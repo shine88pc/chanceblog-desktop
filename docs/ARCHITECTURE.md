@@ -30,6 +30,7 @@
 ## 3. GitHub Pages — 기존 `chanceblog` 로컬 저장소 연결
 
 앱은 설정에 **로컬 `chanceblog` 저장소 경로**를 가진다. 연결할 때 확인한다: 폴더가 git 저장소인가, `origin` 이 `shine88pc/chanceblog` 인가, 작업 트리가 깨끗한가, push 자격(Git 로그인)이 있는가(`git push --dry-run`). 실패하면 이유와 하실 일을 보인다(`PAGES_LOCAL_REPO_INVALID` 등).
+- **구현(연결 확인)**: `src/chanceblog_desktop/publish/gitrepo.py` — `inspect_repo`(폴더·`origin`·`main` 브랜치·저장하지 않은 변경 확인, 새 파일은 변경으로 보지 않음)·`sync_latest`(원격 `main` 을 받아 빨리감기로만 맞춤 — 로컬이 앞서거나 갈라져 있으면 건드리지 않고 `PAGES_LOCAL_REPO_DIVERGED`)·`check_push_access`(`git push --dry-run`, 실제로는 올리지 않음). 앱은 사용자의 커밋·변경을 지우거나 되돌리지 않고 브랜치를 바꾸지 않으며, git 이 대화창을 띄우지 않게(`GIT_TERMINAL_PROMPT=0`) 영어 메시지로 실행해 실패를 오류 코드(`GIT_PUSH_AUTH`·`GIT_PUSH_NETWORK`·`GIT_PUSH_REJECTED` 등)로 나눈다.
 - **글**: `chanceblog` 의 Chance 글과 같은 형식으로 만든다 — `_posts/<카테고리>/YYYY-MM-DD-<언어>-<시각>.md`, Front Matter 키 `layout`·`date`·`permalink`·`title`·`description`·`category`·`tags`·`lang`·`source_url`·`source_name`·`image`(2026-10-30 저장소 확인). 형식은 첫 구현에서 시험으로 고정하고, `chanceblog` 쪽 규칙(`docs/ARCHITECTURE.md` 와 `pipeline/drafts.py`)이 바뀌면 이쪽도 같은 PR 에서 맞춘다.
 - **이미지**: 지금 Chance 는 외부 이미지 주소(Unsplash)를 `image:` 에 쓴다. 앱은 같은 방식과 함께 사용자가 고른 이미지 파일을 저장소 안 정해진 폴더에 두는 방식을 지원한다(폴더·크기 규칙은 첫 구현에서 정한다, 사이트 설정 `_config.yml` 은 건드리지 않는다).
 - **발행**: 미리보기에서 승인하면 앱이 **항상 최신 `main` 을 먼저 가져온 뒤**(봇이 같은 `main` 에 직접 커밋한다) 파일을 만들고 commit·push 한다. 이후는 기존 흐름이다: `main` push → `pages.yml` 이 Jekyll 빌드·배포 → 배포 확인. 앱은 Actions 실행 상태를 읽어 성공·실패를 보이고(§6 오류 안내), 발행 주소를 기록한다.
