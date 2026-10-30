@@ -99,6 +99,27 @@ class LinkAndDecisionTest(unittest.TestCase):
         self.assertEqual(sorted(used - defined), [], "문서가 부르는데 결정 기록에 없는 번호")
 
 
+class WorkflowPinningTest(unittest.TestCase):
+    def test_every_action_in_the_workflows_is_pinned_to_a_full_commit_sha(self):
+        """태그(@v4)는 나중에 다른 코드를 가리키게 바뀔 수 있다 — 전체 커밋 SHA 로 고정한다(docs/SECURITY.md §4)."""
+        uses = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.M)
+        found = 0
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+            for ref in uses.findall(path.read_text(encoding="utf-8")):
+                if ref.startswith("./"):
+                    continue
+                found += 1
+                with self.subTest(file=path.name, action=ref):
+                    self.assertRegex(ref, r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+        self.assertGreaterEqual(found, 2, "액션을 찾지 못했다 — 이 시험의 찾기 규칙이 깨졌다")
+
+    def test_the_pin_check_rejects_a_tag(self):
+        uses = re.compile(r"^\s*-?\s*uses:\s*([^\s#]+)", re.M)
+        self.assertEqual(uses.findall("      - uses: actions/checkout@v4\n"), ["actions/checkout@v4"])
+        self.assertIsNone(re.match(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$", "actions/checkout@v4"))
+        self.assertIsNotNone(re.match(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$", "actions/checkout@" + "a" * 40))
+
+
 class VersionTest(unittest.TestCase):
     SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$")
 
@@ -113,7 +134,8 @@ class VersionTest(unittest.TestCase):
 class SecretHygieneTest(unittest.TestCase):
     def test_gitignore_blocks_secrets_user_data_and_build_output(self):
         lines = {line.strip() for line in read(".gitignore").splitlines()}
-        for needle in (".env", "*.pem", "*.key", "*.pfx", "client_secret*.json", "token*.json", "*.sqlite", "*.db", "dist/", "build/", ".venv/", "update_signing_key*"):
+        for needle in (".env", "*.pem", "*.key", "*.pfx", "client_secret*.json", "token*.json", "*.sqlite", "*.db", "dist/", "build/", ".venv/", "update_signing_key*",
+                       ".git-credentials", ".netrc", "secret*.json", "*.jks"):
             self.assertIn(needle, lines, needle)
         self.assertIn("!.env.example", lines)                             # 변수 이름만 있는 예시는 올린다
 
@@ -131,6 +153,12 @@ class SecretHygieneTest(unittest.TestCase):
 
     def test_no_tracked_text_file_contains_a_key_shaped_string(self):
         pattern = re.compile("|".join(KEY_SHAPES))
+        hits = [str(path.relative_to(ROOT)) for path in text_files() if pattern.search(path.read_text(encoding="utf-8", errors="replace"))]
+        self.assertEqual(hits, [])
+
+    def test_no_tracked_text_file_contains_a_personal_email_address(self):
+        """AGENTS.md 규칙 2 — 개인 이메일을 저장소에 올리지 않는다(GitHub noreply 주소·예시 도메인은 괜찮다)."""
+        pattern = re.compile(r"[\w.+-]+@(?:gmail|googlemail|naver|daum|hanmail|kakao|outlook|hotmail|yahoo|icloud)\.[a-z.]+", re.I)
         hits = [str(path.relative_to(ROOT)) for path in text_files() if pattern.search(path.read_text(encoding="utf-8", errors="replace"))]
         self.assertEqual(hits, [])
 
