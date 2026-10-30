@@ -77,12 +77,18 @@
 
 ```text
 ContentProject: project_id · title · source_content · references · assets · created_at · updated_at · revision
-  └─ PlatformVariant × 플랫폼(github_pages · blogger_en · blogger_ko · naver_a · naver_b): rendered · status · published_url · published_at · error_code
+  └─ PlatformVariant × 플랫폼(github_pages · blogger_en · blogger_ko · naver_a · naver_b): rendered · rendered_revision · status · published_url · published_at · remote_id · error_code
 JobLog: job_id · kind · started_at · finished_at · result · error_code · detail(마스킹됨)
 ```
 
 - API 키 원문은 데이터베이스·프로젝트 파일·로그에 저장하지 않는다.
-- 네이버 상태값: `NOT_STARTED` → `DRAFT_GENERATED` → `REVIEW_REQUIRED` → `READY_TO_COPY` → `COPY_COMPLETED` → `PUBLISHED_MANUAL` (`PUBLISH_FAILED`). 두 네이버 블로그는 같은 주제여도 **제목·도입부·문단 구성·태그를 각자 프로필에 맞게 변환하고 각각 검수**하며, 유사도가 기준을 넘으면 경고하고 운영자가 명시 승인해야 `READY_TO_COPY` 가 된다. 같은 원고를 그대로 복제하는 기능은 기본값으로 두지 않는다. 네이버 A·B 는 표시명·URL·주제·대상 독자·말투·카테고리 매핑·기본 태그·금지 표현·이미지 규격·글 길이·발행 주기·발행 이력을 **각자 독립 프로필**로 관리한다.
+- **상태 흐름**(코드 `content/status.py` 의 `FLOWS` 가 이 표와 같고 시험이 확인한다. 굵게 쓴 공개 상태는 되돌리지 않는다 — 공개 취소는 사람이 플랫폼에서 한다):
+  - GitHub Pages: `NOT_STARTED` → `DRAFT_GENERATED` → `REVIEW_REQUIRED` → `APPROVED` → `COMMITTED` → `PUSHED` → **`PUBLISHED`**
+  - Blogger(영문·한글): `NOT_STARTED` → `DRAFT_GENERATED` → `REVIEW_REQUIRED` → `APPROVED` → `DRAFT_SAVED` → **`PUBLISHED_MANUAL`** (공개는 운영자가 Blogger 에서)
+  - 네이버 A·B: `NOT_STARTED` → `DRAFT_GENERATED` → `REVIEW_REQUIRED` → `READY_TO_COPY` → `COPY_COMPLETED` → **`PUBLISHED_MANUAL`**
+  - 어느 플랫폼이든 승인 단계에서 `REVIEW_REQUIRED` 로, 검토 단계에서 `DRAFT_GENERATED` 로 물러설 수 있고, 올리는 중에 실패하면 `PUBLISH_FAILED`(오류 코드 필수)로 갔다가 `REVIEW_REQUIRED` 나 `DRAFT_GENERATED` 로 돌아가 다시 한다.
+- **상태 규칙**: ① 원고를 고치면(판 번호 `revision` 이 오른다) 검토·승인·초안 저장·복사 중이던 변형은 `DRAFT_GENERATED` 로 돌아가 처음부터 다시 검토한다 — 이미 올라간 `COMMITTED`·`PUSHED`·공개 상태는 과거의 사실이라 그대로 둔다. ② 승인(`APPROVED`·`READY_TO_COPY`)은 **현재 판으로 만든 렌더링**에만 줄 수 있다. ③ 공개 상태로 바꿀 때는 **발행 주소**(https, 로그인 정보 없음, 네이버는 `blog.naver.com` 주소)가 있어야 한다. ④ `PUBLISH_FAILED` 로 바꿀 때는 **오류 코드**가 있어야 한다. 규칙을 어기면 오류 코드(`STATUS_TRANSITION_INVALID`·`PUBLISHED_URL_REQUIRED`·`PUBLISHED_URL_INVALID`·`NAVER_PUBLISH_URL_INVALID`·`CONTENT_INVALID`)로 거절하고 아무것도 바꾸지 않는다.
+- 네이버: 두 네이버 블로그는 같은 주제여도 **제목·도입부·문단 구성·태그를 각자 프로필에 맞게 변환하고 각각 검수**하며, 유사도가 기준을 넘으면 경고하고 운영자가 명시 승인해야 `READY_TO_COPY` 가 된다. 같은 원고를 그대로 복제하는 기능은 기본값으로 두지 않는다. 네이버 A·B 는 표시명·URL·주제·대상 독자·말투·카테고리 매핑·기본 태그·금지 표현·이미지 규격·글 길이·발행 주기·발행 이력을 **각자 독립 프로필**로 관리한다.
 
 ## 10. 로컬 데이터와 백업
 
