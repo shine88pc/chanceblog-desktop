@@ -48,10 +48,10 @@
 | 모듈 | 하는 일 |
 |---|---|
 | `app/` | 화면(대시보드·편집기·블로그 프로필·발행 센터·설정·로그). 화면 틀은 PySide6 또는 pywebview 로 첫 구현에서 비교해 정한다(D-04) |
-| `content/` | ContentProject·플랫폼 변형·원고 Revision·SQLite 저장·자동 저장·복구·스키마 마이그레이션·기존 원고 불러오기 |
-| `render/` | 플랫폼별 변환(Markdown↔HTML, Pages Front Matter, Blogger HTML, 네이버 패키지)과 미리보기. **구현**: `pages.py`(Pages 글, §3)·`markdown.py`(Markdown↔HTML — 제목·문단·줄바꿈·4단계 목록·인용·굵게/기울임·링크(https·허용 주소만)·이미지(HTML 밖에서 따로 목록으로), 원고 속 HTML 은 해석하지 않고 글자로 보이며 결과는 핵심 코드의 정화기를 거쳐 허용 태그만 나간다, 기존 글(HTML)을 Markdown 으로 불러오기 포함) |
+| `content/` | ContentProject·플랫폼 변형·원고 Revision·SQLite 저장·자동 저장·복구·스키마 마이그레이션·기존 원고 불러오기. **구현**: `profiles.py`(네이버 A·B 블로그 프로필 — 표시명·주소·주제·대상 독자·말투·카테고리 매핑·기본 태그·금지 표현·이미지 규격·글 길이·고지문, 엄격한 검사와 JSON) |
+| `render/` | 플랫폼별 변환(Markdown↔HTML, Pages Front Matter, Blogger HTML, 네이버 패키지)과 미리보기. **구현**: `pages.py`(Pages 글, §3)·`markdown.py`(Markdown↔HTML — 제목·문단·줄바꿈·4단계 목록·인용·굵게/기울임·링크(https·허용 주소만)·이미지(HTML 밖에서 따로 목록으로), 원고 속 HTML 은 해석하지 않고 글자로 보이며 결과는 핵심 코드의 정화기를 거쳐 허용 태그만 나간다, 기존 글(HTML)을 Markdown 으로 불러오기·평문 변환·블록별 HTML 과 이미지 자리 포함)·`naver.py`(네이버 복사 패키지 — 블로그 프로필에 맞춰 제목 줄이기·태그 정리·짧은 문단 나누기·이미지 `[이미지 N]` 자리 표시·AI 활용 고지문·체크리스트·금지 표현/글 길이 점검을 만든다. 글을 AI 로 다시 쓰지 않고 파일·네트워크도 쓰지 않는다) |
 | `publish/` | Pages(연결한 로컬 저장소에 쓰기·commit·push·배포 확인), Blogger 초안 저장·수정, 네이버 복사 패키지·상태 |
-| `check/` | 발행 전 검사(핵심 코드 `pipeline/gates.py` 를 감싸고 앱 전용 검사 — 두 네이버 블로그 중복 등 — 추가) |
+| `check/` | 발행 전 검사(핵심 코드 `pipeline/gates.py` 를 감싸고 앱 전용 검사 — 두 네이버 블로그 중복 등 — 추가). **구현**: `similarity.py`(네이버 A·B 유사도 — 제목·도입부·본문·문단 구성·이미지·태그·발행일을 글자 3개씩 묶음·편집 거리로 재고, 기준 이상이면 `NAVER_SIMILARITY_HIGH` 로 직접 승인이 있어야 복사 단계로 넘어간다. 기준값은 기본값이고 인자로 바꾼다) |
 | `errors/` | **오류 코드와 안내 문구 카탈로그**(규칙 기반). 모든 실패는 코드 하나로 모이고 사용자에게 원인·하실 일을 보인다 |
 | `update/` | 업데이트 확인·서명 검증·백업·적용·롤백([`RELEASE.md`](RELEASE.md)), 프로그램 버전·변경 이력 |
 | `security/` | OS 보안 저장소(Windows 자격 증명 관리자) 접근, 로그 마스킹([`SECURITY.md`](SECURITY.md)) |

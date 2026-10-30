@@ -69,6 +69,8 @@ class _Context:
         self.allow_links = allow_links
         self.allowed_hosts = tuple(host.lower() for host in allowed_hosts)
         self.images = []
+        self.positions = []                              # 이미지마다, 그 앞에 나온 최상위 블록 수(이미지의 자리 — 0 이면 글 맨 앞)
+        self.emitted = 0                                 # 지금까지 내보낸 최상위 블록 수
 
 
 def _emphasis(text):
@@ -116,6 +118,7 @@ def _inline_parts(text, context, stash):
 
     def image(match):
         context.images.append((match.group(1).strip(), match.group(2)))
+        context.positions.append(context.emitted)
         return ""
 
     text = _IMAGE.sub(image, text)
@@ -211,6 +214,11 @@ def _list_html(region, context):
 
 def _blocks(lines, context, depth):
     out, i, count = [], 0, len(lines)
+
+    def emit(html):
+        out.append(html)
+        if depth == 0:
+            context.emitted += 1
     while i < count:
         line = lines[i]
         if _BLANK.match(line):
@@ -224,7 +232,7 @@ def _blocks(lines, context, depth):
                 body.append(lines[j])
                 j += 1
             if body:
-                out.append("<p>" + "<br>".join(_escape(row.rstrip()) for row in body) + "</p>")
+                emit("<p>" + "<br>".join(_escape(row.rstrip()) for row in body) + "</p>")
             i = j + 1
             continue
         if _RULE.match(line):
@@ -235,7 +243,7 @@ def _blocks(lines, context, depth):
             content = (atx.group(2) or "").strip()
             if content:
                 tag = _heading_tag(len(atx.group(1)))
-                out.append(f"<{tag}>{_inline(content, context)}</{tag}>")
+                emit(f"<{tag}>{_inline(content, context)}</{tag}>")
             i += 1
             continue
         if _QUOTE.match(line):
@@ -245,7 +253,7 @@ def _blocks(lines, context, depth):
                 j += 1
             body = _blocks(inner, context, depth + 1) if depth < MAX_DEPTH else [_paragraph_html(inner, context)]
             if body:
-                out.append("<blockquote>" + "".join(body) + "</blockquote>")
+                emit("<blockquote>" + "".join(body) + "</blockquote>")
             i = j
             continue
         if _BULLET.match(line) or _ordered_start(line):
@@ -265,7 +273,7 @@ def _blocks(lines, context, depth):
                     j += 1
                     continue
                 break
-            out.append(_list_html(region, context))
+            emit(_list_html(region, context))
             i = j
             continue
         j, paragraph = i + 1, [line]
@@ -274,7 +282,7 @@ def _blocks(lines, context, depth):
             j += 1
         html = _paragraph_html(paragraph, context).strip()
         if html:
-            out.append(f"<p>{html}</p>")
+            emit(f"<p>{html}</p>")
         i = j
     return out
 
@@ -305,19 +313,33 @@ def _flatten_emphasis(html):
 
 def _convert(text, allow_links=False, allowed_hosts=()):
     context = _Context(allow_links, allowed_hosts)
-    html = "".join(_blocks(_normalize(text).split("\n"), context, 0))
+    return _blocks(_normalize(text).split("\n"), context, 0), context
+
+
+def _clean(html, allow_links, allowed_hosts):
     clean, _stats = sanitize_html(html, allow_links=allow_links, allowed_hosts=tuple(allowed_hosts))
-    return _flatten_emphasis(clean), context.images
+    return _flatten_emphasis(clean)
 
 
 def markdown_to_html(text, *, allow_links=False, allowed_hosts=()):
     """Markdown → 허용 태그만 있는 HTML. 링크는 allow_links 이고 https·allowed_hosts 인 것만 남는다. 이미지는 넣지 않는다(markdown_images 로 따로)."""
-    return _convert(text, allow_links, allowed_hosts)[0]
+    blocks, _context = _convert(text, allow_links, allowed_hosts)
+    return _clean("".join(blocks), allow_links, allowed_hosts)
 
 
 def markdown_images(text):
     """글 속 이미지 [(설명, 주소), …] — 코드 안의 것은 제외, 나타난 순서대로. 주소가 안전한지는 부르는 쪽이 따로 검사한다."""
-    return _convert(text)[1]
+    return _convert(text)[1].images
+
+
+def markdown_blocks(text, *, allow_links=False, allowed_hosts=()):
+    """Markdown → (최상위 블록마다 정화한 HTML 목록, 이미지 [(설명, 주소, 자리)]). 블록을 이어 붙이면 `markdown_to_html` 과 같다.
+    자리는 그 이미지 앞에 나온 블록 수다(0 이면 글 맨 앞, 블록 수와 같으면 글 맨 뒤) — 플랫폼 글에서 이미지를 제자리에 놓을 때 쓴다."""
+    blocks, context = _convert(text, allow_links, allowed_hosts)
+    cleaned = [_clean(block, allow_links, allowed_hosts) for block in blocks]
+    kept = [index for index, block in enumerate(cleaned) if block]
+    images = [(alt, url, sum(1 for index in kept if index < position)) for (alt, url), position in zip(context.images, context.positions)]
+    return [cleaned[index] for index in kept], images
 
 
 # ----------------------------------------------------------------------------------------------------------------------------
@@ -490,4 +512,87 @@ def html_to_markdown(html, *, allow_links=False, allowed_hosts=()):
     reader.feed(clean)
     reader.close()
     blocks = _blocks_md(reader.root.children, allow_links)
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+# ----------------------------------------------------------------------------------------------------------------------------
+# HTML → 평문 (서식 없는 칸에 붙여넣을 글 — 네이버 평문 복사)
+# ----------------------------------------------------------------------------------------------------------------------------
+def _text_inline(nodes):
+    out = []
+    for node in nodes:
+        if isinstance(node, str):
+            out.append(re.sub(r"\s+", " ", node))
+        elif node.tag == "br":
+            out.append("\n")
+        else:
+            out.append(_text_inline(node.children))
+    return "".join(out)
+
+
+def _text_lines(text):
+    return "\n".join(line.strip() for line in text.strip().split("\n")).strip()
+
+
+def _text_list(node, level):
+    out, number = [], 1
+    for item in node.children:
+        if isinstance(item, str):
+            text = _text_lines(_text_inline([item]))
+            if text:
+                out.append("  " * level + (f"{number}. " if node.tag == "ol" else "- ") + text.replace("\n", " "))
+                number += 1
+            continue
+        if item.tag in ("ul", "ol"):
+            out.extend(_text_list(item, level + 1))
+            continue
+        if item.tag != "li":
+            continue
+        inline = [child for child in item.children if isinstance(child, str) or child.tag not in ("ul", "ol")]
+        nested = [child for child in item.children if not isinstance(child, str) and child.tag in ("ul", "ol")]
+        text = " ".join(_text_inline(inline).split())
+        out.append("  " * level + (f"{number}. " if node.tag == "ol" else "- ") + text)
+        for child in nested:
+            out.extend(_text_list(child, level + 1))
+        number += 1
+    return out
+
+
+def _text_blocks(nodes):
+    blocks, loose = [], []
+
+    def flush():
+        text = _text_lines(_text_inline(loose))
+        if text:
+            blocks.append(text)
+        loose.clear()
+
+    for node in nodes:
+        if isinstance(node, str) or node.tag in ("strong", "b", "em", "i", "br", "a"):
+            loose.append(node)
+            continue
+        flush()
+        if node.tag in ("ul", "ol"):
+            lines = _text_list(node, 0)
+            if lines:
+                blocks.append("\n".join(lines))
+        elif node.tag == "blockquote":
+            inner = "\n\n".join(_text_blocks(node.children))
+            if inner:
+                blocks.append("\n".join(("> " + row) if row else ">" for row in inner.split("\n")))
+        else:                                            # p·h2~h4 와 목록 밖의 li 같은 것은 글만 문단으로
+            loose.extend(node.children)
+            flush()
+    flush()
+    return blocks
+
+
+def html_to_text(html, *, allow_links=False, allowed_hosts=()):
+    """HTML → 평문. 먼저 허용 태그만 남기고 정화한 뒤 글자만 옮긴다: 블록 사이는 빈 줄, 소제목은 한 줄, 목록은 `- `·`1. `(중첩은 두 칸씩 안으로),
+    인용은 `> `, `<br>` 는 줄바꿈. 굵게·기울임·링크 표시는 없고(링크 글자만 남는다) Markdown 기호를 이스케이프하지 않는다."""
+    clean, _stats = sanitize_html(_normalize(html), allow_links=allow_links, allowed_hosts=tuple(allowed_hosts))
+    reader = _TreeReader()
+    reader.feed(clean)
+    reader.close()
+    blocks = _text_blocks(reader.root.children)
     return "\n\n".join(blocks) + ("\n" if blocks else "")

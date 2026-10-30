@@ -14,13 +14,14 @@ import time
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.render import markdown as md  # noqa: E402
-from chanceblog_desktop.render.markdown import html_to_markdown, markdown_images, markdown_to_html  # noqa: E402
+from chanceblog_desktop.render.markdown import html_to_markdown, html_to_text, markdown_blocks, markdown_images, markdown_to_html  # noqa: E402
 from pipeline.gates import ALLOWED_TAGS, sanitize_html  # noqa: E402  (render.markdown 이 vendor/ 경로를 올려 둔다)
 
 
@@ -195,6 +196,114 @@ class MarkdownToHtmlTest(unittest.TestCase):
             with self.subTest(url=url, hosts=context.allowed_hosts, links=context.allow_links):
                 self.assertEqual(md._link_ok(url, context), ok)
         self.assertTrue(md._link_ok("https://blog.example.com/a", md._Context(True, ("Example.COM",))), "허용 주소는 대소문자를 가리지 않는다")
+
+
+class BlocksTest(unittest.TestCase):
+    """최상위 블록 목록과 이미지의 자리 — 플랫폼 글에서 이미지를 제자리에 놓는 데 쓴다."""
+
+    SOURCE = ("![맨 앞 그림](https://img.example/0.png)\n\n# 제목\n\n첫 문단 ![문단 속](https://img.example/1.png) 이어지는 글\n\n- 목록 하나\n- 목록 둘\n\n"
+              "![홀로 선 그림](https://img.example/2.png)\n\n> 인용\n\n끝 문단\n\n![맨 뒤 그림](https://img.example/3.png)")
+
+    def test_blocks_joined_are_the_whole_html_and_each_block_is_one_top_level_element(self):
+        blocks, _images = markdown_blocks(self.SOURCE)
+        self.assertEqual(blocks, ["<h2>제목</h2>", "<p>첫 문단 이어지는 글</p>", "<ul><li>목록 하나</li><li>목록 둘</li></ul>", "<blockquote><p>인용</p></blockquote>", "<p>끝 문단</p>"])
+        self.assertEqual("".join(blocks), markdown_to_html(self.SOURCE))
+
+    def test_each_image_knows_how_many_blocks_come_before_it(self):
+        _blocks, images = markdown_blocks(self.SOURCE)
+        self.assertEqual(images, [("맨 앞 그림", "https://img.example/0.png", 0), ("문단 속", "https://img.example/1.png", 1), ("홀로 선 그림", "https://img.example/2.png", 3),
+                                  ("맨 뒤 그림", "https://img.example/3.png", 5)])
+        self.assertEqual([(alt, url) for alt, url, _place in images], markdown_images(self.SOURCE))
+
+    def test_an_image_inside_a_quote_stands_before_the_whole_quote(self):
+        blocks, images = markdown_blocks("앞\n\n> 인용 ![속](https://img.example/q.png) 글\n\n뒤")
+        self.assertEqual(blocks, ["<p>앞</p>", "<blockquote><p>인용 글</p></blockquote>", "<p>뒤</p>"])
+        self.assertEqual(images, [("속", "https://img.example/q.png", 1)])
+
+    def test_blocks_inside_a_quote_do_not_move_the_place_of_the_image_after_it(self):
+        blocks, images = markdown_blocks("> 가\n>\n> 나\n\n![그림](https://img.example/a.png)\n\n다")
+        self.assertEqual(blocks, ["<blockquote><p>가</p><p>나</p></blockquote>", "<p>다</p>"])
+        self.assertEqual(images, [("그림", "https://img.example/a.png", 1)], "인용 안의 문단은 최상위 블록으로 세지 않는다")
+
+    def test_a_paragraph_with_only_pictures_is_not_a_block_at_all(self):
+        blocks, images = markdown_blocks("![하나](https://img.example/1.png)\n\n![둘](https://img.example/2.png)\n\n본문")
+        self.assertEqual(blocks, ["<p>본문</p>"])
+        self.assertEqual(images, [("하나", "https://img.example/1.png", 0), ("둘", "https://img.example/2.png", 0)])
+
+    def test_a_block_the_cleaner_leaves_empty_is_left_out_and_the_places_of_later_images_shift_with_it(self):
+        real = md._clean
+
+        def clean(html, allow_links, allowed_hosts):
+            return "" if "버릴" in html else real(html, allow_links, allowed_hosts)
+
+        with mock.patch.object(md, "_clean", clean):
+            blocks, images = markdown_blocks("앞\n\n버릴 문단\n\n![그림](https://img.example/a.png)\n\n뒤")
+        self.assertEqual(blocks, ["<p>앞</p>", "<p>뒤</p>"], "정화하고 나서 빈 블록은 목록에 넣지 않는다")
+        self.assertEqual(images, [("그림", "https://img.example/a.png", 1)], "빠진 블록만큼 이미지 자리도 당겨진다")
+
+    def test_nothing_in_nothing_out(self):
+        self.assertEqual(markdown_blocks(""), ([], []))
+        self.assertEqual(markdown_blocks("![](https://img.example/a.png)"), ([], [("", "https://img.example/a.png", 0)]))
+
+    def test_blocks_always_add_up_to_the_whole_html_for_random_documents(self):
+        rng = random.Random(11)
+        make = RoundTripTest()
+        for _ in range(120):
+            source = "\n\n".join(make.block(rng) for _ in range(rng.randint(1, 6)))
+            blocks, images = markdown_blocks(source)
+            self.assertEqual("".join(blocks), markdown_to_html(source))
+            self.assertTrue(all(0 <= place <= len(blocks) for _alt, _url, place in images))
+            for block in blocks:
+                self.assertEqual(tags_in(block) & {"p", "h2", "h3", "h4", "ul", "ol", "blockquote"} != set(), True, block)
+
+    def test_links_follow_the_same_rules_per_block(self):
+        blocks, _images = markdown_blocks("[내 글](https://example.com/a) 와 [밖](https://evil.example/)", allow_links=True, allowed_hosts=("example.com",))
+        self.assertEqual(blocks, ['<p><a href="https://example.com/a" rel="nofollow noopener">내 글</a> 와 밖</p>'])
+
+
+class HtmlToTextTest(unittest.TestCase):
+    CASES = (
+        ("<p>문단 하나</p><p>문단 둘</p>", "문단 하나\n\n문단 둘\n"),
+        ("<h2>제목</h2><p>본문</p>", "제목\n\n본문\n"),
+        ("<p><strong>굵게</strong> 와 <em>기울임</em> 와 <b>b</b> <i>i</i></p>", "굵게 와 기울임 와 b i\n"),
+        ("<p>줄<br>바꿈</p>", "줄\n바꿈\n"),
+        ("<ul><li>하나</li><li>둘<ul><li>하위</li></ul></li></ul>", "- 하나\n- 둘\n  - 하위\n"),
+        ("<ol><li>첫째</li><li>둘째</li></ol>", "1. 첫째\n2. 둘째\n"),
+        ("<ul>흩어진 항목<li>항목</li></ul>", "- 흩어진 항목\n- 항목\n"),
+        ("<ul><li>가<ul>흩어진 글<li>다</li></ul></li></ul>", "- 가\n  - 흩어진 글\n  - 다\n"),
+        ("<p>가<br> 나 <br>다</p>", "가\n나\n다\n"),
+        ("<blockquote><p>인용</p><p>둘째</p></blockquote>", "> 인용\n>\n> 둘째\n"),
+        ("<p>A &amp; B &lt; C * _ # [x]</p>", "A & B < C * _ # [x]\n"),
+        ("<p>  공백이 \n  여럿  </p>", "공백이 여럿\n"),
+        ("텍스트만", "텍스트만\n"),
+        ("<p>앞</p>흩어진 글<p>뒤</p>", "앞\n\n흩어진 글\n\n뒤\n"),
+        ("<p></p><ul></ul><blockquote></blockquote>", ""),
+        ("", ""),
+        ("<li>목록 밖의 항목</li>", "목록 밖의 항목\n"),
+        ("<p>안녕 <script>alert(1)</script>하세요</p><iframe src=x></iframe>", "안녕 하세요\n"),
+    )
+
+    def test_each_tag_becomes_the_expected_plain_text(self):
+        for html, expected in self.CASES:
+            with self.subTest(html=html[:40]):
+                self.assertEqual(html_to_text(html), expected)
+
+    def test_links_keep_only_their_words(self):
+        html = '<p>보세요 <a href="https://example.com/a">여기</a></p>'
+        self.assertEqual(html_to_text(html), "보세요 여기\n")
+        self.assertEqual(html_to_text(html, allow_links=True, allowed_hosts=("example.com",)), "보세요 여기\n")
+
+    def test_what_comes_from_markdown_reads_naturally(self):
+        source = "# 제목\n\n오늘은 **세 가지**만 해 봅니다. *천천히* 하세요.\n\n1. 물 마시기\n2. 스트레칭\n   - 목\n   - 어깨\n\n> 작은 습관\n\n끝  \n안녕"
+        self.assertEqual(html_to_text(markdown_to_html(source)), "제목\n\n오늘은 세 가지만 해 봅니다. 천천히 하세요.\n\n1. 물 마시기\n2. 스트레칭\n  - 목\n  - 어깨\n\n> 작은 습관\n\n끝\n안녕\n")
+
+    def test_odd_values_and_big_inputs_are_handled(self):
+        for value in (None, 123, b"bytes", ["목록"]):
+            self.assertIsInstance(html_to_text(value), str)
+        self.assertIn("깊은", html_to_text("<blockquote>" * 3000 + "깊은" + "</blockquote>" * 3000))
+        self.assertEqual(html_to_text("<ul>" * 3000 + "<li>x</li>" + "</ul>" * 3000).count("x"), 1)
+        with self.assertRaises(AppError):
+            html_to_text("a" * (md.MAX_CHARS + 1))
 
 
 class SafetyTest(unittest.TestCase):

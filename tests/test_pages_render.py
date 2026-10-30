@@ -143,11 +143,11 @@ class FrontMatterTest(unittest.TestCase):
         self.assertEqual(lines[1], "layout: post")
 
     def test_title_and_category_are_one_line_json_even_with_quotes_backslashes_and_line_separators(self):
-        post = render(project=proj(title='그는 "안녕" 이라고 \\ 말했다 다음'), category='"따옴표" 분야')
+        post = render(project=proj(title='그는 "안녕" 이라고 \\ 말했다\u2028다음'), category='"따옴표" 분야')
         lines = self.header(post)
-        self.assertEqual(json.loads(lines[2][len("title: "):]), '그는 "안녕" 이라고 \\ 말했다 다음')
+        self.assertEqual(json.loads(lines[2][len("title: "):]), '그는 "안녕" 이라고 \\ 말했다\u2028다음')
         self.assertIn("\\u2028", lines[2])
-        self.assertNotIn(" ", post.text)
+        self.assertNotIn("\u2028", post.text)
         self.assertEqual(json.loads(lines[3][len("category: "):]), '"따옴표" 분야')
         self.assertEqual(front_matter_problems(post.text), [])
 
@@ -257,7 +257,7 @@ class BodyTest(unittest.TestCase):
         render(project=proj(body="첫\n둘\n셋\ntitle: 넷째 줄은 괜찮다"))
 
     def test_control_characters_in_the_body_are_refused(self):
-        for bad in ("본문\x00끝", "본문\x1b[31m", "줄 바꿈", "줄\u0085바꿈"):
+        for bad in ("본문\x00끝", "본문\x1b[31m", "줄\u2028바꿈", "줄\u0085바꿈"):
             with self.subTest(bad=repr(bad)):
                 raises_item(self, "본문", project=proj(body=bad))
         render(project=proj(body="탭\t은 괜찮다"))
