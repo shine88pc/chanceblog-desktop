@@ -48,7 +48,7 @@
 | 모듈 | 하는 일 |
 |---|---|
 | `app/` | 화면(대시보드·편집기·블로그 프로필·발행 센터·설정·로그). 화면 틀은 PySide6 또는 pywebview 로 첫 구현에서 비교해 정한다(D-04) |
-| `content/` | ContentProject·플랫폼 변형·원고 Revision·SQLite 저장·자동 저장·복구·스키마 마이그레이션·기존 원고 불러오기 |
+| `content/` | ContentProject·플랫폼 변형·원고 Revision·SQLite 저장·자동 저장·복구·스키마 마이그레이션·기존 원고 불러오기. **구현**: `model.py`(자료·검증)·`status.py`(상태 흐름)·`store.py`(SQLite 저장소, §10) |
 | `render/` | 플랫폼별 변환(Markdown↔HTML, Pages Front Matter, Blogger HTML, 네이버 패키지)과 미리보기 |
 | `publish/` | Pages(연결한 로컬 저장소에 쓰기·commit·push·배포 확인), Blogger 초안 저장·수정, 네이버 복사 패키지·상태 |
 | `check/` | 발행 전 검사(핵심 코드 `pipeline/gates.py` 를 감싸고 앱 전용 검사 — 두 네이버 블로그 중복 등 — 추가) |
@@ -93,6 +93,8 @@ JobLog: job_id · kind · started_at · finished_at · result · error_code · d
 ## 10. 로컬 데이터와 백업
 
 사용자 데이터는 `%LOCALAPPDATA%\ChanceblogDesktop\`(설정·SQLite·이미지·백업·로그)에 둔다. 설치 폴더 밖이라 업데이트가 `current` 만 교체해도 데이터가 남는다. 업데이트 전에 SQLite backup API 로 스냅샷하고 최근 N개를 보관하며, 스키마는 `PRAGMA user_version` 으로 순방향 마이그레이션, 실패하면 백업 복원.
+
+**구현**: `src/chanceblog_desktop/content/store.py`(`Store`) — 파일 하나에 `projects`·`revisions`(원고의 판 기록, 프로젝트마다 기본 50개)·`drafts`(자동 저장 초안) 세 표. 열 때 `application_id`(이 프로그램의 파일인가)·`user_version`(더 새로운 버전이 만든 것은 아닌가)·`quick_check`(깨지지 않았나)를 보고, 아니면 **파일을 한 바이트도 바꾸지 않고** `STORE_CORRUPT`·`STORE_VERSION_UNSUPPORTED` 로 멈춘다. 옛 구조는 사본(`<파일>.v<번호>.bak`)을 둔 뒤 한 트랜잭션으로 올리고 실패하면 원래대로 둔다(`MIGRATION_FAILED`). 쓰는 일은 모두 한 트랜잭션이고 저장된 판보다 낮은 판으로는 덮어쓰지 않는다(`STORE_CONFLICT`). 읽을 때 `ContentProject.from_dict` 의 엄격한 검사를 다시 거치고, 여러 스레드가 함께 써도 한 번에 하나씩 실행한다. `backup()` 은 SQLite backup API 로 점검한 사본(`<이름>-YYYYMMDD-HHMMSS.db`)을 만들고 최근 10개만 남기며, `restore_from()` 은 이 프로그램의 온전한 백업이 아니면 아무것도 바꾸지 않는다(원하면 바꾸기 직전 상태를 먼저 따로 백업한다).
 
 ## 11. 버전
 
