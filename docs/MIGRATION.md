@@ -23,7 +23,7 @@
 
 **AI 가 하는 일(새 세션의 첫 30분)**
 1. 두 저장소를 새 작업 폴더에 clone: `git clone https://github.com/shine88pc/chanceblog.git` · `git clone https://github.com/shine88pc/chanceblog-desktop.git`. 앱이 나오면 설정의 'chanceblog 로컬 저장소' 칸에 앞의 폴더를 지정한다(GitHub Pages 글을 만들고 push 하는 연결, [`ARCHITECTURE.md`](ARCHITECTURE.md) §3).
-2. 작성자 설정은 **각 clone 안에서만**: `git config user.name "강병수"` · `git config user.email "shine88pc@gmail.com"`(전역 설정은 건드리지 않는다). 시스템 `core.autocrlf=true` 는 끄지 않는다.
+2. 작성자 설정은 **각 clone 안에서만**: `git config user.name "<표시할 이름>"` · `git config user.email "<공개해도 되는 이메일 — GitHub 설정의 noreply 주소 권장>"`(값은 운영자가 정해 알려 준다. 이 저장소에는 실명·이메일을 적지 않는다 — AGENTS.md 규칙 2. 전역 설정은 건드리지 않는다). 시스템 `core.autocrlf=true` 는 끄지 않는다.
 3. 환경: `python -m venv .venv` → `.venv\Scripts\pip install -r requirements-dev.txt`(있으면). 파이썬은 `PYTHONUTF8=1` 로 실행한다(한국어 Windows 콘솔 cp949 문제).
 4. 기준선: `python -m unittest discover -s tests` 가 통과하는지(`chanceblog` 는 추가로 `python scripts/validate_repo.py`).
 5. **push 가 되는지 아무것도 만들지 않고 점검**: `GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=false git push --dry-run --porcelain origin HEAD:refs/heads/ai/<이름>/preflight` — 종료 코드 0 과 `[new branch]` 줄이 보이면 된다. `could not read Username`(종료 128)이면 자격 증명이 없는 것이니 운영자에게 로그인을 부탁한다(AI 가 자격을 만들지 않는다).

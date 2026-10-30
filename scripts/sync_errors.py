@@ -6,7 +6,8 @@
     python scripts/sync_errors.py --check  # 어긋나 있으면 종료 코드 1 (시험이 같은 검사를 한다)
 
 표의 한 줄은 `| `코드` | 언제 | 사용자 문구 | 하실 일 | 재시도 |` 이고, 칸이 비었거나 코드가 겹치거나 재시도 칸이
-정해진 문구가 아니면 여기서 실패한다.
+정해진 문구가 아니면 여기서 실패한다. 머리글(`| 코드 | …`) 아래 표 안에서 이 모양이 아닌 줄(코드가 소문자·백틱 없음·들여쓰기 등)도
+조용히 빠뜨리지 않고 실패한다. 코드 블록(```) 안의 표 모양은 예시라서 읽지 않는다.
 """
 from __future__ import annotations
 
@@ -37,6 +38,9 @@ parse_retry = _load_model().parse_retry
 
 HEADING = re.compile(r"^## \d+\. (.+?)\s*$")
 ROW = re.compile(r"^\| `([A-Z][A-Z0-9_]+)` \|(.*)\|\s*$")
+FENCE = re.compile(r"^\s*(```|~~~)")
+TABLE_HEADER = re.compile(r"^\|\s*코드\s*\|")
+SEPARATOR = re.compile(r"^\|[\s:|-]+\|\s*$")
 
 HEADER = '''"""오류 코드 카탈로그 — 직접 고치지 않는다.
 
@@ -51,15 +55,32 @@ ROWS = (
 
 def parse(doc_text):
     """문서 → [(영역, 코드, 언제, 사용자 문구, 하실 일, 재시도), …]. 잘못된 줄이 있으면 ValueError."""
-    rows, seen, area = [], set(), None
+    rows, seen, area, fenced, in_table = [], set(), None, None, False
     for number, line in enumerate(doc_text.splitlines(), 1):
+        fence = FENCE.match(line)
+        if fence:
+            fenced = None if fenced == fence.group(1) else (fenced or fence.group(1))
+            in_table = False
+            continue
+        if fenced:                                   # 코드 블록 안의 표 모양은 예시일 뿐이다
+            continue
         heading = HEADING.match(line)
         if heading:
             area = heading.group(1)
+            in_table = False
+            continue
+        if TABLE_HEADER.match(line):
+            in_table = True
             continue
         match = ROW.match(line)
         if not match:
+            if in_table and line.strip() and not SEPARATOR.match(line):
+                raise ValueError(f"{DOC.name}:{number}: 오류 코드 표의 줄 모양이 틀렸다(`| `CODE` | 언제 | 사용자 문구 | 하실 일 | 재시도 |`): {line.strip()[:60]}")
+            if not line.strip():
+                in_table = False
             continue
+        if not in_table:
+            raise ValueError(f"{DOC.name}:{number} {match.group(1)}: 표 머리글(`| 코드 | …`) 아래에 있어야 한다")
         code = match.group(1)
         cells = [cell.strip() for cell in match.group(2).split("|")]
         if len(cells) != 4 or not all(cells):
@@ -74,6 +95,8 @@ def parse(doc_text):
             raise ValueError(f"{DOC.name}:{number} {code}: {error}") from None
         seen.add(code)
         rows.append((area, code, *cells))
+    if fenced:
+        raise ValueError(f"{DOC.name}: 코드 블록({fenced})이 닫히지 않았다")
     if not rows:
         raise ValueError(f"{DOC.name} 에서 오류 코드 행을 찾지 못했다")
     return rows
