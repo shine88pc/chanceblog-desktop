@@ -236,9 +236,9 @@ class BodyTest(unittest.TestCase):
         return post.text.split("\n---\n\n", 1)[1]
 
     def test_line_endings_bom_and_blank_edges_are_normalized(self):
-        post = render(project=proj(body="﻿\r\n\r\n첫 줄\r\n둘째 줄\r\r셋째 줄\r\n\r\n\r\n"))
+        post = render(project=proj(body="\ufeff\r\n\r\n첫 줄\r\n둘째 줄\r\r셋째 줄\r\n\r\n\r\n"))
         self.assertNotIn("\r", post.text)
-        self.assertNotIn("﻿", post.text)
+        self.assertNotIn("\ufeff", post.text)
         self.assertTrue(self.body_of(post).startswith("첫 줄\n둘째 줄\n\n셋째 줄\n\n![Thumbnail]("))
         self.assertTrue(post.text.endswith(")\n") and not post.text.endswith("\n\n"))
 
@@ -263,7 +263,7 @@ class BodyTest(unittest.TestCase):
         render(project=proj(body="탭\t은 괜찮다"))
 
     def test_the_project_is_not_changed_and_no_file_is_written(self):
-        project = proj(body="﻿앞\r\n뒤")
+        project = proj(body="\ufeff앞\r\n뒤")
         before = project.to_dict()
         with tempfile.TemporaryDirectory() as tmp:
             old = os.getcwd()
@@ -289,7 +289,7 @@ class CheckerTest(unittest.TestCase):
             return self.GOOD.replace(old, new)
 
         cases = {
-            "BOM": "﻿" + self.GOOD,
+            "BOM": "\ufeff" + self.GOOD,
             "첫 줄": "\n" + self.GOOD,
             "닫는 줄 없음": self.GOOD.replace("\n---\n", "\n"),
             "닫는 줄 모양": bad("\n---\n\n본문", "\n----\n\n본문"),

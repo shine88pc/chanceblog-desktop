@@ -28,9 +28,9 @@ MAX_HEADER_LINE = 2000
 # YAML 이 줄바꿈으로 읽는 U+0085·U+2028·U+2029 는 한 줄 JSON 안에서도 \uXXXX 로 쓴다(generator._json_line 과 같다)
 _LINE_BREAKS = {0x85: "\\u0085", 0x2028: "\\u2028", 0x2029: "\\u2029"}
 # YAML 이 읽지 못하는 글자(제어 문자, U+0085·U+2028·U+2029 포함). 탭과 줄바꿈은 허용(CR 은 먼저 줄바꿈으로 바꾼다)
-_UNPRINTABLE = re.compile(r"[^\x09\x0a\x20-\x7e\xa0-\U00002027\U0000202a-퟿-�\U00010000-\U0010ffff]")
+_UNPRINTABLE = re.compile(r"[^\x09\x0a\x20-\x7e\xa0-\U00002027\U0000202a-퟿\ue000-�\U00010000-\U0010ffff]")
 # 한 줄 값(제목·분야·태그·설명·출처)에 넣을 수 있는 글자: 탭과 U+0085·U+2028·U+2029 는 한 줄 JSON 이 \uXXXX 로 이스케이프하므로 받고, 줄바꿈과 나머지 제어 문자는 거절한다
-_VALUE_UNSAFE = re.compile(r"[^\x09\x20-\x7e\xa0-\U00002027\U0000202a-퟿-�\U00010000-\U0010ffff\u0085  ]")
+_VALUE_UNSAFE = re.compile(r"[^\x09\x20-\x7e\xa0-\U00002027\U0000202a-퟿\ue000-�\U00010000-\U0010ffff\u0085  ]")
 _HEADER_KEY = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]|\Z)")
 _FENCE = re.compile(r"-{3,}[ \t]*")
 _BODY_RESIDUE = re.compile(r"(?:layout|title|category|tags|lang|image|description|published|date|permalink|slug|source_name|source_url|source_domain)[ \t]*:")
@@ -121,7 +121,7 @@ def _tags(values):
 
 
 def _body(text):
-    body = str(text).lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    body = str(text).lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     if _UNPRINTABLE.search(body):
         raise _invalid("본문", detail="YAML 이 읽지 못하는 제어 문자가 있다")
     body = body.strip("\n").rstrip()
@@ -181,7 +181,7 @@ def render_pages_post(project, *, category, lang, image_url, tags=(), descriptio
 def front_matter_problems(text):
     """글 한 편의 머리말·본문 머리를 검사해 문제 문장 목록을 돌려준다(비어 있으면 정상). 값은 문장에 넣지 않는다. chanceblog 의 `front_matter_problems` 중 이 앱이 쓰는 부분."""
     text = str(text)
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         return ["글이 BOM 으로 시작함"]
     lines = text.split("\n")
     if lines[0] != "---":

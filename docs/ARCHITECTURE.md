@@ -49,7 +49,7 @@
 |---|---|
 | `app/` | 화면(대시보드·편집기·블로그 프로필·발행 센터·설정·로그). 화면 틀은 PySide6 또는 pywebview 로 첫 구현에서 비교해 정한다(D-04) |
 | `content/` | ContentProject·플랫폼 변형·원고 Revision·SQLite 저장·자동 저장·복구·스키마 마이그레이션·기존 원고 불러오기 |
-| `render/` | 플랫폼별 변환(Markdown↔HTML, Pages Front Matter, Blogger HTML, 네이버 패키지)과 미리보기 |
+| `render/` | 플랫폼별 변환(Markdown↔HTML, Pages Front Matter, Blogger HTML, 네이버 패키지)과 미리보기. **구현**: `pages.py`(Pages 글, §3)·`markdown.py`(Markdown↔HTML — 제목·문단·줄바꿈·4단계 목록·인용·굵게/기울임·링크(https·허용 주소만)·이미지(HTML 밖에서 따로 목록으로), 원고 속 HTML 은 해석하지 않고 글자로 보이며 결과는 핵심 코드의 정화기를 거쳐 허용 태그만 나간다, 기존 글(HTML)을 Markdown 으로 불러오기 포함) |
 | `publish/` | Pages(연결한 로컬 저장소에 쓰기·commit·push·배포 확인), Blogger 초안 저장·수정, 네이버 복사 패키지·상태 |
 | `check/` | 발행 전 검사(핵심 코드 `pipeline/gates.py` 를 감싸고 앱 전용 검사 — 두 네이버 블로그 중복 등 — 추가) |
 | `errors/` | **오류 코드와 안내 문구 카탈로그**(규칙 기반). 모든 실패는 코드 하나로 모이고 사용자에게 원인·하실 일을 보인다 |
