@@ -35,7 +35,7 @@ def load_script():
 
 SYNC = load_script()
 SOURCE_URL = "https://github.com/shine88pc/chanceblog.git"
-EXPECTED_FILES = ("pipeline/__init__.py", "pipeline/console.py", "pipeline/gates.py", "pipeline/secret_patterns.py")
+EXPECTED_FILES = ("pipeline/__init__.py", "pipeline/console.py", "pipeline/gates.py", "pipeline/secret_patterns.py", "scripts/verify_pages_deploy.py")
 CRLF_CONSOLE = b"a = 1\r\nb = '\xed\x95\x9c'\r\n"      # 줄바꿈(CRLF)과 한글이 그대로 와야 한다
 
 

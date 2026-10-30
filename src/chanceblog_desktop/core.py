@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -43,3 +45,25 @@ def use_vendored_core():
         if not inside:
             raise RuntimeError(f"vendor/ 가 아닌 곳의 pipeline 이 이미 불려 와 있다: {origin}")
     return path
+
+
+_SCRIPT_NAME = re.compile(r"[a-z][a-z0-9_]*")
+
+
+def load_vendored_script(name):
+    """`vendor/scripts/<name>.py` 를 모듈로 불러온다. `scripts` 라는 패키지 이름을 만들지 않으려고(이 저장소의 scripts/ 와 섞이지 않게) 파일 경로로 읽고, 한 번만 읽는다."""
+    if not isinstance(name, str) or not _SCRIPT_NAME.fullmatch(name):
+        raise ValueError(f"스크립트 이름이 올바르지 않다: {name!r}")
+    use_vendored_core()                                  # 스크립트가 `from pipeline import …` 를 쓴다
+    key = f"chanceblog_vendor_{name}"
+    module = sys.modules.get(key)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(key, vendor_dir() / "scripts" / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[key] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(key, None)
+            raise
+    return module

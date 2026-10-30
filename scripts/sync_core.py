@@ -20,12 +20,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_REPO = "https://github.com/shine88pc/chanceblog"
 MANIFEST = "VENDOR.json"
-# 가져오는 파일(chanceblog 저장소 기준 경로). 의존: gates → console, 나머지는 표준 라이브러리만 쓴다.
+# 가져오는 파일(chanceblog 저장소 기준 경로). 의존: gates·verify_pages_deploy → console, 나머지는 표준 라이브러리만 쓴다.
+# scripts/verify_pages_deploy.py: 배포 뒤 글이 공개 주소에서 열리는지 확인하는 코드(공개 CDN 이 404 도 보관하는 사정까지 반영된, 클라우드 배포가 쓰는 그대로)
 FILES = (
     "pipeline/__init__.py",
     "pipeline/console.py",
     "pipeline/gates.py",
     "pipeline/secret_patterns.py",
+    "scripts/verify_pages_deploy.py",
 )
 FULL_SHA = re.compile(r"[0-9a-f]{40}")          # fullmatch 로 쓴다(`$` 는 끝의 줄바꿈 하나를 봐준다)
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")
