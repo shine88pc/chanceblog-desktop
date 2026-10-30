@@ -49,4 +49,5 @@
 - 기존 정상 동작은 **먼저 시험으로 고정하고 점진적으로** 바꾼다. 전면 교체·파일 통째 덮어쓰기 금지, 최소 diff.
 - 커밋 메시지는 UTF-8 파일에 쓰고 `git commit -F 파일`(셸 인자로 넘기면 한글이 깨진다). 제목에 대상(`[대상: 데스크톱]` 등), 끝줄에 `Co-Authored-By: <AI 이름> <noreply 주소>`. 작성자 설정은 **이 clone 안에서만**(저장소 로컬 설정).
 - 한 PR = 한 가지 일. PR 본문에 **바꾼 곳 / 바꾸지 않은 곳 / 검증 출력 / 운영자가 할 일**을 적는다.
+- **`vendor/` 는 고치지 않는다.** `chanceblog` 의 핵심 코드를 원본 그대로 가져온 것이라, 고칠 일은 `chanceblog` 에서 고쳐 병합한 뒤 `python scripts/sync_core.py --source <chanceblog 폴더> --ref <커밋>` 로 다시 가져온다. 시험이 해시를 확인한다([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §4).
 - 모르면 운영자에게 묻는다: 정책, 비용, 계정, 삭제, 새 플랫폼, 라이선스.

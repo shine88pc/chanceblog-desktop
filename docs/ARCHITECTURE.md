@@ -38,8 +38,9 @@
 ## 4. 핵심 코드 재사용 — '정해진 버전으로 가져다 쓴다'
 
 `chanceblog` 의 `pipeline/` 에는 이미 시험 4,000여 개로 고정된 코드(검사 `gates.py`, 비밀 패턴 `secret_patterns.py`, 상태 `state.py`, 실패 분류·마스킹 `llm.py` 의 일부, Blogger 어댑터 `publishers/blogger.py`, 복사 패키지 `publishers/issue_package.py`)가 있다. 파이썬 그대로 가져다 쓰면 다시 시험하지 않아도 된다.
-- 방식: `vendor/pipeline/` 에 **원본과 한 글자도 다르지 않게** 복사하고 `vendor/VENDOR.json` 에 가져온 저장소·커밋 SHA·파일별 해시를 적는다. 앱은 시작할 때 `vendor/` 를 `sys.path` 에 올려 `from pipeline import gates` 처럼 쓴다. 갱신은 `scripts/sync_core.py --ref <SHA 또는 태그>`. **시험이 `vendor/` 해시와 `VENDOR.json` 이 같은지 확인**한다. 코어를 고칠 일이 생기면 `chanceblog` 에서 고쳐 병합한 뒤 다시 가져온다(이 저장소에서 `vendor/` 를 고치지 않는다).
-- 서브모듈·패키지 설치 방식은 비개발자 운영과 PC 이관에 부담이라 쓰지 않는다. 가져오는 파일 목록은 첫 구현 PR 에서 정한다(앱이 쓰는 것만).
+- 방식: `vendor/pipeline/` 에 **원본과 한 글자도 다르지 않게** 복사하고 `vendor/VENDOR.json` 에 가져온 저장소·커밋 SHA(40자리)·파일별 SHA-256 을 적는다. 앱은 시작할 때 `chanceblog_desktop.core.use_vendored_core()` 로 `vendor/` 를 `sys.path` 에 올려 `from pipeline import gates` 처럼 쓴다. 갱신은 `python scripts/sync_core.py --source <chanceblog 를 받아 둔 폴더> --ref <커밋·태그·브랜치>`(원본 커밋의 바이트를 그대로 쓰고, 읽기에 실패하면 아무것도 쓰지 않는다). `--check` 와 시험이 `vendor/` 해시와 `VENDOR.json` 이 같은지, 목록 밖 파일이 없는지 확인한다. `.gitattributes` 의 `vendor/** -text` 가 줄바꿈 변환(Windows autocrlf 포함)을 막는다. 코어를 고칠 일이 생기면 `chanceblog` 에서 고쳐 병합한 뒤 다시 가져온다(이 저장소에서 `vendor/` 를 고치지 않는다).
+- 지금 가져오는 파일(앱이 쓰는 것만, 목록은 `scripts/sync_core.py` 의 `FILES`): `pipeline/__init__.py`·`console.py`·`gates.py`(발행 전 검사)·`secret_patterns.py`(비밀 모양 검사). 모두 표준 라이브러리만 쓴다. Blogger 어댑터·복사 패키지·상태 등은 그 기능을 만드는 묶음에서 목록에 더한다.
+- 서브모듈·패키지 설치 방식은 비개발자 운영과 PC 이관에 부담이라 쓰지 않는다.
 
 ## 5. 코드 구성(예정 — `src/chanceblog_desktop/`)
 
