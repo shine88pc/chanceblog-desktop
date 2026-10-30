@@ -1,0 +1,41 @@
+name: "CI — 시험"
+
+# 모든 브랜치 push 와 PR 에서 시험을 돌린다. 시크릿·쓰기 권한을 쓰지 않는다(읽기 전용).
+# 앱은 Windows 용이므로 Windows 에서도 돌리고, 코드는 Python 3.10 문법이어야 하므로 3.10 과 3.12 를 모두 돌린다.
+# 릴리스(설치 파일 빌드)는 이 워크플로가 아니라 따로 만든다(docs/RELEASE.md) — 서명·릴리스 변경은 T3.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 시험 (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 시험 실행
+        env:
+          PYTHONUTF8: '1'
+        run: python -m unittest discover -s tests -v

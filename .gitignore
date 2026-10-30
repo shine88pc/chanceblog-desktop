@@ -1,0 +1,59 @@
+# 비밀 정보 — 절대 커밋 금지 (AGENTS.md 절대 규칙 1·2)
+.env
+.env.*
+!.env.example
+!.env.sample
+client_secret*.json
+token*.json
+credentials*.json
+*credentials*.json
+*service-account*.json
+*service_account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+update_signing_key*
+*.signing-key
+
+# 사용자 데이터(게시 전 원고·설정·백업·로그) — 앱의 데이터 폴더는 저장소 밖이지만 실수로 복사돼도 올라가지 않게 한다
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backups/
+userdata/
+*.log
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# 빌드·배포 산출물(릴리스는 GitHub Actions 가 만든다)
+build/
+dist/
+Releases/
+*.spec.bak
+*.exe
+*.msi
+*.nupkg
+*.zip
+
+# 편집기·OS
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+.DS_Store
