@@ -42,9 +42,12 @@ _MAX_STDOUT = 64 * 1024 * 1024      # 이보다 큰 표준 출력은 잘라 쓰�
 _STDERR_TAIL = 64 * 1024
 
 # git 의 오류 출력(영어로 고정) → 오류 코드. 위에서부터 처음 맞는 것이다. 순서가 뜻이다:
-# 거절 → 내 폴더에 파일을 못 씀(다른 프로그램이 쓰는 중 → 그 밖) → SSH 연결 실패·끊김(문구에 '원격 저장소를 읽을 수 없음'이 같이 나오므로 인증보다 먼저)
+# 커밋 작성자 없음 → 서버가 규칙으로 막음(보호된 브랜치·훅 — 'failed to push some refs' 가 같이 나오므로 거절보다 먼저) → 거절(봇이 먼저 올림) →
+# 내 폴더에 파일을 못 씀(다른 프로그램이 쓰는 중 → 그 밖) → SSH 연결 실패·끊김(문구에 '원격 저장소를 읽을 수 없음'이 같이 나오므로 인증보다 먼저)
 # → 인증 → 그 밖의 네트워크.
 _RULES = (
+    ("GIT_IDENTITY_MISSING", ("author identity unknown", "please tell me who you are", "unable to auto-detect email address", "empty ident name")),
+    ("GIT_PUSH_AUTH", ("protected branch", "repository rule violations", "hook declined", "refusing to allow", "push declined", "email privacy")),         # GH006(보호된 브랜치)·GH013(규칙 위반)·GH007(이메일 공개 제한) 문구에 이 낱말들이 들어 있다
     ("GIT_PUSH_REJECTED", ("[rejected]", "non-fast-forward", "fetch first", "failed to push some refs")),
     ("DISK_FULL", ("no space left on device",)),
     ("FILE_PATH_TOO_LONG", ("filename too long",)),                  # 'unable to unlink …: Filename too long' 은 다른 프로그램이 쓰는 중이 아니라 경로가 긴 것이다 — FILE_IN_USE 보다 먼저
@@ -89,7 +92,8 @@ def _git_env():
     사용자의 ssh 설정(core.sshCommand·GIT_SSH·GIT_SSH_COMMAND)은 건드리지 않는다 — 대화창은 입력 장치(stdin)를 막아 두는 것으로 피한다.
     경로 인자는 글자 그대로 읽는다(GIT_LITERAL_PATHSPECS) — `[x].md` 같은 이름이 다른 파일까지 가리키는 글롭 무늬로 읽히지 않게."""
     env = {key: value for key, value in os.environ.items() if key not in _ENV_DROP}
-    env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="false", LC_ALL="C", LANGUAGE="C", GIT_OPTIONAL_LOCKS="0", GIT_LITERAL_PATHSPECS="1")
+    env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="false", LC_ALL="C", LANGUAGE="C", GIT_OPTIONAL_LOCKS="0", GIT_LITERAL_PATHSPECS="1",
+               GIT_EDITOR="true", GIT_MERGE_AUTOEDIT="no")          # 편집기 창이 뜨지 않게(커밋·병합·rebase 가 메시지를 묻지 않는다)
     return env
 
 
@@ -184,7 +188,8 @@ def run_git(cwd, args, timeout=DEFAULT_TIMEOUT, input_bytes=None):
     # core.hooksPath·commit.gpgsign·push.gpgSign: 사용자의 훅(post-merge·reference-transaction·pre-rebase·prepare-commit-msg …)과 서명(gpg 대화창)이 이 앱의 git 호출에 끼어들지 않게 —
     # 훅이 늦거나 실패하면 받기·올리기가 막히거나 멈추고(시간 초과), 서명 설정은 rebase 를 실패시킨다(독립 검증이 훅 9종이 도는 것을 확인했다). 앱은 어떤 훅도 필요로 하지 않는다
     command = ["git", "-C", str(cwd), "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
-               "-c", f"core.hooksPath={os.devnull}", "-c", "commit.gpgsign=false", "-c", "push.gpgSign=false", "-c", "user.useConfigOnly=true", *args]
+               "-c", f"core.hooksPath={os.devnull}", "-c", "commit.gpgsign=false", "-c", "push.gpgSign=false", "-c", "user.useConfigOnly=true",
+               "-c", "i18n.commitEncoding=UTF-8", "-c", "i18n.logOutputEncoding=UTF-8", *args]            # 레거시 인코딩(cp949) 설정이 있어도 commit 기록과 git log 출력이 UTF-8 이다
     env = _git_env()
     if args and args[0] in _NETWORK_COMMANDS:
         env = _with_ssh_default(cwd, env)

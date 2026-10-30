@@ -18,6 +18,7 @@ ROWS = (
     ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "GIT_NOT_INSTALLED", "`git` 실행 불가", "Git 이 설치되어 있지 않습니다.", "Git for Windows 를 설치한 뒤 앱을 다시 엽니다([`MIGRATION.md`](MIGRATION.md)).", "아니오"),
     ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "GIT_PUSH_AUTH", "push 가 인증 오류(`could not read Username`·401·403)", "저장소에 올릴 권한 확인이 되지 않았습니다.", "터미널에서 `git push` 를 한 번 해 브라우저 로그인(Git Credential Manager)을 마치거나, 저장소 쓰기 권한이 있는 계정으로 로그인합니다.", "로그인 뒤"),
     ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "GIT_PUSH_NETWORK", "저장소에서 받거나 올리는 중 연결 실패·시간 초과", "인터넷 연결 때문에 저장소에서 받거나 저장소에 올리지 못했습니다.", "인터넷 연결(회사망·VPN·프록시)을 확인하고 다시 시도합니다.", "예(최대 3회)"),
+    ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "GIT_IDENTITY_MISSING", "글을 저장소에 기록(commit)할 때 작성자(이름·이메일)가 설정되어 있지 않음", "글을 저장소에 기록할 때 쓸 작성자 이름과 이메일이 설정되어 있지 않습니다.", "명령 프롬프트(터미널)에서 `git config --global user.name \"표시할 이름\"` 과 `git config --global user.email \"GitHub 에 등록한 이메일 또는 noreply 주소\"` 를 한 번 실행한 뒤 다시 시도합니다.", "고친 뒤"),
     ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "GIT_PUSH_REJECTED", "원격 `main` 이 앞서감(봇이 글을 올림)", "저장소에 새 변경이 먼저 생겨 올리지 못했습니다.", "앱이 최신 내용을 다시 받아 합친 뒤 한 번 더 시도합니다. 합칠 수 없으면 이 코드로 멈추니 알려 주세요.", "예(1회)"),
     ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "ACTIONS_RUN_FAILED", "배포·검사 워크플로가 실패", "배포 단계가 실패했습니다: **「워크플로 이름」의 「잡 이름」**.", "화면의 링크로 해당 실행을 열어 실패한 단계를 확인합니다. 글 자체 문제면 앱의 검사 결과를 먼저 확인합니다.", "아니오"),
     ("GitHub Pages — 연결한 `chanceblog` 저장소·배포", "ACTIONS_RUN_PENDING_LONG", "배포가 20분 넘게 대기·진행", "배포가 평소보다 오래 걸립니다.", "GitHub 가 실행을 늦추는 경우가 흔합니다. 30분 뒤 다시 확인하고, 계속되면 알려 주세요.", "예(자동 재확인)"),

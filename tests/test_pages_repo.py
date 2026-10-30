@@ -638,6 +638,16 @@ class FailureClassificationTest(unittest.TestCase):
             "fatal: unable to access 'https://github.com/x/y.git/': The requested URL returned error: 401",
             "git@github.com: Permission denied (publickey,keyboard-interactive).\nfatal: Could not read from remote repository.",
             "remote: Permission to shine88pc/chanceblog.git denied to someone.",
+            # 서버가 규칙으로 막음(보호된 브랜치·규칙 위반·서버 훅): 'failed to push some refs' 가 같이 나와도 거절(봇이 먼저 올림)이 아니라 권한 문제다
+            "remote: error: GH006: Protected branch update failed for refs/heads/main.\nTo https://github.com/x/y.git\n ! [remote rejected] HEAD -> main (protected branch hook declined)\nerror: failed to push some refs to 'https://github.com/x/y.git'",
+            "remote: error: GH013: Repository rule violations found for refs/heads/main.\nremote: - Changes must be made through a pull request.",
+            " ! [remote rejected] HEAD -> main (pre-receive hook declined)",
+            "remote: error: GH007: Your push would publish a private email address.\nremote: You can make your email public or disable this protection by visiting:\nremote: https://github.com/settings/emails\nTo https://github.com/x/y.git\n ! [remote rejected] HEAD -> main (push declined due to email privacy restrictions)\nerror: failed to push some refs to 'https://github.com/x/y.git'",
+        ),
+        "GIT_IDENTITY_MISSING": (
+            "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nfatal: unable to auto-detect email address (got 'user@host.(none)')",
+            "fatal: unable to auto-detect email address (got 'user@PC.(none)')",
+            "fatal: empty ident name (for <>) not allowed",
         ),
         "GIT_PUSH_NETWORK": (
             "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com",
@@ -756,10 +766,11 @@ class RunnerTest(unittest.TestCase):
         (command, kwargs, _process), = popen.made
         self.assertEqual(command[:3], ["git", "-C", "C:/somewhere"])
         self.assertEqual(command[-1], "status")
-        for option in ("http.lowSpeedLimit=1000", "http.lowSpeedTime=30", "gc.auto=0", "maintenance.auto=false", f"core.hooksPath={os.devnull}", "commit.gpgsign=false", "push.gpgSign=false", "user.useConfigOnly=true"):
+        for option in ("http.lowSpeedLimit=1000", "http.lowSpeedTime=30", "gc.auto=0", "maintenance.auto=false", f"core.hooksPath={os.devnull}", "commit.gpgsign=false", "push.gpgSign=false", "user.useConfigOnly=true", "i18n.commitEncoding=UTF-8", "i18n.logOutputEncoding=UTF-8"):
             self.assertIn(option, command)
         env = kwargs["env"]
         self.assertEqual((env["GIT_TERMINAL_PROMPT"], env["GCM_INTERACTIVE"], env["LC_ALL"], env["LANGUAGE"], env["GIT_OPTIONAL_LOCKS"]), ("0", "false", "C", "C", "0"))
+        self.assertEqual((env["GIT_EDITOR"], env["GIT_MERGE_AUTOEDIT"]), ("true", "no"), "편집기 창이 뜨지 않게")
         for name in dropped:
             self.assertNotIn(name, env, name)
         self.assertIs(kwargs["stdin"], subprocess.DEVNULL, "입력 장치를 막아 대화창 입력을 기다리며 멈추지 않게")
