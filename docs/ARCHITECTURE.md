@@ -58,7 +58,7 @@
 
 ## 6. 오류 안내 — 규칙 기반이 먼저다
 
-실패는 AI 가 아니라 **오류 코드 → 플랫폼별 안내 문구**로 설명한다. 예: Blogger HTTP 401 → `BLOGGER_AUTH_EXPIRED`(인증 만료·다시 로그인 안내), Git push 실패 → `GIT_PUSH_AUTH`/`GIT_PUSH_NETWORK`/`GIT_PUSH_REJECTED`(저장소 인증·네트워크·최신 상태 확인), Actions 실패 → `ACTIONS_RUN_FAILED`(실패한 워크플로·잡 이름과 링크 표시), 파일 생성 실패 → `FILE_WRITE_FAILED`(저장 경로·권한 확인), API 호출 제한 → `API_RATE_LIMITED`(재시도 가능 시간 표시). 코드 목록과 문구는 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) 가 정본이고, `errors/` 의 카탈로그와 **시험으로 서로 맞춘다**(코드에만 있는 코드·문서에만 있는 코드 모두 실패). 로그와 오류 보고서에는 키·토큰을 쓰지 않는다.
+실패는 AI 가 아니라 **오류 코드 → 플랫폼별 안내 문구**로 설명한다. 예: Blogger HTTP 401 → `BLOGGER_AUTH_EXPIRED`(인증 만료·다시 로그인 안내), Git push 실패 → `GIT_PUSH_AUTH`/`GIT_PUSH_NETWORK`/`GIT_PUSH_REJECTED`(저장소 인증·네트워크·최신 상태 확인), Actions 실패 → `ACTIONS_RUN_FAILED`(실패한 워크플로·잡 이름과 링크 표시), 파일 생성 실패 → `FILE_WRITE_FAILED`(저장 경로·권한 확인), API 호출 제한 → `API_RATE_LIMITED`(재시도 가능 시간 표시). 코드 목록과 문구는 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) 가 정본이고, `errors/catalog.py` 는 그 표에서 `scripts/sync_errors.py` 가 **만든 파일**이며 **시험이 둘이 같은지 확인**한다(표만 고치고 다시 만들지 않으면 실패). 표에 없는 코드는 `UNEXPECTED_ERROR` 로 안내해 오류 안내가 또 실패하지 않게 한다. 로그와 오류 보고서에는 키·토큰을 쓰지 않는다.
 
 ## 7. 선택 보조 AI — 기본 꺼짐, 최소 인터페이스
 
