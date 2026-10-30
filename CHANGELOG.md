@@ -11,3 +11,4 @@
 - 핵심 코드 가져오기: `vendor/pipeline/`(chanceblog 의 `gates`·`console`·`secret_patterns` 를 원본 그대로 — 커밋 `a5af962`)·`vendor/VENDOR.json`(출처·커밋·해시)·`scripts/sync_core.py`·`chanceblog_desktop.core`·`.gitattributes`, 해시·동작·가져오기 시험 포함. 설치 파일은 아직 없다.
 - 연결한 chanceblog 저장소 확인: `src/chanceblog_desktop/publish/gitrepo.py` — 폴더·origin·main·변경 확인, 원격 main 빨리감기, 올리기 점검(`--dry-run`), git 실패의 오류 코드 분류. 오류 코드 `PAGES_LOCAL_REPO_NOT_MAIN`·`PAGES_LOCAL_REPO_DIVERGED` 추가, 시험 포함.
 - 콘텐츠 모델: `src/chanceblog_desktop/content/` — 하나의 원본 글(`ContentProject`)과 플랫폼별 변형·발행 상태 흐름(Pages·Blogger·네이버), 원고를 고치면 승인이 풀리는 규칙, 공개 상태의 발행 주소 검사, 엄격한 JSON 저장 모양. 오류 코드 4개 추가(`CONTENT_INVALID`·`STATUS_TRANSITION_INVALID`·`PUBLISHED_URL_REQUIRED`·`PUBLISHED_URL_INVALID`), 시험 포함. 저장(SQLite)은 다음 묶음.
+- Pages 글 만들기: `src/chanceblog_desktop/render/pages.py` — 원고를 chanceblog 에 넣을 파일(경로·내용)로 만드는 순수 함수와 머리말 검사. 실제 Chance 글 두 편(`tests/fixtures/`)을 글자 단위로 되살리는 시험 포함.

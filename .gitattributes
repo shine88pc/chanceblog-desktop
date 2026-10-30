@@ -1,3 +1,6 @@
 # vendor/ 는 chanceblog 의 파일을 한 글자도 바꾸지 않고 가져온 것이다(docs/ARCHITECTURE.md §4).
 # 해시가 원본과 같아야 하므로 줄바꿈 변환도 하지 않는다(Windows 의 autocrlf 포함).
 vendor/** -text
+
+# 시험용 실제 글(tests/fixtures)은 글자 하나까지 같아야 하는 기준 자료라 줄바꿈 변환(Windows autocrlf 포함)을 하지 않는다.
+tests/fixtures/** -text
