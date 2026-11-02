@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -179,6 +180,19 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(len(long), MAX_SLOT_CHARS)
         self.assertTrue(long.endswith("…"))
         self.assertEqual(clean_slot(12), "12")
+        self.assertEqual(clean_slot("a\x7fb\x85c"), "a b c", "DEL 과 C1 제어 문자도")
+        self.assertEqual(clean_slot("줄\u2028바꿈\u2029끝"), "줄 바꿈 끝")
+
+    def test_more_invisible_and_filler_characters_are_cleaned_too(self):
+        for sneaky in ("\U000e0041", "\U000e0100", "\ufe0f", "\ufe00", "\u206a", "\u206f", "\u3164", "\u115f", "\u1160", "\u17b4", "\u034f", "\u2800", "\ufff9", "\u180b"):
+            with self.subTest(char=hex(ord(sneaky))):
+                self.assertEqual(clean_slot(f"가{sneaky}나"), "가 나")
+
+    def test_text_direction_tricks_and_invisible_characters_cannot_disguise_a_value(self):
+        self.assertEqual(clean_slot("report\u202egpj.exe"), "report gpj.exe", "오른쪽에서 왼쪽으로 뒤집는 제어 문자(확장자 위장)")
+        for sneaky in ("\u202a", "\u202b", "\u202c", "\u202d", "\u2066", "\u2067", "\u2068", "\u2069", "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\u2060", "\ufeff", "\u00ad", "\u061c"):
+            with self.subTest(char=hex(ord(sneaky))):
+                self.assertEqual(clean_slot(f"가{sneaky}나"), "가 나")
 
     def test_a_value_cannot_forge_another_slot(self):
         shown = render("ACTIONS_RUN_FAILED", {"워크플로 이름": "「잡 이름」", "잡 이름": "build"})
@@ -250,6 +264,34 @@ class GeneratorRulesTest(unittest.TestCase):
                     SYNC.parse(text)
                 self.assertTrue(str(caught.exception))
 
+    def test_rows_inside_code_blocks_are_examples_and_are_not_read(self):
+        doc = GOOD_DOC + "\n```\n| `FENCED_ONE` | 언제 | 문구 | 하실 일 | 아니오 |\n```\n\n~~~\n| `FENCED_TWO` | 언제 | 문구 | 하실 일 | 아니오 |\n~~~\n"
+        self.assertEqual([row[1] for row in SYNC.parse(doc)], ["A_ONE", "B_TWO"])
+
+    def test_a_row_that_does_not_look_like_a_row_is_an_error_not_silently_dropped(self):
+        bad = {
+            "소문자 코드": GOOD_DOC.replace("`B_TWO`", "`b_two`"),
+            "하이픈 코드": GOOD_DOC.replace("`B_TWO`", "`B-TWO`"),
+            "백틱 없음": GOOD_DOC.replace("`B_TWO`", "B_TWO"),
+            "들여쓰기": GOOD_DOC.replace("| `B_TWO`", " | `B_TWO`"),
+            "인용": GOOD_DOC.replace("| `B_TWO`", "> | `B_TWO`"),
+            "머리글 없는 표": GOOD_DOC.replace("| 코드 | 언제 | 사용자 문구 | 하실 일 | 재시도 |\n|---|---|---|---|---|\n", ""),
+            "닫히지 않은 코드 블록": GOOD_DOC + "\n```\n| `C_THREE` | 언제 | 문구 | 하실 일 | 아니오 |\n",
+        }
+        for name, text in bad.items():
+            with self.subTest(name):
+                with self.assertRaises(ValueError) as caught:
+                    SYNC.parse(text)
+                self.assertTrue(str(caught.exception))
+
+    def test_an_indented_code_block_and_aligned_table_separators_are_handled(self):
+        doc = GOOD_DOC.replace("|---|---|---|---|---|", "|:---|---:|:---:|---|:---:|") + "\n  ```\n  | `FENCED` | 언제 | 문구 | 하실 일 | 아니오 |\n  ```\n"
+        self.assertEqual([row[1] for row in SYNC.parse(doc)], ["A_ONE", "B_TWO"])
+
+    def test_other_tables_and_text_in_the_doc_are_left_alone(self):
+        doc = GOOD_DOC + "\n\n## 2. 다른 표\n\n| 이름 | 뜻 |\n|---|---|\n| `abc` | 설명 |\n\n본문에 `CODE_IN_TEXT` 와 | 막대 | 가 있어도 된다.\n"
+        self.assertEqual([row[1] for row in SYNC.parse(doc)], ["A_ONE", "B_TWO"])
+
     def test_check_mode_reports_a_stale_file_and_write_mode_repairs_it(self):
         original = SYNC.OUT
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -263,6 +305,28 @@ class GeneratorRulesTest(unittest.TestCase):
                 self.assertEqual(SYNC.main(["--check"]), 0)
             finally:
                 SYNC.OUT = original
+
+
+class CodeUsageTest(unittest.TestCase):
+    """코드가 쓰는 오류 코드가 표에 있는지 — 오타 난 코드는 조용히 UNEXPECTED_ERROR 로 바뀌어 원인 안내가 사라진다."""
+
+    def test_every_error_code_named_in_the_source_is_in_the_catalog(self):
+        pattern = re.compile(r'AppError\(\s*"([A-Z][A-Z0-9_]+)"')
+        used = {}
+        for path in (ROOT / "src").rglob("*.py"):
+            for code in pattern.findall(path.read_text(encoding="utf-8")):
+                used.setdefault(code, path.name)
+        self.assertTrue({"PAGES_LOCAL_REPO_INVALID", "GIT_NOT_INSTALLED", "NETWORK_TIMEOUT"} <= set(used), "알려진 코드를 못 찾았다 — 이 시험의 찾기 규칙이 깨졌다")
+        for code, where in sorted(used.items()):
+            with self.subTest(code=code):
+                self.assertIn(code, CATALOG, f"{where} 가 표에 없는 코드를 쓴다")
+
+    def test_every_code_the_git_classifier_can_return_is_in_the_catalog(self):
+        from chanceblog_desktop.publish import gitrepo
+        for code, needles in gitrepo._RULES:
+            with self.subTest(code=code):
+                self.assertIn(code, CATALOG)
+                self.assertTrue(needles)
 
 
 class PythonSyntaxTest(unittest.TestCase):
