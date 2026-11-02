@@ -15,6 +15,27 @@
 
 글을 만드는 **핵심 코드(검사 규칙·프로필·Blogger 어댑터 등)는 `chanceblog` 의 것을 정해진 버전으로 가져다 쓴다**([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §4). 프로그램 코드의 수정·유지보수는 운영자가 필요할 때 Claude Code 나 다른 AI 코딩 에이전트를 직접 실행하는 방식이며, 무료 AI 로 세션형 개발을 대신하지 않습니다.
 
+## 명령줄로 써 보기
+
+아직 화면(GUI)과 설치 파일은 없습니다. 대신 **명령줄**로 글을 만들고 검토해 GitHub Pages(연결한 `chanceblog`)에 올릴 수 있습니다(Python 3.10 이상과 Git 이 필요하고, AI 는 쓰지 않습니다). 저장소 폴더에서 처음 한 번 `set PYTHONPATH=src`(PowerShell 은 `$env:PYTHONPATH = "src"`)를 실행한 뒤 아래 명령을 씁니다. 글번호는 앞 4자만 써도 되고, 모든 명령에 `--json`(프로그램이 읽는 출력)을 붙일 수 있으며, 종료 코드는 0(정상)·1(처리된 오류 — 오류 코드와 하실 일을 보여 줍니다)·2(사용법 오류)입니다.
+
+```text
+python -m chanceblog_desktop doctor                          # 상태 점검(읽기만 합니다)
+python -m chanceblog_desktop connect C:\work\chanceblog      # 올릴 chanceblog 폴더를 연결(한 번)
+python -m chanceblog_desktop new --title "제목" --file 원고.md  # 글 만들기(기존 HTML 글은 import-html)
+python -m chanceblog_desktop list                            # 글 목록과 상태
+python -m chanceblog_desktop review 글번호 --platform pages --category 경제·일 --lang ko --image-url https://… --tags 태그1,태그2
+python -m chanceblog_desktop approve 글번호 --platform pages   # 미리 보기를 읽고 직접 승인(검사를 다시 통과해야 합니다)
+python -m chanceblog_desktop publish-pages 글번호              # 먼저 미리 보기 — 아직 아무것도 하지 않습니다
+python -m chanceblog_desktop publish-pages 글번호 --yes        # 정말로 기록(commit)하고 올립니다(push)
+python -m chanceblog_desktop check-deploy 글번호               # 공개 주소가 열리는지 확인(열리면 '공개됨')
+```
+
+- **확인 없이는 올리지 않습니다.** `publish-pages` 는 `--yes` 가 없으면 무엇을 할지 보여 주기만 하고, 글 지우기(`delete`)도 `--yes` 가 있어야 합니다. 올리다 멈추면 같은 명령을 다시 실행하면 이어서 하고, 올리지 않고 되돌리려면 `publish-pages 글번호 --cancel --yes` 입니다. 다른 창에서 같은 글을 올리는 중이면 `PUBLISH_IN_PROGRESS` 로 멈추고 아무것도 바꾸지 않습니다(작업이 죽어 남은 잠금은 그 프로세스가 끝났으면 바로, 아니면 30분 뒤 넘겨받습니다). **다른 글**이 같은 저장소에 올라가는 중이면 끝나기를 기다렸다가(최대 2분) 이어서 올리고, 끝내 안 끝나면 `PUBLISH_REPO_BUSY` 로 아무것도 바꾸지 않고 물러납니다 — 같은 명령을 다시 실행하면 됩니다. 올리지 않은 commit 이 이미 있으면(앱이 올리다 멈춘 글·직접 만든 commit) 새 글을 올리지 않고, 어느 글을 어떻게 하면 되는지(이어서 올리기·나중 글부터 `--cancel --yes`·직접 확인) 한 가지를 알려 줍니다. 올리고 나서 멈춘 글에 `--cancel` 을 쓰면 `PUBLISH_ALREADY_PUSHED` — `--cancel` 없이 같은 명령을 실행하면 마무리합니다. 기록(commit) 직후에 멈춘 경우에도 같은 명령이 이어받고 `--cancel --yes` 가 되돌립니다(`doctor` 가 알려 줍니다). 글에 HTML 태그·`javascript:` 주소·`{% %}`/`{{ }}`·광고 스크립트·눈에 안 보이는 글자가 있으면 검사가 막습니다 — 제목·분야·태그·이미지 주소·설명 같은 머리말 값도 같고, 제목은 글을 만들 때(`new`)·고칠 때(`edit`)부터 막습니다. `delete` 는 `--yes` 가 없으면 어느 글인지만 보여 주고, 지울 때는 먼저 백업합니다. `restore` 도 `--yes` 가 없으면 어느 백업인지만 보여 주고 아무것도 바꾸지 않으며(`restore --latest --yes`), 바꾸기 직전 상태를 따로 백업해 둡니다.
+- 네이버: `naver-profile set naver_a --name 표시명 --url https://blog.naver.com/아이디` 로 블로그 프로필을 정한 뒤 `review 글번호 --platform naver_a` → `naver-package 글번호 --blog naver_a`(복사용 제목·본문·태그·이미지 자리) → 직접 발행 → `naver-done 글번호 --blog naver_a --url 발행한_주소`. 네이버 A·B 글이 많이 비슷하면 `--similarity-approved` 로 직접 승인해야 합니다. 앱은 네이버에 로그인하거나 글을 대신 올리지 않습니다.
+- 글·설정·백업은 PC 의 사용자 데이터 폴더(Windows: `%LOCALAPPDATA%\ChanceblogDesktop`)에만 두고 저장소 안에는 두지 않습니다(`--data-dir` 로 바꿀 수 있지만 저장소 폴더 안은 거절합니다). `backup`·`restore` 로 백업과 복구를 합니다. 키·토큰은 읽지도 보이지도 않고, 화면에 나가는 모든 글은 비밀 모양을 가립니다.
+- 모든 명령과 옵션은 `python -m chanceblog_desktop --help` 와 `명령 --help` 에 한국어로 설명되어 있습니다. 구현 범위와 한계는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §5 `service/`, 오류 코드는 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 에 있습니다.
+
 ## 읽을 문서
 
 | 문서 | 내용 |
