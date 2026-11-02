@@ -3,8 +3,9 @@
     "pipeline/__init__.py": "7dd704e457d2df594076781cf1c4b28bb25076056e4ab041e3da58208cf7f7aa",
     "pipeline/console.py": "936c6ff348ce92c5f219bacb6fef2e56e9582321d5a3703af0f476366c8d5c3a",
     "pipeline/gates.py": "a00cfe405ee1f53b8c02e331ce370120a25d39c9a6826d1d0117a0bcd3b68f85",
-    "pipeline/secret_patterns.py": "8f30be02354459881f01742e1b6e42d7c6a483dcd9a2a01d8f7d6b656a07e820"
+    "pipeline/secret_patterns.py": "8f30be02354459881f01742e1b6e42d7c6a483dcd9a2a01d8f7d6b656a07e820",
+    "scripts/verify_pages_deploy.py": "1e517172710c769306949607e2ef2a53aca0c4991b704204b74e1f4adf6e0cca"
   },
-  "ref": "a5af9621211ea107b200f28787f162da301fb366",
+  "ref": "555906d0eb01dfa441ccf7aa7a71245701d0e29b",
   "source": "https://github.com/shine88pc/chanceblog"
 }

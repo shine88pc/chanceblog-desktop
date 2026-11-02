@@ -18,12 +18,12 @@
 **운영자가 하는 일(한 번)**
 1. **Git for Windows** 설치(https://git-scm.com — 기본 옵션). **Python 3.12** 설치(https://www.python.org — 설치 화면에서 'Add python.exe to PATH' 체크). 가능하면 Python 3.10 도 함께(호환 시험용, 선택).
 2. **GitHub 로그인**: 터미널에서 `git clone https://github.com/shine88pc/chanceblog-desktop.git` 후 처음 `git push` 를 할 때 브라우저 로그인 창이 뜨면 로그인(Git Credential Manager). 비밀번호·토큰을 AI 에게 알려 주지 않는다.
-3. **AI 코딩 도구 설치·로그인**: 프로그램 코드의 수정·유지보수는 필요할 때 운영자가 직접 실행하는 Claude Code 나 다른 AI 코딩 에이전트로 합니다(D-06). 어느 도구든 이 저장소의 문서만으로 이어받을 수 있게 만든다. 무료 AI 로 대신하지 않는다(D-14).
+3. **AI 코딩 도구 설치·로그인**: 프로그램 코드의 수정·유지보수는 필요할 때 운영자가 직접 실행하는 Claude Code 나 다른 AI 코딩 에이전트로 합니다(D-06). 어느 도구든 이 저장소의 문서만으로 이어받을 수 있게 만든다. 무료 AI 로 세션형 개발 전체를 대신하지 않는다(D-14). 작은 수정(T0·T1)에 쓸 무료 도구와 코드 수정이 안 되는 알림·글쓰기용 AI 의 구분, DeepSeek-Coder 판단은 `chanceblog` 저장소의 `docs/AI_MODEL_GUIDE.md`(D-20)를 따른다.
 4. **Smart App Control 확인**: Windows 보안 → 앱 및 브라우저 컨트롤 → 스마트 앱 컨트롤 — 켬/평가/끔 중 무엇인지 AI 에게 알려 준다(켜져 있으면 서명 없는 프로그램이 차단된다 — [`RELEASE.md`](RELEASE.md)).
 
 **AI 가 하는 일(새 세션의 첫 30분)**
 1. 두 저장소를 새 작업 폴더에 clone: `git clone https://github.com/shine88pc/chanceblog.git` · `git clone https://github.com/shine88pc/chanceblog-desktop.git`. 앱이 나오면 설정의 'chanceblog 로컬 저장소' 칸에 앞의 폴더를 지정한다(GitHub Pages 글을 만들고 push 하는 연결, [`ARCHITECTURE.md`](ARCHITECTURE.md) §3).
-2. 작성자 설정은 **각 clone 안에서만**: `git config user.name "강병수"` · `git config user.email "shine88pc@gmail.com"`(전역 설정은 건드리지 않는다). 시스템 `core.autocrlf=true` 는 끄지 않는다.
+2. 작성자 설정은 **각 clone 안에서만**: `git config user.name "<표시할 이름>"` · `git config user.email "<공개해도 되는 이메일 — GitHub 설정의 noreply 주소 권장>"`(값은 운영자가 정해 알려 준다. 이 저장소에는 실명·이메일을 적지 않는다 — AGENTS.md 규칙 2. 전역 설정은 건드리지 않는다). 시스템 `core.autocrlf=true` 는 끄지 않는다.
 3. 환경: `python -m venv .venv` → `.venv\Scripts\pip install -r requirements-dev.txt`(있으면). 파이썬은 `PYTHONUTF8=1` 로 실행한다(한국어 Windows 콘솔 cp949 문제).
 4. 기준선: `python -m unittest discover -s tests` 가 통과하는지(`chanceblog` 는 추가로 `python scripts/validate_repo.py`).
 5. **push 가 되는지 아무것도 만들지 않고 점검**: `GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=false git push --dry-run --porcelain origin HEAD:refs/heads/ai/<이름>/preflight` — 종료 코드 0 과 `[new branch]` 줄이 보이면 된다. `could not read Username`(종료 128)이면 자격 증명이 없는 것이니 운영자에게 로그인을 부탁한다(AI 가 자격을 만들지 않는다).
