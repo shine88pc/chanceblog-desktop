@@ -26,6 +26,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))             # tests/store_v1.py
 
 from chanceblog_desktop.content import Asset, ContentProject  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
@@ -33,6 +34,7 @@ from chanceblog_desktop.content import store as store_module  # noqa: E402
 from chanceblog_desktop.content.store import APPLICATION_ID, BUSY_SECONDS, KEEP_BACKUPS, KEEP_REVISIONS, MAX_DRAFT_CHARS, SCHEMA_VERSION, Store, store_error  # noqa: E402
 from chanceblog_desktop.errors import CATALOG, AppError  # noqa: E402
 from chanceblog_desktop.errors.render import UNKNOWN_SLOT  # noqa: E402
+from store_v1 import make_v1_file  # noqa: E402
 
 NOW = "2026-10-30T03:00:00Z"
 T2 = "2026-10-30T04:00:00Z"
@@ -97,7 +99,7 @@ class OpenTest(StoreCase):
         db = self.raw()
         self.assertEqual(db.execute("PRAGMA application_id").fetchone()[0], APPLICATION_ID)
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
-        self.assertEqual({row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}, {"projects", "revisions", "drafts"})
+        self.assertEqual({row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}, {"projects", "revisions", "drafts", "candidates"})
         self.assertEqual(store._db.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(store._db.execute("PRAGMA secure_delete").fetchone()[0], 1)
         self.assertIsNone(store._db.isolation_level, "트랜잭션은 우리가 직접 정한다(자동으로 열리지 않는다)")
@@ -178,7 +180,7 @@ class OpenTest(StoreCase):
         self.assertEqual(digest(self.path), before)
 
     def test_the_defaults_are_the_documented_ones(self):
-        self.assertEqual((KEEP_REVISIONS, KEEP_BACKUPS, BUSY_SECONDS, SCHEMA_VERSION), (50, 10, 5.0, 1))
+        self.assertEqual((KEEP_REVISIONS, KEEP_BACKUPS, BUSY_SECONDS, SCHEMA_VERSION), (50, 10, 5.0, 2))
         real, calls = sqlite3.connect, []
 
         def spy(path, *args, **kwargs):
@@ -655,8 +657,9 @@ class LockAndThreadTest(StoreCase):
 
 class MigrationTest(StoreCase):
     def make_old_file(self):
-        with Store.open(self.path) as store:
-            store.save(make())
+        """판 1 의 파일 — 지금 판보다 낮은 '옛 파일'이어야 하는 시험이라, 판이 올라가도 옛 파일이도록 SQL 로 직접 만든다(tests/store_v1.py)."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        make_v1_file(self.path, [make()])
 
     def add_table(self, db):
         db.execute("CREATE TABLE extra (id INTEGER)")
@@ -710,15 +713,16 @@ class MigrationTest(StoreCase):
 
     def test_a_copy_that_cannot_be_made_stops_the_migration_before_it_starts(self):
         self.make_old_file()
-        self.path.with_name(self.path.name + ".v1.bak").mkdir()          # 사본 자리에 폴더가 있다
-        with mock.patch.object(store_module, "SCHEMA_VERSION", 2), mock.patch.object(store_module, "MIGRATIONS", {1: self.add_table}):
+        with mock.patch.object(store_module, "SCHEMA_VERSION", 2), mock.patch.object(store_module, "MIGRATIONS", {1: self.add_table}), \
+                mock.patch.object(Store, "_snapshot", side_effect=RuntimeError("사본을 만들지 못했다")):
             self.refuses("MIGRATION_FAILED", Store.open, self.path)
         db = self.raw()
         self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
         self.assertEqual(db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'extra'").fetchone()[0], 0)
 
     def test_no_copy_is_made_when_nothing_needs_migrating(self):
-        self.make_old_file()
+        with Store.open(self.path) as store:                              # 지금 판의 파일 — 올릴 것이 없다
+            store.save(make())
         self.open().close()
         self.assertEqual(sorted(entry.name for entry in self.path.parent.iterdir()), [self.path.name])
 
@@ -814,6 +818,14 @@ class BackupTest(StoreCase):
 
 
 class RestoreTest(StoreCase):
+    def old_backup(self):
+        """판 1 의 백업 파일(옛 프로그램이 만든 것과 같은 모양, tests/store_v1.py)."""
+        folder = self.dir / "backups"
+        folder.mkdir()
+        made = folder / "old-20261030-060000.db"
+        make_v1_file(made, [make()])
+        return made
+
     def test_restoring_brings_back_the_backed_up_state_and_the_store_keeps_working(self):
         store = self.open()
         project = make()
@@ -835,9 +847,7 @@ class RestoreTest(StoreCase):
         self.assertEqual(store._db.execute("PRAGMA foreign_keys").fetchone()[0], 1)   # 연결 설정도 그대로다
 
     def test_a_failed_upgrade_while_restoring_leaves_the_store_usable(self):
-        with Store.open(self.dir / "old.db") as old:
-            old.save(make())
-            made = old.backup(self.dir / "backups")
+        made = self.old_backup()
         digest_before = digest(made)
 
         def broken(db):
@@ -921,9 +931,7 @@ class RestoreTest(StoreCase):
         self.assertEqual(store.load("p1").project_id, "p1")
 
     def test_restoring_an_older_structure_brings_it_up_to_date(self):
-        with Store.open(self.dir / "old.db") as old:
-            old.save(make())
-            made = old.backup(self.dir / "backups")
+        made = self.old_backup()
         with mock.patch.object(store_module, "SCHEMA_VERSION", 2), mock.patch.object(store_module, "MIGRATIONS", {1: lambda db: db.execute("CREATE TABLE extra (id INTEGER)")}):
             store = self.open(self.dir / "new.db")
             self.assertEqual(store._db.execute("PRAGMA user_version").fetchone()[0], 2)

@@ -132,11 +132,14 @@ def _check_store(ctx):
     path = ctx.workspace.store_path
     if not _store_exists(ctx):
         return check("글 저장소", "ok", "", "아직 없습니다 — 처음 글을 만들면 생깁니다.")
-    with Store.open(path) as store:                              # 파일이 이 프로그램의 것이 아니거나 깨졌거나 더 새로우면 여기서 AppError(파일은 건드리지 않는다)
+    with Store.open(path, migrate=False) as store:               # 읽기 전용 열기 — 파일을 만들지도 구조를 올리지도 않는다(옛 구조 파일도 그대로 둔다). 이 프로그램의 것이 아니거나 깨졌거나 더 새로우면 여기서 AppError
         problems = store.check()
         count = len(store.list())
+        old_version = store.schema_version if store.needs_migration else None
     if problems:
         return check("글 저장소", "fail", "STORE_CORRUPT", f"점검에서 문제 {len(problems)}개를 찾았습니다: {problems[0]}")
+    if old_version is not None:
+        return check("글 저장소", "ok", "", f"글 {count}개, 이상 없습니다. 보관함이 옛 구조(판 {old_version})라서 다음에 이 프로그램이 보관함을 열 때(글 목록 보기 포함) 사본(`.v{old_version}.bak`)을 남기고 자동으로 올립니다 — 점검은 파일을 바꾸지 않습니다.")
     return check("글 저장소", "ok", "", f"글 {count}개, 이상 없습니다.")
 
 
@@ -240,7 +243,9 @@ def _leftover_record(journal, project_id):
 
 
 def run_doctor(ctx, *, online=False):
-    """모든 점검을 돌려 Check 목록으로 돌려준다. 점검 하나가 AppError 로 막혀도 나머지는 계속한다."""
+    """모든 점검을 돌려 Check 목록으로 돌려준다. 점검 하나가 AppError 로 막혀도 나머지는 계속한다.
+    점검은 읽기만 한다 — 글 저장소도 읽기 전용으로 열어(`ctx.reading_only()`) 옛 구조의 파일을 올리거나 사본을 남기지 않고, 파일이 없으면 만들지 않는다."""
+    ctx = ctx.reading_only()
     results = []
     for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
                        ("설정 파일", lambda: _check_settings(ctx)), ("글 저장소", lambda: _check_store(ctx)), ("백업", lambda: _check_backups(ctx)), ("핵심 코드(vendor/)", _check_core),
