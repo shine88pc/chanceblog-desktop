@@ -13,7 +13,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
+from store_v1 import make_v1_file  # noqa: E402
 
+from chanceblog_desktop.content import ContentProject  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.publish.gitrepo import GitResult  # noqa: E402
 from chanceblog_desktop.service import doctor, pages_flow, projects  # noqa: E402
@@ -158,6 +160,65 @@ class StoreTest(Base):
             db.commit()
         self.assertEqual(self.find("글 저장소").code, "STORE_VERSION_UNSUPPORTED")
 
+    def make_old_structure_store(self):
+        """판 1(주제 후보 표가 생기기 전) 글 데이터 파일을 옛 프로그램이 만든 모양 그대로 SQL 로 만든다 — 글 1개."""
+        self.ctx.workspace.ensure()
+        path = self.ctx.workspace.store_path
+        make_v1_file(path, [ContentProject.new("옛 구조의 글", "본문 첫 문단입니다.\n\n둘째 문단입니다.", project_id="p1", now="2026-11-02T03:00:00Z")])
+        return path
+
+    def test_an_old_structure_file_is_checked_without_being_upgraded(self):
+        """보관함이 옛 구조(판 1)여도 점검은 읽기만 한다 — 한 바이트도·수정 시각도 그대로이고 사본(`.v1.bak`)·저널도 남기지 않는다(구조를 올리는 일은 글을 쓰는 명령이 한다)."""
+        import sqlite3
+        from contextlib import closing
+        path = self.make_old_structure_store()
+        before, mtime, listing = ss.tree_snapshot(self.tmp), path.stat().st_mtime_ns, sorted(entry.name for entry in path.parent.iterdir())
+        item = self.find("글 저장소")
+        self.assertEqual((item.status, item.code), ("ok", ""))
+        self.assertIn("글 1개", item.message)
+        self.assertIn("옛 구조(판 1)", item.message)
+        self.assertIn("점검은 파일을 바꾸지 않습니다", item.message)
+        self.assertEqual(ss.tree_snapshot(self.tmp), before, "점검이 옛 구조 파일을 올리거나 사본·저널을 남기지 않는다")
+        self.assertEqual(path.stat().st_mtime_ns, mtime)
+        self.assertEqual(sorted(entry.name for entry in path.parent.iterdir()), listing)
+        with closing(sqlite3.connect(str(path))) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1, "구조 판 번호가 그대로(올리지 않았다)")
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        self.assertNotIn("candidates", tables, "후보 표도 만들지 않았다")
+
+    def test_a_whole_run_of_the_check_leaves_an_old_structure_data_folder_exactly_as_it_was(self):
+        self.make_old_structure_store()
+        self.ctx.settings.save_repo_path(str(self.tmp / "chanceblog"))
+        before = ss.tree_snapshot(self.tmp)
+        results = self.results(online=True)
+        self.assertEqual(ss.tree_snapshot(self.tmp), before)
+        self.assertEqual(next(item for item in results if item.name == "글 저장소").status, "ok")
+
+    def test_a_file_at_the_current_structure_gets_no_old_structure_note(self):
+        projects.new_project(self.ctx, "글", ss.ko_text())
+        message = self.find("글 저장소").message
+        self.assertIn("글 1개", message)
+        self.assertNotIn("옛 구조", message)
+
+    def test_an_old_structure_file_is_still_upgraded_with_a_copy_by_the_first_command_that_writes(self):
+        """점검이 올리지 않는다고 올리는 길이 막힌 것은 아니다 — 안내 문장이 약속한 대로 글을 만드는 첫 명령이 사본을 남기고 올린다."""
+        import sqlite3
+        from contextlib import closing
+        path = self.make_old_structure_store()
+
+        def dump_of(file):
+            with closing(sqlite3.connect(str(file))) as db:
+                return list(db.iterdump())
+
+        original = dump_of(path)
+        projects.new_project(self.ctx, "새 글", ss.ko_text())
+        copy = path.with_name(path.name + ".v1.bak")
+        self.assertTrue(copy.exists(), "올리기 전 사본이 남는다")
+        self.assertEqual(dump_of(copy), original, "사본은 올리기 전 파일과 내용이 같다")
+        with closing(sqlite3.connect(str(path))) as db:
+            self.assertGreaterEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertNotIn("옛 구조", self.find("글 저장소").message)
+
     def test_backups_are_counted_and_none_is_only_a_warning(self):
         warning = self.find("백업")
         self.assertEqual((warning.status, warning.code), ("warn", ""))
@@ -288,6 +349,16 @@ class RepoTest(Base):
         self.assertIn("2개", item.message)
         self.assertIn("git log origin/main..HEAD", item.action, "앱이 만든 글 기록이 아닌 commit — 사람이 확인하라는 한 가지 안내")
         self.assertNotIn("이어받아", item.action)
+
+    def test_unpushed_commits_with_no_data_file_do_not_make_the_check_create_one(self):
+        """올리지 않은 commit 이 있어도 글 저장소 파일이 없으면 점검은 그 파일을 만들지 않는다 — 읽기만 한다(설정 파일만 있는 데이터 폴더 그대로)."""
+        self.backend.unpushed = 2
+        self.assertFalse(self.ctx.workspace.store_path.exists())
+        before = ss.tree_snapshot(self.tmp)
+        item = self.find("연결한 chanceblog 저장소")
+        self.assertEqual((item.status, item.code), ("warn", "PAGES_LOCAL_REPO_DIVERGED"))
+        self.assertFalse(self.ctx.workspace.store_path.exists(), "점검이 글 저장소 파일을 만들었다")
+        self.assertEqual(ss.tree_snapshot(self.tmp), before, "점검이 파일이나 폴더를 새로 만들지 않는다")
 
     def test_git_that_cannot_run_is_a_failure(self):
         self.ctx.git = mock.Mock(side_effect=AppError("GIT_NOT_INSTALLED"))

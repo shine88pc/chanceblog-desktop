@@ -10,7 +10,7 @@ from __future__ import annotations
 import errno
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -182,6 +182,7 @@ class Context:
     repo_override: str = ""
     env: object = None
     lock_wait: float = 120.0       # 다른 글이 같은 저장소에 올라가는 중이면 이 만큼(초) 기다리고 그래도 안 끝나면 PUBLISH_REPO_BUSY 로 물러난다(0 이면 기다리지 않고 바로)
+    read_only_store: bool = False  # 참이면 `store()` 가 읽기 전용으로 연다(파일을 만들지도 구조를 올리지도 않는다) — `reading_only()` 로 만든다
 
     def now(self):
         """지금(시간대가 있는 UTC 시각). 시계가 시간대 없는 시각을 내면 멈춘다 — 파일 이름의 한국 시각이 어긋나지 않게."""
@@ -194,9 +195,16 @@ class Context:
         return self.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def store(self):
-        """글 저장소를 연다(`with ctx.store() as store:`). 데이터 폴더가 없으면 만든다."""
+        """글 저장소를 연다(`with ctx.store() as store:`). 데이터 폴더가 없으면 만들고, 옛 구조의 파일은 사본(`.v<판>.bak`)을 남기고 올린다.
+        `reading_only()` 로 만든 사본은 **읽기 전용**으로 연다(`Store.open(migrate=False)`) — 폴더·파일을 만들지 않고 옛 구조도 올리지 않으며, 파일이 없으면 CONTENT_NOT_FOUND."""
+        if self.read_only_store:
+            return Store.open(self.workspace.store_path, migrate=False)
         self.workspace.ensure()
         return Store.open(self.workspace.store_path)
+
+    def reading_only(self):
+        """같은 부품에 '글 저장소는 읽기만' 표시를 한 사본 — 점검(doctor)처럼 읽기만 하는 일이 쓴다. 이 사본의 `store()` 는 파일을 만들지도, 옛 구조를 올리지도, 사본을 남기지도 않는다."""
+        return replace(self, read_only_store=True)
 
     def repo_path(self):
         """연결한 chanceblog 폴더: `--repo` > 저장해 둔 설정 > 환경 변수 CHANCEBLOG_LOCAL_REPO. 아무것도 없으면 PAGES_LOCAL_REPO_INVALID."""
