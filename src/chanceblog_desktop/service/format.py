@@ -7,6 +7,7 @@ from __future__ import annotations
 from ..content import candidates as cd
 from ..content import draft_plan as dp
 from ..content import status as st
+from ..content import suggest as sg
 from ..content.profiles import NaverProfile
 from ..errors import AppError, render
 from ..security.mask import safe_detail
@@ -14,6 +15,8 @@ from . import naver_flow
 from .candidates import DELETE_PREFIX, MAX_ORDINAL_DIGITS, kst
 
 CMD = "python -m chanceblog_desktop"
+HAND_WRITTEN_FIELDS = ("profile_fit", "priority", "keyword_opportunity")              # 사람이 적거나 CSV 로 가져온 점수 칸 — 제안·우선도 계산에는 쓰이지 않는다
+HAND_WRITTEN = "(이전에 적어 둔 값 — 아래 계산값과 따로이고 계산에는 쓰이지 않습니다)"
 STATUS_KO = {
     st.NOT_STARTED: "시작 전", st.DRAFT_GENERATED: "글 만듦", st.REVIEW_REQUIRED: "검토 중", st.APPROVED: "승인됨", st.COMMITTED: "이 PC 에 기록함(아직 안 올림)",
     st.PUSHED: "올림(공개 확인 전)", st.PUBLISHED: "공개됨", st.DRAFT_SAVED: "초안 저장됨", st.READY_TO_COPY: "복사 준비됨", st.COPY_COMPLETED: "복사함",
@@ -273,7 +276,7 @@ def candidate_line(row, *, verbose=False):
     return line + f" · 번호 {candidate.candidate_id if verbose else cd.short_id(candidate.candidate_id)}"
 
 
-def candidate_list_lines(result, *, verbose=False):
+def candidate_list_lines(result, *, verbose=False, assessments=None, notes=()):
     if result.total == 0:
         if result.store_state != "ready":
             return ["아직 후보가 없습니다(쓰는 명령을 처음 실행하면 보관함이 올라갑니다). " + EMPTY_HINT]
@@ -282,7 +285,10 @@ def candidate_list_lines(result, *, verbose=False):
     if not result.rows:
         return [f"조건에 맞는 후보가 없습니다(전체 {result.total}개 — {' · '.join(filters)})."]
     head = f"주제 후보 {len(result.rows)}개" + (f"(전체 {result.total}개 중 — {' · '.join(filters)})" if filters else "")
-    lines = [head] + [candidate_line(row, verbose=verbose) for row in result.rows]
+    lines = [head] + [candidate_line(row, verbose=verbose) + ("" if assessments is None else priority_suffix(assessments[row.candidate.candidate_id])) for row in result.rows]
+    if assessments is not None:
+        lines.append("우선도는 보관함에 저장된 값이 아니라 프로필·기존 글·달력(가져온 지표가 있으면 함께)으로 지금 계산한 작성 순서의 참고값입니다 — 이유는 `candidates show 순번` 에 있습니다.")
+        lines += [f"참고: {note}" for note in notes]
     lines.append(f"자세히 보려면 `{CMD} candidates show 순번` (순번은 전체 목록 기준이고, 후보를 지우면 뒤의 순번이 하나씩 당겨집니다).")
     lines.append(f"지울 때는 순번이 아니라 번호 앞 {DELETE_PREFIX}자를 씁니다: `{CMD} candidates delete 번호 --yes`.")
     if any(row.ordinal >= 10 ** MAX_ORDINAL_DIGITS for row in result.rows):
@@ -303,7 +309,7 @@ def candidate_next_lines(row):
     return lines
 
 
-def candidate_show_lines(result, *, verbose=False):
+def candidate_show_lines(result, *, verbose=False, assessment=None, notes=()):
     row = result.row
     candidate = row.candidate
     number = candidate.candidate_id if verbose else cd.short_id(candidate.candidate_id)
@@ -316,9 +322,11 @@ def candidate_show_lines(result, *, verbose=False):
         lines.append(f"  {cd.LABELS['reason']}: {candidate.reason}")
     if candidate.has_data():
         lines.append(f"  지표({cd.LABELS['data_date']} {candidate.data_date}):")
-        lines += [f"    {cd.LABELS[name]}: {metric_text(name, getattr(candidate, name))}" for name in cd.METRIC_FIELDS]
+        lines += [f"    {cd.LABELS[name]}: {metric_text(name, getattr(candidate, name))}" + (HAND_WRITTEN if name in HAND_WRITTEN_FIELDS and getattr(candidate, name) is not None else "") for name in cd.METRIC_FIELDS]
     else:
         lines.append("  지표: 데이터 없음")
+    if assessment is not None:
+        lines += assessment_lines(assessment, notes)
     for blog, stamp in candidate.selections:
         lines.append(f"  {PLATFORM_KO[blog]} 용으로 고른 때: {local_time(stamp)}")
     project = result.project
@@ -488,3 +496,117 @@ def profile_saved_options_text(profile):
     """`naver-profile set` 으로 저장한 프로필에서 기본값과 다른 항목들(없으면 '')."""
     base = NaverProfile(profile.key, profile.display_name, profile.blog_url)
     return " · ".join(f"{name} {value}" for name, value in _option_pairs(profile, base) if value)
+
+# ---- 자동 후보 제안·콘텐츠 작성 우선도 --------------------------------------------------------------------------------------------------------
+SCORE_NOTE = "점수는 이 프로그램이 가진 정보로 정한 작성 순서의 참고값입니다 — 검색 결과나 방문자 수를 약속하지 않습니다. 계절표와 글 틀은 일반적인 시기 주제와 틀일 뿐 검색 수요를 보증하지 않습니다."
+
+
+def priority_text(priority):
+    return f"{priority.level} {sg.num(priority.score)}점"
+
+
+SHORT_FACTORS = {"fit": "적합도", "season": "시기", "freshness": "신선도", "balance": "균형", "opportunity": "키워드 기회도"}
+
+
+def priority_suffix(assessment):
+    """`candidates list --priority` 의 한 줄 뒤에 덧붙이는 글 — 계산한 우선도·프로필 적합도·이유(요인별 점수)·(조회일). 보관함 값은 바뀌지 않는다."""
+    if assessment.priority is None:
+        return " · 콘텐츠 작성 우선도: 계산할 정보 없음"
+    fit = "데이터 없음" if assessment.fit is None else sg.num(assessment.fit)
+    text = f" · 콘텐츠 작성 우선도 {priority_text(assessment.priority)}(블로그 프로필 적합도 {fit})"
+    why = "·".join(f"{SHORT_FACTORS[part.name]} {sg.num(part.value)}" for part in assessment.parts if part.name != "fit")
+    text += f" · 이유: {why}" if why else ""
+    return text + ("" if assessment.data_age.data_date is None else f" · {assessment.data_age.text()}")
+
+
+def assessment_lines(assessment, notes=()):
+    """`candidates show` 에 덧붙이는 '왜 이 우선도인지' 줄들."""
+    if assessment.priority is None:
+        lines = ["  계산한 콘텐츠 작성 우선도: 계산할 정보가 없습니다"]
+    else:
+        lines = [f"  계산한 콘텐츠 작성 우선도: {priority_text(assessment.priority)} — 보관함에 저장된 값은 바뀌지 않습니다", f"    왜 이 우선도인지: {assessment.reason}"]
+    lines.append(f"  블로그 프로필 적합도(계산): {'데이터 없음' if assessment.fit is None else sg.num(assessment.fit)}")
+    if assessment.data_age.data_date is not None:
+        lines.append(f"  지표 조회: {assessment.data_age.text()}")
+    if assessment.similar:
+        lines.append("  기존 글과 비슷합니다 — 이미 쓴 글과 제목이나 키워드가 많이 겹칩니다.")
+    lines += [f"  참고: {note}" for note in (*assessment.notes, *notes)]
+    return lines
+
+
+def suggestion_lines(item, *, verbose=False):
+    data = "데이터 없음" if item.data_date is None else item.data_age.text()
+    lines = [f"  [{item.rank}] 콘텐츠 작성 우선도 {priority_text(item.priority)} · 블로그 프로필 적합도 {sg.num(item.fit)} · {item.post_type} · {data}",
+             f"      주제: {item.topic}",
+             f"      핵심 키워드: {item.keyword}" + (f" · 보조 키워드: {', '.join(item.sub_keywords)}" if item.sub_keywords else ""),
+             f"      이유: {item.reason}"]
+    if item.data_date is not None:
+        shown = [f"{cd.LABELS[name]} {metric_text(name, getattr(item.metrics, name))}" for name in ("search_demand", "related_blog_results", "trend") if getattr(item.metrics, name) is not None]
+        lines.append("      외부 지표: " + (" · ".join(shown) if shown else "검색 수요·관련 블로그 검색 결과 수·최근 관심도 변화는 데이터 없음"))
+    if verbose:
+        lines.append(f"      계산 내역: 씨앗 「{item.seed}」({item.seed_source}) · 글 틀 {item.frame_id} · " + " · ".join(f"{part.name} {sg.num(part.value)}×{sg.num(part.share * 100)}%" for part in item.factors))
+    return lines
+
+
+def suggest_group_lines(group, *, verbose=False):
+    report = group.report
+    name = PLATFORM_KO[group.blog] + (f"({group.profile_name})" if group.profile_name else "")
+    lines = [f"{name} 주제 제안 — {report.month}월 기준 · 계산일 {report.today}"]
+    if report.guidance:
+        return lines + [report.guidance] + [f"참고: {note}" for note in report.notes]      # 씨앗이 전부 버려진 화면에도 몇 개를 왜 버렸는지 알린다(독립 검증 2차)
+    lines.append("  프로필의 주제·카테고리·기본 태그와 기존 글·최근 선택·달력으로 계산했습니다 — 월간 검색 수요·관련 블로그 검색 결과 수·최근 관심도 변화 같은 외부 데이터가 없는 칸은 '데이터 없음' 이고 점수에 넣지 않습니다.")
+    lines.append("  씨앗: " + " · ".join(f"{seed.text}({seed.source})" for seed in report.seeds))
+    if not report.suggestions:
+        lines.append("  보여 줄 제안이 없습니다.")
+    for item in report.suggestions:
+        lines += suggestion_lines(item, verbose=verbose)
+    removed = [f"{label} {number}" for _code, label, number, kept in report.filtered if not kept]
+    hidden = [f"{label} {number}" for _code, label, number, kept in report.filtered if kept]
+    if removed:
+        lines.append(f"걸러낸 조합(만든 {report.generated}개 중): " + " · ".join(removed))
+    if hidden:
+        lines.append("숨긴 제안(번호는 그대로입니다): " + " · ".join(hidden))
+    lines += [f"참고: {note}" for note in report.notes]
+    if report.suggestions:
+        first = report.suggestions[0]
+        low, high = first.rank, report.suggestions[-1].rank
+        span = f"{low}-{high}" if high > low else str(low)
+        flags = (f" --count {report.count}" if report.count != sg.DEFAULT_COUNT else "") + (f" --month {report.month}" if report.month != int(report.today[5:7]) else "") + (f' --type "{report.post_type}"' if report.post_type and " " in report.post_type else f" --type {report.post_type}" if report.post_type else "")
+        lines.append(f"넣으려면: `{CMD} candidates suggest --blog {group.blog}{flags} --add {','.join(str(item.rank) for item in report.suggestions[:3])} --yes` — 이 화면의 제안을 모두 넣으려면 `--add {span}`(처음 보이던 번호 1~{report.count} 전부는 `all` 로도 넣을 수 있습니다). 번호는 같은 입력이면 같은 순서이지만 보관함이 바뀌면 달라질 수 있어, "
+                     f"확실하게 하려면 키워드로 적습니다(예: `--add \"{first.keyword}\"`).")
+    return lines
+
+
+def suggest_lines(result, *, verbose=False):
+    lines = []
+    for group in result.groups:
+        lines += ([""] if lines else []) + suggest_group_lines(group, verbose=verbose)
+    return lines + ["", SCORE_NOTE] + [f"알려 둔 한계: {note}" for note in result.limits]
+
+
+def suggest_add_lines(result):
+    """`candidates suggest --add` 의 출력 — `--yes` 가 없으면 넣을 목록만(아무것도 넣지 않았다), 있으면 넣은 후보들."""
+    name = PLATFORM_KO[result.blog]
+    adding = [item for item in result.items if item.action == "add"]
+    skips = [item for item in (*result.items, *result.late_skips) if item.action == "skip"]
+    if not result.confirmed:
+        lines = [f"제안 넣기 미리 보기 — {name}(아무것도 넣지 않았습니다)"]
+        lines += [f"  넣을 제안 [{item.suggestion.rank or '목록 밖'}] {item.suggestion.topic} (핵심 키워드: {item.suggestion.keyword}, {item.suggestion.post_type})" for item in adding]
+        if not adding:
+            lines.append("  넣을 제안이 없습니다.")
+    elif result.added:
+        lines = [f"제안 {len(result.added)}개를 새 후보(출처: {sg.SOURCE_MARK})로 보관함에 넣었습니다 — {name}"]
+        lines += [candidate_line(row) for row in result.added]
+    else:
+        lines = [f"넣은 제안이 없습니다 — {name}(고른 제안이 모두 이미 보관함에 있거나 건너뛴 것입니다)"]
+    seen = set()
+    for item in skips:
+        text = f"  건너뜀 {item.label}: {item.reason}" if item.suggestion is None else f"  건너뜀 [{item.suggestion.rank or '목록 밖'}] {item.suggestion.topic}: {item.reason}"
+        if text not in seen:
+            seen.add(text)
+            lines.append(text)
+    if not result.confirmed and adding:
+        lines.append("같은 명령 끝에 --yes 를 붙이면 위 제안을 '새 후보' 로 보관함에 넣습니다(같은 키워드·같은 블로그의 후보가 이미 있으면 넣지 않습니다 — 되풀이해도 겹치지 않습니다).")
+    if result.confirmed and result.added:
+        lines.append(f"다음: `{CMD} candidates list` 로 보고 `{CMD} candidates select 순번 --blog {result.blog}` 로 고릅니다.")
+    return lines
