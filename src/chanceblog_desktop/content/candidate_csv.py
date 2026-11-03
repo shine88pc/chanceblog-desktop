@@ -271,6 +271,15 @@ def parse_bool(text, item=None):
     raise CsvCellError(item or cd.LABELS["duplicate"], "예·아니오 중 하나여야 합니다")
 
 
+_SHOWABLE_BLOG = re.compile(r"[A-Za-z0-9가-힣 _-]{1,24}")
+
+
+def _showable(text):
+    """오류에 되풀이해 보여 줘도 되는 짧은 이름인가 — 글자·숫자·밑줄·하이픈·빈칸 24자 이하(`naver_c`·`naver2`·`blogger-en`)이고 키·토큰 모양이 아닐 때만(긴 글·기호가 섞인 글·키 모양은 숨긴다)."""
+    from ..security.mask import has_key_shape           # 늦게 가져온다(가리기 모듈은 vendor/ 를 먼저 올려야 한다)
+    return bool(_SHOWABLE_BLOG.fullmatch(text)) and not has_key_shape(text)
+
+
 def parse_blogs(text, item=None):
     """블로그 칸 → 구분 코드 튜플(겹치면 하나만). 이름은 `github_pages` 같은 코드도, `네이버 A` 같은 이름도 받는다. 모르는 이름이 있으면 CsvCellError."""
     name = item or cd.LABELS["blogs"]
@@ -280,7 +289,9 @@ def parse_blogs(text, item=None):
             continue
         code = _BLOG_OF.get(flat(token))
         if code is None:
-            raise CsvCellError(name, f"알 수 없는 블로그 「{clean_line(token)[:30]}」 입니다 — 다음 중에서 고릅니다: " + ", ".join(f"{code}({BLOG_NAMES[code][0]})" for code in PLATFORMS))
+            shown = clean_line(token)
+            named = f"알 수 없는 블로그 「{shown}」 입니다" if _showable(shown) else "알 수 없는 블로그가 있습니다(적은 글이 길거나 기호가 섞여 있거나 키·토큰처럼 보여 되풀이해 보여 드리지 않습니다)"
+            raise CsvCellError(name, named + " — 다음 중에서 고릅니다: " + ", ".join(f"{code}({BLOG_NAMES[code][0]})" for code in PLATFORMS))
         if code not in found:
             found.append(code)
     return tuple(found)

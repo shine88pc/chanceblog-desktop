@@ -38,6 +38,38 @@ _ASSIGNMENT = re.compile(
     r"(?![\"']?\[가림)(\"[^\"\n]+\"|'[^'\n]+'|[^\s\"',;&]{4,})")
 
 
+_WORD_B = chr(92) + "b"                                         # 정규식의 단어 경계
+_NOT_AFTER = "(?<![A-Za-z0-9])"                                  # 바로 앞이 ASCII 영숫자가 아니다(밑줄은 괜찮다 — 정본의 `AQ.` 패턴과 같다: `KEY_AKIA…` 도 가린다)
+_NOT_BEFORE = "(?![A-Za-z0-9])"                                  # 바로 뒤가 ASCII 영숫자가 아니다
+
+
+def _ascii_bounded(pattern):
+    """단어 경계 기호(단어 경계)가 든 패턴을 ASCII 기준 앞뒤 확인으로 바꾼 같은 패턴 — 단어 경계 기호 는 한글 같은 유니코드 글자도 단어로 봐서 `키는AKIA…를` 처럼 한글에 붙은 키를 못 알아본다.
+    패턴 맨 앞(또는 `(`·`|`·`(?i)` 바로 뒤)의 단어 경계 기호 는 '바로 앞이 ASCII 영숫자·밑줄이 아니다', 그 밖의 단어 경계 기호 는 '바로 뒤가 아니다'. 단어 경계 기호 가 없으면 None."""
+    source = pattern.pattern
+    if _WORD_B not in source:
+        return None
+    pieces, last = [], 0
+    while True:
+        found = source.find(_WORD_B, last)
+        if found < 0:
+            break
+        before = source[:found]
+        flags = before.rfind("(?")
+        starts = before == "" or before.endswith(("(", "|")) or (before.endswith(")") and flags >= 0 and before[flags:].strip("(?)").isalpha())
+        pieces.append(source[last:found] + (_NOT_AFTER if starts else _NOT_BEFORE))
+        last = found + len(_WORD_B)
+    pieces.append(source[last:])
+    return re.compile("".join(pieces), pattern.flags)
+
+
+# 이 모듈 안의 단어 경계 기호 패턴도 같은 경계로(정본이 아니라 여기서 만든 것들)
+_BEARER, _BASIC, _NPM_TOKEN = (_ascii_bounded(item) or item for item in (_BEARER, _BASIC, _NPM_TOKEN))
+# 정본 패턴 중 단어 경계 기호 가 든 것(GitHub 토큰·Slack 토큰·AWS 액세스 키·sk- 키·Google 토큰 …)의 ASCII 경계 판 — 정본(vendor/)은 그대로 두고 여기서 더 돌린다
+_BOUNDED_PATTERNS = tuple((label, bounded) for label, pattern in SECRET_PATTERNS for bounded in (_ascii_bounded(pattern),) if bounded is not None)
+_SHAPE_PATTERNS = (_PEM, _JWT, _SLACK_HOOK, _NPM_TOKEN, _BEARER, *(pattern for _label, pattern in SECRET_PATTERNS), *(pattern for _label, pattern in _BOUNDED_PATTERNS))
+
+
 _CUT_WINDOW = 400                  # 상한에서 이만큼 안쪽까지 공백을 찾아 거기서 자른다
 
 
@@ -66,6 +98,16 @@ def mask(value):
     return text
 
 
+def has_key_shape(value):
+    """글에 키·토큰 모양(정본 패턴과 그 ASCII 경계 판·이 모듈의 JWT·Bearer·npm·Slack 웹훅·개인 키 블록)이 들어 있는가. `이름=값` 꼴(주소 인자·대입)은 보지 않는다 — 어떤 입력에도 예외를 내지 않는다."""
+    try:
+        text = value if isinstance(value, str) else str(value)
+    except Exception:
+        return False
+    text = _strip_invisible(text[:MAX_MASK_INPUT])
+    return any(pattern.search(text) for pattern in _SHAPE_PATTERNS)
+
+
 def _strip_invisible(text):
     """눈에 안 보이는 글자(폭 없는 글자·방향 제어·태그·변형 선택자·채움 글자 …)를 지운다 — 비밀을 이 글자로 쪼개 패턴을 피하는 것을 막는다. 줄바꿈·탭은 둔다."""
     text = _INVISIBLE.sub("", text)
@@ -86,6 +128,8 @@ def _mask_once(text):
     text = _NPM_TOKEN.sub("[가림: npm 토큰]", text)
     text = _AWS_SECRET.sub(r"\1[가림: AWS 비밀 키]", text)
     for label, pattern in SECRET_PATTERNS:                                     # 이름이 있는 정본 패턴이 먼저(어떤 종류인지 남긴다) — 아래의 일반 대입 규칙은 그 나머지를 가린다
+        text = pattern.sub(f"[가림: {label}]", text)
+    for label, pattern in _BOUNDED_PATTERNS:                                   # 한글 바로 옆의 키까지(정본이 먼저 돌았으니 이미 가려지던 글의 출력은 그대로다)
         text = pattern.sub(f"[가림: {label}]", text)
     text = _ASSIGNMENT.sub(r"\1[가림: 값]", text)
     return text

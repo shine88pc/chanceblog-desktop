@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from ..content import candidates as cd
+from ..content import draft_plan as dp
 from ..content import status as st
 from ..content.profiles import NaverProfile
 from ..errors import AppError, render
@@ -407,6 +408,45 @@ def candidate_import_lines(result):
         lines.append(f"빈 줄 {result.blank_lines}개는 무시했습니다.")
     if result.rejected:
         lines.append("일부 줄을 거절했습니다 — 이유를 고쳐 같은 파일을 다시 가져오면 이미 들어간 줄은 건너뜁니다(겹치지 않습니다).")
+    return lines
+
+
+# ---- 작성 기반(draft plan) -------------------------------------------------------------------------------------------------------------------
+SOURCE_ITEMS = {
+    "post_type": "글 유형", "audience": "대상 독자", "tone": "문체", "length": "글 길이", "subheadings": "소제목 수", "title_limit": "제목 길이 상한", "tag_limit": "태그 수 상한",
+    "paragraph": "문단 길이", "intro_style": "도입부 방식", "difficulty": "설명 난이도", "ending_style": "마무리 방식", "category": "카테고리", "tags": "태그", "title_direction": "제목 방향",
+    "conclusion": "결론", "intent": "예상 검색 의도", "outline": "권장 목차", "titles": "제목 후보", "cautions": "주의사항", "topic": "추천 주제", "keyword": "핵심 키워드", "sub_keywords": "보조 키워드",
+}
+
+
+def draft_plan_lines(result, *, verbose=False):
+    """작성 기반을 사람이 읽는 줄로. 값이 어느 층에서 왔는지는 `--verbose`(와 `--json`)에서만 보인다."""
+    plan, row = result.plan, result.row
+    lines = [f"작성 기반 — 후보 [{row.ordinal}] {plan.topic} · {PLATFORM_KO[plan.blog]} 용 · 기준 날짜 {plan.base_date} (계획만 보여 주고 아무것도 저장하지 않았습니다)"]
+    lines += [f"  글 유형: {plan.post_type}   글 길이 목표: {dp.length_korean(plan.length)}", f"  예상 검색 의도: {plan.intent}", f"  대상 독자: {plan.audience}", f"  핵심 키워드: {plan.keyword}" + (f"   보조 키워드: {', '.join(plan.sub_keywords)}" if plan.sub_keywords else "")]
+    if plan.replaced:
+        lines.append(f"  ※ 후보의 ‘{plan.replaced[0]}’ 형식은 ‘{plan.replaced[1]}’{dp.particle(plan.replaced[1], '으로', '로')} 바꿔 구성했습니다(경험을 지어내지 않습니다).")
+    lines += ["제목 후보:"] + [f"  {number}. {title}" for number, title in enumerate(plan.titles, 1)]
+    lines += ["본문 작성 방향:"] + [f"  - {label}: {text}" for label, text in plan.direction]
+    lines.append("권장 목차와 소제목:")
+    lines += [f"  {number}. {name} — {heading}" for number, (name, heading) in enumerate(zip(plan.outline, plan.subheadings), 1)]
+    lines += ["포함할 핵심 내용:"] + [f"  - {text}" for text in plan.key_points]
+    lines += ["주의사항:"] + [f"  - {text}" for text in plan.cautions]
+    lines.append(f"추천 카테고리: {plan.category or '정하지 못했습니다'}")
+    lines.append("추천 태그: " + (" ".join("#" + tag for tag in plan.tags) if plan.tags else "없음"))
+    if plan.references:
+        lines += ["참고할 수 있는 공개 자료(입력한 주소만 — 앱은 열어 보거나 가져오지 않았습니다):"] + [f"  - {url}" for url in plan.references]
+    else:
+        lines.append("참고할 수 있는 공개 자료: 입력한 주소가 없습니다(앱이 자료를 찾아 주지는 않습니다)")
+    lines += ["확인 권장(있어도 계획은 이대로 쓸 수 있습니다):"] + [f"  - {text}" for text in plan.checks]
+    for note in result.notes:
+        lines.append(f"참고: {note}")
+    if result.comparison is not None:
+        lines.append(f"다른 네이버 블로그({PLATFORM_KO[result.other_blog]}) 용 계획과 견줘 봤습니다.")
+        lines += similarity_lines(result.comparison.report)
+    if verbose:
+        lines.append("값이 온 곳(적용 순서: " + " → ".join(dp.LAYER_KO[layer] for layer in dp.LAYERS) + ", 글 유형만 사용자 → 후보 → 프로필 → 기본값):")
+        lines += [f"  - {SOURCE_ITEMS.get(item, item)}: {dp.LAYER_KO[layer]}" for item, layer in plan.sources]
     return lines
 
 
