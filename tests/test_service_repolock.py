@@ -84,6 +84,7 @@ class GitDirTest(Base):
 
     def test_the_same_repository_is_the_same_lock_however_the_folder_is_spelled(self):
         repo = self.repo
+        (self.tmp / "x").mkdir(exist_ok=True)                                        # 리눅스는 `x/..` 의 x 가 실제 폴더로 있어야 `..` 를 풀 수 있다(Windows 는 글자만으로 풂)
         spellings = [repo, str(repo) + os.sep, self.tmp / "x" / ".." / "chanceblog", self.tmp / "." / "chanceblog"]
         if os.path.splitdrive(str(repo))[0] == os.path.splitdrive(os.getcwd())[0]:
             spellings.append(Path(os.path.relpath(repo)))                            # 상대 경로
