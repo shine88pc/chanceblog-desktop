@@ -365,6 +365,24 @@ class ValueParsersTest(Refused):
         self.assertIn("티스토리", error.reason)
         self.assertIn("naver_a", error.reason, "고를 수 있는 것을 알려 준다")
 
+    def test_an_unknown_blog_name_with_digits_underscore_or_hyphen_is_shown_back(self):
+        for name in ("naver_c", "naver2", "blogger-xx", "github_pages_korean_x", "Naver C 2", "티스토리 2"):
+            with self.subTest(name=name):
+                self.assertIn("「" + name + "」", self.cell_error(c.parse_blogs, name).reason)
+
+    def test_a_long_or_key_shaped_or_symbol_filled_blog_value_is_still_hidden(self):
+        key = "AK" + "IA" + "ABCDEFGHIJKLMNOP"                      # 20자 — 짧은 글자·숫자뿐이지만 키 모양(조각으로 이어 만든다)
+        for value in (key, "a" * 25, "naver" + "_" * 20, "가" * 25, "gh" + "p_" + "A" * 36, "naver.c", "naver:c", "naver=c", "naver!c", "naver@c"):
+            with self.subTest(value=value[:8]):
+                reason = self.cell_error(c.parse_blogs, value).reason
+                self.assertIn("보여 드리지 않습니다", reason)
+                self.assertNotIn(value[:12], reason)
+
+    def test_the_longest_shown_blog_name_has_twenty_four_characters(self):
+        shown = "x" * 24
+        self.assertIn("「" + shown + "」", self.cell_error(c.parse_blogs, shown).reason)
+        self.assertIn("보여 드리지 않습니다", self.cell_error(c.parse_blogs, shown + "x").reason)
+
     def test_post_type_takes_the_exact_name_or_the_name_without_the_suffix(self):
         for text, expected in (("정보형", "정보형"), ("정보", "정보형"), ("비교", "비교형"), ("문제 해결", "문제 해결형"), ("문제해결형", "문제 해결형"), ("제품·서비스 소개형", "제품·서비스 소개형"),
                                ("장소·업체 정보", "장소·업체 정보형"), ("", None)):
