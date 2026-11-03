@@ -55,6 +55,14 @@ class GitPagesBackend:
         text = done.stdout.strip()
         return int(text) if done.returncode == 0 and text.isdigit() else None
 
+    def unpushed_made_by_app(self, repo):
+        """올리지 않은 commit 중 이 앱이 만든 모양(제목이 앱의 글 올리기 commit 제목으로 시작)인 것의 수 — 읽기만 한다(log). 알 수 없으면 0.
+        이 데이터 폴더에 기록이 없는데 앱이 만든 모양인 commit 이 있으면 다른 데이터 폴더(`--data-dir`)의 앱이 올리다 멈춘 글일 수 있다(안내를 가르는 데만 쓴다 — 어떤 commit 도 건드리지 않는다)."""
+        done = self.git(Path(repo), ["log", "--format=%s", f"{REMOTE_MAIN}..HEAD"])
+        if done.returncode != 0:
+            return 0
+        return sum(1 for line in done.stdout.splitlines() if line.startswith(pages._COMMIT_PREFIX))
+
     def duplicates(self, repo, post):
         """같은 주소(날짜-언어-시각)의 글 파일 이름들 — 작업 폴더와 마지막으로 받아 둔 원격 main 에서 찾는다(분야 폴더·확장자가 달라도 Jekyll 주소는 같다). 아무것도 쓰지 않는다."""
         root = Path(repo)

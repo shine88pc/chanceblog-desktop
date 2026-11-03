@@ -35,7 +35,7 @@ class Base(unittest.TestCase):
 
 class PagesPreviewTest(Base):
     def test_the_preview_shows_path_text_gates_and_address_and_writes_nothing(self):
-        (self.tmp / "chanceblog").mkdir()
+        (self.tmp / "chanceblog").mkdir(exist_ok=True)                 # make_ctx 가 이미 만들었다(가짜 저장소 폴더에도 `.git` 폴더가 있다)
         before = self.snapshot()
         self.backend.calls.clear()
         preview = previews.preview_pages(self.ctx, self.project_id, ss.KO_PARAMS)
@@ -50,12 +50,13 @@ class PagesPreviewTest(Base):
     def test_a_preview_never_saves_anything_even_when_the_store_is_watched(self):
         from chanceblog_desktop.content.store import Store
         from unittest import mock
-        (self.tmp / "chanceblog").mkdir()
+        (self.tmp / "chanceblog").mkdir(exist_ok=True)
         with mock.patch.object(Store, "save", side_effect=AssertionError("미리 보기가 글을 저장했다")), mock.patch.object(Store, "delete", side_effect=AssertionError("미리 보기가 글을 지웠다")):
             previews.preview_pages(self.ctx, self.project_id, ss.KO_PARAMS)
             ss.naver_profiles(self.ctx)
             previews.preview_naver(self.ctx, self.project_id)
-        self.assertEqual(sorted(path.name for path in (self.tmp / "chanceblog").iterdir()), [], "연결한 저장소 폴더에도 아무것도 쓰지 않았다")
+        self.assertEqual(sorted(path.name for path in (self.tmp / "chanceblog").iterdir()), [".git"], "연결한 저장소 폴더에도 아무것도 쓰지 않았다(가짜 `.git` 폴더만 있다)")
+        self.assertEqual(list((self.tmp / "chanceblog" / ".git").iterdir()), [], "`.git` 안에도 잠금 파일 같은 것을 만들지 않았다 — 미리 보기는 잠그지 않는다")
 
     def test_a_preview_of_a_changed_post_follows_the_manuscript_and_never_saves_a_rendering(self):
         projects.edit_project(self.ctx, self.project_id, title="바뀐 제목")

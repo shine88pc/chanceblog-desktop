@@ -10,7 +10,7 @@
      위험한 주소는 사라지지만, 저장소에 올라가는 것은 원문이고 사이트(Jekyll)는 원시 HTML 을 그대로 내보내며 `{% %}`·`{{ }}` 는 글을 만들 때 실행한다(광고 사이트에서 스크립트가 끼어들거나 사이트 빌드가 깨질 수 있다).
   6) **머리말 값 전부**(제목·분야·태그·대표 이미지 주소·설명·출처 이름·주소·도메인)에도 같은 검사를 한다 — 머리말 값은 사이트의 글 목록(`posts.json`)·카드·`<title>`·`<meta>` 에 들어가고, 첫 화면의 카드는 제목·분야·태그·이미지 주소를
      이스케이프 없이 HTML 에 넣는 곳이 있다(chanceblog `index.html`). 그래서 HTML 태그·템플릿 표기·위험한 주소는 본문과 똑같이 막고, 줄바꿈·제어 문자·너무 긴 값·https 가 아닌 이미지 주소·따옴표/꺾쇠가 든 주소·모르는 머리말 키(`published`·`permalink` 같은 것)도
-     막는다(`HEADER_VALUE`). 글을 만들거나 고칠 때의 **제목**도 같은 검사를 거친다(`title_problems`).
+     막는다(`HEADER_VALUE`). 글을 만들거나 고칠 때의 **제목**도 같은 검사를 거친다(`title_problems`). 글자의 표시 방향을 바꾸는 제어 문자(U+202A–202E·U+2066–2069)는 본문·머리말 값(제목 포함) 어디에 몇 개가 있든 막는다(`INVISIBLE`).
 
 **검사 기준은 기본값이다**: chanceblog 의 Chance 블로그에는 `gates.check_post` 용 프로필이 없다(`pipeline/blogs.json` 의 `profile: null`). 그래서 여기서는 chanceblog 생성기가 글을 받을 때 쓰는
 최소 본문 분량(위 3)과 객관적인 잔여물·위험 표기 점검만 쓰고(핵심 코드 쪽의 글자 수 기준에도 같은 숫자를 건다 — 그쪽은 공백을 한 칸씩 세므로 더 느슨해 위 3 이 실제로 막는다), 금지 낱말·주제 같은 **정책은 새로 만들지 않는다**(정책·톤을 바꾸는 일은 T3 — 운영자 결정이 필요하다).
@@ -56,9 +56,15 @@ _TEMPLATE = re.compile(r"\{[%{#]")
 _ATTRIBUTE_LIST = re.compile(r"\{:")
 _AD_SCRIPT = re.compile(r"adsbygoogle|googlesyndication", re.IGNORECASE)
 _SCHEME = r"(?:j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t|v\s*b\s*s\s*c\s*r\s*i\s*p\s*t|d\s*a\s*t\s*a)\s*:"
+# 주소 앞의 공백에는 **길이 상한을 두지 않는다**(CommonMark 의 링크 목적지 앞 공백은 길이 제한이 없어서, 상한을 두면 공백을 길게 넣은 `javascript:` 링크가 검사를 빠져나간다).
+# 대신 정규식이 모호하지 않게 쓴다 — `\s*<?\s*`·`\s*["']?\s*` 는 공백 n 개를 두 `\s*` 에 나누는 방법이 n 가지라 맞지 않을 때 O(n²) 로 되돌아갔다(공백 6만 개에 88초).
+# `\s*(?:<\s*)?`·`\s*(?:["']\s*)?` 는 같은 뜻이면서 나누는 방법이 하나뿐이라 공백이 아무리 길어도 선형 시간이다.
 _UNSAFE_URL = re.compile(
-    r"(?is)(?:\]\(\s*<?\s*|^[ \t]{0,3}\[[^\]\n]{0,200}\][ \t]*:\s*<?\s*|<\s*|\b(?:href|src|action|formaction|srcdoc|poster|background)\s*=\s*[\"']?\s*)" + _SCHEME, re.MULTILINE)
+    r"(?is)(?:\]\(\s*(?:<\s*)?|^[ \t]{0,3}\[[^\]\n]{0,200}\][ \t]*:\s*(?:<\s*)?|<\s*|\b(?:href|src|action|formaction|srcdoc|poster|background)\s*=\s*(?:[\"']\s*)?)" + _SCHEME, re.MULTILINE)
 _JOINERS = re.compile("[\u200c\u200d\ufe0e\ufe0f\U000e0100-\U000e01ef]")      # 이모지·문자 이음에 쓰이는 보이지 않는 글자 — 길이에는 안 세고 '많음' 판단에서는 뺀다
+# 글자가 화면에 보이는 방향·순서를 바꾸는 제어 문자 — U+202A–202E(LRE·RLE·PDF·LRO·RLO)·U+2066–2069(LRI·RLI·FSI·PDI). 제목·링크 글을 다르게 보이게 위장하는 데 쓸 수 있고 한글·영어 글에는 필요 없어서
+# 몇 개든(개수·비율과 상관없이) 막는다. U+200E·U+200F(LRM·RLM)는 방향을 '표시' 할 뿐이라 이 규칙 밖이다(다른 보이지 않는 글자와 같이 개수로 센다).
+_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
 _HEADER_LINE = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*)")
 _JSON_KEYS = ("title", "category", "image", "description", "source_name", "source_url", "source_domain")
 _Sample = namedtuple("_Sample", "path text")
@@ -168,9 +174,19 @@ def _raw_reasons(text, where, *, header):
     return reasons
 
 
+def _bidi_reasons(text, where):
+    """글자 방향을 바꾸는 보이지 않는 제어 문자(`_BIDI`)가 하나라도 있으면 사유 하나(`[INVISIBLE]`) — 개수·본문 길이와 상관없이 막는다. `where` 는 '원고에'·'머리말 `title` 에' 처럼 어디인지(조사까지)."""
+    found = sorted({f"U+{ord(char):04X}" for char in _BIDI.findall(text)})
+    if not found:
+        return []
+    shown = ", ".join(found[:4]) + (" …" if len(found) > 4 else "")
+    return [f"[INVISIBLE] {where} 글자의 표시 방향을 바꾸는 보이지 않는 제어 문자가 있다({shown}) — 글이 화면에 다르게 보이도록 위장하는 데 쓰일 수 있어 개수와 상관없이 올리지 않는다. 지운다"]
+
+
 def raw_markdown_problems(body):
-    """저장소에 올라가는 Markdown 원문의 위험한 표기 → ["[코드] 설명", …]. 코드 블록 안이어도 같다(사이트가 코드 안의 `{{ }}` 도 실행하고, 코드 블록의 경계는 사이트마다 다르게 읽을 수 있다)."""
-    return _raw_reasons(body, "원고에", header=False)
+    """저장소에 올라가는 Markdown 원문의 위험한 표기 → ["[코드] 설명", …]. 코드 블록 안이어도 같다(사이트가 코드 안의 `{{ }}` 도 실행하고, 코드 블록의 경계는 사이트마다 다르게 읽을 수 있다).
+    글자 방향을 바꾸는 제어 문자(U+202A–202E·U+2066–2069)도 여기서 몇 개든 막는다."""
+    return _raw_reasons(body, "원고에", header=False) + _bidi_reasons(body, "원고에")
 
 
 def _split_url(value):
@@ -212,6 +228,7 @@ def _value_reasons(key, value, *, limit=None, url_schemes=None):
         reasons.append(f"[HEADER_VALUE] 머리말 `{key}` 에 줄바꿈·제어 문자가 있다 — 머리말은 한 줄에 한 키라서 값의 줄바꿈은 다른 머리말 키를 끼워 넣는 데 쓰일 수 있다. 지운다")
     if key != "title" and invisible_count(value):
         reasons.append(f"[INVISIBLE] 머리말 `{key}` 에 눈에 안 보이는 글자가 있다 — 주소·태그·분야에 숨은 글자를 넣어 검사를 피할 수 있다. 지운다")
+    reasons.extend(_bidi_reasons(value, where))                          # 제목은 보이지 않는 글자를 본문과 합쳐 센다(몇 개는 봐준다) — 그래도 글자 방향을 바꾸는 제어 문자는 어느 값에서든 몇 개든 막는다
     reasons.extend(_raw_reasons(value, where, header=True))
     if url_schemes is not None:
         reasons.extend(_url_reasons(key, value, url_schemes))

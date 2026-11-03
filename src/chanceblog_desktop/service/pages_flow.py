@@ -17,6 +17,7 @@
   8) **승인한 글만 올라간다**: commit 한 뒤 push 하기 전에 원고를 고쳤으면(승인은 풀렸는데 commit 은 남아 있다) push 하지 않고 PUBLISH_CONTENT_CHANGED 로 멈춘다 — `--cancel --yes` 로 되돌린 뒤 다시 승인한다.
   9) **서로 다른 두 글이 같은 저장소에 동시에 올라가지 못한다**: commit·push·되돌리기 구간은 연결한 저장소마다 한 번에 한 작업(저장소 잠금 — 글 잠금을 잡은 다음에 잡는다, 순서 고정이라 서로 기다리며 멈추지 않는다)이고,
      다른 작업이 쥐고 있으면 `Context.lock_wait` 초 기다리다 PUBLISH_REPO_BUSY 로 물러난다(아무것도 바꾸지 않는다 — 같은 명령을 다시 실행하면 된다). 공개 확인을 기다리는 동안에는 저장소 잠금을 쥐지 않는다.
+     저장소 잠금 파일은 그 저장소의 `.git` 안에 있어서 `--data-dir` 을 다르게 준 앱끼리도 서로를 안다. `.git` 에 잠금 파일을 만들 수 없으면 데이터 폴더로 물러서지 않고 올리지 않는다(FILE_WRITE_FAILED).
  10) **올리지 않은 commit 이 있으면 새 글을 올리지 않고 무엇을 해야 하는지 말한다**: 이어받기·두 글 겹침·앱이 모르는 commit 을 가려(`service/unpushed.py`) 정확한 안내 한 가지를 오류 세부에 싣는다(미리 보기도 같다).
  11) **같은 초의 파일 이름을 피한다**: 새 글의 파일 이름은 올리는 순간의 초로 정해지는데 바로 앞 글이 같은 초에 올라갔으면(저장소에 이미 있거나 올리는 중인 글이 쓰는 이름) 점검 단계에서 다음 초의 이름으로 정한다(최대 5번, 읽기만 한다).
 이 모듈은 git 을 직접 쓰지 않는다 — `Context.backend`(기존 `publish/` 모듈)에 맡긴다. 강제 push 는 없다.
@@ -149,6 +150,18 @@ def _refuse_unpushed(ctx, repo, *, stage):
         raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail=f"올리지 않은 commit 이 {situation.ahead}개 있어 올리지 않는다 — {unpushed.action_text(situation)}")
 
 
+def _missing_record(project_id, stage):
+    """이어서 올리거나(COMMITTED)·공개 확인을 이어갈(PUSHED) 글인데 발행 기록 파일이 없다 → SETTINGS_INVALID(세부에 왜 이렇게 됐고 어떻게 하는지).
+    올림(PUSHED)인데 기록이 없는 글은 `check-deploy`·`publish-pages`·`--cancel` 어느 쪽도 이을 수 없다 — 글 파일의 이름(올린 순간의 시각)은 기록에만 있어서다. 지웠다가 백업으로 되살리거나 오래된 백업으로
+    되돌릴 때 생긴다(발행 기록은 백업에 들어 있지 않다). 어느 명령도 서로를 가리키지 않게 '지운다' 는 한 가지 출구를 말한다(올라간 글은 저장소에 그대로 있고 이 앱은 지우지 않는다)."""
+    short = project_id[:8]
+    if stage == STAGE_VERIFY:
+        return AppError("SETTINGS_INVALID", {"파일": f"{project_id}.json"},
+                        detail=("올림(PUSHED) 상태인데 공개 확인을 이어갈 발행 기록 파일이 없다 — 글을 지웠다가 백업으로 되살렸거나 오래된 백업으로 되돌렸을 때 생긴다. 앱은 올라간 글의 파일 이름을 기록으로만 알아서 "
+                                f"공개 확인을 이어갈 수 없다(올라간 글은 저장소에 그대로 있다 — 공개 주소는 사이트에서 직접 확인한다). 이 글의 기록이 필요 없으면 `delete {short} --yes` 로 지운다"))
+    return AppError("SETTINGS_INVALID", {"파일": f"{project_id}.json"}, detail="이어서 올릴 발행 기록 파일이 없다")
+
+
 def _tidy_finished_record(journal, project_id):
     """공개된 글(PUBLISHED)에 발행 기록이 남아 있으면(기록을 지우기 직전에 프로그램이 멈춘 흔적 — 해롭지 않다) 그 기록만 지운다 → 알릴 말('' 이면 할 일 없었다). 읽을 수 없는 기록은 건드리지 않는다."""
     try:
@@ -230,7 +243,7 @@ def plan_pages_publish(ctx, text_id, *, now=None, deadline=DEFAULT_DEADLINE):
         if stage != STAGE_COMMIT:
             record = journal.read(project_id)
             if record is None:
-                raise AppError("SETTINGS_INVALID", {"파일": f"{project_id}.json"}, detail="이어서 올릴 발행 기록 파일이 없다")
+                raise _missing_record(project_id, stage)
         if stage == STAGE_PUSH:
             problem = _outdated(variant, project)
             if problem is not None:
@@ -535,7 +548,7 @@ def cancel_pages_publish(ctx, text_id, *, confirmed):
             if variant.status == st.APPROVED:
                 return _cancel_unrecorded(ctx, project_id, variant, journal, lead)
             if variant.status in (st.PUSHED, st.PUBLISHED):
-                raise _already_pushed(project_id, variant.status)
+                raise _already_pushed(project_id, variant.status, lost_record=variant.status == st.PUSHED and journal.missing(project_id))
             if variant.status != st.COMMITTED:
                 raise AppError("STATUS_TRANSITION_INVALID", {"현재 상태": variant.status, "요청 상태": st.PUBLISH_FAILED}, detail="올리지 않은 글 기록(COMMITTED)만 취소한다")
             record = journal.read(project_id)
@@ -556,11 +569,15 @@ def cancel_pages_publish(ctx, text_id, *, confirmed):
             return CancelReport(project_id, st.PUBLISH_FAILED, lead + steps)
 
 
-def _already_pushed(project_id, status, path=""):
-    """이미 원격 main 에 올라간 글을 되돌리려 했다 — 되돌리지 않고(앱은 올라간 글을 지우지 않는다) 상태에 맞는 다음 일을 알린다."""
+def _already_pushed(project_id, status, path="", *, lost_record=False):
+    """이미 원격 main 에 올라간 글을 되돌리려 했다 — 되돌리지 않고(앱은 올라간 글을 지우지 않는다) 상태에 맞는 다음 일을 알린다.
+    올림(PUSHED)인데 발행 기록이 없으면(`lost_record`) `check-deploy` 로 이을 수 없으니(서로를 가리키는 순환이 된다) 그렇게 말하지 않고 지우는 길을 알린다."""
     short = project_id[:8]
     if status == st.COMMITTED:
         how = f"상태는 아직 '이 PC 에 기록함(COMMITTED)' 이지만 원격 main 에 이미 올라가 있다 — `--cancel` 없이 같은 명령 `publish-pages {short} --yes` 를 실행하면 올림 기록을 마치고 공개 확인까지 한다"
+    elif status == st.PUSHED and lost_record:
+        how = (f"상태는 '올림(PUSHED)' 인데 발행 기록 파일이 없어 `check-deploy` 로 공개 확인을 이어갈 수 없다 — 올라간 글은 되돌리지 않는다(공개 주소는 사이트에서 직접 확인한다). "
+               f"이 글의 기록이 필요 없으면 `delete {short} --yes` 로 지운다")
     elif status == st.PUSHED:
         how = f"상태가 '올림(PUSHED)' 이다 — `check-deploy {short}` 로 공개 확인을 마친다"
     else:

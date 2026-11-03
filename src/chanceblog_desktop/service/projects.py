@@ -184,8 +184,23 @@ def edit_project(ctx, text_id, *, title=None, markdown=None, references=None, as
         return EditResult(view(project), changed, reset)
 
 
+def _must_finish_first(ctx, project_id, project):
+    """지우면 안 되는 글(올리다 만 글)이면 그 이유를 AppError 로 돌려준다 — 아니면 None.
+     · 올리지 않은 글 기록(COMMITTED): 연결한 저장소에 주인 없는 commit 이 남는다 — 먼저 올리거나 취소한다.
+     · 올렸지만 공개 확인이 끝나지 않은 글(PUSHED): 지우면 발행 기록 파일도 함께 지워져 `check-deploy` 로 이을 수 없게 되고(지웠다가 백업으로 되살려도 기록은 되살아나지 않는다 — 기록 없는 '올림' 글은
+       `check-deploy`·`publish-pages`·`--cancel` 이 서로를 가리키며 막힌다), 그러면 지우기 전의 백업으로도 마칠 수 없다 — 먼저 `check-deploy` 로 마친다.
+       단 이미 발행 기록이 없는 '올림' 글(백업으로 되돌리다 생긴 것)은 어떻게 해도 이을 수 없으므로 지울 수 있다(잃는 것이 없다). 읽을 수 없는 기록은 SETTINGS_INVALID 로 그대로 알린다."""
+    status = project.variant("github_pages").status
+    if status == st.COMMITTED:
+        return AppError("STATUS_TRANSITION_INVALID", {"현재 상태": st.COMMITTED, "요청 상태": "삭제"}, detail="올리지 않은 글 기록이 남아 있다 — 먼저 올리거나 취소한다")
+    if status == st.PUSHED and Journal(ctx.workspace.journal_dir).read(project_id) is not None:
+        return AppError("STATUS_TRANSITION_INVALID", {"현재 상태": st.PUSHED, "요청 상태": "삭제"},
+                        detail=f"원격 main 에는 올라갔지만 공개 확인이 끝나지 않은 글이다 — 지우면 발행 기록도 함께 지워져 공개 확인을 이어갈 수 없다. 먼저 `check-deploy {project_id[:8]}` 로 공개 확인을 마친 뒤 지운다")
+    return None
+
+
 def delete_project(ctx, text_id, *, confirmed):
-    """글을 지운다(되돌릴 수 없다 — confirmed=True 가 있어야 한다). 올리지 않은 글 기록(COMMITTED)이 있으면 먼저 올리거나 취소해야 한다."""
+    """글을 지운다(되돌릴 수 없다 — confirmed=True 가 있어야 한다). 올리지 않은 글 기록(COMMITTED)이 있으면 먼저 올리거나 취소해야 하고, 올렸지만 공개 확인이 끝나지 않은 글(PUSHED)은 먼저 `check-deploy` 로 마쳐야 한다."""
     require_confirmation(confirmed, "글 지우기")
     with ctx.store() as store:
         project_id = resolve_id(store, text_id)
@@ -195,13 +210,16 @@ def delete_project(ctx, text_id, *, confirmed):
             if error.code != "STORE_CORRUPT":
                 raise
             project = None                         # 읽을 수 없는 글도 운영자가 지울 수 있어야 한다
-        if project is not None and project.variant("github_pages").status == st.COMMITTED:
-            raise AppError("STATUS_TRANSITION_INVALID", {"현재 상태": st.COMMITTED, "요청 상태": "삭제"}, detail="올리지 않은 글 기록이 남아 있다 — 먼저 올리거나 취소한다")
+        problem = _must_finish_first(ctx, project_id, project) if project is not None else None
+        if problem is not None:
+            raise problem
+        pushed = project is not None and project.variant("github_pages").status in (st.PUSHED, st.PUBLISHED)
         folder = ctx.workspace.backups_dir / "before-delete"
         saved = store.backup(folder, now=_free_moment(ctx, folder, store))             # 지우기 직전 상태를 먼저 백업한다 — 잘못 지웠으면 restore 로 되살릴 수 있다
         store.delete(project_id)
     note = Journal(ctx.workspace.journal_dir).remove(project_id)
-    return project_id, (note + " | " if note else "") + f"지우기 직전 상태를 백업해 두었습니다(잘못 지웠으면 `restore 그파일` 로 되살립니다): {saved}"
+    kept = "이 PC 의 글 기록만 지웠습니다 — 이미 올라간 글은 연결한 저장소에 그대로 있습니다(이 앱은 올라간 글을 지우지 않습니다). " if pushed else ""
+    return project_id, (note + " | " if note else "") + kept + f"지우기 직전 상태를 백업해 두었습니다(잘못 지웠으면 `restore 그파일 --yes` 로 되살립니다 — 확인 표시가 있어야 합니다): {saved}"
 
 
 def backup_store(ctx):

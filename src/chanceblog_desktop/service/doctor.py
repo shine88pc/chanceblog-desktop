@@ -225,6 +225,10 @@ def _check_pending(ctx):
             else:
                 notes.append(check("이어서 처리할 글", "warn", "PAGES_LOCAL_REPO_DIVERGED",
                                    f"{row.title} — 글 기록은 있지만 아직 올리지 않았습니다(번호 {short}). `publish-pages {short} --yes` 로 이어서 올리거나 올리지 않고 되돌리려면 `publish-pages {short} --cancel --yes` 합니다.", ""))
+        elif status == st.PUSHED and journal.missing(row.project_id):
+            notes.append(check("이어서 처리할 글", "warn", "SETTINGS_INVALID",
+                               f"{row.title} — 올림 상태인데 발행 기록 파일이 없어 공개 확인을 이어갈 수 없습니다(번호 {short} — 글을 지웠다가 백업으로 되살렸거나 오래된 백업으로 되돌렸을 때 생깁니다). "
+                               f"올라간 글은 저장소에 그대로 있으니 공개 주소는 사이트에서 직접 확인하고, 이 글의 기록이 필요 없으면 `delete {short} --yes` 로 지웁니다.", ""))
         elif status == st.PUSHED:
             notes.append(check("이어서 처리할 글", "warn", "PAGES_DEPLOY_NOT_VISIBLE", f"{row.title} — 올렸지만 공개 확인이 남았습니다. `check-deploy {short}` 로 확인합니다."))
         elif status == st.PUBLISHED and _leftover_record(journal, row.project_id):
