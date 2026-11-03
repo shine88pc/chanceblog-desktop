@@ -4,10 +4,13 @@
 """
 from __future__ import annotations
 
+from ..content import candidates as cd
 from ..content import status as st
-from ..errors import render
+from ..content.profiles import NaverProfile
+from ..errors import AppError, render
 from ..security.mask import safe_detail
 from . import naver_flow
+from .candidates import DELETE_PREFIX, MAX_ORDINAL_DIGITS, kst
 
 CMD = "python -m chanceblog_desktop"
 STATUS_KO = {
@@ -221,3 +224,227 @@ def doctor_lines(results):
     warned = sum(1 for item in results if item.status == "warn")
     lines.append(f"고쳐야 할 것 {failed}개, 주의 {warned}개." if failed or warned else "모두 정상입니다.")
     return lines
+
+
+# ---- 주제 후보 -------------------------------------------------------------------------------------------------------------------
+LISTED_NOTES = 30                       # 가져오기 결과에서 건너뜀·거절을 줄마다 보이는 최대 수(전체는 --json)
+EMPTY_HINT = "`candidates add` 로 직접 적거나 `candidates import-csv 파일` 로 가져옵니다."
+METRIC_UNITS = {"search_demand": "{:,}회", "related_blog_results": "{:,}건", "mobile_share": "{}%"}
+
+
+def blogs_text(blogs):
+    return ", ".join(PLATFORM_KO[blog] for blog in blogs)
+
+
+def candidate_status_text(candidate):
+    """상태의 한국어 이름 — '선택됨' 이면 어느 블로그용으로 골랐는지도(영문 상태 코드는 보이지 않는다)."""
+    name = cd.STATUS_KO[candidate.status]
+    if candidate.status == cd.SELECTED and candidate.selections:
+        return f"{name}({blogs_text(candidate.selected_blogs)})"
+    return name
+
+
+def metric_text(name, value):
+    if value is None:
+        return "데이터 없음"
+    if name == "seasonality":
+        return "·".join(f"{month}월" for month in value)
+    if name == "duplicate":
+        return "예" if value else "아니오"
+    return METRIC_UNITS.get(name, "{}").format(value)
+
+
+def local_time(stamp):
+    """저장된 시각(UTC) → 한국 시간의 `2026-11-02 12:00`(저장은 UTC 그대로이고 화면만 한국 시간이다)."""
+    return kst(stamp).strftime("%Y-%m-%d %H:%M")
+
+
+def candidate_ref(row):
+    """`[3] 주제 (번호 1a2b3c4d)` — 순번은 지우면 뒤가 당겨져 바뀔 수 있어, 바뀌지 않는 번호 앞 8자를 함께 보인다."""
+    return f"[{row.ordinal}] {row.candidate.topic} (번호 {cd.short_id(row.candidate.candidate_id)})"
+
+
+def candidate_line(row, *, verbose=False):
+    candidate = row.candidate
+    line = f"  [{row.ordinal}] {candidate_status_text(candidate)} — {candidate.topic} · 핵심 키워드: {candidate.keyword} · 대상: {blogs_text(candidate.blogs)}"
+    if candidate.project_id:
+        line += " · 글 연결됨"
+    return line + f" · 번호 {candidate.candidate_id if verbose else cd.short_id(candidate.candidate_id)}"
+
+
+def candidate_list_lines(result, *, verbose=False):
+    if result.total == 0:
+        if result.store_state != "ready":
+            return ["아직 후보가 없습니다(쓰는 명령을 처음 실행하면 보관함이 올라갑니다). " + EMPTY_HINT]
+        return ["아직 후보가 없습니다. " + EMPTY_HINT]
+    filters = [item for item in (f"상태: {cd.STATUS_KO[result.status]}" if result.status else "", f"블로그: {PLATFORM_KO[result.blog]}" if result.blog else "") if item]
+    if not result.rows:
+        return [f"조건에 맞는 후보가 없습니다(전체 {result.total}개 — {' · '.join(filters)})."]
+    head = f"주제 후보 {len(result.rows)}개" + (f"(전체 {result.total}개 중 — {' · '.join(filters)})" if filters else "")
+    lines = [head] + [candidate_line(row, verbose=verbose) for row in result.rows]
+    lines.append(f"자세히 보려면 `{CMD} candidates show 순번` (순번은 전체 목록 기준이고, 후보를 지우면 뒤의 순번이 하나씩 당겨집니다).")
+    lines.append(f"지울 때는 순번이 아니라 번호 앞 {DELETE_PREFIX}자를 씁니다: `{CMD} candidates delete 번호 --yes`.")
+    if any(row.ordinal >= 10 ** MAX_ORDINAL_DIGITS for row in result.rows):
+        lines.append(f"순번 {10 ** MAX_ORDINAL_DIGITS} 이상은 순번으로 고를 수 없습니다 — 그 후보들은 번호 앞 {DELETE_PREFIX}자로 고릅니다(예: `{CMD} candidates show 번호`).")
+    return lines
+
+
+def candidate_next_lines(row):
+    candidate, number = row.candidate, row.ordinal
+    base = f"{CMD} candidates"
+    if candidate.status == cd.REJECTED:
+        return [f"  다음: `{base} restore {number}` 로 검토 중으로 되살릴 수 있습니다."]
+    lines = []
+    if candidate.status != cd.SELECTED:
+        lines.append(f"  다음: `{base} select {number} --blog 블로그` 로 고르거나 `{base} hold {number}`(보류)·`{base} reject {number}`(제외) 합니다.")
+    elif not candidate.project_id:
+        lines.append(f"  다음: `{base} link {number} 글번호` 로 쓰고 있는 글과 이을 수 있습니다.")
+    return lines
+
+
+def candidate_show_lines(result, *, verbose=False):
+    row = result.row
+    candidate = row.candidate
+    number = candidate.candidate_id if verbose else cd.short_id(candidate.candidate_id)
+    lines = [f"후보 [{row.ordinal}]: {candidate.topic}", f"  번호: {number}   (순번은 후보를 지우면 바뀔 수 있고 번호는 바뀌지 않습니다)", f"  상태: {candidate_status_text(candidate)}",
+             f"  {cd.LABELS['keyword']}: {candidate.keyword}"]
+    if candidate.sub_keywords:
+        lines.append(f"  {cd.LABELS['sub_keywords']}: {', '.join(candidate.sub_keywords)}")
+    lines += [f"  {cd.LABELS['blogs']}: {blogs_text(candidate.blogs)}", f"  {cd.LABELS['post_type']}: {candidate.post_type}"]
+    if candidate.reason:
+        lines.append(f"  {cd.LABELS['reason']}: {candidate.reason}")
+    if candidate.has_data():
+        lines.append(f"  지표({cd.LABELS['data_date']} {candidate.data_date}):")
+        lines += [f"    {cd.LABELS[name]}: {metric_text(name, getattr(candidate, name))}" for name in cd.METRIC_FIELDS]
+    else:
+        lines.append("  지표: 데이터 없음")
+    for blog, stamp in candidate.selections:
+        lines.append(f"  {PLATFORM_KO[blog]} 용으로 고른 때: {local_time(stamp)}")
+    project = result.project
+    if project is not None:
+        if project.error:
+            lines.append(f"  연결한 글: 읽을 수 없습니다(오류 코드 {project.error}, 글번호 {short_id(project.project_id)})")
+        else:
+            states = " · ".join(f"{PLATFORM_KO[name]}: {STATUS_KO.get(value, value)}" for name, value in project.statuses)
+            lines.append(f"  연결한 글: {project.title}(글번호 {short_id(project.project_id)})" + (f" — {states}" if states else " — 아직 어느 곳에도 내보내지 않았습니다"))
+    lines.append(f"  만든 때: {local_time(candidate.created_at)}   고친 때: {local_time(candidate.updated_at)}   (한국 시간)")
+    if verbose:
+        lines.append(f"  판: {candidate.revision}")
+    return lines + candidate_next_lines(row)
+
+
+def candidate_add_lines(result):
+    if result.row is None:
+        return [f"같은 핵심 키워드·주제·블로그의 후보가 이미 있어 추가하지 않았습니다(순번 {result.twin.ordinal}).", candidate_line(result.twin)]
+    return ["후보를 추가했습니다.", candidate_line(result.row)] + candidate_next_lines(result.row)
+
+
+def candidate_move_lines(result, verb):
+    after = result.row.candidate
+    return [f"{verb}: {candidate_ref(result.row)} — {cd.STATUS_KO[result.before]} → {cd.STATUS_KO[after.status]}"] + candidate_next_lines(result.row)
+
+
+def candidate_select_lines(result):
+    after = result.row.candidate
+    blog = PLATFORM_KO[result.blog]
+    if result.again:
+        lines = [f"{blog} 용으로도 골랐습니다: {candidate_ref(result.row)} — 이미 선택됨이어서 선택 기록만 더했습니다"]
+    else:
+        lines = [f"{blog} 용으로 골랐습니다: {candidate_ref(result.row)} — {cd.STATUS_KO[result.before]} → {cd.STATUS_KO[after.status]}"]
+    for item in result.warnings:
+        lines.append(f"주의: 같은 핵심 키워드 「{after.keyword}」 을(를) {PLATFORM_KO[item.blog]} 용으로 {item.days_ago}일 전({kst(item.picked_at).strftime('%Y-%m-%d')})에 이미 골랐습니다"
+                     f"(순번 {item.other.ordinal}: {item.other.candidate.topic}, 번호 {cd.short_id(item.other.candidate.candidate_id)}). 이 블로그의 같은 주제 재사용 기준은 {item.days}일입니다 — 선택은 그대로 기록했습니다.")
+    if result.outside:
+        lines.append(f"참고: {blog} 은(는) 이 후보의 추천 대상 블로그({blogs_text(after.blogs)})가 아니지만 요청대로 기록했습니다.")
+    return lines + candidate_next_lines(result.row)
+
+
+def candidate_delete_lines(result):
+    where = f"[{result.ordinal}] " if result.ordinal is not None else ""
+    number = cd.short_id(result.candidate_id)
+    shown = f"{result.topic} (번호 {number})" if result.topic else f"번호 {number}"
+    return [f"후보를 지웠습니다: {where}{shown}", "  연결한 글이 있었다면 글은 그대로 남아 있습니다.", "  뒤의 후보들은 순번이 하나씩 당겨졌을 수 있습니다 — `candidates list` 로 다시 확인합니다."]
+
+
+def candidate_link_lines(result, *, unlinking=False):
+    row = result.row
+    if unlinking:
+        if not result.changed:
+            return [f"이어진 글이 없어 바뀐 것이 없습니다: {candidate_ref(row)}"]
+        return [f"연결을 끊었습니다(글은 그대로입니다): {candidate_ref(row)}"]
+    project = result.project
+    shown = f"{project.title}(글번호 {short_id(project.project_id)})" if project is not None and not project.error else f"글번호 {short_id(row.candidate.project_id)}"
+    if not result.changed:
+        return [f"이미 같은 글과 이어져 있습니다: {candidate_ref(row)} ↔ {shown}"]
+    lines = [f"후보와 글을 이었습니다: {candidate_ref(row)} ↔ {shown}"]
+    if result.previous:
+        lines.append(f"  전에는 다른 글(글번호 {short_id(result.previous)})과 이어져 있었습니다 — 새 글로 바꿨습니다.")
+    return lines
+
+
+def _ranges(numbers):
+    """12 13 14 17 → '12~14, 17'."""
+    groups = []
+    for number in sorted(numbers):
+        if groups and number == groups[-1][1] + 1:
+            groups[-1][1] = number
+        else:
+            groups.append([number, number])
+    return ", ".join(str(low) if low == high else f"{low}~{high}" for low, high in groups)
+
+
+def candidate_import_lines(result):
+    lines = [f"가져오기를 마쳤습니다: {result.file}", result.summary()]
+    if result.added:
+        lines.append(f"  추가한 후보(순번): {_ranges([row.ordinal for row in result.added])}")
+    for label, notes in (("건너뜀", result.skipped), ("거절", result.rejected)):
+        lines += [f"  {label}: 줄 {note.line} — {note.reason}" for note in notes[:LISTED_NOTES]]
+        if len(notes) > LISTED_NOTES:
+            lines.append(f"  {label}: … 외 {len(notes) - LISTED_NOTES}개(전체는 --json)")
+    if result.unknown_columns:
+        lines.append(f"모르는 열 {len(result.unknown_columns)}개는 무시했습니다: {', '.join(result.unknown_columns[:10])}")
+    if result.blank_lines:
+        lines.append(f"빈 줄 {result.blank_lines}개는 무시했습니다.")
+    if result.rejected:
+        lines.append("일부 줄을 거절했습니다 — 이유를 고쳐 같은 파일을 다시 가져오면 이미 들어간 줄은 건너뜁니다(겹치지 않습니다).")
+    return lines
+
+
+# ---- 네이버 프로필의 '글 만들 때 쓰는 항목' ------------------------------------------------------------------------------------------------
+def _option_pairs(profile, base):
+    """(항목 이름, 바꾼 값의 글)을 화면 순서대로 — 기본값에서 바꾸지 않았으면 글이 ''."""
+    def changed(*names):
+        return any(getattr(profile, name) != getattr(base, name) for name in names)
+
+    reuse = f"{profile.topic_reuse_days}일" + ("(경고하지 않음)" if profile.topic_reuse_days == 0 else "")
+    return (
+        ("도입부 스타일", profile.intro_style if changed("intro_style") else ""),
+        ("소제목 수", f"{profile.subheading_min}~{profile.subheading_max}개" if changed("subheading_min", "subheading_max") else ""),
+        ("설명 난이도", profile.difficulty if changed("difficulty") else ""),
+        ("마무리 방식", profile.ending_style if changed("ending_style") else ""),
+        ("제외 주제", ", ".join(profile.excluded_topics) if changed("excluded_topics") else ""),
+        ("같은 주제 재사용 기준", reuse if changed("topic_reuse_days") else ""),
+        ("기본 글 유형", profile.post_type if changed("post_type") else ""),
+    )
+
+
+def profile_option_lines(raw):
+    """저장된 프로필 한 개의 '글 만들 때 쓰는 항목' 줄들 — 하나라도 기본값에서 바꿨으면 항목마다 한 줄(바꾸지 않은 것은 '기본값'). 하나도 안 바꿨으면 줄을 더하지 않는다 —
+    이 항목을 쓰지 않는 프로필의 `show` 출력은 예전과 한 글자도 다르지 않다."""
+    try:
+        profile = NaverProfile.from_dict(raw)
+    except AppError:
+        return ["  글 만들 때 쓰는 항목: 읽을 수 없습니다(저장된 값이 올바르지 않습니다 — `naver-profile set` 으로 다시 정합니다)"]
+    base = NaverProfile(profile.key, profile.display_name, profile.blog_url)
+    pairs = _option_pairs(profile, base)
+    if not any(value for _name, value in pairs):
+        return []
+    defaults = {"도입부 스타일": "정하지 않음", "소제목 수": f"{base.subheading_min}~{base.subheading_max}개", "설명 난이도": "정하지 않음", "마무리 방식": "정하지 않음", "제외 주제": "없음",
+                "같은 주제 재사용 기준": f"{base.topic_reuse_days}일", "기본 글 유형": base.post_type}
+    return ["  글 만들 때 쓰는 항목:"] + [f"    {name}: {value or '기본값(' + defaults[name] + ')'}" for name, value in pairs]
+
+
+def profile_saved_options_text(profile):
+    """`naver-profile set` 으로 저장한 프로필에서 기본값과 다른 항목들(없으면 '')."""
+    base = NaverProfile(profile.key, profile.display_name, profile.blog_url)
+    return " · ".join(f"{name} {value}" for name, value in _option_pairs(profile, base) if value)

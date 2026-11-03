@@ -9,10 +9,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..content import candidates as cd
 from ..content import status as st
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.store import Store
@@ -128,6 +130,17 @@ def _store_exists(ctx):
     return path.exists() and path.stat().st_size > 0
 
 
+_CANDIDATE_PROBLEM = re.compile(r"후보 ([A-Za-z0-9_-]{1,64}): ")
+
+
+def _broken_candidates(problems):
+    """저장소 점검 문제들이 **모두** 주제 후보 하나하나의 것(`후보 <번호>: …`)이면 그 후보 번호들(처음 나온 순서, 겹침 없이), 하나라도 다른 문제가 섞여 있으면 빈 목록."""
+    found = [_CANDIDATE_PROBLEM.match(item) for item in problems]
+    if not all(found):
+        return []
+    return list(dict.fromkeys(match.group(1) for match in found))
+
+
 def _check_store(ctx):
     path = ctx.workspace.store_path
     if not _store_exists(ctx):
@@ -137,6 +150,12 @@ def _check_store(ctx):
         count = len(store.list())
         old_version = store.schema_version if store.needs_migration else None
     if problems:
+        broken = _broken_candidates(problems)
+        if broken:                                                   # 문제가 모두 주제 후보 몇 개의 것이다 — 파일 전체가 아니므로 그 후보만 지우는 길을 안내한다
+            shown = ", ".join(cd.short_id(item) for item in broken[:5]) + (f" 외 {len(broken) - 5}개" if len(broken) > 5 else "")
+            return check("글 저장소", "fail", "CANDIDATE_CORRUPT", f"주제 후보 {len(broken)}개가 깨져 있습니다(번호 {shown}) — 글과 다른 후보는 이상 없습니다.",
+                         action=f"그 후보가 필요 없으면 `candidates delete {cd.short_id(broken[0])} --yes` 로 그 후보만 지웁니다(후보마다 한 번씩). 필요하면 `restore --latest --yes` 로 가장 최근 백업으로 되돌립니다. "
+                                "저장소 파일을 이름 바꿔 새로 시작할 필요는 없습니다.")
         return check("글 저장소", "fail", "STORE_CORRUPT", f"점검에서 문제 {len(problems)}개를 찾았습니다: {problems[0]}")
     if old_version is not None:
         return check("글 저장소", "ok", "", f"글 {count}개, 이상 없습니다. 보관함이 옛 구조(판 {old_version})라서 다음에 이 프로그램이 보관함을 열 때(글 목록 보기 포함) 사본(`.v{old_version}.bak`)을 남기고 자동으로 올립니다 — 점검은 파일을 바꾸지 않습니다.")

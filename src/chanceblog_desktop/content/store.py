@@ -794,6 +794,32 @@ class Store:
 
         self._write(work)
 
+    def add_candidates(self, plan):
+        """새 후보들을 **한 트랜잭션**으로 더한다. 쓰기 잠금을 잡은 **뒤** 지금 있는 후보들을 읽어 `plan(후보들)` 에 넘기고, 그것이 돌려준 새 후보들을 모두 저장한다 — 읽고(이미 있는지 보고) 저장하는
+        사이에 다른 프로세스가 끼어들 수 없어 같은 후보를 두 곳에서 동시에 더해도 겹치지 않고, 하나라도 안 되면(번호가 이미 있음·값이 틀림·디스크 오류 …) 하나도 저장되지 않는다.
+        `plan` 은 순수하게 계산만 한다(안에서 이 저장소를 부르면 안 된다). 깨진 후보가 있으면 `list_candidates` 처럼 CANDIDATE_CORRUPT 로 멈춘다. 저장한 후보들을 튜플로 돌려준다."""
+        saved = []
+
+        def work(db):
+            rows = db.execute("SELECT candidate_id, project_id, data FROM candidates ORDER BY updated_at DESC, candidate_id ASC").fetchall() if self._has_candidates() else []
+            for candidate in plan([self._parse_candidate(*row) for row in rows]):
+                if not isinstance(candidate, Candidate):
+                    raise candidate_invalid("후보", "후보(Candidate)여야 합니다")
+                candidate._validate()                      # 저장하기 전에 한 번 더 — 깨진 자료를 파일에 넣지 않는다
+                if db.execute("SELECT 1 FROM candidates WHERE candidate_id = ?", (candidate.candidate_id,)).fetchone() is not None:
+                    raise AppError("STORE_CONFLICT", {"항목": f"주제 후보 {candidate.topic}"}, detail="같은 번호의 후보가 이미 있다(새 후보만 더할 수 있다)")
+                self._put_candidate(db, candidate)
+                saved.append(candidate)
+
+        self._write(work)
+        return tuple(saved)
+
+    def candidate_ids(self):
+        """저장된 모든 후보의 번호(오름차순). 자료를 읽지 않으므로 깨져서 목록을 막는 후보도 나온다 — 그 후보를 번호 앞부분으로 찾아 지울 때 쓴다."""
+        if not self._has_candidates():
+            return ()
+        return tuple(row[0] for row in self._read("SELECT candidate_id FROM candidates ORDER BY candidate_id"))
+
     def recent_selections(self, keyword, blog, within_days, *, now=None, exclude=None):
         """같은 핵심 키워드를 같은 블로그용으로 `within_days` 일 안에 이미 '선택'해 둔 후보들(방금 고른 것이 먼저) — 다시 고르려 할 때 경고하는 데 쓴다.
         지금 '선택됨' 인 후보만 센다(보류·제외·검토 중으로 물린 것은 쓰지 않기로 한 것이다). 키워드는 띄어쓰기·대소문자·덜 중요한 기호 차이를 무시하고 비교한다(`keyword_key` — C++ 와 C# 은 다르다).
