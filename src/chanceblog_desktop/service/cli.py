@@ -17,11 +17,14 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..content import candidate_csv as csvmod
+from ..content import candidates as cd
 from ..content import status as st
+from ..content.profiles import POST_TYPES
 from ..errors import AppError
 from ..security.mask import MAX_MASK_INPUT, mask
+from . import candidates, naver_flow, pages_flow, projects, review
 from . import format as fmt
-from . import naver_flow, pages_flow, projects, review
 from .context import make_context
 from .doctor import doctor_ok, run_doctor
 from .naver_flow import NaverOptions
@@ -33,6 +36,8 @@ MAX_INPUT_FILE_BYTES = 5 * 1024 * 1024        # 원고·HTML·본문 파일의 �
 PLATFORM_ALIAS = {"pages": "github_pages", "github_pages": "github_pages", "naver_a": "naver_a", "naver_b": "naver_b"}
 PROFILE_FIELDS = (("name", "display_name"), ("url", "blog_url"), ("topic", "topic"), ("audience", "audience"), ("tone", "tone"), ("image_spec", "image_spec"),
                   ("publish_cycle", "publish_cycle"), ("disclosure", "disclosure"))
+PROFILE_OPTIONS = ("intro_style", "subheading_min", "subheading_max", "difficulty", "ending_style", "topic_reuse_days", "post_type")      # 글 만들 때 쓰는 선택 항목 — 값을 그대로 넘긴다(제외 주제는 쉼표로 나눠 따로)
+STATUS_WORDS = {"선택": cd.SELECTED, "검토": cd.REVIEW}                              # 상태 이름의 줄임말(`--status 선택` 처럼 쓴다)
 _USAGE_TRANSLATIONS = (
     (re.compile(r"the following arguments are required: (.+)"), "빠진 항목이 있습니다: {0}"),
     (re.compile(r"unrecognized arguments: (.+)"), "알 수 없는 항목입니다: {0}"),
@@ -120,6 +125,82 @@ def wait_seconds(text):
 
 def split_list(value):
     return tuple(item.strip() for item in (value or "").split(",") if item.strip())
+
+
+_TOPIC_SPLIT = re.compile("[,，]")                 # 반각 쉼표와 전각 쉼표(，) — 한글 입력기로 치면 전각이 섞인다
+
+
+def split_topics(value):
+    """`--excluded-topics` 값 → 낱말 튜플. 반각 쉼표(`,`)와 전각 쉼표(`，`) 모두 구분 글자다(다른 쉼표 목록 옵션은 예전대로 반각만)."""
+    return tuple(item.strip() for item in _TOPIC_SPLIT.split(value or "") if item.strip())
+
+
+def _argument(work, text):
+    """값 읽기 함수가 칸 값 오류(CsvCellError)를 내면 사용법 오류의 말로 바꾼다 — 사용자가 읽는 한국어 이유 그대로."""
+    try:
+        return work(text.strip())
+    except csvmod.CsvCellError as error:
+        raise argparse.ArgumentTypeError(error.reason) from None
+
+
+def blog_names(text):
+    """`--blog` 값 — 블로그 구분(github_pages·blogger_en·blogger_ko·naver_a·naver_b)이나 `네이버 A` 같은 이름, 쉼표로 여러 개 → 구분 코드 튜플."""
+    try:
+        found = csvmod.parse_blogs(text.strip())
+    except csvmod.CsvCellError as error:
+        raise argparse.ArgumentTypeError(f"{error.reason} — 이름에 띄어쓰기가 있으면 따옴표로 묶습니다(예: --blog \"네이버 A\")") from None
+    if not found:
+        raise argparse.ArgumentTypeError("블로그를 적어야 합니다: " + ", ".join(st.PLATFORMS))
+    return found
+
+
+def blog_one(text):
+    found = blog_names(text)
+    if len(found) != 1:
+        raise argparse.ArgumentTypeError("블로그는 하나만 적습니다: " + ", ".join(st.PLATFORMS))
+    return found[0]
+
+
+def status_value(text):
+    """`--status` 값 — 한국어 이름(새 후보·검토 중·선택됨·보류·제외)이나 줄임말(선택·검토), 영문 코드도 받는다 → 상태 코드."""
+    wanted = csvmod.flat(text)
+    for code, name in cd.STATUS_KO.items():
+        if wanted in (csvmod.flat(code), csvmod.flat(name)):
+            return code
+    if wanted in STATUS_WORDS:
+        return STATUS_WORDS[wanted]
+    raise argparse.ArgumentTypeError("다음 중 하나여야 합니다: " + ", ".join(cd.STATUS_KO[code] for code in cd.STATUSES))
+
+
+def day_value(text):
+    return _argument(csvmod.check_day, text)
+
+
+def score_value(text):
+    """0~100 사이의 점수(`72.5`·`65%`) — 정수로 떨어지면 정수로 돌려준다."""
+    found = _argument(lambda value: csvmod.parse_score(value, "점수"), text)
+    if found is None:
+        raise argparse.ArgumentTypeError("0~100 사이의 숫자여야 합니다(예: 72.5)")
+    return found
+
+
+def months_value(text):
+    found = _argument(csvmod.parse_months, text)
+    if found is None:
+        raise argparse.ArgumentTypeError("달(1~12)을 쉼표로 나눠 적어야 합니다(예: 11,12,1)")
+    return found
+
+
+def yes_no_value(text):
+    found = _argument(csvmod.parse_bool, text)
+    if found is None:
+        raise argparse.ArgumentTypeError("예·아니오 중 하나여야 합니다")
+    return found
+
+
+def flatten_blogs(groups):
+    """`--blog` 를 여러 번 쓰거나 쉼표로 이은 것 → 겹치지 않는 구분 코드 튜플(처음 나온 순서)."""
+    return tuple(dict.fromkeys(blog for group in groups for blog in group))
 
 
 def pages_params(args):
@@ -259,8 +340,11 @@ def cmd_naver_done(ctx, args):
 def cmd_naver_profile(ctx, args):
     if args.action == "show":
         found = ctx.settings.naver_profile_dicts()
-        lines = [f"{fmt.PLATFORM_KO[key]}: {item.get('display_name', '')} — {item.get('blog_url', '')}" for key, item in sorted(found.items())] or ["설정된 네이버 블로그 프로필이 없습니다."]
-        return Output(lines, {"profiles": found})
+        lines = []
+        for key, item in sorted(found.items()):
+            lines.append(f"{fmt.PLATFORM_KO[key]}: {item.get('display_name', '')} — {item.get('blog_url', '')}")             # 첫 줄은 예전과 한 글자도 다르지 않다
+            lines += fmt.profile_option_lines(item)                                                                          # 그 아래에 '글 만들 때 쓰는 항목'(기본값은 '기본값')
+        return Output(lines or ["설정된 네이버 블로그 프로필이 없습니다."], {"profiles": found})
     if not args.blog:
         raise UsageError("`naver-profile set` 에는 블로그 구분(naver_a 또는 naver_b)이 필요합니다.")
     fields = {target: getattr(args, source) for source, target in PROFILE_FIELDS if getattr(args, source) is not None}
@@ -275,8 +359,23 @@ def cmd_naver_profile(ctx, args):
     for source, target in (("min_chars", "min_chars"), ("max_chars", "max_chars")):
         if getattr(args, source) is not None:
             fields[target] = getattr(args, source)
-    profile = naver_flow.set_profile(ctx.settings, args.blog, fields)
-    return Output([f"{fmt.PLATFORM_KO[profile.key]} 프로필을 저장했습니다: {profile.display_name} — {profile.blog_url}"], {"profile": profile.to_dict()})
+    for name in PROFILE_OPTIONS:
+        if getattr(args, name) is not None:
+            fields[name] = getattr(args, name)
+    if args.excluded_topics is not None:
+        fields["excluded_topics"] = list(split_topics(args.excluded_topics))
+    try:
+        profile = naver_flow.set_profile(ctx.settings, args.blog, fields)
+    except AppError as error:
+        if error.code != "CONTENT_INVALID":
+            raise
+        if error.slots.get("항목") in ("소제목 수 하한", "소제목 수 상한"):
+            error.detail = f"{error.detail} | 소제목 수의 하한은 상한보다 클 수 없습니다 — 필요하면 하한과 상한을 함께 정합니다(예: --subheading-min 6 --subheading-max 8)"
+        raise AppError("PROFILE_INVALID", {"항목": error.slots.get("항목", "프로필")}, detail=error.detail) from None            # 프로필 칸의 오류는 '원고의 …' 가 아니라 프로필의 말로
+    lines = [f"{fmt.PLATFORM_KO[profile.key]} 프로필을 저장했습니다: {profile.display_name} — {profile.blog_url}"]
+    if any(name in fields for name in (*PROFILE_OPTIONS, "excluded_topics")):                         # 이번에 글 만들 때 쓰는 항목을 정했을 때만 한 줄을 더한다(예전 명령의 출력은 그대로)
+        lines.append("  글 만들 때 쓰는 항목(기본값과 다른 것): " + (fmt.profile_saved_options_text(profile) or "모두 기본값"))
+    return Output(lines, {"profile": profile.to_dict()})
 
 
 def cmd_backup(ctx, args):
@@ -303,6 +402,130 @@ def cmd_delete(ctx, args):
                        detail="지우면 되돌릴 수 없습니다 — 이 글이 맞으면 같은 명령 끝에 --yes 를 붙여 다시 실행합니다")
     project_id, note = projects.delete_project(ctx, args.id, confirmed=args.yes)
     return Output([f"글을 지웠습니다: {project_id}"] + ([note] if note else []), {"deleted": project_id})
+
+
+# ---- 주제 후보(candidates) ------------------------------------------------------------------------------------------------------------
+def _verbose(args):
+    return getattr(args, "verbose", False)
+
+
+def cmd_candidates_list(ctx, args):
+    result = candidates.list_candidates(ctx, status=args.status, blog=args.blog)
+    return Output(fmt.candidate_list_lines(result, verbose=_verbose(args)), result.to_dict())
+
+
+def cmd_candidates_show(ctx, args):
+    result = candidates.show_candidate(ctx, args.ref)
+    return Output(fmt.candidate_show_lines(result, verbose=_verbose(args)), result.to_dict())
+
+
+def cmd_candidates_add(ctx, args):
+    fields = {name: getattr(args, name) for name in ("post_type", "reason", "data_date", "search_demand", "related_blog_results", "trend", "mobile_share", "seasonality", "duplicate",
+                                                     "profile_fit", "priority", "keyword_opportunity") if getattr(args, name) is not None}
+    if args.sub_keywords is not None:
+        fields["sub_keywords"] = split_list(args.sub_keywords)
+    result = candidates.add_candidate(ctx, topic=args.topic, keyword=args.keyword, blogs=flatten_blogs(args.blog), **fields)
+    return Output(fmt.candidate_add_lines(result), result.to_dict())
+
+
+def cmd_candidates_import_csv(ctx, args):
+    result = candidates.import_csv(ctx, args.file, blogs=flatten_blogs(args.blog or ()), data_date=args.data_date)
+    return Output(fmt.candidate_import_lines(result), result.to_dict(), 1 if result.rejected else 0)       # 거절한 줄이 있으면 종료 코드 1 — 나머지는 이미 저장됐다
+
+
+def cmd_candidates_select(ctx, args):
+    result = candidates.select_candidate(ctx, args.ref, args.blog)
+    return Output(fmt.candidate_select_lines(result), result.to_dict())
+
+
+def _mover(status, verb):
+    def run(ctx, args):
+        result = candidates.move_candidate(ctx, args.ref, status)
+        return Output(fmt.candidate_move_lines(result, verb), result.to_dict())
+
+    return run
+
+
+def cmd_candidates_restore(ctx, args):
+    result = candidates.restore_candidate(ctx, args.ref)
+    return Output(fmt.candidate_move_lines(result, "되살렸습니다"), result.to_dict())
+
+
+def cmd_candidates_delete(ctx, args):
+    result = candidates.delete_candidate(ctx, args.ref, confirmed=args.yes)
+    return Output(fmt.candidate_delete_lines(result), result.to_dict())
+
+
+def cmd_candidates_link(ctx, args):
+    result = candidates.link_candidate(ctx, args.ref, args.project)
+    return Output(fmt.candidate_link_lines(result), result.to_dict())
+
+
+def cmd_candidates_unlink(ctx, args):
+    result = candidates.unlink_candidate(ctx, args.ref)
+    return Output(fmt.candidate_link_lines(result, unlinking=True), result.to_dict())
+
+
+def _add_candidates_parser(add, common):
+    """`candidates` 와 그 하위 명령들 — 하위 명령도 같은 한국어 도움말·옵션 줄임말 거절(`KoreanParser`)·공통 옵션(`common`)을 쓴다."""
+    group = add("candidates", None, "주제 후보를 모으고 고르는 명령들(목록·추가·CSV 가져오기·선택·보류·제외·지우기·글 연결)")
+    group.epilog = ("처음이라면: candidates add 또는 import-csv → list → select 순번 --blog 블로그 → link 순번 글번호. 순번은 list 에 보이는 번호입니다.\n"
+                    f"순번은 후보를 지우면 뒤가 당겨집니다. 그래서 지울 때는 순번이 아니라 list 의 '번호'(앞 {candidates.DELETE_PREFIX}자)를 씁니다: candidates delete 번호 --yes")
+    inner = group.add_subparsers(dest="candidates_command", metavar="하위명령", parser_class=KoreanParser)
+    inner.required = True
+
+    def leaf(name, handler, help_text):
+        found = inner.add_parser(name, parents=[common], help=help_text, description=help_text)
+        found.set_defaults(handler=handler, command_path=f"candidates {name}")
+        return found
+
+    def ref(found, what="후보"):
+        found.add_argument("ref", metavar="번호", help=f"{what}의 순번(list 에 보이는 1, 2, 3 … 999)이나 list 의 '번호'(앞 {candidates.MIN_PREFIX}자 이상). 1000번 이상은 번호로 고릅니다")
+
+    found = leaf("list", cmd_candidates_list, "후보 목록을 보여 줍니다(읽기만 합니다 — 보관함을 만들거나 바꾸지 않습니다)")
+    found.add_argument("--status", type=status_value, metavar="상태", help="이 상태의 후보만: 새 후보·검토 중·선택됨·보류·제외")
+    found.add_argument("--blog", type=blog_one, metavar="블로그", help="추천 대상에 이 블로그가 든 후보만(github_pages·blogger_en·blogger_ko·naver_a·naver_b)")
+    found = leaf("show", cmd_candidates_show, "후보 하나의 자세한 내용과 연결한 글을 보여 줍니다(읽기만 합니다)")
+    ref(found)
+    found = leaf("add", cmd_candidates_add, "후보를 직접 더합니다(같은 핵심 키워드·주제·블로그의 후보가 이미 있으면 더하지 않습니다)")
+    found.add_argument("--topic", required=True, metavar="주제", help="추천 포스팅 주제(한 줄)")
+    found.add_argument("--keyword", required=True, metavar="키워드", help="핵심 키워드")
+    found.add_argument("--blog", required=True, action="append", type=blog_names, metavar="블로그", help="추천 대상 블로그(여러 번 쓰거나 쉼표로 이어 쓸 수 있습니다)")
+    found.add_argument("--sub-keywords", metavar="a,b,c", help="보조 키워드(쉼표로 나눔)")
+    found.add_argument("--post-type", metavar="유형", help="추천 글 유형: " + ", ".join(POST_TYPES))
+    found.add_argument("--reason", metavar="이유", help="추천 이유(한 줄)")
+    found.add_argument("--data-date", type=day_value, metavar="YYYY-MM-DD", help="지표를 조회한 날(지표를 하나라도 적으면 꼭 필요합니다)")
+    found.add_argument("--search-demand", dest="search_demand", type=int, metavar="회", help="월간 검색 수요")
+    found.add_argument("--related-results", dest="related_blog_results", type=int, metavar="건", help="관련 블로그 검색 결과 수")
+    found.add_argument("--trend", choices=cd.TRENDS, help="최근 관심도 변화")
+    found.add_argument("--mobile-share", dest="mobile_share", type=score_value, metavar="0~100", help="모바일 비중(%%)")
+    found.add_argument("--seasonality", type=months_value, metavar="11,12,1", help="관심이 몰리는 달(쉼표로 나눔)")
+    found.add_argument("--duplicate", type=yes_no_value, metavar="예|아니오", help="기존 글 중복 여부")
+    found.add_argument("--profile-fit", dest="profile_fit", type=score_value, metavar="0~100", help="블로그 프로필 적합도")
+    found.add_argument("--priority", type=score_value, metavar="0~100", help="콘텐츠 작성 우선도")
+    found.add_argument("--opportunity", dest="keyword_opportunity", type=score_value, metavar="0~100", help="키워드 기회도")
+    found = leaf("import-csv", cmd_candidates_import_csv, "CSV 파일의 후보들을 가져옵니다(다시 가져와도 겹치지 않습니다 — 잘못된 줄은 그 줄만 거절합니다)")
+    found.add_argument("file", metavar="파일", help="CSV 파일(UTF-8 또는 엑셀의 cp949, 5MB 이하, 첫 줄은 열 이름)")
+    found.add_argument("--blog", action="append", type=blog_names, metavar="블로그", help="대상 블로그 칸이 없거나 빈 줄에 쓸 블로그")
+    found.add_argument("--data-date", type=day_value, metavar="YYYY-MM-DD", help="조회일 칸이 없거나 빈 줄에 쓸 날(지표가 있는 줄에 필요합니다)")
+    found.epilog = ("첫 줄(열 이름)에 `주제`·`핵심 키워드`·`대상 블로그`(없으면 --blog)가 있어야 합니다. 영어 이름도 되고 띄어쓰기·대소문자는 무시합니다.\n"
+                    "고르는 열: 보조 키워드·글 유형·월간 검색 수요·관련 블로그 검색 결과 수·최근 관심도 변화·모바일 비중·계절성·기존 글 중복 여부·블로그 프로필 적합도·콘텐츠 작성 우선도·키워드 기회도·추천 이유·데이터 조회일.\n"
+                    "지표가 하나라도 있는 줄에는 조회일이 필요합니다(열 또는 --data-date). 모르는 열은 무시하고, 잘못된 줄은 그 줄만 거절합니다(거절이 있으면 종료 코드 1).\n"
+                    "엑셀에서는 '다른 이름으로 저장' → 'CSV UTF-8(쉼표로 분리)' 이나 'CSV(쉼표로 분리)' 로 저장한 파일을 그대로 받습니다. 쉼표나 줄바꿈이 든 칸은 엑셀이 큰따옴표로 감싸 줍니다.")
+    found = leaf("select", cmd_candidates_select, "후보를 그 블로그용으로 고릅니다(같은 키워드를 최근에 같은 블로그용으로 골랐다면 경고만 합니다)")
+    ref(found)
+    found.add_argument("--blog", required=True, type=blog_one, metavar="블로그", help="어느 블로그용으로 고르는지")
+    for name, status, verb, text in (("hold", cd.HOLD, "보류했습니다", "후보를 보류합니다(나중에 다시 볼 후보)"), ("reject", cd.REJECTED, "제외했습니다", "후보를 제외합니다(지우지는 않습니다 — restore 로 되살립니다)"),
+                                     ("review", cd.REVIEW, "검토 중으로 옮겼습니다", "후보를 검토 중으로 옮깁니다(보류·선택됨·제외한 후보를 다시 살필 때)")):
+        ref(leaf(name, _mover(status, verb), text))
+    ref(leaf("restore", cmd_candidates_restore, "제외한 후보를 검토 중으로 되살립니다(제외한 후보만)"))
+    found = leaf("delete", cmd_candidates_delete, f"후보를 지웁니다(되돌릴 수 없습니다 — 번호 앞 {candidates.DELETE_PREFIX}자와 --yes 가 필요합니다. 다시 볼 후보면 reject 를 씁니다)")
+    found.add_argument("ref", metavar="번호", help=f"지울 후보의 번호 앞 {candidates.DELETE_PREFIX}자(list 의 '번호' — 순번은 지울 때마다 당겨져서 지우기에는 쓰지 않습니다. --yes 없이 순번을 주면 지울 명령을 보여 줍니다)")
+    found.add_argument("--yes", action="store_true", help="정말 지웁니다")
+    found = leaf("link", cmd_candidates_link, "후보를 보관함의 글(원고)과 잇습니다")
+    ref(found)
+    found.add_argument("project", metavar="글번호", help="이을 글의 번호(전체 또는 앞 4자 이상 — `list` 에 보입니다)")
+    ref(leaf("unlink", cmd_candidates_unlink, "후보와 글의 연결을 끊습니다(글은 그대로입니다)"))
 
 
 # ---- 사용법(argparse) -------------------------------------------------------------------------------------------------------------
@@ -421,6 +644,14 @@ def build_parser():
     found.add_argument("--category-map", action="append", metavar="원고분류=네이버카테고리", help="카테고리 매핑(여러 번 쓸 수 있음 — 쓰면 목록을 이것으로 바꿉니다)")
     found.add_argument("--min-chars", type=int, metavar="글자수")
     found.add_argument("--max-chars", type=int, metavar="글자수")
+    found.add_argument("--intro-style", dest="intro_style", metavar="글", help="글 만들 때 쓰는 항목: 도입부 스타일 안내(예: 독자의 고민으로 시작 — 비우려면 \"\")")
+    found.add_argument("--subheading-min", dest="subheading_min", type=int, metavar="개수", help="글 만들 때 쓰는 항목: 소제목 수 하한(1~20, 기본 3 — 소제목이 이보다 적으면 미리 보기에서 주의)")
+    found.add_argument("--subheading-max", dest="subheading_max", type=int, metavar="개수", help="글 만들 때 쓰는 항목: 소제목 수 상한(하한~20, 기본 5 — 소제목이 이보다 많으면 주의)")
+    found.add_argument("--difficulty", metavar="글", help="글 만들 때 쓰는 항목: 설명 난이도 안내(예: 처음 접하는 사람도 이해 — 비우려면 \"\")")
+    found.add_argument("--ending-style", dest="ending_style", metavar="글", help="글 만들 때 쓰는 항목: 마무리 방식 안내(예: 핵심 세 줄 요약 — 비우려면 \"\")")
+    found.add_argument("--excluded-topics", dest="excluded_topics", metavar="a,b,c", help="글 만들 때 쓰는 항목: 이 블로그에서 다루지 않을 주제(쉼표로 나눔 — 글에 있으면 주의, 비우려면 \"\")")
+    found.add_argument("--topic-reuse-days", dest="topic_reuse_days", type=int, metavar="일수", help="글 만들 때 쓰는 항목: 같은 핵심 키워드를 다시 고르기 전에 기다리는 날수(0~3650, 기본 90 — 0 이면 경고하지 않음)")
+    found.add_argument("--post-type", dest="post_type", metavar="유형", help="글 만들 때 쓰는 항목: 기본 글 유형(" + ", ".join(POST_TYPES) + ")")
     add("backup", cmd_backup, "글 저장소의 점검한 백업 사본을 만듭니다(최근 10개 보관)")
     found = add("restore", cmd_restore, "백업으로 글 저장소를 되돌립니다(되돌리기 직전 상태는 따로 백업합니다 — --yes 필요)")
     found.add_argument("file", nargs="?", metavar="백업파일")
@@ -429,6 +660,7 @@ def build_parser():
     found = add("delete", cmd_delete, "글을 지웁니다(되돌릴 수 없습니다 — --yes 필요)")
     found.add_argument("id", metavar="글번호")
     found.add_argument("--yes", action="store_true", help="정말 지웁니다")
+    _add_candidates_parser(add, common)
     return parser
 
 
@@ -506,7 +738,7 @@ def main(argv=None, *, out=None, err=None, ctx=None, env=None):
         return 2
     as_json = getattr(args, "json", False)
     debug = getattr(args, "debug", False)
-    command = args.command
+    command = getattr(args, "command_path", args.command)           # 하위 명령이 있는 명령은 `candidates list` 처럼 전체 이름으로 알린다(오류 도움말·JSON 의 command)
     try:
         context = ctx if ctx is not None else make_context(data_dir=getattr(args, "data_dir", None), repo=getattr(args, "repo", None), env=env)
         if hasattr(context.backend, "progress"):                       # 공개 확인을 기다리는 동안(기본 최대 12분) 진행을 알린다 — 표준 오류로(--json 출력을 어지럽히지 않는다)

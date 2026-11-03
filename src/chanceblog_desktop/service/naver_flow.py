@@ -8,10 +8,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta, timezone
 
-from ..check import similarity
+from ..check import profile_options, similarity
 from ..content import status as st
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.profiles import NaverProfile
@@ -75,8 +75,10 @@ def package_from_json(text):
 def build_for_blog(profile, project, options=None):
     """프로젝트의 원고(또는 블로그별로 고친 값)를 그 블로그 프로필에 맞는 패키지로. 글을 AI 로 다시 쓰지 않고 파일·네트워크도 쓰지 않는다."""
     options = options or NaverOptions()
-    return build_package(profile, title=project.title if options.title is None else options.title, body=project.source_content if options.body is None else options.body,
-                         tags=options.tags, assets=project.assets, category=options.category, ai_assisted=options.ai_assisted)
+    package = build_package(profile, title=project.title if options.title is None else options.title, body=project.source_content if options.body is None else options.body,
+                            tags=options.tags, assets=project.assets, category=options.category, ai_assisted=options.ai_assisted)
+    extra = profile_options.option_warnings(profile, package)          # 프로필의 소제목 수 범위·제외 주제 — 변환(`build_package`)은 이 항목을 읽지 않고 경고만 여기서 덧붙인다
+    return replace(package, warnings=package.warnings + extra) if extra else package
 
 
 def kst_date(now):
