@@ -255,6 +255,27 @@ class CiWorkflowTest(unittest.TestCase):
         for needle in ("'3.10'", "'3.12'", "ubuntu-latest", "windows-latest", "python -m unittest discover -s tests"):
             self.assertIn(needle, ci, needle)
 
+    def test_ci_runs_on_every_push_and_never_again_for_a_pull_request(self):
+        # 미리 검사(D-28): 병합 브랜치를 push 하면 그 자리에서 시험이 돌고, PR 을 만들 때는 같은 커밋을 다시 돌리지 않는다.
+        # PR 이벤트를 켜면 운영자가 PR 화면 앞에서 Windows 칸 13분을 또 기다린다. push 에 브랜치·경로 필터가 있으면 그 밖의 브랜치는 미리 검사되지 않는다.
+        ci = read(".github/workflows/ci.yml").replace("\r\n", "\n")
+        block = []
+        for line in ci.split("\non:\n", 1)[1].splitlines():
+            if line and not line[0].isspace() and not line.startswith("#"):
+                break                      # 다음 최상위 키(permissions: …)에서 끝난다 — 사이의 빈 줄은 건너뛴다
+            block.append(line)
+        lines = [line for line in block if line.strip() and not line.lstrip().startswith("#")]
+        self.assertEqual(lines, ["  push:", "  workflow_dispatch:"], "D-28: ci.yml 의 on: 은 push 와 workflow_dispatch 만(docs/DECISIONS.md) — " + repr(lines))
+        code = [line for line in ci.splitlines() if not line.lstrip().startswith("#")]
+        self.assertFalse(any("pull_request" in line for line in code))
+
+    def test_ci_time_limit_leaves_room_for_the_slowest_cell(self):
+        # Windows 칸이 14~15분까지 늘었다(2026-11-03). 20분 한도에 닿아 빨간 칸이 나오면 병합 부탁이 막힌다(D-28).
+        ci = read(".github/workflows/ci.yml")
+        found = re.search(r"^\s+timeout-minutes:\s*(\d+)", ci, re.M)
+        self.assertIsNotNone(found)
+        self.assertGreaterEqual(int(found.group(1)), 30)
+
 
 if __name__ == "__main__":
     unittest.main()
