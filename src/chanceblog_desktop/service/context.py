@@ -58,13 +58,25 @@ def _write_error(error, path):
     return AppError("DISK_FULL" if number == errno.ENOSPC else "FILE_WRITE_FAILED", {"경로": str(path)}, detail=f"{type(error).__name__}: {error.strerror or error}"[:200])
 
 
+def _write_durably(temp, payload):
+    """임시 파일에 다 쓰고 디스크까지 내려보낸(`fsync`) 뒤에 닫는다 — 이름을 바꾼 직후 전원이 나가도(매일 23:00 강제 재부팅) 내용이 비어 있는 파일이 남지 않게. 줄바꿈은 그대로(`O_BINARY`)."""
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(fd, view):]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def write_json(path, data):
-    """JSON 파일을 임시 파일에 쓴 뒤 이름을 바꿔 넣는다 — 쓰다 멈춰도 옛 파일이 그대로 남는다."""
+    """JSON 파일을 임시 파일에 쓰고 디스크에 내려보낸 뒤(`fsync`) 이름을 바꿔 넣는다 — 쓰다 멈추거나 전원이 나가도 옛 파일이 그대로 남고, 새 파일은 내용이 다 쓰인 것만 자리를 차지한다."""
     path = Path(path)
     temp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+        _write_durably(temp, (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         os.replace(temp, path)
     except OSError as error:
         problem = _write_error(error, path)
@@ -73,6 +85,19 @@ def write_json(path, data):
         except OSError as leftover:                       # 못 지운 임시 파일도 숨기지 않고 오류 세부에 적는다
             problem.detail += f" | 임시 파일도 지우지 못했다({type(leftover).__name__})"
         raise problem from None
+
+
+def keep_bad_copy(path):
+    """읽을 수 없는 파일을 지우지 않고 `.bak` 이름으로 옮겨 둔다(그 위에 새로 쓰기 전에). 옮겼으면 True, 파일이 없었으면 False. 못 옮기면 FILE_WRITE_FAILED."""
+    path = Path(path)
+    target = path.with_name(path.name + ".bak")
+    try:
+        os.replace(path, target)
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise _write_error(error, path) from None
+    return True
 
 
 class Workspace:
@@ -99,6 +124,18 @@ class Workspace:
     @property
     def settings_path(self):
         return self.root / "settings.json"
+
+    @property
+    def connections_path(self):
+        return self.root / "connections.json"            # 연결 설정(키 항목의 이름·상태 같은 메타데이터만 — 키 값은 보관소에만 있다)
+
+    @property
+    def quota_path(self):
+        return self.root / "quota_state.json"            # 한도 사용량 기록(묶음별 창·막힘 해제 시각 — 키 값 없음)
+
+    @property
+    def locks_dir(self):
+        return self.root / "locks"
 
     @property
     def backups_dir(self):
@@ -183,6 +220,7 @@ class Context:
     env: object = None
     lock_wait: float = 120.0       # 다른 글이 같은 저장소에 올라가는 중이면 이 만큼(초) 기다리고 그래도 안 끝나면 PUBLISH_REPO_BUSY 로 물러난다(0 이면 기다리지 않고 바로)
     read_only_store: bool = False  # 참이면 `store()` 가 읽기 전용으로 연다(파일을 만들지도 구조를 올리지도 않는다) — `reading_only()` 로 만든다
+    keystore: object = None        # 비밀 보관소(`security.keystore.KeyStore`) — 시험은 가짜를 넣고, 비워 두면 처음 쓸 때 `default_keystore` 로 연다(Windows 자격 증명 관리자)
 
     def now(self):
         """지금(시간대가 있는 UTC 시각). 시계가 시간대 없는 시각을 내면 멈춘다 — 파일 이름의 한국 시각이 어긋나지 않게."""
@@ -201,6 +239,13 @@ class Context:
             return Store.open(self.workspace.store_path, migrate=False)
         self.workspace.ensure()
         return Store.open(self.workspace.store_path)
+
+    def get_keystore(self):
+        """비밀 보관소. 주입한 것이 없으면 프로그램의 보관소(`default_keystore` — 환경 변수가 없으면 언제나 Windows 자격 증명 관리자)를 연다. 못 열면 KEY_STORE_UNAVAILABLE."""
+        if self.keystore is not None:
+            return self.keystore
+        from ..security.keystore import default_keystore       # 늦게 가져온다 — 키를 안 쓰는 명령이 ctypes 를 불러오지 않게
+        return default_keystore(os.environ if self.env is None else self.env)
 
     def reading_only(self):
         """같은 부품에 '글 저장소는 읽기만' 표시를 한 사본 — 점검(doctor)처럼 읽기만 하는 일이 쓴다. 이 사본의 `store()` 는 파일을 만들지도, 옛 구조를 올리지도, 사본을 남기지도 않는다."""

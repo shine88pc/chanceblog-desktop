@@ -177,7 +177,7 @@ class SourceRulesTest(unittest.TestCase):
                     if name in WRITE_CALLS and name not in ("write", "open", "copy", "move", "replace", "remove"):
                         with self.subTest(file=path.name, call=name, line=node.lineno):
                             self.assertIn(name, allowed, "서비스가 직접 파일을 쓰거나 지우는 곳은 설정(context)과 발행 기록(journal)뿐이다")
-                    allowed_open = ("Store.open", "os.open") if path.name == "lock.py" else ("Store.open",)         # os.open: 잠금 파일을 `O_EXCL` 로 새로 만드는 한 곳
+                    allowed_open = ("Store.open", "os.open") if path.name in ("lock.py", "context.py") else ("Store.open",)         # os.open: 잠금 파일을 `O_EXCL` 로 새로 만드는 곳(lock.py)과, JSON 을 임시 파일에 쓰고 `fsync` 하는 곳(context.py 의 `_write_durably`)
                     opens_a_file = name in ("makedirs", "rmtree", "copytree", "copyfile", "copy2") or (name == "open" and ast.unparse(node.func) not in allowed_open)
                     if opens_a_file:
                         self.fail(f"{path.name}:{node.lineno} 서비스가 직접 파일을 열거나 복사한다: {name}")
