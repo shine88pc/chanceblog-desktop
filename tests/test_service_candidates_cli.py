@@ -30,7 +30,7 @@ from chanceblog_desktop.service import cli, projects  # noqa: E402
 ENGLISH = ("usage:", "positional arguments", "options:", "optional arguments", "show this help message and exit")
 STATUS_CODES = re.compile(r"\b(?:NEW|REVIEW|SELECTED|HOLD|REJECTED)\b")
 LONG_ID = re.compile(r"\b[0-9a-f]{32}\b")
-SUBCOMMANDS = {"list", "show", "add", "import-csv", "select", "hold", "reject", "review", "restore", "delete", "link", "unlink"}
+SUBCOMMANDS = {"list", "show", "add", "import-csv", "select", "hold", "reject", "review", "restore", "delete", "link", "unlink", "suggest"}
 
 
 class Base(unittest.TestCase):

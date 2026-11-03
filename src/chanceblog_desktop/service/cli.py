@@ -20,11 +20,12 @@ from pathlib import Path
 from ..content import candidate_csv as csvmod
 from ..content import candidates as cd
 from ..content import status as st
+from ..content import suggest as sg
 from ..content.draft_options import DraftOptions
 from ..content.profiles import POST_TYPES
 from ..errors import AppError
 from ..security.mask import MAX_MASK_INPUT, mask
-from . import candidates, draft, naver_flow, pages_flow, projects, review
+from . import candidates, draft, naver_flow, pages_flow, projects, review, suggestions
 from . import format as fmt
 from .context import make_context
 from .doctor import doctor_ok, run_doctor
@@ -155,6 +156,14 @@ def blog_names(text):
     return found
 
 
+def blog_one_quiet(text):
+    """`--blog` 값(제안 명령용) — `blog_one` 과 같지만 틀리면 친 글을 오류 문구에 싣지 않는다(앞 30자라도 비밀 모양이 가림 규칙을 빠져나갈 수 있다)."""
+    try:
+        return blog_one(text)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError("알 수 없는 블로그입니다 — 다음 중 하나여야 합니다: " + ", ".join(st.PLATFORMS) + "(이름에 띄어쓰기가 있으면 따옴표로 묶습니다)") from None
+
+
 def blog_one(text):
     found = blog_names(text)
     if len(found) != 1:
@@ -190,6 +199,38 @@ def months_value(text):
     if found is None:
         raise argparse.ArgumentTypeError("달(1~12)을 쉼표로 나눠 적어야 합니다(예: 11,12,1)")
     return found
+
+
+def count_value(text):
+    """`--count` 값 — 1~`MAX_COUNT` 의 정수(받은 글은 문구에 싣지 않는다)."""
+    value = int(text) if re.fullmatch(r"[0-9]{1,3}", text.strip()) else 0            # 1_0·１０·+5 같은 모양은 받지 않는다(ASCII 숫자만)
+    if not 1 <= value <= sg.MAX_COUNT:
+        raise argparse.ArgumentTypeError(f"1~{sg.MAX_COUNT} 사이의 정수를 써야 합니다")
+    return value
+
+
+def month_value(text):
+    """`--month` 값 — 1~12 의 정수."""
+    value = int(text) if re.fullmatch(r"[0-9]{1,2}", text.strip()) else 0
+    if not 1 <= value <= 12:
+        raise argparse.ArgumentTypeError("1~12 사이의 정수(달)를 써야 합니다")
+    return value
+
+
+def post_type_value(text):
+    """`--type` 값 — 글 유형 이름('정보형') 또는 '형' 을 뺀 이름('정보')."""
+    found = _argument(csvmod.parse_post_type, text)
+    if found is None:
+        raise argparse.ArgumentTypeError("글 유형을 적어야 합니다: " + ", ".join(POST_TYPES))
+    return found
+
+
+def add_spec_value(text):
+    """`--add` 값 — `all`, 번호(`1,3`)·번호 범위(`2-4`)·따옴표로 묶은 키워드(쉼표로 나눔)."""
+    try:
+        return suggestions.parse_add_spec(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
 
 
 def yes_no_value(text):
@@ -412,12 +453,45 @@ def _verbose(args):
 
 def cmd_candidates_list(ctx, args):
     result = candidates.list_candidates(ctx, status=args.status, blog=args.blog)
-    return Output(fmt.candidate_list_lines(result, verbose=_verbose(args)), result.to_dict())
+    if not getattr(args, "priority", False):
+        return Output(fmt.candidate_list_lines(result, verbose=_verbose(args)), result.to_dict())
+    found, notes = suggestions.assess_rows(ctx, result.rows, blog=args.blog)                  # 읽기만 한다 — 보관함 값은 바꾸지 않고 지금 계산한 값을 덧붙여 보인다
+    data = result.to_dict()
+    for item in data["candidates"]:
+        item["priority_info"] = found[item["candidate_id"]].to_dict()
+    return Output(fmt.candidate_list_lines(result, verbose=_verbose(args), assessments=found, notes=notes), data)
 
 
 def cmd_candidates_show(ctx, args):
     result = candidates.show_candidate(ctx, args.ref)
-    return Output(fmt.candidate_show_lines(result, verbose=_verbose(args)), result.to_dict())
+    found, notes = suggestions.assess_rows(ctx, [result.row])
+    assessment = found[result.row.candidate.candidate_id]
+    data = result.to_dict()
+    data["candidate"]["priority_info"] = assessment.to_dict()
+    return Output(fmt.candidate_show_lines(result, verbose=_verbose(args), assessment=assessment, notes=notes), data)
+
+
+def cmd_candidates_suggest(ctx, args):
+    """프로필·기존 글·최근 선택·달력으로 후보를 먼저 제안한다(읽기만). `--add 번호,… --yes` 는 고른 제안을 새 후보로 보관함에 넣는다(`--yes` 없이는 넣을 목록만 보인다)."""
+    if args.yes and args.add is None:
+        raise UsageError("--yes 는 --add 와 함께 씁니다(고른 제안을 보관함에 넣을 때).")
+    spec = None
+    if args.add is not None:
+        try:
+            spec = suggestions.merge_add_specs(args.add)
+        except ValueError as error:
+            raise UsageError(str(error)) from None
+    if spec is None:
+        result = suggestions.run_suggest(ctx, blog=args.blog, count=args.count, month=args.month, post_type=args.post_type)
+        return Output(fmt.suggest_lines(result, verbose=_verbose(args)), result.to_dict())
+    blog = args.blog
+    if blog is None:
+        found = suggestions.profiled_blogs(ctx)
+        if len(found) != 1:
+            raise UsageError("--add 를 쓸 때는 --blog 로 블로그를 하나 정합니다(예: --blog naver_a)" + ("" if found else " — 프로필이 저장된 네이버 블로그가 아직 없습니다."))
+        blog = found[0]
+    result = suggestions.add_suggestions(ctx, spec, blog=blog, count=args.count, month=args.month, post_type=args.post_type, confirmed=args.yes)
+    return Output(fmt.suggest_add_lines(result), result.to_dict())
 
 
 def cmd_candidates_add(ctx, args):
@@ -509,8 +583,8 @@ def _add_draft_parser(add, common):
 
 def _add_candidates_parser(add, common):
     """`candidates` 와 그 하위 명령들 — 하위 명령도 같은 한국어 도움말·옵션 줄임말 거절(`KoreanParser`)·공통 옵션(`common`)을 쓴다."""
-    group = add("candidates", None, "주제 후보를 모으고 고르는 명령들(목록·추가·CSV 가져오기·선택·보류·제외·지우기·글 연결)")
-    group.epilog = ("처음이라면: candidates add 또는 import-csv → list → select 순번 --blog 블로그 → link 순번 글번호. 순번은 list 에 보이는 번호입니다.\n"
+    group = add("candidates", None, "주제 후보를 모으고 고르는 명령들(제안·목록·추가·CSV 가져오기·선택·보류·제외·지우기·글 연결)")
+    group.epilog = ("처음이라면: candidates suggest(프로필로 먼저 제안) → suggest --add 번호 --yes, 또는 candidates add / import-csv → list → select 순번 --blog 블로그 → link 순번 글번호. 순번은 list 에 보이는 번호입니다.\n"
                     f"순번은 후보를 지우면 뒤가 당겨집니다. 그래서 지울 때는 순번이 아니라 list 의 '번호'(앞 {candidates.DELETE_PREFIX}자)를 씁니다: candidates delete 번호 --yes")
     inner = group.add_subparsers(dest="candidates_command", metavar="하위명령", parser_class=KoreanParser)
     inner.required = True
@@ -526,6 +600,16 @@ def _add_candidates_parser(add, common):
     found = leaf("list", cmd_candidates_list, "후보 목록을 보여 줍니다(읽기만 합니다 — 보관함을 만들거나 바꾸지 않습니다)")
     found.add_argument("--status", type=status_value, metavar="상태", help="이 상태의 후보만: 새 후보·검토 중·선택됨·보류·제외")
     found.add_argument("--blog", type=blog_one, metavar="블로그", help="추천 대상에 이 블로그가 든 후보만(github_pages·blogger_en·blogger_ko·naver_a·naver_b)")
+    found.add_argument("--priority", action="store_true", help="콘텐츠 작성 우선도·블로그 프로필 적합도를 지금 계산해 덧붙여 보입니다(보관함 값은 바꾸지 않습니다)")
+    found = leaf("suggest", cmd_candidates_suggest, "프로필·기존 글·최근 선택·달력으로 주제 후보를 먼저 제안합니다(읽기만 합니다 — --add 번호 --yes 가 있어야 보관함에 넣습니다)")
+    found.add_argument("--blog", type=blog_one_quiet, metavar="블로그", help="어느 블로그용으로 제안할지(naver_a·naver_b — 없으면 프로필이 저장된 네이버 블로그 모두). --add 를 쓰면 하나만")
+    found.add_argument("--count", type=count_value, default=sg.DEFAULT_COUNT, metavar="개수", help=f"블로그마다 보여 줄 제안 수(1~{sg.MAX_COUNT}, 기본 {sg.DEFAULT_COUNT})")
+    found.add_argument("--month", type=month_value, metavar="1~12", help="이 달의 시기로 제안합니다(없으면 오늘의 달)")
+    found.add_argument("--type", dest="post_type", type=post_type_value, metavar="유형", help="이 글 유형의 틀만 씁니다: " + ", ".join(POST_TYPES))
+    found.add_argument("--add", type=add_spec_value, action="append", metavar="번호,번호|all", help="고른 제안을 '새 후보'(출처: 프로필 제안)로 보관함에 넣습니다 — 번호(1,3)·범위(2-4)·all·따옴표로 묶은 키워드(여러 번 적으면 이어 붙입니다). --yes 가 없으면 넣을 목록만 보입니다")
+    found.add_argument("--yes", action="store_true", help="--add 한 제안을 정말 보관함에 넣습니다")
+    found.epilog = ("제안은 프로필의 주제·카테고리·기본 태그와 기존 글·최근 선택·이번 달 시기로 계산합니다(네트워크·AI 를 쓰지 않고 같은 입력이면 같은 순서입니다). 월간 검색 수요 같은 외부 데이터가 없는 칸은 '데이터 없음' 이며 점수에 넣지 않습니다.\n"
+                    "프로필에 주제가 없으면 `naver-profile set naver_a --topic \"주제1, 주제2\"` 로 적습니다. --add 는 같은 명령을 되풀이해도 같은 키워드가 겹치지 않습니다.")
     found = leaf("show", cmd_candidates_show, "후보 하나의 자세한 내용과 연결한 글을 보여 줍니다(읽기만 합니다)")
     ref(found)
     found = leaf("add", cmd_candidates_add, "후보를 직접 더합니다(같은 핵심 키워드·주제·블로그의 후보가 이미 있으면 더하지 않습니다)")
