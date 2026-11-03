@@ -7,7 +7,11 @@
 그래서 저장소 잠금을 하나 더 둔다: commit·push·되돌리기를 하는 구간은 연결한 저장소마다 한 번에 하나만 돌고, 다른 작업은 짧게 기다리다(`Context.lock_wait` 초) 못 잡으면 **아무것도 바꾸지 않고**
 `PUBLISH_REPO_BUSY` 로 물러난다(같은 명령을 다시 실행하면 된다). 저장소 잠금은 공개 확인을 기다리기 전에 풀어 다른 글이 그동안 올라갈 수 있다.
 
-방식: 사용자 데이터 폴더의 `publish/<글번호>.lock`(저장소 잠금은 `publish/repo-<저장소 폴더 이름의 해시>.lock`) 파일을 `O_CREAT|O_EXCL`(이미 있으면 실패)로 만들고 프로세스 번호·시작 시각·**실행 번호(무작위)** 를 적는다.
+저장소 잠금은 **데이터 폴더가 아니라 연결한 저장소의 `.git` 안**(`.git/chanceblog-desktop-publish.lock` — git 이 추적하지 않는 파일)에 둔다: 데이터 폴더에 두면 `--data-dir` 을 다르게 준 두 앱이 서로의 잠금을 몰라
+같은 저장소에 동시에 올릴 수 있었다(둘 다 commit 만 하고 올리지 못했다). 같은 저장소면 어떤 경로 표기·링크·대소문자로 불러도 같은 `.git` 이라 같은 잠금이다. **`.git` 에 잠금 파일을 만들 수 없으면 데이터 폴더로
+물러서지 않고 올리지 않는다**(fail closed — 물러서면 다른 앱을 막지 못하는 잠금으로 올리게 된다. 어차피 `.git` 에 쓸 수 없으면 commit 도 못 한다).
+
+방식: 사용자 데이터 폴더의 `publish/<글번호>.lock`(저장소 잠금은 저장소의 `.git/chanceblog-desktop-publish.lock`) 파일을 `O_CREAT|O_EXCL`(이미 있으면 실패)로 만들고 프로세스 번호·시작 시각·**실행 번호(무작위)** 를 적는다.
  · 풀 때는 **자기 실행 번호인 잠금만** 지운다(낡은 것으로 보고 다른 실행이 넘겨받은 잠금을 지우지 않는다). 정상 종료·예외·Ctrl+C 모두 `finally` 에서 푼다.
  · 낡은 잠금은 PC 가 갑자기 꺼지거나 창을 닫아 작업이 죽은 흔적으로 보고 넘겨받는다(넘겨받았다는 사실은 알린다): ① 잠금을 남긴 **프로세스가 같은 PC 에서 이미 끝났으면 바로**(`service/liveness.py` — 읽기만 한다.
    Windows 에서 `os.kill(pid, 0)` 은 프로세스를 끝내 버리므로 쓰지 않는다. 프로세스 번호는 재사용되므로 잠금을 잡은 뒤에 시작한 프로세스는 다른 프로세스로 본다) ② 알 수 없으면 시작한 지
@@ -19,7 +23,6 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import hashlib
 import json
 import os
 import platform
@@ -34,8 +37,8 @@ from ..errors import AppError
 from .liveness import process_alive
 
 LOCK_SUFFIX = ".lock"
-REPO_PREFIX = "repo-"           # 연결한 저장소 하나의 잠금 파일 이름 앞머리(`repo-<16자리>.lock`) — 글 번호(uuid)와 겹치지 않는다
-STALE_SECONDS = 1800            # 이보다 오래된 잠금은 낡은 것으로 본다(기다리는 시간이 길면 그 시간 + 15분)
+REPO_LOCK_NAME = "chanceblog-desktop-publish"      # 저장소 잠금 파일 이름(`.git/chanceblog-desktop-publish.lock`) — 연결한 저장소의 `.git` 안에 둔다
+STALE_SECONDS = 1800           # 이보다 오래된 잠금은 낡은 것으로 본다(기다리는 시간이 길면 그 시간 + 15분)
 STALE_MARGIN = 900
 SCHEMA = 1
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -146,6 +149,13 @@ class PublishLock:
             raise self._write_problem(error) from None
         os.close(fd)
 
+    def _prepare_folder(self):
+        """잠금 파일을 둘 폴더를 마련한다(글 잠금은 데이터 폴더의 `publish/` — 없으면 만든다)."""
+        try:
+            Path(self.folder).mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise self._write_problem(error) from None
+
     def _write_problem(self, error):
         code = "DISK_FULL" if getattr(error, "errno", None) == errno.ENOSPC else "FILE_WRITE_FAILED"
         return AppError(code, {"경로": self.path}, detail=f"{type(error).__name__}: 잠금 파일을 만들지 못했다")
@@ -198,10 +208,7 @@ class PublishLock:
 
     def acquire(self):
         """잠금을 잡는다. 같은 글을 올리는 다른 작업이 있으면 PUBLISH_IN_PROGRESS — 그때 아무것도 바꾸지 않는다. 낡은 잠금을 넘겨받았으면 그 사실을 `taken_over` 에 둔다."""
-        try:
-            Path(self.folder).mkdir(parents=True, exist_ok=True)
-        except OSError as error:
-            raise self._write_problem(error) from None
+        self._prepare_folder()
         for attempt in range(3):
             try:
                 self._create()
@@ -218,7 +225,7 @@ class PublishLock:
                     continue                                     # 읽고 난 사이 잠금이 풀렸다 — 넘겨받은 것이 아니므로 알리지 않고 다시 잡아 본다
                 reason = "그 프로세스는 이미 끝나 있음" if self.why_stale == "gone" else "오래된 잠금"
                 self.taken_over = (f"이전에 {self.what} 멈춘 흔적({reason})을 넘겨받았습니다"
-                                   + (f": {holder.started_text()} 에 시작, 프로세스 {holder.pid}." if holder is not None else "."))
+                                   + (f": {holder.started_text()}에 시작, 프로세스 {holder.pid}." if holder is not None else "."))
                 continue
             except PermissionError as error:                     # Windows: 방금 지운 파일이 아직 '지우는 중' 이거나 다른 프로세스가 읽는 중 — 잠깐 뒤 다시
                 if attempt < 2:
@@ -268,27 +275,60 @@ class PublishLock:
             self.release_note = f"잠금 파일을 지우지 못했습니다({problem}) — 30분이 지나면 낡은 것으로 보고 넘겨받습니다: {os.path.basename(self.path)}"
 
 
-def repo_lock_name(repo):
-    """연결한 저장소 폴더 → 저장소 잠금 이름(`repo-<16자리>`). 같은 폴더면 어떤 경로 표기(상대 경로·`..`·링크·정션·Windows 의 대소문자)로 불러도 같은 이름이다."""
-    real = os.path.normcase(os.path.realpath(os.fspath(repo)))
-    return REPO_PREFIX + hashlib.sha256(real.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+def _invalid_git(why):
+    return AppError("PAGES_LOCAL_REPO_INVALID", detail=why)
+
+
+def git_dir_of(repo):
+    """연결한 저장소 폴더 → 그 저장소의 git 폴더(저장소 잠금을 둘 곳). `.git` 폴더이면 그것, `.git` 이 `gitdir: 경로` 한 줄짜리 파일(작업 트리·하위 모듈·떼어 둔 git 폴더)이면 그 경로의 폴더다.
+    `.git` 이 아예 없으면 None — git 저장소가 아니라 잠글 것이 없다(이어지는 저장소 확인이 PAGES_LOCAL_REPO_INVALID 로 멈춘다). `.git` 은 있는데 어디를 가리키는지 알 수 없으면
+    PAGES_LOCAL_REPO_INVALID — 잠글 곳을 모르면 올리지 않는다(없는 `.git` 을 새로 만들지는 않는다). 같은 저장소면 어떤 경로 표기(상대 경로·`..`·링크·정션·Windows 의 대소문자)로 불러도 같은 폴더다."""
+    root = Path(os.fspath(repo))
+    marker = root / ".git"
+    try:
+        if marker.is_dir():
+            return marker
+        if not marker.exists():
+            return None
+        pointer = marker.read_bytes()[:4096].decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise _invalid_git(f".git 을 확인할 수 없다({type(error).__name__})") from None
+    first = next((line.strip() for line in pointer.splitlines() if line.strip()), "")
+    if not first.startswith("gitdir:") or not first[len("gitdir:"):].strip():
+        raise _invalid_git(".git 이 폴더도 `gitdir: 경로` 연결 파일도 아니다")
+    target = Path(os.path.normpath(os.path.join(os.fspath(root), first[len("gitdir:"):].strip())))
+    try:
+        found = target.is_dir()
+    except OSError as error:
+        raise _invalid_git(f".git 이 가리키는 폴더를 확인할 수 없다({type(error).__name__})") from None
+    if not found:
+        raise _invalid_git(".git 이 가리키는 폴더가 없다")
+    return target
 
 
 class RepoLock(PublishLock):
-    """연결한 저장소 하나의 잠금 — 그 저장소에 commit·push·되돌리기를 하는 구간을 한 번에 한 작업만 한다(글이 달라도). 못 잡으면 PUBLISH_REPO_BUSY."""
+    """연결한 저장소 하나의 잠금 — 그 저장소에 commit·push·되돌리기를 하는 구간을 한 번에 한 작업만 한다(글이 달라도, 데이터 폴더가 달라도). 못 잡으면 PUBLISH_REPO_BUSY.
+    잠금 파일은 그 저장소의 git 폴더(`git_dir_of`) 안에 둔다 — 그 폴더가 없으면 만들지 않고(없는 `.git` 을 만들지 않는다) 못 만든다고 알린다."""
 
     busy_code = "PUBLISH_REPO_BUSY"
     what = "이 저장소에 글을 올리다"
 
-    def __init__(self, folder, repo, *, now, alive=None):
-        super().__init__(folder, repo_lock_name(repo), now=now, alive=alive)
+    def __init__(self, git_dir, *, now, alive=None):
+        super().__init__(git_dir, REPO_LOCK_NAME, now=now, alive=alive)
+
+    def _prepare_folder(self):
+        if not os.path.isdir(self.folder):
+            raise self._write_problem(FileNotFoundError(errno.ENOENT, "git 폴더가 없다"))
+
+    def _write_problem(self, error):
+        code = "DISK_FULL" if getattr(error, "errno", None) == errno.ENOSPC else "FILE_WRITE_FAILED"
+        return AppError(code, {"경로": self.path}, detail=(f"{type(error).__name__}: 연결한 저장소의 .git 폴더에 올리기 잠금 파일을 만들지 못했다 — 같은 저장소에 쓰는 다른 앱을 막을 수 없어 올리지 않았다"
+                                                          "(글도 저장소도 바뀌지 않았다). `.git` 폴더에 쓸 수 있는지 확인한다"))
 
 
 @contextlib.contextmanager
 def publish_lock(ctx, project_id, *, deadline=0):
     """`with publish_lock(ctx, 글번호) as lock:` — 블록 안에서만 그 글을 올리는 다른 작업이 없다. 어떻게 끝나도(예외·Ctrl+C 포함) 푼다."""
-    if isinstance(project_id, str) and project_id.startswith(REPO_PREFIX):
-        raise AppError("CONTENT_INVALID", {"항목": "프로젝트 번호"}, detail="저장소 잠금 이름과 같은 앞머리는 쓰지 않는다")
     lock = PublishLock(ctx.workspace.journal_dir, project_id, now=ctx.now, deadline=deadline)
     lock.acquire()
     try:
@@ -299,9 +339,15 @@ def publish_lock(ctx, project_id, *, deadline=0):
 
 @contextlib.contextmanager
 def repo_lock(ctx, repo, *, wait=None, progress=None):
-    """`with repo_lock(ctx, 저장소 폴더) as lock:` — 블록 안에서만 그 저장소에 글을 올리는(commit·push·되돌리는) 다른 작업이 없다. 다른 작업이 쥐고 있으면 최대 `wait`(기본 `ctx.lock_wait`)초 기다리고
-    그래도 못 잡으면 PUBLISH_REPO_BUSY(아무것도 바꾸지 않았다). 어떻게 끝나도(예외·Ctrl+C 포함) 푼다."""
-    lock = RepoLock(ctx.workspace.journal_dir, repo, now=ctx.now)
+    """`with repo_lock(ctx, 저장소 폴더) as lock:` — 블록 안에서만 그 저장소에 글을 올리는(commit·push·되돌리는) 다른 작업이 없다(데이터 폴더가 다른 앱도 포함 — 잠금이 저장소의 `.git` 안에 있다).
+    다른 작업이 쥐고 있으면 최대 `wait`(기본 `ctx.lock_wait`)초 기다리고 그래도 못 잡으면 PUBLISH_REPO_BUSY(아무것도 바꾸지 않았다). `.git` 에 잠금 파일을 만들 수 없으면 FILE_WRITE_FAILED(기다리지 않고 바로,
+    데이터 폴더로 물러서지 않는다). `.git` 이 아예 없는 폴더는 잠글 것이 없어 잠금 없이(`lock` 이 None) 통과한다 — 이어지는 저장소 확인이 PAGES_LOCAL_REPO_INVALID 로 멈춘다.
+    어떻게 끝나도(예외·Ctrl+C 포함) 푼다."""
+    git_dir = git_dir_of(repo)
+    if git_dir is None:
+        yield None
+        return
+    lock = RepoLock(git_dir, now=ctx.now)
     lock.acquire_waiting(ctx.lock_wait if wait is None else wait, progress=progress)
     try:
         yield lock

@@ -97,6 +97,7 @@ class FakeBackend:
         self.deployed_at = None            # 공개 확인을 부를 때 받은 시각(글 파일 이름의 시각과 같아야 한다)
         self.taken_stems = set()           # 이 이름(날짜-언어-시각)의 글이 이미 저장소에 있다 — duplicates 가 그 글의 경로를 돌려준다(같은 초에 올라간 글)
         self.unpushed = 0
+        self.made_by_app = 0               # 올리지 않은 commit 중 앱이 만든 모양(제목이 앱의 commit 제목)인 것의 수 — 이 데이터 폴더에 기록이 없는 commit 이 다른 앱의 것인지 가르는 데 쓴다
         self.head_has_post = False
         self.push_already = False
         self.push_commit_id = "d" * 40
@@ -130,6 +131,10 @@ class FakeBackend:
     def unpushed_count(self, repo):
         self.calls.append(("unpushed_count",))
         return self.unpushed
+
+    def unpushed_made_by_app(self, repo):
+        self.calls.append(("unpushed_made_by_app",))
+        return self.made_by_app
 
     def duplicates(self, repo, post):
         self.calls.append(("duplicates", post.path))
@@ -208,6 +213,7 @@ def make_ctx(tmp, *, backend=None, clock=None, repo="chanceblog", git=None):
     settings = Settings(workspace.settings_path)
     if repo:
         settings.save_repo_path(str(Path(tmp) / repo))
+        (Path(tmp) / repo / ".git").mkdir(parents=True, exist_ok=True)       # 가짜 저장소 폴더에도 `.git` 폴더가 있다(진짜 clone 처럼) — 저장소 잠금 파일은 그 안에 만들어진다(진짜 git 시험의 저장소는 이미 진짜 `.git` 이 있다)
     return Context(workspace, settings, backend if backend is not None else FakeBackend(), git or fake_git, gitrepo.EXPECTED_ORIGIN, clock or Clock(), "", {})
 
 

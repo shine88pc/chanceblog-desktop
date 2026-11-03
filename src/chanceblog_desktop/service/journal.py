@@ -63,6 +63,13 @@ class Journal:
             raise bad("값이 올바르지 않다")
         return PublishRecord(project_id, path, commit, base, stage)
 
+    def missing(self, project_id):
+        """그 글의 발행 기록 파일이 없는가. 읽을 수 없는 기록은 '없다' 가 아니라 '있는데 못 읽는다' 라서 False — 그 문제는 읽는 명령이 SETTINGS_INVALID 로 알린다."""
+        try:
+            return self.read(project_id) is None
+        except AppError:
+            return False
+
     def write(self, record):
         if not isinstance(record, PublishRecord) or record.stage not in STAGES:
             raise AppError("CONTENT_INVALID", {"항목": "발행 기록"})

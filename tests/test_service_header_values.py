@@ -173,6 +173,142 @@ class EveryHeaderValueIsCheckedTest(unittest.TestCase):
                 self.assertFalse(gate.run_gates(text).ok)
 
 
+class ValueLimitBoundariesTest(unittest.TestCase):
+    """독립 검증 3차 낮음 10(변이 H5·H6): 출처 도메인 개별 검사와 이미지 주소·출처 주소 길이 한도의 경계를 지키는 시험이 없었다(둘 다 다른 검사가 가려 주어서 한도·검사가 사라져도 시험이 통과했다)."""
+
+    def padded(self, prefix, size):
+        return prefix + "a" * (size - len(prefix))
+
+    def test_the_image_and_source_address_limit_is_fifteen_hundred_characters_exactly(self):
+        for key in ("image", "source_url"):
+            for size, too_long in ((1500, False), (1501, True), (1499, False)):
+                with self.subTest(key=key, size=size):
+                    text = with_field(EN_FIXTURE, key, self.padded("https://commission.europa.eu/" if key == "source_url" else "https://images.example.com/", size))
+                    report = gate.run_gates(text)
+                    long_reasons = [reason for reason in report.reasons if "너무 길다" in reason and f"머리말 `{key}`" in reason]
+                    self.assertEqual(bool(long_reasons), too_long, report.reasons)
+                    if too_long:
+                        self.assertIn("1501자 — 최대 1500자", long_reasons[0])
+                    else:
+                        self.assertTrue(report.ok, report.reasons)
+
+    def source_with_domain(self, size):
+        labels = ["a" * 60, "b" * 60, "c" * 60]
+        domain = ".".join(labels + ["d" * (size - len(".".join(labels)) - 1)])
+        self.assertEqual(len(domain), size)
+        return with_field(with_field(EN_FIXTURE, "source_url", f"https://{domain}/page"), "source_domain", domain)
+
+    def test_the_source_domain_has_its_own_limit_of_two_hundred_fifty_three_characters(self):
+        for size, too_long in ((253, False), (254, True), (252, False)):
+            with self.subTest(size=size):
+                report = gate.run_gates(self.source_with_domain(size))
+                long_reasons = [reason for reason in report.reasons if "너무 길다" in reason and "머리말 `source_domain`" in reason]
+                self.assertEqual(bool(long_reasons), too_long, report.reasons)
+                if too_long:
+                    self.assertIn("254자 — 최대 253자", long_reasons[0])
+                else:
+                    self.assertTrue(report.ok, report.reasons)
+
+    def test_the_source_domain_is_checked_by_itself_not_only_against_the_address_host(self):
+        """주소의 호스트와 같아도 도메인 값 자체의 검사(보이지 않는 글자·방향 제어 문자)가 따로 이름을 대고 막는다."""
+        for char, code in (("\u200b", "INVISIBLE"), ("\u202e", "INVISIBLE")):
+            with self.subTest(char=hex(ord(char))):
+                host = f"commission{char}.europa.eu"
+                text = with_field(with_field(EN_FIXTURE, "source_url", f"https://{host}/a"), "source_domain", host)
+                report = gate.run_gates(text)
+                self.assertTrue(any("머리말 `source_domain`" in reason and code in reason for reason in report.reasons), report.reasons)
+                self.assertTrue(any("머리말 `source_url`" in reason and code in reason for reason in report.reasons), report.reasons)
+
+    def test_the_limits_are_the_documented_numbers(self):
+        self.assertEqual((gate.VALUE_LIMITS["image"], gate.VALUE_LIMITS["source_url"], gate.VALUE_LIMITS["source_domain"]), (1500, 1500, 253))
+
+
+BIDI = ("\u202a", "\u202b", "\u202c", "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069")         # LRE·RLE·PDF·LRO·RLO·LRI·RLI·FSI·PDI
+
+
+class DirectionControlsTest(unittest.TestCase):
+    """독립 검증 3차 낮음 6: 제목의 U+202E 같은 글자 방향 제어 문자 몇 개는 통과했다(제목은 보이지 않는 글자를 본문과 합쳐 50개·5% 로 세기 때문). 글이 화면에 다르게 보이도록 위장하는 데 쓰일 수 있고
+    한글·영어 글에는 필요 없으므로 U+202A–202E·U+2066–2069 는 개수와 상관없이 거절한다 — 제목·분야·태그·설명·출처·이미지 주소 등 모든 머리말 값."""
+
+    def test_one_direction_control_in_a_title_is_refused_for_each_of_the_nine(self):
+        for char in BIDI:
+            with self.subTest(char=hex(ord(char))):
+                report = gate.run_gates(with_field(EN_FIXTURE, "title", f"Breaking news {char}today"))
+                self.assertIn("INVISIBLE", report.codes())
+                self.assertFalse(report.ok)
+                self.assertTrue(any("머리말 `title`" in reason and f"U+{ord(char):04X}" in reason for reason in report.reasons), report.reasons)
+
+    def test_every_header_value_refuses_it_wherever_it_sits(self):
+        for key, value in (("title", "{}제목"), ("category", "Soc{}iety"), ("description", "desc{}"), ("source_name", "{}European"), ("tags", ["fine", "a{}b"]), ("image", "https://images.example.com/a{}.jpg"),
+                           ("source_url", "https://commission.europa.eu/a{}")):
+            for char in ("\u202e", "\u2066"):
+                with self.subTest(key=key, char=hex(ord(char))):
+                    filled = [item.format(char) for item in value] if isinstance(value, list) else value.format(char)
+                    self.assertIn("INVISIBLE", codes(with_field(EN_FIXTURE, key, filled)))
+        domain = with_field(with_field(EN_FIXTURE, "source_url", "https://commission.europa.eu/a"), "source_domain", "commission\u202e.europa.eu")
+        self.assertIn("INVISIBLE", codes(domain))
+
+    def test_the_reason_is_its_own_sentence_and_not_only_the_generic_invisible_one(self):
+        """제목은 보이지 않는 글자 하나를 봐주지만(오탐 방지) 방향 제어는 몇 개든 막고, 이유 문장이 그것을 말한다."""
+        self.assertNotIn("INVISIBLE", codes(with_field(EN_FIXTURE, "title", "A\u200bB")), "폭 없는 공백 하나는 그대로 통과한다")
+        reasons = gate.title_problems("Plain title \u202e")
+        self.assertEqual(len(reasons), 1)
+        for expected in ("[INVISIBLE]", "U+202E", "개수와 상관없이"):
+            self.assertIn(expected, reasons[0])
+        many = gate.title_problems("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069 제목")
+        self.assertEqual(len(many), 1, "한 값에서는 한 문장으로 모아 말한다")
+        self.assertIn("U+202A", many[0])
+        self.assertIn(" …", many[0], "많으면 앞의 몇 개만 보이고 줄인다")
+
+    def test_marks_that_only_show_a_direction_and_other_invisible_letters_keep_their_old_rule(self):
+        for char in ("\u200e", "\u200f", "\u061c", "\u200b"):
+            with self.subTest(char=hex(ord(char))):
+                self.assertEqual(gate.title_problems(f"Title {char}x"), [], "방향 '표시' 와 폭 없는 글자 하나는 제목에서 예전처럼 통과한다")
+        self.assertEqual(gate.title_problems("가족 👨\u200d👩\u200d👧 이모지 ❤\ufe0f"), [], "이모지의 이음 글자는 그대로")
+
+    def test_a_clean_title_with_a_lot_of_ordinary_punctuation_is_untouched(self):
+        for title in ("한글 제목: 부제 — 설명 (괄호) [대괄호] “따옴표”", "English Title: A Subtitle – With Dash", "העברית title", "عنوان مختلط with Latin"):
+            with self.subTest(title=title):
+                self.assertEqual(gate.title_problems(title), [], "글자 방향이 다른 글자 자체는 막지 않는다 — 방향을 바꾸는 제어 문자만 막는다")
+
+    def test_a_title_with_such_a_control_is_refused_when_the_post_is_made_edited_or_shown_and_nothing_is_saved(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ctx = ss.make_ctx(Path(tmp.name), backend=ss.FakeBackend())
+        for char in ("\u202e", "\u2067"):
+            with self.subTest(char=hex(ord(char))):
+                error = ss.code_of(projects.new_project, ctx, f"안전해 보이는 제목{char}", ss.ko_text())
+                self.assertEqual((error.code, error.slots["걸린 항목 목록"]), ("CHECK_FAILED", "INVISIBLE"))
+        self.assertEqual(projects.list_projects(ctx), [])
+        view = projects.new_project(ctx, "멀쩡한 제목", ss.ko_text())
+        self.assertEqual(ss.code_of(projects.edit_project, ctx, view.project_id, title="바꾼 제목\u202e").code, "CHECK_FAILED")
+        self.assertEqual(projects.show_project(ctx, view.project_id).title, "멀쩡한 제목", "고치지 않았다")
+        code, out, err = ss.run_cli(ctx, "new", "--title", "명령줄 제목\u202e", "--text", ss.ko_text())
+        self.assertEqual(code, 1)
+        self.assertIn("INVISIBLE", err)
+        self.assertIn("U+202E", err)
+        self.assertEqual(len(projects.list_projects(ctx)), 1)
+
+    def test_the_other_values_given_at_review_time_are_refused_on_the_spot(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ctx = ss.make_ctx(Path(tmp.name), backend=ss.FakeBackend())
+        view = projects.new_project(ctx, "평범한 제목", ss.ko_text())
+        for field, value in (("category", "경제\u202e"), ("description", "한 줄 설명\u2067"), ("tags", ("에너지", "생\u202c활"))):
+            with self.subTest(field=field):
+                kwargs = {"category": "경제·일", "lang": "ko", "image_url": "https://images.example.invalid/a.jpg", "tags": ("에너지",)}
+                if field == "tags":
+                    kwargs["tags"] = value
+                elif field == "category":
+                    kwargs["category"] = value
+                else:
+                    kwargs["description"] = value
+                error = ss.code_of(review.request_review, ctx, view.project_id, "github_pages", pages=previews.PagesParams(**kwargs))
+                self.assertEqual(error.code, "CHECK_FAILED")
+                self.assertIn("INVISIBLE", error.slots["걸린 항목 목록"])
+        self.assertEqual(ss.status_of(ctx, view.project_id), st.NOT_STARTED, "검토 중으로 보내지도 않았다")
+
+
 class HeaderStructureStaysIntactTest(unittest.TestCase):
     """제목에 줄바꿈·따옴표·콜론·`---`·`#` 를 넣어도 머리말 구조가 깨지거나 다른 키가 끼어들지 못한다."""
 

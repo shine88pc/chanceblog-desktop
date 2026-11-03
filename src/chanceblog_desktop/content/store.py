@@ -30,7 +30,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from ..errors import AppError
 from .candidates import STAMP_FORMAT, STATUS_KO, TRANSITIONS, Candidate, keyword_key, parse_stamp, short_id
@@ -214,6 +214,31 @@ def _dump(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+_UNC_OR_EXTENDED = re.compile(r"^\\\\")                                                       # 역슬래시 둘로 시작하는 경로 = 네트워크(UNC) 경로나 확장 경로. 드라이브 경로는 `Path.as_uri()` 가 이미 맞게 만든다
+
+
+def _read_only_uri(path):
+    """그 파일을 **읽기 전용**(`mode=ro`)으로 여는 SQLite 주소.
+
+    `Path.as_uri()` 는 네트워크 경로(UNC — 매핑한 네트워크 드라이브를 `resolve()` 하면 `\\\\서버\\공유\\…` 가 된다)에 `file://서버/공유/…` 를 내는데, SQLite 는 주소의 authority(`file://` 바로 뒤)가
+    비었거나 `localhost` 가 아니면 `invalid uri authority` 로 거절한다(독립 검증 'a' 2차 낮음 1). 그래서 UNC 는 슬래시를 하나 더해 authority 를 비우고 `//서버/공유/…` 를 경로로 넘긴다(`file:////서버/공유/…` —
+    Windows 가 그 경로를 UNC 로 읽는다). 확장 경로 접두사(`\\\\?\\C:\\…`·`\\\\?\\UNC\\서버\\공유\\…`)는 먼저 걷는다(그대로는 authority 가 `?` 가 된다). 일반 경로의 주소는 예전과 같다.
+    같은 `mode=ro` 라서 오래된 저널은 여전히 정리하지 못하고(읽기 전용 열기의 약속) 파일은 한 바이트도 바뀌지 않는다 — 일반 경로로 열어 `PRAGMA query_only` 를 거는 방법은 연결이 쓰기 가능이라 옛 저널을 되돌려 파일을 바꿀 수 있어 쓰지 않았다."""
+    resolved = Path(path).resolve()
+    text = os.fspath(resolved)
+    if not _UNC_OR_EXTENDED.match(text):
+        uri = resolved.as_uri()
+    else:
+        for prefix, replacement in (("\\\\?\\UNC\\", "\\\\"), ("\\\\?\\", "")):
+            if text.startswith(prefix):
+                text = replacement + text[len(prefix):]
+                break
+        uri = PureWindowsPath(text).as_uri()
+    if uri.startswith("file://") and not uri.startswith("file:///"):        # `file://서버/공유/…` — authority 가 있다
+        uri = "file:////" + uri[len("file://"):]
+    return uri + "?mode=ro"
+
+
 class Store:
     """한 SQLite 파일을 여는 저장소. `with Store.open(경로) as store:` 로 쓴다(밖으로 나가면 닫는다). 여러 스레드가 함께 써도 된다."""
 
@@ -257,7 +282,7 @@ class Store:
     def _open_read_only(cls, path, keep_revisions, busy_seconds):
         try:
             missing = not path.exists() or (path.is_file() and path.stat().st_size == 0)
-            uri = path.resolve().as_uri() + "?mode=ro"
+            uri = _read_only_uri(path)
         except (OSError, ValueError) as error:
             raise AppError("FILE_WRITE_FAILED", {"경로": str(path)}, detail=_detail(error)) from None
         if missing:
@@ -424,7 +449,7 @@ class Store:
         self._discard(temp)                                 # 앞서 죽은 시도의 찌꺼기(쓰기 잠금을 쥐고 있으니 지금 이 파일을 올리는 다른 곳은 없다)
         try:
             self._snapshot(temp)
-            with closing(sqlite3.connect(temp.resolve().as_uri() + "?mode=ro", uri=True, timeout=self._busy)) as copy:
+            with closing(sqlite3.connect(_read_only_uri(temp), uri=True, timeout=self._busy)) as copy:
                 found = (copy.execute("PRAGMA application_id").fetchone()[0], copy.execute("PRAGMA user_version").fetchone()[0], copy.execute("PRAGMA quick_check").fetchone()[0])
             if found != (APPLICATION_ID, version, "ok"):
                 raise RuntimeError(f"만든 사본이 올바르지 않다(이름표·판 번호·점검: {found})")
@@ -448,7 +473,7 @@ class Store:
             if time.monotonic() - stuck_since[0] > COPY_SECONDS:
                 raise AppError("STORE_LOCKED", detail=f"사본을 만드는 동안 {COPY_SECONDS:g}초가 넘도록 파일이 계속 잠겨 있다")
 
-        with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=self._busy)) as source, closing(sqlite3.connect(str(destination))) as target:
+        with closing(sqlite3.connect(_read_only_uri(self.path), uri=True, timeout=self._busy)) as source, closing(sqlite3.connect(str(destination))) as target:
             source.backup(target, progress=watch)
 
     def _same_content(self, existing, version):
@@ -456,7 +481,7 @@ class Store:
         try:
             if not existing.is_file():
                 return False
-            with closing(sqlite3.connect(existing.resolve().as_uri() + "?mode=ro", uri=True, timeout=self._busy)) as old:
+            with closing(sqlite3.connect(_read_only_uri(existing), uri=True, timeout=self._busy)) as old:
                 if (old.execute("PRAGMA application_id").fetchone()[0], old.execute("PRAGMA user_version").fetchone()[0]) != (APPLICATION_ID, version):
                     return False
                 nothing = object()
@@ -881,7 +906,7 @@ class Store:
         backup = Path(os.fspath(backup))
         with self._lock:
             try:
-                source = sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)
+                source = sqlite3.connect(_read_only_uri(backup), uri=True)
             except sqlite3.Error as error:
                 raise store_error(error, backup) from None
             with closing(source):
