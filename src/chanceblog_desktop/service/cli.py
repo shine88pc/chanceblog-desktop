@@ -25,7 +25,7 @@ from ..content.draft_options import DraftOptions
 from ..content.profiles import POST_TYPES
 from ..errors import AppError
 from ..security.mask import MAX_MASK_INPUT, mask
-from . import candidates, draft, naver_flow, pages_flow, projects, review, suggestions
+from . import candidates, connections, draft, naver_flow, pages_flow, projects, quota, review, suggestions
 from . import format as fmt
 from .context import make_context
 from .doctor import doctor_ok, run_doctor
@@ -40,14 +40,17 @@ PROFILE_FIELDS = (("name", "display_name"), ("url", "blog_url"), ("topic", "topi
                   ("publish_cycle", "publish_cycle"), ("disclosure", "disclosure"))
 PROFILE_OPTIONS = ("intro_style", "subheading_min", "subheading_max", "difficulty", "ending_style", "topic_reuse_days", "post_type")      # 글 만들 때 쓰는 선택 항목 — 값을 그대로 넘긴다(제외 주제는 쉼표로 나눠 따로)
 STATUS_WORDS = {"선택": cd.SELECTED, "검토": cd.REVIEW}                              # 상태 이름의 줄임말(`--status 선택` 처럼 쓴다)
-_USAGE_TRANSLATIONS = (
-    (re.compile(r"the following arguments are required: (.+)"), "빠진 항목이 있습니다: {0}"),
-    (re.compile(r"unrecognized arguments: (.+)"), "알 수 없는 항목입니다: {0}"),
+_USAGE_TRANSLATIONS = (                         # 사용법 오류는 사용자가 친 값을 되풀이하지 않는다(키를 인자 자리에 잘못 쳤을 때 화면에 남지 않게) — argparse 가 값을 담는 문구는 값 없는 고정 문장으로 바꾼다
+    (re.compile(r"the following arguments are required: (.+)"), "빠진 항목이 있습니다: {0}"),            # 항목(옵션·자리) 이름뿐이다
+    (re.compile(r"unrecognized arguments: (.+)", re.S), "알 수 없는 항목입니다(입력한 값은 보이지 않습니다)"),
     (re.compile(r"expected one argument"), "값이 필요합니다"),
-    (re.compile(r"argument (.+?): invalid choice: (.+?) \(choose from (.+)\)"), "{0} 에 쓸 수 없는 값 {1} 입니다. 다음 중에서 고릅니다: {2}"),
-    (re.compile(r"argument (.+?): invalid (?:int|float) value: (.+)"), "{0} 에는 숫자를 써야 합니다(받은 값 {1})"),
-    (re.compile(r"argument (.+?): (.+)"), "{0}: {1}"),                      # 우리가 정한 값 검사(예: --wait 의 범위)의 말
+    (re.compile(r"^argument (.+?): ignored explicit argument .+", re.S), "{0} 에는 값을 붙일 수 없습니다(입력한 값은 보이지 않습니다)"),      # `--json=<값>`·`-h<값>` 꼴 — argparse 가 값을 따옴표로 되풀이한다(독립 검증 2차)
+    (re.compile(r"^argument (.+?): invalid choice: .+ \(choose from (.+)\)\s*$", re.S), "{0} 에 쓸 수 없는 값입니다(입력한 값은 보이지 않습니다). 다음 중에서 고릅니다: {1}"),
+    (re.compile(r"^argument (.+?): invalid (?:int|float) value: .+", re.S), "{0} 에는 숫자를 써야 합니다(입력한 값은 보이지 않습니다)"),
+    (re.compile(r"^argument (.+?): (.+)", re.S), "{0}: {1}"),                      # 우리가 정한 값 검사(예: --wait 의 범위)의 말 — 아래에서 '(받은 값 …)' 은 지운다
 )
+_QUOTED_VALUE = re.compile(r"「[^」]*」")                       # 값 검사 문구 속 「사용자가 친 값」 — 되풀이하지 않는다
+_RECEIVED = re.compile(r"\(받은 값 .*\)\s*$", re.S)
 
 
 class UsageError(Exception):
@@ -84,7 +87,7 @@ class KoreanParser(argparse.ArgumentParser):
         for pattern, template in _USAGE_TRANSLATIONS:
             found = pattern.search(message)
             if found:
-                message = template.format(*found.groups())
+                message = _RECEIVED.sub("(입력한 값은 보이지 않습니다)", template.format(*found.groups()))
                 break
         raise UsageError(message)
 
@@ -150,7 +153,7 @@ def blog_names(text):
     try:
         found = csvmod.parse_blogs(text.strip())
     except csvmod.CsvCellError as error:
-        raise argparse.ArgumentTypeError(f"{error.reason} — 이름에 띄어쓰기가 있으면 따옴표로 묶습니다(예: --blog \"네이버 A\")") from None
+        raise argparse.ArgumentTypeError(f"{_QUOTED_VALUE.sub('「(입력값)」', error.reason)} — 이름에 띄어쓰기가 있으면 따옴표로 묶습니다(예: --blog \"네이버 A\")") from None
     if not found:
         raise argparse.ArgumentTypeError("블로그를 적어야 합니다: " + ", ".join(st.PLATFORMS))
     return found
@@ -653,6 +656,170 @@ def _add_candidates_parser(add, common):
     ref(leaf("unlink", cmd_candidates_unlink, "후보와 글의 연결을 끊습니다(글은 그대로입니다)"))
 
 
+# ---- 연결 설정(keys) — 용도별 키 보관과 한도 안전장치 ------------------------------------------------------------------------------------
+MAX_STDIN_CHARS = 8192                       # `--stdin` 으로 받는 JSON 한 줄의 최대 길이
+STATE_WORDS = {"사용": connections.ACTIVE, "예비": connections.STANDBY, "꺼짐": connections.OFF, **{code: code for code in connections.STATES}}
+
+
+def key_state_value(text):
+    found = STATE_WORDS.get(text.strip())
+    if found is None:
+        raise argparse.ArgumentTypeError("사용·예비·꺼짐 중 하나여야 합니다")
+    return found
+
+
+def _keys_reader(ctx, has_entries):
+    """목록·사용량을 보일 때 쓰는 보관소(읽기만) → (보관소 또는 None, 안내 줄들). 항목이 없으면 보관소를 열지 않는다. 못 열면 끝 4자 없이 보인다."""
+    if not has_entries:
+        return None, []
+    try:
+        store = ctx.get_keystore()
+    except AppError as error:
+        return None, [f"주의: 키 보관소를 열 수 없어 끝 4자와 보관 여부를 확인하지 못했습니다(오류 코드 {error.code})"]
+    return store, (["주의: 시험 전용 가짜 보관소를 쓰는 중입니다 — 실제 키를 넣지 마세요"] if getattr(store, "is_fake", False) else [])
+
+
+def cmd_keys_purposes(ctx, args):
+    return Output(fmt.keys_purposes_lines(connections.PURPOSES), {"purposes": [fmt.keys_purpose_dict(spec) for spec in connections.PURPOSES.values()]})
+
+
+def cmd_keys_list(ctx, args):
+    purpose = getattr(args, "purpose", None)
+    data = connections.load(ctx)
+    store, notes = _keys_reader(ctx, bool(data.entries))
+    views = connections.list_entries(ctx, purpose=purpose, keystore=store)
+    guard = quota.QuotaGuard(ctx)
+    statuses = {key: guard.purpose_status(key, keystore=store) for key in connections.PURPOSES if (purpose is None or key == purpose) and connections.PURPOSES[key].takes_keys}
+    return Output(notes + fmt.keys_list_lines(views, statuses),
+                  {"purposes": [{"purpose": key, "label": connections.PURPOSES[key].label, "status": status, "status_text": connections.STATUS_TEXT[status],
+                                 "entries": [view.to_dict() for view in views if view.entry.purpose == key]} for key, status in statuses.items()],
+                   "fake_keystore": bool(getattr(store, "is_fake", False))})
+
+
+def _secret_input(spec, args):
+    """키 값을 받는다 — **인자로는 받지 않는다**. `--stdin` 이면 표준 입력의 JSON 한 줄, 아니면 터미널에서 칸마다 숨김 입력(화면에 되풀이하지 않는다). 터미널이 아닌데 `--stdin` 도 없으면 묻지 않고 멈춘다.
+    오류 문구에는 입력한 글을 넣지 않는다."""
+    if args.stdin:
+        raw = args.input_stream.read(MAX_STDIN_CHARS + 1)
+        if len(raw) > MAX_STDIN_CHARS:
+            raise AppError("KEY_INVALID_SHAPE", {"항목": "입력", "이유": f"너무 깁니다(최대 {MAX_STDIN_CHARS}자)"})
+        try:
+            found = json.loads(raw)
+        except (ValueError, RecursionError):
+            raise AppError("KEY_INVALID_SHAPE", {"항목": "입력", "이유": "JSON 한 줄이 아닙니다(칸 이름과 값을 큰따옴표로 묶은 JSON 객체여야 합니다)"}) from None
+        if not isinstance(found, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in found.items()):
+            raise AppError("KEY_INVALID_SHAPE", {"항목": "입력", "이유": "칸 이름과 값이 모두 글인 JSON 객체여야 합니다"})
+        return found
+    stream = args.input_stream
+    try:
+        interactive = bool(stream.isatty())
+    except (AttributeError, ValueError):
+        interactive = False
+    if not interactive:
+        raise AppError("KEY_INVALID_SHAPE", {"항목": "입력", "이유": "터미널이 아니어서 키를 물을 수 없습니다 — `--stdin` 으로 JSON 한 줄을 넘깁니다(키는 명령 인자로 받지 않습니다)"})
+    ask = args.secret_prompt
+    if ask is None:
+        import getpass
+        ask = getpass.getpass
+    return {field.name: ask(f"{field.label}(입력은 화면에 보이지 않습니다): ") for field in spec.fields}
+
+
+def cmd_keys_add(ctx, args):
+    spec = connections.PURPOSES[args.purpose]
+    existing = connections.load(ctx).of_purpose(args.purpose)
+    if existing and not args.i_understand_terms and spec.takes_keys:
+        raise AppError("KEY_FAILOVER_TERMS_REQUIRED", {"용도": spec.label})                     # 키를 치기 전에 먼저 멈춘다
+    fields = _secret_input(spec, args) if spec.takes_keys else {}
+    store = ctx.get_keystore()
+    result = connections.add_entry(ctx, args.purpose, name=args.name, fields=fields, project=args.project or "", provider=args.provider or "", state=args.state or connections.ACTIVE,
+                                   terms_ack=args.i_understand_terms, keystore=store)
+    mine = next(item for item in connections.list_entries(ctx, purpose=args.purpose, keystore=store) if item.entry.entry_id == result.entry.entry_id)
+    return Output(fmt.keys_add_lines(mine, result.notes, fake=bool(getattr(store, "is_fake", False))), {"entry": mine.to_dict(), "notes": list(result.notes)})
+
+
+def cmd_keys_remove(ctx, args):
+    result = connections.remove_entry(ctx, args.ref, confirmed=args.yes, keep_cache=args.keep_cache)
+    return Output(fmt.keys_remove_lines(result), {"removed": result.entry.entry_id, "purpose": result.entry.purpose, "keep_cache": result.keep_cache})
+
+
+def cmd_keys_state(ctx, args):
+    entry, before = connections.set_state(ctx, args.ref, args.state)
+    return Output(fmt.keys_state_lines(entry, before), {"entry_id": entry.entry_id, "state": entry.state, "before": before})
+
+
+def cmd_keys_order(ctx, args):
+    items = connections.reorder(ctx, args.purpose, args.refs)
+    return Output(fmt.keys_order_lines(args.purpose, items), {"purpose": args.purpose, "order": [item.entry_id for item in items]})
+
+
+def cmd_keys_usage(ctx, args):
+    purpose = getattr(args, "purpose", None)
+    data = connections.load(ctx)
+    store, notes = _keys_reader(ctx, bool(data.entries))
+    guard = quota.QuotaGuard(ctx)
+    views = guard.usage(purpose)
+    statuses = {view.purpose: guard.purpose_status(view.purpose, keystore=store) for view in views}
+    return Output(notes + fmt.keys_usage_lines(views, statuses),
+                  {"usage": [{**view.to_dict(), "status": statuses[view.purpose], "status_text": connections.STATUS_TEXT[statuses[view.purpose]]} for view in views]})
+
+
+def cmd_keys_policy(ctx, args):
+    tier, on_limit = getattr(args, "tier", None), getattr(args, "on_limit", None)
+    changed = not (tier is None and on_limit is None)
+    policy = connections.set_policy(ctx, args.purpose, on_limit=on_limit, tier=tier) if changed else connections.load(ctx).policy(args.purpose)       # 바꾸는 값이 없으면 지금 정책만 보여 준다(읽기만)
+    return Output(fmt.keys_policy_lines(connections.PURPOSES[args.purpose], policy, changed=changed), {"purpose": args.purpose, "policy": policy.to_dict()})
+
+
+def cmd_keys_test(ctx, args):
+    result = connections.test_entry(ctx, args.ref)
+    return Output(fmt.keys_test_lines(result), {"ran": result.ran, "reason": result.reason, "entry_id": result.entry.entry_id if result.entry else ""})
+
+
+def _add_keys_parser(add, common):
+    """`keys` 와 그 하위 명령들 — 키는 명령 인자로 받지 않는다(`--stdin` 이나 숨김 입력)."""
+    group = add("keys", None, "연결 설정(용도별 키 보관)과 한도 안전장치 명령들(용도·목록·추가·지우기·상태·순서·사용량·정책·시험)")
+    group.epilog = ("처음이라면: keys purposes → keys add 용도 --name 기본 → keys list → keys usage. 키가 없어도 모든 핵심 기능은 그대로 됩니다('연결 안 됨' 은 오류가 아닙니다).\n"
+                    "키는 Windows 자격 증명 관리자에만 보관하고 파일·화면·기록에는 쓰지 않습니다. 키는 명령 인자로 받지 않습니다 — 터미널에서 칸마다 숨김 입력으로 묻거나 `--stdin` 으로 JSON 한 줄을 넘깁니다.")
+    inner = group.add_subparsers(dest="keys_command", metavar="하위명령", parser_class=KoreanParser)
+    inner.required = True
+
+    def leaf(name, handler, help_text):
+        found = inner.add_parser(name, parents=[common], help=help_text, description=help_text)
+        found.set_defaults(handler=handler, command_path=f"keys {name}")
+        return found
+
+    order = tuple(connections.PURPOSES)
+    leaf("purposes", cmd_keys_purposes, "용도 목록과 설명(어떤 키를 받는지·한도·준비 상태)을 보여 줍니다(읽기만 합니다)")
+    found = leaf("list", cmd_keys_list, "용도별 상태와 키 항목을 보여 줍니다 — 이름·상태·끝 4자(16자 이상일 때만)만 보이고 키 원문은 보이지 않습니다(읽기만 합니다)")
+    found.add_argument("--purpose", choices=order, metavar="용도", help="이 용도만 보여 줍니다")
+    found = leaf("add", cmd_keys_add, "키 항목을 더합니다 — 키는 인자로 받지 않고 숨김 입력이나 --stdin 으로 받아 보관소에만 둡니다")
+    found.add_argument("purpose", choices=order, metavar="용도", help="어느 용도의 키인가(keys purposes 로 확인)")
+    found.add_argument("--name", required=True, metavar="이름", help="항목 이름(예: 기본·예비) — 키처럼 보이는 글은 거절합니다")
+    found.add_argument("--project", metavar="이름", help="소속 프로젝트·앱 이름(같은 이름이면 한도를 함께 쓴다고 봅니다)")
+    found.add_argument("--provider", metavar="제공자", help="제공자(이미지 공급자: unsplash·pexels·pixabay, AI 보조: gemini). 안 적으면 첫 제공자")
+    found.add_argument("--state", type=key_state_value, metavar="사용|예비", help="처음 상태(기본 사용)")
+    found.add_argument("--stdin", action="store_true", help="키를 표준 입력의 JSON 한 줄로 받습니다(칸 이름은 keys purposes 에 보입니다)")
+    found.add_argument("--i-understand-terms", action="store_true", help="같은 용도의 둘째 키를 더할 때: 같은 서비스의 무료 한도를 여러 계정으로 나눠 쓰는 것은 약관에서 금지될 수 있음을 이해했습니다")
+    found = leaf("remove", cmd_keys_remove, "키 항목을 지웁니다(보관소의 키도 함께 지워지고 되돌릴 수 없습니다 — 번호 앞 8자와 --yes 가 필요합니다)")
+    found.add_argument("ref", metavar="번호", help="지울 항목의 번호 앞 8자(list 의 '번호' — 순번은 지울 때마다 당겨져서 지우기에는 쓰지 않습니다)")
+    found.add_argument("--yes", action="store_true", help="정말 지웁니다")
+    found.add_argument("--keep-cache", action="store_true", help="이 용도의 저장해 둔 조회 결과(캐시)를 남깁니다(캐시는 나중 묶음이 만듭니다 — 고른 값만 기록합니다)")
+    found = leaf("state", cmd_keys_state, "항목의 상태를 바꿉니다(사용·예비·꺼짐)")
+    found.add_argument("ref", metavar="항목", help="항목의 순번이나 번호(앞 4자 이상)")
+    found.add_argument("state", type=key_state_value, metavar="사용|예비|꺼짐")
+    found = leaf("order", cmd_keys_order, "한 용도의 항목 순서를 정합니다(적은 항목이 앞에 오고 첫 `사용` 항목부터 쓰입니다)")
+    found.add_argument("purpose", choices=order, metavar="용도")
+    found.add_argument("refs", nargs="+", metavar="항목", help="앞에 올 항목들(순번이나 번호 앞 4자 이상)")
+    found = leaf("usage", cmd_keys_usage, "사용량·한도·다음 초기화 시각·절약 모드 여부를 보여 줍니다(읽기만 합니다)")
+    found.add_argument("--purpose", choices=order, metavar="용도")
+    found = leaf("policy", cmd_keys_policy, "한도에 걸렸을 때의 정책(허용된 다음 키로 전환/절약 모드만)과 한도 등급을 보거나 바꿉니다(값을 안 적으면 지금 정책만 보여 줍니다)")
+    found.add_argument("purpose", choices=order, metavar="용도")
+    found.add_argument("--on-limit", choices=connections.ON_LIMIT, metavar="save|failover", help="failover: 한도·일시 오류일 때 허용된 다음 키로 전환(기본) · save: 절약 모드만(다른 키로 넘어가지 않음)")
+    found.add_argument("--tier", metavar="등급", help="한도 등급(예: 이미지 공급자 demo·production — 서비스가 승인한 뒤에만 production)")
+    found = leaf("test", cmd_keys_test, "연결 시험(최소 호출 1번) — 지금은 어느 용도도 실제 호출을 하지 않아 준비 중이라고만 알립니다")
+    found.add_argument("ref", metavar="항목", help="항목의 순번이나 번호(앞 4자 이상)")
+
+
 # ---- 사용법(argparse) -------------------------------------------------------------------------------------------------------------
 def _common():
     common = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
@@ -786,6 +953,7 @@ def build_parser():
     found.add_argument("id", metavar="글번호")
     found.add_argument("--yes", action="store_true", help="정말 지웁니다")
     _add_candidates_parser(add, common)
+    _add_keys_parser(add, common)
     _add_draft_parser(add, common)
     return parser
 
@@ -829,6 +997,27 @@ def _error_payload(error):
     return {"code": shown.code, "message": shown.message, "action": shown.action, "retry": shown.retry_text, "detail": " ".join(str(error.detail or "").split())[:700]}
 
 
+KEYS_WORDS = frozenset({"keys", "purposes", "list", "add", "remove", "state", "order", "usage", "policy", "test", "save", "failover", *connections.PURPOSES, *connections.STATE_TEXT.values(), *connections.STATES,
+                        "unsplash", "pexels", "pixabay", "gemini", "demo", "production"})
+
+
+def redact_usage(message, argv):
+    """`keys` 명령의 사용법 오류에서 사용자가 친 값(키를 인자로 잘못 넘긴 경우 등)을 지운다 — argparse 는 모르는 인자와 잘못된 값을 오류 문구에 그대로 되풀이하기 때문이다.
+    `keys` 가 아닌 명령은 그대로 둔다. 알려 둔 낱말(명령 이름·용도·상태)과 옵션 이름은 남기고 그 밖의 값은 `(입력값)` 으로 바꾼다."""
+    words = [item for item in (argv or ()) if isinstance(item, str)]
+    if "keys" not in words:
+        return message
+    secret = set()
+    for item in words:
+        if item.startswith("-") and "=" in item:
+            secret.add(item.split("=", 1)[1])
+        elif not item.startswith("-") and item not in KEYS_WORDS:
+            secret.add(item)
+    for item in sorted((value for value in secret if value), key=len, reverse=True):
+        message = message.replace(item, "(입력값)")
+    return message
+
+
 def unexpected_error(problem):
     """예상하지 못한 예외 → UNEXPECTED_ERROR(예외 이름과 가린 한 줄만 — 스택 추적·키는 화면에 내지 않는다)."""
     return AppError("UNEXPECTED_ERROR", detail=f"{type(problem).__name__}: {mask(str(problem))[:200]}")
@@ -842,10 +1031,11 @@ def _lenient(stream):
             reconfigure(errors="replace")
 
 
-def main(argv=None, *, out=None, err=None, ctx=None, env=None):
+def main(argv=None, *, out=None, err=None, ctx=None, env=None, stdin=None, prompt=None):
     """명령 하나를 실행하고 종료 코드(0·1·2)를 돌려준다. `ctx` 를 주면 그 Context 로(시험), 없으면 `--data-dir`·`--repo`·환경 변수로 만든다."""
     out = sys.stdout if out is None else out
     err = sys.stderr if err is None else err
+    argv = sys.argv[1:] if argv is None else list(argv)                 # 진짜 실행은 argv 가 None 이다 — 사용법 오류에서 입력값을 지우려면 실제 인자 목록을 알아야 한다
     _lenient(out)
     _lenient(err)
 
@@ -859,7 +1049,7 @@ def main(argv=None, *, out=None, err=None, ctx=None, env=None):
     except SystemExit as stop:                                 # --help
         return int(stop.code or 0)
     except UsageError as problem:
-        say(err, f"사용법 오류: {problem}")
+        say(err, f"사용법 오류: {redact_usage(str(problem), argv)}")
         say(err, f"도움말: {PROG} --help")
         return 2
     as_json = getattr(args, "json", False)
@@ -869,9 +1059,11 @@ def main(argv=None, *, out=None, err=None, ctx=None, env=None):
         context = ctx if ctx is not None else make_context(data_dir=getattr(args, "data_dir", None), repo=getattr(args, "repo", None), env=env)
         if hasattr(context.backend, "progress"):                       # 공개 확인을 기다리는 동안(기본 최대 12분) 진행을 알린다 — 표준 오류로(--json 출력을 어지럽히지 않는다)
             context.backend.progress = lambda text: print(mask_block(text), file=err, flush=True)
+        args.input_stream = sys.stdin if stdin is None else stdin         # 키를 받는 명령(keys add)이 쓴다 — 시험은 가짜 입력·가짜 숨김 입력을 넣는다
+        args.secret_prompt = prompt
         output = args.handler(context, args)
     except UsageError as problem:
-        say(err, f"사용법 오류: {problem}")
+        say(err, f"사용법 오류: {redact_usage(str(problem), argv)}")
         say(err, f"도움말: {PROG} {command} --help")
         return 2
     except AppError as error:

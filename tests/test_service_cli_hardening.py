@@ -376,7 +376,7 @@ class NoSurpriseWritesTest(Base):
             "list": ["list"], "show": ["show", approved], "edit": ["edit", fresh, "--title", "고친 제목"], "review": ["review", fresh, "--platform", "pages", *pages], "preview": ["preview", approved, "--platform", "pages", *pages],
             "approve": ["approve", fresh, "--platform", "pages"], "revoke": ["revoke", approved, "--platform", "pages"], "publish-pages": ["publish-pages", approved], "check-deploy": ["check-deploy", pushed],
             "naver-package": ["naver-package", fresh, "--blog", "naver_a"], "naver-done": ["naver-done", fresh, "--blog", "naver_a", "--url", "https://blog.naver.com/x/1"], "naver-profile": ["naver-profile", "show"],
-            "backup": ["backup"], "restore": ["restore", "--latest"], "delete": ["delete", fresh], "candidates": ["candidates", "list"], "draft": ["draft", "plan", "1"],
+            "backup": ["backup"], "restore": ["restore", "--latest"], "delete": ["delete", fresh], "candidates": ["candidates", "list"], "keys": ["keys", "list"], "draft": ["draft", "plan", "1"],
         }
 
     def test_no_command_commits_pushes_or_undoes_anything_without_the_confirmation(self):

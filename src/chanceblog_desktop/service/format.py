@@ -11,7 +11,7 @@ from ..content import suggest as sg
 from ..content.profiles import NaverProfile
 from ..errors import AppError, render
 from ..security.mask import safe_detail
-from . import naver_flow
+from . import connections, naver_flow
 from .candidates import DELETE_PREFIX, MAX_ORDINAL_DIGITS, kst
 
 CMD = "python -m chanceblog_desktop"
@@ -496,6 +496,132 @@ def profile_saved_options_text(profile):
     """`naver-profile set` 으로 저장한 프로필에서 기본값과 다른 항목들(없으면 '')."""
     base = NaverProfile(profile.key, profile.display_name, profile.blog_url)
     return " · ".join(f"{name} {value}" for name, value in _option_pairs(profile, base) if value)
+
+
+# ---- 연결 설정(keys) ---------------------------------------------------------------------------------------------------------------
+def _limit_text(provider):
+    """제공자의 한도 한 줄 — 모르면 '한도를 확인하지 못했습니다'."""
+    parts = []
+    for tier, windows in provider.tiers:
+        if windows:
+            text = " · ".join(f"{'하루' if window.kind == 'day' else f'최근 {window.minutes}분'} {window.limit:,}회" for window in windows)
+            parts.append(text if len(provider.tiers) == 1 else f"{tier} 등급 {text}")
+    return ", ".join(parts) if parts else "한도를 확인하지 못했습니다(한도 오류 응답으로만 감지합니다)"
+
+
+def keys_purpose_dict(spec):
+    return {"purpose": spec.key, "label": spec.label, "summary": spec.summary, "takes_keys": spec.takes_keys, "implemented": spec.implemented, "works_without_key": spec.works_without_key,
+            "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.fields],
+            "providers": [{"provider": item.key, "label": item.label, "rotation": item.rotation, "limits": _limit_text(item), "default_tier": item.default_tier, "tiers": list(item.tier_names())} for item in spec.providers],
+            "fallback_providers": list(spec.fallback_providers), "note": spec.note}
+
+
+def keys_purposes_lines(registry):
+    lines = ["연결 설정의 용도(키는 Windows 자격 증명 관리자에만 보관하고, 키가 없어도 모든 핵심 기능은 그대로 됩니다)"]
+    for spec in registry.values():
+        lines.append(f"[{spec.key}] {spec.label}")
+        lines.append(f"  쓰임: {spec.summary}")
+        if not spec.takes_keys:
+            lines.append(f"  안내: {spec.note}")
+            continue
+        lines.append("  받는 칸: " + ", ".join(f"{item.name}({item.label}{' — 화면에 보이지 않음' if item.secret else ''}, {item.min_len}~{item.max_len}자, 예: {item.example})" for item in spec.fields))
+        for provider in spec.providers:
+            title = f"제공자 {provider.key}({provider.label})" if provider.key else f"제공자 {provider.label}"
+            auto = "어떤 오류에도 다른 키로 자동 전환하지 않음" if provider.rotation == connections.ROTATION_NEVER else "한도·일시 오류일 때만 허용된 다음 키로 전환"
+            lines.append(f"  {title}: 한도 {_limit_text(provider)} — {auto}" + (f" — {provider.note}" if provider.note else ""))
+        lines.append("  준비 상태: " + ("실제 호출 코드가 있어 연결 시험을 할 수 있습니다" if spec.implemented else "아직 실제 호출 코드가 없어 연결 시험을 하지 않습니다(키를 저장해 둘 수는 있습니다)"))
+        lines.append(f"  범위: {spec.client_scope}")
+    lines.append(f"용도마다 키 항목은 {connections.MAX_ENTRIES_PER_PURPOSE}개까지입니다.")
+    return lines
+
+
+def _entry_line(view):
+    entry = view.entry
+    parts = [f"{connections.STATE_TEXT[entry.state]}", connections.STATUS_TEXT[view.status]]
+    if view.tail:
+        parts.append(f"끝 4자 {view.tail}")
+    if entry.project:
+        parts.append(f"소속 {entry.project}")
+    parts.append("마지막 확인 " + (local_time(entry.checked_at) if entry.checked_at else "없음"))
+    return f"  [{view.ordinal}] {entry.name} — " + " · ".join(parts) + f" · 번호 {connections.short_id(entry.entry_id)}"
+
+
+def keys_list_lines(views, statuses):
+    lines = ["용도별 상태:"]
+    for key, status in statuses.items():
+        lines.append(f"  {connections.PURPOSES[key].label}: {connections.STATUS_TEXT[status]}")
+    if not views:
+        lines.append("키 항목이 아직 없습니다 — 키가 없어도 핵심 기능은 그대로 됩니다. 넣으려면 `keys add 용도 --name 이름` (용도는 `keys purposes`).")
+        return lines
+    lines.append(f"키 항목 {len(views)}개(키 원문은 보이지 않습니다):")
+    lines += [_entry_line(view) for view in views]
+    lines.append(f"지울 때는 순번이 아니라 번호 앞 {connections.DELETE_PREFIX}자를 씁니다: `{CMD} keys remove 번호 --yes`.")
+    return lines
+
+
+def keys_add_lines(view, notes, *, fake=False):
+    lines = (["주의: 시험 전용 가짜 보관소를 쓰는 중입니다 — 실제 키를 넣지 마세요"] if fake else []) + ["키 항목을 추가했습니다(키는 보관소에만 저장했고 화면과 기록에는 남기지 않았습니다).", _entry_line(view)]
+    lines += [f"안내: {note}" for note in notes]
+    if view.entry.state == connections.ACTIVE:
+        lines.append(f"참고: 연결 시험은 아직 준비 중이라 '{connections.STATUS_TEXT[view.status]}' 로 보입니다. 키가 없어도 핵심 기능은 그대로 됩니다.")
+    return lines
+
+
+def keys_remove_lines(result):
+    lines = [f"키 항목을 지웠습니다: {result.entry.name}({result.purpose_label}) — 보관소의 키도 함께 지웠습니다.", "  뒤의 항목은 순번이 당겨졌을 수 있습니다 — `keys list` 로 다시 확인합니다."]
+    lines.append("  저장해 둔 조회 결과(캐시)는 남기도록 표시했습니다(캐시는 나중 묶음이 다룹니다)." if result.keep_cache else "  저장해 둔 조회 결과(캐시)를 남기려면 지울 때 `--keep-cache` 를 붙입니다(캐시는 나중 묶음이 다룹니다).")
+    return lines
+
+
+def keys_state_lines(entry, before):
+    if before == entry.state:
+        return [f"바뀐 것이 없습니다: {entry.name} 은(는) 이미 '{connections.STATE_TEXT[entry.state]}' 입니다."]
+    return [f"상태를 바꿨습니다: {entry.name} — {connections.STATE_TEXT[before]} → {connections.STATE_TEXT[entry.state]}"]
+
+
+def keys_order_lines(purpose, items):
+    lines = [f"순서를 정했습니다({connections.PURPOSES[purpose].label}) — 첫 `사용` 항목부터 쓰입니다:"]
+    lines += [f"  {index}. {item.name}({connections.STATE_TEXT[item.state]})" for index, item in enumerate(items, start=1)]
+    return lines
+
+
+def keys_usage_lines(views, statuses):
+    lines = []
+    for view in views:
+        status = statuses.get(view.purpose, connections.NOT_CONNECTED)
+        lines.append(f"{view.label} — {connections.STATUS_TEXT[status]}")
+        if view.notice:
+            lines.append(f"  주의: {view.notice}")
+        if view.entries == 0:
+            lines.append("  키가 없습니다 — 키가 없어도 핵심 기능은 그대로 됩니다.")
+            continue
+        if not view.rows:
+            lines.append("  한도를 확인하지 못했습니다 — 한도 오류 응답으로만 감지하고 사용량은 세지 않습니다.")
+        for row in view.rows:
+            percent = f" ({row.used * 100 // row.limit}%)" if row.limit else ""
+            when = "오늘" if row.window == "day" else row.span
+            lines.append(f"  {row.entry}({row.provider}) {when} {row.used:,} / {row.limit:,}{percent}" + (" — 한도에 가까워 절약 모드" if row.near_limit else ""))
+        if view.blocked and view.resume_text:
+            lines.append(f"  {view.resume_text}")
+        lines += [f"  최근 키 전환: {item}" for item in view.switches]
+    return lines or ["보여 줄 용도가 없습니다."]
+
+
+def keys_policy_lines(spec, policy, *, changed):
+    lines = [("정책을 바꿨습니다" if changed else "지금 정책") + f"({spec.label}): " + connections.ON_LIMIT_TEXT[policy.on_limit]]
+    lines.append("  한도 등급: " + (policy.tier or "기본") + (f"(바꾼 때 {local_time(policy.changed_at)})" if policy.changed_at else ""))
+    for provider in spec.providers:
+        if provider.rotation == connections.ROTATION_NEVER:
+            lines.append(f"  {provider.label or spec.label}: 어떤 오류에도 다른 키로 자동 전환하지 않습니다(키가 여러 개여도 개발용·운영용 구분이나 직접 고른 전환에만 씁니다).")
+    lines.append("  전환은 한도(429·기간 한도)·일시 오류(500·502·503·504)·시간 초과일 때만, 허용된 다음 키(같은 용도·제공자의 사용·예비 항목)로, 한 요청에 한 바퀴를 넘지 않게 합니다. 인증·잘못된 요청·정책 차단은 숨기지 않고 안내만 합니다.")
+    return lines
+
+
+def keys_test_lines(result):
+    if result.ran:
+        return [f"연결 시험을 마쳤습니다: {result.outcome}"]
+    return [result.message or "시험하지 않았습니다.", "  (아무것도 바꾸지 않았고 키를 보내지도 않았습니다)"]
+
 
 # ---- 자동 후보 제안·콘텐츠 작성 우선도 --------------------------------------------------------------------------------------------------------
 SCORE_NOTE = "점수는 이 프로그램이 가진 정보로 정한 작성 순서의 참고값입니다 — 검색 결과나 방문자 수를 약속하지 않습니다. 계절표와 글 틀은 일반적인 시기 주제와 틀일 뿐 검색 수요를 보증하지 않습니다."

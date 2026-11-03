@@ -21,6 +21,7 @@ from chanceblog_desktop.publish import gitrepo  # noqa: E402
 from chanceblog_desktop.publish.gitrepo import GitResult, RepoInfo  # noqa: E402
 from chanceblog_desktop.publish.pages import CommitInfo, PushInfo  # noqa: E402
 from chanceblog_desktop.publish.deploy import DeployResult  # noqa: E402
+from chanceblog_desktop.security.keystore import MemoryStore  # noqa: E402
 from chanceblog_desktop.service import cli, projects, review  # noqa: E402
 from chanceblog_desktop.service.context import Context, Settings, Workspace  # noqa: E402
 from chanceblog_desktop.service.previews import PagesParams  # noqa: E402
@@ -214,7 +215,7 @@ def make_ctx(tmp, *, backend=None, clock=None, repo="chanceblog", git=None):
     if repo:
         settings.save_repo_path(str(Path(tmp) / repo))
         (Path(tmp) / repo / ".git").mkdir(parents=True, exist_ok=True)       # 가짜 저장소 폴더에도 `.git` 폴더가 있다(진짜 clone 처럼) — 저장소 잠금 파일은 그 안에 만들어진다(진짜 git 시험의 저장소는 이미 진짜 `.git` 이 있다)
-    return Context(workspace, settings, backend if backend is not None else FakeBackend(), git or fake_git, gitrepo.EXPECTED_ORIGIN, clock or Clock(), "", {})
+    return Context(workspace, settings, backend if backend is not None else FakeBackend(), git or fake_git, gitrepo.EXPECTED_ORIGIN, clock or Clock(), "", {}, keystore=MemoryStore())     # 비밀 보관소는 늘 가짜(프로그램 안의 MemoryStore) — 시험이 진짜 자격 증명 관리자를 건드리지 않게
 
 
 def make_approved(ctx, *, title="에너지 절약 습관", text=None, params=KO_PARAMS):
