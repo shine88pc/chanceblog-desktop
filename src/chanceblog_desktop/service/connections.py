@@ -774,6 +774,20 @@ def mark_check(ctx, entry_id, result, *, registry=PURPOSES):
         return next(item for item in data.entries if item.entry_id == entry_id)
 
 
+def mark_call_ok(ctx, entry_id, *, registry=PURPOSES):
+    """성공한 실제 호출을 항목에 적는다 — 마지막 성공 시각(`last_ok_at`)을 지금으로, 확인 결과를 `ok` 로 해서 인증 '맑음'(`auth_state`)의 24시간 창을 이어 준다(호출이 계속 성공하는 동안 '연결 확인 필요' 로 떨어지지 않는다).
+    `checked_at`(마지막 시험 시각)은 건드리지 않는다 — 연결 시험의 60초 규칙은 시험 호출만 센다. 인증 실패로 멈춘 항목(`auth_failed`)은 되살리지 않는다(멈춘 뒤에 도착한 성공 보고가 멈춤을 풀지 못하게).
+    실패·모호한 결과로는 부르지 않는다(부르는 쪽 `quota` 가 가린다). → 바뀐 항목 또는 None(항목이 없거나 되살리지 않음)"""
+    with locked(ctx):
+        data = load(ctx, registry)
+        entry = next((item for item in data.entries if item.entry_id == entry_id), None)
+        if entry is None or entry.check_result == CHECK_AUTH:
+            return None
+        data = _update_entry(data, entry_id, check_result=CHECK_OK, last_ok_at=ctx.stamp())
+        save(ctx, data, registry)
+        return next(item for item in data.entries if item.entry_id == entry_id)
+
+
 # ---- 연결 시험(제공자 시험 함수를 주입받는다) -------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ProviderResult:

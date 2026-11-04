@@ -133,6 +133,11 @@ def _normalized(value, depth=0):
     raise ValueError("조건에는 글·숫자·목록·사전만 쓸 수 있다")
 
 
+def _confirms_auth(status, used_response):
+    """성공 보고가 '인증이 통한다' 는 증거인가 — 응답 상태를 안 적었거나(0) 2xx 이고, 응답을 못 썼다고 알리지 않았을 때만. 모호하면(성공이라는데 상태가 2xx 가 아님·응답을 못 씀) 갱신하지 않는다."""
+    return (status == 0 or 200 <= status < 300) and used_response is not False
+
+
 def condition_hash(condition):
     """정규화한 요청 조건의 해시 앞부분(`CONDITION_HEX` 자). 조건이 없으면 ''. 이 모듈은 키 값을 받지 않으므로 값에서 키를 유도할 수 없다 — 같은 조건이 같은 해시가 되어 '같은 조회의 반복'만 알아볼 수 있다."""
     if condition is None:
@@ -668,6 +673,14 @@ class QuotaGuard:
             return result
         return replace(result, reason=provider.stop_text, cause=_ERROR_CODE_NOTE.sub("", result.cause or result.reason).strip())          # 사유에는 '(오류 코드 …)' 같은 기술 코드를 남기지 않는다 — 사용자 화면에는 쉬운 한국어만
 
+    def _legacy_denial(self, purpose):
+        """옛 용도(`legacy_to`)로는 호출 몫을 주지 않는다 — 옛 항목은 읽기만 하는 것이라(호출 코드도 없다) 쉬운 한국어로 거절하고 새 용도로 안내한다. 옛 용도가 아니면 None."""
+        spec = self.registry[purpose]
+        if not spec.legacy_to:
+            return None
+        target = self.registry.get(spec.legacy_to)
+        return Denied(purpose, "legacy", f"옛 용도라 호출하지 않습니다 — '{target.label if target else spec.legacy_to}'({spec.legacy_to})로 옮겨 쓰세요(옛 항목의 키는 지우지 않았습니다)", degraded=True)
+
     def acquire(self, purpose, calls=1, *, priority=NEW, cached=False, request=None, kind="", condition=None):
         """이번 호출의 몫을 잡는다 → `Lease`(어느 항목으로 부를지) 또는 `Denied`(부르지 않는다 — `degraded`·`use_cache`·`retry_at`). 호출하기 **전에** 사용량을 먼저 센다(동시에 부르는 다른 프로세스가 초과하지 못하게).
         `kind`(호출 종류 이름)·`condition`(정규화할 요청 조건 — 키·응답은 넣지 않는다)은 장부 제공자의 호출 장부에만 쓰인다(`condition_hash` 의 앞부분만 남는다)."""
@@ -675,6 +688,9 @@ class QuotaGuard:
         if not isinstance(kind, str) or not _KIND_KEY.fullmatch(kind):
             raise ValueError(f"kind 는 소문자·숫자·밑줄 {MAX_KIND}자 이내여야 한다")
         cond = condition_hash(condition)
+        legacy = self._legacy_denial(purpose)
+        if legacy is not None:                                      # 옛 용도는 호출 몫을 주지 않는다(상태 파일도 건드리지 않는다)
+            return legacy
         request = request if request is not None else Request(purpose, priority)
         if request.closed or request.purpose != purpose:
             return self._closed_wording(purpose, Denied(purpose, "closed", "이 일은 이미 끝났습니다 — 새 일로 다시 시작합니다", degraded=True))
@@ -828,6 +844,9 @@ class QuotaGuard:
         if not isinstance(kind, str) or not _KIND_KEY.fullmatch(kind):
             raise ValueError(f"kind 는 소문자·숫자·밑줄 {MAX_KIND}자 이내여야 한다")
         cond = condition_hash(condition)
+        legacy = self._legacy_denial(entry.purpose)
+        if legacy is not None:                                      # 옛 용도의 항목으로는 연결 시험 호출도 하지 않는다
+            return legacy
         request = Request(entry.purpose, priority)
         try:
             with cn.locked(self.ctx, "quota-state", wait=self.lock_wait):
@@ -909,6 +928,8 @@ class QuotaGuard:
         if provider.ledger:
             self._audit_finish(bucket, windows, spec, lease, now, outcome, status, used_response)
         self._save(state)
+        if outcome == OK and provider.fail_closed and _confirms_auth(status, used_response):
+            cn.mark_call_ok(self.ctx, entry.entry_id, registry=self.registry)      # 성공한 실제 호출은 인증이 통한다는 증거 — 인증 '맑음'(`auth_state`)의 24시간 창을 이어 준다(한도 기록을 저장한 뒤에 적는다: 못 적어도 사용량은 남는다)
         advice = ""
         if outcome != OK:
             shown = render(ADVICE_CODE[outcome], {"재시도 가능 시각": self._retry_text(blocked)} if blocked else None)
@@ -916,8 +937,12 @@ class QuotaGuard:
         return ReportResult(action, advice, wait, blocked)
 
     def _exhaust_until(self, spec, windows, now, reset_at):
+        """서버가 기간 한도 소진을 알렸을 때 쉬는 시각. 서버가 48시간 안의 초기화 시각을 알려 주면 그 시각, 아니면 **월 창이 있는 제공자는 다음 달 1일 00:00(한국 시간)**(이틀 뒤 같은 달에 다시 열리지 않게),
+        일 창만 있으면 다음 한국 자정, 슬라이딩 창뿐이면 그 길이만큼."""
         if isinstance(reset_at, datetime) and reset_at.tzinfo is not None and now < reset_at <= now + MAX_BLOCK:
             return reset_at.astimezone(timezone.utc)
+        if any(window.kind == "month" for window in windows):
+            return _next_month_start(now)
         for window in windows:
             if window.kind == "day":
                 return _next_reset(now, spec)

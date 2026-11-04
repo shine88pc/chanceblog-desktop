@@ -9,6 +9,9 @@
   E) 한도 단계(콘솔 월 한도 30,000 기준): 호출 뒤 사용량이 21,000 을 넘으면 안내·24,000 을 넘으면 자동 새로고침 중지(직접 시작한 분석은 한 번에 5회까지)·27,000 을 넘으면 모든 신규 호출 중지. 마지막 10% 예약은 쓰지 않는다.
   F) 키 돌려쓰기 금지: 429·기간 한도·인증 실패·일시 오류 어느 것도 다른 키로 넘어가지 않는다.
   G) 상태 파일 판: 장부가 없는 파일은 판 1 그대로(옛 프로그램이 쓴 파일을 깨졌다고 보지 않는다), 장부가 생긴 파일만 판 2.
+  H) 기간 한도 소진 응답 뒤의 쉬는 시각: 월 창이 있는 제공자는 다음 달 1일 00:00(한국 시간), 일 창만 있는 제공자는 그대로 다음 한국 자정.
+  I) 성공한 실제 호출의 보고는 마지막 성공 시각을 갱신해 인증 '맑음' 24시간 창을 이어 준다(실패·모호한 결과·다른 제공자·인증 실패로 멈춘 항목은 갱신하지 않는다).
+  J) 옛 용도(`naver_openapi`)로는 호출 몫을 주지 않는다(쉬운 한국어 거절, 새 용도로 안내).
 """
 import copy
 import json
@@ -1127,17 +1130,19 @@ class RotationTest(HubCase):
         self.assertEqual(ss.code_of(cn.load, self.ctx).code, "CONNECTIONS_FILE_INVALID")
         self.assert_closed(self.guard.acquire(PURPOSE), "unavailable", cause="사용량 기록을 읽거나 쓰지 못해")
 
-    def test_an_exhausted_answer_keeps_the_real_attempt_counts_and_rests_until_korean_midnight(self):
+    def test_an_exhausted_answer_keeps_the_real_attempt_counts_and_rests_until_the_first_of_next_month_korean_time(self):
+        """서버가 기간 한도 소진을 알리면 월 창이 있는 제공자는 '다음 한국 자정' 이 아니라 다음 달 1일 00:00(한국 시간)까지 쉰다 — 이틀 뒤 같은 달에 다시 열리지 않는다(독립 검증 지적 1). 시도 수는 채워 넣지 않는다."""
         self.hub()
         result = self.guard.report(self.lease(), q.QUOTA_EXHAUSTED, status=429)
-        self.assertEqual((result.action, result.blocked_until), (q.ACT_STOP, NEXT_MIDNIGHT))
+        self.assertEqual((result.action, result.blocked_until), (q.ACT_STOP, NEXT_MONTH))
         windows = self.bucket()["windows"]
         self.assertEqual((windows["day"]["used"], windows["month"]["used"]), (1, 1))                           # 한도까지 채워 넣지 않는다
         bucket = self.bucket()
-        self.assertEqual((bucket["blocked_until"], bucket["block_kind"]), (stamp(NEXT_MIDNIGHT), "quota_exhausted"))
+        self.assertEqual((bucket["blocked_until"], bucket["block_kind"]), (stamp(NEXT_MONTH), "quota_exhausted"))
         got = self.denied()
         self.assert_closed(got, "blocked", cause="서비스가 기간 한도를 다 썼다고 알려 와 다음 초기화 때까지 쉽니다")
-        self.assertEqual(got.retry_at, NEXT_MIDNIGHT)
+        self.assertEqual(got.retry_at, NEXT_MONTH)
+        self.assertEqual(got.resume_text, "12월 01일 00:00 이후 자동 재개")
 
     def test_an_exhausted_answer_with_a_reset_time_rests_until_that_time(self):
         self.hub()
@@ -1163,6 +1168,230 @@ class RotationTest(HubCase):
         windows = self.bucket()["windows"]
         self.assertEqual((windows["day"]["used"], windows["day"]["successes"]), (2, 0))
         self.assert_closed(self.guard.acquire(PURPOSE, request=first.request), "closed", cause="이 일은 이미 끝났습니다")
+
+
+class ExhaustedRestTest(HubCase):
+    """서버가 기간 한도 소진(`quota_exhausted`)을 알렸을 때 쉬는 시각 — 월 창이 있는 제공자는 다음 달 1일 00:00(한국 시간), 일 창만 있는 제공자는 그대로 다음 한국 자정(독립 검증 지적 1)."""
+
+    def test_the_rest_ends_at_korean_midnight_of_the_first_of_the_next_month_for_any_moment_of_the_month(self):
+        """달의 처음·한가운데·마지막 1초·새 달 정각·12월(다음 해 1월)·윤년 2월 — 쉬는 시각이 '다음 달 1일 00:00(한국)' 이고 결과·저장한 막힘 시각·거절의 다시 열릴 시각이 모두 같다."""
+        cases = ((datetime(2026, 11, 1, 15, 0, 0, tzinfo=UTC), datetime(2026, 11, 30, 15, 0, 0, tzinfo=UTC)),      # 한국 11-02 00:00:00 → 12-01 00:00
+                 (NOW, NEXT_MONTH),
+                 (datetime(2026, 11, 30, 14, 59, 59, tzinfo=UTC), datetime(2026, 11, 30, 15, 0, 0, tzinfo=UTC)),      # 한국 11-30 23:59:59 → 1초 뒤
+                 (datetime(2026, 11, 30, 15, 0, 0, tzinfo=UTC), datetime(2026, 12, 31, 15, 0, 0, tzinfo=UTC)),        # 한국 12-01 00:00:00 정각 — 새 달이 이미 시작됐으니 그다음 달(1월 1일)
+                 (datetime(2026, 12, 15, 3, 0, 0, tzinfo=UTC), datetime(2026, 12, 31, 15, 0, 0, tzinfo=UTC)),         # 12월 → 다음 해 1월 1일 00:00(한국)
+                 (datetime(2028, 2, 10, 3, 0, 0, tzinfo=UTC), datetime(2028, 2, 29, 15, 0, 0, tzinfo=UTC)))           # 윤년 2월 → 3월 1일 00:00(한국) = 2월 29일 15:00(UTC)
+        for moment, expected in cases:
+            with self.subTest(moment=moment):
+                self.setUp()
+                self.clock.now = moment
+                self.hub()
+                result = self.guard.report(self.lease(), q.QUOTA_EXHAUSTED, status=429)
+                self.assertEqual((result.action, result.blocked_until), (q.ACT_STOP, expected))
+                self.assertEqual(self.bucket()["blocked_until"], stamp(expected))
+                self.assertEqual(self.denied().retry_at, expected)
+
+    def test_two_days_later_in_the_same_month_it_is_still_closed_and_it_opens_exactly_at_the_new_month(self):
+        """옛 동작(다음 한국 자정)이면 이틀 뒤 같은 달에 다시 열렸다 — 이제 다음 달 1일 00:00 한 초 전까지 닫혀 있고 그 정각에 열린다."""
+        self.hub()
+        self.guard.report(self.lease(), q.QUOTA_EXHAUSTED, status=429)
+        for moment in (NOW + timedelta(hours=1), NEXT_MIDNIGHT - timedelta(seconds=1), NEXT_MIDNIGHT, NOW + timedelta(days=2), NEXT_MIDNIGHT + timedelta(days=1), NEXT_MONTH - timedelta(seconds=1)):
+            with self.subTest(moment=moment):
+                self.at(moment)
+                got = self.denied()
+                self.assert_closed(got, "blocked", cause="서비스가 기간 한도를 다 썼다고 알려 와 다음 초기화 때까지 쉽니다")
+                self.assertEqual(got.retry_at, NEXT_MONTH)
+        self.at(NEXT_MONTH)
+        self.lease()
+        windows = self.bucket()["windows"]
+        self.assertEqual((windows["month"]["label"], windows["month"]["used"], windows["day"]["label"], windows["day"]["used"]), ("2026-12", 1, "2026-12-01", 1))
+
+    def test_a_server_reset_time_within_forty_eight_hours_wins_and_a_farther_past_or_naive_one_is_ignored(self):
+        """서버가 48시간 안의 초기화 시각을 알려 주면 그 시각(경계 48시간 정각 포함), 48시간을 넘거나 지났거나 시간대가 없으면 믿지 않고 다음 달 1일."""
+        cases = ((timedelta(hours=1), NOW + timedelta(hours=1)), (timedelta(hours=48), NOW + timedelta(hours=48)), (timedelta(hours=48, seconds=1), NEXT_MONTH), (timedelta(days=20), NEXT_MONTH),
+                 (timedelta(0), NEXT_MONTH), (timedelta(seconds=-1), NEXT_MONTH))
+        for offset, expected in cases:
+            with self.subTest(offset=offset):
+                self.setUp()
+                self.hub()
+                self.assertEqual(self.guard.report(self.lease(), q.QUOTA_EXHAUSTED, reset_at=NOW + offset).blocked_until, expected)
+        self.setUp()
+        self.hub()
+        self.assertEqual(self.guard.report(self.lease(), q.QUOTA_EXHAUSTED, reset_at=datetime(2026, 11, 2, 5, 0, 0)).blocked_until, NEXT_MONTH)
+
+    def test_the_rest_depends_on_which_windows_the_provider_has(self):
+        """월 창이 하나라도 있으면 다음 달 1일(일 창이 같이 있어도), 일 창만이면 다음 한국 자정, 슬라이딩 창뿐이면 그 길이, 창이 없으면 60분."""
+        spec = cn.PURPOSES[PURPOSE]
+        day, month, hour = cn.Window("day", "day", 100), cn.Window("month", "month", 27000), cn.Window("hour", "sliding", 50, 60, True)
+        cases = (((day, month), NEXT_MONTH), ((month, day), NEXT_MONTH), ((month,), NEXT_MONTH), ((day,), NEXT_MIDNIGHT), ((hour,), NOW + timedelta(minutes=60)), ((), NOW + timedelta(minutes=60)))
+        for windows, expected in cases:
+            with self.subTest(windows=[item.kind for item in windows]):
+                self.assertEqual(self.guard._exhaust_until(spec, windows, NOW, None), expected)
+
+    def test_a_day_only_provider_still_rests_until_the_next_korean_midnight_and_fills_its_window(self):
+        """일 창만 있는 제공자(시험용 일반 용도 — 옛 `naver_openapi` 정의)는 지금까지처럼 다음 한국 자정까지 쉬고 창을 한도까지 채운다(다른 용도의 동작은 그대로)."""
+        registry = ss.generic_registry()
+        guard = q.QuotaGuard(self.ctx, registry=registry, lock_wait=0)
+        entry = cn.add_entry(self.ctx, "naver_openapi", name="일반", fields={"client_id": "legacyid0001", "client_secret": "legacysecret01"}, project="앱", registry=registry).entry
+        lease = guard.acquire("naver_openapi")
+        self.assertIsInstance(lease, q.Lease, lease)
+        result = guard.report(lease, q.QUOTA_EXHAUSTED, status=429)
+        self.assertEqual((result.action, result.blocked_until), (q.ACT_STOP, NEXT_MIDNIGHT))
+        held = self.state()["buckets"][q.bucket_key(entry)]
+        self.assertEqual((held["windows"]["day"]["used"], held["blocked_until"]), (25000, stamp(NEXT_MIDNIGHT)))
+        self.assertNotIn("audit", held)
+
+
+class AuthRefreshTest(HubCase):
+    """성공한 실제 호출의 보고가 마지막 성공 시각을 갱신해 인증 '맑음' 의 24시간 창을 이어 준다(독립 검증 지적 2). 실패·모호한 결과·다른 제공자·인증 실패로 멈춘 항목은 갱신하지 않는다."""
+
+    def entry_now(self):
+        return cn.load(self.ctx).entries[0]
+
+    def reported(self, outcome, *, hours=5, **kwargs):
+        """새 항목(연결 시험 성공 = NOW)으로 시작해 `hours` 시간 뒤에 호출을 잡고 `outcome` 을 보고한 다음의 항목."""
+        self.setUp()
+        self.hub()
+        self.at(NOW + timedelta(hours=hours), auth=False)
+        self.guard.report(self.lease(), outcome, **kwargs)
+        return self.entry_now()
+
+    def test_a_successful_report_refreshes_the_last_success_time_and_leaves_the_test_time_alone(self):
+        """성공 보고 → `last_ok_at` 이 그 시각, 확인 결과 ok, 마지막 시험 시각(`checked_at`)은 그대로(연결 시험의 60초 규칙은 시험 호출만 센다)."""
+        entry = self.reported(q.OK, status=200)
+        self.assertEqual((entry.last_ok_at, entry.check_result, entry.checked_at), (stamp(NOW + timedelta(hours=5)), "ok", STAMP))
+
+    def test_each_success_carries_the_twenty_four_hour_window_on_to_the_second(self):
+        """연결 시험 성공 23시간 뒤의 성공 보고가 창을 이어 줘서 47시간 정각까지 맑고 1초 뒤에는 불명확 — 보고가 없었다면 24시간 뒤부터 불명확이었다."""
+        self.hub()
+        self.at(NOW + timedelta(hours=23), auth=False)
+        self.guard.report(self.lease(), q.OK, status=200)
+        self.at(NOW + timedelta(hours=47), auth=False)
+        self.lease()
+        self.at(NOW + timedelta(hours=47, seconds=1), auth=False)
+        self.assert_closed(self.denied(), "auth_unclear", cause="인증 상태가 확실하지 않습니다")
+        self.setUp()
+        self.hub()
+        self.at(NOW + timedelta(hours=24), auth=False)
+        self.lease()
+        self.at(NOW + timedelta(hours=24, seconds=1), auth=False)
+        self.assert_closed(self.denied(), "auth_unclear", cause="인증 상태가 확실하지 않습니다")
+
+    def test_a_failure_of_any_kind_never_refreshes_the_last_success_time(self):
+        """실패 9종(429·기간 한도·일시 오류·시간 초과·인증 실패·잘못된 요청·정책 차단·콘텐츠 차단·그 밖의 오류) 어느 것도 `last_ok_at` 을 바꾸지 않는다. 인증 실패만 확인 결과를 auth_failed 로 하고(그때 시각이 `checked_at`) 나머지는 `checked_at` 도 그대로다."""
+        for outcome, status in FAILURES.items():
+            with self.subTest(outcome=outcome):
+                entry = self.reported(outcome, status=status)
+                self.assertEqual(entry.last_ok_at, STAMP)
+                if outcome == q.AUTH_FAILED:
+                    self.assertEqual((entry.check_result, entry.checked_at), ("auth_failed", stamp(NOW + timedelta(hours=5))))
+                else:
+                    self.assertEqual((entry.check_result, entry.checked_at), ("ok", STAMP))
+
+    def test_a_success_with_an_ambiguous_status_or_an_unused_response_does_not_refresh(self):
+        """성공이라는데 응답 상태가 2xx 가 아니거나(199·300·404·500·599) 응답을 못 썼다고 알린 보고는 모호해서 갱신하지 않고, 상태가 2xx(200·204·299)이거나 안 적은(None) 보고는 갱신한다."""
+        fresh, stale = stamp(NOW + timedelta(hours=5)), STAMP
+        cases = (({"status": 199}, stale), ({"status": 300}, stale), ({"status": 404}, stale), ({"status": 500}, stale), ({"status": 599}, stale), ({"status": 200, "used_response": False}, stale),
+                 ({"used_response": False}, stale), ({"status": 200}, fresh), ({"status": 204}, fresh), ({"status": 299}, fresh), ({}, fresh), ({"status": 200, "used_response": True}, fresh))
+        for kwargs, expected in cases:
+            with self.subTest(**kwargs):
+                self.assertEqual(self.reported(q.OK, **kwargs).last_ok_at, expected)
+
+    def test_a_late_success_does_not_revive_an_entry_stopped_for_failed_authentication(self):
+        """인증 실패로 멈춘 뒤에 먼저 잡아 둔 호출의 성공 보고가 늦게 와도 항목은 되살아나지 않고(확인 결과 auth_failed·`last_ok_at` 그대로) 다음 호출은 인증 실패 코드로 거절된다."""
+        self.hub()
+        first, second = self.lease(), self.lease()
+        self.guard.report(first, q.AUTH_FAILED, status=401)
+        self.at(NOW + timedelta(hours=1), auth=False)
+        self.guard.report(second, q.OK, status=200)
+        entry = self.entry_now()
+        self.assertEqual((entry.check_result, entry.last_ok_at), ("auth_failed", STAMP))
+        self.assert_closed(self.denied(), "auth_failed", cause="인증 정보 오류")
+
+    def test_providers_without_the_fail_closed_gate_do_not_touch_the_connection_file_on_success(self):
+        """Fail-Closed 가 아닌 제공자(이미지 공급자)의 성공 보고는 연결 설정 파일을 쓰지 않는다 — 바이트가 그대로다(다른 용도의 동작은 그대로)."""
+        self.image()
+        path = self.ctx.workspace.connections_path
+        before = path.read_bytes()
+        lease = self.guard.acquire("image_provider")
+        self.assertIsInstance(lease, q.Lease, lease)
+        self.guard.report(lease, q.OK, status=200)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_mark_call_ok_changes_only_the_last_success_and_the_check_result_and_never_revives_a_stopped_entry(self):
+        """`connections.mark_call_ok` — 없는 항목은 None(파일 그대로), 정상 항목은 `last_ok_at`·확인 결과 ok 만 바뀌고 나머지 칸은 같고, 시험 오류(error) 항목은 ok 가 되고, 인증 실패(auth_failed) 항목은 None 이고 파일 그대로."""
+        entry = self.hub(ok=False)
+        path = self.ctx.workspace.connections_path
+        before = path.read_bytes()
+        self.assertIsNone(cn.mark_call_ok(self.ctx, "ff" * 16))
+        self.assertEqual(path.read_bytes(), before)
+        self.clock.now = NOW + timedelta(hours=2)
+        changed = cn.mark_call_ok(self.ctx, entry.entry_id)
+        self.assertEqual((changed.last_ok_at, changed.check_result), (stamp(NOW + timedelta(hours=2)), "ok"))
+        self.assertEqual({key: value for key, value in changed.to_dict().items() if key not in ("last_ok_at", "check_result")},
+                         {key: value for key, value in entry.to_dict().items() if key not in ("last_ok_at", "check_result")})
+        cn.mark_check(self.ctx, entry.entry_id, "error")
+        self.assertEqual(cn.mark_call_ok(self.ctx, entry.entry_id).check_result, "ok")
+        cn.mark_check(self.ctx, entry.entry_id, "auth_failed")
+        stopped = path.read_bytes()
+        self.assertIsNone(cn.mark_call_ok(self.ctx, entry.entry_id))
+        self.assertEqual(path.read_bytes(), stopped)
+
+    def test_a_success_report_that_cannot_write_the_connection_file_still_keeps_the_usage_record(self):
+        """연결 설정 파일을 못 써서 보고가 오류로 끝나도 사용량(성공 수·장부)은 이미 저장돼 있다 — 한도 기록을 먼저 저장하고 마지막 성공 시각을 적는다."""
+        self.hub()
+        lease = self.lease()
+        with mock.patch.object(cn, "save", side_effect=AppError("FILE_WRITE_FAILED")):
+            with self.assertRaises(AppError):
+                self.guard.report(lease, q.OK, status=200)
+        windows = self.bucket()["windows"]
+        self.assertEqual((windows["day"]["used"], windows["day"]["successes"], windows["month"]["successes"]), (1, 1, 1))
+        self.assertEqual(self.audit()["ledger"][0]["ok"], True)
+
+
+class LegacyAcquireTest(HubCase):
+    """옛 용도(`naver_openapi`)로는 호출 몫을 주지 않는다 — 쉬운 한국어로 거절하고 새 용도로 안내한다(독립 검증 지적 7)."""
+
+    def setUp(self):
+        super().setUp()
+        self.registry = ss.generic_registry()
+        self.legacy = cn.add_entry(self.ctx, "naver_openapi", name="옛 기본", fields={"client_id": "legacyid0001", "client_secret": "legacysecret01"}, project="앱", registry=self.registry).entry
+
+    def check(self, got):
+        self.assertIsInstance(got, q.Denied, got)
+        self.assertEqual((got.code, got.degraded, got.use_cache, got.retry_at, got.resume_text, got.cause), ("legacy", True, False, None, "", ""))
+        for text in ("옛 용도라 호출하지 않습니다", "NAVER API HUB 검색어 트렌드", "naver_apihub", "옛 항목의 키는 지우지 않았습니다"):
+            self.assertIn(text, got.reason)
+        self.assertIsNone(re.search(r"[A-Z]{3,}_[A-Z_]+", got.reason), got.reason)
+
+    def test_the_legacy_purpose_is_refused_for_every_priority_count_and_cache_flag_without_touching_the_usage_file(self):
+        """우선순위 4종 × 횟수 × 저장해 둔 값 표시 어느 것으로도 거절이고 사용량 파일은 만들어지지도 않는다."""
+        guard = q.QuotaGuard(self.ctx, lock_wait=0)
+        for priority in q.PRIORITIES:
+            for calls in (1, 5):
+                for cached in (False, True):
+                    with self.subTest(priority=priority, calls=calls, cached=cached):
+                        self.check(guard.acquire("naver_openapi", calls, priority=priority, cached=cached))
+        self.assertFalse(self.path.exists())
+
+    def test_the_connection_test_call_of_a_legacy_entry_is_refused_too(self):
+        """`acquire_entry` 로 옛 항목을 콕 집어 잡아도 거절이고 사용량 파일은 그대로 없다."""
+        self.check(q.QuotaGuard(self.ctx, lock_wait=0).acquire_entry(self.legacy))
+        self.assertFalse(self.path.exists())
+
+    def test_the_legacy_purpose_is_refused_even_with_no_entry_at_all_instead_of_saying_there_is_no_key(self):
+        """항목이 하나도 없어도 옛 용도는 '연결된 키가 없어' 가 아니라 옛 용도 거절이다."""
+        cn.remove_entry(self.ctx, self.legacy.entry_id[:8], confirmed=True)
+        self.check(q.QuotaGuard(self.ctx, lock_wait=0).acquire("naver_openapi"))
+
+    def test_other_purposes_and_a_registry_that_opens_the_purpose_still_give_calls(self):
+        """옛 용도 거절은 `legacy_to` 가 있는 용도에만 — 새 용도·이미지 공급자는 그대로 몫을 받고, 일반 시험 레지스트리(`legacy_to` 가 빈 옛 정의)의 같은 이름 용도도 몫을 받는다."""
+        self.hub()
+        self.image()
+        guard = q.QuotaGuard(self.ctx, lock_wait=0)
+        self.assertIsInstance(guard.acquire(PURPOSE), q.Lease)
+        self.assertIsInstance(guard.acquire("image_provider"), q.Lease)
+        self.assertIsInstance(q.QuotaGuard(self.ctx, registry=self.registry, lock_wait=0).acquire("naver_openapi"), q.Lease)
 
 
 class SchemaTest(HubCase):
