@@ -5,6 +5,7 @@
   2) 로그인·네트워크·셸 자동화 없음: 서비스 코드는 `subprocess`·`socket`·`urllib`·`http`·`ssl`·`webbrowser`·`ctypes` 를 쓰지 않는다(git 은 backend 를 거쳐 `publish/` 모듈이 하고, 네트워크는 주입한 배포 확인뿐이다).
   3) git 을 직접 쓰는 명령은 읽기 전용(`rev-parse`·`rev-list`·`ls-tree`·`cat-file`·`diff-tree`·`log`·`--version`)뿐이다 — commit·push·되돌리기는 모두 `publish/pages.py` 가 한다. 강제 push·`reset --hard` 같은 말은 어디에도 없다.
   4) 서비스 코드가 파일을 쓰는 곳은 설정·발행 기록·잠금 파일(`context.write_json`·`journal`·`lock` — 글 잠금은 데이터 폴더에, 저장소 잠금은 연결한 저장소의 `.git` 안에 둔다)뿐이다 — 연결한 저장소에 글 파일은 쓰지 않는다(그건 `publish/pages.py`).
+     그 허용은 파일 전체가 아니라 **(파일, 함수)** 단위다(`FILE_WRITERS`·`OS_CALLS`) — 같은 파일의 다른 함수에 새로 생긴 쓰기·`os.open`·`os.replace`·`write_text` 도 걸린다(합성 소스로 규칙 자체를 시험한다).
   5) 키·토큰을 읽지 않는다: 읽는 환경 변수는 데이터 폴더·저장소 폴더 위치뿐이고, 영어 비밀 낱말(`api key`·`secret`·`token`·`password`)이 서비스 코드의 문자열에 없다.
   6) 이 PC 의 절대경로는 commit 되는 글·commit 제목에 들어가지 않는다.
 """
@@ -25,7 +26,16 @@ SERVICE = ss.ROOT / "src" / "chanceblog_desktop" / "service"
 FILES = sorted(SERVICE.glob("*.py")) + [ss.ROOT / "src" / "chanceblog_desktop" / "__main__.py"]
 FORBIDDEN_IMPORTS = {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "ftplib", "smtplib", "telnetlib", "xmlrpc", "asyncio"}
 READ_ONLY_GIT = {"rev-parse", "rev-list", "ls-tree", "cat-file", "diff-tree", "log", "--version"}        # diff-tree·log: commit 직후에 멈춘 이 글의 commit 인지 읽기만 해서 확인한다
-FILE_WRITERS = {"context.py": {"write_text", "replace", "unlink", "mkdir"}, "journal.py": {"unlink"}, "lock.py": {"unlink", "mkdir"}}
+# 서비스 코드가 직접 파일을 쓰거나 지우는 곳은 **(파일, 함수)** 단위로 못박는다 — 파일 전체를 허용하면 그 파일 안에 새로 생긴 비내구성 쓰기(임시 파일 없이 바로 쓰기 …)가 걸리지 않는다.
+FILE_WRITERS = {("context.py", "write_json"): {"mkdir", "unlink"}, ("context.py", "ensure"): {"mkdir"}, ("journal.py", "remove"): {"unlink"}, ("lock.py", "_prepare_folder"): {"mkdir"}, ("lock.py", "_remove_file"): {"unlink"}}
+OS_CALLS = {                                      # 낮은 수준 파일 호출과 그것을 불러도 되는 (파일, 함수)
+    "os.open": {("context.py", "_write_durably"), ("lock.py", "_create")},                       # JSON 을 임시 파일에 쓰고 `fsync` 하는 곳 · 잠금 파일을 `O_EXCL` 로 새로 만드는 곳
+    "os.write": {("context.py", "_write_durably"), ("lock.py", "_create")},
+    "os.fsync": {("context.py", "_write_durably")},
+    "os.replace": {("context.py", "write_json"), ("context.py", "keep_bad_copy"), ("lock.py", "_take_over")},
+    "os.link": {("lock.py", "_take_over")},
+    "os.rename": set(), "os.remove": set(),
+}
 WRITE_CALLS = {"write_text", "write_bytes", "write", "unlink", "mkdir", "rmdir", "replace", "rename", "remove", "rmtree", "copy", "copy2", "copyfile", "copytree", "move", "touch", "open", "makedirs", "chmod"}
 ENV_NAMES = {"CHANCEBLOG_DESKTOP_DATA", "CHANCEBLOG_LOCAL_REPO", "LOCALAPPDATA", "XDG_DATA_HOME"}
 OTHER_NAMES = {"VERSION", "O_BINARY"}           # 파일 이름(프로그램 버전을 적은 파일) · 잠금 파일을 만들 때 Windows 에서 쓰는 열기 표시(os.O_BINARY)
@@ -33,6 +43,31 @@ OTHER_NAMES = {"VERSION", "O_BINARY"}           # 파일 이름(프로그램 버
 
 def parse(path):
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def calls_with_function(node, function=""):
+    """(호출, 그 호출을 감싼 가장 안쪽 함수의 이름 — 함수 밖이면 '') 을 모두."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.Call):
+            yield child, function
+        yield from calls_with_function(child, child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else function)
+
+
+def write_violations(file_name, tree):
+    """서비스 파일 하나(`file_name`)의 소스에서 정해진 (파일, 함수) 밖의 쓰기·지우기·열기 호출을 모은다."""
+    found = []
+    for node, function in calls_with_function(tree):
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else (node.func.id if isinstance(node.func, ast.Name) else "")
+        full = ast.unparse(node.func)
+        place = (file_name, function)
+        where = f"{file_name}:{node.lineno} {function or '(함수 밖)'}"
+        if name in WRITE_CALLS and name not in ("write", "open", "copy", "move", "replace", "remove") and name not in FILE_WRITERS.get(place, set()):
+            found.append(f"{where}: {name}")
+        if full in OS_CALLS and place not in OS_CALLS[full]:
+            found.append(f"{where}: {full}")
+        if name in ("makedirs", "rmtree", "copytree", "copyfile", "copy2") or (name == "open" and full not in ("Store.open", "os.open")):
+            found.append(f"{where}: 파일을 직접 열거나 복사한다({full})")
+    return found
 
 
 def strings(tree):
@@ -170,17 +205,27 @@ class SourceRulesTest(unittest.TestCase):
 
     def test_only_settings_and_the_publish_record_are_written_by_the_service_itself(self):
         for path in FILES:
-            allowed = FILE_WRITERS.get(path.name, set())
-            for node in ast.walk(parse(path)):
-                if isinstance(node, ast.Call):
-                    name = node.func.attr if isinstance(node.func, ast.Attribute) else (node.func.id if isinstance(node.func, ast.Name) else "")
-                    if name in WRITE_CALLS and name not in ("write", "open", "copy", "move", "replace", "remove"):
-                        with self.subTest(file=path.name, call=name, line=node.lineno):
-                            self.assertIn(name, allowed, "서비스가 직접 파일을 쓰거나 지우는 곳은 설정(context)과 발행 기록(journal)뿐이다")
-                    allowed_open = ("Store.open", "os.open") if path.name in ("lock.py", "context.py") else ("Store.open",)         # os.open: 잠금 파일을 `O_EXCL` 로 새로 만드는 곳(lock.py)과, JSON 을 임시 파일에 쓰고 `fsync` 하는 곳(context.py 의 `_write_durably`)
-                    opens_a_file = name in ("makedirs", "rmtree", "copytree", "copyfile", "copy2") or (name == "open" and ast.unparse(node.func) not in allowed_open)
-                    if opens_a_file:
-                        self.fail(f"{path.name}:{node.lineno} 서비스가 직접 파일을 열거나 복사한다: {name}")
+            with self.subTest(file=path.name):
+                self.assertEqual(write_violations(path.name, parse(path)), [], "서비스가 직접 파일을 쓰거나 지우거나 여는 곳은 설정(context)·발행 기록(journal)·잠금(lock)의 정해진 함수뿐이다")
+
+    def test_the_write_rules_are_tied_to_functions_and_fire_on_a_new_write_anywhere_else(self):
+        """같은 파일 안의 다른 함수에 새로 생긴 쓰기·`os.open`·`write_text` 도 걸린다(전에는 `context.py` 파일 전체가 허용이었다). 다른 파일의 `os.open`·`write_bytes`·내장 `open` 은 늘 막힌다."""
+        cases = (
+            ("context.py", "def other(p):\n    p.write_text('x')\n", True), ("context.py", "def write_json(p):\n    p.write_text('x')\n", True), ("context.py", "def other(p):\n    os.open(p, 0)\n", True),
+            ("context.py", "def other(p):\n    p.mkdir()\n", True), ("context.py", "def other(p):\n    p.unlink()\n", True), ("context.py", "def other(a, b):\n    os.replace(a, b)\n", True),
+            ("context.py", "def other(fd):\n    os.write(fd, b'')\n", True), ("context.py", "def other(fd):\n    os.fsync(fd)\n", True), ("context.py", "def other(a, b):\n    os.rename(a, b)\n", True),
+            ("context.py", "def other(a):\n    os.remove(a)\n", True), ("context.py", "def other(p):\n    p.write_bytes(b'')\n", True), ("context.py", "def other(p):\n    open(p, 'w')\n", True),
+            ("context.py", "def write_json(p):\n    p.mkdir()\n    p.unlink()\n    os.replace(p, p)\n", False), ("context.py", "def ensure(p):\n    p.mkdir()\n", False),
+            ("context.py", "def _write_durably(p):\n    os.open(p, 0)\n    os.write(1, b'')\n    os.fsync(1)\n", False), ("context.py", "def keep_bad_copy(a, b):\n    os.replace(a, b)\n", False),
+            ("lock.py", "def _create(p):\n    os.open(p, 0)\n    os.write(1, b'')\n", False), ("lock.py", "def other(p):\n    os.open(p, 0)\n", True), ("lock.py", "def _take_over(a, b):\n    os.replace(a, b)\n    os.link(a, b)\n", False),
+            ("lock.py", "def _remove_file(p):\n    os.unlink(p)\n", False), ("lock.py", "def other(p):\n    os.unlink(p)\n", True), ("journal.py", "def remove(p):\n    p.unlink()\n", False),
+            ("journal.py", "def other(p):\n    p.unlink()\n", True), ("pages_flow.py", "def f(p):\n    os.open(p, 0)\n", True), ("pages_flow.py", "def f(p):\n    p.write_bytes(b'')\n", True),
+            ("pages_flow.py", "def f(p):\n    open(p)\n", True), ("cli.py", "def f(p):\n    shutil.rmtree(p)\n", True), ("cli.py", "def f(p):\n    shutil.copytree(p, p)\n", True),
+            ("projects.py", "def f(s):\n    Store.open(s)\n", False), ("projects.py", "def f(p):\n    p.read_text()\n    p.stat()\n", False),
+        )
+        for file_name, source, violated in cases:
+            with self.subTest(file=file_name, source=source.replace("\n", " ; ")[:60]):
+                self.assertEqual(bool(write_violations(file_name, ast.parse(source))), violated, source)
 
     def test_only_the_known_environment_variables_are_named_and_no_secret_words_appear(self):
         secret_words = re.compile(r"(?i)\b(api[_ -]?key|secret|token|passw(?:or)?d|credential)s?\b")

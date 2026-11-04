@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..content import status as st
 from ..content.model import Asset, ContentProject
+from ..echo import shown_backup, shown_ref
 from ..errors import AppError
 from ..render.markdown import html_to_markdown
 from .gate import require_clean_title
@@ -30,7 +31,7 @@ def require_confirmation(confirmed, what):
 
 
 def resolve_id(store, text):
-    """글 번호(전체 또는 앞 4자 이상이 겹치지 않는 앞부분) → 전체 번호."""
+    """글 번호(전체 또는 앞 4자 이상이 겹치지 않는 앞부분) → 전체 번호. 없는 번호를 쳤을 때 오류 문구는 친 글을 **번호 모양일 때만** 되풀이한다(`echo.shown_ref` — 키를 번호 자리에 잘못 쳐도 문구·`--json`·기록에 남지 않게)."""
     wanted = text.strip() if isinstance(text, str) else ""
     if not wanted:
         raise AppError("CONTENT_INVALID", {"항목": "글 번호"})
@@ -38,10 +39,10 @@ def resolve_id(store, text):
     if wanted in ids:
         return wanted
     if len(wanted) < MIN_PREFIX:
-        raise AppError("CONTENT_NOT_FOUND", {"항목": wanted}, detail=f"번호는 전체 또는 앞 {MIN_PREFIX}자 이상으로 적는다")
+        raise AppError("CONTENT_NOT_FOUND", {"항목": shown_ref(wanted)}, detail=f"번호는 전체 또는 앞 {MIN_PREFIX}자 이상으로 적는다")
     matches = [item for item in ids if item.startswith(wanted)]
     if not matches:
-        raise AppError("CONTENT_NOT_FOUND", {"항목": wanted})
+        raise AppError("CONTENT_NOT_FOUND", {"항목": shown_ref(wanted)})
     if len(matches) > 1:
         raise AppError("CONTENT_INVALID", {"항목": "글 번호(여러 글과 맞음)"}, detail=f"{len(matches)}개의 글이 이 앞부분으로 시작한다 — 더 길게 적는다")
     return matches[0]
@@ -259,12 +260,25 @@ def restore_store(ctx, backup_path=None, *, latest=False, confirmed):
     safety = ctx.workspace.backups_dir / "before-restore"
     with ctx.store() as store:
         saved = store.backup(safety, now=_free_moment(ctx, safety, store))              # 바꾸기 직전 상태 — 같은 초에 두 번 복구해도 앞 사본을 덮어쓰지 않는다
-        store.restore_from(source)
+        try:
+            store.restore_from(source)
+        except AppError as error:
+            raise _without_typed_backup(error, source) from None
         problems = store.check()
         if problems:                                                                      # 구조만 멀쩡하고 글 내용이 깨진 백업 — 방금 만든 사본으로 원래대로 돌린다
             store.restore_from(saved)
-            raise AppError("STORE_CORRUPT", {"파일": Path(source).name}, detail="백업의 글 내용이 올바르지 않아 복구하지 않고 원래대로 돌렸다: " + problems[0])
+            raise AppError("STORE_CORRUPT", {"파일": shown_backup(Path(source).name)}, detail="백업의 글 내용이 올바르지 않아 복구하지 않고 원래대로 돌렸다: " + problems[0])
     return source, safety
+
+
+def _without_typed_backup(error, source):
+    """백업 파일을 열다 난 오류(`restore_from`)의 칸에서 사용자가 친 경로·파일 이름을 지운다 — 앱이 만든 백업 이름 모양이면 이름만 남기고, 아니면 `(입력한 파일)`
+    (경로 자리에 키를 잘못 쳤을 수 있다). 지금 쓰는 글 저장소 쪽 오류의 칸은 친 값이 아니므로 그대로 둔다."""
+    typed = (str(source), Path(source).name)
+    for key, value in list(error.slots.items()):
+        if value in typed:
+            error.slots[key] = shown_backup(Path(source).name)
+    return error
 
 
 def _same_file(first, second):

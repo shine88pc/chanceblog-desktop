@@ -238,11 +238,21 @@ class ResolveTest(unittest.TestCase):
                 self.assertIs(svc.resolve(rows, text), rows[position - 1])
 
     def test_a_short_or_unknown_beginning_is_not_found_and_says_how_to_write_one(self):
-        for text in ("abc", "ef0", "ab", "qqqq", "abce", "9999"):
+        for text in ("abc", "ef0", "ab", "abce", "9999", "a1b2c3d4", "ABCDEF12"):                  # 번호 모양(16진수 8자 이하) — 친 그대로 알린다
             with self.subTest(text=text):
                 error = self.refuses("CANDIDATE_NOT_FOUND", text)
                 self.assertEqual(error.slots["항목"], text)
         self.assertIn("앞 4자", self.refuses("CANDIDATE_NOT_FOUND", "abc").detail)
+
+    def test_a_text_that_is_not_shaped_like_a_number_is_never_repeated_in_the_error(self):
+        """번호 자리에 키를 잘못 쳤을 수 있다 — 번호 모양이 아니면(16진수 9자 이상·16진수가 아닌 글자) 친 글이 오류의 어느 곳에도 없다(전에는 `qqqq` 까지 그대로 되풀이했다)."""
+        for text in ("qqqq", "g1", "ab-cd", "abcd12345", "x" * 40, "Qm7Xc2Vb9Nk4Lp8Rt3Wz6Yh1Jd5Sf0GaPq", "AI" + "za" + "A" * 35, "키는abcd1234입니다", "ab cd"):
+            with self.subTest(text=text[:12]):
+                error = self.refuses("CANDIDATE_NOT_FOUND", text)
+                self.assertEqual(error.slots["항목"], "(입력한 번호)")
+                shown = error.rendered()
+                self.assertNotIn(text, shown.message + shown.action + error.detail + error.log_line())
+                self.assertEqual(error.rendered().message, "주제 후보를 찾을 수 없습니다: 「(입력한 번호)」.")
 
     def test_a_beginning_shared_by_several_candidates_is_ambiguous_and_lists_them(self):
         error = self.refuses("CANDIDATE_AMBIGUOUS", "abcd")
@@ -250,6 +260,7 @@ class ResolveTest(unittest.TestCase):
         self.assertIn("후보 번호가 여러 개와 겹칩니다", error.rendered().message)
         for needle in ("2개", "순번 1 주제1", "순번 2 주제2"):
             self.assertIn(needle, error.detail)
+        self.assertTrue(error.detail.startswith("겹치는 후보 2개: 순번 1 주제1"), "세부는 친 글을 되풀이하지 않고 겹치는 후보들만 적는다: " + error.detail)
         self.assertNotIn("주제3", error.detail)
 
     def test_the_list_of_overlapping_candidates_also_shows_each_ones_eight_character_number(self):

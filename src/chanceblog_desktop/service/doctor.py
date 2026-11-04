@@ -1,7 +1,7 @@
 """doctor — 지금 상태를 점검한다. **읽기만 한다**(저장소·데이터 파일·설정을 바꾸지 않고, 없는 파일을 새로 만들지도 않는다. 네트워크는 `online=True` 일 때 올리기 권한 점검(`git push --dry-run`) 하나뿐).
 
 점검마다 한 줄 결과(쉬운 한국어)와 오류 코드(문제일 때)를 돌려준다. 상태는 ok(정상) · warn(주의 — 쓰는 데는 지장 없음) · fail(고쳐야 함) · skip(점검하지 않음)이다.
-점검 항목: 프로그램 버전 · Python · git · 데이터 폴더 · 설정 파일 · 글 저장소(기존 `Store.check`) · 백업 · 가져온 핵심 코드(vendor/, `scripts/sync_core.py` 의 `check` 와 같은 함수) ·
+점검 항목: 프로그램 버전 · Python · git · 데이터 폴더 · 설정 파일 · 연결 설정(`connections.json` — 깨졌으면 실패로 알린다) · 글 저장소(기존 `Store.check`) · 백업 · 가져온 핵심 코드(vendor/, `scripts/sync_core.py` 의 `check` 와 같은 함수) ·
 연결한 chanceblog 저장소(`inspect_repo`, 올리지 않은 commit 이 무엇인지 — `service/unpushed.py` 의 상황별 안내 한 가지) · (선택) 올리기 권한 · 네이버 블로그 프로필 · 이어서 처리할 글(COMMITTED·PUSHED)·공개된 글에 남은 발행 기록.
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from ..content import status as st
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.store import Store
 from ..errors import AppError, render
-from . import unpushed
+from . import connections, unpushed
 from .journal import Journal
 from .projects import list_backups, list_projects
 
@@ -122,6 +122,15 @@ def _check_settings(ctx):
     ctx.settings.repo_path()
     ctx.settings.naver_profile_dicts()
     return check("설정 파일", "ok", "", "읽을 수 있습니다.")
+
+
+def _check_connections(ctx):
+    """연결 설정(`connections.json` — 키 항목의 이름·상태 같은 메타데이터만, 키 값은 없다). 읽기만 한다(없으면 만들지 않는다). 깨졌거나 모양이 틀리면 `connections.load` 가 CONNECTIONS_FILE_INVALID 로 멈추고
+    `_guard` 가 그 오류의 쉬운 한 줄과 하실 일(직전의 올바른 사본 `.bak` 으로 되돌리기)을 실패(종료 코드 1)로 보인다 — 다른 설정 파일 점검과 같은 방식이다. 키는 자격 증명 관리자에 있어 파일이 깨져도 그대로다."""
+    if not ctx.workspace.connections_path.exists():
+        return check("연결 설정(키 항목)", "ok", "", "아직 없습니다 — `keys add` 로 키 항목을 더하면 만들어집니다(키가 없어도 모든 핵심 기능은 그대로 됩니다).")
+    data = connections.load(ctx)
+    return check("연결 설정(키 항목)", "ok", "", f"읽을 수 있습니다 — 키 항목 {len(data.entries)}개(키 값은 이 파일이 아니라 Windows 자격 증명 관리자에 있습니다).")
 
 
 def _store_exists(ctx):
@@ -271,7 +280,7 @@ def run_doctor(ctx, *, online=False):
     ctx = ctx.reading_only()
     results = []
     for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
-                       ("설정 파일", lambda: _check_settings(ctx)), ("글 저장소", lambda: _check_store(ctx)), ("백업", lambda: _check_backups(ctx)), ("핵심 코드(vendor/)", _check_core),
+                       ("설정 파일", lambda: _check_settings(ctx)), ("연결 설정(키 항목)", lambda: _check_connections(ctx)), ("글 저장소", lambda: _check_store(ctx)), ("백업", lambda: _check_backups(ctx)), ("핵심 코드(vendor/)", _check_core),
                        ("연결한 chanceblog 저장소", lambda: _check_repo(ctx)), ("올리기 권한", lambda: _check_push_access(ctx, online)), ("네이버 프로필", lambda: _check_naver(ctx)),
                        ("이어서 처리할 글", lambda: _check_pending(ctx))):
         found = _guard(name, work)
