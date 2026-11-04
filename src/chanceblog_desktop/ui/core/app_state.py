@@ -24,9 +24,9 @@ LOAD_KEY = "home-load"
 BLOG_NAMES = {"A": "블로그 A", "B": "블로그 B"}
 STATUS_LABEL = {"new": "새 후보", "selected": "선택됨", "hold": "보류"}
 TREND_ICON = {"up": "trend_up", "flat": "trend_flat", "down": "trend_down"}
-# 오류 한 줄에서 지울 경로의 시작 모양 셋 — ① 드라이브 경로(`C:\`·`C:/`; 앞이 영숫자면 `https:/` 같은 주소의 한 조각이라 아니다) ② 네트워크 경로(`\\서버\공유`)
-# ③ 유닉스식·사용자 폴더 경로(`/home/…`·`경로:/home/…`·`//서버/…`·`~/…`; 앞이 낱말 글자·`./\~<>-` 이면 날짜(`11/04`)·`a/b`·닫는 태그(`</p>`)지 경로가 아니고, `//` 앞이 `:` 이면 주소(`https://…`)다)
-_PATH_START = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![\w.:/\\~<>-])//|(?<![\w./\\~<>-])(?:~[\\/]|/(?=[\w.~-]))")
+# 오류 한 줄에서 지울 경로의 시작 모양 넷 — ① 드라이브 경로(`C:\`·`C:/`; 앞이 영숫자면 `https:/` 같은 주소의 한 조각이라 아니다) ② 네트워크 경로(`\\서버\공유`)
+# ③ 유닉스식·사용자 폴더 경로(`/home/…`·`경로:/home/…`·`//서버/…`·`~/…`; 앞이 낱말 글자·`./\~<>-` 이면 날짜(`11/04`)·`a/b`·닫는 태그(`</p>`)지 경로가 아니고, `//` 앞이 `:` 이면 주소(`https://…`)다) ④ `file:///home/…`(유닉스식 파일 주소 — 주소 머리 `file://`(대소문자 무관) 바로 뒤의 세 번째 `/` 가 경로의 시작이다; 윈도 `file:///C:/…` 는 ① 이 이미 잡는다)
+_PATH_START = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![\w.:/\\~<>-])//|(?<![\w./\\~<>-])(?:~[\\/]|/(?=[\w.~-]))|(?<=(?<![A-Za-z0-9])(?i:file)://)/(?=[\w.~-])")
 _LINE_BREAKS = "\r\n\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"                      # `str.splitlines()` 가 줄을 가르는 글자 — 경로 안에는 있을 수 없다
 _PATH_END = {quote: re.compile((re.escape(quote) + "(?![A-Za-z0-9])|" if quote else "") + "[" + _LINE_BREAKS + "]") for quote in ("", "'", '"', "`")}     # 따옴표 뒤가 영숫자면(`O'Brien`) 닫는 따옴표가 아니다
 
@@ -73,7 +73,11 @@ def unexpected_line(kind, value):
     """처리하지 못한 예외 하나를 표준 오류에 남길 **한 줄**로 — 예외 이름 + 비밀 모양을 가리고 경로를 지운 짧은 글. 추적(traceback)은 내지 않는다(경로·값이 들어 있다). 어떤 값이 와도 예외를 내지 않는다."""
     name = getattr(kind, "__name__", "") or "Exception"
     try:
-        detail = shown(erase_paths(str(value)), 120)                              # 경로를 지운 뒤 가리고(→) 줄인다 — 가리기가 자르기보다 먼저(줄 끝까지 지우므로 줄바꿈이 한 칸으로 합쳐지기 전에 지운다)
+        from ...security.mask import _strip_invisible                                  # 경로 시작을 보이지 않는 글자로 쪼개 지우기를 피하는 것을 막는다(`C:\u200b\Users\…`)
+        text = str(value)
+        for separator in _LINE_BREAKS:                                            # 줄을 가르는 글자는 경로가 끝나는 곳 — 보이지 않는 글자 지우기(이 중 일부도 지운다)보다 먼저 줄바꿈 하나로 통일한다
+            text = text.replace(separator, "\n")
+        detail = shown(erase_paths(_strip_invisible(text)), 120)                              # 경로를 지운 뒤 가리고(→) 줄인다 — 가리기가 자르기보다 먼저(줄 끝까지 지우므로 줄바꿈이 한 칸으로 합쳐지기 전에 지운다)
     except Exception:
         detail = ""
     return f"{T['unexpected_line']} ({name})" + (f": {detail}" if detail else "")

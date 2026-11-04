@@ -884,6 +884,12 @@ class UnexpectedLineTest(unittest.TestCase):
         self.assertIn("(ValueError)", app_state.unexpected_line(ValueError, None))
         self.assertLess(len(app_state.unexpected_line(ValueError, "x" * 300_000)), 400)                # 가리기 상한(20만 자)을 넘는 글도 짧은 한 줄
 
+    def test_a_failed_mask_import_still_leaves_the_exception_name(self):
+        """가림 모듈을 못 가져와도(`import` 실패) 한 줄 기록은 예외 이름만이라도 남는다 — 오류를 남기는 길이 오류를 내면 원인이 어디에도 안 남는다(G0c 독립 검증)."""
+        with mock.patch.dict(sys.modules, {"chanceblog_desktop.security.mask": None}):
+            self.assertTrue(app_state.unexpected_line(OSError, "x").endswith("(OSError)"))
+            self.assertTrue(app_state.report_unexpected(OSError, "x", io.StringIO()))
+
     def test_a_path_with_spaces_is_erased_whole_never_half(self):
         """공백이 든 경로(`C:/Users/Jane Doe/…`·`Program Files`·유닉스식·네트워크·`~`)를 공백에서 끊어 반쪽만 지우면 이름 조각이 한 줄 기록에 남았다(독립 검증 N-1: `(경로) Doe/Documents/x.db`)."""
         cases = (
@@ -897,6 +903,8 @@ class UnexpectedLineTest(unittest.TestCase):
             ("//server/share name/Jane Doe/x.db denied", ("server", "share", "name", "Jane", "Doe")),
             ("\\\\?\\C:\\Users\\Jane Doe\\x.db", ("Jane", "Doe")),
             ("file:///C:/Users/Jane Doe/x.db 열기 실패", ("Jane", "Doe", "x.db")),
+            ("file:///home/jane doe/x.db 열기 실패", ("jane", "doe", "x.db")),                        # G0c: 유닉스식 파일 주소(세 번째 `/` 가 경로의 시작) — 이름 조각이 남던 한 가지 모양
+            ("FILE:///Users/Jane Doe/x.db 열기 실패", ("Jane", "Doe", "x.db")),
             ("~/Jane Doe/문서/x.db", ("Jane", "Doe", "문서")),
             ("~\\Jane Doe\\x.db", ("Jane", "Doe")),
             ("경로:/home/jane doe/x.db", ("jane", "doe", "x.db")),                                # 콜론 바로 뒤의 `/` 한 개는 주소가 아니라 경로
@@ -911,6 +919,19 @@ class UnexpectedLineTest(unittest.TestCase):
             for piece in pieces:
                 self.assertNotIn(piece, line, (message, line))
 
+    def test_invisible_characters_cannot_hide_a_path_start_and_a_host_file_address_is_left_alone(self):
+        """G0c(재확인 권장): 드라이브 글자와 콜론 사이·슬래시 앞에 폭 없는 글자를 끼워 경로의 시작을 쪼개면 지우기가 못 알아봤다 — 한 줄 기록은 보이지 않는 글자를 먼저 지운다. 호스트가 있는 `file://서버/…` 는 경로가 아니라 주소라 그대로다."""
+        for message, pieces in (("C:\u200b\\Users\\Jane Doe\\x.db", ("Jane", "Doe")), ("C\u200b:/Users/Jane Doe/x", ("Jane", "Doe")), ("\u2060/home/jane doe/x", ("jane", "doe")),
+                                ("\\\\\u200b서버\\공유\\Jane Doe\\x", ("서버", "Jane", "Doe")), ("file:\u200b///home/jane doe/x", ("jane", "doe"))):
+            line = app_state.unexpected_line(OSError, message)
+            self.assertEqual(line.count("(경로)"), 1, (message, line))
+            for piece in pieces:
+                self.assertNotIn(piece, line, (message, line))
+        body = app_state.unexpected_line(OSError, "file://server/share/a b 열기 실패").split("(OSError): ", 1)[1]
+        self.assertEqual(body, "file://server/share/a b 열기 실패")                                    # 호스트가 있는 주소는 경로가 아니다
+        for message in ("profile:///home/x y 열기 실패", "myfile:///Users/a b"):                      # 앞이 낱말 글자인 `…file://` 은 파일 주소가 아니다(과잉으로 지우지 않는다)
+            self.assertEqual(app_state.unexpected_line(OSError, message).split("(OSError): ", 1)[1], message)
+
     def test_a_quoted_path_ends_at_its_closing_quote_and_an_unquoted_one_at_the_end_of_the_line(self):
         def body(message):
             return app_state.unexpected_line(OSError, message).split("(OSError): ", 1)[1]               # 앞의 고정 문구를 뗀 본문
@@ -922,7 +943,7 @@ class UnexpectedLineTest(unittest.TestCase):
         self.assertEqual(body("C:\\Users\\Jane Doe\\x.db 를 열 수 없음"), "(경로)")                     # 따옴표가 없으면 어디서 끝나는지 모른다 — 줄 끝까지
         self.assertEqual(body("첫 줄 C:\\Users\\Jane Doe\\x.db\n둘째 줄 설명"), "첫 줄 (경로) 둘째 줄 설명")      # 줄바꿈은 경로가 끝나는 곳 — 줄바꿈이 한 칸으로 합쳐지기 전에 지운다
         self.assertEqual(body("'C:\\짝 없는 따옴표 경로\n다음 줄"), "'(경로) 다음 줄")
-        for separator in ("\r\n", "\r", "\x0b", "\x0c", "\x85", "\u2028", "\u2029"):                    # 줄을 가르는 글자는 모두 경로가 끝나는 곳이다(`str.splitlines()` 와 같은 목록)
+        for separator in ("\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):                    # 줄을 가르는 글자는 모두 경로가 끝나는 곳이다(`str.splitlines()` 와 같은 목록)
             shown_body = body("첫 줄 C:\\Users\\Jane Doe\\x.db" + separator + "둘째 줄")
             self.assertTrue(shown_body.startswith("첫 줄 (경로)") and shown_body.endswith("둘째 줄"), (separator, shown_body))
             self.assertNotIn("Jane", shown_body)
@@ -1012,11 +1033,13 @@ class DocsStayHonestTest(unittest.TestCase):
     # 조각을 이어 만든 가짜 값(저장소에는 키 문자열이 없다). 가려져야 하는 것('c3' 묶음이 더한 `sk-proj-`·`sk-ant-api03-`·`sk-or-v1-` 포함)과, 가림 규칙이 아직 못 알아본다고 문서에 적은 것.
     MASKED = {"구글 AIza": "AI" + "za" + "SyD" + "x" * 32, "GitHub ghp_": "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8", "AWS AKIA": "AK" + "IA" + "ABCDEFGHJKLMNPQR",
               "sk-proj-": "s" + "k-" + "proj-" + "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2Haiu8Ney", "sk-ant-api03-": "s" + "k-" + "ant-" + "api03-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3F",
-              "sk-or-v1-": "s" + "k-" + "or-v1-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3FVm7G"}
+              "sk-or-v1-": "s" + "k-" + "or-v1-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3FVm7G",
+              "Slack xoxp-": "xo" + "xp-" + "1234567890-" + "AbCdEfGhIjKlMnOp"}
     UNMASKED = {"AWS ASIA": "AS" + "IA" + "ABCDEFGHJKLMNPQR", "sk_live_": "s" + "k_live_" + "Xm5PYjyFYgs6Lcw7JXn7FRdt", "glpat-": "gl" + "pat-" + "euCWfs7NfpzDTj5ERevE",
                 "16진 40자": "3a18f6d4b2907e5c" * 2 + "3a18f6d4", "영숫자 40자": "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2", "base64 모양": "AQg2BNbsBKVhxFZivARis4GWn8HUhyHRbp5Mfq3GXqyA==",
-                "임의 접두어": "n" + "aver-" + "HXp9JVizJScq6Ngr4HYrzBPdvFQbq7QY"}
-    LIMIT_WORDS = ("ASIA", "sk_live_", "glpat-", "16진", "영숫자", "base64", "접두어", "AKIA")                # 한계 목록에 있어야 하는 말(스펙 §9 와 D-32 (o) 둘 다)
+                "임의 접두어": "n" + "aver-" + "HXp9JVizJScq6Ngr4HYrzBPdvFQbq7QY",
+                "Slack xapp-": "xap" + "p-1-A0123456789-1234567890123-" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"}
+    LIMIT_WORDS = ("ASIA", "sk_live_", "glpat-", "16진", "영숫자", "base64", "접두어", "AKIA", "xapp-")                # 한계 목록에 있어야 하는 말(스펙 §9 와 D-32 (o) 둘 다)
     NOW_MASKED_WORDS = ("sk-proj-", "sk-ant-api03-", "sk-or-v1-")                                       # 'c3' 병합으로 이제 가려진다고 적어야 하는 말
 
     @staticmethod
@@ -1035,6 +1058,7 @@ class DocsStayHonestTest(unittest.TestCase):
         for name, value in self.UNMASKED.items():
             self.assertIn(value, mask("값 " + value + " 끝"), f"{name}: 가림 규칙이 이 모양을 이제 알아본다 — UI_DESIGN_SPEC §9 와 DECISIONS D-32 (o) 의 한계 목록에서 빼고 이 시험의 목록도 고친다")
         spec, decision = self.doc("UI_DESIGN_SPEC.md"), self.decision("D-32")
+        self.assertIn("경로 지우기가 알아보는 모양", spec)                                              # G0c 가 더한 §9 한 줄
         for word in self.LIMIT_WORDS:
             self.assertIn(word, spec, word)
             self.assertIn(word, decision, word)
