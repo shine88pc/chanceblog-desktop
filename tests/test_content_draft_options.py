@@ -407,11 +407,45 @@ class UrlTest(unittest.TestCase):
             with self.subTest(url=url):
                 self.assertEqual(DraftOptions(urls=[url]).urls, (url,))
 
-    def test_the_forms_are_the_text_and_at_most_two_decodings(self):
+    def test_the_forms_are_the_text_and_at_most_three_decodings(self):
         self.assertEqual(do._forms("https://a.example/x"), ["https://a.example/x"])
         self.assertEqual(do._forms("a%3Db"), ["a%3Db", "a=b"])
         self.assertEqual(do._forms("a%253Db"), ["a%253Db", "a%3Db", "a=b"])
-        self.assertEqual(len(do._forms("a%25253Db")), 3)
+        self.assertEqual(do._forms("a%25253Db"), ["a%25253Db", "a%253Db", "a%3Db", "a=b"])
+        self.assertEqual(len(do._forms("a%2525253Db")), 4, "네 겹부터는 풀지 않는다 — 일반 글에서 시간이 늘지 않게 상한이 있다")
+
+    def test_a_token_written_with_three_layers_of_percent_is_refused(self):
+        for url in ("https://example.com/p?token%25253D" + LONG40, "https://example.com/a/sid%25253D" + LONG40, "https://example.com/p?x=1%2526token%25253D" + LONG40):
+            with self.subTest(url=url[:50]):
+                self.assertEqual(refused(urls=[url]).code, "DRAFT_OPTION_INVALID")
+        harmless = "https://example.com/p?note%25253Dhello"
+        self.assertEqual(DraftOptions(urls=[harmless]).urls, (harmless,))
+
+    SHARE_KEY_NAMES = ("passphrase", "auth_code", "code_verifier", "rlkey", "share_key", "download_key", "x-share-key", "Pass.Phrase", "AuthCode", "dl_download_key", "reset", "magic", "invite", "Reset", "MAGIC")
+    PLAIN_LONG_NAMES = ("state", "nonce", "login_hint", "client_id", "pat", "reset_page", "magical", "invited", "inviter", "magic_number", "pass_through")
+
+    def test_share_links_and_one_time_credentials_are_refused_when_the_value_is_long(self):
+        for name in self.SHARE_KEY_NAMES:
+            for template in ("https://example.com/p?{n}={v}", "https://example.com/cb#{n}={v}", "https://example.com/p?a=1&{n}={v}"):
+                url = template.format(n=name, v=LONG40)
+                with self.subTest(url=url[:50]):
+                    self.assertEqual(refused(urls=[url]).code, "DRAFT_OPTION_INVALID")
+                    self.assertIn("? 뒤를 빼고", refused(urls=[url]).slots["이유"])
+
+    def test_those_names_with_a_short_or_numeric_value_are_status_values_and_pass(self):
+        for name in self.SHARE_KEY_NAMES:
+            for value in ("1", "on", "1" * 30, "abc"):
+                url = f"https://example.com/p?{name}={value}"
+                with self.subTest(url=url[:50]):
+                    self.assertEqual(DraftOptions(urls=[url]).urls, (url,))
+
+    def test_names_that_only_look_alike_or_are_public_values_stay_accepted(self):
+        for name in self.PLAIN_LONG_NAMES:
+            url = f"https://example.com/p?{name}={LONG40}"
+            with self.subTest(name=name):
+                self.assertEqual(DraftOptions(urls=[url]).urls, (url,))
+        for name in self.SHARE_KEY_NAMES[:6] + self.PLAIN_LONG_NAMES[:5]:
+            self.assertEqual(do._secret_name(name), name in self.SHARE_KEY_NAMES, name)
 
     def test_a_long_value_holding_an_encoded_separator_is_one_value_in_the_raw_text(self):
         self.assertEqual(refused(urls=["https://example.com/?token=aaaa%26" + "b" * 20]).code, "DRAFT_OPTION_INVALID")

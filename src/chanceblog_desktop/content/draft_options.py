@@ -44,9 +44,12 @@ _BAD_URL_CHARS = frozenset("<>\"'`\\{}|^")
 _RARE_INVISIBLES = re.compile("[\u2065\ufff0-\ufff8\U000e0000-\U000e0fff]")
 # 주소 인자 이름(소문자로 하고 `-`·`_`·`.`·공백을 지운 모양)이 이 낱말을 품으면 비밀을 나르는 이름이다: `token`·`access_token`·`token_value`·`token2`·`token[]`·`password_hash`·`xamzsignature`·`phpsessid` …
 # (`tokenizer`·`tokens`·`secretary` 처럼 낱말을 품기만 한 평범한 이름은 값도 함께 봐서 숫자뿐이거나 짧은 값이면 통과시킨다)
-_SECRET_NAME_PARTS = ("token", "secret", "password", "passwd", "pwd", "signature", "authorization", "bearer", "jwt", "credential", "apikey", "accesskey", "privatekey", "sessionid", "sessid")
+# `passphrase`(비밀번호 그 자체)·`auth_code`·`code_verifier`(일회용 인증 자격)·`rlkey`·`share_key`·`download_key`(링크가 곧 접근권인 공유 열쇠)도 비밀 이름이다. `state`·`nonce`(되돌려 받는 확인 값)·`login_hint`(이메일)·
+# `client_id`(공개 값)·`pat`(세 글자라 평범한 이름과 겹친다)은 일부러 넣지 않았다 — 정상 주소 94개가 거절되지 않는 것을 시험이 지킨다
+_SECRET_NAME_PARTS = ("token", "secret", "password", "passwd", "pwd", "signature", "authorization", "bearer", "jwt", "credential", "apikey", "accesskey", "privatekey", "sessionid", "sessid",
+                      "passphrase", "authcode", "codeverifier", "rlkey", "sharekey", "downloadkey")
 # 이 이름은 정확히 같을 때만 비밀 이름이다 — 낱말을 품기만 한 `country_code`·`keyword`·`sessions`·`authors`·`sid1` 은 아니다
-_SECRET_NAME_SAME = frozenset({"sig", "key", "auth", "pass", "otp", "sign", "sid", "ticket", "code", "session"})
+_SECRET_NAME_SAME = frozenset({"sig", "key", "auth", "pass", "otp", "sign", "sid", "ticket", "code", "session", "reset", "magic", "invite"})
 # 사이트 이름의 마지막 낱말이 이것이면 공개 주소가 아니다(내부망·예약 이름)
 _RESERVED_TLDS = frozenset({"localhost", "internal", "local", "localdomain", "lan", "intranet", "private", "corp", "home", "invalid", "test", "onion", "arpa"})
 _KNOWN_SCHEMES = frozenset({"http", "ftp", "file", "data", "javascript", "mailto", "tel", "ws", "wss", "ssh", "git", "blob", "about", "chrome", "vbscript"})
@@ -72,9 +75,9 @@ def _looks_secret(text):
 
 
 def _forms(text):
-    """주소를 읽는 모양들 — 글 그대로와 퍼센트로 쓴 글자를 풀어 쓴 모양(`token%3D…`, 두 번 겹쳐 쓴 `%253D` 까지)."""
+    """주소를 읽는 모양들 — 글 그대로와 퍼센트로 쓴 글자를 풀어 쓴 모양(`token%3D…`, 두 번 겹쳐 쓴 `%253D`·세 번 겹쳐 쓴 `%25253D` 까지)."""
     forms = [text]
-    for _ in range(2):
+    for _ in range(3):
         decoded = unquote(forms[-1])
         if decoded == forms[-1]:
             break
