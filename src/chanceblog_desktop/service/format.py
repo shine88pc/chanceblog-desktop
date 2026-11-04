@@ -500,20 +500,34 @@ def profile_saved_options_text(profile):
 
 # ---- 연결 설정(keys) ---------------------------------------------------------------------------------------------------------------
 def _limit_text(provider):
-    """제공자의 한도 한 줄 — 모르면 '한도를 확인하지 못했습니다'."""
+    """제공자의 한도 한 줄 — 모르면 '한도를 확인하지 못했습니다'. 서비스 콘솔의 월 한도(`console_limit`)를 아는 제공자는 뒤에 참고로 붙인다."""
     parts = []
     for tier, windows in provider.tiers:
         if windows:
-            text = " · ".join(f"{'하루' if window.kind == 'day' else f'최근 {window.minutes}분'} {window.limit:,}회" for window in windows)
+            text = " · ".join(f"{'하루' if window.kind == 'day' else '이번 달' if window.kind == 'month' else f'최근 {window.minutes}분'} {window.limit:,}회" for window in windows)
             parts.append(text if len(provider.tiers) == 1 else f"{tier} 등급 {text}")
-    return ", ".join(parts) if parts else "한도를 확인하지 못했습니다(한도 오류 응답으로만 감지합니다)"
+    if not parts:
+        return "한도를 확인하지 못했습니다(한도 오류 응답으로만 감지합니다)"
+    return ", ".join(parts) + (f"(서비스 콘솔 월 한도 {provider.console_limit:,}회)" if provider.console_limit else "")
+
+
+def _stage_lines(provider):
+    """한도 단계표(콘솔 월 한도 기준) — 단계 비율과 그때의 사용량·하는 일."""
+    return [f"    {stage.percent}%({connections.stage_threshold(provider, stage):,}회)를 넘으면: {stage.text}" for stage in sorted(provider.stages, key=lambda item: item.percent)]
 
 
 def keys_purpose_dict(spec):
-    return {"purpose": spec.key, "label": spec.label, "summary": spec.summary, "takes_keys": spec.takes_keys, "implemented": spec.implemented, "works_without_key": spec.works_without_key,
-            "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.fields],
-            "providers": [{"provider": item.key, "label": item.label, "rotation": item.rotation, "limits": _limit_text(item), "default_tier": item.default_tier, "tiers": list(item.tier_names())} for item in spec.providers],
-            "fallback_providers": list(spec.fallback_providers), "note": spec.note}
+    found = {"purpose": spec.key, "label": spec.label, "summary": spec.summary, "takes_keys": spec.takes_keys, "implemented": spec.implemented, "works_without_key": spec.works_without_key,
+             "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.fields],
+             "providers": [{"provider": item.key, "label": item.label, "rotation": item.rotation, "limits": _limit_text(item), "default_tier": item.default_tier, "tiers": list(item.tier_names())} for item in spec.providers],
+             "fallback_providers": list(spec.fallback_providers), "note": spec.note}
+    if spec.max_entries != connections.MAX_ENTRIES_PER_PURPOSE:           # 키를 하나만 두는 용도만 이 칸이 더해진다(다른 용도의 출력은 그대로)
+        found["max_entries"] = spec.max_entries
+    for item, shown in zip(spec.providers, found["providers"]):
+        if item.console_limit:
+            shown.update({"console_limit": item.console_limit, "stages": [{"name": stage.name, "percent": stage.percent, "above": connections.stage_threshold(item, stage), "text": stage.text, "denies": list(stage.deny)}
+                                                                          for stage in sorted(item.stages, key=lambda value: value.percent)]})
+    return found
 
 
 def keys_purposes_lines(registry):
@@ -529,15 +543,24 @@ def keys_purposes_lines(registry):
             title = f"제공자 {provider.key}({provider.label})" if provider.key else f"제공자 {provider.label}"
             auto = "어떤 오류에도 다른 키로 자동 전환하지 않음" if provider.rotation == connections.ROTATION_NEVER else "한도·일시 오류일 때만 허용된 다음 키로 전환"
             lines.append(f"  {title}: 한도 {_limit_text(provider)} — {auto}" + (f" — {provider.note}" if provider.note else ""))
+            if provider.stages:
+                lines.append("  한도 단계(이번 달 시도 수 기준):")
+                lines += _stage_lines(provider)
+        if spec.max_entries < connections.MAX_ENTRIES_PER_PURPOSE:
+            lines.append(f"  항목 수: 이 용도는 키를 {spec.max_entries}개만 둡니다 — 한도를 늘리려고 키를 돌려 쓰지 않습니다(키를 바꾸려면 기존 항목을 지운 뒤 새로 넣습니다)")
         lines.append("  준비 상태: " + ("실제 호출 코드가 있어 연결 시험을 할 수 있습니다" if spec.implemented else "아직 실제 호출 코드가 없어 연결 시험을 하지 않습니다(키를 저장해 둘 수는 있습니다)"))
         lines.append(f"  범위: {spec.client_scope}")
-    lines.append(f"용도마다 키 항목은 {connections.MAX_ENTRIES_PER_PURPOSE}개까지입니다.")
+    lines.append(f"용도마다 키 항목은 {connections.MAX_ENTRIES_PER_PURPOSE}개까지입니다" + ("(예외: " + ", ".join(f"{item.label} {item.max_entries}개" for item in registry.values() if item.max_entries < connections.MAX_ENTRIES_PER_PURPOSE) + ")." if any(
+        item.max_entries < connections.MAX_ENTRIES_PER_PURPOSE for item in registry.values()) else "."))
     return lines
 
 
 def _entry_line(view):
     entry = view.entry
     parts = [f"{connections.STATE_TEXT[entry.state]}", connections.STATUS_TEXT[view.status]]
+    legacy = connections.PURPOSES[entry.purpose].legacy_to if entry.purpose in connections.PURPOSES else ""
+    if legacy:
+        parts.append(f"옛 항목 — 새 키는 {connections.PURPOSES[legacy].label}({legacy})에 넣고 이 항목은 지웁니다(키는 지우지 않았습니다)")
     if view.tail:
         parts.append(f"끝 4자 {view.tail}")
     if entry.project:
@@ -585,6 +608,32 @@ def keys_order_lines(purpose, items):
     return lines
 
 
+_OUTCOME_TEXT = {"rate_limited": "한도 초과 응답", "quota_exhausted": "기간 한도 소진 응답", "transient_error": "서버 일시 오류", "timeout": "시간 초과", "auth_failed": "인증 실패",
+                 "bad_request": "요청 형식 오류", "policy_blocked": "정책 차단", "content_blocked": "콘텐츠 차단", "other_error": "그 밖의 오류"}      # 장부의 결과 종류 → 쉬운 한국어(영문 코드는 화면에 보이지 않는다)
+
+
+def keys_ledger_lines(view):
+    """장부 제공자(NAVER API HUB)의 설정 화면용 값 — 오늘·이번 달 시도/성공, 내부·콘솔 한도, 마지막 성공·오류, 단계, 호출 중지와 그 사유(멈췄을 때는 고정 문구)."""
+    ledger = view.ledger
+    lines = [f"  오늘 시도 {ledger.day_attempts:,}회 · 성공 {ledger.day_successes:,}회 / 내부 한도 {ledger.day_limit:,}회",
+             f"  이번 달 시도 {ledger.month_attempts:,}회 · 성공 {ledger.month_successes:,}회 / 내부 한도 {ledger.month_limit:,}회(서비스 콘솔 월 한도 {ledger.console_limit:,}회 — 마지막 안전장치)",
+             "  마지막 성공 호출: " + (local_time(ledger.last_success) if ledger.last_success else "없음")]
+    if ledger.last_error:
+        error = ledger.last_error
+        status = f", 상태 {error['status']}" if error["status"] else ""
+        lines.append(f"  마지막 오류: {local_time(error['at'])} — {_OUTCOME_TEXT.get(error['outcome'], '그 밖의 오류')}{status}")
+    else:
+        lines.append("  마지막 오류: 없음")
+    if ledger.stage != "ok":
+        lines.append(f"  한도 단계: {ledger.stage_text}")
+    if ledger.stopped:
+        lines.append(f"  호출 중지: {ledger.stop_text}")
+        lines.append(f"    사유: {ledger.stop_cause}")
+    else:
+        lines.append("  호출 중지: 아니요(지금은 새 조회를 할 수 있습니다)")
+    return lines
+
+
 def keys_usage_lines(views, statuses):
     lines = []
     for view in views:
@@ -597,23 +646,39 @@ def keys_usage_lines(views, statuses):
             continue
         if not view.rows:
             lines.append("  한도를 확인하지 못했습니다 — 한도 오류 응답으로만 감지하고 사용량은 세지 않습니다.")
-        for row in view.rows:
-            percent = f" ({row.used * 100 // row.limit}%)" if row.limit else ""
-            when = "오늘" if row.window == "day" else row.span
-            lines.append(f"  {row.entry}({row.provider}) {when} {row.used:,} / {row.limit:,}{percent}" + (" — 한도에 가까워 절약 모드" if row.near_limit else ""))
+        if view.ledger is not None:                                  # 장부 제공자는 창마다 시도·성공을 따로 보인다
+            lines += keys_ledger_lines(view)
+        else:
+            for row in view.rows:
+                percent = f" ({row.used * 100 // row.limit}%)" if row.limit else ""
+                when = "오늘" if row.window == "day" else row.span
+                lines.append(f"  {row.entry}({row.provider}) {when} {row.used:,} / {row.limit:,}{percent}" + (" — 한도에 가까워 절약 모드" if row.near_limit else ""))
         if view.blocked and view.resume_text:
             lines.append(f"  {view.resume_text}")
         lines += [f"  최근 키 전환: {item}" for item in view.switches]
     return lines or ["보여 줄 용도가 없습니다."]
 
 
-def keys_policy_lines(spec, policy, *, changed):
-    lines = [("정책을 바꿨습니다" if changed else "지금 정책") + f"({spec.label}): " + connections.ON_LIMIT_TEXT[policy.on_limit]]
+def keys_policy_lines(spec, policy, *, changed, view=None):
+    first = "키가 하나뿐이라 다른 키로 넘어가지 않음(절약·중단만)" if spec.max_entries == 1 else connections.ON_LIMIT_TEXT[policy.on_limit]            # 키를 하나만 두는 용도는 전환 정책 글이 거짓이 되지 않게
+    lines = [("정책을 바꿨습니다" if changed else "지금 정책") + f"({spec.label}): " + first]
     lines.append("  한도 등급: " + (policy.tier or "기본") + (f"(바꾼 때 {local_time(policy.changed_at)})" if policy.changed_at else ""))
     for provider in spec.providers:
         if provider.rotation == connections.ROTATION_NEVER:
-            lines.append(f"  {provider.label or spec.label}: 어떤 오류에도 다른 키로 자동 전환하지 않습니다(키가 여러 개여도 개발용·운영용 구분이나 직접 고른 전환에만 씁니다).")
-    lines.append("  전환은 한도(429·기간 한도)·일시 오류(500·502·503·504)·시간 초과일 때만, 허용된 다음 키(같은 용도·제공자의 사용·예비 항목)로, 한 요청에 한 바퀴를 넘지 않게 합니다. 인증·잘못된 요청·정책 차단은 숨기지 않고 안내만 합니다.")
+            if spec.max_entries == 1:
+                lines.append(f"  {provider.label or spec.label}: 키는 하나만 쓰고 어떤 오류(429 포함)에도 다른 키로 넘어가지 않습니다(한도를 늘리려고 키·계정을 돌려 쓰지 않습니다).")
+            else:
+                lines.append(f"  {provider.label or spec.label}: 어떤 오류에도 다른 키로 자동 전환하지 않습니다(키가 여러 개여도 개발용·운영용 구분이나 직접 고른 전환에만 씁니다).")
+        if provider.stages:
+            lines.append(f"  한도 단계(서비스 콘솔 월 한도 {provider.console_limit:,}회 기준):")
+            lines += _stage_lines(provider)
+    if spec.max_entries == 1:
+        lines.append("  전환은 하지 않습니다 — 인증·잘못된 요청·정책 차단·한도 응답은 숨기지 않고 안내만 하고, 사용량·시계·인증 상태를 확인할 수 없으면 새 호출을 하지 않습니다(저장된 정보로 계속합니다).")
+    else:
+        lines.append("  전환은 한도(429·기간 한도)·일시 오류(500·502·503·504)·시간 초과일 때만, 허용된 다음 키(같은 용도·제공자의 사용·예비 항목)로, 한 요청에 한 바퀴를 넘지 않게 합니다. 인증·잘못된 요청·정책 차단은 숨기지 않고 안내만 합니다.")
+    if view is not None and view.ledger is not None:
+        lines.append("지금 사용량:")
+        lines += keys_ledger_lines(view)
     return lines
 
 

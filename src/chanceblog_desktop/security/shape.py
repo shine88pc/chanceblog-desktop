@@ -14,6 +14,7 @@ _HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Zs"})
 # 눈에 안 보이는 채움·서식 글자(한글 채움 U+3164·점자 빈칸 U+2800·변형 선택자 …) — 범주만으로는 걸리지 않는 것들(security/mask.py 의 목록과 같은 범위)
 _FILLERS = re.compile(r"[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb\U000e0000-\U000e0fff]")
 _ALLOWED_VALUE = re.compile(r"[A-Za-z0-9_\-+/=.~:]+")        # 키·ID·토큰에 쓰이는 글자(영문·숫자와 `_ - + / = . ~ :`) — 따옴표·괄호·공백·한글은 붙여 넣기 실수다
+_ALNUM_VALUE = re.compile(r"[A-Za-z0-9_\-]+")                  # 공식 문서에 모양이 없는 값(NAVER API HUB 의 Client ID·Secret)을 느슨하게 보는 글자 — 영문·숫자와 `_ -` 만
 MAX_SCAN_CHARS = 100_000                                       # 이 길이를 넘는 글은 비밀을 찾을 것도 없이 모양이 틀린 것으로 본다(실패 열림 금지)
 
 # 알려진 비밀 접두사 — 접두사 바로 뒤에 짧게라도 이어지면 비밀 모양으로 본다(앞 글자는 따지지 않는다)
@@ -55,8 +56,8 @@ def looks_secret(text):
     return False
 
 
-def value_problem(value, *, min_len, max_len):
-    """키·ID 한 칸의 모양이 올바르지 않은 이유(쉬운 한국어, **값을 넣지 않는다**). 올바르면 ''."""
+def value_problem(value, *, min_len, max_len, charset=""):
+    """키·ID 한 칸의 모양이 올바르지 않은 이유(쉬운 한국어, **값을 넣지 않는다**). 올바르면 ''. `charset="alnum"` 이면 영문·숫자와 `_ -` 만 허용한다(그 밖의 글자는 이유만 알린다)."""
     if not isinstance(value, str):
         return "글이 아닙니다"
     if len(value) > MAX_SCAN_CHARS:
@@ -67,6 +68,10 @@ def value_problem(value, *, min_len, max_len):
         return f"너무 짧습니다(최소 {min_len}자)"
     if len(value) > max_len:
         return f"너무 깁니다(최대 {max_len}자)"
+    if charset == "alnum":
+        if not _ALNUM_VALUE.fullmatch(value):
+            return "영문·숫자와 _ - 만 쓸 수 있습니다(따옴표·괄호·한글·붙여 넣은 설명 글이 섞이지 않았는지 확인합니다)"
+        return ""
     if not _ALLOWED_VALUE.fullmatch(value):
         return "영문·숫자와 _ - + / = . ~ : 만 쓸 수 있습니다(따옴표·괄호·한글·붙여 넣은 설명 글이 섞이지 않았는지 확인합니다)"
     return ""

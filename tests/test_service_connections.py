@@ -1,7 +1,8 @@
 """연결 설정 시험(`service/connections.py`) — 용도별 키 항목이 보관소에만 비밀을 두고, 어떤 오류·파일·표시에도 입력한 값이 새지 않는지 본다. 네트워크·진짜 자격 증명 관리자 없이 돈다(보관소는 가짜).
 
 지키는 것:
-  1) 레지스트리(용도 6개·칸 이름·이미지 공급자는 Unsplash 가 첫 제공자이고 Secret Key 칸이 없다·한도 정책 값·상태 문구 5종·항목 최대 3개)가 정해 둔 값 그대로다.
+  1) 레지스트리(현재 용도 6개와 맨 뒤의 옛 용도 `naver_openapi` 1개·칸 이름·이미지 공급자는 Unsplash 가 첫 제공자이고 Secret Key 칸이 없다·한도 정책 값·상태 문구 5종·항목 최대 3개 — NAVER API HUB 만 1개)가 정해 둔 값 그대로다.
+     여러 항목·하루 창·돌려쓰기 같은 '일반 동작'은 실제 레지스트리에서 더할 수 있는 용도(이미지 공급자 등)나 `ss.generic_registry()`(옛 첫 용도를 시험용으로 되살린 것)로 시험한다.
   2) `add_entry`: 값은 보관소에, 메타데이터만 `connections.json` 에(키 값·끝 4자가 파일에 없다). 둘째 키부터 약관 확인, 같은 이름·같은 값 거절, 한도 묶음 이름, 안내 문구.
   3) **어떤 거절 문구에도 입력 원문이 없다** — 가짜 키 모양 7종 × 이웃 글자(한글·괄호·따옴표·줄바꿈 …) × 입력 자리 8곳을 전수로 부르고 오류의 모든 표면(`str`·`log_line`·`rendered`·`detail`·`repr`·`slots`)을 본다.
   4) 실패 처리(보관소 오류·메타데이터 쓰기 실패의 롤백)와 `connections.json` 의 모양 검사(깨진 파일은 건드리지 않고 `CONNECTIONS_FILE_INVALID`).
@@ -168,21 +169,25 @@ class Base(unittest.TestCase):
 class RegistryTest(Base):
     def test_the_six_purposes_in_order_with_their_field_names(self):
         expected = {
-            "naver_openapi": ["client_id", "client_secret"], "naver_searchad": ["customer_id", "access_license", "secret_key"], "image_provider": ["access_key"],
+            "naver_apihub": ["client_id", "client_secret"], "naver_searchad": ["customer_id", "access_license", "secret_key"], "image_provider": ["access_key"],
             "ai_assist": ["key"], "blogger": ["client_id", "client_secret", "refresh_token"], "github_repo": [],
+            "naver_openapi": ["client_id", "client_secret"],                 # 옛 용도 — 맨 뒤에 정의만 남아 있다(옛 파일의 항목을 읽고 보여 주려고, 새 항목은 받지 않는다)
         }
         self.assertEqual(list(c.PURPOSES), list(expected))
         for purpose, names in expected.items():
             with self.subTest(purpose=purpose):
                 self.assertEqual([item.name for item in c.PURPOSES[purpose].fields], names)
+        self.assertEqual(c.listed_purposes(c.Data()), tuple(expected)[:6])      # 화면에 보이는 용도는 현재 용도 여섯 개(옛 용도는 그 항목이 남아 있을 때만 보인다)
 
     def test_which_fields_are_secret_and_the_first_secret_field_is_the_one_whose_tail_is_shown(self):
-        secret = {"naver_openapi": {"client_id": False, "client_secret": True}, "naver_searchad": {"customer_id": False, "access_license": True, "secret_key": True},
-                  "image_provider": {"access_key": True}, "ai_assist": {"key": True}, "blogger": {"client_id": False, "client_secret": True, "refresh_token": True}, "github_repo": {}}
+        secret = {"naver_apihub": {"client_id": False, "client_secret": True}, "naver_searchad": {"customer_id": False, "access_license": True, "secret_key": True},
+                  "image_provider": {"access_key": True}, "ai_assist": {"key": True}, "blogger": {"client_id": False, "client_secret": True, "refresh_token": True}, "github_repo": {},
+                  "naver_openapi": {"client_id": False, "client_secret": True}}
         for purpose, flags in secret.items():
             with self.subTest(purpose=purpose):
                 self.assertEqual({item.name: item.secret for item in c.PURPOSES[purpose].fields}, flags)
-        primary = {"naver_openapi": "client_secret", "naver_searchad": "access_license", "image_provider": "access_key", "ai_assist": "key", "blogger": "client_secret", "github_repo": ""}
+        primary = {"naver_apihub": "client_secret", "naver_searchad": "access_license", "image_provider": "access_key", "ai_assist": "key", "blogger": "client_secret", "github_repo": "",
+                   "naver_openapi": "client_secret"}
         self.assertEqual({purpose: spec.primary_secret() for purpose, spec in c.PURPOSES.items()}, primary)
 
     def test_the_image_provider_takes_one_access_key_and_never_a_second_secret_key(self):
@@ -210,8 +215,12 @@ class RegistryTest(Base):
         self.assertIsNone(spec.provider("nope"))
 
     def test_naver_has_a_daily_window_and_the_other_single_provider_purposes_have_none_known(self):
-        naver = c.PURPOSES["naver_openapi"].providers[0]
-        self.assertEqual((naver.key, naver.rotation, naver.windows()), ("", "limited", (c.Window("day", "day", 25000),)))
+        naver = c.PURPOSES["naver_apihub"].providers[0]                          # 첫 용도는 NAVER API HUB — 하루 100회와 이번 달 27,000회 창이 있고 돌려쓰기는 없다
+        self.assertEqual((naver.key, naver.rotation, naver.windows()), ("", "never", (c.Window("day", "day", 100), c.Window("month", "month", 27000))))
+        self.assertEqual(c.PURPOSES["naver_apihub"].max_entries, 1)
+        old = c.PURPOSES["naver_openapi"].providers[0]                            # 옛 용도의 정의는 그대로 남아 있다(옛 파일을 읽고 보여 주려고)
+        self.assertEqual((old.key, old.rotation, old.windows()), ("", "limited", (c.Window("day", "day", 25000),)))
+        self.assertEqual(ss.generic_registry()["naver_openapi"].providers[0].windows(), (c.Window("day", "day", 25000),))      # 시험용으로 되살린 옛 첫 용도도 같은 하루 창이다
         for purpose in ("naver_searchad", "ai_assist", "blogger"):
             with self.subTest(purpose=purpose):
                 self.assertEqual(c.PURPOSES[purpose].providers[0].windows(), ())
@@ -227,7 +236,7 @@ class RegistryTest(Base):
 
     def test_identity_fields_decide_the_limit_bucket_only_for_the_purposes_that_have_an_app_id(self):
         self.assertEqual({purpose: spec.identity_field for purpose, spec in c.PURPOSES.items()},
-                         {"naver_openapi": "client_id", "naver_searchad": "customer_id", "image_provider": "", "ai_assist": "", "blogger": "client_id", "github_repo": ""})
+                         {"naver_apihub": "client_id", "naver_searchad": "customer_id", "image_provider": "", "ai_assist": "", "blogger": "client_id", "github_repo": "", "naver_openapi": "client_id"})
 
     def test_status_and_state_words_are_five_and_three_and_only_in_these_tables(self):
         self.assertEqual(c.STATUS_TEXT, {"connected": "연결됨", "needs_check": "연결 확인 필요", "rate_limited": "요청 한도 도달", "auth_error": "인증 정보 오류", "not_connected": "연결 안 됨"})
@@ -330,9 +339,10 @@ class AddEntryTest(Base):
 
     def test_a_naver_bucket_is_decided_by_the_client_id_not_by_the_project_and_never_holds_the_id(self):
         shared_id, other_id = "SharedClientId01", "OtherClientId002"
-        first = c.add_entry(self.ctx, "naver_openapi", name="기본", fields={"client_id": shared_id, "client_secret": "s1" * 5}, project="앱 하나")
-        second = c.add_entry(self.ctx, "naver_openapi", name="예비", fields={"client_id": shared_id, "client_secret": "s2" * 5}, project="앱 둘", terms_ack=True)
-        third = c.add_entry(self.ctx, "naver_openapi", name="셋째", fields={"client_id": other_id, "client_secret": "s3" * 5}, project="앱 하나", terms_ack=True)
+        registry = ss.generic_registry()                       # 항목이 여럿인 용도(옛 첫 용도를 시험용으로 되살린 것) — 실제 레지스트리의 NAVER API HUB 는 키를 하나만 두고 옛 용도는 새 항목을 받지 않는다
+        first = c.add_entry(self.ctx, "naver_openapi", name="기본", fields={"client_id": shared_id, "client_secret": "s1" * 5}, project="앱 하나", registry=registry)
+        second = c.add_entry(self.ctx, "naver_openapi", name="예비", fields={"client_id": shared_id, "client_secret": "s2" * 5}, project="앱 둘", terms_ack=True, registry=registry)
+        third = c.add_entry(self.ctx, "naver_openapi", name="셋째", fields={"client_id": other_id, "client_secret": "s3" * 5}, project="앱 하나", terms_ack=True, registry=registry)
         self.assertEqual(first.entry.bucket, second.entry.bucket)
         self.assertNotEqual(first.entry.bucket, third.entry.bucket)
         for entry in (first.entry, second.entry, third.entry):
@@ -350,7 +360,7 @@ class AddEntryTest(Base):
         second = self.add(name="예비", seed="b", state="standby")
         self.assertEqual(second.entry.state, "standby")
         self.assertNotEqual(first.entry.entry_id, second.entry.entry_id)
-        naver = self.add("naver_openapi")
+        naver = self.add("naver_apihub")
         self.assertEqual(naver.entry.provider, "")
         pexels = self.add(name="핵시", seed="c", provider="pexels")
         self.assertEqual(pexels.entry.provider, "pexels")
@@ -361,7 +371,7 @@ class AddEntryTest(Base):
         error = self.assert_rejected("KEY_ENTRY_LIMIT", "image_provider", name="넷째", fields=values("image_provider", "d"), terms_ack=True)
         self.assertEqual(error.rendered().message, "「이미지 공급자」에는 키 항목을 「3」개까지만 둘 수 있습니다.")
         self.assertEqual(len(c.load(self.ctx).entries), 3)
-        other = self.add("naver_openapi")                                        # 한도는 용도마다 따로다
+        other = self.add("naver_apihub")                                         # 한도는 용도마다 따로다
         self.assertEqual(other.entry.order, 1)
 
     def test_a_rejected_fourth_key_does_not_even_ask_for_the_terms(self):
@@ -410,7 +420,7 @@ class AddEntryTest(Base):
         import base64
         import hashlib
         secrets = []
-        for purpose in ("naver_openapi", "naver_searchad", "image_provider", "ai_assist", "blogger"):
+        for purpose in ("naver_apihub", "naver_searchad", "image_provider", "ai_assist", "blogger"):
             self.add(purpose, name="기본", seed="q", project="앱")
             spec = c.PURPOSES[purpose]
             secrets += [(purpose, item.name, values(purpose, "q")[item.name]) for item in spec.fields if item.secret]
@@ -500,33 +510,35 @@ class RejectionTest(Base):
         self.assertEqual(c.add_entry(ok, "image_provider", name="기본", fields={"access_key": allowed}).entry.name, "기본")
 
     def test_the_length_limits_of_every_field_are_exact(self):
-        for purpose, spec in c.PURPOSES.items():
+        registry = ss.generic_registry()                       # 현재 용도 6개 + 옛 첫 용도(`naver_openapi`)를 새 항목을 받는 시험용으로 되살린 것 — 옛 용도의 칸 길이도 그대로 지킨다
+        self.assertEqual(list(registry), list(c.PURPOSES))
+        for purpose, spec in registry.items():
             for item in spec.fields:
                 for length, accepted in ((item.min_len - 1, False), (item.min_len, True), (item.max_len, True), (item.max_len + 1, False)):
                     with self.subTest(purpose=purpose, field=item.name, length=length):
                         ctx = self.new_ctx()
                         fields = {**values(purpose), item.name: "a" * length}
                         if accepted:
-                            self.assertEqual(c.add_entry(ctx, purpose, name="기본", fields=fields).entry.purpose, purpose)
+                            self.assertEqual(c.add_entry(ctx, purpose, name="기본", fields=fields, registry=registry).entry.purpose, purpose)
                         else:
-                            error = self.assert_rejected("KEY_INVALID_SHAPE", purpose, ctx=ctx, name="기본", fields=fields)
+                            error = self.assert_rejected("KEY_INVALID_SHAPE", purpose, ctx=ctx, name="기본", fields=fields, registry=registry)
                             self.assertEqual(error.slots["항목"], item.label)
                             self.assertIn("최소" if length < item.min_len else "최대", error.slots["이유"])
 
     def test_field_names_must_match_the_purpose_exactly(self):
-        good = values("naver_openapi")
+        good = values("naver_apihub")
         cases = {"빠진 칸": {"client_id": good["client_id"]}, "모르는 칸": {**good, "extra": "x" * 10}, "다른 칸": {"client_id": good["client_id"], "other": good["client_secret"]}, "빈 dict": {}}
         for label, fields in cases.items():
             with self.subTest(case=label):
                 ctx = self.new_ctx()
-                error = self.assert_rejected("KEY_INVALID_SHAPE", "naver_openapi", ctx=ctx, name="기본", fields=fields)
+                error = self.assert_rejected("KEY_INVALID_SHAPE", "naver_apihub", ctx=ctx, name="기본", fields=fields)
                 self.assertEqual(error.slots["항목"], "입력 칸")
                 self.assertIn("client_id, client_secret", error.slots["이유"])
-        error = self.assert_rejected("KEY_INVALID_SHAPE", "naver_openapi", name="기본", fields={"client_id": good["client_id"]})
+        error = self.assert_rejected("KEY_INVALID_SHAPE", "naver_apihub", name="기본", fields={"client_id": good["client_id"]})
         self.assertIn("빠진 칸이 있습니다: client_secret", error.slots["이유"])
         for label, fields in {"리스트": ["a"], "None": None, "글": "abc", "숫자 값": {"client_id": 5, "client_secret": 6}, "글 아닌 이름": {5: "x" * 10}}.items():
             with self.subTest(case=label):
-                error = self.assert_rejected("KEY_INVALID_SHAPE", "naver_openapi", name="기본", fields=fields)
+                error = self.assert_rejected("KEY_INVALID_SHAPE", "naver_apihub", name="기본", fields=fields)
                 self.assertEqual(error.slots["항목"], "입력")
 
     def test_unknown_purpose_provider_state_and_a_purpose_that_takes_no_key(self):
@@ -536,7 +548,8 @@ class RejectionTest(Base):
             with self.subTest(purpose=purpose):
                 self.assertEqual(ss.code_of(c.add_entry, self.ctx, purpose, name="기본", fields=values("image_provider")).code, "CONNECTION_NOT_FOUND")
         self.assertEqual(self.reject("KEY_INVALID_SHAPE", provider="nope").slots["항목"], "제공자")
-        self.assertEqual(ss.code_of(c.add_entry, self.ctx, "naver_openapi", name="기본", fields=values("naver_openapi"), provider="unsplash").code, "KEY_INVALID_SHAPE")
+        other = ss.code_of(c.add_entry, self.ctx, "naver_apihub", name="기본", fields=values("naver_apihub"), provider="unsplash")        # 다른 용도의 제공자 이름은 이 용도(제공자 하나)에서 거절
+        self.assertEqual((other.code, other.slots["항목"]), ("KEY_INVALID_SHAPE", "제공자"))
         for state in ("예비", "ACTIVE", "", None, "on"):
             with self.subTest(state=state):
                 self.assertEqual(self.reject("KEY_INVALID_SHAPE", state=state).slots["항목"], "상태")
@@ -576,9 +589,13 @@ class RejectionTest(Base):
 
 class NoEchoTest(Base):
     SLOTS = ("secret_value", "plain_value", "name", "project", "provider", "purpose", "state", "unknown_field_name")
+    PURPOSE = "naver_apihub"                       # 비밀 칸(client_secret)과 비밀이 아닌 칸(client_id)이 하나씩 있는 용도 — 실제 레지스트리의 첫 용도(글자 범위가 영문·숫자·`_ -` 뿐이라 `.` 이 든 값은 모양 검사에서 거절된다)
+
+    def registry(self):
+        return c.PURPOSES
 
     def call(self, ctx, slot, text):
-        purpose, fields = "naver_openapi", values("naver_openapi")
+        purpose, fields = self.PURPOSE, values(self.PURPOSE)
         arguments = {"name": "기본", "project": "", "provider": "", "state": "active"}
         if slot == "secret_value":
             fields["client_secret"] = text
@@ -590,7 +607,7 @@ class NoEchoTest(Base):
             purpose = text
         else:
             arguments[slot] = text
-        return c.add_entry(ctx, purpose, fields=fields, **arguments)
+        return c.add_entry(ctx, purpose, fields=fields, registry=self.registry(), **arguments)
 
     def test_no_refusal_and_no_result_ever_contains_what_was_typed(self):
         for shape_name, secret in key_shapes().items():
@@ -638,6 +655,15 @@ class NoEchoTest(Base):
             for value in fields.values():
                 self.assertNotIn(value, text, path)
                 self.assertNotIn(TAIL, text, path)
+
+
+class NoEchoGenericTest(NoEchoTest):
+    """같은 전수 시험을 '일반 용도'로도 한다 — 옛 첫 용도(`naver_openapi`)를 새 항목을 받는 시험용으로 되살린 레지스트리(`ss.generic_registry()`)는 기본 글자 범위(`_ - + / = . ~ :` 포함)의 값도 받아들이므로
+    '받아들인 값이 어느 파일에도 남지 않는다' 쪽도 옛 시험과 같게 지켜진다(NAVER API HUB 는 글자 범위가 좁아 그런 값을 모양 검사에서 거절한다)."""
+    PURPOSE = "naver_openapi"
+
+    def registry(self):
+        return ss.generic_registry()
 
 
 class FailureHandlingTest(Base):
@@ -724,7 +750,7 @@ class FileFormatTest(Base):
         loaded = c.load(self.ctx)
         self.assertEqual([item.entry_id for item in loaded.entries], [ID1, ID2])
         self.assertEqual(loaded.policy("image_provider").on_limit, "save")
-        self.assertEqual(loaded.policy("naver_openapi"), c.Policy())               # 정하지 않은 용도는 기본 정책
+        self.assertEqual(loaded.policy("naver_apihub"), c.Policy())                # 정하지 않은 용도는 기본 정책
         self.assertEqual(json.loads(self.file_path().with_name("connections.json.bak").read_text(encoding="utf-8"))["policies"], {})   # 정책을 정하기 직전의 내용
         c.save(self.ctx, loaded)
         self.assertEqual(json.loads(self.file_path().with_name("connections.json.bak").read_text(encoding="utf-8")), self.good)
@@ -834,7 +860,7 @@ class ListAndStatusTest(Base):
     def test_listing_reads_only_and_never_creates_the_data_folder_or_a_lock(self):
         ctx = self.new_ctx()
         self.assertEqual(c.list_entries(ctx, keystore=ctx.keystore), [])
-        self.assertEqual((c.load(ctx), c.diagnostic_summary(ctx)["purposes"][0]), (c.Data(), {"purpose": "naver_openapi", "entries": 0, "active": 0}))
+        self.assertEqual((c.load(ctx), c.diagnostic_summary(ctx)["purposes"][0]), (c.Data(), {"purpose": "naver_apihub", "entries": 0, "active": 0}))
         self.assertFalse(ctx.workspace.root.exists())
         self.add(ctx=ctx)
         before = ss.tree_snapshot(ctx.workspace.root)
@@ -848,7 +874,7 @@ class ListAndStatusTest(Base):
             with self.subTest(length=length):
                 ctx = self.new_ctx()
                 secret = ("s" * length)[: length - 4] + TAIL
-                c.add_entry(ctx, "naver_openapi", name="기본", fields={"client_id": "ClientId0001", "client_secret": secret})
+                c.add_entry(ctx, "naver_apihub", name="기본", fields={"client_id": "ClientId0001", "client_secret": secret})
                 view = c.list_entries(ctx, keystore=ctx.keystore)[0]
                 self.assertEqual(view.tail, tail)
                 self.assertEqual(view.to_dict()["tail"], tail)
@@ -870,10 +896,10 @@ class ListAndStatusTest(Base):
 
     def test_filtering_and_the_global_ordinals_follow_the_purpose_order_then_the_item_order(self):
         self.add("image_provider", name="기본", new_id=key_ids(ID1))
-        self.add("naver_openapi", name="기본", new_id=key_ids(ID2))
+        self.add("naver_apihub", name="기본", new_id=key_ids(ID2))
         self.add("image_provider", name="예비", seed="b", new_id=key_ids(ID3))
         views = c.list_entries(self.ctx, keystore=self.store)
-        self.assertEqual([(view.ordinal, view.entry.purpose, view.entry.name) for view in views], [(1, "naver_openapi", "기본"), (2, "image_provider", "기본"), (3, "image_provider", "예비")])
+        self.assertEqual([(view.ordinal, view.entry.purpose, view.entry.name) for view in views], [(1, "naver_apihub", "기본"), (2, "image_provider", "기본"), (3, "image_provider", "예비")])
         only = c.list_entries(self.ctx, purpose="image_provider", keystore=self.store)
         self.assertEqual([(view.ordinal, view.entry.name) for view in only], [(2, "기본"), (3, "예비")])        # 거르기를 해도 순번은 전체 기준 그대로
         self.assertEqual(c.list_entries(self.ctx, purpose="blogger", keystore=self.store), [])
@@ -954,18 +980,19 @@ class ListAndStatusTest(Base):
                 self.assertEqual(c.purpose_status(ctx, data, purpose, keystore=ctx.keystore), "not_connected")
                 self.assertEqual(data.policy(purpose), c.Policy())
         self.assertEqual(c.list_entries(ctx, keystore=None), [])
-        self.assertEqual(c.diagnostic_summary(ctx), {"purposes": [{"purpose": key, "entries": 0, "active": 0} for key in c.PURPOSES]})
+        self.assertEqual(c.diagnostic_summary(ctx), {"purposes": [{"purpose": key, "entries": 0, "active": 0} for key in c.PURPOSES if key != "naver_openapi"]})
         self.assertFalse(ctx.workspace.root.exists())
 
 
 class ResolveAndRemoveTest(Base):
     N1, N2 = "1a2b3c4d" + "0" * 24, "1a2b9999" + "0" * 24
     I1, I2, I3 = "bbbb0001" + "0" * 24, "bbbb0002" + "0" * 24, "cccc0003" + "0" * 24
+    FIRST = "naver_searchad"            # 순번이 이미지 공급자보다 앞서고(레지스트리 둘째) 항목을 3개까지 두는 용도 — 첫 용도 NAVER API HUB 는 키를 하나만 두고 옛 `naver_openapi` 는 맨 뒤라 새 항목을 받지 않는다
 
     def setUp(self):
         super().setUp()
-        self.add("naver_openapi", name="기본", new_id=key_ids(self.N1))
-        self.add("naver_openapi", name="예비", seed="b", new_id=key_ids(self.N2))
+        self.add(self.FIRST, name="기본", new_id=key_ids(self.N1))
+        self.add(self.FIRST, name="예비", seed="b", new_id=key_ids(self.N2))
         self.add("image_provider", name="기본", new_id=key_ids(self.I1))
         self.add("image_provider", name="예비", seed="b", new_id=key_ids(self.I2))
         self.add("image_provider", name="셋째", seed="c", new_id=key_ids(self.I3))
@@ -1028,7 +1055,7 @@ class ResolveAndRemoveTest(Base):
         for text in (self.I1[:8], self.I1, self.I1.upper(), " " + self.I1[:8] + " "):
             with self.subTest(text=text):
                 ctx = self.new_ctx()
-                for purpose, name, seed, new in (("image_provider", "기본", "a", self.I1), ("image_provider", "예비", "b", self.I2), ("image_provider", "셋째", "c", self.I3), ("naver_openapi", "기본", "a", self.N1)):
+                for purpose, name, seed, new in (("image_provider", "기본", "a", self.I1), ("image_provider", "예비", "b", self.I2), ("image_provider", "셋째", "c", self.I3), (self.FIRST, "기본", "a", self.N1)):
                     self.add(purpose, name=name, seed=seed, ctx=ctx, new_id=key_ids(new))
                 events = []
                 original_delete, original_save = ctx.keystore._delete, c.save
@@ -1046,10 +1073,10 @@ class ResolveAndRemoveTest(Base):
                     result = c.remove_entry(ctx, text, confirmed=True)
                 self.assertEqual(events, [("delete", "image_provider:" + self.I1), ("save",)], "보관소가 먼저")
                 self.assertEqual((result.entry.entry_id, result.keep_cache, result.purpose_label), (self.I1, False, "이미지 공급자"))
-                self.assertEqual(sorted(ctx.keystore.list_refs()), sorted(["image_provider:" + self.I2, "image_provider:" + self.I3, "naver_openapi:" + self.N1]))
+                self.assertEqual(sorted(ctx.keystore.list_refs()), sorted(["image_provider:" + self.I2, "image_provider:" + self.I3, f"{self.FIRST}:" + self.N1]))
                 rest = c.load(ctx)
                 self.assertEqual([(item.entry_id, item.order) for item in rest.of_purpose("image_provider")], [(self.I2, 1), (self.I3, 2)], "남은 항목의 순서가 1부터 다시 매겨진다")
-                self.assertEqual([item.order for item in rest.of_purpose("naver_openapi")], [1])
+                self.assertEqual([item.order for item in rest.of_purpose(self.FIRST)], [1])
 
     def test_keep_cache_is_just_the_users_choice_handed_back(self):
         for passed, expected in ((True, True), (False, False), ("yes", True), (0, False)):
@@ -1087,7 +1114,7 @@ class ChangeTest(Base):
         self.add(name="기본", new_id=key_ids(ID1))
         self.add(name="예비", seed="b", new_id=key_ids(ID2))
         self.add(name="셋째", seed="c", new_id=key_ids(ID3))
-        self.add("naver_openapi", name="기본", new_id=key_ids("aaaa1111" * 4))
+        self.add("naver_apihub", name="기본", new_id=key_ids("aaaa1111" * 4))
 
     def order(self, purpose="image_provider"):
         return [item.entry_id for item in c.load(self.ctx).of_purpose(purpose)]
@@ -1123,7 +1150,7 @@ class ChangeTest(Base):
         self.assertEqual([item.order for item in c.load(self.ctx).of_purpose("image_provider")], [1, 2, 3])
         c.reorder(self.ctx, "image_provider", [])
         self.assertEqual(self.order(), [ID2, ID1, ID3])
-        self.assertEqual(self.order("naver_openapi"), ["aaaa1111" * 4])
+        self.assertEqual(self.order("naver_apihub"), ["aaaa1111" * 4])
 
     def test_reorder_refuses_another_purposes_item_a_repeated_item_and_unknown_things(self):
         before = self.file_bytes()
@@ -1141,14 +1168,14 @@ class ChangeTest(Base):
         self.assertEqual(saved, c.Policy("save", "", "2026-11-02T02:30:12Z"))
         self.assertEqual(c.load(self.ctx).policy("image_provider"), saved)
         self.assertEqual(c.set_policy(self.ctx, "image_provider", on_limit="failover").on_limit, "failover")
-        self.assertEqual(c.load(self.ctx).policy("naver_openapi"), c.Policy(), "다른 용도의 정책은 그대로")
+        self.assertEqual(c.load(self.ctx).policy("naver_apihub"), c.Policy(), "다른 용도의 정책은 그대로")
 
     def test_the_tier_is_only_for_purposes_that_have_more_than_one_and_can_be_cleared(self):
         self.assertEqual(c.set_policy(self.ctx, "image_provider", tier="production").tier, "production")
         self.assertEqual(c.load(self.ctx).policy("image_provider").on_limit, "failover", "tier 만 바꿔도 on_limit 은 그대로")
         self.assertEqual(c.set_policy(self.ctx, "image_provider", tier="demo").tier, "demo")
         self.assertEqual(c.set_policy(self.ctx, "image_provider", tier="").tier, "")
-        for purpose, tier in (("naver_openapi", "default"), ("naver_openapi", "demo"), ("image_provider", "gold"), ("image_provider", "default"), ("github_repo", "demo")):
+        for purpose, tier in (("naver_apihub", "default"), ("naver_apihub", "demo"), ("naver_openapi", "default"), ("naver_openapi", "demo"), ("image_provider", "gold"), ("image_provider", "default"), ("github_repo", "demo")):
             with self.subTest(purpose=purpose, tier=tier):
                 self.assertEqual(ss.code_of(c.set_policy, self.ctx, purpose, tier=tier).code, "KEY_INVALID_SHAPE")
 
@@ -1404,11 +1431,11 @@ class DiagnosticsTest(Base):
         fields = values("image_provider")
         a = c.add_entry(self.ctx, "image_provider", name="비밀이름", fields=fields, project="비밀프로젝트", new_id=key_ids(ID1)).entry
         c.add_entry(self.ctx, "image_provider", name="예비", fields=values("image_provider", "b"), state="standby", terms_ack=True)
-        self.add("naver_openapi", name="네이버")
+        self.add("naver_apihub", name="네이버")
         summary = c.diagnostic_summary(self.ctx)
-        self.assertEqual(summary, {"purposes": [{"purpose": "naver_openapi", "entries": 1, "active": 1}, {"purpose": "naver_searchad", "entries": 0, "active": 0},
+        self.assertEqual(summary, {"purposes": [{"purpose": "naver_apihub", "entries": 1, "active": 1}, {"purpose": "naver_searchad", "entries": 0, "active": 0},
                                                 {"purpose": "image_provider", "entries": 2, "active": 1}, {"purpose": "ai_assist", "entries": 0, "active": 0},
-                                                {"purpose": "blogger", "entries": 0, "active": 0}, {"purpose": "github_repo", "entries": 0, "active": 0}]})
+                                                {"purpose": "blogger", "entries": 0, "active": 0}, {"purpose": "github_repo", "entries": 0, "active": 0}]})              # 옛 용도는 그 항목이 남아 있을 때만 요약에 한 줄이 있다
         text = json.dumps(summary, ensure_ascii=False)
         probes = [ID1, ID1[:8], "비밀이름", "비밀프로젝트", "예비", "네이버", a.bucket, TAIL, "****", *fields.values()]
         for probe in probes:
@@ -1417,7 +1444,7 @@ class DiagnosticsTest(Base):
     def test_a_whole_session_leaves_no_value_or_tail_in_any_file_of_the_data_folder(self):
         registry = implemented_registry()
         secrets = []
-        for purpose, seed, name in (("image_provider", "a", "기본"), ("image_provider", "b", "예비"), ("image_provider", "c", "셋째"), ("naver_openapi", "a", "기본"), ("ai_assist", "a", "기본")):
+        for purpose, seed, name in (("image_provider", "a", "기본"), ("image_provider", "b", "예비"), ("image_provider", "c", "셋째"), ("naver_apihub", "a", "기본"), ("ai_assist", "a", "기본")):
             self.add(purpose, name=name, seed=seed, project=f"앱 {seed}")
             secrets.extend(values(purpose, seed).values())
         c.set_state(self.ctx, "3", "standby")
