@@ -67,6 +67,7 @@ class AppShell(QMainWindow):
         self.refresh_button = self.cancel_button = self.drawer_close = None
         self._dialog_return = self._drawer_return = None
         self._outside_focus = {}
+        self._cancel_released = False                                                   # 취소를 눌러 화면을 먼저 풀고 안내했다 — 돌고 있던 일이 나중에 끝나며 보낼 신호 하나를 무시하려고(그 일의 끝 신호가 오면 꺼진다)
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.escape)
         self.bridge = JobBridge(self)
         self.bridge.loaded.connect(self._on_loaded)
@@ -346,20 +347,26 @@ class AppShell(QMainWindow):
         return True
 
     def cancel_load(self):
-        """불러오기를 취소한다 — 서비스 호출 하나가 도는 동안은 끊을 수 없어 일은 끝까지 가지만(늦게 끝난 결과는 작업 쪽이 버린다), 화면은 **바로** 보이던 모습으로 돌아간다(몇 초 동안 '불러오는 중' 에 멈춰 있지 않게)."""
+        """불러오기를 취소한다 — 서비스 호출 하나가 도는 동안은 끊을 수 없어 일은 끝까지 가지만(늦게 끝난 결과는 작업 쪽이 버린다), 화면은 **바로** 보이던 모습으로 돌아간다(몇 초 동안 '불러오는 중' 에 멈춰 있지 않게).
+        그렇게 먼저 풀고 안내했으면 일이 나중에 끝나며 보내는 취소 신호는 무시한다(`_on_cancelled`) — 안 그러면 몇 초 뒤에 같은 안내가 다시 뜨고 화면이 한 번 더 그려진다. 같은 일에 또 눌러도 안내는 한 번뿐이다."""
         self.state.cancel_load()
-        if self.state.loading:
+        if self.state.loading and not self._cancel_released:
+            self._cancel_released = True
             self._guarded(self._show_cancelled)
 
     # 작업 스레드가 보내 온 결과를 받는 화면 스레드 슬롯 셋 — 안에서 예외가 나도(이상한 데이터 …) '불러오는 중' 에 멈추지 않고 오류 상태로 바꾼다(`_guarded`)
     def _on_loaded(self, data):
+        self._cancel_released = False                                                  # 일이 끝났다(취소 신호는 이제 오지 않는다)
         self._guarded(self._show_loaded, data)
 
     def _on_failed(self, failure):
+        self._cancel_released = False
         self._guarded(self._show_failed, failure)
 
     def _on_cancelled(self):
-        self._guarded(self._show_cancelled)
+        released, self._cancel_released = self._cancel_released, False
+        if not released:                                                               # 취소를 눌렀을 때 이미 화면을 풀고 안내했으면 늦게 끝난 일의 취소 신호는 무시한다(안내·다시 그리기를 두 번 하지 않는다)
+            self._guarded(self._show_cancelled)
 
     def _show_loaded(self, data):
         self.state.apply_home(data)

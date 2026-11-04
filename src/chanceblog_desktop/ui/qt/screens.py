@@ -223,7 +223,7 @@ def _rail(shell, rail):
         head.addWidget(mark)
         names = QVBoxLayout()
         names.setSpacing(0)
-        names.addWidget(UI.ElidedLabel(blog["name"], "body_lg"))                  # 긴 이름은 카드 밖으로 잘리지 않고 …(줄임표)로 줄어든다(전체는 툴팁·접근 이름)
+        names.addWidget(UI.ElidedLabel(blog["name"], "body_lg"))                  # 긴 이름은 카드 밖으로 잘리지 않고 …(줄임표)로 줄어든다(툴팁은 어댑터가 가린 뒤 30자로 줄인 이름 — 40자 이름이면 툴팁도 30자 + …)
         if blog["category"]:
             names.addWidget(UI.label(blog["category"], "caption"))
         head.addLayout(names, 1)

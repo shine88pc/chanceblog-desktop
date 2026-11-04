@@ -20,7 +20,7 @@ def make_app(argv=None):
 
 def make_excepthook(window=None, stream=None):
     """처리하지 못한 예외(화면 슬롯·이벤트 처리 안에서 난 것 — PySide6 가 `sys.excepthook` 으로 넘긴다)를 받는 훅.
-    추적(traceback)에는 경로와 값이 들어 있어 그대로 내지 않고 **한 줄**(예외 이름 + 비밀 모양을 가리고 경로를 지운 짧은 글)만 표준 오류에 남기며, 창이 있으면 쉬운 안내(토스트)를 보인다.
+    추적(traceback)에는 경로와 값이 들어 있어 그대로 내지 않고 **한 줄**(예외 이름 + 비밀 모양을 가리고 경로를 지운 짧은 글)만 표준 오류에 남기며(표준 오류가 없는 `pythonw`·창 없는 exe 에서는 남길 곳이 없어 줄이 안 남는다 — `report_unexpected` 가 False), 창이 있으면 쉬운 안내(토스트)를 보인다.
     Ctrl+C 는 그대로 둔다. 이 훅 안에서는 어떤 오류도 다시 내지 않는다."""
     def hook(kind, value, trace):
         if issubclass(kind, KeyboardInterrupt):

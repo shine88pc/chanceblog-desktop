@@ -18,6 +18,7 @@ import hashlib
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import threading
@@ -25,6 +26,7 @@ import time
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -547,6 +549,29 @@ class JobsTest(unittest.TestCase):
             self.assertFalse(runner.running("k"))
             self.assertIsNotNone(runner.start("k", lambda progress, cancelled: None))          # 다시 시작할 수 있다
 
+    def test_job_threads_are_daemon_threads(self):
+        """작업 스레드가 daemon 이 아니면 끝나지 않는 일 하나가 프로그램 종료를 막는다(창을 닫았는데 프로세스가 남는다) — 변이 N31."""
+        release = threading.Event()
+        runner = jobs.JobRunner()
+        job = runner.start("stuck", lambda progress, cancelled: release.wait(30))
+        try:
+            self.assertTrue(job._thread.daemon)
+            self.assertTrue(runner.running("stuck"))
+        finally:
+            release.set()
+            job.join(2)
+
+    def test_a_process_whose_job_never_ends_still_exits_at_once(self):
+        """진짜 프로세스로 — 끝나지 않는 일(2분짜리)이 돌고 있어도 주 흐름이 끝나면 프로세스가 곧 끝난다. 작업 스레드가 daemon 이 아니면 2분을 기다려 시간 초과로 실패한다."""
+        code = ("import sys, threading\n"
+                "sys.path.insert(0, sys.argv[1])\n"
+                "from chanceblog_desktop.ui.core import jobs\n"
+                "runner = jobs.JobRunner()\n"
+                "runner.start('stuck', lambda progress, cancelled: threading.Event().wait(120))\n"
+                "print('started', runner.running('stuck'))\n")
+        result = subprocess.run([sys.executable, "-c", code, str(ROOT / "src")], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "started True"), result.stderr[-300:])
+
 
 class ServicesAndStateTest(unittest.TestCase):
     def test_the_fake_service_marks_itself_as_sample_and_has_missing_values_as_none(self):
@@ -800,6 +825,18 @@ class ServicesAndStateTest(unittest.TestCase):
             for word in ("생활", "에너지", "IT", "재테크", "쇼핑", "장소", "기타", "주제"):
                 self.assertNotIn(word, unknown["label"])
 
+    def test_every_example_candidate_names_its_field_exactly_like_this(self):
+        """예시 후보의 분야 문구는 화면에 그대로 보인다(변이 N54 — 하나를 바꿔도 시험이 통과했다). 손으로 적은 기대값으로 모두 못박는다."""
+        expected = (("자취방 곰팡이 없애는 순서", "생활·집"), ("전기요금 절약 방법", "생활·에너지"), ("노트북 배터리 오래 쓰는 법", "IT·기기"), ("프리랜서 종합소득세 신고 순서", "재테크·세금"),
+                    ("에어프라이어 고르는 기준", "쇼핑·가전"), ("무선 이어폰 비교 포인트", "쇼핑·가전"), ("겨울철 실내 습도 관리", "생활·집"), ("주말 근교 조용한 카페 모음", "장소·맛집"))
+        topics = services.sample_topics()
+        self.assertEqual(len(topics), len(expected))
+        for topic, (title, field) in zip(topics, expected):
+            thumb = app_state.topic_vm(topic)["thumb"]
+            self.assertEqual((topic.title, thumb["category"], thumb["label"]), (title, field, f"{field} 주제의 이미지 자리 표시"))
+        self.assertEqual(services.SAMPLE_CATEGORY, {"t_droplet": "생활·집", "t_bolt": "생활·에너지", "t_laptop": "IT·기기", "t_calc": "재테크·세금", "t_box": "쇼핑·가전", "t_headphones": "쇼핑·가전",
+                                                    "t_coffee": "장소·맛집", "t_spark": "기타"})
+
 
 class UnexpectedLineTest(unittest.TestCase):
     """처리하지 못한 예외를 표준 오류에 남기는 한 줄 — 예외 이름과 비밀을 가리고 경로를 지운 짧은 글뿐이다(추적에는 경로·값이 들어 있다)."""
@@ -846,6 +883,188 @@ class UnexpectedLineTest(unittest.TestCase):
         self.assertIn("(Exception)", app_state.unexpected_line(object(), "x"))
         self.assertIn("(ValueError)", app_state.unexpected_line(ValueError, None))
         self.assertLess(len(app_state.unexpected_line(ValueError, "x" * 300_000)), 400)                # 가리기 상한(20만 자)을 넘는 글도 짧은 한 줄
+
+    def test_a_path_with_spaces_is_erased_whole_never_half(self):
+        """공백이 든 경로(`C:/Users/Jane Doe/…`·`Program Files`·유닉스식·네트워크·`~`)를 공백에서 끊어 반쪽만 지우면 이름 조각이 한 줄 기록에 남았다(독립 검증 N-1: `(경로) Doe/Documents/x.db`)."""
+        cases = (
+            ("C:/Users/Jane Doe/Documents/x.db", ("Jane", "Doe", "Documents", "x.db")),
+            ("C:\\Users\\Jane Doe\\Documents\\x.db 를 열 수 없음", ("Jane", "Doe", "Documents", "x.db")),
+            ("C:\\Program Files\\Chance Blog\\app.dll 접근 거부", ("Program", "Files", "Chance", "Blog", "app.dll")),
+            ("d:\\내 문서\\홍 길동\\비밀 노트.txt", ("내 문서", "홍", "길동", "비밀", "노트")),
+            ("/home/jane doe/문서 폴더/x.db not found", ("jane", "doe", "문서", "x.db")),
+            ("/Users/Jane Doe/Library/x.db", ("Jane", "Doe", "Library")),
+            ("\\\\서버\\공유 폴더\\Jane Doe\\x.db 접근 거부", ("서버", "공유", "Jane", "Doe", "x.db")),
+            ("//server/share name/Jane Doe/x.db denied", ("server", "share", "name", "Jane", "Doe")),
+            ("\\\\?\\C:\\Users\\Jane Doe\\x.db", ("Jane", "Doe")),
+            ("file:///C:/Users/Jane Doe/x.db 열기 실패", ("Jane", "Doe", "x.db")),
+            ("~/Jane Doe/문서/x.db", ("Jane", "Doe", "문서")),
+            ("~\\Jane Doe\\x.db", ("Jane", "Doe")),
+            ("경로:/home/jane doe/x.db", ("jane", "doe", "x.db")),                                # 콜론 바로 뒤의 `/` 한 개는 주소가 아니라 경로
+            ("dir:~/Jane Doe/x", ("Jane", "Doe")),
+            ("ssh host:/home/jane doe/x", ("jane", "doe")),
+            ("\\\\wsl$\\Ubuntu\\home\\jane doe\\x", ("Ubuntu", "jane", "doe")),
+            ("\\\\.\\pipe\\a b", ("pipe",)),
+        )
+        for message, pieces in cases:
+            line = app_state.unexpected_line(OSError, message)
+            self.assertEqual(line.count("(경로)"), 1, line)
+            for piece in pieces:
+                self.assertNotIn(piece, line, (message, line))
+
+    def test_a_quoted_path_ends_at_its_closing_quote_and_an_unquoted_one_at_the_end_of_the_line(self):
+        def body(message):
+            return app_state.unexpected_line(OSError, message).split("(OSError): ", 1)[1]               # 앞의 고정 문구를 뗀 본문
+
+        self.assertEqual(body("[Errno 13] Permission denied: 'C:\\\\Users\\\\Jane Doe\\\\x.db' (다시 시도)"), "[Errno 13] Permission denied: '(경로)' (다시 시도)")      # 파이썬이 겹쳐 쓴 역슬래시도
+        self.assertEqual(body('열 수 없음 "/home/jane doe/a b" 그리고 끝'), '열 수 없음 "(경로)" 그리고 끝')
+        self.assertEqual(body("`C:\\내 폴더\\x` 와 'D:\\다른 폴더\\y' 비교"), "`(경로)` 와 '(경로)' 비교")
+        self.assertEqual(body("'C:\\Users\\O'Brien Jr\\x.db' 못 읽음"), "'(경로)' 못 읽음")              # 따옴표 뒤가 영숫자면 이름의 일부(아포스트로피)
+        self.assertEqual(body("C:\\Users\\Jane Doe\\x.db 를 열 수 없음"), "(경로)")                     # 따옴표가 없으면 어디서 끝나는지 모른다 — 줄 끝까지
+        self.assertEqual(body("첫 줄 C:\\Users\\Jane Doe\\x.db\n둘째 줄 설명"), "첫 줄 (경로) 둘째 줄 설명")      # 줄바꿈은 경로가 끝나는 곳 — 줄바꿈이 한 칸으로 합쳐지기 전에 지운다
+        self.assertEqual(body("'C:\\짝 없는 따옴표 경로\n다음 줄"), "'(경로) 다음 줄")
+        for separator in ("\r\n", "\r", "\x0b", "\x0c", "\x85", "\u2028", "\u2029"):                    # 줄을 가르는 글자는 모두 경로가 끝나는 곳이다(`str.splitlines()` 와 같은 목록)
+            shown_body = body("첫 줄 C:\\Users\\Jane Doe\\x.db" + separator + "둘째 줄")
+            self.assertTrue(shown_body.startswith("첫 줄 (경로)") and shown_body.endswith("둘째 줄"), (separator, shown_body))
+            self.assertNotIn("Jane", shown_body)
+        for message in ("https://example.com/a b 실패", "ftp://host/x y 실패", "날짜 11/04 와 a/b 와 </p> 와 1 / 2", "pattern: /: 'str'", "20% / 30% 비율"):
+            self.assertEqual(body(message), message)                                                       # 주소·날짜·태그·나눗셈은 경로가 아니다
+
+    def test_paths_are_erased_before_the_text_is_cut_so_a_long_path_does_not_eat_the_message(self):
+        """경로를 먼저 지우고 나서 가리고 자른다 — 거꾸로면 긴 경로가 120자를 다 써 버려 뒤의 설명이 사라진다(변이 N17)."""
+        long_path = "C:\\" + "폴더 이름 " * 60 + "x.db"
+        self.assertTrue(app_state.unexpected_line(OSError, f"'{long_path}' 를 열 수 없음").endswith("'(경로)' 를 열 수 없음"))
+        self.assertTrue(app_state.unexpected_line(OSError, "저장하지 못함: '/home/" + "가 나 " * 80 + "x' 이유는 권한").endswith("'(경로)' 이유는 권한"))
+        self.assertTrue(app_state.unexpected_line(OSError, "C:\\Users\\Jane Doe\\x.db\n" + "다음 줄 설명 " * 3).endswith("(경로) 다음 줄 설명 다음 줄 설명 다음 줄 설명"))
+
+    def test_erasing_paths_is_linear_in_the_length_of_the_text(self):
+        started = time.perf_counter()
+        for value in ("'C:\\a' " * 40_000, "'C:\\a " * 40_000, "/a " * 100_000, "C:\\ " * 80_000, ("'/x y" + "\n") * 50_000, "\\" * 300_000, "'" * 300_000 + "C:\\", "~/" * 150_000):
+            erased = app_state.erase_paths(value)
+            self.assertIn("(경로)", erased)
+            self.assertLessEqual(len(erased), len(value) + 10)
+        self.assertLess(time.perf_counter() - started, 10)                                                 # 보통 1초 안쪽 — 제곱으로 느려지면 몇 분이 걸린다
+
+    def test_with_no_standard_error_nothing_is_claimed_to_be_written(self):
+        """pythonw·창 없는 exe 에는 표준 오류가 없다(`sys.stderr` 가 None) — 예전에는 아무 데도 안 남았는데 True 를 돌려줬다(독립 검증 N-2). 표준 출력으로 새지도 않는다."""
+        out, stream = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stderr", None), contextlib.redirect_stdout(out):
+            self.assertFalse(app_state.report_unexpected(ValueError, "기본 흐름"))
+            self.assertFalse(app_state.report_unexpected(ValueError, "기본 흐름", None))
+            self.assertTrue(app_state.report_unexpected(ValueError, "정한 흐름", stream))                    # 흐름을 직접 주면 그리로 쓴다
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("(ValueError): 정한 흐름", stream.getvalue())
+
+
+class MaskThenCutTest(unittest.TestCase):
+    """화면에 나가는 글은 **가린 뒤에 자른다**(독립 검증 M-1·N-6) — 자르기가 먼저면 한도에 걸친 키는 반쪽이 되어 가림 규칙이 못 알아본다.
+    한도마다 키가 한도를 가로지르거나 바로 앞뒤에 오는 모든 자리(한글에 붙인 것·띄운 것)에서 키 조각이 안 남는지 본다 — 호출 위치에서 순서를 바꾸는 변이(N27·N28)를 잡는다."""
+    KEYS = ("AI" + "za" + "SyD4e7Kq9ZmW2xV8bN5tR1cY6uH3jL0pGfA1B"[:35], "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")        # 구글 키(39자)·GitHub 토큰(40자) 모양의 가짜 값
+
+    @staticmethod
+    def pieces(key, size=6):
+        return {key[i:i + size] for i in range(len(key) - size + 1)}
+
+    def straddling(self, limit):
+        """(키, 글) — 키가 한도 글자 자리를 가로지르거나 바로 앞뒤에 오는 모든 자리의 글."""
+        for key in self.KEYS:
+            for lead in range(max(0, limit - len(key) - 2), limit + 2):
+                for glue in ("", " "):
+                    yield key, "가" * lead + glue + key
+
+    def assert_clean(self, key, shown_text, where):
+        self.assertEqual([piece for piece in self.pieces(key) if piece in shown_text], [], where)
+
+    def test_a_failure_message_and_code_are_masked_before_their_cuts(self):
+        for key, value in self.straddling(200):                                              # 문장 200자
+            self.assert_clean(key, app_state.clean_failure(jobs.JobFailure(value, code="C")).user_message, ("message", value[-45:]))
+        for key, value in self.straddling(80):                                               # 코드 80자(진단 정보도 같은 한도)
+            self.assert_clean(key, app_state.clean_failure(jobs.JobFailure("문장", code=value)).code, ("code", value[-45:]))
+            self.assert_clean(key, app_state.diagnostic_text(jobs.JobFailure("문장", code=value)), ("diagnostic", value[-45:]))
+
+    def test_every_candidate_text_is_masked_before_its_own_cut(self):
+        for field, limit in {"title": 200, "desc": 300, "keywords": 80, "reason": 300, "post_type": 40, "category": 40}.items():
+            for key, value in self.straddling(limit):
+                values = {"id": "k", "title": "제목", "date": "2026-11-01", field: (value, "평범한 키워드") if field == "keywords" else value}
+                view = app_state.topic_vm(services.Topic(**values))
+                self.assert_clean(key, repr(view), (field, value[-45:]))
+                self.assertNotIn(key, repr(view), field)
+
+    def test_the_drawer_masks_before_cutting_too(self):
+        for field, limit in {"title": 200, "reason": 300, "season": 80, "date": 40, "keywords": 300}.items():
+            for key, value in self.straddling(limit):
+                values = {"id": "d", "title": "제목", "blogs": ("A",), "date": "2026-11-01", field: (value, "평범한 키워드") if field == "keywords" else value}
+                state = app_state.AppState(services.FakeHomeProvider())
+                state.apply_home(services.HomeData(topics=(services.Topic(**values),)))
+                state.open_drawer("d")
+                self.assert_clean(key, repr(state.drawer_view()), (field, value[-45:]))
+
+    def test_blog_names_and_categories_in_the_side_panel_are_masked_before_the_forty_character_cut(self):
+        topics = (services.Topic(id="b", title="제목", blogs=("A",), date="2026-11-01"),)
+        for key, value in self.straddling(40):
+            for blog in (services.BlogInfo("A", value), services.BlogInfo("A", "블로그", value)):
+                state = app_state.AppState(services.FakeHomeProvider())
+                state.apply_home(services.HomeData(topics=topics, blogs=(blog,)))
+                self.assert_clean(key, repr(state.home_view()["rail"]), (blog.name[-20:], blog.category[-20:]))
+
+
+class DocsStayHonestTest(unittest.TestCase):
+    """문서의 알려 둔 한계가 코드의 실제와 같은지 — 독립 검증이 찾은 어긋남(N-2·N-4·N-5)이 되살아나지 않게 한다."""
+    # 조각을 이어 만든 가짜 값(저장소에는 키 문자열이 없다). 가려져야 하는 것('c3' 묶음이 더한 `sk-proj-`·`sk-ant-api03-`·`sk-or-v1-` 포함)과, 가림 규칙이 아직 못 알아본다고 문서에 적은 것.
+    MASKED = {"구글 AIza": "AI" + "za" + "SyD" + "x" * 32, "GitHub ghp_": "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8", "AWS AKIA": "AK" + "IA" + "ABCDEFGHJKLMNPQR",
+              "sk-proj-": "s" + "k-" + "proj-" + "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2Haiu8Ney", "sk-ant-api03-": "s" + "k-" + "ant-" + "api03-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3F",
+              "sk-or-v1-": "s" + "k-" + "or-v1-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3FVm7G"}
+    UNMASKED = {"AWS ASIA": "AS" + "IA" + "ABCDEFGHJKLMNPQR", "sk_live_": "s" + "k_live_" + "Xm5PYjyFYgs6Lcw7JXn7FRdt", "glpat-": "gl" + "pat-" + "euCWfs7NfpzDTj5ERevE",
+                "16진 40자": "3a18f6d4b2907e5c" * 2 + "3a18f6d4", "영숫자 40자": "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2", "base64 모양": "AQg2BNbsBKVhxFZivARis4GWn8HUhyHRbp5Mfq3GXqyA==",
+                "임의 접두어": "n" + "aver-" + "HXp9JVizJScq6Ngr4HYrzBPdvFQbq7QY"}
+    LIMIT_WORDS = ("ASIA", "sk_live_", "glpat-", "16진", "영숫자", "base64", "접두어", "AKIA")                # 한계 목록에 있어야 하는 말(스펙 §9 와 D-32 (o) 둘 다)
+    NOW_MASKED_WORDS = ("sk-proj-", "sk-ant-api03-", "sk-or-v1-")                                       # 'c3' 병합으로 이제 가려진다고 적어야 하는 말
+
+    @staticmethod
+    def doc(name):
+        return (ROOT / "docs" / name).read_text(encoding="utf-8")
+
+    def decision(self, number):
+        match = re.search(rf"(?m)^\| {number} \|.*$", self.doc("DECISIONS.md"))
+        self.assertIsNotNone(match, number)
+        return match.group(0)
+
+    def test_the_mask_limit_list_in_the_docs_matches_what_the_mask_really_recognizes(self):
+        from chanceblog_desktop.security.mask import mask
+        for name, value in self.MASKED.items():
+            self.assertNotIn(value, mask("값 " + value + " 끝"), f"{name}: 문서가 '가려진다' 고 한 모양이 안 가려진다")
+        for name, value in self.UNMASKED.items():
+            self.assertIn(value, mask("값 " + value + " 끝"), f"{name}: 가림 규칙이 이 모양을 이제 알아본다 — UI_DESIGN_SPEC §9 와 DECISIONS D-32 (o) 의 한계 목록에서 빼고 이 시험의 목록도 고친다")
+        spec, decision = self.doc("UI_DESIGN_SPEC.md"), self.decision("D-32")
+        for word in self.LIMIT_WORDS:
+            self.assertIn(word, spec, word)
+            self.assertIn(word, decision, word)
+        for word in self.NOW_MASKED_WORDS:
+            self.assertIn(word, spec, word)
+            self.assertIn(word, decision, word)
+        self.assertNotIn("그 밖의 키 모양(구글·GitHub·AWS 등)은 가려진다", spec)           # `AKIA…` 한정이던 말 — ASIA… 는 안 가려진다
+        for stale in ("'c3' 묶음이 규칙을 보강하기 전까지", "보강되는 묶음이 병합되기 전까지", "묶음이 병합되기 전까지의 한계"):       # 'c3' 가 아직 main 에 없을 때 쓰던 문장 — c3 는 2026-11-04 에 병합됐다
+            self.assertNotIn(stale, spec)
+            self.assertNotIn(stale, decision)
+
+    def test_the_docs_say_the_one_line_record_needs_a_console(self):
+        """한 줄 기록은 표준 오류에 쓴다 — pythonw·창 없는 exe 에는 표준 오류가 없어 어디에도 안 남는다(독립 검증 N-2). '조용한 실패도 아니다' 는 콘솔 실행 기준이다."""
+        for where in (self.doc("UI_STATES.md"), self.decision("D-32"), self.doc("UI_DESIGN_SPEC.md")):
+            self.assertIn("콘솔 실행 기준", where)
+        self.assertIn("표준 오류가 없는", self.doc("UI_STATES.md"))
+        self.assertIn("로그 파일은 설치 파일 묶음", self.doc("UI_STATES.md"))
+
+    def test_the_docs_say_the_tooltip_holds_the_cut_text_not_the_whole_name(self):
+        """툴팁은 '전체' 가 아니라 어댑터가 가린 뒤 30자로 줄인 글이다(독립 검증 N-5)."""
+        for name in ("UI_COMPONENTS.md", "UI_DESIGN_SPEC.md", "UI_VISUAL_QA.md"):
+            self.assertNotIn("전체는 툴팁", self.doc(name), name)
+        self.assertIn("받은 글", self.doc("UI_COMPONENTS.md"))
+        self.assertIn("30자", self.doc("UI_COMPONENTS.md"))
+        source = (UI_DIR / "qt" / "components.py").read_text(encoding="utf-8")
+        self.assertNotIn("전체가 툴팁", source)
+        self.assertNotIn("전체는 툴팁", (UI_DIR / "qt" / "screens.py").read_text(encoding="utf-8"))
+
+    def test_the_docs_say_a_late_cancel_signal_is_ignored(self):
+        self.assertIn("늦은 취소 신호", self.doc("UI_STATES.md"))
 
 
 class PackageBoundaryTest(unittest.TestCase):

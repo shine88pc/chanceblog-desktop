@@ -66,7 +66,7 @@ def label(text, role="body", wrap=False, mono=False):
 
 
 class ElidedLabel(QLabel):
-    """한 줄로 보여 주고 넘치면 …(줄임표)로 줄인다. 줄인 글은 마우스를 올리면 전체가 툴팁으로 나온다."""
+    """한 줄로 보여 주고 넘치면 …(줄임표)로 줄인다. 마우스를 올리면 **받은 글**이 툴팁으로 나온다 — 받은 글은 뷰모델이 가린 뒤 이미 줄인 글(블로그 이름 30자 + …, 한 줄 설명 300자)이라 그보다 긴 원문은 툴팁에도 없다(키가 반쪽으로 남지 않게 가린 뒤에 자르는 원칙)."""
 
     def __init__(self, text, role="small"):
         super().__init__(text)
