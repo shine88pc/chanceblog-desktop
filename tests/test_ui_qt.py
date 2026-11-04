@@ -886,6 +886,18 @@ class StatesTest(QtBase):
         finish_the_job()
         self.assertEqual(cancelled_notices(), 6)
 
+    def test_cancel_with_no_job_running_shows_no_notice_and_leaves_no_trace(self):
+        """G0c(재확인 권장·변이 G30): 도는 일이 없을 때 취소를 눌러도 안내가 뜨지 않고 '취소를 눌러 풀었다' 는 기억(`_cancel_released`)이 남지 않는다 — 남으면 다음 일의 정상 취소 신호가 삼켜진다."""
+        window = self.make()
+        self.assertFalse(window.state.loading)
+        notices = []
+        notify = window.notify
+        window.notify = lambda message: (notices.append(message), notify(message))[1]
+        window.cancel_load()
+        self.assertFalse(window.state.loading)
+        self.assertEqual(notices.count(text.T["load_cancelled"]), 0)
+        self.assertFalse(window._cancel_released)
+
     def test_the_global_hook_and_the_slot_guard_survive_having_no_standard_error(self):
         """pythonw·창 없는 exe 처럼 `sys.stderr` 가 None 이어도 훅·슬롯 보호는 예외 없이 쉬운 안내와 오류 상태로 끝난다(독립 검증 N-2)."""
         window = self.make()
