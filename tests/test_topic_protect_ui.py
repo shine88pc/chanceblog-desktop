@@ -320,5 +320,46 @@ class TopicsPlaceholderTest(unittest.TestCase):
         self.assertIsNotNone(link, "홈의 '전체 보기' 가 '주제 후보' 로 가는 줄을 찾지 못했다")
 
 
+class LegacyDemandLabelTest(unittest.TestCase):
+    """기존 절대 횟수 칸(`Candidate.search_demand`)의 화면 이름·단위를 못박는다 — 운영자 조건 1 은 이 칸을 상대지수로 덮어쓰거나 **재해석(재라벨)하지 않는다**. 이 시험이 없으면 '월 검색량' 을 '최근 관심도(상대값)' 로 바꿔도 소리 없이 통과한다."""
+    LEGACY_KEYS = ("demand", "d_demand", "unit_demand", "tip_demand")
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_the_legacy_absolute_count_is_called_monthly_search_volume_and_counted_in_times_in_the_screen_text(self):
+        T = text.T
+        self.assertEqual((T["demand"], T["d_demand"], T["unit_demand"]), ("월 검색량", "월간 검색량", "회"))                         # 행의 지표 이름·서랍의 항목 이름·단위
+        self.assertEqual(T["tip_demand"], "한 달 동안 이 키워드가 검색된 횟수를 어림잡은 값이에요.")                                     # 툴팁은 절대 횟수로 설명한다
+        self.assertEqual((T["docs"], T["d_docs"], T["unit_docs"]), ("블로그 문서 수", "관련 블로그 검색 결과 수", "건"))               # 같은 Legacy 지표 묶음의 다른 칸
+        self.assertEqual([text.fmt_demand(value) for value in (None, 0, 87, 8600, 1_234_567)], ["데이터 없음", "0회", "87회", "8,600회", "1,234,567회"])
+        self.assertEqual([text.fmt_docs(value) for value in (None, 0, 4120)], ["데이터 없음", "0건", "4,120건"])
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_none_of_the_legacy_count_labels_borrows_the_relative_interest_wording(self):
+        # 새 Trend 칸의 이름 `최근 관심도(상대값)` 는 P4 가 새 문구로 더한다. 기존 절대 횟수 칸의 문구에는 어느 단계에서도 상대값·관심도·지수·트렌드가 들어가면 안 된다(재라벨 금지).
+        for key in self.LEGACY_KEYS:
+            for word in ("상대", "관심도", "지수", "트렌드", "Trend", "ratio"):
+                with self.subTest(key=key, word=word):
+                    self.assertNotIn(word, text.T[key])
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_the_screen_text_has_no_relative_interest_label_yet_so_p4_adds_it_as_a_new_key(self):
+        # P4 가 `최근 관심도(상대값)` 를 새 문구로 더하면 이 시험의 빈 목록을 의식적으로 고친다 — 더해도 위 시험이 지키는 네 개 키에는 들어가면 안 된다.
+        self.assertEqual([key for key, value in text.T.items() if "상대값" in value or "최근 관심도" in value], [])
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_the_row_and_the_drawer_show_the_legacy_count_with_the_times_unit_and_the_monthly_label(self):
+        row = app_state.topic_vm(topic("행", demand=8600, docs=4120))
+        self.assertEqual((row["demand"], row["docs"], row["demand_missing"], row["docs_missing"]), ("8,600회", "4,120건", False, False))
+        bare = app_state.topic_vm(topic("빈 행"))
+        self.assertEqual((bare["demand"], bare["docs"], bare["demand_missing"], bare["docs_missing"]), ("데이터 없음", "데이터 없음", True, True))
+        state = state_with(topic("행", demand=8600, docs=4120))
+        self.assertTrue(state.open_drawer("행"))
+        fields = state.drawer_view()["fields"]
+        self.assertEqual((fields[0]["label"], fields[0]["value"], fields[0]["missing"]), ("월간 검색량", "8,600회", False))        # 서랍의 첫 항목
+        shown = {field["label"]: field["value"] for field in fields}
+        self.assertEqual((shown["월간 검색량"], shown["관련 블로그 검색 결과 수"]), ("8,600회", "4,120건"))
+        self.assertNotIn("최근 관심도", " ".join(shown))
+
+
 if __name__ == "__main__":
     unittest.main()

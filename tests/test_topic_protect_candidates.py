@@ -23,6 +23,7 @@ from chanceblog_desktop.content import profiles  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.content import suggest_score as sc  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.service import format as fmt  # noqa: E402
 from chanceblog_desktop.service.format import PLATFORM_KO  # noqa: E402
 
 NOW = "2026-11-03T00:00:00Z"
@@ -89,6 +90,19 @@ class RelativeIndexLooksLikeACountTest(unittest.TestCase):
         self.assertEqual(sorted(fields | {"schema"}), CANDIDATE_KEYS)
         self.assertEqual(set(cd.METRIC_FIELDS), {"search_demand", "related_blog_results", "trend", "mobile_share", "seasonality", "duplicate", "profile_fit", "priority", "keyword_opportunity"})
         self.assertEqual(cd.TRENDS, ("상승", "보합", "하락"))                                  # 관심도 변화는 세 낱말뿐 — '데이터 부족' 값이 없다(없으면 None)
+
+
+class LegacyCountOnTheCommandLineTest(unittest.TestCase):
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_the_command_line_prints_the_legacy_count_as_monthly_search_demand_in_times_and_never_as_a_relative_value(self):
+        # 화면 쪽 이름·단위는 `test_topic_protect_ui.LegacyDemandLabelTest` 가 못박는다. 여기는 명령줄 출력(`candidates show`·`suggest`)이 같은 칸을 부르는 이름과 단위다 — 운영자 조건 1: 재해석하지 않는다.
+        self.assertEqual(cd.LABELS["search_demand"], "월간 검색 수요")
+        self.assertEqual(fmt.METRIC_UNITS, {"search_demand": "{:,}회", "related_blog_results": "{:,}건", "mobile_share": "{}%"})
+        self.assertEqual([fmt.metric_text("search_demand", value) for value in (None, 0, 87, 8600)], ["데이터 없음", "0회", "87회", "8,600회"])
+        self.assertEqual((fmt.metric_text("related_blog_results", 4120), fmt.metric_text("mobile_share", 71)), ("4,120건", "71%"))
+        for word in ("상대", "관심도", "지수"):
+            self.assertNotIn(word, cd.LABELS["search_demand"])
+            self.assertNotIn(word, fmt.METRIC_UNITS["search_demand"])
 
 
 class StrictShapeTest(unittest.TestCase):

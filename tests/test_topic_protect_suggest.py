@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import service_support as support  # noqa: E402
+from chanceblog_desktop.content import candidates as cd  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.content import suggest as sg  # noqa: E402
 from chanceblog_desktop.content import suggest_score as sc  # noqa: E402
@@ -271,11 +272,47 @@ class OtherChannelsInTheSuggestionServiceTest(unittest.TestCase):
         self.assertEqual(getattr(caught.exception, "code", ""), "CANDIDATE_INVALID")
 
 
+class StoredCandidatePriorityTest(unittest.TestCase):
+    """보관함 후보의 우선도 계산(`sg.assess` — `candidates list --priority`·`candidates show` 가 `service/suggestions.py` 를 거쳐 쓴다)도 제안과 **같은 `season_fit`** 을 쓴다. 그래서 계절 낱말 부분 일치의 영향은 제안 결과에만 있지 않다."""
+
+    def assess(self, word, profile=None, **fields):
+        item = cd.Candidate.new(f"{word} 고르는 법", word, ("naver_b",), candidate_id="c0000001", now="2026-11-03T00:00:00Z", **fields)
+        return sg.assess(item, profile=profile, today=TODAY, month=11)
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    # KNOWN_DEFECT: 보관함 후보도 '그래픽카드'·'카드뮴' 이 11월에 시기 요인 70점과 '연말정산 준비' 이유를 받는다 — P0b 가 고치면 우선도 89.1 → 81.8(프로필 B 가 있으면 92.9 → 88.2)과 추천 이유의 시기 문장이 바뀐다.
+    def test_KNOWN_DEFECT_a_stored_candidates_priority_also_reads_graphics_card_and_cadmium_as_the_year_end_season(self):
+        for word in ("그래픽카드", "카드뮴"):
+            with self.subTest(word=word):
+                found = self.assess(word)
+                self.assertEqual((found.priority.score, found.priority.level, found.season.word), (89.1, "높음", YEAR_END))
+                self.assertEqual([(part.name, part.value) for part in found.parts], [("season", 70.0), ("freshness", 100.0), ("balance", 100.0)])
+                self.assertIn("연말정산 준비", found.reason)
+        with_profile = self.assess("그래픽카드", PROFILE_B)
+        self.assertEqual((with_profile.priority.score, with_profile.fit, with_profile.season.word), (92.9, 100, YEAR_END))
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_the_intended_card_words_get_the_same_season_factor_and_a_plain_word_gets_the_neutral_one(self):
+        for word in ("신용카드", "체크카드", "카드값"):                                            # 금융 카드 — P0b 뒤에도 그대로여야 한다
+            with self.subTest(word=word):
+                found = self.assess(word)
+                self.assertEqual((found.priority.score, found.season.word), (89.1, YEAR_END))
+        plain = self.assess("자전거")
+        self.assertEqual((plain.priority.score, plain.season, [(part.name, part.value) for part in plain.parts][0]), (81.8, None, ("season", 50.0)))
+        self.assertNotIn("연말정산", plain.reason)
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_external_months_on_the_candidate_decide_the_season_factor_without_reading_the_word(self):
+        in_season = self.assess("그래픽카드", seasonality=(11,), data_date="2026-11-03")
+        off_season = self.assess("그래픽카드", seasonality=(6,), data_date="2026-11-03")
+        self.assertEqual(([(part.name, part.value) for part in in_season.parts][0], in_season.season), (("season", 100.0), None))
+        self.assertEqual(([(part.name, part.value) for part in off_season.parts][0], off_season.season, off_season.priority.score), (("season", 30.0), None, 74.5))
+
+
 class RelativeIndexScoreEffectTest(unittest.TestCase):
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     # KNOWN_DEFECT: 상대지수 87 이 '월간 검색 수요 87회' 로 들어오면 우선도의 기회도 요인이 38.9점으로 계산되어 우선도가 9.2점 내려간다(없을 때 81.8 → 72.6) — 상대값과 횟수를 구분하는 장치가 없다.
     def test_KNOWN_DEFECT_a_relative_index_of_87_is_scored_as_87_searches_and_lowers_the_priority(self):
-        from chanceblog_desktop.content import candidates as cd
         bare = cd.Candidate.new("주제 테스트 문장", "키워드", ("naver_b",), candidate_id="c0", now="2026-11-03T00:00:00Z")
         indexed = cd.Candidate.new("주제 테스트 문장", "키워드", ("naver_b",), candidate_id="c1", now="2026-11-03T00:00:00Z", search_demand=87, data_date="2026-11-03")
         without, with_87 = (sg.assess(item, profile=None, today=TODAY) for item in (bare, indexed))
