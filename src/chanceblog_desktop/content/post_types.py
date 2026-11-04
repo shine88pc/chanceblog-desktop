@@ -14,6 +14,7 @@ import re
 
 from dataclasses import dataclass
 
+from ..check.claims import COGNITIVE_STEMS, NEUTRAL_STEMS
 from .draft_options import squash
 from .profiles import DEFAULT_POST_TYPE, POST_TYPES
 
@@ -224,9 +225,9 @@ _PREMISE_REGEX = {"product": re.compile("체험(?!판|학습|프로그램|이벤
 _ENGLISH_RULES = {"product": re.compile(r"\b(?:unboxing|hands[- ]?on)\b"), "review": re.compile(r"\b(?:reviews?|testimonials?)\b")}
 _PREMISE_WORDS = ("후기", "리뷰", "체험단", "체험기", "체험담", "사용기", "사용소감", "방문기", "내돈내산", "솔직", "직접", "다녀온", "다녀왔", "써본", "써봤", "써보니", "사용해본", "사용해봤", "해본", "가본", "먹어본", "먹어봤",
                   "마셔본", "마셔봤", "입어본", "입어봤", "신어본", "신어봤", "언박싱", "개봉기", "실사용", "경험담", "경험기", "탐방", "구매해본", "구입해본", "시승기", "시착기", "시식기", "시음기", "착용기", "도전기",
-                  "도전후기", "여행기", "답사", "後記", "后记", "체험", "소감")
+                  "도전후기", "여행기", "답사", "後記", "后记", "訪問", "체험", "소감")
 _ENGLISH_PREMISE = frozenset({"review", "reviews", "unboxing", "hands-on", "handson", "honest", "testimonial"})
-_DANGLING = frozenset({"사용", "이용", "방문", "구매", "구입", "체험", "경험", "착용", "복용"})        # 경험 낱말을 걷어 내고 남은 맨 끝의 동작 낱말은 함께 뺀다('보일러 사용 후기' → '보일러')
+_DANGLING = frozenset({"사용", "이용", "방문", "구매", "구입", "체험", "경험", "착용", "복용", "장기", "결과", "소감", "느낌", "이야기", "과정", "기록", "일기", "총평", "도전"})        # 경험 낱말을 걷어 내고 남은 맨 끝의 동작 낱말은 함께 뺀다('보일러 사용 후기' → '보일러')
 _PUNCT = "·,.-_:;()[]“”‘’\"'—–~|/…"
 # 경험을 보고하는 서술어 한 낱말('써봤어요·써봤더니·다녀왔어요·먹어본·해봤다') — 어미째 통째로 뺀다(글자만 지우면 '어요'·'더니' 가 남는다)
 _EXPERIENCE_VERB = re.compile(r"(?:직접)?(?:써|사용해|이용해|체험해|경험해|착용해|복용해|먹어|마셔|입어|신어|들어|읽어|타|돌려|가|다녀|방문해|구매해|구입해|사|해|시승해|시착해|도전해|겪어)"
@@ -234,9 +235,20 @@ _EXPERIENCE_VERB = re.compile(r"(?:직접)?(?:써|사용해|이용해|체험해|
 _SINCERE = re.compile(r"(?:솔직|직접)(?:하게|한|히|적으로|적인|해서)?")
 # 후기를 '쓴' 글이 아니라 후기에 '대한' 정보 글(후기 작성 방법·체험단 신청·리뷰 앱 추천 …) — 겪은 일을 말하는 낱말이 함께 없으면 후기 전제로 보지 않는다
 _INFO_ARTICLE = re.compile("(?:후기|리뷰|체험단|체험)(?:를|을)?(?:작성|쓰는|쓰기|잘쓰는|요령|팁|양식|템플릿|예시|신청|모집|가입|참여|이벤트|정책|규정|약관|삭제|신고|등록|앱|어플|사이트|플랫폼|서비스)|(?:작성|신청|모집|참여|가입|등록)(?:방법|법|요령|팁)")
+# 세 갈래다. ① 뜻이 분명한 낱말('후기 쓰는 법'·'가짜 리뷰 구별') — 후기 낱말 바로 뒤 4글자 안. ② 사진·순위·점수·구성·광고·차이·형식·통계·구조·랭킹은 '방문 후기 사진 모음'·'구매 후기 순위'·'사용 후기 광고 없음' 처럼
+# 진짜 후기 제목의 꼬리로도 흔하다 — 그 명사 뒤에 설명하는 꼬리('사진 고르는 요령'·'점수 계산 원리')가 이어질 때만 설명 글로 본다(모음·공개·포함·정리·순위·비교 같은 목록 꼬리는 후기다). ③ 후기 자체를 따지는 풀이 끝말('후기 순위의 비밀'·'별점의 함정').
+# ②·③ 은 후기 낱말이 제목의 앞머리(앞에 네 글자 이하)에 올 때만 본다 — '광안리 횟집 방문 후기 다시 갈 만할까'·'무선 이어폰 두 달 후기 소리 차이는' 처럼 장소·제품·경험 낱말 뒤에 후기가 오면 후기 '자체'의 제목이고, 후기를 설명하는 글은 후기가 앞머리에 서기 때문이다.
+# 헷갈리면 후기로 본다 — 후기를 설명하는 글을 후기로 읽으면 장소·제품 안내 글로 바뀔 뿐이지만, 진짜 후기를 설명 글로 읽으면 경험 낱말이 제목에 그대로 남는다.
+_ABOUT_HEAD = "(?:^|(?<= ))[^가-힣0-9a-z]{0,2}[가-힣0-9a-z]{0,4}?"
+_REVIEW_ABOUT = re.compile("(?:후기|리뷰|체험단|평점|별점)[가-힣]{0,4}?(?:쓰는|쓰기|쓸때|작성|읽는|읽기|가려(?![움운워])|거르|걸러|구별|구분|판별|조작|마케팅|찍는|표기|신뢰|믿어도|믿을|가짜|허위|알바|대행|검증|규정|정책|이벤트|신청|무엇|뜻이|뜻은"
+                           "|문구|밝혀야|밝히는|단서|따져|알아보는|매겨)"
+                           "|" + _ABOUT_HEAD + "(?:후기|리뷰|체험단|평점|별점)[가-힣]{0,4}?(?:사진|순위|점수|구성|광고|차이|형식|통계|구조|랭킹)[가-힣]{0,6}?(?:고르는|잡는|찍는|매기는|매겨|계산|산정|정하는|정해|구하는|읽는|보는|해석|분석|방식|방법|요령|이유|기준"
+                           "|무엇|어떻게|어떤|왜|저작권|주의|알아보|구별|구분|가려(?![움운워])|거르|걸러|조작|왜곡|신뢰|믿)"
+                           "|" + _ABOUT_HEAD + "(?:후기|리뷰|별점|평점|체험단)[가-힣0-9?]{0,20}?(?:원리|비밀|함정|의미|일까(?!지)|할까|될까|이란|차이는|차이가|차이를|차이점은)"
+                           "|(?:광고성|가짜|허위|조작된)(?:후기|리뷰)")
 _EXPERIENCED = ("다녀왔", "다녀온", "가본곳", "가봤", "써봤", "써본", "써보니", "사용해봤", "사용해본", "먹어봤", "먹어본", "구매해봤", "구매해본", "사봤", "내돈내산", "개봉기", "언박싱", "시승기", "시착기", "시식기", "시음기",
                 "착용기", "도전기", "체험담", "경험담", "장기사용", "한달사용", "직접사용", "직접써", "실사용", "이용해본", "이용해봤")           # 겪은 일을 말하는 낱말 — '방문 후기' 같은 이름 낱말은 정보 글 제목에도 나오므로 넣지 않는다
-_FELT = re.compile("(?:느낀|느꼈던) ?(?:점|것|부분|바)?(?![가-힣])")                        # '써보고 느낀 점' 의 느낀 점
+_FELT = re.compile("(?:느낀|느꼈던|알게 ?된|알게 ?됐던|깨달은|배운|달라진) ?(?:점|것|부분|바)?(?![가-힣])")                        # '써보고 느낀 점' 의 느낀 점
 _DURATION = re.compile("(?:한|두|세|네|다섯|여섯|[0-9]{1,3}) ?(?:달|주일|주|개월|년)(?= ?(?:동안 ?)?(?:사용|이용|써본|써봤|체험|복용|착용|후기|리뷰))")      # '한 달 사용 후기' 의 한 달
 # 띄어 쓴 서술어('써 봤습니다'·'가 본'·'사용해 보니') — 어간과 어미 낱말을 붙여 한 낱말로 읽는다
 _SPLIT_VERB = re.compile(r"(?<![가-힣])(써|사용해|이용해|체험해|경험해|착용해|복용해|먹어|마셔|입어|신어|들어|읽어|타|돌려|가|다녀|방문해|구매해|구입해|사|해|시승해|시착해|도전해|겪어) (?=(?:봤|보았|보니|본|봐서|왔|와서|오니|보고))")
@@ -245,17 +257,54 @@ _CONNECT_PAIRS = {"와": ("과", "와"), "과": ("과", "와"), "랑": ("이랑"
 _CASE = frozenset({"을", "를", "은", "는", "이", "가", "의", "도", "에", "에서", "에서는", "에는", "로", "으로", "만", "까지", "부터", "라는", "이라는", "란", "이란", "엔", "과의", "와의", "이야기", "이야기를"})
 
 
+_CONNECTIVE = "".join(chr(0xAC00 + 28 * (21 * lead + vowel)) for lead in range(19) for vowel in (0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 14, 15))
+_TRIAL = re.compile("(?:보니|봤|보았|보고(?!서)|본)")
+_TRIAL_END = ("후기", "결과", "소감", "느낌", "경험", "과정", "이유", "점", "내용", "기록", "이야기", "적", "뒤", "후", "것", "사람", "솔직", "리뷰", "장단점", "단점", "장점", "비교", "기간")
+_TRIAL_JOIN = re.compile(rf"(?<![가-힣])([가-힣]{{0,6}}?[{_CONNECTIVE}]) (?=(?:봤|보았|보니|본|봐서|보고(?!서)))")
+_TRIAL_TOKEN = re.compile(r"(?P<stem>[가-힣]{1,7}?)(?:봤|보았|보니|본|봐서|보고(?!서))(?:어요|습니다|더니|는데|다|고|지만|으며|으니|서)?[가-힣]{0,3}")
+_ONE_SYLLABLE_VERBS = ("해", "가", "써", "타", "사", "와")                 # '해 본'·'가 본' 처럼 한 글자 어간 — 그 밖의 한 글자('대본') 는 해 본 일이 아니다
+_TRAILING_PARTICLE = re.compile("(?:으로|에서|까지|부터|이랑|하고|을|를|와|과|은|는|에|로)$")
+
+
+def _cut(stem):
+    """'알아본 방법'·'비교해 본 결과' 처럼 알아보거나 따져 본 일의 어간인가."""
+    return stem.endswith(COGNITIVE_STEMS) or any(stem.endswith(word + "해") for word in NEUTRAL_STEMS)
+
+
+def _tried(plain):
+    """띄어쓰기를 지운 글에 해 본 일('다녀와보니'·'받아본후기'·'앉아보고고른')이 있는가 — 알아보거나 따져 본 일은 뺀다."""
+    for match in _TRIAL.finditer(plain):
+        start = match.start()
+        if not start or plain[start - 1] not in _CONNECTIVE or _cut(plain[max(0, start - 8):start]):
+            continue
+        if match.group(0) == "본" and match.end() != len(plain) and not plain.startswith(_TRIAL_END, match.end()):
+            continue
+        return True
+    return False
+
+
+def _trial_token(plain):
+    """낱말 하나가 해 본 일을 말하는 서술어('받아본'·'다녀와보니'·'해본') 하나인가."""
+    found = _TRIAL_TOKEN.fullmatch(plain)
+    if not found:
+        return False
+    stem = found.group("stem")
+    if stem[-1] not in _CONNECTIVE or _cut(stem):
+        return False
+    return not (plain[len(stem)] == "본" and len(stem) < 2 and stem not in _ONE_SYLLABLE_VERBS)
+
+
 def premise_of(*texts):
     """후보의 글(주제·핵심 키워드·보조 키워드)이 전제한 경험 형식 → Replacement(없으면 None). 가장 구체적인 것 하나."""
     plain = " ".join(squash(text) for text in texts if text)
     raw = " ".join(str(text) for text in texts if text).casefold()
-    if _INFO_ARTICLE.search(plain) and not any(word in plain for word in _EXPERIENCED):          # '후기 작성 방법' 같은 정보 글은 후기를 쓴 글이 아니다
+    if (_INFO_ARTICLE.search(plain) or _REVIEW_ABOUT.search(plain)) and not any(word in plain for word in _EXPERIENCED) and not _tried(plain):          # '후기 작성 방법'·'후기 가려 읽는 법' 같은 정보 글은 후기를 쓴 글이 아니다
         return None
     for replacement, words in PREMISE_RULES:
         if (any(word in plain for word in words) or (replacement.kind in _PREMISE_REGEX and _PREMISE_REGEX[replacement.kind].search(plain))
                 or (replacement.kind in _ENGLISH_RULES and _ENGLISH_RULES[replacement.kind].search(raw))):
             return replacement
-    return None
+    return PREMISE_RULES[-1][0] if _tried(plain) else None
 
 
 def _has_final(text):
@@ -287,7 +336,7 @@ def _strip_words(plain):
 
 def _prepared(text):
     """걷어 내기 전에 글을 손본다 — 띄어 쓴 서술어를 붙이고('써 봤습니다'), 후기 앞의 기간('한 달')과 '느낀 점' 을 지운다."""
-    joined = _SPLIT_VERB.sub(lambda match: match.group(1), text)
+    joined = _TRIAL_JOIN.sub(lambda match: match.group(1), _SPLIT_VERB.sub(lambda match: match.group(1), text))
     return _DURATION.sub(" ", _FELT.sub(" ", joined))
 
 
@@ -304,6 +353,9 @@ def strip_premise(text):
             removed = True
             continue
         cleaned = _strip_words(plain)
+        if cleaned == plain and _trial_token(plain):                                 # '받아본'·'다녀와보니' — 낱말 목록으로 지울 수 없는 서술어 하나
+            removed = True
+            continue
         if cleaned != plain:
             removed = True
             if cleaned in _CONNECT:                                          # '후기와' → 와 — 뒤에 남는 낱말이 있으면 앞 낱말에 붙인다
@@ -320,6 +372,10 @@ def strip_premise(text):
     if removed:
         while kept and kept[-1] in _DANGLING:
             kept.pop()
+        if kept:                                                                     # 걷어 낸 서술어 앞에 붙어 있던 조사('아이폰으로 바꿔 보니' 의 '으로')를 뗀다
+            trimmed = _TRAILING_PARTICLE.sub("", kept[-1])
+            if len(trimmed) >= 2:
+                kept[-1] = trimmed
     return " ".join(kept)
 
 

@@ -378,6 +378,21 @@ class ValueParsersTest(Refused):
                 self.assertIn("보여 드리지 않습니다", reason)
                 self.assertNotIn(value[:12], reason)
 
+    def test_a_key_head_fragment_or_a_secret_word_is_hidden_even_when_short(self):
+        fragments = ("gh" + "p_" + "a1B2c3D4e5F6g7H8i9J0", "s" + "k-" + "a1B2c3D4e5F6g7H8i9J0k", "AI" + "za" + "SyA1b2C3d4E5f6G7h8I", "xox" + "b-12345678", "ey" + "J0eXAiOiJKV1Q", "np" + "m_a1B2c3D4e5F6", "gl" + "pat-a1B2c3D4e5F6",
+                     "password hunter22", "my-password-hunter2", "token abc123def456", "Secret blog", "pass_phrase xyz", "api key 1234", "Bearer abcdef12", "credential-x1", "PWD 1234")
+        for value in fragments:
+            with self.subTest(value=value[:6]):
+                reason = self.cell_error(c.parse_blogs, value).reason
+                self.assertIn("보여 드리지 않습니다", reason)
+                self.assertNotIn(value[:6], reason)
+                self.assertNotIn(value[-6:], reason)
+
+    def test_plain_short_names_that_only_start_like_a_key_head_are_still_shown(self):
+        for name in ("sk-1", "asia", "xox", "skin blog", "eyes", "pk 1", "hf blog", "Asia", "ghost_x", "tokyo blog", "akiaa"):
+            with self.subTest(name=name):
+                self.assertIn("「" + name + "」", self.cell_error(c.parse_blogs, name).reason)
+
     def test_the_longest_shown_blog_name_has_twenty_four_characters(self):
         shown = "x" * 24
         self.assertIn("「" + shown + "」", self.cell_error(c.parse_blogs, shown).reason)

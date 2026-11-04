@@ -272,12 +272,20 @@ def parse_bool(text, item=None):
 
 
 _SHOWABLE_BLOG = re.compile(r"[A-Za-z0-9가-힣 _-]{1,24}")
+# 키·토큰 앞머리로 시작하는 짧은 조각(`ghp_`+20자·`sk-`+21자·`AIza`+19자)은 키 전체가 아니라서 `has_key_shape` 가 못 알아본다 — 앞머리 다음에 6자 넘게 이어지면 숨긴다
+_KEY_HEADS = ("ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "sk-", "sk_", "pk_", "rk_", "akia", "asia", "aiza", "xox", "xapp-", "eyj", "ya29", "npm_", "hf_", "shpat_")
+# 이 낱말이 든 글(`password hunter22`·`my-password-hunter2`·`token abc123def456`)은 비밀을 적은 것일 수 있어 숨긴다(띄어쓰기·밑줄·하이픈은 무시하고 본다)
+_SECRET_WORDS = ("password", "passwd", "passphrase", "pwd", "token", "secret", "apikey", "credential", "bearer", "privatekey", "accesskey")
 
 
 def _showable(text):
-    """오류에 되풀이해 보여 줘도 되는 짧은 이름인가 — 글자·숫자·밑줄·하이픈·빈칸 24자 이하(`naver_c`·`naver2`·`blogger-en`)이고 키·토큰 모양이 아닐 때만(긴 글·기호가 섞인 글·키 모양은 숨긴다)."""
+    """오류에 되풀이해 보여 줘도 되는 짧은 이름인가 — 글자·숫자·밑줄·하이픈·빈칸 24자 이하(`naver_c`·`naver2`·`blogger-en`)이고 키·토큰 모양이 아닐 때만(긴 글·기호가 섞인 글·키 모양·키 앞머리 조각·비밀 낱말이 든 글은 숨긴다)."""
     from ..security.mask import has_key_shape           # 늦게 가져온다(가리기 모듈은 vendor/ 를 먼저 올려야 한다)
-    return bool(_SHOWABLE_BLOG.fullmatch(text)) and not has_key_shape(text)
+    if not _SHOWABLE_BLOG.fullmatch(text) or has_key_shape(text):
+        return False
+    lowered = text.casefold()
+    plain = lowered.replace(" ", "").replace("_", "").replace("-", "")
+    return not (any(lowered.startswith(head) and len(lowered) >= len(head) + 6 for head in _KEY_HEADS) or any(word in plain for word in _SECRET_WORDS))
 
 
 def parse_blogs(text, item=None):
