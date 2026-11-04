@@ -5,7 +5,8 @@
 이미 있는 시험(`test_ui_adapters.py`·`test_ui_core.py`)과 겹치지 않게, 거기에 없는 경계·조합만 더한다 — 이미 있는 것: 우선도 라벨 낱개(`test_priority_labels`)·메뉴 여섯과 이름(`test_the_menu_has_exactly_six_entries_in_the_operator_order`)·
 홈 카드 넷·행 다섯·칩 다섯의 이름(`test_home_view_has_four_cards_five_rows_and_five_chips`)·예시 데이터의 정렬(`test_the_home_list_is_ordered_by_priority_then_newest_with_hand_written_expectations`)·보류 제외(`test_held_topics_are_not_recommended_but_counted_as_saved_ideas`).
 """
-import re
+import ast
+import datetime
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,7 @@ from chanceblog_desktop.ui import adapters  # noqa: E402
 from chanceblog_desktop.ui.core import app_state, services, text  # noqa: E402
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
+TODAY = datetime.date(2026, 11, 3)                  # 화면의 '오늘' 을 고정한다(`AppState(today=…)` — 실제 시계를 읽지 않는다)
 STAMP = "2026-11-03T00:{minute:02d}:00Z"          # 후보마다 만든 시각을 1분씩 달리해 순서를 정한다(같은 날)
 
 
@@ -35,9 +37,70 @@ def topic(name, blogs=("A",), **fields):
 
 
 def state_with(*topics):
-    state = app_state.AppState(services.FakeHomeProvider())
+    state = app_state.AppState(services.FakeHomeProvider(), today=TODAY)
     state.apply_home(services.HomeData(topics=tuple(topics)))
     return state
+
+
+def called_name(call):
+    """호출식의 이름 — `S.home_screen(…)` 이면 `home_screen`, `f(…)` 이면 `f`."""
+    return call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
+
+
+def is_home_test(node, aliases=()):
+    """`…page == "home"` 모양의 조건인가 — 지역 변수에 담아 쓴 것(`aliases`)도 같은 조건으로 본다. 공백·줄 바꿈·괄호·주석은 `ast` 가 이미 걸러 낸다."""
+    if isinstance(node, ast.Name):
+        return node.id in aliases
+    return (isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq) and isinstance(node.left, ast.Attribute) and node.left.attr == "page"
+            and len(node.comparators) == 1 and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value == "home")
+
+
+def home_branches(function, wanted):
+    """함수 안에서 `wanted` 를 부르는 곳마다, 그 호출을 감싼 '홈 조건'의 가지를 돌려준다 — `참` = 홈일 때만 실행·`거짓` = 홈이 아닐 때만 실행·빈 집합 = 조건 없이 실행."""
+    aliases = {target.id for stmt in ast.walk(function) if isinstance(stmt, ast.Assign) and is_home_test(stmt.value) for target in stmt.targets if isinstance(target, ast.Name)}
+    found = []
+
+    def walk(node, branches):
+        if isinstance(node, (ast.If, ast.IfExp)) and is_home_test(node.test, aliases):
+            for child in (node.body if isinstance(node.body, list) else [node.body]):
+                walk(child, branches | {"참"})
+            for child in (node.orelse if isinstance(node.orelse, list) else [node.orelse]):
+                walk(child, branches | {"거짓"})
+            return
+        if isinstance(node, ast.Call) and called_name(node) == wanted:
+            found.append(branches)
+        for child in ast.iter_child_nodes(node):
+            walk(child, branches)
+
+    for statement in function.body:
+        walk(statement, frozenset())
+    return found
+
+
+def function_named(tree, name):
+    found = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name]
+    assert len(found) == 1, f"함수 `{name}` 이 {len(found)}개다 — 화면 틀을 고쳤다면 이 시험을 의식적으로 고친다"
+    return found[0]
+
+
+def is_section_all(node):
+    """`vm["section"]["all"]` — 홈 '전체 보기' 단추의 글."""
+    return (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "all" and isinstance(node.value, ast.Subscript)
+            and isinstance(node.value.slice, ast.Constant) and node.value.slice.value == "section")
+
+
+def all_link_targets(tree):
+    """`vm["section"]["all"]` 글의 단추를 눌렀을 때 `shell.go("…")` 로 가는 곳들."""
+    buttons = {target.id for node in ast.walk(tree) if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and called_name(node.value) == "Button"
+               and any(is_section_all(arg) for arg in node.value.args) for target in node.targets if isinstance(target, ast.Name)}
+    targets = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and called_name(node) == "connect" and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "clicked"
+                and isinstance(node.func.value.value, ast.Name) and node.func.value.value.id in buttons):
+            for arg in node.args:
+                if isinstance(arg, ast.Lambda) and isinstance(arg.body, ast.Call) and called_name(arg.body) == "go" and arg.body.args and isinstance(arg.body.args[0], ast.Constant):
+                    targets.append(arg.body.args[0].value)
+    return targets
 
 
 class ToTopicTest(unittest.TestCase):
@@ -109,6 +172,16 @@ class ToTopicTest(unittest.TestCase):
         late = cd.Candidate.new("늦은 밤 주제", "늦은 밤 키워드", ("naver_a",), candidate_id="late0001", now="2026-11-02T23:30:00Z")
         self.assertEqual(adapters.to_topic(late).date, "2026-11-02", "만든 날은 UTC 날짜 앞 10자다(한국 시간으로는 11월 3일 아침)")
 
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_the_three_trend_words_become_up_flat_and_down_and_no_trend_stays_empty(self):
+        self.assertEqual(adapters.TREND, {"상승": "up", "보합": "flat", "하락": "down"})
+        for word, code in (("상승", "up"), ("보합", "flat"), ("하락", "down"), (None, None)):
+            with self.subTest(word=word):
+                fields = {} if word is None else {"trend": word, "data_date": "2026-11-03"}
+                self.assertEqual(adapters.to_topic(cand(1, **fields)).trend, code)
+        self.assertEqual(app_state.TREND_ICON, {"up": "trend_up", "flat": "trend_flat", "down": "trend_down"})
+        self.assertEqual([app_state.trend_vm(topic("행", trend=code))["label"] for code in ("up", "flat", "down", None)], ["상승", "보통", "하락", "데이터 없음"])
+
 
 class LoadHomeScenarioTest(unittest.TestCase):
     CHANNELS = {"A만": ("naver_a",), "B만": ("naver_b",), "둘 다": ("naver_a", "naver_b")}
@@ -132,7 +205,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
                     in_a, in_b = ("naver_a" in blogs) * count, ("naver_b" in blogs) * count
                     self.assertEqual([(blog.key, blog.name, blog.candidates) for blog in data.blogs], [("A", "블로그 A", in_a), ("B", "블로그 B", in_b)])
                     self.assertEqual((data.done, data.pub, data.sample, data.offline, data.partial), (0, 0, False, False, ()))
-                    state = app_state.AppState(adapters.ServiceHomeProvider())
+                    state = app_state.AppState(adapters.ServiceHomeProvider(), today=TODAY)
                     state.apply_home(data)
                     view = state.home_view()
                     self.assertEqual(view["state"], "empty" if count == 0 else "normal")
@@ -148,7 +221,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
         data = self.load([cand(1, ("github_pages",)), cand(2, ("blogger_en", "blogger_ko")), cand(3, ("naver_a",)), cand(4, ("github_pages", "naver_b"))])
         self.assertEqual([item.blogs for item in data.topics], [(), (), ("A",), ("B",)])
         self.assertEqual([(blog.key, blog.candidates) for blog in data.blogs], [("A", 1), ("B", 1)])
-        state = app_state.AppState(adapters.ServiceHomeProvider())
+        state = app_state.AppState(adapters.ServiceHomeProvider(), today=TODAY)
         state.apply_home(data)
         view = state.home_view()
         self.assertEqual([chip["count"] for chip in view["chips"]], [4, 1, 1, 0, 4])
@@ -166,7 +239,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
             data = adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx).load_home(lambda *a: None, lambda: False)
         self.assertEqual([(item.title, item.status) for item in data.topics], [("주제 01", "new"), ("주제 02", "hold"), ("주제 03", "new")])
         self.assertEqual([(blog.key, blog.candidates) for blog in data.blogs], [("A", 2), ("B", 1)])         # 보류한 것은 센 수에서 빠진다
-        state = app_state.AppState(adapters.ServiceHomeProvider())
+        state = app_state.AppState(adapters.ServiceHomeProvider(), today=TODAY)
         state.apply_home(data)
         view = state.home_view()
         self.assertEqual([card["value"] for card in view["cards"]], ["2개", "0개", "0개", "1개"])
@@ -218,6 +291,15 @@ class HomeViewTest(unittest.TestCase):
         state.set_home_filter("b")
         self.assertEqual([row["title"] for row in state.home_view()["rows"]], ["비 하나"])                    # 칩으로 거르면 보인다
 
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_loading_new_data_puts_the_chip_back_to_all_and_selects_the_first_live_row(self):
+        state = state_with(topic("에이", ("A",), priority="높음"), topic("비", ("B",), priority="보통"))
+        self.assertTrue(state.set_home_filter("b"))
+        self.assertEqual((state.home_filter, state.selected), ("b", "비"))
+        state.apply_home(services.HomeData(topics=(topic("새 에이", ("A",), priority="높음"), topic("새 비", ("B",), priority="보통"))))
+        self.assertEqual((state.home_filter, state.selected), ("all", "새 에이"))
+        self.assertEqual([chip["active"] for chip in state.home_view()["chips"]], [True, False, False, False, False])
+
 
 class ChannelTwoAssumptionTest(unittest.TestCase):
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
@@ -253,7 +335,7 @@ class ChannelTwoAssumptionTest(unittest.TestCase):
     def test_only_naver_profiles_can_rename_a_blog_and_other_keys_in_the_settings_are_ignored(self):
         def names(raw):
             ctx = SimpleNamespace(settings=SimpleNamespace(naver_profile_dicts=lambda: raw))
-            return adapters.ServiceHomeProvider()._names(ctx)
+            return adapters.ServiceHomeProvider()._names(ctx)                                  # 비공개 이름 — 바뀌면 이 시험을 고친다
 
         self.assertEqual(names({}), {"A": "블로그 A", "B": "블로그 B"})
         self.assertEqual(names({"naver_a": {"display_name": "에이 이름"}, "naver_b": {"display_name": "비 이름"}}), {"A": "에이 이름", "B": "비 이름"})
@@ -310,14 +392,15 @@ class TopicsPlaceholderTest(unittest.TestCase):
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_the_qt_shell_source_picks_home_or_the_placeholder_and_shows_the_drawer_on_home_only(self):
-        # Qt 를 불러오지 않고 소스 글만 읽는다(순수 뷰모델에는 '어느 화면을 그릴지' 가 없다). 다음 묶음이 화면 표로 바꿀 때 이 시험을 의식적으로 고친다.
-        shell = (QT_DIR / "shell.py").read_text(encoding="utf-8")
-        screens = (QT_DIR / "screens.py").read_text(encoding="utf-8")
-        self.assertEqual(shell.count('state.page == "home"'), 2)
-        self.assertEqual(len(re.findall(r'S\.home_screen\(self, state\.home_view\(\)\) if state\.page == "home" else S\.placeholder_screen\(self, state\.page_view\(\)\)', shell)), 1)
-        self.assertEqual(len(re.findall(r'view = state\.drawer_view\(\) if state\.page == "home" else None', shell)), 1)
-        link = re.search(r'all_link = UI\.Button\("ghost", vm\["section"\]\["all"\][^\n]*\n(?:[^\n]*\n){0,3}?[^\n]*shell\.go\("topics"\)', screens)
-        self.assertIsNotNone(link, "홈의 '전체 보기' 가 '주제 후보' 로 가는 줄을 찾지 못했다")
+        # Qt 를 불러오지 않고 소스를 `ast` 로 읽는다(순수 뷰모델에는 '어느 화면을 그릴지' 가 없다) — 글자 모양이 아니라 규칙을 본다: 조건을 변수에 담거나 줄을 바꾸거나 주석을 달아도
+        # 같은 규칙이면 통과하고, 서랍이 홈 밖에서도 보이거나 홈 조건이 사라지면 옛 줄을 주석으로 남겨도 깨진다. 다음 묶음(P4)이 화면 표로 바꿀 때 이 시험을 의식적으로 고친다.
+        shell = ast.parse((QT_DIR / "shell.py").read_text(encoding="utf-8"))
+        screens = ast.parse((QT_DIR / "screens.py").read_text(encoding="utf-8"))
+        render, overlays = function_named(shell, "render"), function_named(shell, "_sync_overlays")
+        self.assertEqual(home_branches(render, "home_screen"), [frozenset({"참"})], "홈 화면은 홈일 때만 그린다")
+        self.assertEqual(home_branches(render, "placeholder_screen"), [frozenset({"거짓"})], "자리표시 화면은 홈이 아닐 때만 그린다")
+        self.assertEqual(home_branches(overlays, "drawer_view"), [frozenset({"참"})], "서랍은 홈에서만 연다")
+        self.assertEqual(all_link_targets(screens), ["topics"], "홈의 '전체 보기' 는 '주제 후보' 로 간다")
 
 
 class LegacyDemandLabelTest(unittest.TestCase):
@@ -343,8 +426,9 @@ class LegacyDemandLabelTest(unittest.TestCase):
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_the_screen_text_has_no_relative_interest_label_yet_so_p4_adds_it_as_a_new_key(self):
-        # P4 가 `최근 관심도(상대값)` 를 새 문구로 더하면 이 시험의 빈 목록을 의식적으로 고친다 — 더해도 위 시험이 지키는 네 개 키에는 들어가면 안 된다.
-        self.assertEqual([key for key, value in text.T.items() if "상대값" in value or "최근 관심도" in value], [])
+        # P4 가 새 Trend 문구 `최근 관심도(상대값)` 를 **새 키**로 더하면 이 시험의 빈 목록을 의식적으로 고친다 — 더해도 위 시험이 지키는 네 개 키에는 들어가면 안 된다.
+        # 보는 것은 '상대값' 낱말뿐이라, 기존 추세 항목 이름(`d_trend` 의 '최근 트렌드')이 나중에 '최근 관심도 변화' 처럼 바뀌어도 이 시험은 깨지지 않는다.
+        self.assertEqual([key for key, value in text.T.items() if "상대값" in value], [])
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_the_row_and_the_drawer_show_the_legacy_count_with_the_times_unit_and_the_monthly_label(self):
@@ -358,7 +442,7 @@ class LegacyDemandLabelTest(unittest.TestCase):
         self.assertEqual((fields[0]["label"], fields[0]["value"], fields[0]["missing"]), ("월간 검색량", "8,600회", False))        # 서랍의 첫 항목
         shown = {field["label"]: field["value"] for field in fields}
         self.assertEqual((shown["월간 검색량"], shown["관련 블로그 검색 결과 수"]), ("8,600회", "4,120건"))
-        self.assertNotIn("최근 관심도", " ".join(shown))
+        self.assertNotIn("상대값", " ".join(shown))                                                                          # 서랍 항목 이름 어디에도 상대값 이름은 없다(기존 추세 항목 `최근 트렌드` 이름 변경은 상관없다)
 
 
 if __name__ == "__main__":

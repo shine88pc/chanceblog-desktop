@@ -156,6 +156,19 @@ class SeasonFitCardTest(unittest.TestCase):
         self.assertGreater(sc.SEASON_RELATED, sc.SEASON_NEUTRAL)
 
 
+class SeasonGenericWordTest(unittest.TestCase):
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_a_text_with_only_a_generic_word_does_not_connect_to_a_season_whose_name_contains_it(self):
+        # '준비'·'마무리'·'행사' 는 시기 이름의 일부여도('종합소득세 준비'·'여름 마무리'·'쇼핑 행사') 주제를 가리키지 않는 흔한 말이라 이어지는 낱말로 쓰지 않는다(`GENERIC_WORD_STEMS`).
+        self.assertEqual(sc.GENERIC_WORD_STEMS, frozenset({"준비", "시즌", "시기", "행사", "마무리"}))
+        for text, month in (("테스트 준비", 4), ("테스트 마무리", 8), ("테스트 행사", 11), ("테스트 시기", 11)):
+            with self.subTest(text=text, month=month):
+                self.assertEqual(sc.season_fit(text, month), (sc.SEASON_NEUTRAL, None))
+        # 같은 항목이어도 흔한 말을 뺀 나머지 낱말은 이어지고(70), 이름 전체가 들어 있으면 일치한다(100)
+        scores = [sc.season_fit(text, month)[0] for text, month in (("종합소득세", 4), ("종합소득세 준비", 4), ("쇼핑", 11), ("쇼핑 행사", 11), ("여름 마무리", 8))]
+        self.assertEqual(scores, [sc.SEASON_RELATED, sc.SEASON_MATCH, sc.SEASON_RELATED, sc.SEASON_MATCH, sc.SEASON_MATCH])
+
+
 class GraphicsCardTopSuggestionTest(unittest.TestCase):
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     # KNOWN_DEFECT: 프로필 B(AI 서비스·PC 부품·업무 자동화·그래픽카드)의 11월 1위가 '연말정산 준비 시기에 챙겨 볼 그래픽카드 정리' 100점이다 — P0b 가 계절 일치를 고치면 이 제안은 사라진다.
@@ -213,7 +226,7 @@ class RiskySeedTest(unittest.TestCase):
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_the_risky_word_list_has_no_word_for_health_brand_or_sponsorship_tags_other_than_trial_and_review_words(self):
-        pattern = sg._RISKY.pattern.split("|")
+        pattern = sg._RISKY.pattern.split("|")                                      # 비공개 이름 — 바뀌면 이 시험을 고친다
         self.assertIn("체험단", pattern)
         self.assertIn("후기", pattern)
         for word in ("협찬", "제휴", "광고", "건강", "영양", "삼성"):

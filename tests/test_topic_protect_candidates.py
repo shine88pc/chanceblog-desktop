@@ -51,6 +51,7 @@ def code_of(callable_, *args, **kwargs):
 class RelativeIndexLooksLikeACountTest(unittest.TestCase):
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     # KNOWN_DEFECT: 상대지수 87 을 `search_demand=87` 로 넣으면 그대로 통과해 '월간 검색 수요 87' 로 저장된다 — 상대지수와 실제 횟수를 구분하는 장치(출처·기간·종류 칸)가 없다.
+    # 뒤집는 단계가 계획에 없다 — Legacy 칸은 그대로 두고(D-37 ③) 새 Trend 칸이 대신한다. 이 시험은 '이 칸은 상대값과 횟수를 구분하지 못한다' 는 현재 모습을 계속 기록한다.
     def test_KNOWN_DEFECT_the_number_87_passes_as_a_monthly_search_demand_of_87_with_no_way_to_tell_an_index_from_a_count(self):
         found = make(search_demand=87, data_date=DAY)
         self.assertEqual((found.search_demand, found.data_date, found.has_data()), (87, DAY, True))
@@ -78,6 +79,7 @@ class RelativeIndexLooksLikeACountTest(unittest.TestCase):
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     # KNOWN_DEFECT: 점수는 87 을 '87회' 의 로그 눈금으로 보므로 87 점이 아니라 38.89 점이 된다 — 같은 87 을 상대지수(0~100)로 읽으면 매우 높은 값인데 반대로 낮게 매겨진다.
+    # 뒤집는 단계가 계획에 없다 — Legacy 칸은 그대로 두고(D-37 ③) 새 Trend 칸이 대신한다. 이 시험은 '이 칸은 상대값과 횟수를 구분하지 못한다' 는 현재 모습을 계속 기록한다.
     def test_KNOWN_DEFECT_the_same_87_scores_far_below_87_because_it_is_read_as_a_count(self):
         self.assertLess(sc.opportunity(search_demand=87), 40)
         self.assertLess(sc.opportunity(search_demand=87), sc.opportunity(search_demand=100))
@@ -137,6 +139,7 @@ class CsvAndTrendColumnTest(unittest.TestCase):
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     # KNOWN_DEFECT: '검색량' 이라는 이름의 열 값 87 은 그대로 월간 검색 수요 87 로 받는다 — 열에도 상대값인지 횟수인지 적는 곳이 없다.
+    # 뒤집는 단계가 계획에 없다 — Legacy 칸은 그대로 두고(D-37 ③) 새 Trend 칸이 대신한다. 이 시험은 '이 칸은 상대값과 횟수를 구분하지 못한다' 는 현재 모습을 계속 기록한다.
     def test_KNOWN_DEFECT_a_column_named_search_volume_is_taken_as_the_monthly_search_demand(self):
         for head in ("검색량", "Search Volume", "월간 검색량", "monthly searches"):
             with self.subTest(head=head):
