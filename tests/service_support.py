@@ -69,6 +69,18 @@ def code_of(callable_, *args, **kwargs):
     return caught.exception
 
 
+def generic_registry():
+    """한도 안전장치·연결 설정의 **일반 동작**(전환·절약·하루 창 경계·항목 3개·약관 확인)을 시험하는 레지스트리 — 실제 레지스트리의 첫 용도였던 옛 `naver_openapi`(하루 25,000회·돌려쓰기 허용·항목 3개)를
+    **새 항목을 더할 수 있는 시험용 용도**로 되살려 넣는다(실제 레지스트리에서는 옛 용도라 새 항목을 거절하고 첫 용도는 NAVER API HUB 다). `registry=` 로 `add_entry`·`QuotaGuard` 에 넘긴다."""
+    from chanceblog_desktop.service import connections as cn
+    old = cn.Purpose("naver_openapi", "네이버 오픈 API(검색·데이터랩)", "키워드의 검색 수요·블로그 검색 결과 수 같은 지표를 조회해 후보의 지표 칸을 채우는 데 씁니다.",
+                     (cn.Field("client_id", "클라이언트 ID", False, 8, 64, "영문·숫자 20자 안팎"), cn.Field("client_secret", "클라이언트 시크릿", True, 8, 64, "영문·숫자 10자 안팎")),
+                     (cn.Provider("", "네이버", cn.ROTATION_LIMITED, (("default", (cn.Window("day", "day", 25000),)),), "default",
+                                  "하루 25,000회 안팎(제3자 문서 기준이라 네이버 공식 문서와 대조가 필요합니다). 앱(클라이언트 ID)마다 따로 셉니다"),),
+                     identity_field="client_id")
+    return {**cn.PURPOSES, "naver_openapi": old}
+
+
 class Clock:
     """가짜 시계 — 고정된 시각을 돌려주고 advance 로만 흐른다."""
 

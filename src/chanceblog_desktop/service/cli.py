@@ -681,7 +681,8 @@ def _keys_reader(ctx, has_entries):
 
 
 def cmd_keys_purposes(ctx, args):
-    return Output(fmt.keys_purposes_lines(connections.PURPOSES), {"purposes": [fmt.keys_purpose_dict(spec) for spec in connections.PURPOSES.values()]})
+    current = {key: spec for key, spec in connections.PURPOSES.items() if not spec.legacy_to}              # 옛 용도는 새로 쓰는 용도가 아니라 목록에 올리지 않는다(남은 옛 항목은 `keys list` 에 '옛 항목' 으로 보인다)
+    return Output(fmt.keys_purposes_lines(current), {"purposes": [fmt.keys_purpose_dict(spec) for spec in current.values()]})
 
 
 def cmd_keys_list(ctx, args):
@@ -690,7 +691,8 @@ def cmd_keys_list(ctx, args):
     store, notes = _keys_reader(ctx, bool(data.entries))
     views = connections.list_entries(ctx, purpose=purpose, keystore=store)
     guard = quota.QuotaGuard(ctx)
-    statuses = {key: guard.purpose_status(key, keystore=store) for key in connections.PURPOSES if (purpose is None or key == purpose) and connections.PURPOSES[key].takes_keys}
+    shown = connections.listed_purposes(data)                                                          # 옛 용도는 그 항목이 남아 있을 때만 보인다
+    statuses = {key: guard.purpose_status(key, keystore=store) for key in connections.PURPOSES if key in shown and (purpose is None or key == purpose) and connections.PURPOSES[key].takes_keys}
     return Output(notes + fmt.keys_list_lines(views, statuses),
                   {"purposes": [{"purpose": key, "label": connections.PURPOSES[key].label, "status": status, "status_text": connections.STATUS_TEXT[status],
                                  "entries": [view.to_dict() for view in views if view.entry.purpose == key]} for key, status in statuses.items()],
@@ -727,7 +729,10 @@ def _secret_input(spec, args):
 
 def cmd_keys_add(ctx, args):
     spec = connections.PURPOSES[args.purpose]
+    connections.refuse_legacy(spec)                                                                    # 옛 용도는 키를 묻기 전에 먼저 거절한다
     existing = connections.load(ctx).of_purpose(args.purpose)
+    if existing and spec.takes_keys and spec.max_entries < connections.MAX_ENTRIES_PER_PURPOSE and len(existing) >= spec.max_entries:
+        raise AppError("KEY_ENTRY_LIMIT", {"용도": spec.label, "개수": str(spec.max_entries)}, detail=connections.ENTRY_LIMIT_DETAIL)       # 키를 하나만 두는 용도는 약관 확인을 묻기 전에 먼저 거절한다
     if existing and not args.i_understand_terms and spec.takes_keys:
         raise AppError("KEY_FAILOVER_TERMS_REQUIRED", {"용도": spec.label})                     # 키를 치기 전에 먼저 멈춘다
     fields = _secret_input(spec, args) if spec.takes_keys else {}
@@ -754,7 +759,9 @@ def cmd_keys_order(ctx, args):
 
 
 def cmd_keys_usage(ctx, args):
-    purpose = getattr(args, "purpose", None)
+    purpose = getattr(args, "purpose", None) or getattr(args, "purpose_name", None)               # `keys usage 용도` 와 `keys usage --purpose 용도` 둘 다 된다
+    if getattr(args, "purpose", None) and getattr(args, "purpose_name", None) and args.purpose != args.purpose_name:
+        raise UsageError("용도를 서로 다르게 두 번 적었습니다 — 하나만 적습니다")
     data = connections.load(ctx)
     store, notes = _keys_reader(ctx, bool(data.entries))
     guard = quota.QuotaGuard(ctx)
@@ -768,7 +775,12 @@ def cmd_keys_policy(ctx, args):
     tier, on_limit = getattr(args, "tier", None), getattr(args, "on_limit", None)
     changed = not (tier is None and on_limit is None)
     policy = connections.set_policy(ctx, args.purpose, on_limit=on_limit, tier=tier) if changed else connections.load(ctx).policy(args.purpose)       # 바꾸는 값이 없으면 지금 정책만 보여 준다(읽기만)
-    return Output(fmt.keys_policy_lines(connections.PURPOSES[args.purpose], policy, changed=changed), {"purpose": args.purpose, "policy": policy.to_dict()})
+    spec = connections.PURPOSES[args.purpose]
+    view = next(iter(quota.QuotaGuard(ctx).usage(args.purpose)), None) if any(item.ledger for item in spec.providers) else None            # 장부 제공자는 정책과 함께 오늘·이번 달 사용량·한도·마지막 성공/오류·중지 사유를 보인다(읽기만)
+    data = {"purpose": args.purpose, "policy": policy.to_dict()}
+    if view is not None and view.ledger is not None:
+        data["ledger"] = view.ledger.to_dict()
+    return Output(fmt.keys_policy_lines(spec, policy, changed=changed, view=view), data)
 
 
 def cmd_keys_test(ctx, args):
@@ -811,7 +823,8 @@ def _add_keys_parser(add, common):
     found = leaf("order", cmd_keys_order, "한 용도의 항목 순서를 정합니다(적은 항목이 앞에 오고 첫 `사용` 항목부터 쓰입니다)")
     found.add_argument("purpose", choices=order, metavar="용도")
     found.add_argument("refs", nargs="+", metavar="항목", help="앞에 올 항목들(순번이나 번호 앞 4자 이상)")
-    found = leaf("usage", cmd_keys_usage, "사용량·한도·다음 초기화 시각·절약 모드 여부를 보여 줍니다(읽기만 합니다)")
+    found = leaf("usage", cmd_keys_usage, "사용량·한도·다음 초기화 시각·절약 모드 여부를 보여 줍니다(읽기만 합니다). NAVER API HUB 는 오늘·이번 달 시도/성공, 마지막 성공·오류, 호출 중지 사유도 보입니다")
+    found.add_argument("purpose_name", nargs="?", choices=order, metavar="용도", help="이 용도만 보여 줍니다(`--purpose` 와 같습니다)")
     found.add_argument("--purpose", choices=order, metavar="용도")
     found = leaf("policy", cmd_keys_policy, "한도에 걸렸을 때의 정책(허용된 다음 키로 전환/절약 모드만)과 한도 등급을 보거나 바꿉니다(값을 안 적으면 지금 정책만 보여 줍니다)")
     found.add_argument("purpose", choices=order, metavar="용도")

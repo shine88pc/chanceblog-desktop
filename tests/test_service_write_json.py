@@ -138,10 +138,11 @@ class OrderTest(WriteJsonCase):
         self.log.clear()
         ctx.settings.save_repo_path(str(self.dir / "다른 저장소"))                       # 설정
         self.assertEqual(self.log.count("fsync"), 1)
-        cn.add_entry(ctx, "naver_openapi", name="키", fields={"client_id": "abcdefgh12345", "client_secret": "tinysecret1"}, project="앱")      # 연결
+        registry = ss.generic_registry()                        # 일반 용도(옛 첫 용도를 시험용으로 되살린 것) — 실제 레지스트리의 NAVER API HUB 는 Fail-Closed 라 연결 시험 전에는 호출 몫을 주지 않고 옛 용도는 새 항목을 받지 않는다
+        cn.add_entry(ctx, "naver_openapi", name="키", fields={"client_id": "abcdefgh12345", "client_secret": "tinysecret1"}, project="앱", registry=registry)      # 연결
         self.assertGreaterEqual(self.log.count("fsync"), 2)
         before = self.log.count("fsync")
-        guard = q.QuotaGuard(ctx, lock_wait=0)
+        guard = q.QuotaGuard(ctx, lock_wait=0, registry=registry)
         self.assertIsInstance(guard.acquire("naver_openapi"), q.Lease)                    # 사용량
         self.assertGreater(self.log.count("fsync"), before)
         for path in (ctx.workspace.settings_path, ctx.workspace.connections_path, ctx.workspace.quota_path):
