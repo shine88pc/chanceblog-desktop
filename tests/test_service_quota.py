@@ -39,10 +39,11 @@ class GuardCase(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.clock = ss.Clock()
         self.ctx = ss.make_ctx(tmp.name, clock=self.clock)
-        self.guard = q.QuotaGuard(self.ctx, lock_wait=0)
+        self.registry = ss.generic_registry()                  # 일반 동작 시험용 — 옛 `naver_openapi` 를 새 항목을 더할 수 있는 용도로 되살린 레지스트리(실제 레지스트리의 첫 용도는 NAVER API HUB)
+        self.guard = q.QuotaGuard(self.ctx, registry=self.registry, lock_wait=0)
 
     def naver(self, number, *, state="active", project=None, ack=True):
-        return cn.add_entry(self.ctx, "naver_openapi", name=f"키{number}", fields=naver_fields(number), project=project or f"앱{number}", state=state, terms_ack=ack).entry
+        return cn.add_entry(self.ctx, "naver_openapi", name=f"키{number}", fields=naver_fields(number), project=project or f"앱{number}", state=state, terms_ack=ack, registry=self.registry).entry
 
     def image(self, number, *, state="active", project=None, ack=True, provider=""):
         return cn.add_entry(self.ctx, "image_provider", name=f"이미지{number}", fields=image_fields(number), project=project or f"앱{number}", state=state, terms_ack=ack, provider=provider).entry
@@ -108,9 +109,9 @@ class BudgetTest(GuardCase):
 
     def test_the_reserve_rounds_up_when_the_limit_is_not_a_multiple_of_ten(self):
         """한도 55 에서 10% 는 5.5 — 올림해 6 을 남긴다(내림하면 5 만 남는다). 30% 는 16.5 → 17, 20% 는 11 그대로."""
-        base = cn.PURPOSES["naver_openapi"]
+        base = self.registry["naver_openapi"]                                              # 시험용으로 되살린 옛 용도(legacy_to 가 비어 있다) — 실제 레지스트리의 것을 쓰면 옛 용도라 항목을 더할 수 없다
         small = cn.Provider("", "네이버", cn.ROTATION_LIMITED, (("default", (cn.Window("day", "day", 55),)),), "default")
-        registry = {**cn.PURPOSES, "naver_openapi": cn.Purpose(**{**base.__dict__, "providers": (small,)})}
+        registry = {**self.registry, "naver_openapi": cn.Purpose(**{**base.__dict__, "providers": (small,)})}
         guard = q.QuotaGuard(self.ctx, registry=registry, lock_wait=0)
         entry = cn.add_entry(self.ctx, "naver_openapi", name="키", fields=naver_fields(1), project="앱", registry=registry).entry
         for used, priority, allowed in ((48, q.SELECTED, True), (49, q.SELECTED, False), (43, q.NEW, True), (44, q.NEW, False), (37, q.BULK, True), (38, q.BULK, False), (54, q.CRITICAL, True), (55, q.CRITICAL, False)):
@@ -214,7 +215,7 @@ class SwitchRulesTest(GuardCase):
             return "naver_openapi", [self.naver(1), self.naver(2), self.naver(3)]
         if layout == "same":
             first = self.naver(1, project="같은 앱")
-            second = cn.add_entry(self.ctx, "naver_openapi", name="키2", fields={"client_id": naver_fields(1)["client_id"], "client_secret": "other12345"}, project="같은 앱", terms_ack=True).entry
+            second = cn.add_entry(self.ctx, "naver_openapi", name="키2", fields={"client_id": naver_fields(1)["client_id"], "client_secret": "other12345"}, project="같은 앱", terms_ack=True, registry=self.registry).entry
             return "naver_openapi", [first, second]
         return "image_provider", [self.image(1, ack=False), self.image(2)]
 
@@ -689,7 +690,7 @@ class StateFileTest(GuardCase):
         self.naver(1, ack=False)
         path = self.ctx.workspace.quota_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        for broken in ("{not json", "[]", json.dumps({"schema": 2, "buckets": {}, "failovers": []}), json.dumps({"schema": 1, "buckets": {"a": {}}, "failovers": []}), "\u0000" * 10):
+        for broken in ("{not json", "[]", json.dumps({"schema": 3, "buckets": {}, "failovers": []}), json.dumps({"schema": 1, "buckets": {"a": {}}, "failovers": []}), "\u0000" * 10):      # 판 3 = 모르는 판(판 2 는 장부 제공자용으로 올바른 판이 됐다)
             with self.subTest(broken=broken[:12]):
                 path.write_text(broken, encoding="utf-8")
                 view = self.guard.usage("naver_openapi")[0]
@@ -764,10 +765,13 @@ class AvailabilityTest(GuardCase):
                 got = self.guard.acquire(purpose)
                 self.assertEqual((type(got).__name__, got.code, got.degraded), ("Denied", "no_key", True))
         views = self.guard.usage()
-        self.assertEqual(len(views), 5)
+        self.assertEqual(len(views), 6)                                                       # 실제 용도 다섯(NAVER API HUB·검색광고·이미지·AI·Blogger) + 시험용으로 되살린 옛 오픈 API 용도 하나
         for view in views:
             self.assertEqual((view.entries, view.rows, view.blocked, view.saving_mode), (0, (), False, False))
             self.assertEqual(self.guard.purpose_status(view.purpose), cn.NOT_CONNECTED)
+        real = q.QuotaGuard(self.ctx, lock_wait=0).usage()                                     # 실제 레지스트리 — 옛 용도는 사용량에서 빠져 다섯 그대로다
+        self.assertEqual(len(real), 5)
+        self.assertNotIn("naver_openapi", [view.purpose for view in real])
 
     def test_a_lock_held_by_another_flow_denies_instead_of_spending_blindly(self):
         self.naver(1, ack=False)
@@ -828,7 +832,7 @@ class AvailabilityTest(GuardCase):
 
     def test_two_flows_calling_at_the_same_time_lose_no_count(self):
         entry = self.naver(1, ack=False)
-        guard = q.QuotaGuard(self.ctx, lock_wait=30)
+        guard = q.QuotaGuard(self.ctx, registry=self.registry, lock_wait=30)
         failures, leases = [], []
 
         def work():

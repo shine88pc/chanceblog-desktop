@@ -4,7 +4,7 @@
   1) 키는 명령 인자로 받지 않는다(`--stdin` JSON 한 줄이나 터미널의 숨김 입력). 터미널이 아니면 묻지 않고 멈춘다. 입력은 화면에 되풀이되지 않는다.
   2) **어떤 출력에도 키가 없다**: 키 모양 여섯 가지와 긴 무작위 값을 한글·괄호·따옴표·줄바꿈 바로 옆에 두고 이름·프로젝트·키 칸·모르는 칸 이름 자리에 넣어도(거절되든 저장되든) 화면·오류·`--json`·`--verbose` 어디에도 값이 없다.
   3) 읽기 명령(`purposes`·`list`·`usage`·값 없는 `policy`)은 데이터 폴더·보관소를 만들거나 바꾸지 않고, 키가 하나도 없어도 오류 없이 끝난다.
-  4) 지우기는 번호 앞 8자와 `--yes` 가 있어야 하고 순번으로는 지우지 않는다. 둘째 키는 약관 확인 표시가 있어야 하고 용도마다 3개까지다.
+  4) 지우기는 번호 앞 8자와 `--yes` 가 있어야 하고 순번으로는 지우지 않는다. 둘째 키는 약관 확인 표시가 있어야 하고 용도마다 3개까지다(NAVER API HUB 만 키 1개 — 여러 항목이 필요한 시험은 이미지 공급자·AI 보조로 한다).
   5) 영문 상태 코드는 `--json` 에만 있고 사람이 보는 글에는 없다. 종료 코드는 0 정상·1 처리된 오류·2 사용법 오류.
 """
 import io
@@ -118,7 +118,7 @@ class NoKeyTest(unittest.TestCase):
                 out, err = io.StringIO(), io.StringIO()
                 return cli.main(list(argv), out=out, err=err, ctx=ctx, stdin=FakeStdin(stdin)), out.getvalue()
 
-            for argv in (("list",), ("usage",), ("list", "--purpose", "image_provider"), ("usage", "--purpose", "naver_openapi")):
+            for argv in (("list",), ("usage",), ("list", "--purpose", "image_provider"), ("usage", "--purpose", "naver_apihub")):
                 for json_flag in ((), ("--json",)):
                     with self.subTest(argv=argv, json=json_flag):
                         self.assertEqual(run(*json_flag, "keys", *argv)[0], 0)
@@ -133,7 +133,7 @@ class NoKeyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(cli.main(["--json", "keys", "purposes", "--data-dir", str(Path(tmp) / "d")], out=out, err=err, env={}), 0)
         purposes = {item["purpose"]: item for item in json.loads(out.getvalue())["data"]["purposes"]}
-        self.assertEqual(list(purposes), ["naver_openapi", "naver_searchad", "image_provider", "ai_assist", "blogger", "github_repo"])
+        self.assertEqual(list(purposes), ["naver_apihub", "naver_searchad", "image_provider", "ai_assist", "blogger", "github_repo"])           # 옛 용도(naver_openapi)는 목록에 올리지 않는다
         self.assertEqual([item["name"] for item in purposes["image_provider"]["fields"]], ["access_key"])
         self.assertEqual(purposes["github_repo"]["fields"], [])
         self.assertFalse(purposes["github_repo"]["takes_keys"])
@@ -156,7 +156,7 @@ class AddTest(CliCase):
         self.assertFalse([word for word in WORDS if word in out])
 
     def test_a_short_value_shows_no_tail_at_all(self):
-        code, out, err = self.add("naver_openapi", "기본", {"client_id": "abcdefgh12345", "client_secret": "tinysecret1"})
+        code, out, err = self.add("naver_apihub", "기본", {"client_id": "abcdefgh12345", "client_secret": "tinysecret1"})
         self.assertEqual((code, err), (0, ""))
         self.assertNotIn("끝 4자", out)
         self.assertNotIn("cret1", out)
@@ -182,7 +182,7 @@ class AddTest(CliCase):
             asked.append(text)
             return next(answers)
 
-        code, out, err, _ = self.run_keys("add", "naver_openapi", "--name", "기본", tty=True, prompt=ask)
+        code, out, err, _ = self.run_keys("add", "naver_apihub", "--name", "기본", tty=True, prompt=ask)
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(asked, ["클라이언트 ID(입력은 화면에 보이지 않습니다): ", "클라이언트 시크릿(입력은 화면에 보이지 않습니다): "])
         for value in ("abcdefgh12345", "tinysecret1"):
@@ -199,7 +199,7 @@ class AddTest(CliCase):
             return next(answers)
 
         with mock.patch("getpass.getpass", fake_getpass):
-            code, out, err, _ = self.run_keys("add", "naver_openapi", "--name", "기본", tty=True)
+            code, out, err, _ = self.run_keys("add", "naver_apihub", "--name", "기본", tty=True)
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(len(asked), 2)
         for value in ("abcdefgh12345", "tinysecret1"):
@@ -226,16 +226,16 @@ class AddTest(CliCase):
         self.assertEqual((code, err), (0, ""), out)
 
     def test_the_terms_check_comes_before_the_key_is_read_and_every_later_key_needs_it(self):
-        self.add("naver_openapi", "기본", {"client_id": "abcdefgh12345", "client_secret": "tinysecret1"})
-        other = {"client_id": "zyxwvuts98765", "client_secret": "othersecret2"}
-        code, out, err, source = self.run_keys("add", "naver_openapi", "--name", "예비", "--stdin", stdin=json.dumps(other))
+        self.add("image_provider", "기본", {"access_key": "A1b2C3d4E5f6G7h8I9j0K1l2"})              # 키를 여럿 둘 수 있는 용도(NAVER API HUB 는 키를 하나만 둔다)
+        other = {"access_key": "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2"}
+        code, out, err, source = self.run_keys("add", "image_provider", "--name", "예비", "--stdin", stdin=json.dumps(other))
         self.assertEqual((code, out, source.reads), (1, "", 0))
         self.assertIn("코드: KEY_FAILOVER_TERMS_REQUIRED", err)
         self.assertIn("키를 끝없이 돌려 쓰는 기능은 이 프로그램에 없습니다(용도마다 3개까지이고, 다른 앱의 키로 넘어가는 것은 한도·일시 오류일 때뿐입니다)", err)
-        code, out, err = self.add("naver_openapi", "예비", other, "--i-understand-terms", "--state", "예비")
+        code, out, err = self.add("image_provider", "예비", other, "--i-understand-terms", "--state", "예비")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("서비스 약관에서 금지될 수 있습니다", out)
-        listed = json.loads(self.json_out("list"))["data"]["purposes"][0]["entries"]
+        listed = next(group for group in json.loads(self.json_out("list"))["data"]["purposes"] if group["purpose"] == "image_provider")["entries"]
         self.assertEqual([item["terms_ack_at"] != "" for item in listed], [False, True])
         self.assertEqual([item["state"] for item in listed], ["active", "standby"], "--state 예비 는 예비로 저장된다")
 
@@ -286,7 +286,7 @@ class NoLeakTest(CliCase):
         leaked = []
         for label, shape in key_shapes().items():
             for argv in (("add", "image_provider", "--name", "기본", "--access-key", shape), ("add", "image_provider", "--name", "기본", f"--access-key={shape}"), ("add", shape, "--name", "기본"),
-                         ("policy", "naver_openapi", "--on-limit", shape), ("state", "1", shape), ("usage", "--purpose", shape), ("list", shape), ("remove", "1", shape, "--yes"),
+                         ("policy", "naver_apihub", "--on-limit", shape), ("state", "1", shape), ("usage", "--purpose", shape), ("list", shape), ("remove", "1", shape, "--yes"),
                          ("add", "image_provider", "--name", "기본", "--stdin", shape), ("order",), ("add", "image_provider", shape)):
                 for mode in ((), ("--json",), ("--verbose",)):
                     out, err = io.StringIO(), io.StringIO()
@@ -398,8 +398,8 @@ class NoLeakTest(CliCase):
     def test_saved_keys_never_appear_in_any_command_output_or_file(self):
         values = {}
         for number, (label, shape) in enumerate(key_shapes().items()):
-            purpose = ("naver_openapi", "naver_searchad", "image_provider", "ai_assist", "blogger")[number % 5]
-            spec_fields = {"naver_openapi": {"client_id": "id" + shape[:14], "client_secret": shape[:30]}, "naver_searchad": {"customer_id": "1234567", "access_license": shape, "secret_key": shape[::-1]},
+            purpose = ("naver_apihub", "naver_searchad", "image_provider", "ai_assist", "blogger")[number % 5]
+            spec_fields = {"naver_apihub": {"client_id": "id" + shape[:14], "client_secret": shape[:30]}, "naver_searchad": {"customer_id": "1234567", "access_license": shape, "secret_key": shape[::-1]},
                            "image_provider": {"access_key": shape}, "ai_assist": {"key": shape}, "blogger": {"client_id": "cid" + shape[:20], "client_secret": shape[:24], "refresh_token": shape}}[purpose]
             if number >= 5:
                 continue
@@ -407,7 +407,7 @@ class NoLeakTest(CliCase):
             self.assertEqual(code, 0, (label, err))
             values[label] = list(spec_fields.values())
         every = [value for items in values.values() for value in items if len(value) >= 8]
-        commands = (("list",), ("usage",), ("purposes",), ("policy", "image_provider"), ("test", "1"), ("state", "1", "예비"), ("state", "1", "사용"), ("order", "naver_openapi", "1"), ("remove", "1"), ("remove", "zzzzzz"))
+        commands = (("list",), ("usage",), ("purposes",), ("policy", "image_provider"), ("test", "1"), ("state", "1", "예비"), ("state", "1", "사용"), ("order", "naver_apihub", "1"), ("remove", "1"), ("remove", "zzzzzz"))
         texts = []
         for argv in commands:
             for mode in ((), ("--json",), ("--verbose",)):
@@ -440,12 +440,14 @@ class NoLeakTest(CliCase):
 
 
 class ManageTest(CliCase):
+    PURPOSE = "ai_assist"            # 키를 여럿 둘 수 있고 한도 등급이 하나뿐인 용도(첫 용도 NAVER API HUB 는 키를 하나만 두고, 이미지 공급자는 한도 등급이 둘이라 `--tier` 거절 시험에 맞지 않는다)
+
     def setUp(self):
         super().setUp()
         for number, name in enumerate(("가", "나")):
             extra = ("--i-understand-terms",) if number else ()
-            self.assertEqual(self.add("naver_openapi", name, {"client_id": f"app{number}" + "x" * 12, "client_secret": f"sec{number}abcdefg"}, "--project", f"앱{number}", *extra)[0], 0)
-        self.ids = [item["entry_id"] for item in json.loads(self.json_out("list"))["data"]["purposes"][0]["entries"]]
+            self.assertEqual(self.add(self.PURPOSE, name, {"key": f"sec{number}abcdefg" + "x" * 8}, "--project", f"앱{number}", *extra)[0], 0)
+        self.ids = [item["entry_id"] for item in next(group for group in json.loads(self.json_out("list"))["data"]["purposes"] if group["purpose"] == self.PURPOSE)["entries"]]
 
     def test_removing_needs_the_confirmation_and_a_number_not_an_ordinal(self):
         before = ss.tree_snapshot(self.ctx.workspace.root)
@@ -476,20 +478,20 @@ class ManageTest(CliCase):
         self.assertIn("사용 → 꺼짐", out)
         self.assertEqual(self.run_keys("state", "2", "off")[0], 0)
         self.assertEqual(self.run_keys("state", "2", "멈춤")[0], 2)
-        code, out, err, _ = self.run_keys("order", "naver_openapi", self.ids[1][:8])
+        code, out, err, _ = self.run_keys("order", self.PURPOSE, self.ids[1][:8])
         self.assertEqual((code, err), (0, ""))
         self.assertLess(out.index("나"), out.index("가"))
-        self.assertEqual(self.run_keys("order", "naver_openapi", self.ids[1][:8], self.ids[1][:8])[0], 1)
+        self.assertEqual(self.run_keys("order", self.PURPOSE, self.ids[1][:8], self.ids[1][:8])[0], 1)
         self.assertEqual(self.run_keys("order", "image_provider", self.ids[0][:8])[0], 1)
-        code, out, err, _ = self.run_keys("policy", "naver_openapi")
+        code, out, err, _ = self.run_keys("policy", self.PURPOSE)
         self.assertIn("허용된 다음 키로 전환", out)
         for value, words in (("save", "절약 모드만"), ("failover", "허용된 다음 키로 전환")):
-            code, out, err, _ = self.run_keys("policy", "naver_openapi", "--on-limit", value)
+            code, out, err, _ = self.run_keys("policy", self.PURPOSE, "--on-limit", value)
             self.assertEqual((code, err), (0, ""), value)
             self.assertIn("정책을 바꿨습니다", out)
             self.assertIn(words, out)
-        self.assertEqual(self.run_keys("policy", "naver_openapi", "--on-limit", "maybe")[0], 2)
-        self.assertEqual(self.run_keys("policy", "naver_openapi", "--tier", "production")[0], 1)
+        self.assertEqual(self.run_keys("policy", self.PURPOSE, "--on-limit", "maybe")[0], 2)
+        self.assertEqual(self.run_keys("policy", self.PURPOSE, "--tier", "production")[0], 1)
         code, out, err, _ = self.run_keys("test", "1")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("시험 기능 준비 중", out)
@@ -497,7 +499,7 @@ class ManageTest(CliCase):
     def test_read_commands_change_nothing_even_when_entries_exist(self):
         before = ss.tree_snapshot(self.ctx.workspace.root)
         blobs = dict(self.store._blobs)
-        for argv in (("list",), ("usage",), ("purposes",), ("policy", "naver_openapi"), ("test", "1"), ("list", "--purpose", "naver_openapi"), ("usage", "--purpose", "image_provider")):
+        for argv in (("list",), ("usage",), ("purposes",), ("policy", self.PURPOSE), ("test", "1"), ("list", "--purpose", self.PURPOSE), ("usage", "--purpose", "image_provider")):
             with self.subTest(argv=argv):
                 self.assertEqual(self.run_keys(*argv)[0], 0)
         self.assertEqual(ss.tree_snapshot(self.ctx.workspace.root), before)
@@ -506,7 +508,7 @@ class ManageTest(CliCase):
     def test_the_list_shows_names_states_and_badges_in_korean_and_the_number_prefix(self):
         code, out, err, _ = self.run_keys("list")
         self.assertEqual((code, err), (0, ""))
-        for needle in ("[1] 가 — 사용 · 연결 확인 필요", "[2] 나 — 사용 · 연결 확인 필요", f"번호 {self.ids[0][:8]}", "소속 앱0", "마지막 확인 없음", "네이버 오픈 API(검색·데이터랩): 연결 확인 필요"):
+        for needle in ("[1] 가 — 사용 · 연결 확인 필요", "[2] 나 — 사용 · 연결 확인 필요", f"번호 {self.ids[0][:8]}", "소속 앱0", "마지막 확인 없음", "AI 보조(선택): 연결 확인 필요"):
             self.assertIn(needle, out)
         self.assertFalse([word for word in WORDS if word in out])
         self.assertNotIn(self.ids[0], out)
@@ -569,7 +571,7 @@ class ProcessTest(unittest.TestCase):
         self.assertEqual(self.run_module("add", "image_provider", "--name", "기본", "--stdin", stdin="x")[0], 1)
 
     def test_two_processes_adding_at_the_same_time_both_succeed_without_losing_one(self):
-        first = self.launch("add", "naver_openapi", "--name", "가", "--stdin")
+        first = self.launch("add", "naver_apihub", "--name", "가", "--stdin")
         second = self.launch("add", "naver_searchad", "--name", "나", "--stdin")
         bodies = ({"client_id": "abcdefgh12345", "client_secret": "tinysecret1"}, {"customer_id": "1234567", "access_license": "L" * 20, "secret_key": "K" * 20})
         results = [process.communicate(json.dumps(body).encode("utf-8"), timeout=180) for process, body in zip((first, second), bodies, strict=True)]
@@ -588,7 +590,7 @@ class ProcessTest(unittest.TestCase):
     def test_usage_errors_of_a_real_process_never_repeat_what_was_typed(self):
         """진짜 프로세스(`argv` 를 넘기지 않는 실행)에서 키를 인자 자리에 잘못 쳤을 때의 사용법 오류에도 값이 없다 — 시험이 `argv` 를 직접 넘기면 이 구멍이 안 보였다."""
         secret = "Qm7Xc2Vb9Nk4Lp8Rt3Wz6Yh1Jd5Sf0Ga"
-        for argv in (("list", "--purpose", secret), ("list", "--bogus-flag", secret), ("add", secret, "--name", "기본"), ("policy", "naver_openapi", "--on-limit", secret), ("state", "1", secret),
+        for argv in (("list", "--purpose", secret), ("list", "--bogus-flag", secret), ("add", secret, "--name", "기본"), ("policy", "naver_apihub", "--on-limit", secret), ("state", "1", secret),
                      ("usage", "--purpose", secret), ("list", secret), ("remove", "1", secret, "--yes"), ("add", "image_provider", "--name", "기본", f"--access-key={secret}"), ("order",)):
             with self.subTest(argv=argv[:3]):
                 code, out, err = self.run_module(*argv)

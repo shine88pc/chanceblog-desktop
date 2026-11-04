@@ -431,7 +431,7 @@ class ConnectionsCheckTest(Base):
 
     def entry(self):
         from chanceblog_desktop.service import connections
-        connections.add_entry(self.ctx, "naver_openapi", name="기본", fields={"client_id": "abcdefgh12345", "client_secret": "tinysecret1"})
+        connections.add_entry(self.ctx, "naver_apihub", name="기본", fields={"client_id": "abcdefgh12345", "client_secret": "tinysecret1"})
 
     def test_no_file_is_fine_and_the_check_creates_nothing(self):
         before = sorted(entry.name for entry in self.ctx.workspace.root.iterdir())

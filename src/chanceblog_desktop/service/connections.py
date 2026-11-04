@@ -53,6 +53,7 @@ CHECK_RESULTS = (CHECK_NONE, CHECK_OK, CHECK_AUTH, CHECK_ERROR)
 ON_SAVE, ON_FAILOVER = "save", "failover"
 ON_LIMIT = (ON_SAVE, ON_FAILOVER)
 ON_LIMIT_TEXT = {ON_SAVE: "절약 모드만(다른 키로 넘어가지 않음)", ON_FAILOVER: "허용된 다음 키로 전환(한도·일시 오류일 때만)"}
+ENTRY_LIMIT_DETAIL = "이 용도는 키를 하나만 둡니다 — 한도를 늘리려고 여러 키·계정을 돌려 쓰지 않습니다(키를 바꾸려면 기존 항목을 `keys remove 번호 --yes` 로 지운 뒤 새로 넣습니다)"
 ROTATION_NEVER, ROTATION_LIMITED = "never", "limited"     # never: 어떤 오류에도 다른 항목으로 자동 전환하지 않는다(Unsplash) · limited: 한도·일시 오류 네 가지에만 허용된 다음 항목으로
 
 CONNECTED, NEEDS_CHECK, RATE_LIMITED, AUTH_ERROR, NOT_CONNECTED = "connected", "needs_check", "rate_limited", "auth_error", "not_connected"
@@ -68,15 +69,29 @@ class Field:
     min_len: int
     max_len: int
     example: str               # 모양 안내(실제 값이 아니다)
+    charset: str = ""          # '' 는 기본 글자(영문·숫자와 `_ - + / = . ~ :`) · 'alnum' 은 영문·숫자와 `_ -` 만 — 공식 문서에 모양이 없는 값(NAVER API HUB)을 느슨하게 검사한다
 
 
 @dataclass(frozen=True)
 class Window:
-    name: str                  # 'day' · 'hour' 처럼 기록에 쓰는 이름
-    kind: str                  # 'day'(하루 — 한국 시간 초기화 시각에 0 으로) · 'sliding'(최근 `minutes` 분)
+    name: str                  # 'day' · 'hour' · 'month' 처럼 기록에 쓰는 이름
+    kind: str                  # 'day'(하루 — 한국 시간 초기화 시각에 0 으로) · 'month'(한국 시간 달력 월 — 다음 달 1일 00:00 에 0 으로, 라벨 `YYYY-MM`) · 'sliding'(최근 `minutes` 분)
     limit: int
     minutes: int = 0
     header_sync: bool = False  # 응답 머리글의 남은 횟수로 로컬 계수를 보정하는 창
+
+
+STAGE_NOTICE, STAGE_LIMITED, STAGE_CLOSED = "notice", "limited", "closed"
+
+
+@dataclass(frozen=True)
+class Stage:
+    """한도 단계 — 이번 달 사용량이 `Provider.console_limit`(콘솔 월 한도)의 `percent`% 를 **넘기면**(이 호출을 하고 난 뒤의 사용량 기준) 이 단계다. 단계는 비율이 높은 것이 이긴다."""
+    name: str                  # STAGE_NOTICE(안내만) · STAGE_LIMITED(자동 새로고침 중지) · STAGE_CLOSED(신규 호출 중지) — 코드용 이름이라 화면에는 `text` 만 보인다
+    percent: int
+    text: str                  # 쉬운 한국어 안내
+    deny: tuple = ()           # 이 단계에서 거절하는 우선순위(`bulk_refresh` · `new_candidate` · `selected_candidate` · `critical`)
+    manual_max_calls: int = 0  # 이 단계에서 `new_candidate`(직접 시작한 분석)가 한 번에 부를 수 있는 횟수의 상한(0 = 상한 없음)
 
 
 @dataclass(frozen=True)
@@ -87,6 +102,11 @@ class Provider:
     tiers: tuple               # ((등급 이름, (Window, …)), …) — 한도를 모르면 빈 튜플
     default_tier: str
     note: str = ""
+    ledger: bool = False       # 참이면 창마다 시도·성공을 따로 세고 호출 장부를 남긴다(실패한 호출도 시도로 센다 — 공식 사용량에 들어가는지 모르는 제공자)
+    fail_closed: bool = False  # 참이면 사용량·시계·계수·인증 상태를 확인할 수 없을 때 신규 호출을 막는다(다른 제공자는 지금 동작 그대로)
+    console_limit: int = 0     # 서비스 콘솔의 월 한도(참고 값 — 단계 비율의 기준). 프로그램 안 한도는 `tiers` 의 창이다
+    stages: tuple = ()         # (Stage, …) — 비어 있으면 기존 규칙(`quota.FLOOR_PERCENT`·`RESERVE_PERCENT`)을 쓴다
+    stop_text: str = ""        # 신규 호출을 멈췄을 때 사용자에게 보이는 고정 문구(기술 오류 코드는 보이지 않는다)
 
     def windows(self, tier=""):
         wanted = tier or self.default_tier
@@ -115,6 +135,8 @@ class Purpose:
     reset_hour: int = 0                 # 하루 한도가 0 으로 돌아가는 한국 시각(시)
     client_scope: str = CLIENT_SCOPE
     note: str = ""
+    max_entries: int = MAX_ENTRIES_PER_PURPOSE      # 이 용도의 항목 수 상한 — 기본 3, 키를 하나만 두는 용도(NAVER API HUB)는 1
+    legacy_to: str = ""                 # 비어 있지 않으면 '옛 용도' — 새 용도 이름. 옛 파일에 남은 항목은 읽고 보여 주지만 새 항목은 더하지 못한다(키는 지우지 않는다)
 
     def field(self, name):
         return next((item for item in self.fields if item.name == name), None)
@@ -130,15 +152,32 @@ class Purpose:
         return next((item.name for item in self.fields if item.secret), "")
 
 
+APIHUB_STOP_TEXT = "NAVER API HUB의 새로운 데이터 조회를 사용할 수 없습니다. 저장된 정보와 기본 주제 선정 규칙으로 후보 생성을 계속합니다."     # 고정 문구 — 사유(기술 오류 코드 없이 쉬운 한국어)는 따로 덧붙인다
+APIHUB_INTERNAL_DAY, APIHUB_INTERNAL_MONTH, APIHUB_CONSOLE_MONTH = 100, 27000, 30000      # 프로그램 안 기준(하루·월)과 콘솔 월 한도 — 안 기준 월 27,000 은 콘솔 30,000 의 90%
+APIHUB_NEW_CALL_CAP = 5                # 80% 를 넘은 뒤 직접 시작한 분석이 한 번에 부를 수 있는 횟수(기본값 — 운영자가 바꿀 수 있는 정책 값)
+APIHUB_STAGES = (
+    Stage(STAGE_NOTICE, 70, "이번 달 사용량이 NAVER API HUB 콘솔 한도의 70%를 넘었습니다 — 아직 정상이지만 사용량을 살펴 주세요."),
+    Stage(STAGE_LIMITED, 80, f"이번 달 사용량이 80%를 넘어 자동 새로고침과 자동 배치를 멈췄습니다 — 직접 시작한 분석만 한 번에 {APIHUB_NEW_CALL_CAP}회까지 부릅니다.", ("bulk_refresh",), APIHUB_NEW_CALL_CAP),
+    Stage(STAGE_CLOSED, 90, "이번 달 사용량이 90%(프로그램 안 월 한도)를 넘어 새 데이터 조회를 모두 멈췄습니다 — 저장된 정보와 기본 규칙으로 계속하고 다음 달 1일에 다시 열립니다.",
+          ("bulk_refresh", "new_candidate", "selected_candidate", "critical")),
+)
+
+
 def _purposes():
     day_naver = (("default", (Window("day", "day", 25000),)),)
     unsplash = Provider("unsplash", "Unsplash", ROTATION_NEVER, (("demo", (Window("hour", "sliding", 50, 60, True),)), ("production", (Window("hour", "sliding", 1000, 60, True),))), "demo",
                         "데모 앱은 시간당 50회, 승인된 앱은 시간당 1,000회입니다. `api.unsplash.com` 요청만 세고 사진 파일(`images.unsplash.com`) 요청은 세지 않습니다. 자동으로 다른 키로 넘어가지 않습니다")
+    apihub = Provider("", "NAVER API HUB", ROTATION_NEVER, (("default", (Window("day", "day", APIHUB_INTERNAL_DAY), Window("month", "month", APIHUB_INTERNAL_MONTH))),), "default",
+                      "프로그램 안 기준은 하루 100회·이번 달 27,000회이고 서비스 콘솔의 월 한도(30,000회 — 계정 설정에 따라 최대 50,000회, 100% 에서 호출이 차단됩니다)는 마지막 안전장치입니다. "
+                      "실패한 호출도 시도로 세고 월 경계는 한국 시간 달력 월로 잡습니다(실패한 호출이 공식 사용량에 들어가는지·월 초기화 시각은 공개 문서에 없어 안전한 쪽으로 가정했습니다). "
+                      "키는 하나만 쓰고 429 가 나도 다른 키로 넘어가지 않습니다",
+                      ledger=True, fail_closed=True, console_limit=APIHUB_CONSOLE_MONTH, stages=APIHUB_STAGES, stop_text=APIHUB_STOP_TEXT)
     return (
-        Purpose("naver_openapi", "네이버 오픈 API(검색·데이터랩)", "키워드의 검색 수요·블로그 검색 결과 수 같은 지표를 조회해 후보의 지표 칸을 채우는 데 씁니다.",
-                (Field("client_id", "클라이언트 ID", False, 8, 64, "영문·숫자 20자 안팎"), Field("client_secret", "클라이언트 시크릿", True, 8, 64, "영문·숫자 10자 안팎")),
-                (Provider("", "네이버", ROTATION_LIMITED, day_naver, "default", "하루 25,000회 안팎(제3자 문서 기준이라 네이버 공식 문서와 대조가 필요합니다). 앱(클라이언트 ID)마다 따로 셉니다"),),
-                identity_field="client_id"),
+        Purpose("naver_apihub", "NAVER API HUB 검색어 트렌드", "네이버 데이터랩 '검색어 트렌드' 로 키워드의 관심도 변화를 조회해 후보의 지표를 보정하는 데 씁니다(준비 중 — 안전 장치만 있고 호출 코드는 아직 없습니다). "
+                "키는 하나만 두고 한도를 늘리려고 돌려 쓰지 않습니다.",
+                (Field("client_id", "클라이언트 ID", False, 8, 128, "영문·숫자·-·_ 8~128자(공식 문서에 모양이 없어 느슨하게 확인합니다)", "alnum"),
+                 Field("client_secret", "클라이언트 시크릿", True, 8, 128, "영문·숫자·-·_ 8~128자(공식 문서에 모양이 없어 느슨하게 확인합니다)", "alnum")),
+                (apihub,), identity_field="client_id", max_entries=1),
         Purpose("naver_searchad", "네이버 검색광고 API", "키워드 도구의 월간 검색 수 같은 지표를 조회하는 데 씁니다(준비 중).",
                 (Field("customer_id", "고객 ID", False, 3, 20, "숫자 7자리 안팎"), Field("access_license", "액세스 라이선스", True, 16, 128, "영문·숫자 40~64자"), Field("secret_key", "비밀 키", True, 16, 128, "영문·숫자·기호 40자 안팎")),
                 (Provider("", "네이버 검색광고", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다 — 한도 오류 응답으로만 감지합니다"),), identity_field="customer_id"),
@@ -156,6 +195,11 @@ def _purposes():
                 (Provider("", "Google", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다"),), identity_field="client_id"),
         Purpose("github_repo", "GitHub 저장소", "글을 올릴 때 쓰는 저장소 권한입니다.", (), (Provider("", "GitHub", ROTATION_NEVER, (("default", ()),), "default"),), takes_keys=False,
                 note="이 앱은 키를 받지 않습니다 — 컴퓨터의 Git 로그인(Git 자격 증명 관리자)을 씁니다. 터미널에서 `git push` 를 한 번 해 로그인을 마칩니다."),
+        Purpose("naver_openapi", "옛 항목 — 네이버 오픈 API(검색·데이터랩)", "예전 버전이 만든 용도입니다. 이 용도의 항목은 읽기만 하고(새 항목은 더하지 못합니다) 키는 지우지 않았습니다. "
+                "NAVER API HUB 검색어 트렌드(naver_apihub)에 새로 넣은 뒤 이 항목은 `keys remove` 로 지웁니다.",
+                (Field("client_id", "클라이언트 ID", False, 8, 64, "영문·숫자 20자 안팎"), Field("client_secret", "클라이언트 시크릿", True, 8, 64, "영문·숫자 10자 안팎")),
+                (Provider("", "네이버", ROTATION_LIMITED, day_naver, "default", "옛 용도입니다 — 호출하지 않습니다"),),
+                identity_field="client_id", legacy_to="naver_apihub"),
     )
 
 
@@ -272,9 +316,9 @@ def parse(ctx, raw, registry=PURPOSES):
         entries.append(found)
     if len({item.entry_id for item in entries}) != len(entries):
         raise _bad_file(ctx, "같은 항목 번호가 겹친다")
-    for purpose in registry:
-        if len([item for item in entries if item.purpose == purpose]) > MAX_ENTRIES_PER_PURPOSE:
-            raise _bad_file(ctx, f"한 용도의 항목이 {MAX_ENTRIES_PER_PURPOSE}개를 넘는다")
+    for purpose, found_spec in registry.items():
+        if len([item for item in entries if item.purpose == purpose]) > found_spec.max_entries:
+            raise _bad_file(ctx, f"한 용도의 항목이 {found_spec.max_entries}개를 넘는다")
     policies = []
     for purpose, item in raw["policies"].items():
         spec = registry.get(purpose) if isinstance(purpose, str) else None
@@ -400,6 +444,38 @@ def primary_entry(data, purpose):
     return next((item for item in data.of_purpose(purpose) if item.state == ACTIVE), None)
 
 
+AUTH_CLEAR, AUTH_BAD, AUTH_UNCLEAR = "clear", "auth_failed", "unclear"
+
+
+def auth_state(entry, *, now, valid_hours=CHECK_VALID_HOURS):
+    """항목의 인증 상태(Fail-Closed 가 신규 호출을 열어도 되는지) — `clear`(시험 성공 기록이 유효 기간 안) · `auth_failed`(인증 실패로 멈춤) · `unclear`(시험 성공 기록이 없거나 오래됐다 — '연결 확인 필요').
+    `entry_status` 와 달리 `implemented` 는 보지 않는다(호출 코드가 생기기 전에는 아무도 이 판정으로 호출하지 않는다 — 틀만 있다)."""
+    if entry.check_result == CHECK_AUTH:
+        return AUTH_BAD
+    if entry.check_result == CHECK_OK and entry.last_ok_at and now - _parse_stamp(entry.last_ok_at) <= timedelta(hours=valid_hours):
+        return AUTH_CLEAR
+    return AUTH_UNCLEAR
+
+
+def listed_purposes(data, registry=PURPOSES):
+    """화면에 보일 용도 이름들 — 옛 용도는 그 용도의 항목이 남아 있을 때만 보인다."""
+    return tuple(key for key, spec in registry.items() if not spec.legacy_to or data.of_purpose(key))
+
+
+def stage_threshold(provider, stage):
+    """단계가 시작되는 월 사용량의 경계 — 콘솔 월 한도 × 비율. 호출 뒤 사용량이 이 값을 **넘으면** 그 단계다(같으면 아직 아니다)."""
+    return provider.console_limit * stage.percent // 100
+
+
+def stage_of(provider, used_after):
+    """호출을 하고 난 뒤의 이번 달 사용량이 `used_after` 일 때의 단계(비율이 가장 높은 것) 또는 None."""
+    found = None
+    for stage in sorted(provider.stages, key=lambda item: item.percent):
+        if used_after > stage_threshold(provider, stage):
+            found = stage
+    return found
+
+
 def secret_present(ctx, entry, keystore):
     """보관소에 이 항목의 값이 있나(True/False) — 보관소를 못 열면 None. 값 자체는 꺼내지 않는다."""
     if keystore is None:
@@ -497,10 +573,17 @@ def check_fields(spec, fields):
         why = ("빠진 칸이 있습니다: " + ", ".join(missing)) if missing else "이 용도에 없는 칸이 있습니다"
         raise AppError("KEY_INVALID_SHAPE", {"항목": "입력 칸", "이유": f"{why}(이 용도의 칸: {', '.join(expected)})"})
     for item in spec.fields:
-        problem = shape.value_problem(fields[item.name], min_len=item.min_len, max_len=item.max_len)
+        problem = shape.value_problem(fields[item.name], min_len=item.min_len, max_len=item.max_len, charset=item.charset)
         if problem:
             raise AppError("KEY_INVALID_SHAPE", {"항목": item.label, "이유": problem})
     encode_fields(fields)                                      # 보관소 한도(2,560바이트)를 먼저 확인한다 — KEY_TOO_LONG
+
+
+def refuse_legacy(spec, registry=PURPOSES):
+    """옛 용도(`legacy_to`)에는 새 항목을 더하지 않는다 — 옛 항목은 읽기만 하고 키는 지우지 않는다. 새 키는 새 용도에 넣으라고 쉬운 한국어로 알린다. 아니면 아무것도 하지 않는다(명령줄은 키를 묻기 전에 이것을 먼저 부른다)."""
+    if spec.legacy_to:
+        target = registry.get(spec.legacy_to)
+        raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": f"옛 용도라 새 항목을 더하지 못합니다 — 새 키는 '{target.label if target else spec.legacy_to}'({spec.legacy_to})에 넣습니다. 옛 항목의 키는 지우지 않았습니다"})
 
 
 def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTIVE, terms_ack=False, keystore=None, registry=PURPOSES, new_id=None):
@@ -510,6 +593,7 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
         raise _not_found("용도 이름")
     if not spec.takes_keys:
         raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": spec.note or "이 용도는 앱이 키를 받지 않습니다"})
+    refuse_legacy(spec, registry)
     chosen = spec.provider(provider)
     if chosen is None:
         raise AppError("KEY_INVALID_SHAPE", {"항목": "제공자", "이유": "이 용도의 제공자는 " + ", ".join(spec.provider_keys()) + " 중에서 고릅니다"})
@@ -527,8 +611,8 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
     with locked(ctx):
         data = load(ctx, registry)
         mine = data.of_purpose(purpose)
-        if len(mine) >= MAX_ENTRIES_PER_PURPOSE:
-            raise AppError("KEY_ENTRY_LIMIT", {"용도": spec.label, "개수": str(MAX_ENTRIES_PER_PURPOSE)})
+        if len(mine) >= spec.max_entries:
+            raise AppError("KEY_ENTRY_LIMIT", {"용도": spec.label, "개수": str(spec.max_entries)}, detail=ENTRY_LIMIT_DETAIL if spec.max_entries < MAX_ENTRIES_PER_PURPOSE else "")
         if mine and not terms_ack:
             raise AppError("KEY_FAILOVER_TERMS_REQUIRED", {"용도": spec.label})
         if any(item.name == name for item in mine):
@@ -690,6 +774,20 @@ def mark_check(ctx, entry_id, result, *, registry=PURPOSES):
         return next(item for item in data.entries if item.entry_id == entry_id)
 
 
+def mark_call_ok(ctx, entry_id, *, registry=PURPOSES):
+    """성공한 실제 호출을 항목에 적는다 — 마지막 성공 시각(`last_ok_at`)을 지금으로, 확인 결과를 `ok` 로 해서 인증 '맑음'(`auth_state`)의 24시간 창을 이어 준다(호출이 계속 성공하는 동안 '연결 확인 필요' 로 떨어지지 않는다).
+    `checked_at`(마지막 시험 시각)은 건드리지 않는다 — 연결 시험의 60초 규칙은 시험 호출만 센다. 인증 실패로 멈춘 항목(`auth_failed`)은 되살리지 않는다(멈춘 뒤에 도착한 성공 보고가 멈춤을 풀지 못하게).
+    실패·모호한 결과로는 부르지 않는다(부르는 쪽 `quota` 가 가린다). → 바뀐 항목 또는 None(항목이 없거나 되살리지 않음)"""
+    with locked(ctx):
+        data = load(ctx, registry)
+        entry = next((item for item in data.entries if item.entry_id == entry_id), None)
+        if entry is None or entry.check_result == CHECK_AUTH:
+            return None
+        data = _update_entry(data, entry_id, check_result=CHECK_OK, last_ok_at=ctx.stamp())
+        save(ctx, data, registry)
+        return next(item for item in data.entries if item.entry_id == entry_id)
+
+
 # ---- 연결 시험(제공자 시험 함수를 주입받는다) -------------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ProviderResult:
@@ -750,4 +848,4 @@ def test_entry(ctx, text, tester=None, *, keystore=None, guard=None, registry=PU
 def diagnostic_summary(ctx, registry=PURPOSES):
     """진단 보고서·내보내기에 실을 수 있는 요약 — 용도별 항목 수·상태 이름뿐이다. 값·끝 4자·번호·이름·프로젝트는 싣지 않는다."""
     data = load(ctx, registry)
-    return {"purposes": [{"purpose": key, "entries": len(data.of_purpose(key)), "active": len([item for item in data.of_purpose(key) if item.state == ACTIVE])} for key in registry]}
+    return {"purposes": [{"purpose": key, "entries": len(data.of_purpose(key)), "active": len([item for item in data.of_purpose(key) if item.state == ACTIVE])} for key in listed_purposes(data, registry)]}
