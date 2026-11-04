@@ -111,6 +111,12 @@ _ARGUMENT = ("을", "를", "에", "이", "가", "의", "도", "만", "와", "과
 _CONNECTIVE_END = ("서", "다가", "자마자")     # 이어 가는 낱말('직접 가서'·'갔다가'·'들어서자마자') — 뒤에 이어지는 것은 머리말이 아니라 같이 하는 일이다
 _WRITER_IF = ("자면", "요약하면", "정리하면", "종합하면", "말하면", "말씀드리면")          # 독자에게 거는 조건이 아니라 글쓴이가 말을 잇는 '…면'
 _SUBJECT = "이가"                                    # 주어 조사
+WRITER_SPAN = 12                           # 꾸미는 낱말 앞 이 만큼의 글자 안에 글쓴이를 가리키는 1인칭이 낱말로 서 있고 부탁 꼬리가 추천류(`_RECOMMEND`)면 서술 절의 길이와 상관없이 단정으로 본다(`_writer_leads`)
+_WRITER = re.compile("제가|저는|저도|내가|우리는|우리가|저희(?:가|는|도|만|끼리)")           # 글쓴이를 가리키는 1인칭 — '저희 매장·저희 제품' 처럼 소유로 쓴 '저희' 는 독자에게 하는 부탁에 흔해 세지 않는다. '나는' 은 '소리가 나는'·'냄새가 나는' 의 동사와 겹쳐 뺐다
+_PLEDGE = re.compile("(?:겠습니다|겠어요|겠죠|겠지요|겠다|할게요|볼게요|드릴게요|할래요|예정입니다|예정이에요|계획입니다|계획이에요|생각입니다|생각이에요|생각이다|할것입니다|할거예요|할겁니다|볼겁니다|볼거예요|려고합니다|려고해요|려고요)")           # 부탁 꼬리가 글쓴이 자신의 앞으로의 계획·다짐이면('제가 써 본 뒤에 알려 드릴게요') 1인칭은 그 계획의 주어다
+_OTHERS = ("분의", "분을", "분에게", "분과", "분만", "분으로")           # 꾸미는 낱말 바로 뒤의 '써 본 분의 후기'·'다녀온 분을' — 해 본 사람은 글쓴이가 아니라 남이다('분이·분은·분도·분께' 는 `_NOUN_START` 가 먼저 가린다)
+_RECOMMEND = re.compile("참고|확인해주세요|써보세요|가보세요|드셔보세요|믿고|구경해보세요|추천")           # 글쓴이가 겪은 일을 근거로 권하는 부탁 꼬리('…편해서 참고하세요') — 끊는 자리 앞 마지막 낱말부터 찾는다. 독자에게 경험을 청하는 부탁('…알려 주세요')은 이 규칙으로 걸지 않는다 — '이용해·방문해 보세요' 도 독자에게 순서를 안내하는 문장('…해 본 뒤에 바로 이용해 보세요')의 새 오탐이 늘어 일부러 넣지 않았다(D-33 ⑬ ㉲)
+_PLAN_CLAUSE = "테니"                                 # 앞으로 할 일을 이유로 이어 가는 말('제가 써 본 뒤에 후기를 올릴 테니 참고하세요') — '…겠으니·…예정이니' 는 `_ASSERT` 의 '…으니·…이니' 가 먼저 단정으로 보므로 여기까지 오지 않는다
 REQUEST_WORD_SIZE = 3                      # 부탁 앞 낱말('남겨'·'참고'·'확인해')이 차지하는 글자 수 — 붙여 쓴 글에서만 쓴다
 PLAIN_SPAN = 7                             # 꾸미는 낱말에 조사가 붙은 부탁의 목적어('써 본 느낌을 댓글로 편하게 남겨 주세요') — 조사 뒤부터 부탁 앞까지 이 글자 수를 넘으면 따로 선 서술 절이다
 CLAUSE_SPAN = 3                            # 조사 없이 낱말 뒤에 말이 이어지는 꼴('써 본 결과 …'·'다녀온 후기로는 …') — 부탁 앞까지 이 글자 수를 넘으면 서술 절이다
@@ -447,25 +453,36 @@ def _asserted(flat_sentence, match, starts=None, asked=False):
     return _clause_between(flat_sentence, start, stop, match.group(0), starts() if starts else None)
 
 
+def _writer_leads(flat_sentence, begin, end, boundary):
+    """꾸미는 낱말(`begin`~`end`) 앞 `WRITER_SPAN` 글자 안에 글쓴이를 가리키는 1인칭('제가·저는·내가·저도·저희는·우리는·우리가')이 한 낱말로 서 있는가 — 낱말이 시작하고 끝나는 자리에서만 센다('요금제가' 속 '제가'·'우리가족이' 속 '우리가' 는 낱말의 일부다)."""
+    return any(found.start() in boundary and found.end() in boundary for found in _WRITER.finditer(flat_sentence, max(0, begin - WRITER_SPAN), end))
+
+
 def _clause_between(flat_sentence, start, stop, word, boundary):
     """꾸미는 낱말 뒤 ~ 부탁 앞의 말이 부탁의 목적어가 아니라 따로 선 서술 절인가 — 서술 어미가 무엇이든 가르는 구조 판정이다('표지 + 서술 절 + 부탁 꼬리').
     낱말의 머리말('느낌·후기·결과')에 조사가 붙어 부탁의 목적어·때가 된 꼴('써 본 느낌을 댓글로 편하게 남겨 주세요')은 그 조사가 낀 낱말 뒤 `PLAIN_SPAN` 글자까지, 조사가 없거나 주제로 세운 꼴('써 본 결과 …'·'다녀온 후기로는 …')은
     `CLAUSE_SPAN` 글자까지만 부탁의 말로 보고 그보다 길게 이어지면 서술 절로 본다(부탁 자신인 끊는 자리의 낱말은 세지 않는다). 조건('…나면')이 낀 말은 독자에게 하는 안내다.
-    `boundary` 는 낱말이 시작하는 자리(띄어 쓴 글만) — 붙여 쓴 글은 머리말을 알아볼 수 없어 서술 절 쪽(엄격)으로 본다."""
+    글쓴이를 가리키는 1인칭이 꾸미는 낱말 앞 `WRITER_SPAN` 글자 안에 낱말로 서 있고(`_writer_leads`) 부탁 꼬리가 그 경험을 근거로 권하는 말(`_RECOMMEND` — '참고하세요'·'확인해 주세요'·'써 보세요' …)이면, 아래의 이어 가는 낱말·조건('…면') 검사를 지난 뒤 서술 절이 얼마나 짧든 '제가 직접 써 본 결과 편해서 참고하세요' 처럼 겪은 일을 단정한 말이다 —
+    독자에게 경험을 청하는 부탁('제가 올린 사진을 보고 써 본 느낌을 댓글로 알려 주세요')과 독자에게 거는 조건 안내('…막히면 질문하세요')는 이 규칙으로 걸지 않는다(꼬리가 추천류가 아닌 단정도 이 규칙으로는 못 건다) —
+    다만 사이가 비어 있거나('제가 써 본 느낌을 알려 드릴게요') 부탁 꼬리가 글쓴이 자신의 앞으로의 계획·다짐('…알려 드릴게요'·'…올릴 예정입니다')이거나 절이 계획을 이유로 이어 가면('…올릴 테니 참고하세요') 1인칭은 그 계획의 주어이므로 이 규칙을 쓰지 않는다 —
+    꾸미는 낱말이 '써 본 분의 후기'·'다녀온 분을' 처럼 해 본 사람을 가리키면('저는 써 본 적이 없어서 직접 써 본 분의 후기를 참고하세요') 그 경험은 글쓴이 것이 아니다.
+    `boundary` 는 낱말이 시작하는 자리(띄어 쓴 글만) — 붙여 쓴 글은 머리말을 알아볼 수 없어 서술 절 쪽(엄격)으로 본다(낱말 경계를 모르면 '요금제가' 속 '제가' 를 가를 수 없어 1인칭 규칙도 쓰지 않는다)."""
     if boundary is None:
         return stop - start > CLAUSE_SPAN + REQUEST_WORD_SIZE
-    if word.endswith(_CONNECTIVE_END):
-        return False
     begin, limit = start, CLAUSE_SPAN
     if (start in boundary and word.endswith(_ADNOMINAL)) or start not in boundary:           # '써 본|후기를'·'느낌|을' — 머리말 낱말(조사가 붙은 것까지)이 끝나는 자리부터 센다
         begin = next((place for place in range(start + 1, stop + 1) if place in boundary), stop)
         if flat_sentence.endswith(_ARGUMENT, start, begin) and not flat_sentence.endswith("결과", start, begin):          # '결과' 의 '과' 는 조사가 아니다
             limit = PLAIN_SPAN
-    if any(place in boundary and flat_sentence[place - 1] == "면" and not flat_sentence.endswith(_WRITER_IF, 0, place) for place in range(begin + 1, stop + 1)):          # 조건절('오류가 나면 …')은 서술이 아니라 안내다 — 글쓴이가 말을 잇는 '풀어 보자면'은 아니다
-        return False
     end = stop - 1 if stop in boundary else stop                                                       # 끊는 자리의 낱말('남겨 |주세요'·'참고|하세요')은 부탁 자신이다 — 그 앞까지만 센다
     while end > begin and end not in boundary:
         end -= 1
+    if word.endswith(_CONNECTIVE_END):
+        return False
+    if any(place in boundary and flat_sentence[place - 1] == "면" and not flat_sentence.endswith(_WRITER_IF, 0, place) for place in range(begin + 1, stop + 1)):          # 조건절('오류가 나면 …')은 서술이 아니라 안내다 — 글쓴이가 말을 잇는 '풀어 보자면'은 아니다
+        return False
+    if end > begin and _writer_leads(flat_sentence, start - len(word), start, boundary) and not _PLEDGE.match(flat_sentence, stop) and flat_sentence.find(_PLAN_CLAUSE, begin, end) < 0 and not flat_sentence.startswith(_OTHERS, start) and _RECOMMEND.search(flat_sentence, end, stop + REQUEST_SPAN) and not flat_sentence.endswith(("을", "를"), begin, end):
+        return True                                                                                    # '제가 직접 써 본 결과 편해서 참고하세요' — 글쓴이 자신이 겪은 일을 서술한 절이고 꼬리가 그 경험을 근거로 권하는 말이다(절이 얼마나 짧든 — 이어 가는 낱말·조건('…면')은 위에서 먼저 지나가고, 절이 '…을·…를' 로 끝나면 꼬리가 받는 목적어('결과를 확인해 주세요')라 독자에게 순서를 안내하는 말이므로 걸지 않는다 — 추천 낱말은 끊는 자리 뒤 `REQUEST_SPAN` 글자까지만 찾는다(긴 한 문장에서 제곱 시간이 되지 않게))
     if limit == PLAIN_SPAN and any(place in boundary and flat_sentence[place - 1] in _SUBJECT for place in range(begin + 1, end + 1)):          # 조사가 붙은 머리말 뒤에 자기 주어를 가진 말('남기니 많은 도움이 되길')이 끼면 목적어가 아니라 서술 절이다
         limit = CLAUSE_SPAN
     return end - begin > limit
