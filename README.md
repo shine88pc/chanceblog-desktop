@@ -17,7 +17,7 @@
 
 ## 명령줄로 써 보기
 
-아직 화면(GUI)과 설치 파일은 없습니다. 대신 **명령줄**로 글을 만들고 검토해 GitHub Pages(연결한 `chanceblog`)에 올릴 수 있습니다(Python 3.10 이상과 Git 이 필요하고, AI 는 쓰지 않습니다). 저장소 폴더에서 처음 한 번 `set PYTHONPATH=src`(PowerShell 은 `$env:PYTHONPATH = "src"`)를 실행한 뒤 아래 명령을 씁니다. 글번호는 앞 4자만 써도 되고, 모든 명령에 `--json`(프로그램이 읽는 출력)을 붙일 수 있으며, 종료 코드는 0(정상)·1(처리된 오류 — 오류 코드와 하실 일을 보여 줍니다)·2(사용법 오류)입니다.
+설치 파일은 아직 없고 화면은 첫 기초뿐입니다(아래 '화면(GUI) 열어 보기'). **명령줄**로 글을 만들고 검토해 GitHub Pages(연결한 `chanceblog`)에 올릴 수 있습니다(Python 3.10 이상과 Git 이 필요하고, AI 는 쓰지 않습니다). 저장소 폴더에서 처음 한 번 `set PYTHONPATH=src`(PowerShell 은 `$env:PYTHONPATH = "src"`)를 실행한 뒤 아래 명령을 씁니다. 글번호는 앞 4자만 써도 되고, 모든 명령에 `--json`(프로그램이 읽는 출력)을 붙일 수 있으며, 종료 코드는 0(정상)·1(처리된 오류 — 오류 코드와 하실 일을 보여 줍니다)·2(사용법 오류)입니다.
 
 ```text
 python -m chanceblog_desktop doctor                          # 상태 점검(읽기만 합니다)
@@ -91,6 +91,19 @@ python -m chanceblog_desktop draft plan 3 --blog naver_a --experience "지난달
 - 글·설정·백업은 PC 의 사용자 데이터 폴더(Windows: `%LOCALAPPDATA%\ChanceblogDesktop`)에만 두고 저장소 안에는 두지 않습니다(`--data-dir` 로 바꿀 수 있지만 저장소 폴더 안은 거절합니다). `backup`·`restore` 로 백업과 복구를 합니다(`restore` 는 지금 글 저장소를 그 백업의 내용으로 통째로 바꾸므로 `--yes` 가 있어야 합니다 — `restore --latest` 만 쓰면 `CONFIRMATION_REQUIRED` 와 함께 어느 백업인지 알려 주니 맞으면 같은 명령 끝에 `--yes` 를 붙입니다). 키·토큰은 읽지도 보이지도 않고, 화면에 나가는 모든 글은 비밀 모양을 가립니다(영문·숫자에 바로 붙은 `abcAKIA…` 와 밑줄·하이픈 앞의 JWT 는 알아보지 못합니다 — 기준이 되는 가리기 규칙과 같은 한계입니다).
 - 모든 명령과 옵션은 `python -m chanceblog_desktop --help` 와 `명령 --help` 에 한국어로 설명되어 있습니다. 구현 범위와 한계는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §5 `service/`, 오류 코드는 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 에 있습니다.
 
+## 화면(GUI) 열어 보기 — 첫 기초(홈·상태 화면)
+
+화면은 PySide6 로 만듭니다(선택 설치 — **없어도 위의 명령줄은 그대로 동작합니다**). 화면은 아직 첫 기초뿐입니다: 홈(요약 카드·맞춤 주제 추천·내 블로그 현황)과 불러오는 중·빈 화면·오류·일부만·오프라인 상태, 주제 상세 서랍. 그 밖의 메뉴는 '아직 만들고 있어요' 안내입니다. 화면은 **읽기만 합니다**(보관함을 만들거나 바꾸지 않고 네트워크·로그인을 쓰지 않습니다).
+
+```text
+python -m pip install PySide6                          # 한 번만(저장소 밖 가상환경에 설치하는 것을 권장합니다)
+python -m chanceblog_desktop gui                       # 내 후보를 읽어 화면을 엽니다(명령줄과 같은 사용자 데이터 폴더)
+python -m chanceblog_desktop gui --sample              # 내 데이터 대신 '예시 데이터' 로 화면을 둘러봅니다
+python -m chanceblog_desktop gui --data-dir C:\work\data   # 다른 데이터 폴더를 읽습니다
+```
+
+PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한국어로 안내하고 끝납니다(오류 창·긴 영문 오류 없음). `gui` 에 모르는 옵션을 주면 입력한 값은 되풀이하지 않고 `사용법 오류: gui 명령의 인자가 올바르지 않습니다(입력한 값은 보이지 않습니다).` 와 사용법 한 줄만 나오며(종료 코드 2), `--data-dir` 로 정한 폴더가 없거나 파일이면 빈 화면이 아니라 쉬운 안내가 나옵니다. 화면 구조·값·부품 규칙은 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §5.1 과 [`docs/UI_DESIGN_SPEC.md`](docs/UI_DESIGN_SPEC.md), 사진·배율 검수는 [`docs/UI_VISUAL_QA.md`](docs/UI_VISUAL_QA.md) 에 있습니다.
+
 ## 읽을 문서
 
 | 문서 | 내용 |
@@ -103,6 +116,7 @@ python -m chanceblog_desktop draft plan 3 --blog naver_a --experience "지난달
 | [`docs/RELEASE.md`](docs/RELEASE.md) | 설치 파일·자동 업데이트·릴리스 절차 |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | 키·로그·업데이트 보안 |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | 회사 PC → 개인 PC 이관과 새 PC 준비 |
+| [`docs/UI_DESIGN_SPEC.md`](docs/UI_DESIGN_SPEC.md) · [`UI_COMPONENTS.md`](docs/UI_COMPONENTS.md) · [`UI_STATES.md`](docs/UI_STATES.md) · [`UI_ICONS.md`](docs/UI_ICONS.md) · [`UI_IMAGES.md`](docs/UI_IMAGES.md) · [`UI_VISUAL_QA.md`](docs/UI_VISUAL_QA.md) | 화면(GUI) 설계 값·부품·상태·아이콘·사진 규칙·사진 검수 |
 | [`CHANGELOG.md`](CHANGELOG.md) · `VERSION` | 변경 이력과 현재 버전 |
 
 ## 개발 방식
