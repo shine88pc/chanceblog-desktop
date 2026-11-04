@@ -508,12 +508,17 @@ class MaskTest(Base):
 
     def test_a_key_shaped_text_in_an_error_is_masked_in_the_json_output_too(self):
         self.add("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
-        for argv in (("candidates", "show", ss.KEY), ("candidates", "delete", "1"), ("candidates", "select", ss.KEY, "--blog", "naver_a")):
-            with self.subTest(argv=argv):
-                payload = self.error_json(*argv)                   # 종료 코드 1·표준 오류 비어 있음·`ok` false 도 함께 확인한다
+        payload = self.error_json("candidates", "delete", "1")        # 후보의 주제에 든 키 모양 글은 오류의 JSON 에서도 가려진다 — 종료 코드 1·표준 오류 비어 있음·`ok` false 도 함께 확인한다
+        shown = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn(ss.KEY, shown)
+        self.assertIn("[가림", shown, "가린 자리가 보이지 않으면 시험이 키 모양 글을 만나지도 못한 것이다")
+        for argv in (("candidates", "show", ss.KEY), ("candidates", "select", ss.KEY, "--blog", "naver_a")):          # 키를 번호 자리에 잘못 쳤을 때는 그 글이 오류에 아예 되풀이되지 않는다(가릴 것이 없다 — 앞 12자도)
+            with self.subTest(argv=argv[:2]):
+                payload = self.error_json(*argv)
                 shown = json.dumps(payload, ensure_ascii=False)
                 self.assertNotIn(ss.KEY, shown)
-                self.assertIn("[가림", shown, "가린 자리가 보이지 않으면 시험이 키 모양 글을 만나지도 못한 것이다")
+                self.assertNotIn(ss.KEY[:12], shown)
+                self.assertIn("(입력한 번호)", shown)
 
     def test_a_key_shaped_text_in_a_csv_header_or_a_rejected_line_is_masked_too(self):
         path = self.tmp / "x.csv"

@@ -292,7 +292,12 @@ class SaveLoadTest(StoreCase):
         self.assertTrue(store.exists("p1"))
         self.assertFalse(store.exists("p2"))
         error = self.refuses("CONTENT_NOT_FOUND", store.load, "p2")
-        self.assertIn("p2", error.rendered().message)
+        self.assertNotIn("p2", error.rendered().message, "번호 모양(16진수 8자 이하)이 아닌 번호는 오류 문구에 되풀이하지 않는다 — 키를 번호 자리에 잘못 쳤을 수 있다")
+        self.assertIn("「(입력한 번호)」", error.rendered().message)
+        self.assertIn("「ab12cd34」", self.refuses("CONTENT_NOT_FOUND", store.load, "ab12cd34").rendered().message, "번호 모양이면 그대로 알린다")
+        self.assertIn("「ab12cd34」", self.refuses("CONTENT_NOT_FOUND", store.delete, "ab12cd34").rendered().message)
+        self.assertNotIn("p2", self.refuses("CONTENT_NOT_FOUND", store.snapshot, "p2", 3).rendered().message)
+        self.assertIn("ab12cd34 의 3판", self.refuses("CONTENT_NOT_FOUND", store.snapshot, "ab12cd34", 3).rendered().message)
         self.refuses("CONTENT_NOT_FOUND", store.delete, "p2")
         store.save(make("p3"))                                                  # 없는 글을 지우려던 일이 열린 트랜잭션을 남기지 않는다
         self.assertEqual([item.project_id for item in store.list()], ["p1", "p3"])

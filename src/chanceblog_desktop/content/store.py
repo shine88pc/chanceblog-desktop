@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
 
+from ..echo import shown_ref
 from ..errors import AppError
 from .candidates import STAMP_FORMAT, STATUS_KO, TRANSITIONS, Candidate, keyword_key, parse_stamp, short_id
 from .candidates import STATUSES as CANDIDATE_STATUSES
@@ -579,7 +580,7 @@ class Store:
         _check_id(project_id)
         rows = self._read("SELECT data FROM projects WHERE project_id = ?", (project_id,))
         if not rows:
-            raise AppError("CONTENT_NOT_FOUND", {"항목": project_id})
+            raise AppError("CONTENT_NOT_FOUND", {"항목": shown_ref(project_id)})
         return self._parse(project_id, rows[0][0])
 
     def _parse(self, project_id, text):
@@ -606,7 +607,7 @@ class Store:
 
         def work(db):
             if db.execute("DELETE FROM projects WHERE project_id = ?", (project_id,)).rowcount == 0:
-                raise AppError("CONTENT_NOT_FOUND", {"항목": project_id})
+                raise AppError("CONTENT_NOT_FOUND", {"항목": shown_ref(project_id)})
             db.execute("DELETE FROM drafts WHERE project_id = ?", (project_id,))
 
         self._write(work)
@@ -622,7 +623,7 @@ class Store:
         _check_id(project_id)
         rows = self._read("SELECT saved_at, data FROM revisions WHERE project_id = ? AND revision = ?", (project_id, revision))
         if not rows:
-            raise AppError("CONTENT_NOT_FOUND", {"항목": f"{project_id} 의 {revision}판"})
+            raise AppError("CONTENT_NOT_FOUND", {"항목": f"{shown_ref(project_id)} 의 {revision}판"})
         try:
             data = json.loads(rows[0][1])
             return Snapshot(revision, rows[0][0], data["title"], data["source_content"], tuple(data["references"]), tuple(Asset(**raw) for raw in data["assets"]))
@@ -695,7 +696,7 @@ class Store:
                 raise AppError("CANDIDATE_TRANSITION_INVALID", {"현재 상태": STATUS_KO.get(stored_status, str(stored_status)), "요청 상태": STATUS_KO[candidate.status]},
                                detail=f"저장된 상태 {stored_status} → {candidate.status} 는 표에 없다")
         if link is not None and db.execute("SELECT 1 FROM projects WHERE project_id = ?", (link,)).fetchone() is None:
-            raise AppError("CONTENT_NOT_FOUND", {"항목": link})
+            raise AppError("CONTENT_NOT_FOUND", {"항목": shown_ref(link)})
         db.execute(
             "INSERT INTO candidates (candidate_id, keyword_key, status, project_id, revision, created_at, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT (candidate_id) DO UPDATE SET keyword_key = excluded.keyword_key, status = excluded.status, project_id = excluded.project_id,"

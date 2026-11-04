@@ -3,7 +3,8 @@
 
 규칙:
   · 후보 번호는 긴 무작위 번호(uuid)라 사람이 쓰기 어렵다 — 화면에는 **순번**(만든 시각 순으로 1부터, 전체 목록 기준)과 **번호 앞 8자**를 함께 보이고, 순번(1~999)이나 번호의 **앞 4자 이상**(겹치지 않을 때)으로 고른다.
-    겹치면 `CANDIDATE_AMBIGUOUS` 로 어느 후보들인지 알려 준다. 번호 전체는 `--json`·`--verbose` 에서만 보인다. 순번은 지우면 뒤가 당겨지므로(같은 순번이 다른 후보를 가리키게 된다)
+    겹치면 `CANDIDATE_AMBIGUOUS` 로 어느 후보들인지 알려 준다. 번호 전체는 `--json`·`--verbose` 에서만 보인다. 없는 번호를 쳤을 때 오류 문구가 친 글을 되풀이하는 것은 **번호 모양일 때뿐**이다(`echo.shown_ref` — 키를 번호 자리에 잘못
+    쳤어도 문구·`--json`·기록에 남지 않게, 아니면 `(입력한 번호)`). 순번은 지우면 뒤가 당겨지므로(같은 순번이 다른 후보를 가리키게 된다)
     **지울 때는 번호 앞 8자 이상만** 받는다(`DELETE_PREFIX`) — 순번이나 짧은 앞부분과 `--yes` 를 함께 줘도 아무것도 지우지 않고 지울 명령(번호 앞 8자)을 알려 준다. 1000번 이상의 순번은 쓸 수 없다(번호 앞 8자로 고른다).
   · 보기만 하는 `list`·`show` 는 보관함을 **읽기 전용**으로 연다(`ctx.reading_only()`) — 보관함 파일이 없거나 옛 구조여도 파일을 만들지도 올리지도 않고 '아직 후보가 없습니다' 로 안내한다.
     쓰는 명령은 보관함을 열면서 옛 구조를 올린다(사본 `.v<판>.bak` 을 남긴다).
@@ -30,6 +31,7 @@ from ..content import candidates as cd
 from ..content import status as st
 from ..content.profiles import DEFAULT_TOPIC_REUSE_DAYS
 from ..content.profiles import KEYS as NAVER_KEYS
+from ..echo import shown_ref
 from ..errors import AppError
 from . import projects
 
@@ -96,17 +98,17 @@ def resolve(rows, text):
     if exact:
         return exact[0]
     if len(wanted) < MIN_PREFIX:
-        raise _not_found(wanted, f"번호는 목록의 순번(1~{10 ** MAX_ORDINAL_DIGITS - 1})이거나 번호의 앞 {MIN_PREFIX}자 이상으로 적는다")
+        raise _not_found(shown_ref(wanted), f"번호는 목록의 순번(1~{10 ** MAX_ORDINAL_DIGITS - 1})이거나 번호의 앞 {MIN_PREFIX}자 이상으로 적는다")
     lowered = wanted.casefold()
     found = [row for row in rows if row.candidate.candidate_id.casefold().startswith(lowered)]
     if not found:
         if _DIGITS.fullmatch(wanted) and len(wanted) < DELETE_PREFIX:
-            raise _not_found(wanted, f"{10 ** MAX_ORDINAL_DIGITS}번 이상은 순번으로 고를 수 없습니다 — 번호 앞 {DELETE_PREFIX}자로 고르세요(`candidates list` 의 '번호' 에 보입니다)")
-        raise _not_found(wanted)
+            raise _not_found(shown_ref(wanted), f"{10 ** MAX_ORDINAL_DIGITS}번 이상은 순번으로 고를 수 없습니다 — 번호 앞 {DELETE_PREFIX}자로 고르세요(`candidates list` 의 '번호' 에 보입니다)")
+        raise _not_found(shown_ref(wanted))
     if len(found) > 1:
         shown = " · ".join(_label(row) for row in found[:SHOWN_CONFLICTS])
         more = f" 외 {len(found) - SHOWN_CONFLICTS}개" if len(found) > SHOWN_CONFLICTS else ""
-        raise AppError("CANDIDATE_AMBIGUOUS", {"항목": wanted}, detail=f"겹치는 후보 {len(found)}개: {shown}{more}")
+        raise AppError("CANDIDATE_AMBIGUOUS", {"항목": shown_ref(wanted)}, detail=f"겹치는 후보 {len(found)}개: {shown}{more}")
     return found[0]
 
 
@@ -189,7 +191,7 @@ def show_candidate(ctx, text):
     except AppError as error:
         if error.code != "CONTENT_NOT_FOUND":
             raise
-        raise _not_found(_short(text), "아직 보관함이 없다 — 후보가 하나도 없다") from None
+        raise _not_found(shown_ref(text.strip() if isinstance(text, str) else ""), "아직 보관함이 없다 — 후보가 하나도 없다") from None
     with store:
         row = resolve(numbered(store.list_candidates()), text)
         link = row.candidate.project_id
@@ -409,7 +411,7 @@ def _delete_corrupt(store, text, blocked, confirmed):
     if not found:                                                    # 맞는 번호가 없다 — 목록이 막힌 이유(깨진 후보)를 다시 알린다
         raise blocked
     if len(found) > 1:
-        raise AppError("CANDIDATE_AMBIGUOUS", {"항목": wanted}, detail=f"겹치는 후보 {len(found)}개: " + " · ".join(f"번호 {item[:12]}" for item in found[:SHOWN_CONFLICTS]) + " — 더 긴 번호를 적습니다")
+        raise AppError("CANDIDATE_AMBIGUOUS", {"항목": shown_ref(wanted)}, detail=f"겹치는 후보 {len(found)}개: " + " · ".join(f"번호 {item[:12]}" for item in found[:SHOWN_CONFLICTS]) + " — 더 긴 번호를 적습니다")
     target = found[0]
     number = cd.short_id(target)
     _confirm_delete(f"깨진 후보 지우기 — 번호 {number}(목록이 깨져 있어 주제를 읽지 못했습니다)", number, confirmed)

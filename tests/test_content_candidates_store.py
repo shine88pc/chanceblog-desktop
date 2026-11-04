@@ -496,7 +496,9 @@ class ProjectLinkTest(CandidateStoreCase):
     def test_linking_to_a_missing_project_is_refused_and_nothing_is_stored(self):
         store = self.open()
         error = self.refuses("CONTENT_NOT_FOUND", store.save_candidate, cand(project_id="nope"))
-        self.assertIn("nope", error.rendered().message)
+        self.assertNotIn("nope", error.rendered().message, "번호 모양(16진수 8자 이하)이 아닌 글 번호는 오류 문구에 되풀이하지 않는다")
+        self.assertIn("「(입력한 번호)」", error.rendered().message)
+        self.assertIn("「ab12cd34」", self.refuses("CONTENT_NOT_FOUND", store.save_candidate, cand("c9", keyword="다른 키워드", project_id="ab12cd34")).rendered().message, "번호 모양이면 그대로 알린다")
         self.assertEqual(store.list_candidates(), [])
         store.save_candidate(cand())
         self.refuses("CONTENT_NOT_FOUND", store.save_candidate, store.load_candidate("c1").edited(project_id="nope", now=at(hours=1)))

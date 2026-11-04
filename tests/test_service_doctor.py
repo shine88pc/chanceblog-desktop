@@ -2,7 +2,7 @@
 
 지키는 것:
   1) **아무것도 쓰지 않는다**: 없는 데이터 폴더·글 저장소·설정 파일을 새로 만들지 않고, 있는 파일은 한 바이트도 바꾸지 않는다. 네트워크는 `--online` 일 때 올리기 권한 점검 하나뿐이다.
-  2) 항목: 프로그램 버전·Python·git·데이터 폴더·설정 파일·글 저장소(깨짐 포함)·백업·가져온 핵심 코드(vendor/ 해시)·연결한 저장소(올리지 않은 글 기록 포함)·올리기 권한·네이버 프로필·이어서 처리할 글.
+  2) 항목: 프로그램 버전·Python·git·데이터 폴더·설정 파일·연결 설정(`connections.json` — 깨졌으면 실패, `ConnectionsCheckTest`)·글 저장소(깨짐 포함)·백업·가져온 핵심 코드(vendor/ 해시)·연결한 저장소(올리지 않은 글 기록 포함)·올리기 권한·네이버 프로필·이어서 처리할 글.
   3) 점검 하나가 막혀도(AppError) 나머지는 계속하고, 문제(주의·실패)에는 오류 코드와 하실 일을 붙인다. 고쳐야 할 것(fail)이 있을 때만 정상이 아니다.
 """
 import sys
@@ -420,6 +420,70 @@ class PendingAndProfilesTest(Base):
     def test_nothing_pending_means_no_pending_lines(self):
         projects.new_project(self.ctx, "그냥 글", ss.ko_text())
         self.assertEqual([item for item in self.results() if item.name == "이어서 처리할 글"], [])
+
+
+class ConnectionsCheckTest(Base):
+    """연결 설정(`connections.json` — 키 항목의 메타데이터)의 점검. 깨진 파일을 알리지 않던 것(독립 검증 2차 낮음)."""
+    NAME = "연결 설정(키 항목)"
+
+    def path(self):
+        return self.ctx.workspace.connections_path
+
+    def entry(self):
+        from chanceblog_desktop.service import connections
+        connections.add_entry(self.ctx, "naver_openapi", name="기본", fields={"client_id": "abcdefgh12345", "client_secret": "tinysecret1"})
+
+    def test_no_file_is_fine_and_the_check_creates_nothing(self):
+        before = sorted(entry.name for entry in self.ctx.workspace.root.iterdir())
+        item = self.find(self.NAME)
+        self.assertEqual((item.status, item.code, item.action), ("ok", "", ""))
+        self.assertIn("아직 없습니다", item.message)
+        self.assertFalse(self.path().exists())
+        self.assertEqual(sorted(entry.name for entry in self.ctx.workspace.root.iterdir()), before)
+
+    def test_a_readable_file_is_reported_with_the_number_of_entries_and_is_not_changed(self):
+        self.entry()
+        data, mtime = self.path().read_bytes(), self.path().stat().st_mtime_ns
+        item = self.find(self.NAME)
+        self.assertEqual((item.status, item.code), ("ok", ""))
+        self.assertIn("키 항목 1개", item.message)
+        self.assertEqual((self.path().read_bytes(), self.path().stat().st_mtime_ns), (data, mtime), "점검은 파일을 바꾸지 않는다")
+        self.assertTrue(doctor.doctor_ok(self.results()))
+
+    def test_a_broken_file_is_a_failure_with_a_plain_sentence_and_the_way_back(self):
+        self.entry()
+        good = self.path().read_bytes()
+        for broken in (b"{broken", b"", b"[]", b'{"schema": 1, "entries": [], "policies": {}, "extra": 1}', b'{"schema": 2, "entries": [], "policies": {}}', b"\xff\xfe\x00"):
+            with self.subTest(content=broken[:20]):
+                self.path().write_bytes(broken)
+                results = self.results()
+                item = next(found for found in results if found.name == self.NAME)
+                self.assertEqual((item.status, item.code), ("fail", "CONNECTIONS_FILE_INVALID"))
+                self.assertEqual(item.message, "연결 설정 파일을 읽을 수 없습니다: 「connections.json」.")
+                self.assertIn("connections.json.bak", item.action, "되돌리는 방법(직전의 올바른 사본)을 알린다")
+                self.assertIn("자격 증명 관리자", item.action)
+                self.assertFalse(doctor.doctor_ok(results), "고쳐야 할 것이라 점검은 정상이 아니다(종료 코드 1)")
+                self.assertEqual(self.path().read_bytes(), broken, "깨진 파일도 점검이 고치거나 지우지 않는다")
+        self.path().write_bytes(good)
+        self.assertEqual(self.find(self.NAME).status, "ok")
+
+    def test_the_other_checks_still_run_and_the_command_line_exits_with_one(self):
+        self.path().parent.mkdir(parents=True, exist_ok=True)
+        self.path().write_text("{broken", encoding="utf-8")
+        results = self.results()
+        self.assertGreater(len(results), 10)
+        self.assertEqual([item.status for item in results if item.name in ("프로그램 버전", "설정 파일", "글 저장소")], ["ok", "ok", "ok"])
+        code, out, err = ss.run_cli(self.ctx, "doctor")
+        self.assertEqual((code, err), (1, ""))
+        self.assertIn("연결 설정 파일을 읽을 수 없습니다", out)
+        self.assertIn("CONNECTIONS_FILE_INVALID", out)
+        code, out, err = ss.run_cli(self.ctx, "--json", "doctor")
+        self.assertEqual(code, 1)
+        self.assertIn('"code": "CONNECTIONS_FILE_INVALID"', out)
+        self.path().write_text("{}", encoding="utf-8")
+        self.assertEqual(ss.run_cli(self.ctx, "doctor")[0], 1)
+        self.path().unlink()
+        self.assertEqual(ss.run_cli(self.ctx, "doctor")[0], 0)
 
 
 if __name__ == "__main__":

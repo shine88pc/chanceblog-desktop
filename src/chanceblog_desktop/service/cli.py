@@ -23,6 +23,7 @@ from ..content import status as st
 from ..content import suggest as sg
 from ..content.draft_options import DraftOptions
 from ..content.profiles import POST_TYPES
+from ..echo import shown_backup
 from ..errors import AppError
 from ..security.mask import MAX_MASK_INPUT, mask
 from . import candidates, connections, draft, naver_flow, pages_flow, projects, quota, review, suggestions
@@ -433,7 +434,7 @@ def cmd_restore(ctx, args):
         raise UsageError("백업 파일을 적거나(`restore 파일`) 가장 최근 백업을 쓰려면 --latest 를 쓰세요 — 둘 중 하나만 씁니다.")
     if not args.yes:
         source = projects.resolve_backup(ctx, args.file, latest=args.latest)         # 어느 백업인지 보여 주려고 이름만 정한다(열지도 바꾸지도 않는다)
-        raise AppError("CONFIRMATION_REQUIRED", {"항목": f"백업으로 되돌리기 — {source.name}"},
+        raise AppError("CONFIRMATION_REQUIRED", {"항목": f"백업으로 되돌리기 — {shown_backup(source.name)}"},
                        detail="지금 글 저장소의 내용이 그 백업의 내용으로 통째로 바뀝니다(바꾸기 직전 상태는 backups 폴더 안 before-restore 에 따로 백업해 둡니다) — 맞으면 같은 명령 끝에 --yes 를 붙여 다시 실행합니다")
     source, safety = projects.restore_store(ctx, args.file, latest=args.latest, confirmed=True)
     return Output([f"백업으로 되돌렸습니다: {source}", f"  되돌리기 직전의 상태는 따로 백업해 두었습니다: {safety}"], {"restored_from": str(source), "safety_backup_folder": str(safety)})

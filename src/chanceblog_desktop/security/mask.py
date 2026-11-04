@@ -2,7 +2,7 @@
 
 규칙의 정본은 chanceblog 의 `pipeline/secret_patterns.py` 이고(`vendor/` 로 원본 그대로 가져온 것), 여기서는 그 패턴을 그대로 써서 글 속 비밀 모양을
 `[가림: <이름>]` 으로 바꾼다. 거기에 이 앱이 다루는 글에서 더 필요한 세 가지를 더한다: 주소 속 `사용자:토큰@`(비밀번호에 `@` 가 들어 있어도),
-주소의 `?access_token=…` 같은 인자, `Bearer <토큰>`. 어떤 입력이 와도 예외를 내지 않고(없는 값은 빈 글), 이미 가린 글을 다시 가려도 같다.
+주소의 `?access_token=…` 같은 인자, `Bearer <토큰>`. 정본의 `sk-` 패턴이 못 알아보는 붙임표·밑줄이 든 새 키 모양(OpenAI `sk-proj-…`·Anthropic `sk-ant-api03-…`·OpenRouter `sk-or-v1-…`과 그 밖의 `sk-` 긴 모양)도 가린다. 어떤 입력이 와도 예외를 내지 않고(없는 값은 빈 글), 이미 가린 글을 다시 가려도 같다.
 """
 from __future__ import annotations
 
@@ -32,6 +32,16 @@ _PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:----
 _SLACK_HOOK = re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+")
 _NPM_TOKEN = re.compile(r"\bnpm_[A-Za-z0-9]{30,}")
 _AWS_SECRET = re.compile(r"(?i)(aws_secret_access_key\s*[=:]\s*[\"']?)[A-Za-z0-9/+=]{20,}")
+# 정본의 `sk-` 패턴(`\bsk-[A-Za-z0-9]{32,}\b`)은 영숫자만 받아서, 붙임표·밑줄이 든 새 키 모양을 못 알아본다: OpenAI 프로젝트 키(`sk-proj-…`)·Anthropic 키(`sk-ant-api03-…`)·OpenRouter 키(`sk-or-v1-…`).
+# 앞 셋은 접두사가 종류를 정하므로 낱말(`sk-project`·`sk-ant-colony`)과 섞이지 않고, 꼬리는 영숫자·`-`·`_` 20자 이상이다(실제 키는 64~160자). 앞 글자는 ASCII 영숫자가 아니면 된다(한글 바로 옆·밑줄 뒤의 키도 가린다 — 정본의 ASCII 경계 판과 같다).
+# 넷째는 그 밖의 `sk-` 긴 모양(`sk-svcacct-…`·`sk-admin-…`) — 꼬리가 40자 이상이고 앞 60자 안에 대문자와 숫자가 모두 있을 때만이다(소문자 낱말을 붙임표로 이은 주소 조각 `sk-hynix-…` 는 대문자가 없어 글이다).
+# 앞내다보기는 60자로 막아 두었다(입력 길이에 선형 — `sk-aa-sk-aa-…` 같은 입력에서도 제곱으로 느려지지 않는다).
+_NEW_SK_PATTERNS = (
+    ("OpenAI 프로젝트 키", re.compile(r"(?<![A-Za-z0-9])sk-proj-[A-Za-z0-9_-]{20,}")),
+    ("Anthropic 키", re.compile(r"(?<![A-Za-z0-9])sk-ant-[a-z]{2,8}[0-9]{2}-[A-Za-z0-9_-]{20,}")),
+    ("OpenRouter 키", re.compile(r"(?<![A-Za-z0-9])sk-or-v[0-9]{1,2}-[A-Za-z0-9_-]{20,}")),
+    ("sk- 형식 API 키(긴 모양)", re.compile(r"(?<![A-Za-z0-9])sk-(?=[A-Za-z0-9_-]{0,60}[A-Z])(?=[A-Za-z0-9_-]{0,60}[0-9])[A-Za-z0-9_-]{40,}")),
+)
 # `password: 값`·`token=값`, 환경 변수식 `DB_PASSWORD=값`·`MY_SERVICE_TOKEN=값`·쿠키 `csrftoken=값`, JSON `"password": "값"`·짧은 따옴표 값 `secret = "x"`. 시작을 덩어리 맨 앞으로 한정한다(제곱으로 느려지지 않게)
 _ASSIGNMENT = re.compile(
     r"(?i)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|credential|sessionid|session_id)s?[\"']?\s*[:=]\s*)"
@@ -67,7 +77,7 @@ def _ascii_bounded(pattern):
 _BEARER, _BASIC, _NPM_TOKEN = (_ascii_bounded(item) or item for item in (_BEARER, _BASIC, _NPM_TOKEN))
 # 정본 패턴 중 단어 경계 기호 가 든 것(GitHub 토큰·Slack 토큰·AWS 액세스 키·sk- 키·Google 토큰 …)의 ASCII 경계 판 — 정본(vendor/)은 그대로 두고 여기서 더 돌린다
 _BOUNDED_PATTERNS = tuple((label, bounded) for label, pattern in SECRET_PATTERNS for bounded in (_ascii_bounded(pattern),) if bounded is not None)
-_SHAPE_PATTERNS = (_PEM, _JWT, _SLACK_HOOK, _NPM_TOKEN, _BEARER, *(pattern for _label, pattern in SECRET_PATTERNS), *(pattern for _label, pattern in _BOUNDED_PATTERNS))
+_SHAPE_PATTERNS = (_PEM, _JWT, _SLACK_HOOK, _NPM_TOKEN, _BEARER, *(pattern for _label, pattern in SECRET_PATTERNS), *(pattern for _label, pattern in _BOUNDED_PATTERNS), *(pattern for _label, pattern in _NEW_SK_PATTERNS))
 
 
 _CUT_WINDOW = 400                  # 상한에서 이만큼 안쪽까지 공백을 찾아 거기서 자른다
@@ -130,6 +140,8 @@ def _mask_once(text):
     for label, pattern in SECRET_PATTERNS:                                     # 이름이 있는 정본 패턴이 먼저(어떤 종류인지 남긴다) — 아래의 일반 대입 규칙은 그 나머지를 가린다
         text = pattern.sub(f"[가림: {label}]", text)
     for label, pattern in _BOUNDED_PATTERNS:                                   # 한글 바로 옆의 키까지(정본이 먼저 돌았으니 이미 가려지던 글의 출력은 그대로다)
+        text = pattern.sub(f"[가림: {label}]", text)
+    for label, pattern in _NEW_SK_PATTERNS:                                    # 붙임표·밑줄이 든 새 `sk-` 키 모양(정본이 못 알아보던 것 — 정본이 가리던 글은 이미 가려져 그대로다)
         text = pattern.sub(f"[가림: {label}]", text)
     text = _ASSIGNMENT.sub(r"\1[가림: 값]", text)
     return text
