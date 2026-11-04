@@ -21,7 +21,7 @@ from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.service import candidates as svc  # noqa: E402
 from chanceblog_desktop.service import projects  # noqa: E402
 from chanceblog_desktop.ui import adapters  # noqa: E402
-from chanceblog_desktop.ui.core import app_state, jobs, services  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, jobs, services, text  # noqa: E402
 
 # 가짜 비밀 모양(조각을 이어 만들어 저장소에는 키 문자열이 없다) — 구글 키(39자)·GitHub 토큰(40자). 조각이 하나라도 화면 글에 남으면 샌 것이다.
 GOOGLE_KEY = "AI" + "za" + "SyD4e7Kq9ZmW2xV8bN5tR1cY6uH3jL0pGfA1B"[:35]
@@ -255,6 +255,37 @@ class AdapterTest(unittest.TestCase):
         with self.assertRaises(jobs.JobFailure) as caught:
             adapters.ServiceHomeProvider(context_factory=other).load_home(lambda *a: None, lambda: False)
         self.assertIn("데이터를 둘 폴더가 안전하지 않습니다", caught.exception.user_message)         # 다른 오류 문구는 그대로
+
+    def test_only_the_two_write_worded_codes_are_reworded_and_every_other_catalog_code_keeps_its_own_text(self):
+        """'저장하지 못했다' 말투 바꾸기가 다른 오류로 번지지 않는다(변이 N04: 다른 코드 하나를 더해도 시험이 통과했다) — 오류 표의 모든 코드에서, 바뀌는 건 단 둘이고 나머지는 표의 문장 그대로다."""
+        import re
+        from chanceblog_desktop.errors import CATALOG, render
+        reworded = frozenset({"FILE_WRITE_FAILED", "FILE_IN_USE"})
+        self.assertEqual(adapters.WRITE_WORDED_CODES, reworded)
+        self.assertTrue(reworded <= set(CATALOG))
+        self.assertGreater(len(CATALOG), 50)
+        for code, info in sorted(CATALOG.items()):
+            slots = {name: f"{name} 값" for name in re.findall("「([^」]+)」", info.message + " " + info.action)}
+            failure = adapters.failure_from(AppError(code, slots))
+            self.assertEqual(failure.code, code)
+            if code in reworded:
+                self.assertEqual(failure.user_message, text.T["data_unreadable"], code)
+            else:
+                rendered = render(code, slots)
+                self.assertEqual(failure.user_message, f"{rendered.message} {rendered.action}".strip(), code)
+                self.assertNotEqual(failure.user_message, text.T["data_unreadable"], code)
+
+    def test_a_blog_name_that_is_empty_after_masking_falls_back_to_the_default_name(self):
+        """눈에 안 보이는 글자뿐인 이름은 가리면 빈 글이 된다 — 빈 이름이 아니라 기본 이름(변이 N07: 대체를 지워도 시험이 통과했다)."""
+        for name in ("\u200b\u200b", "\u2060", "\ufeff", "\x00", "\u200f\u200e", "\U000e0041", "\u200b\u2060\ufeff"):
+            self.raw_name(name, "naver_a")
+            self.assertEqual(self.blog_names()[0], "블로그 A", repr(name))
+            self.raw_name(name, "naver_b")
+            self.assertEqual(self.blog_names()[1], "블로그 B", repr(name))
+        self.raw_name("   ")                                                                    # 공백뿐인 이름은 처음부터 기본 이름
+        self.assertEqual(self.blog_names()[0], "블로그 A")
+        self.raw_name("\u200b진짜 이름\u200b")                                                   # 보이지 않는 글자는 지워지고 이름은 남는다
+        self.assertEqual(self.blog_names()[0], "진짜 이름")
 
     def test_the_adapter_cuts_no_text_by_slicing_except_two_known_places(self):
         """글을 가리기 전에 자르는 것(검증 M-1)이 어댑터에 다시 생기지 않게 — 어댑터의 글 자르기는 `shown`(가리기 → 자르기) 한 곳이다. 슬라이스는 보조 키워드 **개수**(`[:2]`)와 시스템이 적은 만든 시각의 날짜 부분(`[:10]`)뿐이다."""

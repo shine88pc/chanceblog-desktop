@@ -195,7 +195,7 @@ class ShellTest(QtBase):
         self.assertLessEqual(height, 900)
 
     def test_a_long_blog_name_in_the_side_panel_is_elided_with_the_full_name_in_the_tooltip_and_never_leaves_its_card(self):
-        """오른쪽 패널이 옆에 있는 넓은 창에서 블로그 이름이 한글 14자쯤부터 카드 밖으로 잘렸다(검증 M-4) — 이제 한 줄 …(줄임표)로 줄고 전체는 툴팁에 있다."""
+        """오른쪽 패널이 옆에 있는 넓은 창에서 블로그 이름이 한글 14자쯤부터 카드 밖으로 잘렸다(검증 M-4) — 이제 한 줄 …(줄임표)로 줄고 부품이 받은 글이 툴팁에 있다(받은 글은 어댑터가 이미 30자로 줄인 글이라 전체 이름이 아니다 — N-5)."""
         long_name = "가나다라마바사아자차카타파하" * 2 + "가나"
         provider = Custom([services.Topic(id="b1", title="주제", blogs=("A",), date="2026-11-01")], blogs=(services.BlogInfo("A", long_name, "생활", 10, 2, 3), services.BlogInfo("B", "블로그 비", "IT", 5, 1, 1)))
         for size in ((1920, 1080), (1440, 900), (1366, 768), (1100, 700)):
@@ -203,7 +203,7 @@ class ShellTest(QtBase):
             labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text() == long_name]
             self.assertEqual(len(labels), 1, size)
             label = labels[0]
-            self.assertEqual(label.toolTip(), long_name)                                     # 줄어든 글의 전체는 툴팁에
+            self.assertEqual(label.toolTip(), long_name)                                     # 툴팁은 부품이 받은 글(여기서는 30자 이름이라 뷰모델이 줄이지 않았다)
             card = label.parentWidget()
             while card is not None and card.property("card") != "true":
                 card = card.parentWidget()
@@ -803,6 +803,113 @@ class StatesTest(QtBase):
         for window in windows:
             window.close()
 
+    def test_the_real_run_path_prints_one_clean_line_for_a_slot_error_with_a_path_with_spaces(self):
+        """진짜 `run()` 으로(이벤트 루프만 가짜) — 타이머 슬롯에서 난 예외가 설치된 훅을 거쳐 표준 오류에 한 줄로 나가고, 공백이 든 경로는 통째로 지워진다(독립 검증 N-1 — `(경로) Doe/Documents/x.db`)."""
+        err = io.StringIO()
+
+        def fake_exec(*_):
+            def boom():
+                raise OSError("열 수 없음 'C:\\\\Users\\\\Jane Doe\\\\Documents\\\\x.db' (접근 거부)")
+
+            QTimer.singleShot(0, boom)
+            ui_offscreen.settle(self.app, 6)
+            return 0
+
+        with mock.patch.object(qapp.QApplication, "exec", fake_exec), mock.patch.object(sys, "excepthook", sys.excepthook), contextlib.redirect_stderr(err):
+            self.assertEqual(qapp.run(services.FakeHomeProvider(), argv=["t"]), 0)
+        self.assertEqual(err.getvalue().strip().splitlines(), [f"{text.T['unexpected_line']} (OSError): 열 수 없음 '(경로)' (접근 거부)"])
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, shell_module.AppShell):
+                widget.close()
+
+    def test_a_late_cancel_signal_after_the_screen_was_already_freed_shows_nothing_again(self):
+        """취소를 누르면 화면이 바로 풀리고 안내가 한 번 뜬다. 끊을 수 없던 일이 몇 초 뒤 끝나며 보내는 취소 신호가 같은 안내와 다시 그리기를 또 부르던 것(독립 검증 N-3 — 5초 일은 5초 뒤에 안내가 다시 떴다)."""
+        gates, fail_next = [], []
+
+        class Stubborn(services.HomeProvider):
+            def load_home(self, progress, cancelled):
+                gate = threading.Event()
+                gates.append(gate)
+                gate.wait(8)                                                             # 취소를 보지 않는다
+                if fail_next:
+                    raise JobFailure("늦은 실패", code="LATE_FAILURE")
+                return services.HomeData(topics=services.sample_topics(3), sample=False)
+
+        window = self.make(Stubborn(), wait=None)
+        notices, renders = [], []
+        notify, render = window.notify, window.render
+        window.notify = lambda message: (notices.append(message), notify(message))[1]
+        window.render = lambda: (renders.append(1), render())[1]
+
+        def cancelled_notices():
+            return notices.count(text.T["load_cancelled"])
+
+        def finish_the_job():
+            gates[-1].set()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not window.state.loading, 8))
+            ui_offscreen.settle(self.app, 15, 0.03)                                      # 끝 신호가 화면 스레드에 닿을 때까지 충분히
+
+        for cycle in (1, 2):                                                             # 두 번째에도 취소가 보인다(첫 취소가 귀를 막아 두지 않는다)
+            self.assertTrue(window.reload(), cycle)
+            window.cancel_load()
+            self.assertEqual(cancelled_notices(), cycle)
+            self.assertNotEqual(window.state.list_state, "loading")
+            window.cancel_load()                                                         # 같은 일에 또 눌러도 안내·다시 그리기는 그대로
+            self.assertEqual(cancelled_notices(), cycle)
+            drawn = len(renders)
+            finish_the_job()                                                             # 이제 일이 끝난다 — 늦은 취소 신호가 온다
+            self.assertEqual(cancelled_notices(), cycle, "늦은 취소 신호가 같은 안내를 또 띄웠다")
+            self.assertEqual(len(renders), drawn, "늦은 취소 신호가 화면을 다시 그렸다")
+        with mock.patch.object(window.state, "cancel_load"):                             # 취소가 일에 닿지 못한 경우(일이 막 끝나던 때) — 취소 신호 대신 결과가 온다
+            self.assertTrue(window.reload())
+            window.cancel_load()
+        self.assertEqual(cancelled_notices(), 3)
+        finish_the_job()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.list_state == "normal", 5))      # 결과가 와서 보인다
+        self.assertEqual(cancelled_notices(), 3)
+        self.assertTrue(window.reload())                                                 # 그 뒤 새 일에 취소를 눌러도 보인다(안 온 취소 신호를 기다리며 막혀 있지 않다)
+        window.cancel_load()
+        self.assertEqual(cancelled_notices(), 4)
+        finish_the_job()
+        self.assertEqual(cancelled_notices(), 4)
+        fail_next.append(1)                                                              # 일이 늦게 '실패' 로 끝나는 경우도 같다 — 실패 신호가 오면 기억이 지워진다
+        with mock.patch.object(window.state, "cancel_load"):
+            self.assertTrue(window.reload())
+            window.cancel_load()
+        self.assertEqual(cancelled_notices(), 5)
+        finish_the_job()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.list_state == "error", 5))
+        fail_next.clear()
+        self.assertTrue(window.reload())
+        window.cancel_load()
+        self.assertEqual(cancelled_notices(), 6)
+        finish_the_job()
+        self.assertEqual(cancelled_notices(), 6)
+
+    def test_the_global_hook_and_the_slot_guard_survive_having_no_standard_error(self):
+        """pythonw·창 없는 exe 처럼 `sys.stderr` 가 None 이어도 훅·슬롯 보호는 예외 없이 쉬운 안내와 오류 상태로 끝난다(독립 검증 N-2)."""
+        window = self.make()
+        out = io.StringIO()
+        with mock.patch.object(sys, "stderr", None), contextlib.redirect_stdout(out):
+            try:
+                raise ValueError("C:\\Users\\Jane Doe\\x.db")
+            except ValueError:
+                qapp.make_excepthook(window)(*sys.exc_info())
+            self.assertEqual(window.toast.text(), text.T["job_failed"])
+            window._on_loaded("이상한 값")
+        self.assertEqual(window.state.list_state, "error")
+        self.assertEqual(out.getvalue(), "")                                             # 표준 출력으로 새지도 않는다
+
+    def test_the_global_hook_erases_a_path_with_spaces_whole(self):
+        window = self.make()
+        stream = io.StringIO()
+        try:
+            raise OSError(f"열 수 없음 'C:\\\\Users\\\\Jane Doe\\\\비밀 노트.txt' 키 {FAKE_KEY}")
+        except OSError:
+            qapp.make_excepthook(window, stream)(*sys.exc_info())
+        line = stream.getvalue()
+        self.assertEqual(line.strip().splitlines(), [f"{text.T['unexpected_line']} (OSError): 열 수 없음 '(경로)' 키 [가림: Google API 키]"])
+
 
 class SafetyTest(QtBase):
     def test_titles_and_text_with_html_are_shown_as_plain_text(self):
@@ -858,6 +965,27 @@ class SafetyTest(QtBase):
                 self.assertIn("가림", everything)
                 self.assertIn("블로그 [가림", " ".join(w.text() for w in window.findChildren(QLabel)))        # 우측 패널의 블로그 이름: 앞부분은 보이고 키는 가려졌다
                 window.close()
+
+    def test_a_forty_character_blog_name_shows_and_tooltips_the_thirty_character_text_the_adapter_made(self):
+        """툴팁은 '전체' 가 아니라 받은 글이다 — 어댑터가 가린 뒤 30자로 줄인 글(독립 검증 N-5). 40자 이름은 라벨도 툴팁도 29자 + …"""
+        sys.path.insert(0, str(ROOT / "tests"))
+        import service_support as support
+        from chanceblog_desktop.content.profiles import NaverProfile
+        from chanceblog_desktop.service import candidates as candidate_service
+        from chanceblog_desktop.ui import adapters
+        name = "가나다라마바사아자차" * 4
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = support.make_ctx(tmp)
+            ctx.settings.save_naver_profile(NaverProfile("naver_a", name, "https://blog.naver.com/exampleaaa", default_tags=("생활",), min_chars=10, max_chars=20000))
+            candidate_service.add_candidate(ctx, topic="주제", keyword="키워드", blogs=("naver_a",))
+            window = self.make(adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx))
+            labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text().startswith("가나다라")]
+            self.assertEqual(len(labels), 1)
+            expected = name[:adapters.NAME_LIMIT - 1] + "…"
+            self.assertEqual((labels[0].text(), labels[0].toolTip()), (expected, expected))
+            self.assertEqual(len(labels[0].toolTip()), adapters.NAME_LIMIT)
+            self.assertNotIn(name[:adapters.NAME_LIMIT + 1], labels[0].toolTip())
+            window.close()
 
     def test_visible_texts_never_contain_english_codes_internal_ids_or_promises(self):
         window = self.make()
@@ -977,6 +1105,35 @@ class ComponentsTest(QtBase):
         everything = " ".join(w.text() for w in window.findChildren(QLabel)) + " ".join(w.accessibleName() + w.toolTip() for w in window.findChildren(QWidget))
         self.assertNotIn(FAKE_KEY, everything)
         self.assertIn("가림", everything)
+
+    def test_an_elided_label_keeps_a_one_line_height_that_follows_its_font(self):
+        """글꼴이 스타일시트로 정해지거나 바뀌면 한 줄 높이도 따라 달라진다 — 레이아웃이 새 높이를 받아야 큰 글자가 안 잘린다. 글이 있든 없든 같다.
+        (독립 검증의 변이 N52 — `changeEvent` 의 `updateGeometry()` 를 지우는 것 — 는 동등 변이다: 부모 클래스의 `QWidget.changeEvent` 가 글꼴·스타일이 바뀔 때 어차피 `updateGeometry()` 를 부른다. 이 시험은 높이가 글꼴을 따라가야 한다는 약속 자체를 지킨다.)"""
+        window = self.make()
+        for shown in ("높이 시험 글", ""):
+            label = UI.ElidedLabel(shown, "small")
+            box = QWidget(window.centralWidget())
+            layout = QVBoxLayout(box)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(label)
+            layout.addStretch(1)
+            box.resize(300, 300)
+            box.show()
+            self.settle(4)
+            before = label.height()
+            self.assertEqual(before, label.fontMetrics().lineSpacing() + 2, repr(shown))
+            label.setStyleSheet("QLabel { font-size: 40px; }")
+            self.settle(4)
+            self.assertEqual(label.height(), label.fontMetrics().lineSpacing() + 2, repr(shown))
+            self.assertGreater(label.height(), before)
+            label.setStyleSheet("")
+            self.settle(4)
+            self.assertEqual(label.height(), before, repr(shown))
+            label.setStyleSheet("QLabel { font-size: 8px; }")                            # 작아질 때도 따라간다(커질 때는 `minimumSizeHint` 가 받쳐 줘서 이 쪽이 `sizeHint` 를 확인한다)
+            self.settle(4)
+            self.assertEqual(label.height(), label.fontMetrics().lineSpacing() + 2, repr(shown))
+            self.assertLess(label.height(), before)
+            box.deleteLater()
 
 
 class ToolsTest(QtBase):

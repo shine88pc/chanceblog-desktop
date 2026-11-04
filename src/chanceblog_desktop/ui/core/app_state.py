@@ -24,7 +24,11 @@ LOAD_KEY = "home-load"
 BLOG_NAMES = {"A": "블로그 A", "B": "블로그 B"}
 STATUS_LABEL = {"new": "새 후보", "selected": "선택됨", "hold": "보류"}
 TREND_ICON = {"up": "trend_up", "flat": "trend_flat", "down": "trend_down"}
-_PATH_LIKE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s'\"<>|*?]*")           # 드라이브 경로·네트워크 경로(\\서버\폴더) — 오류 한 줄에서 지운다
+# 오류 한 줄에서 지울 경로의 시작 모양 셋 — ① 드라이브 경로(`C:\`·`C:/`; 앞이 영숫자면 `https:/` 같은 주소의 한 조각이라 아니다) ② 네트워크 경로(`\\서버\공유`)
+# ③ 유닉스식·사용자 폴더 경로(`/home/…`·`경로:/home/…`·`//서버/…`·`~/…`; 앞이 낱말 글자·`./\~<>-` 이면 날짜(`11/04`)·`a/b`·닫는 태그(`</p>`)지 경로가 아니고, `//` 앞이 `:` 이면 주소(`https://…`)다)
+_PATH_START = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|(?<![\w.:/\\~<>-])//|(?<![\w./\\~<>-])(?:~[\\/]|/(?=[\w.~-]))")
+_LINE_BREAKS = "\r\n\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"                      # `str.splitlines()` 가 줄을 가르는 글자 — 경로 안에는 있을 수 없다
+_PATH_END = {quote: re.compile((re.escape(quote) + "(?![A-Za-z0-9])|" if quote else "") + "[" + _LINE_BREAKS + "]") for quote in ("", "'", '"', "`")}     # 따옴표 뒤가 영숫자면(`O'Brien`) 닫는 따옴표가 아니다
 
 
 def shown(value, limit=300):
@@ -48,20 +52,42 @@ def diagnostic_text(failure, when=None):
     return f"{T['diag_code']}: {code}\n{T['diag_when']}: {stamp}"
 
 
+def erase_paths(text):
+    """글 속 절대 경로를 `(경로)` 로 바꾼다(드라이브·네트워크·유닉스식·`~` 경로). **경로에는 공백이 들어 있을 수 있어**(사용자 이름 `Jane Doe` 나 `Program Files` 폴더처럼) 공백에서 끊으면 이름 조각(`Doe`)이 남는다 —
+    따옴표로 연 경로는 짝이 되는 따옴표 앞까지, 아니면 그 줄 끝까지 지운다(어디서 끝나는지 알 수 없을 때는 더 많이 지우는 쪽이 안전하다). 같은 글에 경로가 여럿이어도 한 번 훑는다(글 길이에 선형)."""
+    pieces, pos = [], 0
+    while True:
+        found = _PATH_START.search(text, pos)
+        if found is None:
+            break
+        start = found.start()
+        quote = text[start - 1] if start and text[start - 1] in "'\"`" else ""
+        end = _PATH_END[quote].search(text, found.end())
+        pieces += [text[pos:start], "(경로)"]
+        pos = end.start() if end else len(text)
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
 def unexpected_line(kind, value):
     """처리하지 못한 예외 하나를 표준 오류에 남길 **한 줄**로 — 예외 이름 + 비밀 모양을 가리고 경로를 지운 짧은 글. 추적(traceback)은 내지 않는다(경로·값이 들어 있다). 어떤 값이 와도 예외를 내지 않는다."""
     name = getattr(kind, "__name__", "") or "Exception"
     try:
-        detail = shown(_PATH_LIKE.sub("(경로)", str(value)), 120)                 # 경로를 지운 뒤 가리고(→) 줄인다 — 가리기가 자르기보다 먼저
+        detail = shown(erase_paths(str(value)), 120)                              # 경로를 지운 뒤 가리고(→) 줄인다 — 가리기가 자르기보다 먼저(줄 끝까지 지우므로 줄바꿈이 한 칸으로 합쳐지기 전에 지운다)
     except Exception:
         detail = ""
     return f"{T['unexpected_line']} ({name})" + (f": {detail}" if detail else "")
 
 
 def report_unexpected(kind, value, stream=None):
-    """처리하지 못한 예외를 `unexpected_line` 한 줄로 표준 오류에 남긴다(조용한 실패 금지 — 원인이 어디에도 안 남지 않게). 남겼으면 True. 표준 오류를 쓸 수 없어도 예외를 내지 않는다(이 함수는 오류를 처리하는 중에 불린다)."""
+    """처리하지 못한 예외를 `unexpected_line` 한 줄로 표준 오류에 남긴다(조용한 실패 금지 — 원인이 어디에도 안 남지 않게). 남겼으면 True. 표준 오류를 쓸 수 없어도 예외를 내지 않는다(이 함수는 오류를 처리하는 중에 불린다).
+    **표준 오류가 없는 실행**(`pythonw`·창 없는 exe — `sys.stderr` 가 None)에서는 남길 곳이 없어 False 를 돌려준다(`print(file=None)` 은 표준 출력으로 가므로 그대로 두면 아무것도 안 남았는데 True 가 된다) — 이 묶음은 파일을 쓰지 않는다(읽기 전용);
+    로그 파일은 설치 파일 묶음에서 정한다."""
+    target = stream if stream is not None else sys.stderr
+    if target is None:
+        return False
     try:
-        print(unexpected_line(kind, value), file=stream if stream is not None else sys.stderr)
+        print(unexpected_line(kind, value), file=target)
         return True
     except Exception:
         return False
