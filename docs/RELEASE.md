@@ -37,3 +37,7 @@
 ## 확인하지 못한 것
 
 Velopack 의 롤백·서명 검증은 '문서에 없음'일 뿐 코드는 미확인(정적 `latest/download` URL 방식 시험 필요), 파이썬 SDK 레퍼런스가 얇음, 설치기 한국어 지원, 토스트 알림용 앱 식별자, PyInstaller 오탐 빈도, 설치 크기·빌드 시간 실측, 서명 서비스의 한국 개인 자격. 점검 시점: 2026-11 말(서명 서비스 지역·자격), 2026-12(Velopack 1.3 정식·파이썬 SDK).
+
+**설치 시험 항목(화면, D-32)**: 설치 파일에 PySide6 와 함께 **JPG·PNG·WebP 를 읽는 Qt 이미지 형식 플러그인**(`PySide6/plugins/imageformats` 의 `qjpeg`·`qwebp`)이 들어갔는지, 설치된 환경에서 `QImageReader.supportedImageFormats()` 에 `jpeg`·`png`·`webp` 가 있는지, 실제 윈도 125%·150% 화면·한글 입력기·화면 읽기 프로그램에서 홈 화면이 잘리지 않는지 확인한다([`UI_IMAGES.md`](UI_IMAGES.md) §4, [`UI_VISUAL_QA.md`](UI_VISUAL_QA.md) §6).
+
+**라이선스 확인(화면, D-32)**: **PySide6(Qt for Python)는 LGPL 이다.** 개발·시험에 쓰는 것은 문제없지만 PySide6 를 설치 파일에 넣어 배포하기 전에는 ① 고지(저작권·라이선스 문구·LGPL 전문·소스를 얻는 방법을 설치 파일·앱 안 '정보' 에 싣기) ② 재배포 조건(사용자가 PySide6·Qt 라이브러리를 바꿔 끼울 수 있게 동적 링크 상태로 두는 것 — 단일 파일로 합치거나 정적으로 묶는 방식은 조건을 따져 봐야 한다) 을 검토해야 한다. 앱 자체의 라이선스가 미정(D-13)이라 그 결정과 함께 정한다.
