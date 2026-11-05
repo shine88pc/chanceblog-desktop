@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import NamedTuple
 
 from . import suggest_text as text
-from .suggest_data import SEASONS
+from .suggest_data import RELATED_COMPOUNDS, SEASONS
 
 # ---- 우선도 요인과 가중치(합 100) ------------------------------------------------------------------------------------------------
 FACTORS = ("fit", "season", "freshness", "balance", "opportunity")
@@ -133,39 +133,80 @@ def opportunity(search_demand=None, related_blog_results=None, trend=None):
 GENERIC_WORD_STEMS = frozenset({"준비", "시즌", "시기", "행사", "마무리"})      # 시기 낱말 속에 들어 있어도 주제를 가리키지 않는 말('여름 휴가 준비' 의 '준비') — 이어지는 낱말로는 쓰지 않는다
 
 
-def _related_stems(item):
-    """시기와 이어지는 낱말 — 항목의 `related` 와 시기 낱말의 어근(너무 흔한 말은 뺀다)."""
-    return frozenset(text.stem(word) for word in item.related) | (text.stem_set(item.word) - GENERIC_WORD_STEMS)
+# 표의 낱말 뒤에 붙어도 같은 낱말로 보는 조사 — 작은 허용 목록이다(시험이 이 목록을 못박는다). 이 밖의 글자가 붙으면 다른 낱말이다('카드'+'뮴'·'아이'+'폰'·'운동'+'화'). 낱말 처리(`suggest_text.stem`)가 떼는 어미와 맞춰
+# 시기 낱말 통째 일치('김장에도' = 100)와 이어지는 낱말 일치('세금에도' = 70)가 같은 글을 같게 읽는다. 복수 '들'·'나는' 은 오탐 위험이라 넣지 않았다('세금들'·'아이들' 은 사전에 적은 것만).
+PARTICLE_TAILS = frozenset({"은", "는", "이", "가", "을", "를", "의", "에", "로", "와", "과", "도", "만", "으로", "에서", "까지", "부터", "이나", "이랑", "하고", "처럼",
+                            "에는", "에도", "에서는", "에서도", "으로는", "보다", "마다", "에게", "한테", "라도", "이라", "이며", "이란", "랑"})
+_MAX_TAIL = max(len(tail) for tail in PARTICLE_TAILS)
 
 
-def _is_related(tokens, related):
-    """글의 낱말(두 글자 이상) 중 하나가 시기와 이어지는 낱말과 같거나 서로 포함되면 이어진다."""
+_CONNECTORS = {}                    # 시기 항목 → `_connectors` 의 결과(표는 순수 자료라 항목마다 한 번만 만든다)
+
+
+def _connectors(item):
+    """시기와 이어지는 말 → (한 낱말들, 띄어 쓴 구문들(낱말 묶음)) — 항목의 `related` 와 시기 낱말의 낱말(두 글자 이상, 너무 흔한 말은 뺀다)이고, 한 낱말은 `RELATED_COMPOUNDS` 에 적힌 붙여 쓴 복합어도 함께 가진다."""
+    found = _CONNECTORS.get(item)
+    if found is None:
+        found = _CONNECTORS[item] = _build_connectors(item)
+    return found
+
+
+def _build_connectors(item):
+    singles, phrases = set(), set()
+    for entry in item.related:
+        parts = tuple(text.words(entry))
+        if len(parts) == 1 and len(parts[0]) >= text.MIN_STEM:
+            singles.add(parts[0])
+        elif len(parts) > 1:
+            phrases.add(parts)
+    for word in text.words(item.word):
+        if len(text.stem(word)) >= text.MIN_STEM and text.stem(word) not in GENERIC_WORD_STEMS:
+            singles.add(word)
+    for word in tuple(singles):
+        singles.update(found for entry in RELATED_COMPOUNDS.get(word, ()) for found in text.words(entry))
+    return frozenset(singles), frozenset(phrases)
+
+
+def _same_word(token, word):
+    """글의 낱말이 표의 낱말과 통째로 같거나, 뒤에 조사(`PARTICLE_TAILS`)만 붙은 것인가."""
+    return token == word or (token.startswith(word) and token[len(word):] in PARTICLE_TAILS)
+
+
+def _is_related(tokens, item):
+    """글의 낱말들이 그 시기 항목과 이어지는가 — ① 낱말 하나가 표의 낱말·복합어와 통째로 같거나 뒤에 조사만 붙은 것이거나 ② 표에 띄어 적은 구문의 낱말들이 글에 나란히 있다(각 낱말은 ①처럼).
+    낱말 속에 우연히 든 글자 조각('아이폰' 의 '아이'·'그래픽카드' 의 '카드')과 글의 낱말이 표의 낱말 속에 든 경우('의료' ⊂ '의료비')는 이어진 것으로 보지 않는다(D-42)."""
+    singles, phrases = _connectors(item)
     for token in tokens:
-        if len(token) < text.MIN_STEM:
-            continue
-        for word in related:
-            if len(word) >= text.MIN_STEM and (token == word or word in token or token in word):
+        if token in singles:
+            return True
+        for size in range(1, min(_MAX_TAIL, len(token) - text.MIN_STEM) + 1):
+            if token[-size:] in PARTICLE_TAILS and token[:-size] in singles:
+                return True
+    for phrase in phrases:
+        size = len(phrase)
+        for start in range(len(tokens) - size + 1):
+            if all(_same_word(tokens[start + step], phrase[step]) for step in range(size)):
                 return True
     return False
 
 
 def season_fit(sentence, month):
-    """(시기 적합 점수, 맞은 시기 항목 | None) — 글에 그 달의 시기 낱말이 통째로 들어 있으면 `SEASON_MATCH`, 시기 낱말은 없지만 시기와 이어지는 낱말이 있으면 `SEASON_RELATED`, 아니면 `SEASON_NEUTRAL`."""
-    stems = text.stems(sentence)
-    present = frozenset(stems)
+    """(시기 적합 점수, 맞은 시기 항목 | None) — 글에 그 달의 시기 낱말이 통째로 들어 있으면 `SEASON_MATCH`, 시기 낱말은 없지만 시기와 이어지는 낱말·구문이 있으면 `SEASON_RELATED`(일치 규칙은 `_is_related`), 아니면 `SEASON_NEUTRAL`."""
+    tokens = text.words(sentence)
+    present = frozenset(text.stem(token) for token in tokens)
     for item in SEASONS[month]:
         if text.contains_all(present, text.stem_set(item.word)):
             return SEASON_MATCH, item
     for item in SEASONS[month]:
-        if _is_related(stems, _related_stems(item)):
+        if _is_related(tokens, item):
             return SEASON_RELATED, item
     return SEASON_NEUTRAL, None
 
 
 def related_items(sentence, month):
     """그 달의 시기 항목 중 글(씨앗)과 이어지는 것들(표의 순서대로)."""
-    stems = text.stems(sentence)
-    return tuple(item for item in SEASONS[month] if _is_related(stems, _related_stems(item)))
+    tokens = text.words(sentence)
+    return tuple(item for item in SEASONS[month] if _is_related(tokens, item))
 
 
 def month_of(value):
@@ -204,7 +245,7 @@ def data_age(data_date, today):
 
 
 __all__ = [
-    "BALANCE_STEP", "DEMAND_FULL", "DataAge", "FACTORS", "FACTOR_HELP", "FACTOR_NAMES", "HIGH", "HIGH_FROM", "LOW", "MID", "MID_FROM", "OPPORTUNITY_WEIGHTS", "Part", "Priority", "RESULTS_FULL",
+    "BALANCE_STEP", "DEMAND_FULL", "DataAge", "FACTORS", "FACTOR_HELP", "FACTOR_NAMES", "HIGH", "HIGH_FROM", "LOW", "MID", "MID_FROM", "OPPORTUNITY_WEIGHTS", "PARTICLE_TAILS", "Part", "Priority", "RESULTS_FULL",
     "SEASON_MATCH", "SEASON_NEUTRAL", "SEASON_OFF", "SEASON_RELATED", "SEED_STRENGTH", "SIMILAR_FROM", "STALE_DATA_DAYS", "TREND_POINTS", "TYPE_BONUS", "WEIGHTS", "balance_score", "clamp",
     "combine", "data_age", "fit_score", "freshness_score", "level_of", "month_of", "opportunity", "related_items", "season_fit",
 ]
