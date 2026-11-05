@@ -85,7 +85,7 @@ class PostsJsonTest(unittest.TestCase):
         self.assertEqual(result.warnings, ())
         record = result.records[0]
         self.assertEqual((record.channel, record.title, record.keywords, record.date, record.language, record.ref, record.origin),
-                         ("github_pages", "예시 글 제목 하나", ("예시", "표본"), "2026-10-18", "ko", "2026-10-18-AI.md", "posts_json"))
+                         ("github_pages", "예시 글 제목 하나", ("예시", "표본"), "2026-10-18", "ko", "2026-10-18-AI", "posts_json"))      # P2b(독립 검증 M5) 의도적 갱신: 글 번호는 `.md` 를 뗀 모양이다(머리말 길과 같은 글에 같은 번호)
         self.assertEqual(record.url, "https://blog.example.test/sample/2026/10/18/example/", "절대 주소를 먼저 쓴다")
         self.assertNotIn("content", record.to_dict())
         self.assertNotIn("본문", repr(record))
@@ -172,6 +172,53 @@ class PostsJsonTest(unittest.TestCase):
         self.assertEqual(items, before)
 
 
+class DayDigitsTest(unittest.TestCase):
+    # P2b(독립 검증 M6 ②): 날짜 정규식의 `[0-9]` 를 `\d` 로 바꿔도 시험이 통과했다 — 전각·아랍 숫자 날짜는 날짜가 아니다.
+    def test_only_ascii_digits_make_a_day(self):
+        for good in ("2026-11-05", "2000-01-01", "2200-12-31", "2028-02-29"):
+            self.assertEqual(hs.valid_day(good), good)
+        fullwidth = "".join(chr(ord(ch) + 0xFEE0) if ch.isdigit() else ch for ch in "2026-11-05")
+        arabic = "".join(chr(0x0660 + int(ch)) if ch.isdigit() else ch for ch in "2026-11-05")
+        devanagari = "".join(chr(0x0966 + int(ch)) if ch.isdigit() else ch for ch in "2026-11-05")
+        mixed = "2026-" + chr(0x0661) + chr(0x0661) + "-05"
+        for bad in (fullwidth, arabic, devanagari, mixed, "2026-11-05" + chr(10), " 2026-11-05","2026-11-05 ", "2026/11/05", "26-11-05", "2026-1-05", "2026-02-30", "1999-12-31", "", None, 20261105):
+            with self.subTest(day=repr(bad)[:20]):
+                self.assertIsNone(hs.valid_day(bad))
+
+    def test_a_record_and_the_readers_refuse_such_dates_too(self):
+        arabic = "".join(chr(0x0660 + int(ch)) if ch.isdigit() else ch for ch in "2026-10-18")
+        with self.assertRaises(ValueError):
+            hs.HistoryRecord(channel="github_pages", title="예시", date=arabic, origin="posts_json")
+        result = hs.read_posts_json([dict(POST, date=arabic)])
+        self.assertIsNone(result.records[0].date)
+        self.assertEqual(messages(result), ["항목 1: 날짜를 읽지 못했습니다 — 나머지는 그대로 읽습니다"])
+
+
+class SameRefTest(unittest.TestCase):
+    # P2b(독립 검증 M5): 같은 글이 `posts.json` 길과 머리말 길로 들어오면 서로 다른 글 번호(`…KR-000001.md` 와 `…KR-000001`)가 되어 서로 다른 글로 세어질 수 있었다.
+    def test_the_two_paths_give_the_same_ref_for_the_same_post_file(self):
+        for name in ("2026-10-18-KR-000001.md", "2026-10-18-AI.md", "2026-10-18-EN-225949.md", "2026-10-19-KR-233513.md"):
+            with self.subTest(name=name):
+                from_json = hs.read_posts_json([dict(POST, name=name)]).records[0]
+                from_header = hs.read_front_matter(HEADER, filename=name).records[0]
+                self.assertEqual(from_json.ref, from_header.ref)
+                self.assertEqual(from_json.ref, name[:-3])
+                self.assertFalse(from_json.ref.endswith(".md"))
+
+    def test_a_path_or_an_upper_case_extension_is_cut_the_same_way_on_both_paths(self):
+        for name in ("_posts/Sample/2026-10-18-KR-000001.md", "_posts\\Sample\\2026-10-18-KR-000001.md", "2026-10-18-KR-000001.MD", "2026-10-18-KR-000001.Md"):
+            with self.subTest(name=name):
+                self.assertEqual(hs.read_posts_json([dict(POST, name=name)]).records[0].ref, "2026-10-18-KR-000001")
+                self.assertEqual(hs.read_front_matter(HEADER, filename=name).records[0].ref, "2026-10-18-KR-000001")
+
+    def test_a_name_without_the_extension_or_a_number_name_is_kept_and_a_missing_or_odd_name_gives_no_ref(self):
+        self.assertEqual(hs.read_posts_json([dict(POST, name="2026-10-18-KR-000001")]).records[0].ref, "2026-10-18-KR-000001")
+        self.assertEqual(hs.read_posts_json([dict(POST, name=12345)]).records[0].ref, "12345")
+        for name in (None, "", ".md", "한글.md"):
+            with self.subTest(name=name):
+                self.assertIsNone(hs.read_posts_json([dict(POST, name=name)]).records[0].ref)
+
+
 class FrontMatterTest(unittest.TestCase):
     def test_a_real_shaped_header_gives_the_title_tags_language_and_the_date_from_the_file_name(self):
         result = hs.read_front_matter(HEADER, filename="2026-10-18-AI.md")
@@ -180,6 +227,34 @@ class FrontMatterTest(unittest.TestCase):
         self.assertEqual((record.channel, record.title, record.keywords, record.date, record.language, record.ref, record.origin),
                          ("github_pages", "예시 머리말 제목: 부제가 있는 경우", ("예시", "쉼표, 들어간 태그", "표본"), "2026-10-18", "ko", "2026-10-18-AI", "front_matter"))
         self.assertIsNone(record.url)
+
+    def test_a_title_that_is_only_a_yaml_marker_is_not_read_as_a_title(self):
+        # P2b(독립 검증 L5): `title: >`·`|-`·`null`·`~`·`true` 가 그대로 제목이 되어 '>' 나 'null' 이라는 글이 이력에 들어갔다.
+        for marker in (">", "|", ">-", "|-", ">+", "|+", "null", "Null", "NULL", "~", "true", "True", "false", "FALSE"):
+            with self.subTest(marker=marker):
+                result = hs.read_front_matter(f"---\ntitle: {marker}\ntags: [가]\n---\n본문\n", filename="2026-10-18-KR-000001.md")
+                self.assertEqual(result.records, ())
+                self.assertEqual(len(result.warnings), 1)
+                self.assertTrue(result.warnings[0].skipped)
+                self.assertIn("YAML 표시", result.warnings[0].message())
+
+    def test_a_quoted_marker_or_a_title_that_only_starts_like_one_is_a_real_title(self):
+        for raw, expected in (('"null"', "null"), ("'true'", "true"), ('">"', ">"), ("nullable 이야기", "nullable 이야기"), ("true story", "true story"), ("~물결", "~물결"), ("> 인용 같은 제목", "> 인용 같은 제목")):
+            with self.subTest(raw=raw):
+                result = hs.read_front_matter(f"---\ntitle: {raw}\n---\n본문\n")
+                self.assertEqual([record.title for record in result.records], [expected])
+
+    def test_an_unreadable_header_date_is_a_warning_and_falls_back_to_the_file_name_day(self):
+        # 독립 검증 L5: 머리말 날짜가 틀려도 경고 없이 파일 이름의 날짜가 쓰였다.
+        broken = HEADER.replace("lang: ko\n", "lang: ko\ndate: 어제 오후\n")
+        result = hs.read_front_matter(broken, filename="2026-10-18-KR-000001.md")
+        self.assertEqual(result.records[0].date, "2026-10-18")
+        self.assertEqual(messages(result), ["머리말: 머리말 날짜를 읽지 못했습니다(파일 이름의 날짜를 씁니다) — 나머지는 그대로 읽습니다"])
+        none_at_all = hs.read_front_matter(broken, filename="이름.md")
+        self.assertIsNone(none_at_all.records[0].date)
+        self.assertEqual(messages(none_at_all), ["머리말: 머리말 날짜를 읽지 못했습니다 — 나머지는 그대로 읽습니다"])
+        self.assertEqual(hs.read_front_matter(HEADER.replace("lang: ko\n", "lang: ko\ndate: 2026-10-20T09:00:00+09:00\n"), filename="2026-10-18-KR-000001.md").warnings, ())
+        self.assertEqual(hs.read_front_matter(HEADER.replace("lang: ko\n", "lang: ko\ndate:\n"), filename="2026-10-18-KR-000001.md").warnings, (), "비어 있는 날짜는 없는 것과 같다")
 
     def test_the_directory_part_of_the_file_name_is_ignored_for_both_slash_kinds(self):
         for name in ("_posts/EN - Space/2026-10-19-KR-233513.md", "_posts\\KR - Tech\\2026-10-19-KR-233513.md", "2026-10-19-KR-233513.md"):

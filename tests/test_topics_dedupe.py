@@ -347,9 +347,10 @@ class MarkedTest(unittest.TestCase):
     def setUp(self):
         self.made = cand(topic="로컬 ai 사양 확인", primary_keyword="로컬 AI 사양", scores=ts.flat_card(90), work_status="REVIEW")
         self.matches = dd.find_matches(self.made, [record("로컬 ai 사양 확인", ref="r100"), record("로컬 ai 사양 점검", ref="r60"), record("로컬 ai 사양 검토 확인", ref="r70")], B)
+        self.compared = 3                    # P2b(독립 검증 M3) 의도적 갱신: `marked` 는 견준 기존 글의 수(`compared`)를 꼭 받는다
 
     def test_the_worst_status_and_the_reference_numbers_are_written_to_the_display_fields_only(self):
-        result = dd.marked(self.made, self.matches)
+        result = dd.marked(self.made, self.matches, compared=self.compared)
         self.assertEqual(result.duplicate_status, "duplicate_or_update")
         self.assertEqual(result.similar_post_ids, tuple(match.record.ref for match in self.matches))
         for name in ("scores", "work_status", "topic", "primary_keyword", "channel", "candidate_id", "recommendation_band", "review_expires_at", "selection_reasons"):
@@ -358,34 +359,55 @@ class MarkedTest(unittest.TestCase):
 
     def test_the_original_candidate_is_not_changed(self):
         before = self.made.to_dict()
-        dd.marked(self.made, self.matches)
+        dd.marked(self.made, self.matches, compared=self.compared)
         self.assertEqual(self.made.to_dict(), before)
         self.assertIsNone(self.made.duplicate_status)
 
-    def test_no_similar_post_means_a_different_topic_and_no_numbers(self):
-        result = dd.marked(self.made, ())
+    def test_no_similar_post_among_records_that_were_compared_means_a_different_topic_and_no_numbers(self):
+        result = dd.marked(self.made, (), compared=5)
         self.assertEqual((result.duplicate_status, result.similar_post_ids), ("different_topic", ()))
+        self.assertEqual(dd.marked(self.made, (), compared=1).duplicate_status, "different_topic")
+
+    def test_when_nothing_could_be_compared_the_status_stays_unknown_and_the_candidate_is_left_as_it_was(self):
+        # P2b(독립 검증 M3): 비교할 이력이 하나도 없어도(이력을 못 읽은 날) '다른 주제' 로 적던 거짓 확신을 막는다 — '모름 ≠ 0'.
+        result = dd.marked(self.made, (), compared=0)
+        self.assertIsNone(result.duplicate_status)
+        self.assertEqual((result.similar_post_ids, result.to_dict()), ((), self.made.to_dict()))
+        earlier = dd.marked(self.made, self.matches, compared=3)
+        self.assertEqual(dd.marked(earlier, (), compared=0), earlier, "이미 적힌 표시도 지우지 않고 그대로 둔다")
+
+    def test_marked_wants_the_number_of_compared_records_as_a_keyword_and_checks_that_it_makes_sense(self):
+        with self.assertRaises(TypeError):
+            dd.marked(self.made, self.matches)
+        for bad in (-1, 1.5, True, "3", None):
+            with self.subTest(compared=bad):
+                with self.assertRaises(ValueError):
+                    dd.marked(self.made, self.matches, compared=bad)
+        with self.assertRaises(ValueError):
+            dd.marked(self.made, self.matches, compared=2)               # 비슷한 글이 셋인데 둘만 견줬다는 말은 앞뒤가 안 맞는다
+        self.assertEqual(dd.marked(self.made, self.matches, compared=3).duplicate_status, "duplicate_or_update")
+        self.assertEqual(dd.marked(self.made, self.matches, compared=300).duplicate_status, "duplicate_or_update")
 
     def test_a_match_without_a_reference_sets_the_status_but_adds_no_number(self):
         found = dd.find_matches(self.made, [record("로컬 ai 사양 점검")], B)
-        result = dd.marked(self.made, found)
+        result = dd.marked(self.made, found, compared=1)
         self.assertEqual((result.duplicate_status, result.similar_post_ids), ("different_angle_needed", ()))
 
     def test_repeated_numbers_are_written_once_in_order(self):
         found = dd.find_matches(self.made, [record("로컬 ai 사양 확인", ref="same"), record("로컬 ai 사양 점검", ref="same"), record("로컬 ai 사양 점검 확인", ref="other")], B)
-        self.assertEqual(dd.marked(self.made, found).similar_post_ids, ("same", "other"))
+        self.assertEqual(dd.marked(self.made, found, compared=3).similar_post_ids, ("same", "other"))
 
     def test_the_status_follows_the_most_alike_match_whatever_the_order_given(self):
         shuffled = tuple(reversed(self.matches))
-        self.assertEqual(dd.marked(self.made, shuffled).duplicate_status, "duplicate_or_update")
+        self.assertEqual(dd.marked(self.made, shuffled, compared=self.compared).duplicate_status, "duplicate_or_update")
 
     def test_a_marked_candidate_is_still_a_valid_candidate_and_survives_a_json_round_trip(self):
-        result = dd.marked(self.made, self.matches)
+        result = dd.marked(self.made, self.matches, compared=self.compared)
         self.assertEqual(md.TopicCandidate.from_dict(result.to_dict()), result)
 
     def test_a_marked_candidate_stays_visible_in_the_top_view_this_module_never_excludes_it(self):
         from chanceblog_desktop.topics import select as sel
-        result = dd.marked(self.made, self.matches)
+        result = dd.marked(self.made, self.matches, compared=self.compared)
         self.assertEqual(result.duplicate_status, "duplicate_or_update")
         self.assertEqual([item.candidate_id for item in sel.top_view([result], B).items], [self.made.candidate_id])
 
@@ -393,7 +415,48 @@ class MarkedTest(unittest.TestCase):
         for args in ((None, ()), (self.made, [None]), (self.made, [self.matches[0].record]), (self.made, None)):
             with self.subTest(args=repr(args)[:20]):
                 with self.assertRaises(TypeError):
-                    dd.marked(*args)
+                    dd.marked(*args, compared=3)
+
+
+class FindDuplicatesTest(unittest.TestCase):
+    # P2b(독립 검증 M3): '몇 개를 견줬는지' 가 있어야 '비슷한 글이 없다' 와 '견줄 글이 없다' 를 가를 수 있다.
+    def setUp(self):
+        self.made = cand(topic="로컬 ai 사양 확인", primary_keyword="로컬 AI 사양")
+
+    def test_the_matches_are_the_same_as_find_matches_and_the_compared_count_is_added(self):
+        records = [record("무선 청소기 고르는 기준"), record("로컬 ai 사양 점검", ref="r60"), record("로컬 ai 사양 확인", ref="r100"), record("로컬 ai 사양 확인", channel="naver_a", ref="other"),
+                   record("완전히 다른 글")]
+        found = dd.find_duplicates(self.made, records, B)
+        self.assertEqual(found.matches, dd.find_matches(self.made, records, B))
+        self.assertEqual(found.compared, 4, "같은 채널(네이버 B)의 기존 글 넷만 견줬다 — 다른 채널 글은 세지 않는다")
+        self.assertEqual(dd.find_duplicates(self.made, records, B, limit=1).matches, found.matches[:1])
+        self.assertEqual(dd.find_duplicates(self.made, records, B, limit=1).compared, 4)
+
+    def test_no_record_or_only_other_channels_means_nothing_was_compared(self):
+        self.assertEqual(dd.find_duplicates(self.made, [], B), dd.Duplicates((), 0))
+        self.assertEqual(dd.find_duplicates(self.made, [record("로컬 ai 사양 확인", channel="naver_a")], B), dd.Duplicates((), 0))
+        marked = dd.marked(self.made, *[dd.find_duplicates(self.made, [], B).matches], compared=dd.find_duplicates(self.made, [], B).compared)
+        self.assertIsNone(marked.duplicate_status)
+
+    def test_a_record_without_any_letters_to_compare_is_not_counted(self):
+        found = dd.find_duplicates(self.made, [record("★★★"), record("전혀 다른 글")], B)
+        self.assertEqual((found.matches, found.compared), ((), 1))
+
+    def test_unrelated_records_count_as_compared_so_the_candidate_can_be_called_a_different_topic(self):
+        found = dd.find_duplicates(self.made, [record("무선 청소기 고르는 기준"), record("여름 휴가지 정하기")], B)
+        self.assertEqual((found.matches, found.compared), ((), 2))
+        self.assertEqual(dd.marked(self.made, found.matches, compared=found.compared).duplicate_status, "different_topic")
+
+    def test_the_same_checks_as_find_matches_apply_and_the_error_names_the_function(self):
+        with self.assertRaises(TypeError) as caught:
+            dd.find_duplicates(None, [], B)
+        self.assertIn("find_duplicates", str(caught.exception))
+        with self.assertRaises(ValueError):
+            dd.find_duplicates(self.made, [], ts.PROFILES["naver_a"])
+        with self.assertRaises(ValueError):
+            dd.find_duplicates(self.made, [], B, limit=0)
+        with self.assertRaises(TypeError):
+            dd.find_duplicates(self.made, [{"title": "x"}], B)
 
 
 def pair(first_changes=None, second_changes=None, channels=("naver_a", "naver_b")):
@@ -402,8 +465,9 @@ def pair(first_changes=None, second_changes=None, channels=("naver_a", "naver_b"
     return left, right
 
 
+# P2b(독립 검증 L4) 의도적 갱신: 수익 태그가 한쪽만 비면 '모름' 이 되어 네 번째 '다른 항목' 으로 세지 않으므로 이 예시는 두 쪽 모두 태그가 있다.
 FOUR = ({"target_reader": "독자 가", "search_intent": "selection_guide", "topic_angle": "angle-a", "monetization_tags": ("pc_parts",)},
-        {"target_reader": "독자 나", "search_intent": "how_to", "topic_angle": "angle-b", "monetization_tags": ()})
+        {"target_reader": "독자 나", "search_intent": "how_to", "topic_angle": "angle-b", "monetization_tags": ("ai_service",)})
 
 
 class AcrossChannelsTest(unittest.TestCase):
@@ -443,10 +507,44 @@ class AcrossChannelsTest(unittest.TestCase):
         self.assertEqual(verdict.differing, ("reader", "language", "intent", "angle", "monetization"))
 
     def test_the_monetization_purpose_compares_the_set_of_tags_not_their_order(self):
-        for first, second, expected in ((("pc_parts", "ai_service"), ("ai_service", "pc_parts"), False), (("pc_parts",), (), True), ((), (), False), (("pc_parts",), ("ai_service",), True)):
+        # P2b(독립 검증 L4) 의도적 갱신: 한쪽만 비면 다르다가 아니라 '모름' 이다(태그를 아직 안 달았을 수 있다) — 둘 다 비면 같은 것, 둘 다 있으면 묶음이 다른지 본다.
+        for first, second, expected in ((("pc_parts", "ai_service"), ("ai_service", "pc_parts"), "same"), (("pc_parts",), (), "unknown"), ((), ("pc_parts",), "unknown"), ((), (), "same"),
+                                        (("pc_parts",), ("ai_service",), "differing"), (("pc_parts",), ("pc_parts", "ai_service"), "differing")):
             with self.subTest(first=first, second=second):
                 verdict = dd.compare_across_channels(*pair({"monetization_tags": first}, {"monetization_tags": second}))
-                self.assertEqual("monetization" in verdict.differing, expected)
+                found = next(name for name in ("differing", "same", "unknown") if "monetization" in getattr(verdict, name))
+                self.assertEqual(found, expected)
+
+    def test_an_empty_tag_list_on_one_side_alone_cannot_make_the_pair_enough(self):
+        first, second = dict(FOUR[0]), dict(FOUR[1])
+        second["monetization_tags"] = ()
+        verdict = dd.compare_across_channels(*pair(first, second))
+        self.assertEqual((verdict.differing, verdict.unknown, verdict.enough), (("reader", "intent", "angle"), ("outline", "channel_info", "monetization"), False))
+
+    def test_the_extras_must_be_true_false_or_none_and_nothing_else(self):
+        # P2b(독립 검증 L4): `PairExtras` 에 bool 검사가 없어 `1`·`'yes'` 가 달라짐/같음/모름 어디에도 안 들어갔다.
+        left, right = pair(*FOUR)
+        for bad in (1, 0, "yes", "", 1.0, [True], object()):
+            for field in ("outline_differs", "channel_info_differs"):
+                with self.subTest(field=field, value=repr(bad)[:12]):
+                    with self.assertRaises(TypeError) as caught:
+                        dd.compare_across_channels(left, right, extras=dd.PairExtras(**{field: bad}))
+                    self.assertIn(field, str(caught.exception))
+        for good in (True, False, None):
+            dd.compare_across_channels(left, right, extras=dd.PairExtras(outline_differs=good, channel_info_differs=good))
+        with self.assertRaises(TypeError):
+            dd.check_topic_spread([left, right], extras={("c-left", "c-right"): dd.PairExtras(outline_differs="yes")})
+
+    def test_two_candidates_of_different_source_topics_are_not_compared(self):
+        # P2b(독립 검증 L4): 같은 원천 주제에서 나온 두 후보를 견주는 함수다 — 번호가 다르면 거절한다(둘 다 없는 것은 같은 것으로 본다).
+        left, right = pair(*FOUR)
+        with self.assertRaises(ValueError) as caught:
+            dd.compare_across_channels(left, dataclasses.replace(right, source_topic_id="src2"))
+        self.assertIn("source_topic_id", str(caught.exception))
+        with self.assertRaises(ValueError):
+            dd.compare_across_channels(left, dataclasses.replace(right, source_topic_id=None))
+        none_left, none_right = dataclasses.replace(left, source_topic_id=None), dataclasses.replace(right, source_topic_id=None)
+        self.assertTrue(dd.compare_across_channels(none_left, none_right).enough)
 
     def test_the_reader_text_is_compared_after_normalizing_spacing_and_case(self):
         verdict = dd.compare_across_channels(*pair({"target_reader": "일반 사용자 PC"}, {"target_reader": "일반사용자 pc"}))

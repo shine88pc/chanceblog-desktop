@@ -12,10 +12,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from ..content.candidates import _invalid
+from . import wording
 from .model import LABELS, MAX_REASONS, SOURCE_TYPES, TopicCandidate, _channel, _choice, _optional_id, _texts, check_trend, stored_id
-from .score import BANDS, DATA_STATUSES, ScoreCard, band_of
+from .score import BAND_KO, BANDS, DATA_STATUSES, ScoreCard, band_of
 
 SCHEMA = 1
+LINK_FIELD_KO = MappingProxyType({"engine_candidate_id": "엔진 후보 번호", "legacy_candidate_id": "기존 후보 번호", "draft_plan_id": "초안 계획 번호", **LABELS})        # 칸 이름 → 쉬운 한국어(오류 안내용)
 
 # 스냅샷에 담지 않는 후보의 값과 그 까닭(어디에 있는지) — '새 칸을 빠뜨리지 않기' 시험이 이 목록과 `Provenance` 의 칸이 후보의 모든 값을 남김없이 나눠 갖는지 확인한다.
 NOT_CARRIED = MappingProxyType({
@@ -35,6 +37,7 @@ NOT_CARRIED = MappingProxyType({
     "duplicate_status": "엔진 보관함이 가진다(중복 판정은 후보 단계의 일이다)",
     "similar_post_ids": "엔진 보관함이 가진다(중복 판정은 후보 단계의 일이다)",
     "monetization_tags": "엔진 보관함이 가진다 — 협찬 고지를 만드는 묶음에서 필요하면 스냅샷에 더한다(열린 항목)",
+    "safety_flags": "엔진 보관함이 가진다 — 협찬 고지 문구를 만드는 묶음(P6)에서 필요하면 스냅샷에 더한다(열린 항목)",
     "processing_errors": "처리 중 문제는 엔진 보관함에 남기고 초안으로 넘기지 않는다",
     "work_status": "다른 축이다 — 기존 후보의 작업 상태가 따로 있다",
     "created_at": "기존 후보가 자기 만든 시각을 가진다",
@@ -79,10 +82,10 @@ class CandidateLink:
 
 def _strict(data, names, item):
     if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SCHEMA:
-        raise _invalid(item, "저장된 모양(schema 1)이 아닙니다")
+        raise _invalid(item, f"{wording.FILE_KEY_KO['schema']}가 {SCHEMA}인 연결이 아닙니다", detail="저장된 모양(schema 1)이 아닙니다")
     unknown, missing = sorted(map(str, set(data) - {"schema", *names})), sorted({*names} - set(data))
     if unknown or missing:
-        raise _invalid(item, "모르는 칸이 있거나 빠진 칸이 있습니다", detail=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
+        raise _invalid(item, wording.unknown_and_missing(unknown, missing, LINK_FIELD_KO), detail=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
     return {name: data[name] for name in names}
 
 
@@ -108,16 +111,16 @@ class Provenance:
 
         if not isinstance(self.scores, ScoreCard):
             raise _invalid(LABELS["scores"], "점수 묶음(ScoreCard)이어야 합니다")
-        _choice(self.recommendation_band, BANDS, LABELS["recommendation_band"])
+        _choice(self.recommendation_band, BANDS, LABELS["recommendation_band"], BAND_KO)
         if self.recommendation_band != band_of(self.scores.final):
             raise _invalid(LABELS["recommendation_band"], "최종 점수에서 계산한 구간과 다릅니다")
         put("selection_reasons", _texts(self.selection_reasons, LABELS["selection_reasons"], count=MAX_REASONS))
         _status, _ratio, period, group, _queried = check_trend(self.trend_status, self.trend_ratio, self.trend_period, self.trend_compared_group, self.trend_queried_on)
         put("trend_period", period)
         put("trend_compared_group", group)
-        _choice(self.data_status, DATA_STATUSES, LABELS["data_status"])
+        _choice(self.data_status, DATA_STATUSES, LABELS["data_status"], wording.DATA_STATUS_KO)
         _optional_id(self.seed_id, LABELS["seed_id"])
-        _choice(self.source_type, SOURCE_TYPES, LABELS["source_type"])
+        _choice(self.source_type, SOURCE_TYPES, LABELS["source_type"], wording.SOURCE_TYPE_KO)
         _optional_id(self.source_topic_id, LABELS["source_topic_id"])
         _channel(self.channel)
 
@@ -147,4 +150,4 @@ class Provenance:
         return cls(**values)
 
 
-__all__ = ["CandidateLink", "NOT_CARRIED", "Provenance", "SCHEMA"]
+__all__ = ["CandidateLink", "LINK_FIELD_KO", "NOT_CARRIED", "Provenance", "SCHEMA"]

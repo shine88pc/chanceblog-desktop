@@ -47,7 +47,8 @@ def full(**overrides):
         "scores": card(85, channel_fit=92, feasibility=85, differentiation=78, timing=80, evidence=82, monetization=88),
         "trend_status": "rising", "trend_ratio": 73, "trend_period": "2025-11-04~2026-11-04", "trend_compared_group": ("로컬 AI", "클라우드 AI"), "trend_queried_on": "2026-11-04",
         "search_demand_count": 4200, "search_count_source": "검색광고 키워드 도구", "data_status": "sufficient", "duplicate_status": "different_angle_needed",
-        "similar_post_ids": ("2026-10-01-KR-120000",), "monetization_tags": ("pc_parts", "affiliate"), "selection_reasons": ("공식 사양으로 쓸 수 있다", "부품 협업 가능"),
+        "similar_post_ids": ("2026-10-01-KR-120000",), "monetization_tags": ("pc_parts", "affiliate"), "safety_flags": ("product_brand", "sponsor_disclosure"),
+        "selection_reasons": ("공식 사양으로 쓸 수 있다", "부품 협업 가능"),
         "processing_errors": ("관심도 조회 한 번 실패 후 재시도", ), "work_status": "REVIEW", "review_expires_at": "2027-02-02T09:56:00Z",
     }
     values.update(overrides)

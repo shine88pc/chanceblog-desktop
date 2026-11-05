@@ -13,5 +13,8 @@
   dedupe    — 중복 판정(유사도 → 네 구간, 숫자만으로 지우지 않는다)·채널 사이 최대 2채널과 일곱 항목 비교
   history   — 발행 이력 읽기(5채널의 기존 글을 관대하게 읽는 순수 파서 — 파일은 읽지 않고 이미 읽은 값을 받는다)
   hold      — 보류함 90일 만료일 계산
+  expand·feasibility·generate — 확장어·작성 가능성·후보 조립(P2b)    safety — 개념군 조합 안전 표시(건강 세 상태·협찬 가능성/이해관계·경험·결과 약속, P2b 보완)
+  wording   — 쉬운 말 도우미와 값 이름 표(사용자 노출 문장에서 목록 꼴·영문 값 이름 제거)    concepts — 건강·협찬·경험 개념군 표와 신호 계산(초기값)
+  notice    — 사용자 메시지 `Notice`(code·level·title·message·action)    brand — 브랜드 이름만 있는 씨앗의 구체화(하위 후보 최대 3개, 초기값)
 의존은 표준 라이브러리와 `content`(채널 키·후보 검증 도구)·`errors` 뿐이고 `service`·`ui`·`publish`·`render` 를 가져오지 않는다(시험이 지킨다).
 """

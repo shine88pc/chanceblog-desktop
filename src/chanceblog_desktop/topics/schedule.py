@@ -4,6 +4,7 @@
 캘린더 항목 하나 = 이름 + 이 시기와 이어지는 낱말들 + 준비 시작 + 발행 기간(시작·끝, 끝날도 포함) + 피크(있으면) + 반복(`yearly` 매년·`once` 한 해만) + 마지막 평가일 + 적용 채널(비면 모든 채널).
   · 날짜는 `MM-DD`(예: `11-15`)다. 2월 29일은 쓰지 않는다(해마다 같은 날이 있도록). 발행 기간의 끝이 시작보다 앞서면 해를 넘기는 기간이다(`12-20` → `01-10`).
   · 준비 시작은 발행 시작보다 `MAX_LEAD_DAYS`(180)일 이내로 앞서고(같은 날도 된다), 발행 기간은 `MAX_WINDOW_DAYS`(183)일을 넘지 않으며, 피크는 발행 기간 안이어야 한다.
+    준비 시작일도 발행 시작·끝·피크처럼 **달력의 `MM-DD` 날짜 그대로**다(윤년에도 같은 달·일 — P2b, 독립 검증 L2 가 '윤년에 하루 어긋남' 을 고쳤다). 180일·183일 한도만 평년(2월 28일까지) 날수로 잰다 — 윤년에는 실제 날수가 하루 더 길 수 있다.
   · `once` 항목은 `year`(발행 기간이 시작하는 해)가 꼭 있고 그 한 번만 돈다. `yearly` 항목에는 `year` 가 없다.
 **시기 상태**(P1 `score.timing_score` 의 첫 입력 `calendar`): 후보의 글(주제·핵심 키워드·보조 키워드)에 항목의 낱말이 있으면 그 항목이 후보에 해당한다 —
   해당하는 항목의 발행 기간 안이면 `due`, 해당 항목은 있지만 모두 발행 기간 밖이면(준비 중이거나 지난·아직 안 온 시기) `out_of_range`, 해당하는 항목이 하나도 없으면 `unknown`(캘린더에 없음 — 0 이 아니라 '모름').
@@ -15,13 +16,14 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from types import MappingProxyType
 from typing import NamedTuple
 
-from ..content.candidates import _ID
+from ..content.candidates import _ID, forbidden_claim
 from ..content.profiles import _no_markup, _text, _words
 from ..errors import AppError
+from . import wording
 from .channels import CHANNELS, at_entry, explain, invalid_in
 from .dedupe import words_of
 from .history import valid_day
@@ -47,10 +49,12 @@ MAX_NAME = 30
 MIN_YEAR, MAX_YEAR = 2000, 2200
 
 _KEYS = ("entry_id", "name", "keywords", "prep_start", "publish_from", "publish_to", "peak", "repeat", "year", "last_evaluated_on", "channels")
+ENTRY_FIELD_KO = MappingProxyType({"entry_id": "항목 번호", "name": "이름", "keywords": "시기 낱말", "prep_start": "준비 시작", "publish_from": "발행 기간 시작", "publish_to": "발행 기간 끝",
+                                   "peak": "피크", "repeat": "반복", "year": "해", "last_evaluated_on": "마지막 평가일", "channels": "적용 채널"})        # 칸 이름 → 쉬운 한국어(오류 안내용)
 
 
-def _invalid(item, detail=""):
-    return invalid_in(SUBJECT, item, detail)
+def _invalid(item, detail="", *, dev=""):
+    return invalid_in(SUBJECT, item, detail, dev=dev)
 
 
 class MonthDay(NamedTuple):
@@ -115,6 +119,10 @@ class CalendarEntry:
         words = _words(self.keywords, "시기 낱말", count=MAX_KEYWORDS, high=MAX_KEYWORD, sequence_only=True, markup_free=True)
         if not words or not all(words_of(word, filtered=False) for word in words):
             raise _invalid("시기 낱말", "글자나 숫자가 있는 낱말이 1개 이상 있어야 한다")
+        for label, shown in (("이름", self.name), *(("시기 낱말", word) for word in words)):
+            claim = forbidden_claim(shown)
+            if claim:
+                raise _invalid(label, f"‘{claim[0]}’ 같은 결과를 약속하는 표현은 쓸 수 없다")
         put("keywords", words)
         prep, first, last = (_month_day(getattr(self, name), label) for name, label in (("prep_start", "준비 시작"), ("publish_from", "발행 기간 시작"), ("publish_to", "발행 기간 끝")))
         lead = (date(2001, first.month, first.day) - date(2001, prep.month, prep.day)).days % 365
@@ -127,19 +135,19 @@ class CalendarEntry:
         if peak is not None and _span(first, peak) > length:
             raise _invalid("피크", "발행 기간 안이어야 한다")
         if not isinstance(self.repeat, str) or self.repeat not in REPEATS:
-            raise _invalid("반복", "다음 중 하나여야 한다: " + ", ".join(REPEATS))
+            raise _invalid("반복", wording.one_of(REPEATS, REPEAT_KO), dev="값: " + ", ".join(REPEATS))
         if self.repeat == REPEAT_ONCE:
             if not isinstance(self.year, int) or isinstance(self.year, bool) or not MIN_YEAR <= self.year <= MAX_YEAR:
                 raise _invalid("해", f"한 번만 도는 항목은 {MIN_YEAR}~{MAX_YEAR} 사이의 해(정수)가 꼭 있어야 한다")
         elif self.year is not None:
             raise _invalid("해", "매년 도는 항목에는 해를 적지 않는다")
-        if self.last_evaluated_on is not None and valid_day(self.last_evaluated_on) is None:
-            raise _invalid("마지막 평가일", "2026-11-05 같은 모양의 달력에 있는 날짜(2000년 이후)이거나 비워 두어야 한다")
+        if self.last_evaluated_on is not None and (valid_day(self.last_evaluated_on) is None or int(self.last_evaluated_on[:4]) > MAX_YEAR):
+            raise _invalid("마지막 평가일", f"2026-11-05 같은 모양의 달력에 있는 날짜({MIN_YEAR}~{MAX_YEAR}년)이거나 비워 두어야 한다")
         if not isinstance(self.channels, (list, tuple)):
             raise _invalid("적용 채널", "목록이어야 한다")
         codes = tuple(self.channels)
         if not all(isinstance(code, str) and code in CHANNELS for code in codes) or len(set(codes)) != len(codes):
-            raise _invalid("적용 채널", "코드의 채널 이름(" + ", ".join(CHANNELS) + ")을 한 번씩만 쓸 수 있다")
+            raise _invalid("적용 채널", "채널은 " + wording.quoted(CHANNELS, names=wording.CHANNEL_KO) + " 중에서 한 번씩만 쓸 수 있습니다", dev="코드의 채널 이름: " + ", ".join(CHANNELS))
         put("channels", codes)
 
     def to_dict(self):
@@ -153,7 +161,7 @@ class CalendarEntry:
             raise _invalid("모양", "칸이 있는 묶음(JSON 객체)이어야 한다")
         unknown, missing = sorted(map(str, set(data) - set(_KEYS))), sorted(set(_KEYS) - set(data))
         if unknown or missing:
-            raise _invalid("모양", f"모르는 칸 {unknown}, 빠진 칸 {missing}")
+            raise _invalid("모양", wording.unknown_and_missing(unknown, missing, ENTRY_FIELD_KO), dev=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
         return cls(**data)
 
     def applies_to(self, channel):
@@ -182,10 +190,11 @@ def _dates(entry, start_year):
     first, last = parse_month_day(entry.publish_from), parse_month_day(entry.publish_to)
     start = date(start_year, first.month, first.day)
     end = date(start_year if last >= first else start_year + 1, last.month, last.day)
-    lead = (date(2001, first.month, first.day) - date(2001, *parse_month_day(entry.prep_start))).days % 365
+    prep = parse_month_day(entry.prep_start)
+    prep_day = date(start_year if prep <= first else start_year - 1, prep.month, prep.day)         # 준비 시작도 달력 날짜 그대로(발행 시작보다 앞서면 지난해)
     peak = parse_month_day(entry.peak) if entry.peak is not None else None
     peak_day = None if peak is None else date(start_year if peak >= first else start_year + 1, peak.month, peak.day)
-    return start - timedelta(days=lead), start, end, peak_day
+    return prep_day, start, end, peak_day
 
 
 def cycle_of(entry, year):
@@ -208,8 +217,6 @@ def phase_of(entry, on):
     today = _day_of(on, "오늘 날짜")
     years = (entry.year,) if entry.repeat == REPEAT_ONCE else range(today.year - 1, today.year + 2)
     for year in years:
-        if year > MAX_YEAR:
-            continue
         prep, start, end, _peak = _dates(entry, year)
         if start <= today <= end:
             return PHASE_PUBLISHING
@@ -302,12 +309,12 @@ def entries_from_dict(data):
     """저장된 모양 → 캘린더 항목들(파일 순서). `schema`·정확한 칸을 요구하고 모르는 칸·틀린 값·같은 번호 두 번·`MAX_ENTRIES` 초과는 `CONTENT_INVALID` 로 거절한다."""
     item = "캘린더 저장 형식"
     if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SCHEMA:
-        raise _invalid(item, "저장된 캘린더의 모양(schema 1)이 아니다")
+        raise _invalid(item, f"{wording.FILE_KEY_KO['schema']}가 {SCHEMA}인 캘린더 파일이 아닙니다", dev="저장된 캘린더의 모양(schema 1)이 아니다")
     if set(data) != {"schema", "entries"}:
-        raise _invalid(item, "schema 와 entries 두 칸만 있어야 한다")
+        raise _invalid(item, wording.quoted(("schema", "entries"), names=wording.FILE_KEY_KO) + " 두 칸만 있어야 합니다", dev="schema 와 entries 두 칸만 있어야 한다")
     raw = data["entries"]
     if not isinstance(raw, list):
-        raise _invalid(item, "entries 는 목록이어야 한다")
+        raise _invalid(item, f"{wording.quote(wording.FILE_KEY_KO['entries'])} 은 여러 개를 담는 목록이어야 합니다", dev="entries 는 목록이어야 한다")
     if len(raw) > MAX_ENTRIES:
         raise _invalid(item, f"항목은 {MAX_ENTRIES}개까지다")
     made = []
@@ -328,11 +335,11 @@ def _check_all(pool):
         raise _invalid("캘린더 목록", f"항목은 {MAX_ENTRIES}개까지다")
     twice = sorted(name for name, count in Counter(entry.entry_id for entry in pool).items() if count > 1)
     if twice:
-        raise _invalid("캘린더 목록", f"같은 항목 번호가 두 번 들어 있다: {twice}")
+        raise _invalid("캘린더 목록", "같은 항목 번호가 두 번 들어 있습니다: " + wording.quoted(twice), dev=f"겹친 번호: {twice}")
 
 
 __all__ = [
     "CalendarEntry", "CalendarState", "Cycle", "EVALUATION_DAYS", "EntryPhase", "MAX_ENTRIES", "MAX_LEAD_DAYS", "MAX_WINDOW_DAYS", "MonthDay", "PHASES", "PHASE_OUTSIDE", "PHASE_PREPARING",
-    "PHASE_PUBLISHING", "REPEATS", "REPEAT_KO", "REPEAT_ONCE", "REPEAT_YEARLY", "SCHEMA", "calendar_state", "cycle_of", "entries_from_dict", "entries_to_dict", "evaluation_age", "needs_evaluation",
+    "ENTRY_FIELD_KO", "PHASE_PUBLISHING", "REPEATS", "REPEAT_KO", "REPEAT_ONCE", "REPEAT_YEARLY", "SCHEMA", "calendar_state", "cycle_of", "entries_from_dict", "entries_to_dict", "evaluation_age", "needs_evaluation",
     "parse_month_day", "phase_of", "state_of",
 ]

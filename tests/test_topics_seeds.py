@@ -73,16 +73,17 @@ class ConstantsTest(unittest.TestCase):
 class SeedShapeTest(unittest.TestCase):
     def test_an_example_seed_has_every_field_and_the_expected_defaults(self):
         made = seed()
-        self.assertEqual((made.priority, made.excluded_keywords, made.sponsor_tag, made.last_selected_on), (False, (), None, None))
+        self.assertEqual((made.priority, made.excluded_keywords, made.sponsor_tag, made.last_selected_on, made.active_since), (False, (), None, None, None))
+        # P2b(독립 검증 M4) 의도적 갱신: 사용 시작일(`active_since`) 칸이 하나 늘었다 — `seeds.json` 을 처음 저장하기 전이라 이관이 필요 없다.
         self.assertEqual(tuple(made.to_dict()), ("seed_id", "major", "minor", "keyword", "seed_type", "scope", "priority", "excluded_keywords", "sponsor_tag", "state", "registered_on",
-                                                 "last_selected_on"))
+                                                 "last_selected_on", "active_since"))
 
     def test_the_state_has_no_default_so_an_automatic_proposal_cannot_become_active_by_accident(self):
         with self.assertRaises(TypeError):
             sd.Seed(seed_id="x1", major="가", minor="나", keyword="다", seed_type="general", scope="common", registered_on="2026-05-01")
 
     def test_a_full_seed_round_trips_through_its_dictionary(self):
-        made = seed(priority=True, excluded_keywords=("제외 하나", "제외 둘"), seed_type="sponsorable", sponsor_tag="pc_parts", scope="naver_a", last_selected_on="2026-09-01")
+        made = seed(priority=True, excluded_keywords=("제외 하나", "제외 둘"), seed_type="sponsorable", sponsor_tag="pc_parts", scope="naver_a", last_selected_on="2026-09-01", active_since="2026-08-01")
         self.assertEqual(sd.Seed.from_dict(made.to_dict()), made)
         self.assertEqual(made.to_dict()["excluded_keywords"], ["제외 하나", "제외 둘"])
 
@@ -163,7 +164,9 @@ class DatesAndStatesTest(unittest.TestCase):
             with self.subTest(old=old, new=new):
                 made = seed(state=old)
                 if new in sd.TRANSITIONS[old]:
-                    self.assertEqual(sd.change_state(made, new).state, new)
+                    changed = sd.change_state(made, new, "2026-11-05")                 # 사용 중으로 바꿀 때만 날짜가 꼭 필요하다(P2b M4) — 다른 바꾸기에서는 쓰지 않는다
+                    self.assertEqual(changed.state, new)
+                    self.assertEqual(changed.active_since, "2026-11-05" if new == "active" else None)
                 else:
                     with self.assertRaises(AppError) as caught:
                         sd.change_state(made, new)
@@ -172,9 +175,44 @@ class DatesAndStatesTest(unittest.TestCase):
 
     def test_a_state_change_gives_a_new_seed_and_leaves_the_original_alone(self):
         original = seed(state="proposed")
-        approved = sd.change_state(original, "active")
+        approved = sd.change_state(original, "active", "2026-11-05")
         self.assertEqual((original.state, approved.state), ("proposed", "active"))
-        self.assertEqual(dataclasses.replace(approved, state="proposed"), original)
+        self.assertEqual(dataclasses.replace(approved, state="proposed", active_since=None), original)
+        self.assertEqual((original.active_since, approved.active_since), (None, "2026-11-05"))
+
+    def test_turning_a_seed_on_needs_a_real_date_that_is_not_before_the_known_dates(self):
+        # P2b(독립 검증 M4): 사용 중으로 바꿀 때는 날짜가 꼭 있어야 하고 등록일·이전 선택일·이전 사용 시작일보다 앞서면 안 된다. 다른 바꾸기에서는 날짜를 쓰지 않는다.
+        resting = seed(state="inactive", registered_on="2026-05-01", last_selected_on="2026-07-01", active_since="2026-06-01")
+        for bad in (None, "어제", "2026-13-01", "2026-11-5", 20261105, "1999-12-31"):
+            with self.subTest(on=bad):
+                with self.assertRaises(AppError) as caught:
+                    sd.change_state(resting, "active", bad)
+                self.assertEqual(caught.exception.code, "CONTENT_INVALID")
+                self.assertIn("사용 시작일", caught.exception.rendered().message)
+        for early in ("2026-04-30", "2026-06-30"):
+            with self.subTest(early=early):
+                with self.assertRaises(AppError) as caught:
+                    sd.change_state(resting, "active", early)
+                self.assertIn("앞설 수 없다", caught.exception.rendered().message)
+        self.assertEqual(sd.change_state(resting, "active", "2026-07-01").active_since, "2026-07-01", "가장 늦은 날과 같은 날은 된다")
+        self.assertEqual(sd.change_state(seed(state="active"), "inactive").active_since, None)
+        self.assertEqual(sd.change_state(seed(state="active", active_since="2026-06-01"), "inactive", "garbage").active_since, "2026-06-01", "쉬게 할 때의 날짜 인자는 쓰지 않는다")
+
+    def test_the_start_day_is_checked_like_the_other_dates(self):
+        self.assertEqual(seed(registered_on="2026-05-01", active_since="2026-05-01").active_since, "2026-05-01")
+        self.assertEqual(seed(state="inactive", active_since="2026-06-01").active_since, "2026-06-01")
+        for bad in ("어제", "2026-04-30", "2026-13-01", 3):
+            with self.subTest(active_since=bad):
+                self.assertIn("사용 시작일", rejected(self, registered_on="2026-05-01", active_since=bad).rendered().message)
+        error = rejected(self, state="proposed", active_since="2026-06-01")
+        self.assertIn("승인 전", error.rendered().message)
+
+    def test_selecting_cannot_be_dated_before_the_seed_was_turned_on(self):
+        turned_on = seed(registered_on="2026-01-01", active_since="2026-06-01")
+        with self.assertRaises(AppError) as caught:
+            sd.selected(turned_on, "2026-05-31")
+        self.assertIn("사용 시작일", caught.exception.rendered().message)
+        self.assertEqual(sd.selected(turned_on, "2026-06-01").last_selected_on, "2026-06-01")
 
     def test_an_unknown_state_name_and_wrong_kinds_are_refused(self):
         for bad in ("ACTIVE", "approved", None, 3):
@@ -262,6 +300,45 @@ class IdleProposalTest(unittest.TestCase):
                 with self.assertRaises(AppError):
                     sd.idle_days(seed(), bad)
 
+    def test_the_basis_is_the_latest_of_the_last_selection_the_start_of_use_and_the_registration(self):
+        # P2b(독립 검증 M4): 쉬게 했다 다시 켜거나 제안을 승인하면 180일 시계가 다시 시작한다 — 기준은 세 날짜 중 가장 늦은 날이다.
+        cases = (({"registered_on": ago(300)}, ago(300), "registered"), ({"registered_on": ago(300), "last_selected_on": ago(100)}, ago(100), "selected"),
+                 ({"registered_on": ago(300), "active_since": ago(50)}, ago(50), "started"), ({"registered_on": ago(300), "last_selected_on": ago(100), "active_since": ago(50)}, ago(50), "started"),
+                 ({"registered_on": ago(300), "last_selected_on": ago(40), "active_since": ago(50)}, ago(40), "selected"), ({"registered_on": ago(300), "last_selected_on": ago(50), "active_since": ago(50)}, ago(50), "selected"),
+                 ({"registered_on": ago(50), "active_since": ago(50)}, ago(50), "started"))
+        for changes, day, kind in cases:
+            with self.subTest(changes=changes):
+                self.assertEqual(sd.basis_of(seed(**changes)), (day, kind))
+                self.assertEqual(sd.idle_days(seed(**changes), ago(0)), (TODAY - date.fromisoformat(day)).days)
+
+    def test_resting_and_turning_it_on_again_restarts_the_clock_instead_of_proposing_at_once(self):
+        # 독립 검증 M4 의 재현: 마지막 선택 826일 전인 씨앗을 쉬게 했다가 같은 날 다시 켜면 곧바로 826일로 제안됐다.
+        long_ago = seed(registered_on="2024-01-01", last_selected_on="2024-08-01")
+        self.assertEqual(sd.idle_proposals([long_ago], "2026-11-05")[0].idle_days, 826)
+        rested = sd.change_state(long_ago, "inactive", "2026-11-05")
+        turned_on = sd.change_state(rested, "active", "2026-11-05")
+        self.assertEqual(sd.idle_proposals([turned_on], "2026-11-05"), ())
+        self.assertEqual(sd.idle_days(turned_on, "2026-11-05"), 0)
+        self.assertEqual(len(sd.idle_proposals([turned_on], "2027-05-04")), 1, "다시 켠 날로부터 180일째에 다시 제안한다")
+        self.assertEqual(sd.idle_proposals([turned_on], "2027-05-03"), (), "179일째는 아직")
+        self.assertEqual(turned_on.last_selected_on, "2024-08-01", "마지막 선택일은 지우지 않는다")
+
+    def test_approving_a_proposal_starts_the_clock_on_the_approval_day_not_the_registration_day(self):
+        proposed = seed(state="proposed", registered_on="2026-03-01")
+        self.assertEqual(sd.idle_proposals([sd.change_state(proposed, "active", "2026-11-05")], "2026-11-05"), ())
+        found = sd.idle_proposals([sd.change_state(proposed, "active", "2026-05-01")], "2026-11-05")
+        self.assertEqual((found[0].since, found[0].idle_days, found[0].basis, found[0].never_selected), ("2026-05-01", 188, "started", True))
+        self.assertIn("다시 켠(시작한) 뒤", found[0].message())
+
+    def test_the_sentence_names_the_basis_it_used(self):
+        started = sd.idle_proposals([seed(registered_on=ago(400), active_since=ago(200))], ago(0))[0]
+        self.assertEqual((started.basis, started.since), ("started", ago(200)))
+        self.assertIn("사용을 다시 켠(시작한) 뒤 한 번도 선택하지 않았고 200일", started.message())
+        selected = sd.idle_proposals([seed(registered_on=ago(400), active_since=ago(300), last_selected_on=ago(190))], ago(0))[0]
+        self.assertEqual(selected.basis, "selected")
+        self.assertIn("마지막으로 선택한 뒤 190일", selected.message())
+        self.assertEqual(sd.IdleProposal("a", "k", "2026-01-01", 200, True).basis, "registered", "기준을 안 적은 예전 모양은 등록일이다")
+
     def test_the_sentence_says_how_long_and_that_nothing_changes_before_approval(self):
         never = sd.idle_proposals([seed(registered_on=ago(200), keyword="예시 씨앗 하나")], ago(0))[0].message()
         self.assertIn("예시 씨앗 하나", never)
@@ -299,7 +376,7 @@ class UsableSeedsTest(unittest.TestCase):
     def test_a_proposed_seed_is_never_used_until_it_is_approved(self):
         pool = self.pool()
         self.assertNotIn("p1", [item.seed_id for key in ch.CHANNELS for item in sd.usable_seeds(pool, key)])
-        approved = [sd.change_state(item, "active") if item.seed_id == "p1" else item for item in pool]
+        approved = [sd.change_state(item, "active", "2026-11-05") if item.seed_id == "p1" else item for item in pool]
         self.assertIn("p1", [item.seed_id for item in sd.usable_seeds(approved, "naver_b")])
 
     def test_priority_seeds_come_first_then_major_minor_keyword_and_number(self):

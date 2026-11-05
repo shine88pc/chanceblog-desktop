@@ -9,6 +9,8 @@
   · `read_titles`      — GitHub Pages 생성기의 `history.json`(제목 글자와 kr_title·en_title 을 가진 항목이 섞인 목록).
   · `read_naver_items` — 네이버 A·B 이력의 **틀**: 이력은 데스크톱 보관함에서 오므로(P3) 이 함수는 보관함을 읽지 않고 '제목·키워드·날짜·주소·글 번호' 를 가진 항목만 받는다.
 '모름 ≠ 0': 날짜·주소·언어·글 번호를 모르면 지어내지 않고 `None` 이다(제목이 없으면 그 항목을 건너뛴다). 같은 입력은 늘 같은 결과다.
+**같은 글은 어느 길로 읽어도 같은 글 번호(`ref`)를 낸다**(P2b, 독립 검증 M5): 글 번호는 글 파일 이름에서 `.md` 를 뗀 모양이다(`read_posts_json` 의 `name` 과 `read_front_matter` 의 파일 이름이 같은 글에 같은 번호).
+머리말의 제목이 `>`·`|`(여러 줄 값 표시)·`null`·`~`·`true`·`false` 처럼 따옴표 없는 YAML 표시이면 제목으로 읽지 않고 건너뛴다. 머리말 날짜를 읽지 못하면 경고를 남긴다.
 """
 from __future__ import annotations
 
@@ -209,6 +211,12 @@ def _ref_of(value, notes):
     return text
 
 
+def _stem_of(name):
+    """글 파일 이름(경로가 붙어 있어도 마지막 조각)에서 `.md` 를 뗀 글 번호 모양 — 두 길(`posts.json`·머리말)이 같은 글에 같은 번호를 내게 한다."""
+    base = name.replace("\\", "/").rsplit("/", 1)[-1]
+    return base[:-3] if base.lower().endswith(".md") else base
+
+
 def _make(channel, origin, title, **values):
     return HistoryRecord(channel=channel, title=title, origin=origin, **values)
 
@@ -253,7 +261,7 @@ def read_posts_json(items):
             notes.append("주소 모양을 알 수 없습니다")
         name = data.get("name")
         return [_make("github_pages", ORIGIN_POSTS, title, keywords=_keywords_of(data.get("tags"), notes), date=_day_of(data.get("date"), notes), url=url,
-                      language=_language_of(data.get("lang")), ref=_ref_of(name, []) if name else None)]
+                      language=_language_of(data.get("lang")), ref=_ref_of(_stem_of(name) if isinstance(name, str) else name, []) if name else None)]
 
     return _collect(items, ORIGIN_POSTS, convert)
 
@@ -262,6 +270,7 @@ _FENCE = re.compile(r"---[ \t]*")
 _KEY = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.*)")
 _FILE_DAY = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2})-")
 _UNQUOTE = {'"': '"', "'": "'"}
+_YAML_NOT_TEXT = frozenset({">", "|", ">-", "|-", ">+", "|+", "~", "null", "true", "false"})       # 따옴표 없는 머리말 값 중 글이 아니라 YAML 표시인 것(여러 줄 값·없음·참거짓)
 
 
 def _unquote(raw):
@@ -326,6 +335,8 @@ def read_front_matter(text, *, filename=""):
     notes = []
     if "title" not in values:
         return HistoryResult((), (HistoryWarning(ORIGIN_FRONT_MATTER, where, "머리말에 title 줄이 없습니다", True),))
+    if values["title"].strip().casefold() in _YAML_NOT_TEXT:
+        return HistoryResult((), (HistoryWarning(ORIGIN_FRONT_MATTER, where, "제목이 글이 아니라 ‘>’·‘null’ 같은 YAML 표시라서 읽을 수 없습니다(여러 줄 제목은 지원하지 않습니다)", True),))
     try:
         title = _title(_unquote(values["title"]), notes)
     except _Skip as skip:
@@ -339,10 +350,12 @@ def read_front_matter(text, *, filename=""):
     header_day = _day_prefix(_unquote(values["date"])) if "date" in values else None
     file_match = _FILE_DAY.match(base)
     file_day = valid_day(file_match.group(1)) if file_match else None
+    if "date" in values and _unquote(values["date"]).strip() and header_day is None:
+        notes.append("머리말 날짜를 읽지 못했습니다" + ("(파일 이름의 날짜를 씁니다)" if file_day else ""))
     language = _language_of(_unquote(values.get("lang", "")))
     if language is None and "-en-" in base.lower():
         language = "en"
-    stem = base[:-3] if base.lower().endswith(".md") else base
+    stem = _stem_of(base)
     keywords = _keywords_of(tags, notes)
     try:
         record = _make("github_pages", ORIGIN_FRONT_MATTER, title, keywords=keywords, date=header_day or file_day, language=language, ref=_ref_of(stem, []) if stem else None)
@@ -359,7 +372,9 @@ def read_history_entries(items, channel):
     def convert(item, notes):
         data = _mapping(item)
         title = _title(data.get("title"), notes)
-        day = _day_of(data.get("date"), notes) if data.get("date") else _day_prefix(data.get("generated_at"))
+        day = _day_of(data.get("date"), notes) if data.get("date") else None
+        if day is None:
+            day = _day_prefix(data.get("generated_at"))                  # `date` 가 없거나 읽을 수 없어도 만든 시각의 날짜가 멀쩡하면 그것을 쓴다
         return [_make(channel, ORIGIN_ENTRIES, title, keywords=_keywords_of(data.get("labels"), notes), date=day, url=_url_of(data.get("url"), notes), topic=_topic_of(data.get("topic"), notes),
                       ref=_ref_of(data.get("post_id"), notes))]
 

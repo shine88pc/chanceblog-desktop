@@ -330,6 +330,18 @@ class CardCheckTest(unittest.TestCase):
             self.assertIn(needle, shown)
         self.assertEqual(sc.score(self.B, liar.factors).final, 46)
 
+    def test_the_stored_number_is_the_first_one_and_the_recomputed_number_the_second_in_the_sentence(self):
+        # P2b(독립 검증 M6 ③): 두 숫자가 문장에 있기만 하면 통과해서 '저장된 값' 과 '다시 계산한 값' 자리를 바꿔도 몰랐다.
+        for stored, recomputed, card in ((80, 46, sc.ScoreCard(factors(10, None, None, 90, None, None), 80)), (45, 46, sc.ScoreCard(factors(10, None, None, 90, None, None), 45)),
+                                         ("없음", 60, sc.ScoreCard(factors(60, None, None, None, None, None), None))):
+            with self.subTest(stored=stored, recomputed=recomputed):
+                with self.assertRaises(AppError) as caught:
+                    sc.check_card(self.B, card)
+                shown = caught.exception.rendered().message
+                self.assertIn(f"저장된 값 {stored} 이(가)", shown)
+                self.assertIn(f"다시 계산한 값 {recomputed} 과", shown)
+                self.assertLess(shown.index("저장된 값"), shown.index("다시 계산한 값"))
+
     def test_one_point_off_in_either_direction_is_refused_and_the_exact_value_is_accepted(self):
         for final in (45, 47):
             with self.subTest(final=final):

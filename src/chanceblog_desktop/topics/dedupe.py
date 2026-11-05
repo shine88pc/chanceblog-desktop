@@ -11,6 +11,8 @@
   ④ 최종 유사도(%)는 정수이고 소수점 첫째 자리에서 0.5 를 올린다(`score.round_half_up`). 비교할 글자가 하나도 없으면 0 이 아니라 '모름'(`None`)이고 구간도 None(확인 전)이다.
 채널 사이: 같은 원천 주제(`source_topic_id`)는 **최대 2채널**까지이고(`channels.MAX_CHANNELS_PER_TOPIC`), 두 채널에 쓰려면 대상 독자·언어·검색 의도·관점·목차·채널 고유 정보·수익 목적의 일곱 항목 중 `MIN_DIFFERENT_ITEMS`(4)개 이상이 달라야 한다.
 목차·채널 고유 정보는 후보 모델에 없어서 호출하는 쪽이 `PairExtras` 로 알려 줄 때만 달라진 것으로 센다(모르면 '모름' — 달라진 것으로도 같은 것으로도 세지 않는다).
+수익 목적도 한쪽의 수익 태그만 비어 있으면 모름이다(둘 다 비면 같은 것, 둘 다 있으면 태그 묶음이 다른지 본다 — P2b, 독립 검증 L4). 같은 원천 주제(`source_topic_id`)가 아닌 두 후보는 견주지 않는다.
+**견줄 기존 글이 하나도 없으면 '다른 주제' 가 아니라 모름이다**(P2b, 독립 검증 M3): `marked` 는 '몇 개를 견줬는지'(`compared`)를 꼭 받고, 0 이면 후보의 표시 칸을 건드리지 않는다. `find_duplicates` 가 비슷한 글과 견준 수를 함께 돌려준다.
 """
 from __future__ import annotations
 
@@ -235,10 +237,15 @@ class Match(NamedTuple):
     comparison: Comparison
 
 
-def find_matches(candidate, records, profile, *, limit=3):
-    """후보와 **같은 채널**의 기존 글 중 '다른 주제' 보다 비슷한 것을 비슷한 순으로(같으면 최근 날짜·제목·글 번호 순) 최대 `limit` 개 돌려준다. 입력은 바꾸지 않는다."""
+class Duplicates(NamedTuple):
+    matches: tuple                                  # `find_matches` 와 같은 값 — '다른 주제' 보다 비슷한 글들(`Match`)
+    compared: int                                   # 후보와 견준 기존 글의 수 — 같은 채널이고 유사도를 잴 수 있었던 것. 0 이면 견줄 것이 없었다(모름)
+    highest: int | None = None                      # 견준 글 중 가장 높은 유사도(%) — 하나도 견주지 못했으면 None(0 이 아니다)
+
+
+def _scan(candidate, records, profile, limit, name):
     if not isinstance(candidate, TopicCandidate) or not isinstance(profile, ChannelProfile):
-        raise TypeError("find_matches(후보, 기존 글 묶음, 채널 프로필) 로 불러야 한다")
+        raise TypeError(f"{name}(후보, 기존 글 묶음, 채널 프로필) 로 불러야 한다")
     if profile.key != candidate.channel:
         raise ValueError(f"후보의 채널({candidate.channel})과 채널 프로필({profile.key})이 달라 중복 기준을 정할 수 없다")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_MATCHES:
@@ -249,17 +256,36 @@ def find_matches(candidate, records, profile, *, limit=3):
     found = [Match(record, _best(candidate, record, profile.dup_cutoffs)) for record in pool if record.channel == candidate.channel]
     kept = [match for match in found if match.comparison.status not in (None, DIFFERENT_TOPIC)]
     ordered = sorted(kept, key=lambda match: (-match.comparison.percent, -(int(match.record.date.replace("-", "")) if match.record.date else 0), match.record.title, match.record.ref or ""))
-    return tuple(ordered[:limit])
+    known = [match.comparison.percent for match in found if match.comparison.percent is not None]
+    return Duplicates(tuple(ordered[:limit]), len(known), max(known, default=None))
 
 
-def marked(candidate, matches):
-    """비슷한 글(`find_matches` 의 결과)을 후보의 **표시 칸에만** 적은 새 후보를 돌려준다 — 가장 비슷한 글의 구간을 `duplicate_status` 로(비슷한 글이 없으면 `different_topic`),
-    글 번호가 있는 것은 `similar_post_ids` 로. 작업 상태(`work_status`)·점수·추천 구간은 건드리지 않는다(숫자만으로 제외하지 않는다). 원래 후보는 바뀌지 않는다."""
+def find_matches(candidate, records, profile, *, limit=3):
+    """후보와 **같은 채널**의 기존 글 중 '다른 주제' 보다 비슷한 것을 비슷한 순으로(같으면 최근 날짜·제목·글 번호 순) 최대 `limit` 개 돌려준다. 입력은 바꾸지 않는다."""
+    return _scan(candidate, records, profile, limit, "find_matches").matches
+
+
+def find_duplicates(candidate, records, profile, *, limit=3):
+    """`find_matches` 와 같은 비슷한 글에 **견준 기존 글의 수**를 더해 돌려준다(`Duplicates`) — `marked` 에 `compared=` 로 넘긴다. 견준 수가 0 이면 '다른 주제' 라고 말할 근거가 없다(모름)."""
+    return _scan(candidate, records, profile, limit, "find_duplicates")
+
+
+def marked(candidate, matches, *, compared):
+    """비슷한 글(`find_matches` 의 결과)을 후보의 **표시 칸에만** 적은 새 후보를 돌려준다 — 가장 비슷한 글의 구간을 `duplicate_status` 로, 글 번호가 있는 것은 `similar_post_ids` 로.
+    `compared` 는 후보와 견준 기존 글의 수(`find_duplicates` 가 돌려준다)다 — 비슷한 글이 없는데 하나 이상 견줬다면 `different_topic`(다른 주제)이고, **하나도 견주지 못했다면 모름이라
+    후보를 그대로 둔다**(이력을 못 읽은 날 모든 후보에 '다른 주제' 라는 거짓 확신이 붙지 않게 — P2b, 독립 검증 M3). 작업 상태(`work_status`)·점수·추천 구간은 건드리지 않는다(숫자만으로 제외하지 않는다).
+    원래 후보는 바뀌지 않는다."""
     if not isinstance(candidate, TopicCandidate):
-        raise TypeError("marked(후보, 비슷한 글 묶음) 로 불러야 한다")
+        raise TypeError("marked(후보, 비슷한 글 묶음, compared=견준 글 수) 로 불러야 한다")
     pool = tuple(matches)
     if not all(isinstance(match, Match) for match in pool):
         raise TypeError("비슷한 글(Match)만 넘길 수 있다")
+    if not isinstance(compared, int) or isinstance(compared, bool) or compared < 0:
+        raise ValueError("compared 는 0 이상의 정수(후보와 견준 기존 글의 수)여야 한다")
+    if compared < len(pool):
+        raise ValueError(f"견준 글 수({compared})가 비슷한 글 수({len(pool)})보다 적을 수 없다")
+    if not pool and compared == 0:
+        return candidate
     worst = max(pool, key=lambda match: -1 if match.comparison.percent is None else match.comparison.percent, default=None)
     status = worst.comparison.status if worst is not None else DIFFERENT_TOPIC
     refs = tuple(dict.fromkeys(match.record.ref for match in pool if match.record.ref))[:MAX_MATCHES]
@@ -292,7 +318,13 @@ class PairVerdict(NamedTuple):
 
 
 def _monetization_differs(left, right):
-    return set(left.monetization_tags) != set(right.monetization_tags)
+    """수익 목적(태그 묶음)이 다른가 — 둘 다 비었으면 같은 것(False), 한쪽만 비었으면 모름(None: 태그를 아직 안 달았을 수 있다), 둘 다 있으면 묶음이 다른지(순서는 상관없다)."""
+    first, second = set(left.monetization_tags), set(right.monetization_tags)
+    if not first and not second:
+        return False
+    if not first or not second:
+        return None
+    return first != second
 
 
 def compare_across_channels(first, second, *, extras=NO_EXTRAS, min_different=MIN_DIFFERENT_ITEMS):
@@ -301,6 +333,11 @@ def compare_across_channels(first, second, *, extras=NO_EXTRAS, min_different=MI
         raise TypeError("compare_across_channels(후보, 후보, extras=PairExtras()) 로 불러야 한다")
     if first.channel == second.channel:
         raise ValueError("서로 다른 채널의 후보를 견주는 함수다")
+    if first.source_topic_id != second.source_topic_id:
+        raise ValueError("같은 원천 주제(source_topic_id)에서 나온 두 후보를 견주는 함수다 — 원천 주제 번호가 다르다")
+    for name, value in extras._asdict().items():
+        if value is not None and not isinstance(value, bool):
+            raise TypeError(f"PairExtras.{name} 는 True(다르다)·False(같다)·None(모름) 중 하나여야 한다")
     if not isinstance(min_different, int) or isinstance(min_different, bool) or not 1 <= min_different <= len(CROSS_ITEMS):
         raise ValueError(f"min_different 는 1~{len(CROSS_ITEMS)} 사이의 정수여야 한다")
     answers = {
@@ -351,7 +388,7 @@ def check_topic_spread(candidates, *, extras=None, min_different=MIN_DIFFERENT_I
 
 
 __all__ = [
-    "ANGLE_NEEDED", "CROSS_ITEMS", "CROSS_ITEM_KO", "Comparison", "DEFAULT_CUTOFFS", "DIFFERENT_TOPIC", "DUPLICATE_OR_UPDATE", "FILLERS", "MAX_MATCHES", "MIN_DIFFERENT_ITEMS", "Match", "NO_EXTRAS",
+    "ANGLE_NEEDED", "CROSS_ITEMS", "CROSS_ITEM_KO", "Comparison", "DEFAULT_CUTOFFS", "DIFFERENT_TOPIC", "DUPLICATE_OR_UPDATE", "Duplicates", "FILLERS", "MAX_MATCHES", "MIN_DIFFERENT_ITEMS", "Match", "NO_EXTRAS",
     "PARTICLES", "PairExtras", "PairVerdict", "SIGNAL_KO", "SIMILAR_ELEMENTS", "STATUS_KO", "Signals", "Signature", "Similarity", "TopicSpread", "WEIGHT_GRAMS", "WEIGHT_WORDS", "check_topic_spread", "compare",
-    "compare_across_channels", "find_matches", "grams_of", "marked", "signals_of", "signature_of", "similarity", "status_of", "words_of",
+    "compare_across_channels", "find_duplicates", "find_matches", "grams_of", "marked", "signals_of", "signature_of", "similarity", "status_of", "words_of",
 ]
