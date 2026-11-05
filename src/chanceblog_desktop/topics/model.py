@@ -4,7 +4,7 @@
 규칙: ① 한 줄 규칙·위험한 표기 거절·결과를 약속하는 표현 금지는 기존 후보와 **같은 도구**(`content.candidates` 의 `_line`·`_keyword`·`forbidden_claim`)를 쓴다 — 주제·키워드·이유·오류·관심도 글칸 전부에.
 ② 채널은 후보 한 건에 **하나**다(`channel`, 코드의 채널 키 — 입력 별칭은 저장하지 않는다). 같은 주제를 두 채널에서 쓰는 것은 후보 여러 건이 같은 `source_topic_id` 를 갖거나 `similar_post_ids` 로 서로를 가리키는 것으로 표현한다.
 ③ **상태 축이 둘이다**: `work_status`(사람의 작업 흐름 — 기존 후보의 NEW·REVIEW·SELECTED·HOLD·REJECTED 를 그대로 쓴다)와 `recommendation_band`(추천 구간 — 점수에서 계산하는 값이라 저장하지 않는다). 하나의 status 로 합치지 않는다.
-④ **관심도(Trend)와 실제 검색 횟수는 다른 칸이다**: 관심도는 상대값(`trend_ratio` 0~100)과 그 기준(`trend_period`·`trend_compared_group`·`trend_queried_on`), 실제 검색 횟수(`search_demand_count`)는 횟수를 주는 출처가 있을 때만(`search_demand_source` 필수)이며
+④ **관심도(Trend)와 실제 검색 횟수는 다른 칸이다**: 관심도는 상대값(`trend_ratio` 0~100)과 그 기준(`trend_period`·`trend_compared_group`·`trend_queried_on`), 실제 검색 횟수(`search_demand_count`)는 횟수를 주는 출처가 있을 때만(`search_count_source` 필수)이며
 점수 계산은 이 칸을 읽지 않는다. 상대값은 어떤 경우에도 횟수 칸으로 흘러가지 않고, 관심도 서비스를 출처로 적은 횟수는 거절한다. '월 검색량'·'조회수' 같은 이름은 칸 이름·저장 키·화면 이름 어디에도 쓰지 않는다.
 ⑤ 모르는 값은 0 이 아니라 `None`(점수·관심도·횟수) 이다. 후보는 바꿀 수 없는 값이고(frozen) 고치려면 `dataclasses.replace` 로 새로 만든다(그때 다시 검증한다).
 저장 모양은 `schema` 1 의 엄격한 JSON 이다 — 모르는 칸·빠진 필수 칸은 거절하고 다른 칸은 기본값이다. 모든 검증 실패는 `CANDIDATE_INVALID`(어느 칸이 왜 안 되는지)로 낸다.
@@ -12,13 +12,14 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import timedelta
 from types import MappingProxyType
 
-from ..content.candidates import MAX_REASON, MAX_SUB_KEYWORDS, MAX_TOPIC, NEW, STATUSES, _day, _ID, _invalid, _keyword, _line, _lines, keyword_key, parse_stamp
-from .channels import CHANNEL_ALIAS, CHANNELS, LANGUAGES, is_slug, is_tag
-from .score import DATA_INSUFFICIENT, DATA_STATUSES, DETERMINATE_TRENDS, TREND_INSUFFICIENT, TREND_STATUSES, Factors, ScoreCard, band_of
+from ..content.candidates import MAX_REASON, MAX_SUB_KEYWORDS, MAX_TOPIC, NEW, SHORT_ID, STATUSES, _day, _ID, _invalid, _keyword, _line, _lines, keyword_key, parse_stamp
+from .channels import CHANNEL_ALIAS, CHANNELS, LANGUAGES, ChannelProfile, is_slug, is_tag
+from .score import DATA_INSUFFICIENT, DATA_STATUSES, DETERMINATE_TRENDS, TREND_INSUFFICIENT, TREND_STATUSES, Factors, ScoreCard, band_of, check_card
 
 SCHEMA = 1
 
@@ -49,21 +50,30 @@ MAX_SEARCH_COUNT = 1_000_000_000
 MAX_SEQUENCE = 9999
 KST = timedelta(hours=9)                                                                  # 화면 표시는 한국 시간(+9) 고정 — 저장은 UTC
 _REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,119}")
-# 관심도(상대값)를 주는 서비스를 '실제 검색 횟수의 출처' 로 적을 수 없다 — 글자·숫자만 남긴 소문자 글에 이 낱말이 있으면 거절한다
-_TREND_SOURCE_WORDS = ("trend", "datalab", "트렌드", "데이터랩", "관심도", "상대지수", "상대값")
+# 관심도(상대값)를 주는 서비스·상대값을 뜻하는 말을 '실제 검색 횟수의 출처' 로 적을 수 없다. 출처 이름은 비교하기 전에 정리한다(`_fold`): 호환 문자(전각 ＴＲＥＮＤ)·악센트(trénd)·대소문자를 풀고
+# 키릴·그리스 글자 중 라틴 글자와 똑같이 생긴 것(trеnd 의 가운데 글자)을 라틴 글자로 바꾼다. 그런 다음 ① 글자·숫자만 남긴 글(T-R-E-N-D → trend)에 '낱말 조각' 이 있는지, ② 낱말 단위로 '통째 낱말' 이
+# 있는지 본다. 숫자를 글자로 읽은 것(Tr3nd)도 ① 에서 잡는다. `ratio` 는 operation·migration 같은 흔한 영어 낱말 속에도 들어 있어서 ② 처럼 통째로 있을 때만 거절한다.
+_TREND_SOURCE_PARTS = ("trend", "datalab", "relative", "interestindex", "searchindex", "트렌드", "트랜드", "데이터랩", "관심도", "관심지수", "검색지수", "상대지수", "상대값", "상대적", "지수", "비율")
+_TREND_SOURCE_WORDS = ("ratio", "ratios", "index", "indices", "indexes")
+_LOOKALIKE = {chr(code): letter for code, letter in (
+    (0x0430, "a"), (0x0441, "c"), (0x0435, "e"), (0x043E, "o"), (0x0440, "p"), (0x0445, "x"), (0x0443, "y"), (0x0456, "i"), (0x0458, "j"), (0x0455, "s"), (0x0501, "d"), (0x04BB, "h"),
+    (0x051B, "q"), (0x051D, "w"), (0x04CF, "l"), (0x0261, "g"), (0x03B1, "a"), (0x03B5, "e"), (0x03B9, "i"), (0x03BA, "k"), (0x03BD, "v"), (0x03BF, "o"), (0x03C1, "p"), (0x03C5, "u"),
+    (0x03C4, "t"), (0x03B7, "n"), (0x0131, "i"), (0x00F8, "o"), (0x0111, "d"))}
+_LEET = {"i": str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"}), "l": str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})}
+_DISPLAY_PREFIX = "candidate-"      # 표시 번호(`display_id`)의 앞부분 — 저장 번호가 이것으로 시작하면 명령줄의 '번호 앞 8자 선택'(`candidat`)에서 서로 구분되지 않는다
 
 LABELS = MappingProxyType({
     "candidate_id": "후보 번호", "source_topic_id": "원천 주제 번호", "seed_id": "씨앗 번호", "source_type": "후보가 생긴 경로", "candidate_type": "후보 종류", "channel": "채널", "language": "언어",
     "topic": "추천 포스팅 주제", "primary_keyword": "핵심 키워드", "secondary_keywords": "보조 키워드", "search_intent": "검색 의도", "content_type": "글 종류", "topic_cluster": "주제 묶음",
     "topic_angle": "관점", "target_reader": "대상 독자", "scores": "점수", "trend_status": "최근 관심도 변화", "trend_ratio": "최근 관심도(상대값)", "trend_period": "관심도 비교 기간",
-    "trend_compared_group": "관심도 비교 키워드 그룹", "trend_queried_on": "관심도 조회일", "search_demand_count": "실제 검색 횟수", "search_demand_source": "검색 횟수 출처",
+    "trend_compared_group": "관심도 비교 키워드 그룹", "trend_queried_on": "관심도 조회일", "search_demand_count": "실제 검색 횟수", "search_count_source": "검색 횟수 출처",
     "data_status": "자료 상태", "duplicate_status": "중복 판정", "similar_post_ids": "비슷한 글", "monetization_tags": "협업 가능 유형", "selection_reasons": "선정 이유",
     "processing_errors": "처리 중 문제", "work_status": "작업 상태", "recommendation_band": "추천 구간", "created_at": "만든 시각", "review_expires_at": "검토 기한",
 })
 
 _KEYS = ("schema", "candidate_id", "source_topic_id", "seed_id", "source_type", "candidate_type", "channel", "language", "topic", "primary_keyword", "secondary_keywords", "search_intent",
          "content_type", "topic_cluster", "topic_angle", "target_reader", "scores", "trend_status", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on",
-         "search_demand_count", "search_demand_source", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags", "selection_reasons", "processing_errors",
+         "search_demand_count", "search_count_source", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags", "selection_reasons", "processing_errors",
          "work_status", "created_at", "review_expires_at")
 _REQUIRED = frozenset({"schema", "candidate_id", "source_type", "candidate_type", "channel", "language", "topic", "primary_keyword", "search_intent", "content_type", "topic_cluster",
                        "topic_angle", "target_reader", "created_at"})
@@ -135,21 +145,40 @@ def check_trend(status, ratio, period, group, queried_on):
     return status, ratio, period, names, queried_on
 
 
-def _flat(text):
-    return "".join(ch for ch in text.casefold() if ch.isalnum())
+def _fold(text):
+    """출처 이름을 비교용으로 정리한다 — 호환 문자를 풀고(NFKC) 대소문자·악센트를 없애고, 라틴 글자와 똑같이 생긴 키릴·그리스 글자를 라틴 글자로 바꾼다. 한글 음절은 풀지 않는다."""
+    kept = []
+    for ch in unicodedata.normalize("NFKC", text).casefold():
+        if "가" <= ch <= "힣":
+            kept.append(ch)
+            continue
+        kept.extend(_LOOKALIKE.get(part, part) for part in unicodedata.normalize("NFD", ch) if not unicodedata.combining(part))
+    return "".join(kept)
+
+
+def trend_word_in(source):
+    """출처 이름에 '상대값·관심도' 를 뜻하는 말이 들어 있으면 그 말을, 없으면 None. 전각·악센트·대소문자·키릴 닮은꼴·띄어쓰기·기호·숫자 글자(Tr3nd)를 가리지 않고 찾는다."""
+    text = _fold(source)
+    for variant in (text, text.translate(_LEET["i"]), text.translate(_LEET["l"])):
+        flat = "".join(ch for ch in variant if ch.isalnum())
+        for part in _TREND_SOURCE_PARTS:
+            if part in flat:
+                return part
+    words = re.findall(r"[^\W\d_]+", text)
+    return next((word for word in _TREND_SOURCE_WORDS if word in words), None)
 
 
 def check_search_demand(count, source):
     """실제 검색 횟수와 그 출처. 값이 있으면 출처도 필수이고, 출처만 있어도 안 되며, 관심도(상대값)를 주는 서비스는 출처가 될 수 없다."""
     if count is not None and (not isinstance(count, int) or isinstance(count, bool) or not 0 <= count <= MAX_SEARCH_COUNT):
         raise _invalid(LABELS["search_demand_count"], f"0~{MAX_SEARCH_COUNT:,} 사이의 정수이거나 비워 두어야 합니다")
-    source = None if source is None else _line(source, LABELS["search_demand_source"], low=1, high=MAX_PERIOD)
+    source = None if source is None else _line(source, LABELS["search_count_source"], low=1, high=MAX_PERIOD)
     if count is not None and source is None:
-        raise _invalid(LABELS["search_demand_source"], "실제 검색 횟수에는 횟수를 준 출처의 이름이 있어야 합니다")
+        raise _invalid(LABELS["search_count_source"], "실제 검색 횟수에는 횟수를 준 출처의 이름이 있어야 합니다")
     if source is not None and count is None:
         raise _invalid(LABELS["search_demand_count"], "출처만 있고 횟수가 없습니다")
-    if source is not None and any(word in _flat(source) for word in _TREND_SOURCE_WORDS):
-        raise _invalid(LABELS["search_demand_source"], "관심도(상대값)를 주는 서비스는 실제 검색 횟수의 출처가 될 수 없습니다")
+    if source is not None and trend_word_in(source):
+        raise _invalid(LABELS["search_count_source"], "관심도(상대값)를 주는 서비스는 실제 검색 횟수의 출처가 될 수 없습니다")
     return count, source
 
 
@@ -165,7 +194,21 @@ def display_id(created_at, sequence):
     moment = parse_stamp(created_at, LABELS["created_at"])
     if not isinstance(sequence, int) or isinstance(sequence, bool) or not 1 <= sequence <= MAX_SEQUENCE:
         raise _invalid("표시 번호의 순번", f"1~{MAX_SEQUENCE} 사이의 정수여야 합니다")
-    return f"candidate-{moment + KST:%Y%m%d}-{sequence:03d}"
+    try:
+        local = moment + KST
+    except OverflowError:
+        raise _invalid(LABELS["created_at"], "너무 먼 미래(9999년 끝)라 한국 시간의 날짜로 바꿀 수 없습니다", detail="9999-12-31 에 9시간을 더하면 달력 범위를 넘는다") from None
+    return f"{_DISPLAY_PREFIX}{local:%Y%m%d}-{sequence:03d}"
+
+
+def stored_id(value, item):
+    """저장하는 번호의 모양 — 영문·숫자·밑줄(_)·붙임표(-) 1~64자이고 화면 표시 번호(`candidate-…`)와 앞 8자(`candidat`)가 같지 않다(P2a, 독립 검증 L9).
+    표시 번호는 앞 글자가 모두 같아 명령줄의 '번호 앞 8자 선택'(`content.candidates.SHORT_ID`)으로 서로 고를 수 없으므로 저장 번호로 쓰면 안 된다."""
+    if not isinstance(value, str) or not _ID.fullmatch(value):
+        raise _invalid(item, "영문·숫자·밑줄(_)·붙임표(-) 1~64자여야 합니다")
+    if value.casefold().startswith(_DISPLAY_PREFIX[:SHORT_ID]):
+        raise _invalid(item, f"‘{_DISPLAY_PREFIX[:SHORT_ID]}’ 으로 시작하는 번호는 화면 표시 번호와 앞 {SHORT_ID}자가 같아 ‘번호 앞 {SHORT_ID}자’ 로 고를 수 없습니다 — 다른 모양의 번호를 쓰세요")
+    return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -193,7 +236,7 @@ class TopicCandidate:
     trend_compared_group: tuple = ()                    # 상대값의 비교 키워드 그룹
     trend_queried_on: str | None = None                 # 관심도 조회일(YYYY-MM-DD)
     search_demand_count: int | None = None              # 실제 검색 횟수 — 횟수를 주는 출처가 있을 때만(점수 계산은 읽지 않는다)
-    search_demand_source: str | None = None             # 그 횟수의 출처 이름(횟수가 있으면 필수)
+    search_count_source: str | None = None             # 그 횟수의 출처 이름(횟수가 있으면 필수)
     data_status: str = DATA_INSUFFICIENT                # sufficient·partial·insufficient(모자람)·unavailable(조회 불가 — 장애·한도)
     duplicate_status: str | None = None                 # None 이면 아직 중복 확인 전
     similar_post_ids: tuple = ()
@@ -207,8 +250,7 @@ class TopicCandidate:
         def put(name, value):
             object.__setattr__(self, name, value)
 
-        if not isinstance(self.candidate_id, str) or not _ID.fullmatch(self.candidate_id):
-            raise _invalid(LABELS["candidate_id"], "영문·숫자·밑줄(_)·붙임표(-) 1~64자여야 합니다")
+        stored_id(self.candidate_id, LABELS["candidate_id"])
         _optional_id(self.source_topic_id, LABELS["source_topic_id"])
         _optional_id(self.seed_id, LABELS["seed_id"])
         _choice(self.source_type, SOURCE_TYPES, LABELS["source_type"])
@@ -236,8 +278,8 @@ class TopicCandidate:
         _status, _ratio, period, group, _queried = check_trend(self.trend_status, self.trend_ratio, self.trend_period, self.trend_compared_group, self.trend_queried_on)
         put("trend_period", period)
         put("trend_compared_group", group)
-        _count, source = check_search_demand(self.search_demand_count, self.search_demand_source)
-        put("search_demand_source", source)
+        _count, source = check_search_demand(self.search_demand_count, self.search_count_source)
+        put("search_count_source", source)
         _choice(self.data_status, DATA_STATUSES, LABELS["data_status"])
         if self.duplicate_status is not None:
             _choice(self.duplicate_status, DUPLICATE_STATUSES, LABELS["duplicate_status"])
@@ -263,7 +305,7 @@ class TopicCandidate:
             "secondary_keywords": list(self.secondary_keywords), "search_intent": self.search_intent, "content_type": self.content_type, "topic_cluster": self.topic_cluster,
             "topic_angle": self.topic_angle, "target_reader": self.target_reader, "scores": self.scores.to_dict(), "trend_status": self.trend_status, "trend_ratio": self.trend_ratio,
             "trend_period": self.trend_period, "trend_compared_group": list(self.trend_compared_group), "trend_queried_on": self.trend_queried_on,
-            "search_demand_count": self.search_demand_count, "search_demand_source": self.search_demand_source, "data_status": self.data_status, "duplicate_status": self.duplicate_status,
+            "search_demand_count": self.search_demand_count, "search_count_source": self.search_count_source, "data_status": self.data_status, "duplicate_status": self.duplicate_status,
             "similar_post_ids": list(self.similar_post_ids), "monetization_tags": list(self.monetization_tags), "selection_reasons": list(self.selection_reasons),
             "processing_errors": list(self.processing_errors), "work_status": self.work_status, "created_at": self.created_at, "review_expires_at": self.review_expires_at,
         }
@@ -283,7 +325,18 @@ class TopicCandidate:
         return cls(**values)
 
 
+def check_candidate_score(candidate, profile):
+    """엔진 후보의 점수가 **그 채널의 가중치로 다시 계산한 값과 같은지** 확인한다(`score.check_card`) — 채널 프로필도 후보의 채널과 같아야 한다.
+    저장소에서 불러온 후보를 우수 후보 고르기(`select.top_view`) 같은 곳에 넘기기 전에 거르는 용도다. 같으면 후보를 돌려주고 다르면 `CANDIDATE_INVALID`."""
+    if not isinstance(candidate, TopicCandidate) or not isinstance(profile, ChannelProfile):
+        raise TypeError("check_candidate_score(엔진 후보, 채널 프로필) 로 불러야 한다")
+    if profile.key != candidate.channel:
+        raise _invalid(LABELS["channel"], f"후보의 채널({candidate.channel})과 점수를 다시 계산할 채널 프로필({profile.key})이 다릅니다")
+    check_card(profile, candidate.scores)
+    return candidate
+
+
 __all__ = [
     "CANDIDATE_TYPES", "CONTENT_TO_POST_TYPE", "CONTENT_TYPES", "DUPLICATE_STATUSES", "Factors", "LABELS", "SCHEMA", "SEARCH_INTENTS", "SOURCE_TYPES", "ScoreCard", "TopicCandidate",
-    "check_search_demand", "check_trend", "display_id", "to_post_type",
+    "check_candidate_score", "check_search_demand", "check_trend", "display_id", "stored_id", "to_post_type", "trend_word_in",
 ]

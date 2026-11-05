@@ -303,6 +303,73 @@ TREND_CELLS = {                                     # 손으로 쓴 점수표
 CALENDAR_ONLY = {"due": 60, "out_of_range": 20, "unknown": None}
 
 
+class CardCheckTest(unittest.TestCase):
+    # P2a(독립 검증 M2): `ScoreCard` 는 '최소~최대 사이' 까지만 보므로, 저장된 점수가 채널 가중치로 다시 계산한 값과 같은지는 `check_card` 가 따로 확인한다.
+    B = ts.PROFILES["naver_b"]
+
+    def test_the_card_alone_cannot_tell_a_lying_final_score_from_an_honest_one(self):
+        liar = sc.ScoreCard(factors(10, None, None, 90, None, None), 80)             # 항목 10·90 에 최종 80 — 받아들여진다(최소 10 ~ 최대 90 사이)
+        self.assertEqual(liar.band, sc.BAND_RECOMMENDED)
+
+    def test_the_recomputed_card_passes_for_every_channel_and_every_pattern_of_missing_factors(self):
+        values = (92, 55, 70, 100, 0, 38)
+        for key, profile in ts.PROFILES.items():
+            for mask in itertools.product((True, False), repeat=6):
+                shown = [value if keep else None for value, keep in zip(values, mask, strict=True)]
+                with self.subTest(channel=key, factors=shown):
+                    card = sc.score(profile, factors(*shown)).card
+                    self.assertIs(sc.check_card(profile, card), card)
+
+    def test_the_lie_is_refused_with_the_stored_and_the_recomputed_number(self):
+        liar = sc.ScoreCard(factors(10, None, None, 90, None, None), 80)
+        with self.assertRaises(AppError) as caught:
+            sc.check_card(self.B, liar)
+        self.assertEqual(caught.exception.code, "CANDIDATE_INVALID")
+        shown = caught.exception.rendered().message
+        for needle in ("최종 점수", "80", "46", "네이버 B", "다시 계산한 값"):
+            self.assertIn(needle, shown)
+        self.assertEqual(sc.score(self.B, liar.factors).final, 46)
+
+    def test_one_point_off_in_either_direction_is_refused_and_the_exact_value_is_accepted(self):
+        for final in (45, 47):
+            with self.subTest(final=final):
+                with self.assertRaises(AppError):
+                    sc.check_card(self.B, sc.ScoreCard(factors(10, None, None, 90, None, None), final))
+        exact = sc.ScoreCard(factors(10, None, None, 90, None, None), 46)
+        self.assertIs(sc.check_card(self.B, exact), exact)
+
+    def test_a_final_score_that_the_weights_cannot_produce_is_refused(self):
+        zero_weight = dataclasses.replace(self.B, weights={**self.B.weights, "channel_fit": 25, "timing": 0, "evidence": 10 + 20, "monetization": 20})
+        card = sc.ScoreCard(factors(None, None, None, 90, None, None), 90)             # 평가한 항목(시기)의 가중치가 0 이라 다시 계산하면 '점수 없음'
+        self.assertIsNone(sc.score(zero_weight, card.factors).final)
+        with self.assertRaises(AppError):
+            sc.check_card(zero_weight, card)
+
+    def test_a_missing_final_with_evaluated_factors_is_refused_and_no_score_at_all_is_fine(self):
+        with self.assertRaises(AppError):
+            sc.check_card(self.B, sc.ScoreCard(factors(60, None, None, None, None, None), None))
+        empty = sc.ScoreCard()
+        self.assertIs(sc.check_card(self.B, empty), empty)
+
+    def test_the_same_card_is_judged_with_the_weights_of_the_channel_it_is_given(self):
+        card = sc.score(self.B, factors(90, None, None, 10, None, None)).card
+        sc.check_card(self.B, card)
+        with self.assertRaises(AppError):
+            sc.check_card(ts.PROFILES["naver_a"], card)
+
+    def test_wrong_kinds_of_input_are_programming_errors(self):
+        card = sc.ScoreCard()
+        for args in ((None, card), (self.B, None), ({"key": "naver_b"}, card), (self.B, {"final": 1}), (self.B, factors(1, None, None, None, None, None))):
+            with self.subTest(args=repr(args)[:30]):
+                with self.assertRaises(TypeError):
+                    sc.check_card(*args)
+
+    def test_it_does_not_change_the_card_and_gives_the_same_answer_every_time(self):
+        card = sc.score(self.B, factors(70, 70, None, 70, None, None)).card
+        again = dataclasses.replace(card)
+        self.assertEqual((sc.check_card(self.B, card), sc.check_card(self.B, card)), (again, again))
+
+
 class TimingTest(unittest.TestCase):
     def test_the_state_names(self):
         self.assertEqual(sc.CALENDAR_STATES, ("due", "out_of_range", "unknown"))

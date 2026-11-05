@@ -30,7 +30,7 @@ NOW = "2026-11-03T00:00:00Z"
 DAY = "2026-11-03"
 # 새 엔진 후보·연결·출처 스냅샷이 쓸 이름들(운영자 확정 사항) — 지금 `Candidate` 에는 하나도 없다. 새 이름은 기존 칸과 겹치지 않는다.
 NEW_ENGINE_NAMES = (
-    "search_demand_count", "search_demand_source", "trend_ratio", "trend_status", "trend_period", "trend_compared_group", "trend_queried_on", "data_status",
+    "search_demand_count", "search_count_source", "trend_ratio", "trend_status", "trend_period", "trend_compared_group", "trend_queried_on", "data_status",
     "work_status", "recommendation_band", "engine_candidate_id", "legacy_candidate_id", "draft_plan_id", "source_topic_id", "seed_id", "channel",
     "topic_cluster", "topic_angle", "monetization_tags", "scores", "search_intent", "target_reader", "language", "provenance",
 )

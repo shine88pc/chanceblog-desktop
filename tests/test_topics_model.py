@@ -4,7 +4,8 @@
   1) 열거형 값은 닫힌 목록이다(작업 상태는 기존 후보의 다섯 값을 그대로 쓴다). 글 종류는 기존 글 유형 다섯에 빠짐없이 대응한다.
   2) 모든 글칸(주제·키워드·보조 키워드·대상 독자·선정 이유·처리 중 문제·관심도 기간·비교 그룹·횟수 출처)은 기존 후보와 같은 한 줄·위험한 표기·결과 약속 표현 규칙으로 거절한다.
   3) 관심도(상대값)와 실제 검색 횟수는 다른 칸이다 — 상대값에는 기준(기간·비교 그룹·조회일)이 있어야 하고 횟수에는 출처가 있어야 하며, 상대값은 횟수 칸으로 흘러가지 않는다.
-     칸 이름·저장 키·화면 이름 어디에도 '검색량'·'조회수'·volume 이 없고 demand 는 실제 횟수 칸 둘에만 있다.
+     칸 이름·저장 키·화면 이름 어디에도 '검색량'·'조회수'·volume 이 없고 demand 는 실제 횟수 칸(`search_demand_count`) 하나에만 있다(출처 칸은 `search_count_source` — P2a 에서 개명, D-43).
+  6) 출처 이름에 상대값·관심도를 뜻하는 말이 들어 있으면 전각·악센트·키릴 닮은꼴·숫자 글자로 바꿔 써도 거절하고(P2a, L1), 저장 번호는 화면 표시 번호 모양(`candidate-…`)이 될 수 없다(L9).
   4) 작업 상태(work_status)와 추천 구간(recommendation_band)은 다른 축이다 — 구간은 점수에서 계산하고 저장하지 않으며 하나의 status 로 합치지 않는다.
   5) 저장 모양(JSON)은 엄격하다 — 모르는 칸·빠진 필수 칸·어긋난 값은 거절하고 왕복하면 같은 후보다.
 네트워크·파일·실제 시계·난수 없이 돈다.
@@ -28,7 +29,7 @@ from chanceblog_desktop.topics import score as sc  # noqa: E402
 REQUIRED = ("candidate_id", "source_type", "candidate_type", "channel", "language", "topic", "primary_keyword", "search_intent", "content_type", "topic_cluster", "topic_angle",
             "target_reader", "created_at")
 OPTIONAL = ("source_topic_id", "seed_id", "secondary_keywords", "scores", "trend_status", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on",
-            "search_demand_count", "search_demand_source", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags", "selection_reasons", "processing_errors",
+            "search_demand_count", "search_count_source", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags", "selection_reasons", "processing_errors",
             "work_status", "review_expires_at")
 PROMISES = ("상위노출 보장", "검색 1위 가능성", "수익 보장", "노출 확률 높이는 법", "guaranteed income")
 TREND_BASIS = {"trend_ratio": 60, "trend_period": "최근 12개월", "trend_compared_group": ("로컬 AI",), "trend_queried_on": "2026-11-04"}
@@ -55,6 +56,12 @@ class ClosedListsTest(unittest.TestCase):
             self.assertTrue(all(ch.is_tag(value) for value in values))
         self.assertIn("selection_guide", md.SEARCH_INTENTS)
         self.assertIn("buying_guide", md.CONTENT_TYPES)
+
+    def test_the_two_closed_lists_are_exactly_these_values_so_adding_a_word_is_a_conscious_change(self):
+        # 낱말을 더하거나 빼면 여기가 걸린다 — 값이 늘면 이 시험과 글 종류 대응표(`CONTENT_TO_POST_TYPE`)를 함께 고친다(P2a, 독립 검증 L10).
+        self.assertEqual(md.SEARCH_INTENTS, ("information", "how_to", "problem_solving", "selection_guide", "comparison", "local_info", "context_explainer", "routine_building"))
+        self.assertEqual(md.CONTENT_TYPES, ("explainer", "how_to_guide", "checklist", "troubleshooting", "buying_guide", "comparison", "place_guide", "news_analysis", "routine_plan",
+                                            "dev_log", "service_intro"))
 
     def test_every_enumerated_value_is_accepted_and_others_are_not(self):
         cases = (("source_type", md.SOURCE_TYPES), ("candidate_type", md.CANDIDATE_TYPES), ("search_intent", md.SEARCH_INTENTS), ("content_type", md.CONTENT_TYPES),
@@ -108,7 +115,7 @@ class ShapeTest(unittest.TestCase):
         self.assertEqual((c.trend_status, c.data_status, c.work_status), ("insufficient", "insufficient", "NEW"))
         self.assertEqual(c.scores, sc.ScoreCard())
         self.assertEqual(c.recommendation_band, "UNRATED")
-        for name in ("source_topic_id", "seed_id", "trend_ratio", "trend_period", "trend_queried_on", "search_demand_count", "search_demand_source", "duplicate_status", "review_expires_at"):
+        for name in ("source_topic_id", "seed_id", "trend_ratio", "trend_period", "trend_queried_on", "search_demand_count", "search_count_source", "duplicate_status", "review_expires_at"):
             self.assertIsNone(getattr(c, name), name)
         for name in ("secondary_keywords", "trend_compared_group", "similar_post_ids", "monetization_tags", "selection_reasons", "processing_errors"):
             self.assertEqual(getattr(c, name), (), name)
@@ -224,7 +231,7 @@ class TextRulesTest(unittest.TestCase):
     def test_the_trend_texts_and_the_count_source_reject_a_promise_too(self):
         rejected(self, **{**TREND_BASIS, "trend_status": "flat", "trend_period": "상위노출 보장"})
         rejected(self, **{**TREND_BASIS, "trend_status": "flat", "trend_compared_group": ("수익 보장",)})
-        rejected(self, search_demand_count=10, search_demand_source="수익 보장")
+        rejected(self, search_demand_count=10, search_count_source="수익 보장")
 
     def test_one_line_rules_apply_to_every_text_field(self):
         bad_texts = ("두\n줄", "탭\t문자", "겹친  공백", "보이지" + chr(0x200B) + "않는 글자", "<b>굵게</b>", "{{ 템플릿 }}", "javascript:alert(1)", "")
@@ -374,34 +381,34 @@ class TrendFieldsTest(unittest.TestCase):
 
 class SearchDemandTest(unittest.TestCase):
     def test_a_real_count_comes_with_its_source(self):
-        c = ts.make(search_demand_count=4200, search_demand_source="검색광고 키워드 도구")
-        self.assertEqual((c.search_demand_count, c.search_demand_source), (4200, "검색광고 키워드 도구"))
-        self.assertEqual(ts.make(search_demand_count=0, search_demand_source="수동 입력").search_demand_count, 0)
+        c = ts.make(search_demand_count=4200, search_count_source="검색광고 키워드 도구")
+        self.assertEqual((c.search_demand_count, c.search_count_source), (4200, "검색광고 키워드 도구"))
+        self.assertEqual(ts.make(search_demand_count=0, search_count_source="수동 입력").search_demand_count, 0)
 
     def test_a_count_without_a_source_and_a_source_without_a_count_are_both_refused(self):
         rejected(self, search_demand_count=4200)
-        rejected(self, search_demand_source="검색광고 키워드 도구")
-        rejected(self, search_demand_count=4200, search_demand_source="")
+        rejected(self, search_count_source="검색광고 키워드 도구")
+        rejected(self, search_demand_count=4200, search_count_source="")
 
     def test_the_count_is_an_integer_in_range(self):
-        self.assertEqual(ts.make(search_demand_count=md.MAX_SEARCH_COUNT, search_demand_source="출처").search_demand_count, md.MAX_SEARCH_COUNT)
+        self.assertEqual(ts.make(search_demand_count=md.MAX_SEARCH_COUNT, search_count_source="출처").search_demand_count, md.MAX_SEARCH_COUNT)
         for bad in (-1, md.MAX_SEARCH_COUNT + 1, 12.5, 100.0, True, "4200", [1]):
             with self.subTest(count=bad):
-                rejected(self, search_demand_count=bad, search_demand_source="출처")
+                rejected(self, search_demand_count=bad, search_count_source="출처")
 
     def test_a_trend_service_cannot_be_the_source_of_a_real_count(self):
         for source in ("NAVER Search Trend", "naver_search_trend", "네이버 데이터랩", "Datalab", "Google Trends", "트렌드 지수", "관심도 지수", "상대지수", "Search-Trend API"):
             with self.subTest(source=source):
-                error = rejected(self, search_demand_count=100, search_demand_source=source)
+                error = rejected(self, search_demand_count=100, search_count_source=source)
                 self.assertIn("실제 검색 횟수의 출처", error.rendered().message)
         for source in ("검색광고 키워드 도구", "naver_searchad", "수동 입력", "운영자가 확인한 값"):
             with self.subTest(source=source):
-                self.assertEqual(ts.make(search_demand_count=100, search_demand_source=source).search_demand_source, source)
+                self.assertEqual(ts.make(search_demand_count=100, search_count_source=source).search_count_source, source)
 
     def test_a_relative_value_never_becomes_a_count(self):
         c = ts.make(trend_status="rising", **TREND_BASIS)
         self.assertIsNone(c.search_demand_count)
-        self.assertIsNone(c.search_demand_source)
+        self.assertIsNone(c.search_count_source)
         self.assertIsNone(c.to_dict()["search_demand_count"])
         self.assertEqual(c.to_dict()["trend_ratio"], 60)
         self.assertIsNone(dataclasses.replace(c, trend_ratio=70).search_demand_count)
@@ -417,27 +424,36 @@ class SearchDemandTest(unittest.TestCase):
 
     def test_a_count_does_not_change_the_score_or_the_band(self):
         plain = ts.make(scores=ts.flat_card(70))
-        counted = ts.make(scores=ts.flat_card(70), search_demand_count=10**8, search_demand_source="출처")
+        counted = ts.make(scores=ts.flat_card(70), search_demand_count=10**8, search_count_source="출처")
         self.assertEqual((plain.scores, plain.recommendation_band), (counted.scores, counted.recommendation_band))
 
 
 class NamesTest(unittest.TestCase):
     FORBIDDEN = ("volume", "검색량", "조회수", "예상 조회", "월 검색", "월간 검색", "demand")
-    EXACT_COUNT_FIELDS = {"search_demand_count", "search_demand_source"}
+    EXACT_COUNT_FIELDS = {"search_demand_count"}                  # 운영자가 정한 이름 하나뿐 — 출처 칸은 search_count_source(P2a 개명, D-43)
 
     def names(self):
         fields = {f.name for f in dataclasses.fields(md.TopicCandidate)}
         return fields | set(md._KEYS) | set(ts.full().to_dict()) | set(md.LABELS)
 
-    def test_no_field_key_or_label_name_uses_a_search_volume_word_except_the_two_real_count_fields(self):
+    def test_no_field_key_or_label_name_uses_a_search_volume_word_except_the_one_real_count_field(self):
         for name in self.names():
             for word in self.FORBIDDEN:
                 if word in name.casefold():
                     with self.subTest(name=name, word=word):
                         self.assertEqual((word, name in self.EXACT_COUNT_FIELDS), ("demand", True))
 
-    def test_the_demand_word_appears_only_in_the_two_real_count_fields(self):
+    def test_the_demand_word_appears_only_in_the_one_real_count_field(self):
         self.assertEqual({name for name in self.names() if "demand" in name}, self.EXACT_COUNT_FIELDS)
+
+    def test_the_source_field_is_called_search_count_source_and_the_old_name_is_gone(self):
+        names = self.names()
+        self.assertIn("search_count_source", names)
+        self.assertNotIn("search_demand_source", names)
+        self.assertEqual(md.LABELS["search_count_source"], "검색 횟수 출처")
+        self.assertNotIn("search_demand_source", ts.full().to_dict())
+        with self.assertRaises(AppError):
+            md.TopicCandidate.from_dict(dict(ts.make().to_dict(), search_demand_source=None))
 
     def test_no_label_text_uses_a_search_volume_word(self):
         for key, text in md.LABELS.items():
@@ -551,7 +567,7 @@ class JsonShapeTest(unittest.TestCase):
     def test_a_wrong_value_is_refused_when_read(self):
         good = ts.full().to_dict()
         for name, bad in (("channel", "blogger_a"), ("source_type", "manual"), ("work_status", "DRAFTING"), ("trend_ratio", True), ("trend_status", "unavailable"),
-                          ("search_demand_source", None), ("scores", None), ("scores", {"final": 80}), ("secondary_keywords", "하나"), ("created_at", "어제"), ("topic", "상위노출 보장")):
+                          ("search_count_source", None), ("scores", None), ("scores", {"final": 80}), ("secondary_keywords", "하나"), ("created_at", "어제"), ("topic", "상위노출 보장")):
             with self.subTest(field=name):
                 with self.assertRaises(AppError):
                     md.TopicCandidate.from_dict({**good, name: bad})
@@ -589,7 +605,7 @@ class JsonShapeTest(unittest.TestCase):
 STRATEGY_FIELDS = ("candidate_id", "source_topic_id", "seed_id", "source_type", "candidate_type", "channel", "language", "topic", "primary_keyword", "secondary_keywords", "search_intent",
                    "content_type", "topic_cluster", "topic_angle", "target_reader", "scores", "trend_status", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags",
                    "selection_reasons", "status", "created_at", "review_expires_at")
-ADDED_FIELDS = ("processing_errors", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on", "search_demand_count", "search_demand_source")
+ADDED_FIELDS = ("processing_errors", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on", "search_demand_count", "search_count_source")
 
 
 class StrategyFieldsTest(unittest.TestCase):
@@ -611,6 +627,182 @@ class StrategyFieldsTest(unittest.TestCase):
         with self.assertRaises(AppError):
             md.TopicCandidate.from_dict(legacy)
         self.assertEqual(cand.Candidate.new("주제", "키워드", ["naver_a"], search_demand=87, data_date="2026-11-04").search_demand, 87)
+
+
+def fullwidth(text):
+    """영문을 전각으로(ＴＲＥＮＤ) — 글자 이스케이프를 소스에 쓰지 않고 코드 위치로 만든다."""
+    return "".join(chr(ord(ch) + 0xFEE0) if "!" <= ch <= "~" else ch for ch in text)
+
+
+CYRILLIC_E, ACUTE_E = chr(0x0435), chr(0x00E9)
+# 상대값·관심도를 뜻하는 말을 바꿔 쓴 출처 이름 — 전부 실제 검색 횟수의 출처가 될 수 없다(독립 검증 L1 이 찾은 우회 14가지 + 같은 계열)
+DISGUISED_SOURCES = (
+    fullwidth("TREND"), fullwidth("NAVER Search Trend"), fullwidth("DataLab"), "tr" + CYRILLIC_E + "nd", "NAVER Search Tr" + CYRILLIC_E + "nd", "tr" + ACUTE_E + "nd", "Tr" + ACUTE_E + "nds",
+    "relative index", "relative interest", "Relative-Interest", "ratio", "Ratio", "the ratio", "interest index", "Interest Index", "관심지수", "검색 지수", "검색지수", "지수", "트랜드", "트렌드",
+    "Tr3nd", "d4t4lab", "re1ative", "interest1ndex", "T R E N D", "T-R-E-N-D", "t.r.e.n.d", "데이터 랩", "상대 값", "상대 비율", "비율", "ＮＡＶＥＲ ＳｅａｒｃｈＴｒｅｎｄ",
+)
+HONEST_SOURCES = ("검색광고 키워드 도구", "NAVER SearchAd", "naver_searchad", "manual csv", "사람이 적음", "my notes", "수동 입력", "운영자가 확인한 값", "operation log", "migration notes",
+                  "API integration report", "registration sheet", "calibration table", "generation log")
+
+
+class SourceNameWordsTest(unittest.TestCase):
+    # P2a(독립 검증 L1): 출처 이름 막기가 낱말 그대로만 보지 않는다 — 전각·악센트·키릴 닮은꼴·숫자 글자·띄어쓰기·기호로 바꿔 써도 상대값을 뜻하는 말이면 거절한다.
+    def test_a_disguised_relative_value_word_is_refused_as_the_source_of_a_real_count(self):
+        for source in DISGUISED_SOURCES:
+            with self.subTest(source=source):
+                self.assertTrue(md.trend_word_in(source), source)
+                error = rejected(self, search_demand_count=50, search_count_source=source)
+                self.assertIn("실제 검색 횟수의 출처", error.rendered().message)
+
+    def test_an_honest_source_name_is_accepted_even_when_it_contains_the_letters_of_a_banned_word(self):
+        for source in HONEST_SOURCES:
+            with self.subTest(source=source):
+                self.assertIsNone(md.trend_word_in(source), source)
+                self.assertEqual(ts.make(search_demand_count=50, search_count_source=source).search_count_source, source)
+
+    def test_ratio_and_index_count_only_as_whole_words_because_operation_and_integration_contain_them(self):
+        for source in ("ratio", "Ratios", "index", "the index", "Indexes"):
+            with self.subTest(source=source):
+                self.assertIn(md.trend_word_in(source), ("ratio", "ratios", "index", "indexes"))
+        for source in ("operation", "integration", "migration", "indexing tool"):
+            with self.subTest(source=source):
+                self.assertIsNone(md.trend_word_in(source))
+
+    def test_the_word_that_was_found_is_reported(self):
+        self.assertEqual(md.trend_word_in("Google Trends"), "trend")
+        self.assertEqual(md.trend_word_in("NAVER DataLab"), "datalab")
+        self.assertEqual(md.trend_word_in("관심도 조사"), "관심도")
+        self.assertIsNone(md.trend_word_in("my notes"))
+
+    def test_the_folding_keeps_hangul_whole_and_turns_look_alikes_into_latin_letters(self):
+        self.assertEqual(md._fold("트렌드 데이터랩"), "트렌드 데이터랩")
+        self.assertEqual(md._fold(fullwidth("TREND")), "trend")
+        self.assertEqual(md._fold("tr" + CYRILLIC_E + "nd"), "trend")
+        self.assertEqual(md._fold("tr" + ACUTE_E + "nd"), "trend")
+        self.assertEqual(md._fold("Ａｂｃ１２３"), "abc123")
+
+    def test_a_trend_service_is_still_refused_in_every_old_spelling(self):
+        for source in ("NAVER Search Trend", "naver_search_trend", "네이버 데이터랩", "Datalab", "Google Trends", "트렌드 지수", "관심도 지수", "상대지수", "Search-Trend API", "상대값"):
+            with self.subTest(source=source):
+                rejected(self, search_demand_count=1, search_count_source=source)
+
+    def test_the_check_applies_to_the_source_only_when_a_count_exists(self):
+        self.assertIsNone(ts.make().search_count_source)
+        rejected(self, search_count_source="relative index")
+
+
+class DisplayIdLimitsTest(unittest.TestCase):
+    # P2a(독립 검증 L4): 먼 미래 날짜에서 파이썬의 OverflowError 가 새지 않고 앱의 오류(AppError)로 나온다.
+    def test_the_last_moment_that_still_fits_in_the_korean_calendar_works(self):
+        self.assertEqual(md.display_id("9999-12-31T14:59:59Z", 1), "candidate-99991231-001")
+
+    def test_one_second_later_would_be_the_year_10000_in_korea_and_gives_an_app_error(self):
+        for stamp in ("9999-12-31T15:00:00Z", "9999-12-31T20:00:00Z", "9999-12-31T23:59:59Z"):
+            with self.subTest(created_at=stamp):
+                with self.assertRaises(AppError) as caught:
+                    md.display_id(stamp, 1)
+                self.assertEqual(caught.exception.code, "CANDIDATE_INVALID")
+                self.assertIn("한국 시간", caught.exception.rendered().message)
+
+    def test_a_candidate_created_that_late_can_still_be_made_only_the_display_id_refuses(self):
+        late = ts.make(created_at="9999-12-31T20:00:00Z")
+        self.assertEqual(late.created_at, "9999-12-31T20:00:00Z")
+        with self.assertRaises(AppError):
+            md.display_id(late.created_at, 1)
+
+
+class StoredIdTest(unittest.TestCase):
+    # P2a(독립 검증 L9): 화면 표시 번호(`candidate-날짜-순번`)는 앞 8자가 모두 같아 명령줄의 '번호 앞 8자 선택' 으로 고를 수 없다 — 저장 번호로 쓰지 못하게 막는다.
+    def test_a_display_id_cannot_be_a_stored_id(self):
+        shown = md.display_id(ts.STAMP, 1)
+        error = rejected(self, candidate_id=shown)
+        self.assertIn("앞 8자", error.rendered().message)
+        for bad in ("candidate-1", "Candidate-1", "CANDIDATE-X", "candidate_1", "candidates1", "candidat"):
+            with self.subTest(candidate_id=bad):
+                rejected(self, candidate_id=bad)
+
+    def test_ordinary_ids_are_still_fine_and_are_told_apart_by_their_first_eight_characters(self):
+        for good in ("cand0001", "c90-local-ai", "9f3a7c1e2b4d4a0e9c1d5b6a7f8e9d0c", "cand", "candy-1", "can-didate"):
+            with self.subTest(candidate_id=good):
+                self.assertEqual(ts.make(candidate_id=good).candidate_id, good)
+
+    def test_the_rule_is_the_shared_short_id_length_not_a_number_of_its_own(self):
+        self.assertEqual(cand.SHORT_ID, 8)
+        self.assertTrue(md._DISPLAY_PREFIX.startswith("candidat"))
+        self.assertEqual(md.stored_id("cand0001", "x"), "cand0001")
+        for bad in (None, 3, "", "a b", "x" * 65, "가나다"):
+            with self.subTest(value=bad):
+                with self.assertRaises(AppError):
+                    md.stored_id(bad, "x")
+
+    def test_the_same_rule_holds_for_the_id_inside_a_link_and_when_reading_json(self):
+        from chanceblog_desktop.topics import link
+        for bad in ("candidate-20261104-001", "Candidate-9"):
+            with self.subTest(engine_candidate_id=bad):
+                with self.assertRaises(AppError):
+                    link.CandidateLink(engine_candidate_id=bad, legacy_candidate_id=None, draft_plan_id=None, source_topic_id=None, seed_id=None, channel="naver_b")
+                with self.assertRaises(AppError):
+                    md.TopicCandidate.from_dict(dict(ts.make().to_dict(), candidate_id=bad))
+        self.assertEqual(link.CandidateLink.of(ts.make()).engine_candidate_id, "cand0001")
+
+
+class ScoreRecheckTest(unittest.TestCase):
+    # P2a(독립 검증 M2): 저장된 점수가 항목 점수와 채널 가중치로 다시 계산한 값과 같은지 확인한다 — 거짓 묶음(항목 10·90 에 최종 80)을 거절한다.
+    def test_an_honest_candidate_passes_for_every_channel(self):
+        factors = sc.Factors(channel_fit=92, feasibility=85, differentiation=78, timing=80, evidence=82, monetization=88)
+        partial = sc.Factors(channel_fit=60, timing=75)
+        for key, profile in ts.PROFILES.items():
+            for what in (factors, partial, sc.Factors()):
+                with self.subTest(channel=key, factors=what.present()):
+                    made = ts.make(channel=key, language="en" if key == "blogger_en" else "ko", scores=sc.score(profile, what).card)
+                    self.assertIs(md.check_candidate_score(made, profile), made)
+
+    def test_a_lying_final_score_is_refused_with_the_recomputed_number_in_plain_korean(self):
+        liar = ts.make(scores=ts.card(80, channel_fit=10, timing=90))
+        self.assertEqual(liar.recommendation_band, "RECOMMENDED", "거짓 카드는 모델만으로는 만들어지고 우수 후보 구간이다")
+        with self.assertRaises(AppError) as caught:
+            md.check_candidate_score(liar, ts.PROFILES["naver_b"])
+        error = caught.exception
+        self.assertEqual(error.code, "CANDIDATE_INVALID")
+        shown = error.rendered().message
+        for needle in ("최종 점수", "80", "46", "다시 계산한 값"):
+            self.assertIn(needle, shown)
+
+    def test_every_off_by_one_and_a_missing_final_are_refused(self):
+        profile = ts.PROFILES["naver_b"]
+        true_final = sc.score(profile, sc.Factors(channel_fit=10, timing=90)).final
+        self.assertEqual(true_final, 46)
+        for final in (45, 47, 10, 90, None):
+            with self.subTest(final=final):
+                with self.assertRaises(AppError):
+                    md.check_candidate_score(ts.make(scores=ts.card(final, channel_fit=10, timing=90)), profile)
+        md.check_candidate_score(ts.make(scores=ts.card(46, channel_fit=10, timing=90)), profile)
+
+    def test_the_same_card_can_be_right_for_one_channel_and_wrong_for_another(self):
+        factors = sc.Factors(channel_fit=90, timing=10)
+        right = sc.score(ts.PROFILES["naver_b"], factors).final
+        wrong_for_a = sc.score(ts.PROFILES["naver_a"], factors).final
+        self.assertNotEqual(right, wrong_for_a)
+        made = ts.make(scores=sc.ScoreCard(factors, right))
+        md.check_candidate_score(made, ts.PROFILES["naver_b"])
+        with self.assertRaises(AppError):
+            md.check_candidate_score(dataclasses.replace(made, channel="naver_a"), ts.PROFILES["naver_a"])
+
+    def test_the_profile_must_be_the_channel_of_the_candidate(self):
+        made = ts.make(scores=sc.score(ts.PROFILES["naver_a"], sc.Factors(channel_fit=70)).card)
+        with self.assertRaises(AppError) as caught:
+            md.check_candidate_score(made, ts.PROFILES["naver_a"])
+        self.assertIn("채널", caught.exception.rendered().message)
+
+    def test_wrong_kinds_of_input_are_programming_errors(self):
+        for args in ((None, ts.PROFILES["naver_b"]), (ts.make(), None), (ts.make().scores, ts.PROFILES["naver_b"]), (ts.make(), {"key": "naver_b"})):
+            with self.subTest(args=type(args[0]).__name__):
+                with self.assertRaises(TypeError):
+                    md.check_candidate_score(*args)
+
+    def test_no_score_at_all_is_consistent_with_itself(self):
+        plain = ts.make()
+        self.assertIs(md.check_candidate_score(plain, ts.PROFILES["naver_b"]), plain)
 
 
 if __name__ == "__main__":

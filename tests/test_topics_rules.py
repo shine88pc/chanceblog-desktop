@@ -6,6 +6,8 @@
   3) 오류를 삼키지 않고(맨 except·pass 뿐인 except 금지) 코드는 파이썬 3.10 문법이다. 보이지 않는 글자·BOM·이 PC 의 절대경로·키 낱말이 없다.
   4) `__init__.py` 는 설명뿐이고 `layout.py` 는 이름 상수뿐이다. 이 패키지를 쓰는 곳이 아직 없다(기존 동작은 하나도 바뀌지 않았다).
   5) 위 검사기 자신도 합성 소스로 시험한다 — 어긴 소스를 실제로 잡는다.
+  6) P2a 가 더한 모듈(`seeds`·`schedule`·`dedupe`·`history`·`hold`)에도 같은 검사가 그대로 걸린다. 모듈 목록 시험은 모듈을 더하거나 빼면 일부러 고쳐야 하는 시험이다.
+검사기는 **이름 기반**이다 — 인자로 받은 객체의 메서드 이름까지 다 막지는 못한다(사고 방지용이지 악의 방지가 아니다, 독립 검증 L6). 파일 열기·목록 훑기 같은 흔한 메서드 이름을 막는 목록(`FORBIDDEN_METHODS`)을 P2a 에서 넓혔다.
 네트워크·파일 쓰기·실제 시계 없이 돈다.
 """
 import ast
@@ -23,13 +25,16 @@ from chanceblog_desktop.errors import CATALOG  # noqa: E402
 TOPICS = ts.TOPICS
 SRC = ts.ROOT / "src" / "chanceblog_desktop"
 FILES = sorted(TOPICS.glob("*.py"))
-EXPECTED_FILES = ["__init__.py", "channels.py", "layout.py", "link.py", "model.py", "score.py", "select.py"]
-TOPIC_MODULES = {"channels", "layout", "link", "model", "score", "select"}
+# 모듈을 더하거나 빼면 이 두 목록과 `docs/ARCHITECTURE.md` §5 의 `topics/` 행을 의식적으로 함께 고친다(P1 → P2a 에서 `dedupe`·`history`·`hold`·`schedule`·`seeds` 를 더했다).
+EXPECTED_FILES = ["__init__.py", "channels.py", "dedupe.py", "history.py", "hold.py", "layout.py", "link.py", "model.py", "schedule.py", "score.py", "seeds.py", "select.py"]
+TOPIC_MODULES = {"channels", "dedupe", "history", "hold", "layout", "link", "model", "schedule", "score", "seeds", "select"}
+P2A_MODULES = ("seeds.py", "schedule.py", "dedupe.py", "history.py", "hold.py")
 ALLOWED_STDLIB = {"__future__", "collections", "dataclasses", "datetime", "enum", "fractions", "functools", "itertools", "math", "re", "types", "typing", "unicodedata"}
 ALLOWED_INTERNAL = {"content.status", "content.candidates", "content.profiles", "errors"}
 FORBIDDEN_CALLS = {"open", "print", "input", "exec", "eval", "compile", "__import__", "breakpoint", "exit", "quit"}
 FORBIDDEN_METHODS = {"now", "utcnow", "today", "monotonic", "perf_counter", "sleep", "random", "randint", "randrange", "choice", "shuffle", "uuid1", "uuid4", "urandom", "token_hex",
-                     "read_text", "write_text", "read_bytes", "write_bytes", "mkdir", "unlink", "rmtree", "touch", "connect", "system", "popen", "Popen", "getenv", "urlopen"}
+                     "read_text", "write_text", "read_bytes", "write_bytes", "mkdir", "unlink", "rmtree", "touch", "connect", "system", "popen", "Popen", "getenv", "urlopen",
+                     "open", "exists", "is_file", "is_dir", "iterdir", "glob", "rglob", "listdir", "scandir"}
 SECRET_WORDS = re.compile(r"(?i)\b(api[_ -]?key|secret|token|passw(?:or)?d|credential)s?\b")
 LOCAL_PATH = re.compile(r"(?i)[a-z]:[\\/]+users[\\/]|/users/[a-z]|/home/[a-z]")
 
@@ -69,8 +74,15 @@ def strings(tree):
 
 
 class PackageFilesTest(unittest.TestCase):
-    def test_the_package_has_exactly_the_expected_modules(self):
-        self.assertEqual([path.name for path in FILES], EXPECTED_FILES)
+    def test_the_package_has_exactly_the_expected_modules_so_adding_or_removing_one_is_a_conscious_change(self):
+        # P1 의 `test_the_package_has_exactly_the_expected_modules` 를 P2a 에서 의식적으로 바꿨다(독립 검증 L10): 이름에 '의식적' 이 보이게 하고 실패 메시지에 고칠 곳을 적었다.
+        self.assertEqual([path.name for path in FILES], EXPECTED_FILES, "모듈을 더하거나 뺐다면 EXPECTED_FILES·TOPIC_MODULES 와 docs/ARCHITECTURE.md §5 의 topics/ 행을 의식적으로 함께 고친다")
+
+    def test_the_p2a_modules_are_in_the_list_the_checks_run_over(self):
+        for name in P2A_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(name, [path.name for path in FILES])
+                self.assertIn(name[:-3], TOPIC_MODULES)
 
     def test_every_module_starts_with_an_explanation(self):
         for path in FILES:
@@ -146,7 +158,8 @@ class PurityRulesTest(unittest.TestCase):
     def test_the_checker_catches_a_clock_read_a_random_number_and_file_access(self):
         for source in ("datetime.now()", "datetime.datetime.utcnow()", "date.today()", "time.monotonic()", "time.perf_counter()", "random.random()", "random.choice([1])", "uuid.uuid4()",
                        "os.urandom(4)", "open('x')", "open('x', 'w')", "Path('x').read_text()", "p.write_text('x')", "p.mkdir()", "p.unlink()", "shutil.rmtree(p)", "print('x')", "input()",
-                       "exec('1')", "eval('1')", "__import__('os')", "os.getenv('A')", "socket.connect(1)", "request.urlopen(u)", "sqlite3.connect(':memory:')", "sys.argv", "os.environ"):
+                       "exec('1')", "eval('1')", "__import__('os')", "os.getenv('A')", "socket.connect(1)", "request.urlopen(u)", "sqlite3.connect(':memory:')", "sys.argv", "os.environ",
+                       "p.open()", "p.exists()", "p.is_file()", "p.is_dir()", "p.iterdir()", "p.glob('*')", "p.rglob('*')", "os.listdir('.')", "os.scandir('.')"):
             with self.subTest(source=source):
                 self.assertTrue(violations(source), source)
 
@@ -157,6 +170,8 @@ class PurityRulesTest(unittest.TestCase):
 
     def test_the_checker_lets_the_allowed_things_through(self):
         for source in ("import re", "from __future__ import annotations", "from dataclasses import dataclass, field", "from datetime import timedelta", "from types import MappingProxyType",
+                       "from collections import Counter", "from datetime import date", "from fractions import Fraction", "from .dedupe import words_of", "from .history import valid_day", "from . import hold",
+                       "from .schedule import CalendarEntry", "from .seeds import Seed", "from ..content.candidates import keyword_key, forbidden_claim", "from ..content.profiles import clean_line",
                        "from typing import NamedTuple", "from collections.abc import Mapping", "import unicodedata", "from fractions import Fraction", "import itertools",
                        "from ..content.status import PLATFORMS", "from ..content.candidates import STATUSES", "from ..content.profiles import _invalid", "from ..errors import AppError",
                        "from .channels import FACTOR_NAMES", "from .score import score", "from . import channels", "x = datetime.timedelta(hours=9)", "moment.strftime('%Y')",
@@ -241,6 +256,46 @@ class DocsAndScopeTest(unittest.TestCase):
     def test_the_changelog_mentions_the_new_package(self):
         log = (ts.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertIn("src/chanceblog_desktop/topics/", log)
+
+    def test_the_changelog_mentions_p2a_and_its_five_new_modules(self):
+        log = (ts.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("'P2a'", log)
+        for name in P2A_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(f"`{name}`", log)
+
+    def test_the_plan_names_every_module_and_keeps_the_month_table_relation_in_one_place(self):
+        plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
+        for path in FILES:
+            if path.name != "__init__.py":
+                with self.subTest(module=path.name):
+                    self.assertIn(f"| `{path.name}` |", plan)
+        row = next(line for line in plan.splitlines() if line.startswith("| `schedule.py` |"))
+        for needle in ("SEASONS", "그대로 두고 읽지 않는다", "겹칠 수 있다"):
+            self.assertIn(needle, row)
+        self.assertNotIn("`bands.py` | 추천 구간", plan, "구간 계산은 score.py 에 있다 — bands.py 는 만들지 않았다")
+
+    def test_the_plan_stays_within_400_lines_so_it_can_be_read_in_one_go(self):
+        plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
+        self.assertLessEqual(len(plan.splitlines()), 400, "계획 문서가 400줄을 넘으면 다른 곳을 줄여 맞춘다")
+
+    def test_the_plan_no_longer_says_the_package_does_not_exist_and_marks_the_stages(self):
+        plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
+        self.assertNotIn("**아직 코드에 없고** 해당 단계(P1~)", plan)
+        self.assertNotIn("계획이다. `topics/`·`service/topics.py`", plan, "한계 첫 줄의 낡은 문장")
+        for stage in ("P1 (병합됨, PR #23)", "**P2a** (지금)", "| P2b |"):
+            with self.subTest(stage=stage):
+                self.assertIn(stage, plan)
+
+    def test_the_decisions_d43_to_d45_exist_once_each_in_order(self):
+        text = (ts.ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
+        found = re.findall(r"^\| (D-\d{2}) \|", text, re.M)
+        self.assertEqual(found[-4:], ["D-42", "D-43", "D-44", "D-45"])
+        self.assertEqual(len(found), len(set(found)))
+        rows = {line.split(" | ")[0].lstrip("| "): line for line in text.splitlines() if line.startswith("| D-4")}
+        self.assertIn("search_count_source", rows["D-43"])
+        self.assertIn("180일", rows["D-44"])
+        self.assertIn("숫자만으로 지우거나 제외하지 않는다", rows["D-45"])
 
     def test_the_package_does_not_turn_an_engine_candidate_into_an_existing_candidate_yet(self):
         for path in FILES:

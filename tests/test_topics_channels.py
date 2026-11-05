@@ -326,6 +326,118 @@ class StrictProfileTest(unittest.TestCase):
         self.assertIn("100", error.detail)
 
 
+class CopyAndPlainViewTest(unittest.TestCase):
+    # P2a(독립 검증 L3): 읽기 전용 보기(`MappingProxyType`)는 복사할 수 없어 채널 프로필이 `copy`·`pickle`·`dataclasses.asdict` 에서 TypeError 였다 — 가중치를 복사할 수 있는 읽기 전용 사전(`Weights`)으로 바꿨다.
+    def test_every_default_profile_can_be_copied_deep_copied_and_pickled_and_stays_equal(self):
+        import copy
+        import pickle
+        for profile in ch.default_profiles():
+            with self.subTest(channel=profile.key):
+                self.assertEqual(copy.copy(profile), profile)
+                self.assertEqual(copy.deepcopy(profile), profile)
+                for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+                    self.assertEqual(pickle.loads(pickle.dumps(profile, protocol)), profile)
+                self.assertEqual(hash(copy.deepcopy(profile)), hash(profile))
+
+    def test_a_copy_still_has_read_only_weights_and_is_a_separate_object(self):
+        import copy
+        original = ch.default_profiles()[4]
+        clone = copy.deepcopy(original)
+        self.assertIsNot(clone.weights, original.weights)
+        self.assertEqual(type(clone.weights), ch.Weights)
+        with self.assertRaises(TypeError):
+            clone.weights["timing"] = 1
+
+    def test_asdict_and_astuple_work_and_the_result_is_plain_enough_for_json(self):
+        profile = ch.default_profiles()[4]
+        data = dataclasses.asdict(profile)
+        self.assertEqual(dict(data["weights"]), dict(profile.weights))
+        self.assertEqual(json.loads(json.dumps(data))["weights"], dict(profile.weights))
+        self.assertEqual(data["key"], "naver_b")
+        self.assertEqual(len(dataclasses.astuple(profile)), len(dataclasses.fields(profile)))
+
+    def test_the_weights_cannot_be_changed_by_any_of_the_usual_ways(self):
+        weights = ch.default_profiles()[0].weights
+        attempts = (lambda: weights.__setitem__("timing", 1), lambda: weights.__delitem__("timing"), lambda: weights.update(timing=1), lambda: weights.pop("timing"), lambda: weights.popitem(),
+                    lambda: weights.setdefault("timing", 1), lambda: weights.clear())
+        for attempt in attempts:
+            with self.subTest(attempt=attempt):
+                with self.assertRaises(TypeError):
+                    attempt()
+        with self.assertRaises(TypeError):
+            weights |= {"timing": 1}
+        self.assertEqual(sum(weights.values()), 100)
+
+    def test_a_weights_object_behaves_like_a_dictionary_for_reading(self):
+        weights = ch.default_profiles()[0].weights
+        self.assertEqual(list(weights), list(ch.FACTOR_NAMES))
+        self.assertEqual(weights, dict(weights))
+        self.assertEqual(weights["evidence"], 25)
+        self.assertEqual(ch.Weights(dict(weights)), weights)
+
+
+class PlainKoreanErrorTest(unittest.TestCase):
+    # P2a(독립 검증 L5): 안내 틀이 '원고의 「항목」 이 올바르지 않습니다' 라서 칸 이름만으로는 무엇이 틀렸는지 알 수 없었다 — 같은 오류 코드(`CONTENT_INVALID`)에 '어느 칸이 왜' 를 쉬운 말로 함께 담는다.
+    def message(self, **changes):
+        with self.assertRaises(AppError) as caught:
+            profile(**changes)
+        self.assertEqual(caught.exception.code, "CONTENT_INVALID")
+        return caught.exception.rendered().message
+
+    def test_the_weight_sum_error_says_the_sum_and_what_it_should_be(self):
+        weights = dict(profile().weights)
+        weights["timing"] += 5
+        shown = self.message(weights=weights)
+        for needle in ("채널 프로필의 항목별 가중치", "합은 100", "105"):
+            self.assertIn(needle, shown)
+
+    def test_every_kind_of_wrong_value_names_the_profile_the_field_and_the_reason(self):
+        cases = ((dict(top_n=0), "채널당 후보 수", "1~20"), (dict(cluster_cap=99), "주제 묶음 상한", "1~20"), (dict(subheading_min=0), "소제목 최소 수", "1~20"), (dict(evergreen_pct=101), "지속형 비율", "0~100"),
+                 (dict(evergreen_pct=60), "지속형·실시간 비율", "합은 100"), (dict(language="fr"), "언어", "ko"), (dict(trend_use="x"), "관심도 사용 정도", "primary"), (dict(dup_cutoffs=(40, 60)), "중복 판정 기준", "세 개"),
+                 (dict(dup_cutoffs=(60, 40, 75)), "중복 판정 기준", "커야"), (dict(display_name=""), "표시 이름", "한 줄"), (dict(topic_clusters=("Bad Name",)), "주제 묶음", "식별자"),
+                 (dict(expansion_directions="문자열"), "확장 방향", "모양"), (dict(monetization_focus=("Bad",)), "우선 수익화 분야", "태그"), (dict(generation_enabled="yes"), "후보 생성 켜기", "true"))
+        for changes, field, reason in cases:
+            with self.subTest(changes=changes):
+                shown = self.message(**changes)
+                self.assertIn("채널 프로필의 " + field, shown)
+                self.assertIn(reason, shown)
+
+    def test_the_detail_for_the_log_is_kept_and_the_reason_is_in_the_message(self):
+        weights = dict(profile().weights)
+        weights["timing"] += 1
+        with self.assertRaises(AppError) as caught:
+            profile(weights=weights)
+        self.assertIn("101", caught.exception.detail)
+        self.assertIn("101", caught.exception.rendered().message)
+
+    def test_the_structure_errors_when_reading_a_file_name_the_problem_too(self):
+        good = ch.profiles_to_dict(ch.default_profiles())
+        extra = {**good, "profiles": [{**good["profiles"][0], "unknown": 1}, *good["profiles"][1:]]}
+        with self.assertRaises(AppError) as caught:
+            ch.profiles_from_dict(extra)
+        self.assertIn("모르는 칸", caught.exception.rendered().message)
+        with self.assertRaises(AppError) as caught:
+            ch.profiles_from_dict({**good, "profiles": good["profiles"][:4]})
+        self.assertIn("빠진 채널", caught.exception.rendered().message)
+        with self.assertRaises(AppError) as caught:
+            ch.canonical("naver")
+        self.assertIn("아는 채널 이름이 아닙니다", caught.exception.rendered().message)
+
+    def test_the_helpers_other_modules_use_build_the_same_kind_of_message(self):
+        error = ch.invalid_in("씨앗", "대분류", "1~30자 한 줄이어야 한다")
+        self.assertEqual((error.code, error.detail), ("CONTENT_INVALID", "1~30자 한 줄이어야 한다"))
+        self.assertIn("씨앗의 대분류 — 1~30자 한 줄이어야 한다", error.rendered().message)
+        self.assertIn("씨앗 목록 — 같은 번호", ch.invalid_in("씨앗", "씨앗 목록", "같은 번호").rendered().message)
+        wrapped = ch.at_entry("씨앗", 3, error)
+        self.assertIn("3번째 씨앗의 대분류 — 1~30자 한 줄이어야 한다", wrapped.rendered().message)
+        self.assertEqual(wrapped.slots["항목"], "3번째 씨앗의 대분류 — 1~30자 한 줄이어야 한다", "화면 정리 없이도 공백이 하나뿐이고 칸 이름이 온전하다")
+        self.assertEqual(error.slots["항목"], "씨앗의 대분류 — 1~30자 한 줄이어야 한다")
+        self.assertEqual(ch.at_entry("캘린더", 12, ch.invalid_in("캘린더", "피크", "발행 기간 안이어야 한다")).slots["항목"], "12번째 캘린더의 피크 — 발행 기간 안이어야 한다")
+        plain = AppError("CANDIDATE_INVALID", {"항목": "x", "이유": "y"})
+        self.assertIs(ch.at_entry("씨앗", 3, plain), plain)
+        self.assertIs(ch.explain("씨앗", plain), plain)
+
+
 class JsonShapeTest(unittest.TestCase):
     def test_one_profile_round_trips_and_has_exactly_these_keys(self):
         for key in KEYS:

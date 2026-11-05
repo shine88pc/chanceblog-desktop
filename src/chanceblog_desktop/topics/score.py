@@ -6,6 +6,7 @@
 **반올림 규칙은 이 파일의 `round_half_up` 한 곳이다**: 최종 점수는 정수이고 소수점 첫째 자리에서 반올림하되 0.5 는 올린다(79.5 → 80, 64.5 → 65, 49.5 → 50). 구간 경계는 이 정수에 적용한다.
 추천 구간(`band_of`)은 작업 흐름 상태(NEW·REVIEW·SELECTED·HOLD·REJECTED)와 **다른 축**이다. 두 축에 모두 HOLD 라는 이름이 있다 — 작업 축의 HOLD 는 사람이 누른 보류이고 구간 축의 HOLD 는 점수 50~64 의 보류함이다.
 이 점수는 기존 `content/suggest_score.py` 의 5요인 우선도(결정 D-29)와 별개이고 그것을 바꾸지 않는다. 기존 `search_demand` 같은 옛 칸은 읽지도 않는다.
+후보에 **저장된** 점수 묶음이 항목 점수와 채널 가중치로 다시 계산한 값과 같은지는 `check_card` 가 확인한다(저장소에서 불러온 후보를 쓰기 전에 거르는 용도 — 거짓 묶음은 `CANDIDATE_INVALID`).
 """
 from __future__ import annotations
 
@@ -139,6 +140,20 @@ def score(profile, factors):
     return Score(factors, round_half_up(sum(part.value * part.weight for part in parts), used), parts, used, missing)
 
 
+def check_card(profile, card):
+    """후보에 저장된 점수 묶음(`ScoreCard`)이 **그 채널의 가중치로 다시 계산한 값과 같은지** 확인한다(P2a — 독립 검증 M2).
+    `ScoreCard` 자신은 '가장 낮은 항목과 가장 높은 항목 사이' 까지만 검사하므로(채널 가중치를 모른다) 항목 10·90 에 최종 80 같은 거짓 묶음도 만들어진다 —
+    저장소에서 불러온 후보를 쓰기 전에 이 함수로 거른다. 같으면 그 묶음을 돌려주고, 다르면 `CANDIDATE_INVALID` 로 어느 값이 얼마와 다른지 쉬운 말로 알린다."""
+    if not isinstance(profile, ChannelProfile) or not isinstance(card, ScoreCard):
+        raise TypeError("check_card(채널 프로필, 점수 묶음) 로 불러야 한다")
+    again = score(profile, card.factors).final
+    if again != card.final:
+        saved = "없음" if card.final is None else card.final
+        shown = "없음" if again is None else again
+        raise _invalid("최종 점수", f"저장된 값 {saved} 이(가) 여섯 항목과 {profile.display_name} 의 가중치로 다시 계산한 값 {shown} 과 다릅니다")
+    return card
+
+
 def band_of(final):
     """최종 점수(정수 또는 None) → 추천 구간: 80 이상 우선 추천·65 이상 일반 후보·50 이상 보류함·그 아래 제외·점수 없음은 `UNRATED`."""
     if final is None:
@@ -196,5 +211,6 @@ def timing_score(calendar, trend_status, *, trend_use=USE_PRIMARY, outage=False)
 __all__ = [
     "BANDS", "BAND_EXCLUDED", "BAND_GENERAL", "BAND_HOLD", "BAND_KO", "BAND_RECOMMENDED", "BAND_UNRATED", "CALENDAR_DUE", "CALENDAR_OUT_OF_RANGE", "CALENDAR_STATES", "CALENDAR_UNKNOWN",
     "DATA_INSUFFICIENT", "DATA_PARTIAL", "DATA_STATUSES", "DATA_SUFFICIENT", "DATA_UNAVAILABLE", "DETERMINATE_TRENDS", "Factors", "Part", "Score", "ScoreCard", "TIMING_CALENDAR_ONLY",
-    "TIMING_WITH_TREND", "TREND_FALLING", "TREND_FLAT", "TREND_INSUFFICIENT", "TREND_RISING", "TREND_STATUSES", "TREND_STATUS_KO", "Timing", "band_of", "round_half_up", "score", "timing_score",
+    "TIMING_WITH_TREND", "TREND_FALLING", "TREND_FLAT", "TREND_INSUFFICIENT", "TREND_RISING", "TREND_STATUSES", "TREND_STATUS_KO", "Timing", "band_of", "check_card", "round_half_up", "score",
+    "timing_score",
 ]

@@ -16,6 +16,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import topics_support as ts  # noqa: E402
 
+from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.topics import model  # noqa: E402
 from chanceblog_desktop.topics import select as sel  # noqa: E402
 
 B = ts.PROFILES["naver_b"]
@@ -90,9 +92,72 @@ class OrderAndBandsTest(unittest.TestCase):
         self.assertEqual(ids(view), ["r1", "g1"])
         self.assertEqual(view.shortfall, 3)
 
-    def test_the_work_status_is_not_looked_at_only_the_recommendation_band(self):
+    def test_the_work_status_decides_nothing_when_the_caller_asks_not_to_hide_anything(self):
+        # P2a 에서 의식적으로 바꾼 시험(D-43, 독립 검증 M1): 예전에는 `top_view` 가 작업 상태를 아예 보지 않았다(제외·보류 후보도 위에 떴다).
+        # 지금은 숨기는 것이 기본값이고, 옛 동작은 `hide_work_status=()` 로 풀었을 때만 남는다.
         pool = [rated(90, "a", "held", work_status="HOLD"), rated(85, "b", "rejected", work_status="REJECTED"), rated(80, "c", "new")]
-        self.assertEqual(ids(sel.top_view(pool, B)), ["held", "rejected", "new"])
+        self.assertEqual(ids(sel.top_view(pool, B, hide_work_status=())), ["held", "rejected", "new"])
+
+
+class WorkStatusTest(unittest.TestCase):
+    # P2a(독립 검증 M1): 사람이 '제외'·'보류' 한 후보는 점수가 높아도 우수 후보 맨 위에 다시 뜨면 안 된다 — 숨기는 것이 안전한 기본값이다.
+    STATUSES = ("NEW", "REVIEW", "SELECTED", "HOLD", "REJECTED")
+
+    def test_the_default_hides_rejected_and_held_candidates_even_with_the_best_score(self):
+        pool = [rated(95, "a", "rejected", work_status="REJECTED"), rated(94, "b", "held", work_status="HOLD"), rated(80, "c", "new")]
+        view = sel.top_view(pool, B)
+        self.assertEqual(ids(view), ["new"])
+        self.assertEqual(view.shortfall, 4, "숨긴 후보는 개수에서도 빠진다 — 모자란 자리를 다른 후보가 억지로 채우지 않는다")
+        self.assertEqual(sel.HIDDEN_WORK_STATUSES, ("REJECTED", "HOLD"))
+
+    def test_every_status_is_judged_one_by_one_by_the_default(self):
+        for status in self.STATUSES:
+            with self.subTest(work_status=status):
+                shown = ids(sel.top_view([rated(90, "a", "x", work_status=status)], B))
+                self.assertEqual(shown, [] if status in ("REJECTED", "HOLD") else ["x"])
+
+    def test_a_chosen_candidate_and_one_under_review_stay_visible(self):
+        pool = [rated(90, "a", "picked", work_status="SELECTED"), rated(85, "b", "review", work_status="REVIEW"), rated(80, "c", "new")]
+        self.assertEqual(ids(sel.top_view(pool, B)), ["picked", "review", "new"])
+
+    def test_the_hidden_statuses_can_be_chosen_by_the_caller(self):
+        pool = [rated(95, "a", "rejected", work_status="REJECTED"), rated(94, "b", "held", work_status="HOLD"), rated(93, "c", "picked", work_status="SELECTED"), rated(92, "d", "new")]
+        self.assertEqual(ids(sel.top_view(pool, B, hide_work_status=("REJECTED",))), ["held", "picked", "new"])
+        self.assertEqual(ids(sel.top_view(pool, B, hide_work_status=("SELECTED", "NEW"))), ["rejected", "held"])
+        self.assertEqual(ids(sel.top_view(pool, B, hide_work_status=[])), ["rejected", "held", "picked", "new"])
+        self.assertEqual(ids(sel.top_view(pool, B, hide_work_status=frozenset({"HOLD"}))), ["rejected", "picked", "new"])
+
+    def test_a_hidden_candidate_does_not_use_up_the_cluster_cap(self):
+        pool = [rated(99, "ai", "rejected", work_status="REJECTED"), rated(98, "ai", "held", work_status="HOLD"), rated(97, "ai", "a1"), rated(96, "ai", "a2"), rated(95, "ai", "a3")]
+        self.assertEqual(ids(sel.top_view(pool, B)), ["a1", "a2"])
+
+    def test_the_work_status_never_changes_the_recommendation_band(self):
+        held = rated(90, "a", "held", work_status="HOLD")
+        self.assertEqual(held.recommendation_band, "RECOMMENDED")
+        self.assertEqual(ids(sel.top_view([held], B, hide_work_status=())), ["held"])
+
+    def test_the_status_list_is_checked(self):
+        pool = [rated(90, "a", "r1")]
+        for bad in ("HOLD", b"HOLD", None, 3, ("ARCHIVED",), ("hold",), (None,), ([],), ("REJECTED", "NOPE")):
+            with self.subTest(hide_work_status=bad):
+                with self.assertRaises((TypeError, ValueError)):
+                    sel.top_view(pool, B, hide_work_status=bad)
+        with self.assertRaises(TypeError):
+            sel.top_view(pool, B, hide_work_status="REJECTED")
+        with self.assertRaises(ValueError):
+            sel.top_view(pool, B, hide_work_status=("REJECTED", "ARCHIVED"))
+
+    def test_a_channel_with_generation_off_is_still_an_empty_view_with_the_reason(self):
+        pages = ts.PROFILES["github_pages"]
+        view = sel.top_view([rated(95, "a", "g1", channel="github_pages")], pages)
+        self.assertEqual((view.items, view.shortfall, view.reason), ((), 0, sel.REASON_GENERATION_OFF))
+
+    def test_the_view_does_not_recheck_a_stored_final_score_so_the_caller_checks_it_first(self):
+        # 알려 둔 한계(독립 검증 M2): 고르기는 후보에 저장된 최종 점수를 그대로 믿는다 — 저장소에서 불러온 후보는 `model.check_candidate_score` 로 먼저 거른다.
+        liar = ts.make(candidate_id="liar", scores=ts.card(80, channel_fit=10, timing=90))
+        self.assertEqual(ids(sel.top_view([liar], B)), ["liar"])
+        with self.assertRaises(AppError):
+            model.check_candidate_score(liar, B)
 
 
 class ClusterCapTest(unittest.TestCase):

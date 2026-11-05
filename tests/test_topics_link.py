@@ -159,7 +159,7 @@ class ProvenanceTest(unittest.TestCase):
         for name in ("scores", "recommendation_band", "selection_reasons", "trend_status", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on", "data_status",
                      "seed_id", "source_type", "source_topic_id", "channel"):
             self.assertIn(name, {f.name for f in dataclasses.fields(link.Provenance)})
-        for name in ("work_status", "search_demand_count", "search_demand_source", "candidate_id"):
+        for name in ("work_status", "search_demand_count", "search_count_source", "candidate_id"):
             self.assertIn(name, link.NOT_CARRIED)
 
     def test_every_carried_value_shows_up_in_the_stored_form(self):
@@ -261,6 +261,16 @@ class ProvenanceTest(unittest.TestCase):
         del data["trend_period"]
         with self.assertRaises(TypeError):
             link.Provenance(**data)
+
+    def test_a_snapshot_built_directly_refuses_a_score_that_is_not_a_score_card(self):
+        # P2a(독립 검증 L10): 직접 만들 때의 오류 분기(`scores` 가 `ScoreCard` 인지 보는 곳)가 한 번도 실행되지 않던 빈틈
+        carried = {name: getattr(link.Provenance.of(ts.full()), name) for name in CARRIED}
+        for bad in (None, {"final": 85}, ts.full().scores.factors, 85, "85"):
+            with self.subTest(scores=repr(bad)[:20]):
+                with self.assertRaises(AppError) as caught:
+                    link.Provenance(**{**carried, "scores": bad})
+                self.assertEqual(caught.exception.code, "CANDIDATE_INVALID")
+                self.assertIn("점수", caught.exception.rendered().message)
 
 
 class LayoutTest(unittest.TestCase):

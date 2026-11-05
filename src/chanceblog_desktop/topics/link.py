@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from ..content.candidates import _ID, _invalid
-from .model import LABELS, MAX_REASONS, SOURCE_TYPES, TopicCandidate, _channel, _choice, _optional_id, _texts, check_trend
+from ..content.candidates import _invalid
+from .model import LABELS, MAX_REASONS, SOURCE_TYPES, TopicCandidate, _channel, _choice, _optional_id, _texts, check_trend, stored_id
 from .score import BANDS, DATA_STATUSES, ScoreCard, band_of
 
 SCHEMA = 1
@@ -31,7 +31,7 @@ NOT_CARRIED = MappingProxyType({
     "topic_angle": "엔진 보관함이 가진다 — 초안에 필요하면 다음 묶음에서 스냅샷에 더한다(열린 항목)",
     "target_reader": "엔진 보관함이 가진다 — 초안에 필요하면 다음 묶음에서 스냅샷에 더한다(열린 항목)",
     "search_demand_count": "기존 후보의 옛 검색 수요 칸으로 옮기지 않는다(출처가 분명한 값을 사람이 명시적으로 옮기는 길은 따로 정한다)",
-    "search_demand_source": "실제 검색 횟수와 함께 엔진 보관함에만 있다",
+    "search_count_source": "실제 검색 횟수와 함께 엔진 보관함에만 있다",
     "duplicate_status": "엔진 보관함이 가진다(중복 판정은 후보 단계의 일이다)",
     "similar_post_ids": "엔진 보관함이 가진다(중복 판정은 후보 단계의 일이다)",
     "monetization_tags": "엔진 보관함이 가진다 — 협찬 고지를 만드는 묶음에서 필요하면 스냅샷에 더한다(열린 항목)",
@@ -40,12 +40,6 @@ NOT_CARRIED = MappingProxyType({
     "created_at": "기존 후보가 자기 만든 시각을 가진다",
     "review_expires_at": "엔진 보관함이 가진다(보류함 기한)",
 })
-
-
-def _link_id(value, item):
-    if not isinstance(value, str) or not _ID.fullmatch(value):
-        raise _invalid(item, "영문·숫자·밑줄(_)·붙임표(-) 1~64자여야 합니다")
-    return value
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -58,7 +52,7 @@ class CandidateLink:
     channel: str                                        # 채널 코드 키
 
     def __post_init__(self):
-        _link_id(self.engine_candidate_id, "엔진 후보 번호")
+        stored_id(self.engine_candidate_id, "엔진 후보 번호")
         _optional_id(self.legacy_candidate_id, "기존 후보 번호")
         _optional_id(self.draft_plan_id, "초안 계획 번호")
         _optional_id(self.source_topic_id, LABELS["source_topic_id"])
