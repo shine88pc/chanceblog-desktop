@@ -1,7 +1,8 @@
 """특성 시험(P0) — 규칙 기반 제안 엔진(`content/suggest*.py`)과 제안 서비스의 '네이버 둘뿐' 가정을 **현재 모습 그대로** 못박는다(계획 문서 `docs/TOPIC_ENGINE_PLAN.md` 의 G2·G4 제안 쪽). 네트워크·시크릿·실제 시계·자식 프로세스 없음(날짜는 `today` 인자).
 
 왜: 5채널 주제 선정 전략의 새 엔진을 얹기 전에, 지금의 제안 결과(같은 입력 → 같은 결과)가 뒤의 단계에서 소리 없이 바뀌지 않게 못박는다. 이 시험은 '옳다고 정한 것' 이 아니라 '지금 이렇다' 이다 —
-바꾸려면 새 결정(D-nn)을 쓰고 해당 시험을 의식적으로 고친다. 현재 동작이 마음에 안 드는 것(알려진 결함)은 이름에 `KNOWN_DEFECT` 를 달았다 — 계절 낱말의 부분 일치(P0b 가 토큰/구문 기반으로 바꾸며 뒤집는다)·위험 씨앗의 건강·브랜드 표시 없음(P2).
+바꾸려면 새 결정(D-nn)을 쓰고 해당 시험을 의식적으로 고친다. 현재 동작이 마음에 안 드는 것(알려진 결함)은 이름에 `KNOWN_DEFECT` 를 달았다 — 위험 씨앗의 건강·브랜드 표시 없음(P2)·Legacy 상대값 87 이 우선도를 내림(뒤집는 단계 없음). 계절 낱말의 부분 일치는 P0b 가 토큰/구문 기반으로
+바꾸며 의도적으로 뒤집었다(D-42) — 그 시험들은 `KNOWN_DEFECT` 이름을 지우고 새 기대로 고쳤으며 각 시험 위 주석에 '(P0b 가 의도적으로 바꿈, D-42)' 이력이 있다. 새 규칙의 전체 시험은 `tests/test_season_match.py`.
 이미 있는 시험과 겹치지 않게 더한다 — 이미 있는 것: 결정성 한 가지 입력(`test_suggest.DeterminismTest`)·월 표 12개월 8~15항목과 이름 있는 시기 낱말(`test_suggest_data.SeasonTableTest`)·계절 점수 일반 예(`test_suggest_score.SeasonFitTest`)·
 수요 점수의 양 끝(`test_suggest_score.OpportunityTest`)·위험 낱말 32개 목록(`test_suggest.SeedFilterTest.test_every_word_of_the_experience_and_guarantee_list_is_pinned_by_a_test`)·다른 블로그 안내문(`test_service_suggestions` 의 `OTHER_BLOG_GUIDANCE`).
 """
@@ -44,10 +45,11 @@ CASES = {
         ("에어컨 시기에 챙겨 볼 소형가전 정리", "에어컨 소형가전", "정보형", 100.0, "소형가전", "주제", "info-season", "에어컨"),
         ("에어컨 시기 소형가전 관리 요령", "에어컨 소형가전 관리", "정보형", 100.0, "소형가전", "주제", "info-season-care", "에어컨"),
         ("장마 시기에 챙겨 볼 제습기 정리", "장마 제습기", "정보형", 100.0, "제습기", "주제", "info-season", "장마"))),
-    ("B", 11): (PROFILE_B, 11, 74, 0, (
-        ("연말정산 준비 시기에 챙겨 볼 그래픽카드 정리", "연말정산 준비 그래픽카드", "정보형", 100.0, "그래픽카드", "주제", "info-season", YEAR_END),
-        ("그래픽카드 처음 알아볼 때 꼭 짚어 둘 기본 정리", "그래픽카드", "정보형", 92.9, "그래픽카드", "주제", "info-basic", YEAR_END),
-        ("그래픽카드를 시작하기 전에 확인할 체크리스트", "그래픽카드 체크리스트", "정보형", 92.9, "그래픽카드", "주제", "info-check", YEAR_END))),
+    # (P0b 가 의도적으로 바꿈, D-42) 이 줄은 P0 때 '연말정산 준비 시기에 챙겨 볼 그래픽카드 정리' 100점 …(조합 74·알림 0)이었다. 이제는 6월과 같다 — 그래픽카드는 금융 카드가 아니라 시기 제안이 없다(조합 68·알림 1).
+    ("B", 11): (PROFILE_B, 11, 68, 1, (
+        ("AI 서비스 처음 알아볼 때 꼭 짚어 둘 기본 정리", "AI 서비스", "정보형", 88.2, "AI 서비스", "주제", "info-basic", None),
+        ("AI 서비스를 시작하기 전에 확인할 체크리스트", "AI 서비스 체크리스트", "정보형", 88.2, "AI 서비스", "주제", "info-check", None),
+        ("AI 서비스 자주 묻는 질문 모음", "AI 서비스 질문", "정보형", 88.2, "AI 서비스", "주제", "info-faq", None))),
     ("B", 6): (PROFILE_B, 6, 68, 1, (
         ("AI 서비스 처음 알아볼 때 꼭 짚어 둘 기본 정리", "AI 서비스", "정보형", 88.2, "AI 서비스", "주제", "info-basic", None),
         ("AI 서비스를 시작하기 전에 확인할 체크리스트", "AI 서비스 체크리스트", "정보형", 88.2, "AI 서비스", "주제", "info-check", None),
@@ -103,50 +105,63 @@ class DeterminismAndSnapshotTest(unittest.TestCase):
 
 
 class SeasonFitCardTest(unittest.TestCase):
-    # 월 11 의 '연말정산 준비' 항목은 이어지는 낱말에 '카드' 가 있다. 지금의 `season_fit` 은 낱말 하나가 '카드' 를 **포함하기만 하면** 이어진다고 본다(`word in token`).
+    # 월 11 의 '연말정산 준비' 항목의 이어지는 낱말에는 금융 카드 구문(신용카드·체크카드·카드값·카드 혜택 …, `suggest_data.FINANCE_CARDS`)이 있다. P0 때는 '카드' 한 낱말이 있었고 `season_fit` 은 낱말 하나가 '카드' 를
+    # **포함하기만 하면**(`word in token`) 이어진다고 보았다. P0b 가 토큰/구문 일치로 바꾸고(D-42) 이 클래스의 KNOWN_DEFECT 시험들을 의도적으로 뒤집었다 — 각 시험 위 주석에 이력이 있다.
     def fit(self, word, month=11):
         score, item = sc.season_fit(word, month)
         return score, None if item is None else item.word
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_the_card_words_the_operator_means_to_match_do_match_the_year_end_tax_season(self):
-        # 신용카드·체크카드·카드값(과 '카드 혜택') 은 금융 카드 이야기라 일치가 의도다 — P0b 가 부분 문자열을 토큰/구문 기반으로 바꾼 뒤에도 그대로여야 한다.
-        for word in ("신용카드", "체크카드", "카드값", "카드 혜택", "카드"):
+        # 신용카드·체크카드·카드값(과 '카드 혜택'·'법인카드'·'카드 공제'·띄어 쓴 '신용 카드') 은 금융 카드 이야기라 일치가 의도다 — P0b 가 부분 문자열을 토큰/구문 기반으로 바꾼 뒤에도 그대로다.
+        # (P0 의 목록에는 '카드' 한 낱말도 있었다 — 뜻이 여럿이라 P0b 가 뺐다: 바로 아래 시험, D-42)
+        for word in ("신용카드", "체크카드", "카드값", "카드 혜택", "법인카드", "카드 공제", "신용 카드", "체크 카드", "법인 카드", "직불 카드", "선불 카드"):
             with self.subTest(word=word):
                 self.assertEqual(self.fit(word), (sc.SEASON_RELATED, YEAR_END))
                 self.assertEqual([item.word for item in sc.related_items(word, 11)], [YEAR_END])
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    # KNOWN_DEFECT: '그래픽카드'(컴퓨터 부품)와 '카드뮴'(금속 이름)도 '카드' 를 품었다는 이유만으로 연말정산 시기와 이어진다 — P0b 가 (50, None) 으로 뒤집는다.
-    def test_KNOWN_DEFECT_graphics_card_and_cadmium_match_the_year_end_tax_season_only_because_they_contain_card(self):
+    # 의도적 변경 시험(P0b, D-42): P0 의 시험은 '카드' 한 낱말도 연말정산 시기와 이어진다고 못박았다 — P0b 가 의도적으로 바꿨다. '카드' 는 금융 카드·그래픽카드·게임 카드·카드 뉴스를 다 뜻해서 낱말 하나로는 모른다('모름 ≠ 0' — 감점이 아니라 시기와 무관한 중립 50).
+    def test_the_bare_word_card_is_too_vague_to_connect_to_the_year_end_tax_season(self):
+        self.assertEqual(self.fit("카드"), (sc.SEASON_NEUTRAL, None))
+        self.assertEqual(sc.related_items("카드", 11), ())
+        self.assertEqual(self.fit("그래픽 카드"), (sc.SEASON_NEUTRAL, None), "띄어 써도 '카드' 낱말 하나로는 이어지지 않는다")
+
+    # 의도적 변경 시험(P0b, D-42): P0 의 KNOWN_DEFECT 시험('그래픽카드'·'카드뮴' 이 '카드' 를 품었다는 이유만으로 (70, 연말정산 준비))을 P0b 가 의도적으로 뒤집었다 — 낱말 속 글자 조각은 일치로 보지 않는다.
+    def test_graphics_card_and_cadmium_do_not_match_the_year_end_tax_season(self):
         for word in ("그래픽카드", "카드뮴"):
             with self.subTest(word=word):
-                self.assertEqual(self.fit(word), (sc.SEASON_RELATED, YEAR_END))
-                self.assertEqual([item.word for item in sc.related_items(word, 11)], [YEAR_END])
+                self.assertEqual(self.fit(word), (sc.SEASON_NEUTRAL, None))
+                self.assertEqual(sc.related_items(word, 11), ())
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_other_words_that_only_contain_card_also_match_today_and_p0b_decides_each(self):
-        # 운영자 예시 밖의 추가 반례(사운드카드·교통카드·메모리카드) — 현재 동작만 적는다. 맞는지 아닌지는 P0b 구현자가 정해 보고한다(여기서는 옳고 그름을 정하지 않는다).
-        for word in ("사운드카드", "교통카드", "메모리카드"):
+    # 의도적 변경 시험(P0b, D-42): P0 는 추가 반례(사운드카드·교통카드·메모리카드)의 현재 값(모두 일치)만 적고 옳고 그름은 P0b 가 정하라고 했다 — 여섯 모두 금융 카드가 아니라 일치하지 않는 것으로 정했다.
+    # 사운드카드·메모리카드·SD카드·카드키=컴퓨터·전자 부품/물건, 교통카드=버스·지하철 결제 수단(연말정산의 신용·체크·직불·선불 카드와 다른 말로 쓰여 따로 적지 않았다), 크리스마스카드=인사 카드(12월엔 '크리스마스' 시기).
+    def test_other_words_that_only_contain_card_do_not_match_either_and_p0b_decided_each(self):
+        for word in ("사운드카드", "교통카드", "메모리카드", "SD카드", "크리스마스카드", "카드키"):
             with self.subTest(word=word):
-                self.assertEqual(self.fit(word), (sc.SEASON_RELATED, YEAR_END))
+                self.assertEqual(self.fit(word), (sc.SEASON_NEUTRAL, None))
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_the_same_five_words_match_the_neighbouring_year_end_items_in_other_months_and_nothing_in_june(self):
-        for word in ("그래픽카드", "신용카드", "체크카드", "카드값", "카드뮴"):
+    # 의도적 변경 시험(P0b, D-42): P0 의 시험은 다섯 낱말이 1·2·12월 '연말정산' 에 모두 걸린다고 못박았다 — 이제 금융 카드 셋만 걸리고 그래픽카드·카드뮴은 어느 달에도 안 걸린다. 6월은 그대로 아무것도 안 걸린다.
+    def test_the_financial_card_words_match_the_neighbouring_year_end_items_and_the_others_match_nothing_in_any_month(self):
+        for word in ("신용카드", "체크카드", "카드값"):
             with self.subTest(word=word):
                 self.assertEqual(self.fit(word, 1), (sc.SEASON_RELATED, "연말정산"))
                 self.assertEqual(self.fit(word, 2), (sc.SEASON_RELATED, "연말정산"))
                 self.assertEqual(self.fit(word, 12), (sc.SEASON_RELATED, "연말정산"))
                 self.assertEqual(self.fit(word, 6), (sc.SEASON_NEUTRAL, None))
+        for word in ("그래픽카드", "카드뮴"):
+            for month in range(1, 13):
+                with self.subTest(word=word, month=month):
+                    self.assertEqual(self.fit(word, month), (sc.SEASON_NEUTRAL, None))
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_the_matching_is_substring_both_ways_so_a_short_word_inside_a_long_related_word_matches_too(self):
-        # 이어지는 낱말('세금'·'공제' …)이 글의 낱말 안에 들어 있어도(`word in token`) 글의 낱말이 이어지는 낱말 안에 들어 있어도(`token in word`) 이어진다.
-        self.assertEqual(self.fit("부가세금액"), (sc.SEASON_RELATED, YEAR_END))                 # '세금' ⊂ '부가세금액' (이어지는 낱말이 글의 낱말 안에 든다)
-        self.assertEqual(self.fit("의료"), (sc.SEASON_RELATED, YEAR_END))                       # '의료' ⊂ '의료비' (글의 낱말이 이어지는 낱말 안에 든다)
-        self.assertEqual(self.fit("직장"), (sc.SEASON_RELATED, YEAR_END))                       # '직장' ⊂ '직장인'
-        self.assertEqual(self.fit("세금"), (sc.SEASON_RELATED, YEAR_END))
+    # 의도적 변경 시험(P0b, D-42): P0 의 시험은 일치가 부분 문자열 양쪽('세금' ⊂ '부가세금액'·'의료' ⊂ '의료비'·'직장' ⊂ '직장인')이라고 못박았다 — P0b 가 낱말 속-낱말 일치를 모두 없앴다(부가세금액·의료·직장은 오탐 제거).
+    # 표의 낱말과 통째로 같은 것('의료비'·'직장인'·'세금')과 거기에 조사만 붙은 것('세금을')은 그대로 이어진다.
+    def test_the_matching_is_whole_word_so_a_short_word_inside_a_long_word_no_longer_matches(self):
+        self.assertEqual(self.fit("부가세금액"), (sc.SEASON_NEUTRAL, None))                      # '세금' ⊂ '부가세금액' — 낱말 속 글자 조각
+        self.assertEqual(self.fit("의료"), (sc.SEASON_NEUTRAL, None))                            # '의료' ⊂ '의료비' — 글의 낱말이 표의 낱말 속에 든 경우
+        self.assertEqual(self.fit("직장"), (sc.SEASON_NEUTRAL, None))                            # '직장' ⊂ '직장인'
+        for word in ("세금", "세금을", "의료비", "의료비를", "직장인", "직장인은"):
+            with self.subTest(word=word):
+                self.assertEqual(self.fit(word), (sc.SEASON_RELATED, YEAR_END))
         self.assertEqual(self.fit("자전거"), (sc.SEASON_NEUTRAL, None))
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
@@ -170,30 +185,36 @@ class SeasonGenericWordTest(unittest.TestCase):
 
 
 class GraphicsCardTopSuggestionTest(unittest.TestCase):
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    # KNOWN_DEFECT: 프로필 B(AI 서비스·PC 부품·업무 자동화·그래픽카드)의 11월 1위가 '연말정산 준비 시기에 챙겨 볼 그래픽카드 정리' 100점이다 — P0b 가 계절 일치를 고치면 이 제안은 사라진다.
-    def test_KNOWN_DEFECT_profile_b_in_november_ranks_a_year_end_tax_title_for_graphics_cards_first(self):
-        top = run(PROFILE_B, 11).suggestions[0]
-        self.assertEqual((top.topic, top.keyword, top.priority.score, top.priority.level), ("연말정산 준비 시기에 챙겨 볼 그래픽카드 정리", "연말정산 준비 그래픽카드", 100.0, "높음"))
-        self.assertEqual((top.season.word, top.frame_id, top.seed, top.seed_source), (YEAR_END, "info-season", "그래픽카드", "주제"))
-        self.assertEqual([(part.name, part.value) for part in top.factors], [("fit", 100.0), ("season", 100.0), ("freshness", 100.0), ("balance", 100.0)])
-        self.assertIn("연말정산", top.reason)
+    # 의도적 변경 시험(P0b, D-42): P0 의 KNOWN_DEFECT 시험은 프로필 B(AI 서비스·PC 부품·업무 자동화·그래픽카드)의 11월 1위가 '연말정산 준비 시기에 챙겨 볼 그래픽카드 정리' 100점이라고 못박았다 — P0b 가 의도적으로 뒤집었다.
+    # 이제 11월 1위는 시기와 무관한 '정보형 기본' 제안이다(점수 88.2 = 프로필 적합도 100 · 시기 50(중립) · 신선도 100 · 균형 100 의 가중 평균).
+    def test_profile_b_in_november_no_longer_ranks_a_year_end_tax_title_for_graphics_cards_first(self):
+        report = run(PROFILE_B, 11)
+        top = report.suggestions[0]
+        self.assertEqual((top.topic, top.keyword, top.priority.score, top.priority.level), ("AI 서비스 처음 알아볼 때 꼭 짚어 둘 기본 정리", "AI 서비스", 88.2, "높음"))
+        self.assertEqual((top.season, top.frame_id, top.seed, top.seed_source), (None, "info-basic", "AI 서비스", "주제"))
+        self.assertEqual([(part.name, part.value) for part in top.factors], [("fit", 100.0), ("season", 50.0), ("freshness", 100.0), ("balance", 100.0)])
+        for item in report.suggestions:
+            self.assertNotIn("연말정산", item.topic + item.reason)
+        self.assertEqual((report.generated, len(report.notes)), (68, 1))
+        self.assertIn("시기 맞춤 제안은 만들지 못했습니다", report.notes[0])
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    # KNOWN_DEFECT: 같은 씨앗이어도 '그래픽카드' 가 주제가 아닌 카테고리에서 오면 점수만 94.7 로 내려갈 뿐 같은 제목이 1위다.
-    def test_KNOWN_DEFECT_the_same_title_wins_when_the_graphics_card_seed_comes_from_the_category(self):
+    # 의도적 변경 시험(P0b, D-42): P0 의 KNOWN_DEFECT 시험은 '그래픽카드' 가 카테고리에서 와도 같은 제목이 94.7 로 1위라고 못박았다 — P0b 가 의도적으로 뒤집었다. 씨앗이 어디서 오든 같은 제목은 없다(조합 91 → 85).
+    def test_the_year_end_title_is_gone_also_when_the_graphics_card_seed_comes_from_the_category(self):
         report = run(PROFILE_B_TAGGED, 11)
         top = report.suggestions[0]
-        self.assertEqual((top.topic, top.priority.score, top.seed_source, top.season.word), ("연말정산 준비 시기에 챙겨 볼 그래픽카드 정리", 94.7, "카테고리", YEAR_END))
-        self.assertEqual(report.generated, 91)
+        self.assertEqual((top.topic, top.priority.score, top.seed_source, top.season), ("AI 서비스 처음 알아볼 때 꼭 짚어 둘 기본 정리", 88.2, "주제", None))
+        self.assertEqual(report.generated, 85)
+        self.assertFalse([item.topic for item in report.suggestions if "연말정산" in item.topic])
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    # KNOWN_DEFECT: 11월이 아니면(6월) 같은 프로필에서 연말정산 제안이 나오지 않는다 — 결함은 달 표와 부분 일치가 만나는 11·12·1·2월에만 보인다.
-    def test_KNOWN_DEFECT_the_year_end_title_appears_only_in_the_months_whose_table_holds_card(self):
-        self.assertFalse([item.topic for item in run(PROFILE_B, 6).suggestions if "연말정산" in item.topic])
-        for month, word in ((11, YEAR_END), (12, "연말정산"), (1, "연말정산"), (2, "연말정산")):
+    # 의도적 변경 시험(P0b, D-42): P0 의 KNOWN_DEFECT 시험은 연말정산 제목이 표에 '카드' 가 든 달(11·12·1·2월)에만 나온다고 못박았다 — 이제 프로필 B 는 어느 달에도 시기 제안이 없다(조합·알림·1위가 열두 달 모두 같다).
+    # 1월에는 '가계부' 항목에도 '카드' 가 들어 있어 '가계부 시기에 챙겨 볼 그래픽카드 정리' 도 나왔었다(P0 가 못박지 못한 같은 오탐) — 그것도 사라졌다.
+    def test_the_year_end_title_for_graphics_cards_appears_in_no_month(self):
+        for month in range(1, 13):
             with self.subTest(month=month):
-                self.assertIn(f"{word} 시기에 챙겨 볼 그래픽카드 정리", [item.topic for item in run(PROFILE_B, month).suggestions])
+                report = run(PROFILE_B, month)
+                self.assertEqual((report.generated, len(report.notes), report.suggestions[0].topic), (68, 1, "AI 서비스 처음 알아볼 때 꼭 짚어 둘 기본 정리"))
+                self.assertFalse([item.topic for item in report.suggestions if item.season is not None])
+                self.assertFalse([item.topic for item in report.suggestions if "시기에 챙겨 볼 그래픽카드" in item.topic])
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_a_real_card_seed_gets_the_same_year_end_title_and_that_one_is_meant(self):
@@ -292,17 +313,17 @@ class StoredCandidatePriorityTest(unittest.TestCase):
         item = cd.Candidate.new(f"{word} 고르는 법", word, ("naver_b",), candidate_id="c0000001", now="2026-11-03T00:00:00Z", **fields)
         return sg.assess(item, profile=profile, today=TODAY, month=11)
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    # KNOWN_DEFECT: 보관함 후보도 '그래픽카드'·'카드뮴' 이 11월에 시기 요인 70점과 '연말정산 준비' 이유를 받는다 — P0b 가 고치면 우선도 89.1 → 81.8(프로필 B 가 있으면 92.9 → 88.2)과 추천 이유의 시기 문장이 바뀐다.
-    def test_KNOWN_DEFECT_a_stored_candidates_priority_also_reads_graphics_card_and_cadmium_as_the_year_end_season(self):
+    # 의도적 변경 시험(P0b, D-42): P0 의 KNOWN_DEFECT 시험은 보관함 후보 '그래픽카드'·'카드뮴' 이 11월에 시기 요인 70점과 '연말정산 준비' 이유를 받아 우선도 89.1(프로필 B 가 있으면 92.9)이라고 못박았다 — P0b 가 의도적으로 뒤집었다.
+    # 이제 평범한 낱말('자전거')과 같은 81.8(프로필 B 가 있으면 88.2)이고 추천 이유에 시기 문장이 없다.
+    def test_a_stored_candidates_priority_no_longer_reads_graphics_card_and_cadmium_as_the_year_end_season(self):
         for word in ("그래픽카드", "카드뮴"):
             with self.subTest(word=word):
                 found = self.assess(word)
-                self.assertEqual((found.priority.score, found.priority.level, found.season.word), (89.1, "높음", YEAR_END))
-                self.assertEqual([(part.name, part.value) for part in found.parts], [("season", 70.0), ("freshness", 100.0), ("balance", 100.0)])
-                self.assertIn("연말정산 준비", found.reason)
+                self.assertEqual((found.priority.score, found.priority.level, found.season), (81.8, "높음", None))
+                self.assertEqual([(part.name, part.value) for part in found.parts], [("season", 50.0), ("freshness", 100.0), ("balance", 100.0)])
+                self.assertNotIn("연말정산", found.reason)
         with_profile = self.assess("그래픽카드", PROFILE_B)
-        self.assertEqual((with_profile.priority.score, with_profile.fit, with_profile.season.word), (92.9, 100, YEAR_END))
+        self.assertEqual((with_profile.priority.score, with_profile.fit, with_profile.season), (88.2, 100, None))
 
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     def test_the_intended_card_words_get_the_same_season_factor_and_a_plain_word_gets_the_neutral_one(self):
@@ -325,6 +346,7 @@ class StoredCandidatePriorityTest(unittest.TestCase):
 class RelativeIndexScoreEffectTest(unittest.TestCase):
     # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
     # KNOWN_DEFECT: 상대지수 87 이 '월간 검색 수요 87회' 로 들어오면 우선도의 기회도 요인이 38.9점으로 계산되어 우선도가 9.2점 내려간다(없을 때 81.8 → 72.6) — 상대값과 횟수를 구분하는 장치가 없다.
+    # 뒤집는 단계가 계획에 없다 — Legacy 칸은 그대로 두고(D-37 ③) 새 Trend 칸이 대신한다. 이 시험은 '이 칸은 상대값과 횟수를 구분하지 못해 우선도가 내려간다' 는 현재 모습을 계속 기록한다.
     def test_KNOWN_DEFECT_a_relative_index_of_87_is_scored_as_87_searches_and_lowers_the_priority(self):
         bare = cd.Candidate.new("주제 테스트 문장", "키워드", ("naver_b",), candidate_id="c0", now="2026-11-03T00:00:00Z")
         indexed = cd.Candidate.new("주제 테스트 문장", "키워드", ("naver_b",), candidate_id="c1", now="2026-11-03T00:00:00Z", search_demand=87, data_date="2026-11-03")

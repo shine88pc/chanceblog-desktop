@@ -129,7 +129,7 @@ class StrictShapeTest(unittest.TestCase):
         self.assertEqual(five.to_dict()["blogs"], list(st.PLATFORMS))
         for bad in ((), ("naver_c",), ("naver_a", "naver_a"), ("tistory",), "naver_a"):
             with self.subTest(blogs=bad):
-                self.assertEqual(code_of(cd.Candidate.new, "주제 테스트 문장", "키워드", bad), "CANDIDATE_INVALID")
+                self.assertEqual(code_of(cd.Candidate.new, "주제 테스트 문장", "키워드", bad, candidate_id="c0000003", now=NOW), "CANDIDATE_INVALID")      # 시각·번호를 직접 줘서 실제 시계를 읽지 않는다
 
 
 class CsvAndTrendColumnTest(unittest.TestCase):

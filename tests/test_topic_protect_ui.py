@@ -55,9 +55,23 @@ def is_home_test(node, aliases=()):
             and len(node.comparators) == 1 and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value == "home")
 
 
+def home_aliases(function):
+    """홈 조건을 담아 두고 쓰는 지역 변수들 — 그 이름에 값을 넣는 곳이 **모두** 홈 조건일 때만 별칭이다. 같은 이름에 다른 값을 덮어쓰거나(`is_home = page == "settings"`)·조건부로 바꾸거나(`is_home = True`)·
+    `+=`·`for`·`with`·`:=` 로 다시 넣으면 별칭이 아니다 — 처음에 홈 조건을 담았다는 이유만으로 '홈 조건' 으로 읽으면 곧바로 덮어쓴 억지 변이에 속는다(독립 검증이 찾은 허점 P10)."""
+    stores, homes = {}, {}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            stores[node.id] = stores.get(node.id, 0) + 1
+        if isinstance(node, ast.Assign) and is_home_test(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    homes[target.id] = homes.get(target.id, 0) + 1
+    return {name for name, count in homes.items() if stores.get(name) == count}
+
+
 def home_branches(function, wanted):
     """함수 안에서 `wanted` 를 부르는 곳마다, 그 호출을 감싼 '홈 조건'의 가지를 돌려준다 — `참` = 홈일 때만 실행·`거짓` = 홈이 아닐 때만 실행·빈 집합 = 조건 없이 실행."""
-    aliases = {target.id for stmt in ast.walk(function) if isinstance(stmt, ast.Assign) and is_home_test(stmt.value) for target in stmt.targets if isinstance(target, ast.Name)}
+    aliases = home_aliases(function)
     found = []
 
     def walk(node, branches):
@@ -401,6 +415,38 @@ class TopicsPlaceholderTest(unittest.TestCase):
         self.assertEqual(home_branches(render, "placeholder_screen"), [frozenset({"거짓"})], "자리표시 화면은 홈이 아닐 때만 그린다")
         self.assertEqual(home_branches(overlays, "drawer_view"), [frozenset({"참"})], "서랍은 홈에서만 연다")
         self.assertEqual(all_link_targets(screens), ["topics"], "홈의 '전체 보기' 는 '주제 후보' 로 간다")
+
+
+class HomeConditionReaderTest(unittest.TestCase):
+    """위 Qt 소스 시험이 쓰는 `ast` 읽개 자체의 시험 — 홈 조건을 변수에 담아 쓴 것은 같은 조건으로 읽되, 그 변수를 다른 값으로 덮어쓴 소스는 홈 조건으로 읽지 않는다(그러면 Qt 소스 시험이 깨진다)."""
+
+    @staticmethod
+    def source(*lines):
+        """함수 `f` 하나짜리 소스 — 줄마다 들여 써서 붙인다."""
+        return "\n".join(("def f(self):", *("    " + line for line in lines))) + "\n"
+
+    def branches(self, *lines):
+        return home_branches(function_named(ast.parse(self.source(*lines)), "f"), "drawer")
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_a_home_condition_kept_in_a_variable_and_used_once_is_read_as_the_home_condition(self):
+        direct = ('view = self.drawer() if self.state.page == "home" else None',)
+        kept = ('is_home = self.state.page == "home"', "view = self.drawer() if is_home else None")
+        commented = ("# view = self.drawer()", 'is_home = (self.state.page ==', '           "home")  # 줄을 바꿔도 주석을 달아도', "view = self.drawer() if is_home else None")
+        for lines in (direct, kept, commented):
+            with self.subTest(lines=lines):
+                self.assertEqual(self.branches(*lines), [frozenset({"참"})])
+
+    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_a_home_condition_variable_that_is_overwritten_is_not_read_as_the_home_condition(self):
+        overwritten = ('is_home = self.state.page == "home"', 'is_home = self.state.page == "settings"', "view = self.drawer() if is_home else None")
+        by_a_flag = ('is_home = self.state.page == "home"', "if self.flag:", "    is_home = True", "view = self.drawer() if is_home else None")
+        augmented = ('is_home = self.state.page == "home"', "is_home |= self.flag", "view = self.drawer() if is_home else None")
+        looped = ('is_home = self.state.page == "home"', "for is_home in (True, False):", "    pass", "view = self.drawer() if is_home else None")
+        for lines in (overwritten, by_a_flag, augmented, looped):
+            with self.subTest(lines=lines):
+                self.assertEqual(self.branches(*lines), [frozenset()], "홈 조건이 아닌 변수를 홈 조건으로 읽었다")
+        self.assertEqual(home_aliases(function_named(ast.parse(self.source(*overwritten)), "f")), set())
 
 
 class LegacyDemandLabelTest(unittest.TestCase):
