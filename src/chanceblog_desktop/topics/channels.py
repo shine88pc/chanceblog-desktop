@@ -14,10 +14,45 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import NamedTuple
 
-from ..content.profiles import _invalid, _no_markup, _number, _text, _words
+from ..content.profiles import _invalid as _base_invalid
+from ..content.profiles import _no_markup, _number, _text, _words
 from ..content.status import PLATFORMS
+from ..errors import AppError
 
 SCHEMA = 1
+
+
+def invalid_in(subject, item, detail=""):
+    """`subject`(예: '채널 프로필'·'씨앗 목록'·'캘린더')의 칸 오류(`CONTENT_INVALID`). 안내 문구의 「항목」 자리에 어느 칸이 왜 안 되는지를 함께 담는다 — 안내 틀이 '원고의 「항목」 이 올바르지 않습니다'
+    라서 칸 이름만 있으면 무엇이 틀렸는지 알 수 없다(새 오류 코드는 만들지 않고 이 자리에 쉬운 말로 적는다 — P2a, 독립 검증 L5). 개발자용 세부(`detail`)는 그대로 남긴다."""
+    shown = item if item.startswith(subject) else f"{subject}의 {item}"
+    error = _base_invalid(f"{shown} — {detail}" if detail else shown, detail=detail)
+    error.explained = True
+    return error
+
+
+def explain(subject, error):
+    """칸 검사 도구(`content.profiles`)가 칸 이름만 담아 낸 오류를 `invalid_in` 과 같은 모양으로 바꾼다. 이미 풀어 쓴 오류·다른 코드의 오류는 그대로 둔다."""
+    if getattr(error, "explained", False) or error.requested_code != "CONTENT_INVALID":
+        return error
+    return invalid_in(subject, str(error.slots.get("항목", "")), error.detail or "모양이나 길이가 맞지 않습니다")
+
+
+def at_entry(subject, number, error):
+    """목록의 `number`번째 항목에서 난 오류(`explain`·`invalid_in` 으로 만든 것)를 '`number`번째 `subject`' 이름이 붙은 오류로 바꾼다 — 사람이 고치는 JSON 에서 어느 항목인지 알 수 있게 한다."""
+    if getattr(error, "explained", False) is not True or error.requested_code != "CONTENT_INVALID":
+        return error
+    item = str(error.slots.get("항목", "")).split(" — ", 1)[0]
+    item = item[len(subject) + 2:] if item.startswith(subject + "의 ") else item          # '씨앗의 ' 를 떼고 칸 이름만 남긴다
+    return invalid_in(f"{number}번째 {subject}", item, error.detail)
+
+
+def _invalid(item, detail=""):
+    return invalid_in("채널 프로필", item, detail)
+
+
+def _explained(error):
+    return explain("채널 프로필", error)
 
 # ---- 채널 이름 ------------------------------------------------------------------------------------------------------------------
 CHANNELS = PLATFORMS                                  # 코드의 다섯 키(순서 포함): github_pages·blogger_en·blogger_ko·naver_a·naver_b
@@ -92,6 +127,20 @@ def _flag(value, item):
     return value
 
 
+class Weights(dict):
+    """여섯 항목의 가중치 — **읽기 전용** 사전이다. 고치려는 모든 시도(`[]=`·`del`·`update`·`pop`·`|=` …)는 `TypeError` 다.
+    `MappingProxyType` 대신 `dict` 를 이어받아 `copy.deepcopy`·`pickle`·`dataclasses.asdict`·`astuple` 이 채널 프로필에서도 된다(독립 검증 L3 — 읽기 전용 보기는 복사할 수 없었다)."""
+    __slots__ = ()
+
+    def _blocked(self, *args, **kwargs):
+        raise TypeError("가중치는 읽기 전용이다 — 바꾸려면 `dataclasses.replace` 로 새 채널 프로필을 만든다")
+
+    __setitem__ = __delitem__ = __ior__ = clear = pop = popitem = setdefault = update = _blocked
+
+    def __reduce__(self):
+        return (Weights, (dict(self),))
+
+
 def _weights(value):
     item = "항목별 가중치"
     if not isinstance(value, Mapping) or set(value) != set(FACTOR_NAMES):
@@ -100,7 +149,7 @@ def _weights(value):
     total = sum(checked.values())
     if total != 100:
         raise _invalid(item, detail=f"가중치의 합은 100 이어야 하는데 {total} 이다")
-    return MappingProxyType(checked)
+    return Weights(checked)
 
 
 def _cutoffs(value):
@@ -148,6 +197,12 @@ class ChannelProfile:
     monetization_focus: tuple = ()                    # 우선 수익화 분야 태그(영문 소문자-밑줄)
 
     def __post_init__(self):
+        try:
+            self._check()
+        except AppError as error:
+            raise _explained(error) from None
+
+    def _check(self):
         def put(name, value):
             object.__setattr__(self, name, value)
 
@@ -264,6 +319,7 @@ def profiles_from_dict(data):
 
 __all__ = [
     "CHANNELS", "CHANNEL_ALIAS", "ChannelProfile", "DEFAULT_PROFILES", "FACTOR_LABELS", "FACTOR_NAMES", "FOLLOW_UP_PER_POST", "GRADE_CUTOFFS", "HOLD_DAYS", "LANGUAGES", "MAX_CHANNELS_PER_TOPIC",
-    "PER_SEED", "SCHEMA", "SOURCE_MIX", "SeedQuota", "TREND_USES", "USE_NONE", "USE_PRIMARY", "USE_REFERENCE", "USE_SUPPORTING", "canonical", "default_profiles", "is_slug", "is_tag",
+    "PER_SEED", "SCHEMA", "SOURCE_MIX", "SeedQuota", "TREND_USES", "USE_NONE", "USE_PRIMARY", "USE_REFERENCE", "USE_SUPPORTING", "Weights", "at_entry", "canonical", "default_profiles", "explain", "invalid_in",
+    "is_slug", "is_tag",
     "profiles_from_dict", "profiles_to_dict",
 ]

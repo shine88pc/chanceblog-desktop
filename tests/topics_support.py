@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from chanceblog_desktop.topics import model, score  # noqa: E402
+from chanceblog_desktop.topics import model, schedule, score, seeds  # noqa: E402
 from chanceblog_desktop.topics.channels import FACTOR_NAMES, default_profiles  # noqa: E402
 
 PROFILES = {profile.key: profile for profile in default_profiles()}
@@ -46,9 +46,24 @@ def full(**overrides):
         "source_topic_id": "src-local-ai", "seed_id": "seed-gpu", "secondary_keywords": ("GPU 메모리", "로컬 LLM"),
         "scores": card(85, channel_fit=92, feasibility=85, differentiation=78, timing=80, evidence=82, monetization=88),
         "trend_status": "rising", "trend_ratio": 73, "trend_period": "2025-11-04~2026-11-04", "trend_compared_group": ("로컬 AI", "클라우드 AI"), "trend_queried_on": "2026-11-04",
-        "search_demand_count": 4200, "search_demand_source": "검색광고 키워드 도구", "data_status": "sufficient", "duplicate_status": "different_angle_needed",
+        "search_demand_count": 4200, "search_count_source": "검색광고 키워드 도구", "data_status": "sufficient", "duplicate_status": "different_angle_needed",
         "similar_post_ids": ("2026-10-01-KR-120000",), "monetization_tags": ("pc_parts", "affiliate"), "selection_reasons": ("공식 사양으로 쓸 수 있다", "부품 협업 가능"),
         "processing_errors": ("관심도 조회 한 번 실패 후 재시도", ), "work_status": "REVIEW", "review_expires_at": "2027-02-02T09:56:00Z",
     }
     values.update(overrides)
     return make(**values)
+
+
+def example_seed(**changes):
+    """검증을 모두 통과하는 **예시** 씨앗 — 시험용으로 지어낸 자료이고 실제 씨앗이 아니다(실제 씨앗 목록은 이 저장소에 두지 않는다 — 운영자 조건 4)."""
+    values = {"seed_id": "ex-seed-001", "major": "예시 대분류", "minor": "예시 중분류", "keyword": "예시 씨앗 하나", "seed_type": "general", "scope": "common", "registered_on": "2026-05-01",
+              "state": "active"}
+    values.update(changes)
+    return seeds.Seed(**values)
+
+
+def example_entry(**changes):
+    """검증을 모두 통과하는 **예시** 캘린더 항목 — 시험용으로 지어낸 자료이고 실제 캘린더가 아니다."""
+    values = {"entry_id": "ex-cal-001", "name": "예시 시기 하나", "keywords": ("예시시기",), "prep_start": "10-15", "publish_from": "11-01", "publish_to": "11-30", "peak": "11-20", "repeat": "yearly"}
+    values.update(changes)
+    return schedule.CalendarEntry(**values)
