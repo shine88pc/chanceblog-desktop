@@ -92,6 +92,21 @@ class EntryShapeTest(unittest.TestCase):
             with self.subTest(**{name: value}):
                 self.assertIn(label, rejected(self, **{name: value}).rendered().message)
 
+    def test_the_last_evaluation_day_stays_inside_the_years_the_calendar_works_with(self):
+        # 독립 검증 L9: 9999-12-31 이 통과해 재평가 알림이 영영 안 떴다.
+        self.assertEqual(entry(last_evaluated_on="2200-12-31").last_evaluated_on, "2200-12-31")
+        self.assertEqual(entry(last_evaluated_on="2000-01-01").last_evaluated_on, "2000-01-01")
+        for bad in ("2201-01-01", "9999-12-31", "1999-12-31", "2026-02-30", "2026-1-1", 20261105):
+            with self.subTest(day=bad):
+                self.assertIn("마지막 평가일", rejected(self, last_evaluated_on=bad).rendered().message)
+
+    def test_the_name_and_the_words_refuse_a_promise_of_results_like_the_candidate_fields_do(self):
+        # 독립 검증 L9: 캘린더 이름·낱말에는 '상위노출 보장' 같은 표현을 거절하지 않았다(후보 칸과 씨앗 낱말은 거절).
+        self.assertIn("이름", rejected(self, name="상위노출 보장 시기").rendered().message)
+        self.assertIn("시기 낱말", rejected(self, keywords=("예시시기", "수익 보장")).rendered().message)
+        self.assertIn("결과를 약속하는 표현", rejected(self, name="검색 1위 보장").rendered().message)
+        self.assertEqual(entry(name="상위노출을 피하는 법").name, "상위노출을 피하는 법", "약속이 아니라 경계하는 말은 지나간다")
+
     def test_the_message_says_what_is_wrong_in_plain_korean(self):
         message = rejected(self, publish_from="2026-11-01").rendered().message
         self.assertIn("캘린더의 발행 기간 시작", message)
@@ -227,10 +242,57 @@ class PhaseTest(unittest.TestCase):
     def test_the_cycle_dates_follow_the_year_and_the_preparation_is_counted_in_days(self):
         made = entry(prep_start="02-19", publish_from="03-01", publish_to="03-31", peak="03-15")
         self.assertEqual(sc.cycle_of(made, 2027), sc.Cycle("2027-02-19", "2027-03-01", "2027-03-31", "2027-03-15"))
-        self.assertEqual(sc.cycle_of(made, 2028), sc.Cycle("2028-02-20", "2028-03-01", "2028-03-31", "2028-03-15"), "윤년에는 2월 29일이 끼어 같은 10일 앞이 하루 늦은 날짜(2월 20일)다")
+        # P2b(독립 검증 L2) 의도적 갱신: 준비 시작일도 발행 시작·끝·피크처럼 달력의 MM-DD 날짜 그대로다 — 전에는 날수로 세서 윤년에 하루 어긋난 날짜(2월 20일)가 나왔다.
+        self.assertEqual(sc.cycle_of(made, 2028), sc.Cycle("2028-02-19", "2028-03-01", "2028-03-31", "2028-03-15"), "윤년에도 준비 시작은 적은 날짜(2월 19일) 그대로다")
         wrapped = entry(prep_start="12-10", publish_from="12-20", publish_to="01-10", peak="01-02")
         self.assertEqual(sc.cycle_of(wrapped, 2026), sc.Cycle("2026-12-10", "2026-12-20", "2027-01-10", "2027-01-02"))
         self.assertIsNone(sc.cycle_of(entry(peak=None), 2026).peak)
+
+    def test_the_preparation_start_is_the_calendar_date_that_was_written_in_leap_years_too(self):
+        # 독립 검증 L2 의 재현: prep 02-15 / start 03-15 → 2027 은 02-15, 2028 은 02-16 이었다. prep 02-28 / start 03-01 → 2028 준비 시작이 `2028-02-29`(MM-DD 로는 못 적는 날)이었다.
+        for prep, start in (("02-15", "03-15"), ("02-28", "03-01"), ("02-01", "03-10"), ("01-31", "03-01")):
+            made = entry(prep_start=prep, publish_from=start, publish_to="04-30", peak=None)
+            for year in (2027, 2028, 2032, 2100, 2096):
+                with self.subTest(prep=prep, start=start, year=year):
+                    cycle = sc.cycle_of(made, year)
+                    self.assertEqual(cycle.prep_start, f"{year}-{prep}")
+                    self.assertEqual(cycle.start, f"{year}-{start}")
+        made = entry(prep_start="02-28", publish_from="03-01", publish_to="03-31", peak=None)
+        self.assertEqual(sc.phase_of(made, "2028-02-27"), "outside")
+        self.assertEqual(sc.phase_of(made, "2028-02-28"), "preparing")
+        self.assertEqual(sc.phase_of(made, "2028-02-29"), "preparing")
+        self.assertEqual(sc.phase_of(made, "2028-03-01"), "publishing")
+
+    def test_a_preparation_in_the_year_before_is_the_same_calendar_date_in_the_year_before(self):
+        made = entry(prep_start="12-20", publish_from="01-05", publish_to="01-31", peak=None)
+        for year in (2027, 2028, 2029):
+            with self.subTest(year=year):
+                self.assertEqual(sc.cycle_of(made, year).prep_start, f"{year - 1}-12-20")
+        leap_window = entry(prep_start="11-15", publish_from="03-01", publish_to="03-31", peak=None)        # 평년 날수로 106일 앞 — 윤년에는 실제로 107일 앞이어도 한도(180일) 안이다
+        self.assertEqual(sc.cycle_of(leap_window, 2028).prep_start, "2027-11-15")
+        self.assertEqual(sc.phase_of(leap_window, "2028-02-29"), "preparing")
+
+    def test_the_limit_of_180_days_is_counted_in_common_year_days_and_a_leap_year_may_be_a_day_longer(self):
+        edge = entry(prep_start="09-04", publish_from="03-02", publish_to="03-31", peak=None)       # 평년 날수로 정확히 179일
+        self.assertEqual((sc.cycle_of(edge, 2027).start, sc.cycle_of(edge, 2027).prep_start), ("2027-03-02", "2026-09-04"))
+        self.assertEqual(sc.cycle_of(edge, 2028).prep_start, "2027-09-04")
+        rejected(self, prep_start="09-02", publish_from="03-02", publish_to="03-31", peak=None)
+
+    def test_a_preparation_that_starts_the_same_day_as_the_window_is_in_the_same_year(self):
+        # 준비 시작이 발행 시작과 같은 월-일이면(0일 앞) 같은 해다 — 지난해로 읽으면 준비 중이 365일로 늘어난다.
+        made = entry(prep_start="11-01", publish_from="11-01", publish_to="11-30", peak=None)
+        self.assertEqual(sc.cycle_of(made, 2026), sc.Cycle("2026-11-01", "2026-11-01", "2026-11-30", None))
+        self.assertEqual(sc.cycle_of(made, 2028).prep_start, "2028-11-01")
+        self.assertEqual([sc.phase_of(made, day) for day in ("2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01", "2027-05-01")], ["outside", "publishing", "publishing", "outside", "outside"])
+        self.assertEqual(sc.phase_of(entry(prep_start="10-01", publish_from="10-01", publish_to="10-02", peak=None), "2026-09-30"), "outside")
+
+    def test_the_last_year_end_still_finds_a_preparation_that_starts_before_a_window_in_the_year_after(self):
+        # 독립 검증 L9: 2200 년 끝의 준비 중(발행은 2201 년 1월)이 '밖' 으로 나왔다.
+        made = entry(prep_start="12-15", publish_from="01-05", publish_to="01-31", peak=None)
+        self.assertEqual(sc.phase_of(made, "2200-12-14"), "outside")
+        self.assertEqual(sc.phase_of(made, "2200-12-15"), "preparing")
+        self.assertEqual(sc.phase_of(made, "2200-12-31"), "preparing")
+        self.assertEqual(sc.phase_of(made, "2200-01-10"), "publishing")
 
     def test_a_once_entry_has_a_cycle_only_in_its_year(self):
         made = entry(repeat="once", year=2026)
@@ -306,6 +368,16 @@ class CalendarStateTest(unittest.TestCase):
         for text in ("black friday deals", "BLACK  FRIDAY tips".replace("  ", " "), "ＢＬＡＣＫ ＦＲＩＤＡＹ"):
             with self.subTest(text=text):
                 self.assertEqual(sc.calendar_state([english], [text], "2026-11-10").state, "due")
+
+    def test_one_matching_word_among_several_is_enough_for_an_entry_to_apply(self):
+        # P2b(독립 검증 M6 ①): 시기 낱말이 여럿일 때 '하나라도 있으면 해당'(any)이다 — '모두 있어야'(all)로 바뀌어도 통과하던 빈틈을 막는다.
+        many = entry(keywords=("예시시기", "다른낱말", "또다른낱말"))
+        for text in ("예시시기 글", "다른낱말 글", "또다른낱말 글", "예시시기 다른낱말 글"):
+            with self.subTest(text=text):
+                found = sc.calendar_state([many], [text], "2026-11-10")
+                self.assertEqual((found.state, [item.entry_id for item in found.matched]), ("due", ["ex-cal-001"]))
+        self.assertEqual(sc.calendar_state([many], ["아무 상관 없는 글"], "2026-11-10").state, "unknown")
+        self.assertEqual(sc.calendar_state([many], ["예시시기 글"], "2026-12-20").state, "out_of_range")
 
     def test_any_of_the_given_texts_may_hold_the_word_but_a_phrase_must_sit_inside_one_text(self):
         phrase = entry(keywords=("새해 계획",))

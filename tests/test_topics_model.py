@@ -29,8 +29,8 @@ from chanceblog_desktop.topics import score as sc  # noqa: E402
 REQUIRED = ("candidate_id", "source_type", "candidate_type", "channel", "language", "topic", "primary_keyword", "search_intent", "content_type", "topic_cluster", "topic_angle",
             "target_reader", "created_at")
 OPTIONAL = ("source_topic_id", "seed_id", "secondary_keywords", "scores", "trend_status", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on",
-            "search_demand_count", "search_count_source", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags", "selection_reasons", "processing_errors",
-            "work_status", "review_expires_at")
+            "search_demand_count", "search_count_source", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags", "safety_flags", "selection_reasons", "processing_errors",
+            "work_status", "review_expires_at")       # P2b 의도적 갱신: `safety_flags`(안전 표시)를 이 구현이 더했다 — 규칙 기반 안전 표시를 담을 자리(결정 D-47)
 PROMISES = ("상위노출 보장", "검색 1위 가능성", "수익 보장", "노출 확률 높이는 법", "guaranteed income")
 TREND_BASIS = {"trend_ratio": 60, "trend_period": "최근 12개월", "trend_compared_group": ("로컬 AI",), "trend_queried_on": "2026-11-04"}
 
@@ -606,6 +606,7 @@ STRATEGY_FIELDS = ("candidate_id", "source_topic_id", "seed_id", "source_type", 
                    "content_type", "topic_cluster", "topic_angle", "target_reader", "scores", "trend_status", "data_status", "duplicate_status", "similar_post_ids", "monetization_tags",
                    "selection_reasons", "status", "created_at", "review_expires_at")
 ADDED_FIELDS = ("processing_errors", "trend_ratio", "trend_period", "trend_compared_group", "trend_queried_on", "search_demand_count", "search_count_source")
+P2B_ADDED_FIELDS = ("safety_flags",)          # P2b 가 더한 칸 — 운영자가 칸 이름까지 정한 것이 아니라 '건강·제품·협찬은 표시만 한다' 는 전략 요구를 담으려고 이 구현이 정했다(결정 D-47)
 
 
 class StrategyFieldsTest(unittest.TestCase):
@@ -615,9 +616,9 @@ class StrategyFieldsTest(unittest.TestCase):
         self.assertEqual([name for name in STRATEGY_FIELDS if name not in names], ["status"])
         self.assertTrue({"work_status"} <= names and "recommendation_band" in md.LABELS)
 
-    def test_the_added_fields_are_exactly_the_ones_the_operator_asked_for(self):
+    def test_the_added_fields_are_exactly_the_ones_the_operator_asked_for_and_the_one_p2b_added(self):
         names = {f.name for f in dataclasses.fields(md.TopicCandidate)}
-        self.assertEqual(names - (set(STRATEGY_FIELDS) - {"status"}) - {"work_status"}, set(ADDED_FIELDS))
+        self.assertEqual(names - (set(STRATEGY_FIELDS) - {"status"}) - {"work_status"}, set(ADDED_FIELDS) | set(P2B_ADDED_FIELDS))
 
     def test_the_engine_candidate_and_the_existing_candidate_do_not_mix(self):
         engine = ts.full().to_dict()
@@ -689,6 +690,74 @@ class SourceNameWordsTest(unittest.TestCase):
     def test_the_check_applies_to_the_source_only_when_a_count_exists(self):
         self.assertIsNone(ts.make().search_count_source)
         rejected(self, search_count_source="relative index")
+
+    def test_capital_look_alikes_from_cyrillic_and_greek_are_read_as_latin_letters_before_folding_to_lower_case(self):
+        # P2b(독립 검증 L1): `ТRЕND`(키릴 대문자 Т·Е)·`ΤRΕΝD`(그리스 대문자 Τ·Ε·Ν)가 통과했다 — 소문자로 접으면 Τ→τ(표에 있음)이지만 Ν→ν 는 v 로 읽히고 Т→т 는 표에 없었다.
+        cyrillic = chr(0x0422) + "R" + chr(0x0415) + "ND"
+        greek = chr(0x03A4) + "R" + chr(0x0395) + chr(0x039D) + "D"
+        for source in (cyrillic, greek, "NAVER " + cyrillic, greek + " API", chr(0x0422) + "r" + chr(0x0435) + "nd"):
+            with self.subTest(source=source):
+                self.assertEqual(md.trend_word_in(source), "trend")
+                rejected(self, search_demand_count=5, search_count_source=source)
+        self.assertEqual(md._fold(cyrillic), "trend")
+        self.assertEqual(md._fold(greek), "trend")
+        self.assertEqual(md._fold(chr(0x039D)), "n", "그리스 대문자 Ν 은 n 이다(소문자 ν 는 v)")
+        self.assertEqual(md._fold(chr(0x03BD)), "v")
+
+    def test_digits_and_symbols_that_stand_for_letters_are_read_also_inside_the_whole_words_ratio_and_index(self):
+        # 독립 검증 L1: `r4tio`·`rati0`·`1ndex`·`tr€nd` 가 통과했다 — 숫자 글자는 낱말 조각만 보고 통째 낱말(ratio·index)에는 적용되지 않았다.
+        for source in ("r4tio", "rati0", "R4TI0", "1ndex", "ind3x", "1nd3x", "the r4tio", "tr€nd", "TR€ND", "d4t4lab"):
+            with self.subTest(source=source):
+                self.assertTrue(md.trend_word_in(source), source)
+                rejected(self, search_demand_count=5, search_count_source=source)
+
+    def test_letters_spaced_out_one_by_one_are_joined_into_a_word_before_the_whole_word_check(self):
+        for source in ("r a t i o", "r-a-t-i-o", "r.a.t.i.o", "i n d e x", "i-n-d-e-x", "NAVER r a t i o", "r a t i o and notes", "R A T I O"):
+            with self.subTest(source=source):
+                self.assertTrue(md.trend_word_in(source), source)
+        for source in ("o p e r a t i o n", "a b c", "i o", "m i g r a t i o n", "r a t e", "x y index card".replace("index card", "z")):
+            with self.subTest(honest=source):
+                self.assertIsNone(md.trend_word_in(source), source)
+                self.assertEqual(ts.make(search_demand_count=5, search_count_source=source).search_count_source, source)
+
+    def test_the_message_names_the_word_that_was_found_and_never_echoes_the_whole_name(self):
+        # 독립 검증 L1: 거절 문구가 어떤 낱말 때문인지 알려 주지 않았다 — 걸린 말은 이 모듈의 고정 목록에서 나오므로(입력 글이 아니다) 문구에 넣어도 안전하다.
+        for source, word in (("Google Trends", "trend"), ("NAVER DataLab", "datalab"), ("상대 지수", "상대지수"), ("r a t i o", "ratio"), ("the index", "index")):
+            with self.subTest(source=source):
+                shown = rejected(self, search_demand_count=1, search_count_source=source).rendered().message
+                self.assertIn(f"‘{word}’", shown)
+                self.assertNotIn(source, shown.replace(f"‘{word}’", ""), "입력한 출처 이름을 그대로 되풀이하지 않는다")
+
+
+class SafetyFlagsFieldTest(unittest.TestCase):
+    # P2b: 규칙 기반 안전 표시(`safety.py`)를 담는 칸 — 닫힌 목록이고 표시일 뿐이다(후보를 지우거나 점수·구간을 바꾸지 않는다).
+    def test_the_closed_list_is_exactly_these_names_so_adding_one_is_a_conscious_change(self):
+        self.assertEqual(md.SAFETY_FLAGS, ("health_check", "product_brand", "experience_claim", "sponsor_disclosure", "result_promise"))
+        self.assertTrue(all(ch.is_tag(name) for name in md.SAFETY_FLAGS))
+        self.assertEqual(md.LABELS["safety_flags"], "안전 표시")
+
+    def test_it_is_empty_by_default_and_every_listed_flag_is_accepted_in_any_order_once(self):
+        self.assertEqual(ts.make().safety_flags, ())
+        self.assertEqual(ts.make(safety_flags=list(md.SAFETY_FLAGS)).safety_flags, md.SAFETY_FLAGS)
+        self.assertEqual(ts.make(safety_flags=("sponsor_disclosure", "health_check")).safety_flags, ("sponsor_disclosure", "health_check"))
+
+    def test_an_unknown_repeated_or_wrongly_shaped_flag_list_is_refused(self):
+        for bad in (("health",), ("HEALTH_CHECK",), ("health_check", "health_check"), "health_check", {"health_check"}, (None,), (3,), tuple(md.SAFETY_FLAGS) + ("health_check",), ("",)):
+            with self.subTest(bad=repr(bad)[:30]):
+                self.assertIn("안전 표시", rejected(self, safety_flags=bad).rendered().message)
+
+    def test_the_flags_survive_the_json_round_trip_and_an_old_stored_candidate_without_them_still_loads(self):
+        made = ts.make(safety_flags=("product_brand",))
+        self.assertEqual(made.to_dict()["safety_flags"], ["product_brand"])
+        self.assertEqual(md.TopicCandidate.from_dict(made.to_dict()), made)
+        old = ts.make().to_dict()
+        del old["safety_flags"]
+        self.assertEqual(md.TopicCandidate.from_dict(old).safety_flags, ())
+
+    def test_a_flag_changes_nothing_else_about_the_candidate(self):
+        plain = ts.rated(70)
+        flagged = dataclasses.replace(plain, safety_flags=("health_check",))
+        self.assertEqual((flagged.recommendation_band, flagged.scores, flagged.work_status), (plain.recommendation_band, plain.scores, plain.work_status))
 
 
 class DisplayIdLimitsTest(unittest.TestCase):

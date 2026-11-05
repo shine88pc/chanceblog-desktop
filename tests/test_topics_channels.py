@@ -348,13 +348,57 @@ class CopyAndPlainViewTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             clone.weights["timing"] = 1
 
-    def test_asdict_and_astuple_work_and_the_result_is_plain_enough_for_json(self):
+    def test_asdict_and_astuple_work_and_json_text_comes_from_to_dict(self):
+        # P2b(독립 검증 M1) 의도적 갱신: 가중치를 진짜 읽기 전용으로 만들려고 `dict` 하위 클래스를 `Mapping` 으로 바꿨다 — `asdict` 가 돌려주는 가중치도 읽기 전용 `Weights` 로 남아 JSON 글로 바로는
+        # 못 쓴다(전에는 사전이라 됐다). JSON 글은 처음부터 `to_dict()`(일반 사전)가 맡는다 — `asdict`·`astuple` 이 오류 없이 되고 값이 같다는 약속은 그대로다.
         profile = ch.default_profiles()[4]
         data = dataclasses.asdict(profile)
         self.assertEqual(dict(data["weights"]), dict(profile.weights))
-        self.assertEqual(json.loads(json.dumps(data))["weights"], dict(profile.weights))
+        self.assertEqual(type(data["weights"]), ch.Weights)
+        with self.assertRaises(TypeError):
+            data["weights"]["timing"] = 1
+        self.assertEqual(json.loads(json.dumps(profile.to_dict()))["weights"], dict(profile.weights))
+        self.assertEqual(json.loads(json.dumps({**data, "weights": dict(data["weights"])}))["weights"], dict(profile.weights))
         self.assertEqual(data["key"], "naver_b")
         self.assertEqual(len(dataclasses.astuple(profile)), len(dataclasses.fields(profile)))
+
+    def test_the_weights_are_a_real_read_only_mapping_not_a_dictionary_so_calling_the_dictionary_parts_directly_fails_too(self):
+        # P2b(독립 검증 M1): P2a 의 `dict` 하위 클래스는 `dict.update(w, …)`·`dict.__setitem__(w, …)`·`w.__init__(…)` 같은 직접 호출로 가중치가 바뀌었다 — 공유 기본값이 한 번 바뀌면 프로세스 전체가 오염된다.
+        import operator
+        from collections.abc import Mapping
+        weights = ch.default_profiles()[0].weights
+        before = dict(weights)
+        self.assertIsInstance(weights, Mapping)
+        self.assertNotIsInstance(weights, dict)
+        attempts = (lambda: dict.update(weights, {"channel_fit": 99}), lambda: dict.__setitem__(weights, "channel_fit", 99), lambda: dict.__delitem__(weights, "channel_fit"), lambda: dict.clear(weights),
+                    lambda: dict.pop(weights, "channel_fit"), lambda: dict.popitem(weights), lambda: dict.setdefault(weights, "extra", 1), lambda: weights.__init__({"channel_fit": 99}),
+                    lambda: weights.__init__(), lambda: setattr(weights, "_data", {}), lambda: setattr(weights, "extra", 1), lambda: delattr(weights, "_data"), lambda: weights.__setattr__("x", 1),
+                    lambda: operator.setitem(weights._data, "channel_fit", 99))
+        for number, attempt in enumerate(attempts):
+            with self.subTest(attempt=number):
+                with self.assertRaises(TypeError):
+                    attempt()
+        self.assertEqual(dict(weights), before)
+        self.assertEqual(dict(ch.default_profiles()[0].weights), before, "공유 기본값은 그대로다")
+        self.assertEqual(sum(weights.values()), 100)
+
+    def test_a_copy_of_the_weights_is_equal_but_never_the_same_object_and_can_be_pickled(self):
+        import copy
+        import pickle
+        weights = ch.default_profiles()[3].weights
+        for clone in (copy.copy(weights), copy.deepcopy(weights), pickle.loads(pickle.dumps(weights)), ch.Weights(weights), ch.Weights(dict(weights))):
+            with self.subTest(clone=type(clone).__name__):
+                self.assertIsNot(clone, weights)
+                self.assertEqual(clone, weights)
+                self.assertEqual(clone, dict(weights))
+                self.assertEqual(dict(weights), clone)
+                self.assertIs(type(clone), ch.Weights)
+        self.assertEqual(repr(ch.Weights({"a": 1})), "Weights({'a': 1})")
+        self.assertEqual(len(weights), 6)
+        self.assertIn("timing", weights)
+        self.assertEqual(weights.get("timing"), 15)
+        self.assertIsNone(weights.get("nope"))
+        self.assertEqual(list(weights.items())[0], ("channel_fit", 25))
 
     def test_the_weights_cannot_be_changed_by_any_of_the_usual_ways(self):
         weights = ch.default_profiles()[0].weights
@@ -393,7 +437,7 @@ class PlainKoreanErrorTest(unittest.TestCase):
 
     def test_every_kind_of_wrong_value_names_the_profile_the_field_and_the_reason(self):
         cases = ((dict(top_n=0), "채널당 후보 수", "1~20"), (dict(cluster_cap=99), "주제 묶음 상한", "1~20"), (dict(subheading_min=0), "소제목 최소 수", "1~20"), (dict(evergreen_pct=101), "지속형 비율", "0~100"),
-                 (dict(evergreen_pct=60), "지속형·실시간 비율", "합은 100"), (dict(language="fr"), "언어", "ko"), (dict(trend_use="x"), "관심도 사용 정도", "primary"), (dict(dup_cutoffs=(40, 60)), "중복 판정 기준", "세 개"),
+                 (dict(evergreen_pct=60), "지속형·실시간 비율", "합은 100"), (dict(language="fr"), "언어", "한국어"), (dict(trend_use="x"), "관심도 사용 정도", "주된 근거로 씀"), (dict(dup_cutoffs=(40, 60)), "중복 판정 기준", "세 개"),
                  (dict(dup_cutoffs=(60, 40, 75)), "중복 판정 기준", "커야"), (dict(display_name=""), "표시 이름", "한 줄"), (dict(topic_clusters=("Bad Name",)), "주제 묶음", "식별자"),
                  (dict(expansion_directions="문자열"), "확장 방향", "모양"), (dict(monetization_focus=("Bad",)), "우선 수익화 분야", "태그"), (dict(generation_enabled="yes"), "후보 생성 켜기", "true"))
         for changes, field, reason in cases:
@@ -422,6 +466,47 @@ class PlainKoreanErrorTest(unittest.TestCase):
         with self.assertRaises(AppError) as caught:
             ch.canonical("naver")
         self.assertIn("아는 채널 이름이 아닙니다", caught.exception.rendered().message)
+
+    OLD_WORDING = ("원고의", "제목은 200자", "출처 주소는", "이미지 파일 이름", "폴더 구분", "주제는 200자", "핵심 키워드는 60자", "추천 이유는 300자", "상위노출", "저장하지 않았습니다")
+
+    def test_the_shared_content_template_no_longer_talks_about_manuscripts_titles_or_candidates(self):
+        # P2b(독립 검증 M7): P2a 는 이유를 안내문에 넣었지만 틀 앞의 '원고의' 와 뒤의 '제목은 200자 이하…' 조치가 그대로라 씨앗·캘린더·보류·채널 프로필 오류에 맞지 않았다 — 틀 자체를 중립으로 바꿨다.
+        info = CATALOG["CONTENT_INVALID"]
+        self.assertEqual((set(info.slots), info.retry_kind, info.code), ({"항목"}, "after_user", "CONTENT_INVALID"))
+        for old in self.OLD_WORDING:
+            self.assertNotIn(old, info.message + info.action, old)
+        self.assertEqual(info.message, "다음 칸의 값이 올바르지 않습니다: **「항목」**.")
+        self.assertIn("직접 고쳐야", info.action)
+        for area in ("채널 프로필", "씨앗", "캘린더", "보류함"):
+            self.assertIn(area, info.when)
+
+    def test_every_engine_error_shows_the_field_and_the_reason_and_none_of_the_old_wording(self):
+        from chanceblog_desktop.topics import hold, schedule, seeds
+        weights = dict(profile().weights)
+        weights["timing"] += 5
+        calls = (lambda: profile(weights=weights), lambda: profile(top_n=0), lambda: ts.example_seed(keyword=""), lambda: ts.example_seed(state="proposed", active_since="2026-06-01"),
+                 lambda: ts.example_entry(prep_start="01-01", publish_from="12-31"), lambda: ts.example_entry(name="상위노출 보장"), lambda: hold.review_expires_at("엉터리"),
+                 lambda: hold.review_expires_at("2026-11-05T00:00:00Z", 0), lambda: seeds.seeds_from_dict({"schema": 1, "seeds": [{}]}), lambda: schedule.entries_from_dict({"schema": 2}),
+                 lambda: ch.profiles_from_dict({"schema": 1}), lambda: ch.canonical("naver"), lambda: seeds.change_state(ts.example_seed(), "active", None))
+        for number, call in enumerate(calls):
+            with self.subTest(call=number):
+                with self.assertRaises(AppError) as caught:
+                    call()
+                self.assertEqual(caught.exception.code, "CONTENT_INVALID")
+                shown = caught.exception.rendered()
+                self.assertTrue(shown.message.startswith("다음 칸의 값이 올바르지 않습니다: 「"), shown.message)
+                self.assertIn(" — ", shown.message, "칸 이름 뒤에 이유가 있다")
+                fixed = shown.message.split("「", 1)[0] + shown.message.rsplit("」", 1)[-1] + " " + shown.action          # 틀의 고정 글(칸 안의 이유는 빼고 — 이유는 '상위노출 보장' 같은 말을 따옴표로 보일 수 있다)
+                for old in self.OLD_WORDING:
+                    self.assertNotIn(old, fixed, old)
+
+    def test_the_candidate_template_is_left_alone_for_the_candidate_fields(self):
+        # 후보 칸(주제·키워드·점수 …)의 오류는 그대로 `CANDIDATE_INVALID` 의 후보용 안내다(이 안내는 후보 칸에 맞다).
+        with self.assertRaises(AppError) as caught:
+            ts.make(topic="")
+        self.assertEqual(caught.exception.code, "CANDIDATE_INVALID")
+        self.assertIn("주제 후보의", caught.exception.rendered().message)
+        self.assertIn("주제는 200자", caught.exception.rendered().action)
 
     def test_the_helpers_other_modules_use_build_the_same_kind_of_message(self):
         error = ch.invalid_in("씨앗", "대분류", "1~30자 한 줄이어야 한다")

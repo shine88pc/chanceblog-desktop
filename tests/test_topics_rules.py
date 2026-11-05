@@ -6,7 +6,8 @@
   3) 오류를 삼키지 않고(맨 except·pass 뿐인 except 금지) 코드는 파이썬 3.10 문법이다. 보이지 않는 글자·BOM·이 PC 의 절대경로·키 낱말이 없다.
   4) `__init__.py` 는 설명뿐이고 `layout.py` 는 이름 상수뿐이다. 이 패키지를 쓰는 곳이 아직 없다(기존 동작은 하나도 바뀌지 않았다).
   5) 위 검사기 자신도 합성 소스로 시험한다 — 어긴 소스를 실제로 잡는다.
-  6) P2a 가 더한 모듈(`seeds`·`schedule`·`dedupe`·`history`·`hold`)에도 같은 검사가 그대로 걸린다. 모듈 목록 시험은 모듈을 더하거나 빼면 일부러 고쳐야 하는 시험이다.
+  6) P2a 가 더한 모듈(`seeds`·`schedule`·`dedupe`·`history`·`hold`)과 P2b 가 더한 모듈(`expand`·`feasibility`·`safety`·`generate`)에도 같은 검사가 그대로 걸린다. 모듈 목록 시험은 모듈을 더하거나 빼면 일부러 고쳐야 하는 시험이다.
+  7) 기존 부품 중 이 패키지가 가져올 수 있는 것은 `content` 의 세 모듈·`errors` 와 **`check.claims` 하나**다(P2b — 계획 3.2 가 처음부터 허용한 순수 부품이고 `safety.py` 가 경험 단정 검사를 읽기만 하려고 쓴다). `check` 의 다른 모듈은 여전히 거절한다.
 검사기는 **이름 기반**이다 — 인자로 받은 객체의 메서드 이름까지 다 막지는 못한다(사고 방지용이지 악의 방지가 아니다, 독립 검증 L6). 파일 열기·목록 훑기 같은 흔한 메서드 이름을 막는 목록(`FORBIDDEN_METHODS`)을 P2a 에서 넓혔다.
 네트워크·파일 쓰기·실제 시계 없이 돈다.
 """
@@ -25,12 +26,16 @@ from chanceblog_desktop.errors import CATALOG  # noqa: E402
 TOPICS = ts.TOPICS
 SRC = ts.ROOT / "src" / "chanceblog_desktop"
 FILES = sorted(TOPICS.glob("*.py"))
-# 모듈을 더하거나 빼면 이 두 목록과 `docs/ARCHITECTURE.md` §5 의 `topics/` 행을 의식적으로 함께 고친다(P1 → P2a 에서 `dedupe`·`history`·`hold`·`schedule`·`seeds` 를 더했다).
-EXPECTED_FILES = ["__init__.py", "channels.py", "dedupe.py", "history.py", "hold.py", "layout.py", "link.py", "model.py", "schedule.py", "score.py", "seeds.py", "select.py"]
-TOPIC_MODULES = {"channels", "dedupe", "history", "hold", "layout", "link", "model", "schedule", "score", "seeds", "select"}
+# 모듈을 더하거나 빼면 이 두 목록과 `docs/ARCHITECTURE.md` §5 의 `topics/` 행을 의식적으로 함께 고친다(P1 → P2a 에서 `dedupe`·`history`·`hold`·`schedule`·`seeds` 를, P2a → P2b 에서 `expand`·`feasibility`·`generate`·`safety` 를,
+# P2b 보완에서 `wording`·`concepts`·`notice`·`brand` 를 더했다).
+EXPECTED_FILES = ["__init__.py", "brand.py", "channels.py", "concepts.py", "dedupe.py", "expand.py", "feasibility.py", "generate.py", "history.py", "hold.py", "layout.py", "link.py", "model.py", "notice.py",
+                  "safety.py", "schedule.py", "score.py", "seeds.py", "select.py", "wording.py"]
+TOPIC_MODULES = {"brand", "channels", "concepts", "dedupe", "expand", "feasibility", "generate", "history", "hold", "layout", "link", "model", "notice", "safety", "schedule", "score", "seeds", "select", "wording"}
 P2A_MODULES = ("seeds.py", "schedule.py", "dedupe.py", "history.py", "hold.py")
+P2B_MODULES = ("expand.py", "feasibility.py", "safety.py", "generate.py")
+P2B_FIX_MODULES = ("wording.py", "concepts.py", "notice.py", "brand.py")
 ALLOWED_STDLIB = {"__future__", "collections", "dataclasses", "datetime", "enum", "fractions", "functools", "itertools", "math", "re", "types", "typing", "unicodedata"}
-ALLOWED_INTERNAL = {"content.status", "content.candidates", "content.profiles", "errors"}
+ALLOWED_INTERNAL = {"content.status", "content.candidates", "content.profiles", "errors", "check.claims"}
 FORBIDDEN_CALLS = {"open", "print", "input", "exec", "eval", "compile", "__import__", "breakpoint", "exit", "quit"}
 FORBIDDEN_METHODS = {"now", "utcnow", "today", "monotonic", "perf_counter", "sleep", "random", "randint", "randrange", "choice", "shuffle", "uuid1", "uuid4", "urandom", "token_hex",
                      "read_text", "write_text", "read_bytes", "write_bytes", "mkdir", "unlink", "rmtree", "touch", "connect", "system", "popen", "Popen", "getenv", "urlopen",
@@ -84,6 +89,18 @@ class PackageFilesTest(unittest.TestCase):
                 self.assertIn(name, [path.name for path in FILES])
                 self.assertIn(name[:-3], TOPIC_MODULES)
 
+    def test_the_p2b_modules_are_in_the_list_the_checks_run_over_too(self):
+        for name in P2B_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(name, [path.name for path in FILES])
+                self.assertIn(name[:-3], TOPIC_MODULES)
+
+    def test_the_p2b_fix_modules_are_in_the_list_the_checks_run_over_too(self):
+        for name in P2B_FIX_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(name, [path.name for path in FILES])
+                self.assertIn(name[:-3], TOPIC_MODULES)
+
     def test_every_module_starts_with_an_explanation(self):
         for path in FILES:
             with self.subTest(module=path.name):
@@ -127,7 +144,7 @@ class PurityRulesTest(unittest.TestCase):
     def test_the_modules_import_nothing_from_the_service_ui_publish_or_render_layers(self):
         for path in FILES:
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                if isinstance(node, ast.ImportFrom):
+                if isinstance(node, ast.ImportFrom) and node.module != "check.claims":              # P2b 의도적 갱신: `check` 중 `check.claims` 하나만 허용한다(위 7번)
                     with self.subTest(module=path.name, line=node.lineno):
                         self.assertNotIn((node.module or "").split(".")[0], {"service", "ui", "publish", "render", "update", "security", "jobs", "assist", "check"})
 
@@ -139,6 +156,12 @@ class PurityRulesTest(unittest.TestCase):
                     used.add(node.module)
         self.assertTrue(used <= ALLOWED_INTERNAL)
         self.assertTrue({"content.status", "content.candidates", "content.profiles"} <= used)
+        self.assertIn("check.claims", used, "safety.py 가 경험 단정 검사를 읽는다")
+        for path in FILES:
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.level == 2 and node.module == "check.claims":
+                    with self.subTest(module=path.name):
+                        self.assertEqual(path.name, "safety.py", "check.claims 를 읽는 곳은 안전 표시 하나뿐이다")
 
     def test_the_checker_catches_a_forbidden_import(self):
         for source in ("import os", "import sys", "import socket", "import subprocess", "import ctypes", "import sqlite3", "import random", "import secrets", "import uuid", "import time",
@@ -151,7 +174,8 @@ class PurityRulesTest(unittest.TestCase):
     def test_the_checker_catches_an_import_of_the_upper_layers(self):
         for source in ("from ..service import context", "from ..service.context import Context", "from ..ui import core", "from ..publish import pages", "from ..render import pages",
                        "from ..security import mask", "from ..update import x", "from ..jobs import x", "from ..assist import x", "from ..check import claims", "from ..content import store",
-                       "from ..content.store import Store", "from ..content.suggest import suggest", "from ... import x", "from .. import service", "from .other import x", "from . import other"):
+                       "from ..content.store import Store", "from ..content.suggest import suggest", "from ... import x", "from .. import service", "from .other import x", "from . import other",
+                       "from ..check.similarity import similarity", "from ..check.profile_options import x", "from ..check import similarity", "from ...check.claims import find_violations"):
             with self.subTest(source=source):
                 self.assertTrue(violations(source), source)
 
@@ -175,6 +199,8 @@ class PurityRulesTest(unittest.TestCase):
                        "from typing import NamedTuple", "from collections.abc import Mapping", "import unicodedata", "from fractions import Fraction", "import itertools",
                        "from ..content.status import PLATFORMS", "from ..content.candidates import STATUSES", "from ..content.profiles import _invalid", "from ..errors import AppError",
                        "from .channels import FACTOR_NAMES", "from .score import score", "from . import channels", "x = datetime.timedelta(hours=9)", "moment.strftime('%Y')",
+                       "from ..check.claims import find_violations", "from ..check.claims import LABELS as CLAIM_LABELS", "from .expand import stable_id", "from .safety import mark", "from . import generate, expand",
+                       "from .feasibility import assess",
                        "sorted(items, key=len)", "re.compile('x')"):
             with self.subTest(source=source):
                 self.assertEqual(violations(source), [], source)
@@ -264,6 +290,22 @@ class DocsAndScopeTest(unittest.TestCase):
             with self.subTest(module=name):
                 self.assertIn(f"`{name}`", log)
 
+    def test_the_changelog_mentions_p2b_and_its_four_new_modules_and_says_the_tables_are_initial_values(self):
+        log = (ts.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("'P2b'", log)
+        for name in P2B_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(f"`{name}`", log)
+        self.assertIn("초기값 — 전략 원문 확인 전", log)
+
+    def test_the_changelog_mentions_the_p2b_fix_and_its_four_new_modules(self):
+        log = (ts.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("**P2b 보완**", log)
+        for name in P2B_FIX_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(f"`{name}`", log)
+        self.assertIn("ExistingCount", log)
+
     def test_the_plan_names_every_module_and_keeps_the_month_table_relation_in_one_place(self):
         plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
         for path in FILES:
@@ -283,19 +325,45 @@ class DocsAndScopeTest(unittest.TestCase):
         plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
         self.assertNotIn("**아직 코드에 없고** 해당 단계(P1~)", plan)
         self.assertNotIn("계획이다. `topics/`·`service/topics.py`", plan, "한계 첫 줄의 낡은 문장")
-        for stage in ("P1 (병합됨, PR #23)", "**P2a** (지금)", "| P2b |"):
+        for stage in ("P1 (병합됨, PR #23)", "| P2a (검증 끝·병합 부탁 대기) |", "| **P2b** (지금) |"):                  # P2b 의도적 갱신: P2a 는 병합 부탁 대기, 지금은 P2b
             with self.subTest(stage=stage):
                 self.assertIn(stage, plan)
 
-    def test_the_decisions_d43_to_d45_exist_once_each_in_order(self):
+    def test_the_decisions_d43_to_d58_exist_once_each_in_order(self):
         text = (ts.ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
         found = re.findall(r"^\| (D-\d{2}) \|", text, re.M)
-        self.assertEqual(found[-4:], ["D-42", "D-43", "D-44", "D-45"])
+        self.assertEqual(found[-17:], ["D-42", "D-43", "D-44", "D-45", "D-46", "D-47", "D-48", "D-49", "D-50", "D-51", "D-52", "D-53", "D-54", "D-55", "D-56", "D-57", "D-58"])
         self.assertEqual(len(found), len(set(found)))
         rows = {line.split(" | ")[0].lstrip("| "): line for line in text.splitlines() if line.startswith("| D-4")}
         self.assertIn("search_count_source", rows["D-43"])
         self.assertIn("180일", rows["D-44"])
         self.assertIn("숫자만으로 지우거나 제외하지 않는다", rows["D-45"])
+        for needle in ("active_since", "compared", "Mapping", "CONTENT_INVALID", "안내 틀"):                   # P2b: D-46 은 P2a 독립 검증의 중간 지적 인수
+            self.assertIn(needle, rows["D-46"])
+        for needle in ("safety_flags", "표시", "check.claims"):
+            self.assertIn(needle, rows["D-47"])
+        for needle in ("ALLOWED_FAMILIES", "초기값", "BASE_OUTLINES"):
+            self.assertIn(needle, rows["D-48"])
+        for needle in ("route_targets", "B=1", "C=0", "D=0", "E=4", "RealtimeItem"):
+            self.assertIn(needle, rows["D-49"])
+        fix = {line.split(" | ")[0].lstrip("| "): line for line in text.splitlines() if line.startswith("| D-5")}
+        for number, needles in (("D-50", ("개념군", "HEALTH_MATRIX", "product_brand", "SafetyReport.stop", "forbidden_claim")), ("D-51", ("monetization_opportunity", "economic_relationship", "Campaign", "campaigns")),
+                                ("D-52", ("hands-on", "my experience", "EXPERIENCE_PHRASES_EN", "토큰")), ("D-53", ("Notice", "INFO", "WARNING", "ERROR", "leaks", "BRAND_ONLY")),
+                                ("D-54", ("EVIDENCE_PENALTY", "health_check", "experience_claim")),
+                                ("D-55", ("brand_only", "brand_unfeasible", "최대 3", "초기값", "safety", "나열", "후속", "실시간", "모호")), ("D-56", ("remaining_slots", "expectedFailure", "11.1", "normalized_topic_hash")),
+                                ("D-57", ("wording", "invalid_in", "dev", "PROBES")), ("D-58", ("compact_marked", "reads_as_one_word", "설치 매뉴얼", "맞바꿈", "_issue_key"))):          # 보완 1차: 낱말 경계·이슈 처리 순서
+            for needle in needles:
+                with self.subTest(decision=number, needle=needle):
+                    self.assertIn(needle, fix[number])
+
+    def test_the_plan_has_the_p3_todo_section_with_the_counting_rule_and_the_same_candidate_rule(self):
+        plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
+        self.assertIn("### 11.1 P3 TODO", plan)
+        section = plan.split("### 11.1 P3 TODO", 1)[1].split("## 12.", 1)[0]
+        for needle in ("remaining_slots", "active_existing_count", "pending_review_count", "normalized_topic_hash", "work_status", "recommendation_band", "FOLLOW_ON", "hold.is_expired", "seed_id", "search_intent", "topic_angle",
+                       "ExistingCountTodayTest", "ExistingCountP3Test", "expectedFailure"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, section)
 
     def test_the_package_does_not_turn_an_engine_candidate_into_an_existing_candidate_yet(self):
         for path in FILES:

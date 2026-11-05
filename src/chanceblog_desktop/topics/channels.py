@@ -18,16 +18,22 @@ from ..content.profiles import _invalid as _base_invalid
 from ..content.profiles import _no_markup, _number, _text, _words
 from ..content.status import PLATFORMS
 from ..errors import AppError
+from . import wording
 
 SCHEMA = 1
 
 
-def invalid_in(subject, item, detail=""):
-    """`subject`(예: '채널 프로필'·'씨앗 목록'·'캘린더')의 칸 오류(`CONTENT_INVALID`). 안내 문구의 「항목」 자리에 어느 칸이 왜 안 되는지를 함께 담는다 — 안내 틀이 '원고의 「항목」 이 올바르지 않습니다'
-    라서 칸 이름만 있으면 무엇이 틀렸는지 알 수 없다(새 오류 코드는 만들지 않고 이 자리에 쉬운 말로 적는다 — P2a, 독립 검증 L5). 개발자용 세부(`detail`)는 그대로 남긴다."""
+def invalid_in(subject, item, detail="", *, dev=""):
+    """`subject`(예: '채널 프로필'·'씨앗 목록'·'캘린더'·'보류함')의 칸 오류(`CONTENT_INVALID`). 안내 문구의 「항목」 자리에 어느 칸이 왜 안 되는지를 함께 담는다 — 칸 이름만 있으면 무엇이 틀렸는지 알 수 없다
+    (새 오류 코드는 만들지 않고 이 자리에 쉬운 말로 적는다 — P2a, 독립 검증 L5). 안내 틀(`docs/TROUBLESHOOTING.md` 의 `CONTENT_INVALID` 행)은 P2b 에서 '원고의 …·제목은 200자 이하…' 대신
+    원고와 주제 엔진이 함께 쓸 수 있는 말('다음 칸의 값이 올바르지 않습니다: 「항목」')로 바꿨다(독립 검증 M7). 개발자용 세부(`detail`)는 그대로 남긴다.
+    P2b 보완(D-57): `dev` 는 개발자용 메모(원시 값·칸 이름 목록)로 **`AppError.detail` 에만** 이어 붙고(`detail | dev`) 「항목」 글에는 들어가지 않는다 — 화면 글은 쉬운 말 도우미(`wording`)로만 만든다.
+    만든 오류에는 속성 둘이 달린다: `reason`(「항목」 에 들어간 쉬운 말 이유)·`dev`(개발자 메모) — `at_entry` 가 이것으로 오류를 다시 만들어 메모가 화면 글로 새지 않는다."""
     shown = item if item.startswith(subject) else f"{subject}의 {item}"
-    error = _base_invalid(f"{shown} — {detail}" if detail else shown, detail=detail)
+    error = _base_invalid(f"{shown} — {detail}" if detail else shown, detail=f"{detail} | {dev}" if detail and dev else (detail or dev))
     error.explained = True
+    error.reason = detail
+    error.dev = dev
     return error
 
 
@@ -44,11 +50,11 @@ def at_entry(subject, number, error):
         return error
     item = str(error.slots.get("항목", "")).split(" — ", 1)[0]
     item = item[len(subject) + 2:] if item.startswith(subject + "의 ") else item          # '씨앗의 ' 를 떼고 칸 이름만 남긴다
-    return invalid_in(f"{number}번째 {subject}", item, error.detail)
+    return invalid_in(f"{number}번째 {subject}", item, getattr(error, "reason", error.detail), dev=getattr(error, "dev", ""))          # 쉬운 말 이유와 개발자 메모를 따로 다시 넣는다
 
 
-def _invalid(item, detail=""):
-    return invalid_in("채널 프로필", item, detail)
+def _invalid(item, detail="", *, dev=""):
+    return invalid_in("채널 프로필", item, detail, dev=dev)
 
 
 def _explained(error):
@@ -66,7 +72,7 @@ def canonical(name):
             return name
         if name in CHANNEL_ALIAS:
             return CHANNEL_ALIAS[name]
-    raise _invalid("채널 이름", detail=f"아는 채널 이름이 아닙니다: {str(name)[:40]!r} — 다음 중 하나여야 합니다: " + ", ".join(CHANNELS))
+    raise _invalid("채널 이름", detail=f"아는 채널 이름이 아닙니다: {wording.quote(str(name), 40)} — " + wording.one_of(CHANNELS, wording.CHANNEL_KO), dev="코드의 채널 이름: " + ", ".join(CHANNELS))
 
 
 # ---- 점수 여섯 항목(채널마다 가중치가 다르다) ----------------------------------------------------------------------------------------
@@ -127,24 +133,45 @@ def _flag(value, item):
     return value
 
 
-class Weights(dict):
-    """여섯 항목의 가중치 — **읽기 전용** 사전이다. 고치려는 모든 시도(`[]=`·`del`·`update`·`pop`·`|=` …)는 `TypeError` 다.
-    `MappingProxyType` 대신 `dict` 를 이어받아 `copy.deepcopy`·`pickle`·`dataclasses.asdict`·`astuple` 이 채널 프로필에서도 된다(독립 검증 L3 — 읽기 전용 보기는 복사할 수 없었다)."""
-    __slots__ = ()
+class Weights(Mapping):
+    """여섯 항목의 가중치 — **읽기 전용** 이다(P2b, 독립 검증 M1). 사전(`dict`)이 아니라 `collections.abc.Mapping` 을 이어받고 값은 안쪽의 읽기 전용 보기에 숨겨 둔다 —
+    `w[k] = v`·`update`·`pop`·`|=` 는 물론 `dict.update(w, …)`·`dict.__setitem__(w, …)` 처럼 사전 부품을 직접 불러도, `w.__init__(…)` 으로 다시 채우려 해도, 속성을 바꾸려 해도 `TypeError` 다.
+    P2a 의 `dict` 하위 클래스는 그런 직접 호출을 막지 못했고 `default_profiles()` 가 돌려주는 공유 객체가 한 번 바뀌면 프로세스 전체의 기본 가중치가 오염됐다.
+    `copy.copy`·`copy.deepcopy`·`pickle`·`dataclasses.asdict`·`astuple` 은 `__reduce__` 덕분에 그대로 된다(독립 검증 L3). 단 `asdict` 가 돌려주는 가중치는 `Weights` 로 남는다 — JSON 글로 쓸 때는 `to_dict()` 를 쓴다.
+    (파이썬에서 `object.__setattr__` 로 작정하고 우회하는 것까지는 막지 못한다 — 실수 방지와 오염 방지가 목적이다.)"""
+    __slots__ = ("_data",)
+
+    def __init__(self, data=()):
+        if hasattr(self, "_data"):
+            raise TypeError("가중치는 읽기 전용이다 — 이미 만들어진 가중치를 다시 채울 수 없다")
+        object.__setattr__(self, "_data", MappingProxyType(dict(data)))
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
 
     def _blocked(self, *args, **kwargs):
         raise TypeError("가중치는 읽기 전용이다 — 바꾸려면 `dataclasses.replace` 로 새 채널 프로필을 만든다")
 
-    __setitem__ = __delitem__ = __ior__ = clear = pop = popitem = setdefault = update = _blocked
+    # 고치려는 모든 보통 시도(`[]=`·`del`·`update`·`pop`·`|=` …)는 TypeError 다(P1·P2a 의 약속 그대로) — 사전이 아니므로 `dict.update(w, …)` 같은 직접 호출도 TypeError 다
+    __setitem__ = __delitem__ = __ior__ = __setattr__ = __delattr__ = clear = pop = popitem = setdefault = update = _blocked
+
+    def __repr__(self):
+        return f"Weights({dict(self._data)!r})"
 
     def __reduce__(self):
-        return (Weights, (dict(self),))
+        return (Weights, (dict(self._data),))
 
 
 def _weights(value):
     item = "항목별 가중치"
     if not isinstance(value, Mapping) or set(value) != set(FACTOR_NAMES):
-        raise _invalid(item, detail="가중치는 여섯 항목(" + ", ".join(FACTOR_NAMES) + ")이 모두 있어야 하고 다른 이름은 쓸 수 없다")
+        raise _invalid(item, detail="가중치는 여섯 항목(" + wording.quoted(FACTOR_NAMES, names=FACTOR_LABELS) + ")이 모두 있어야 하고 다른 이름은 쓸 수 없습니다", dev="항목 이름: " + ", ".join(FACTOR_NAMES))
     checked = {name: _number(value[name], item, 0, 100) for name in FACTOR_NAMES}
     total = sum(checked.values())
     if total != 100:
@@ -175,6 +202,10 @@ def _identifiers(values, item, *, count, check, shape):
 
 _KEYS = ("key", "display_name", "language", "generation_enabled", "history_enabled", "evergreen_pct", "realtime_pct", "weights", "top_n", "cluster_cap", "subheading_min",
          "trend_use", "dup_cutoffs", "topic_clusters", "expansion_directions", "monetization_focus")
+PROFILE_FIELD_KO = MappingProxyType({"key": "채널 이름", "display_name": "표시 이름", "language": "언어", "generation_enabled": "후보 생성 켜기", "history_enabled": "이력 읽기 켜기",
+                                     "evergreen_pct": "지속형 비율", "realtime_pct": "실시간 비율", "weights": "항목별 가중치", "top_n": "채널당 후보 수", "cluster_cap": "주제 묶음 상한",
+                                     "subheading_min": "소제목 최소 수", "trend_use": "관심도 사용 정도", "dup_cutoffs": "중복 판정 기준", "topic_clusters": "주제 묶음",
+                                     "expansion_directions": "확장 방향", "monetization_focus": "우선 수익화 분야"})        # 칸 이름 → 쉬운 한국어(오류 안내용)
 
 
 @dataclass(frozen=True)
@@ -207,10 +238,10 @@ class ChannelProfile:
             object.__setattr__(self, name, value)
 
         if not isinstance(self.key, str) or self.key not in CHANNELS:
-            raise _invalid("채널 이름", detail="코드의 채널 이름이어야 한다: " + ", ".join(CHANNELS))
+            raise _invalid("채널 이름", detail="다음 채널 중 하나여야 합니다: " + wording.quoted(CHANNELS, names=wording.CHANNEL_KO), dev="코드의 채널 이름: " + ", ".join(CHANNELS))
         put("display_name", _no_markup(_text(self.display_name, "표시 이름", low=1, high=MAX_NAME), "표시 이름"))
         if not isinstance(self.language, str) or self.language not in LANGUAGES:
-            raise _invalid("언어", detail="다음 중 하나여야 한다: " + ", ".join(LANGUAGES))
+            raise _invalid("언어", detail=wording.one_of(LANGUAGES, wording.LANGUAGE_KO), dev="값: " + ", ".join(LANGUAGES))
         _flag(self.generation_enabled, "후보 생성 켜기")
         _flag(self.history_enabled, "이력 읽기 켜기")
         evergreen = _number(self.evergreen_pct, "지속형 비율", 0, 100)
@@ -222,7 +253,7 @@ class ChannelProfile:
         _number(self.cluster_cap, "주제 묶음 상한", 1, MAX_CLUSTER_CAP)
         _number(self.subheading_min, "소제목 최소 수", 1, MAX_SUBHEADING_MIN)
         if not isinstance(self.trend_use, str) or self.trend_use not in TREND_USES:
-            raise _invalid("관심도 사용 정도", detail="다음 중 하나여야 한다: " + ", ".join(TREND_USES))
+            raise _invalid("관심도 사용 정도", detail=wording.one_of(TREND_USES, wording.TREND_USE_KO), dev="값: " + ", ".join(TREND_USES))
         put("dup_cutoffs", _cutoffs(self.dup_cutoffs))
         put("topic_clusters", _identifiers(self.topic_clusters, "주제 묶음", count=MAX_CLUSTERS, check=is_slug, shape="영문 소문자·숫자·붙임표(-)로 된 식별자"))
         put("expansion_directions", _words(self.expansion_directions, "확장 방향", count=MAX_DIRECTIONS, high=40, sequence_only=True, markup_free=True))
@@ -243,7 +274,7 @@ class ChannelProfile:
             raise _invalid("채널 프로필", detail="칸이 있는 묶음(JSON 객체)이어야 한다")
         unknown, missing = sorted(map(str, set(data) - set(_KEYS))), sorted(set(_KEYS) - set(data))
         if unknown or missing:
-            raise _invalid("채널 프로필", detail=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
+            raise _invalid("채널 프로필", detail=wording.unknown_and_missing(unknown, missing, PROFILE_FIELD_KO), dev=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
         return cls(**data)
 
 
@@ -293,10 +324,10 @@ def _ordered(profiles):
     keys = [item.key for item in items]
     duplicated = sorted({key for key in keys if keys.count(key) > 1})
     if duplicated:
-        raise _invalid("채널 프로필", detail=f"같은 채널이 두 번 들어 있다: {duplicated}")
+        raise _invalid("채널 프로필", detail="같은 채널이 두 번 들어 있습니다: " + wording.quoted(duplicated, names=wording.CHANNEL_KO), dev=f"겹친 채널: {duplicated}")
     absent = [key for key in CHANNELS if key not in keys]
     if absent:
-        raise _invalid("채널 프로필", detail=f"빠진 채널이 있다: {absent} — 다섯 채널이 모두 있어야 한다")
+        raise _invalid("채널 프로필", detail="빠진 채널이 있습니다: " + wording.quoted(absent, names=wording.CHANNEL_KO) + " — 다섯 채널이 모두 있어야 합니다", dev=f"빠진 채널: {absent}")
     return tuple(sorted(items, key=lambda item: CHANNELS.index(item.key)))
 
 
@@ -308,18 +339,18 @@ def profiles_to_dict(profiles):
 def profiles_from_dict(data):
     """저장된 모양 → 채널 프로필 다섯 개(코드의 채널 순서). `schema`·정확한 칸을 요구하고 모르는 칸·빠진 채널·겹친 채널·틀린 값은 `CONTENT_INVALID` 로 거절한다."""
     if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SCHEMA:
-        raise _invalid("채널 프로필 저장 형식", detail="저장된 채널 프로필의 모양(schema 1)이 아니다")
+        raise _invalid("채널 프로필 저장 형식", detail=f"{wording.FILE_KEY_KO['schema']}가 {SCHEMA}인 채널 프로필 파일이 아닙니다", dev="저장된 채널 프로필의 모양(schema 1)이 아니다")
     if set(data) != {"schema", "profiles"}:
-        raise _invalid("채널 프로필 저장 형식", detail="schema 와 profiles 두 칸만 있어야 한다")
+        raise _invalid("채널 프로필 저장 형식", detail=wording.quoted(("schema", "profiles"), names=wording.FILE_KEY_KO) + " 두 칸만 있어야 합니다", dev="schema 와 profiles 두 칸만 있어야 한다")
     items = data["profiles"]
     if not isinstance(items, list):
-        raise _invalid("채널 프로필 저장 형식", detail="profiles 는 목록이어야 한다")
+        raise _invalid("채널 프로필 저장 형식", detail=f"{wording.quote(wording.FILE_KEY_KO['profiles'])} 은 여러 개를 담는 목록이어야 합니다", dev="profiles 는 목록이어야 한다")
     return _ordered(ChannelProfile.from_dict(item) for item in items)
 
 
 __all__ = [
     "CHANNELS", "CHANNEL_ALIAS", "ChannelProfile", "DEFAULT_PROFILES", "FACTOR_LABELS", "FACTOR_NAMES", "FOLLOW_UP_PER_POST", "GRADE_CUTOFFS", "HOLD_DAYS", "LANGUAGES", "MAX_CHANNELS_PER_TOPIC",
-    "PER_SEED", "SCHEMA", "SOURCE_MIX", "SeedQuota", "TREND_USES", "USE_NONE", "USE_PRIMARY", "USE_REFERENCE", "USE_SUPPORTING", "Weights", "at_entry", "canonical", "default_profiles", "explain", "invalid_in",
+    "PER_SEED", "PROFILE_FIELD_KO", "SCHEMA", "SOURCE_MIX", "SeedQuota", "TREND_USES", "USE_NONE", "USE_PRIMARY", "USE_REFERENCE", "USE_SUPPORTING", "Weights", "at_entry", "canonical", "default_profiles", "explain", "invalid_in",
     "is_slug", "is_tag",
     "profiles_from_dict", "profiles_to_dict",
 ]
