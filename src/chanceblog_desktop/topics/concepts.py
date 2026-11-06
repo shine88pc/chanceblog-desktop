@@ -1,9 +1,11 @@
-"""개념군 표 · 일치 도구 · 신호 계산 — 건강·협찬·경험의 **신호**를 글에서 계산한다(P2b 보완, D-50~D-52 — 순수 계산: 파일·네트워크·시계·난수·AI 없음, 같은 입력은 늘 같은 결과).
+"""개념군 표 · 일치 도구 · 신호 계산 — 건강·협찬·경험의 **신호**를 글에서 계산한다(P2b 보완, D-50~D-52·D-105 — 순수 계산: 파일·네트워크·시계·난수·AI 없음, 같은 입력은 늘 같은 결과).
 
-이 모듈은 상태(일반 생활정보 / 건강 정보 확인 필요 / 의료·효과 단정 위험)·표시·알림을 정하지 않는다 — 그것은 `safety.py` 의 일이다. 여기서는 표(낱말·문구)와 일치 규칙으로 신호를 센다.
+이 모듈은 단계(일반 생활정보 / 건강 정보 확인 필요 — 표시만·근거 확인 필요 / 의료·효과 단정 위험)·표시·알림을 정하지 않는다 — 그것은 `safety.py` 의 일이다. 여기서는 표(낱말·문구)와 일치 규칙으로 신호를 세고,
+단계표의 열쇠(`HealthSignals.concept_key` — 증상 S·질환 D·제품 P·의료 효능어 M·효과 E·단정 A 여섯 값)까지만 만든다.
 
-**표는 모두 초기값 — 전략 원문 확인 전이다.** 전략 원문의 건강·협찬 표기 규칙 표가 이 PC 에 없어서 운영자 요청서의 개념군 낱말을 시작 목록으로 두고 상식으로 넓혔다. 원문에 맞춰 고칠 때는 이 파일의 표 한 곳만 고치고
-시험(`test_topics_concepts` 의 값 못박기)을 의식적으로 함께 고친다. 표 이름: 건강 `HEALTH_SYMPTOM_KO`·`HEALTH_DISEASE_KO`·`HEALTH_EFFECT_KO`·`HEALTH_MEDICAL_KO`·`HEALTH_PRODUCT_KO`·`HEALTH_ASSERT_KO`·
+**표는 초기값이다 — 건강 표의 증상·제품 낱말은 전략 원문 §21 과 대조했고, 나머지 낱말은 여전히 초기값 — 전략 원문 확인 전이다.** 운영자 요청서의 개념군 낱말을 시작 목록으로 두고 상식으로 넓혔다.
+대조 결과(D-105): 원문 §21 이 든 여섯 낱말(피로·불면·통증·자세·체중·영양제)은 이미 증상 표와 제품 표에 모두 있어 **표는 바꾸지 않았고** 판정 단계와 감점 조건만 `safety.py`·`generate.py` 에서 바꿨다.
+원문에 맞춰 고칠 때는 이 파일의 표 한 곳만 고치고 시험(`test_topics_concepts` 의 값 못박기)을 의식적으로 함께 고친다. 표 이름: 건강 `HEALTH_SYMPTOM_KO`·`HEALTH_DISEASE_KO`·`HEALTH_EFFECT_KO`·`HEALTH_MEDICAL_KO`·`HEALTH_PRODUCT_KO`·`HEALTH_ASSERT_KO`·
 `HEALTH_ASSERT_EFFECT_KO`·`HEALTH_ASSERT_SOFT_KO`·`HEALTH_MASKS_KO`·`HEALTH_WARNING_KO`(영어는 `_EN`) / 협찬 `SPONSOR_STRONG_KO`·`SPONSOR_WEAK_KO`·`SPONSOR_MARKERS_KO`·`SPONSOR_MASKS_KO`(영어는 `_EN`) /
 경험 `EXPERIENCE_GENRE_STRONG_KO`·`EXPERIENCE_GENRE_WEAK_KO`·`EXPERIENCE_MARKERS_KO`·`EXPERIENCE_MASKS_KO`·`EXPERIENCE_PHRASES_EN` / 일반 낱말 금지 목록 `GENERAL_WORDS`.
 
@@ -244,6 +246,46 @@ def find_assert(text, starts, table):
     return found
 
 
+def _spans_ko(text, starts, table):
+    """`find_ko` 와 같은 일치 규칙(낱말 경계 포함)으로 찾되 항목마다 **찾아진 자리** `[(시작, 끝)]` 를 돌려준다 — 찾지 못한 항목은 싣지 않는다."""
+    found = {}
+    for entry, pattern, strict in table:
+        places = [(match.start(), match.end()) for match in pattern.finditer(text) if not strict or reads_as_one_word(text, starts, match.start(), match.end())]
+        if places:
+            found[entry] = places
+    return found
+
+
+def _spans_en(tokens, entries):
+    """`find_en`(부정 보호 없이)과 같은 규칙으로 항목마다 모든 자리 `[(시작, 끝)]`(낱말 번호)를 돌려준다."""
+    found = {}
+    for entry in entries:
+        want = entry.split()
+        places = [(start, start + len(want)) for start in range(len(tokens) - len(want) + 1) if _token_match(tokens, start, want)]
+        if places:
+            found[entry] = places
+    return found
+
+
+def _only_inside(found, covers):
+    """`found`(항목 → 자리들) 가운데 **모든 자리가** `covers`(더 긴 낱말이 찾아진 자리들)의 어느 하나 안에 들어 있는 항목 — 제품·기기 이름의 일부일 뿐이라 따로 세지 않는다(D-105)."""
+    return [entry for entry, places in found.items() if all(any(low <= start and end <= high and high - low > end - start for low, high in covers) for start, end in places)]
+
+
+def _pieces_inside_products(joined, starts, tokens, raw):
+    """건강 제품·기기 이름 안에서만 찾아진 증상·효과·의료 낱말 — `((칸 이름, 항목), …)`. 제품 이름이 없거나 그 안에 들어갈 낱말이 없으면 계산하지 않는다(보통의 글은 비용이 늘지 않는다).
+    `자세교정기` 속 ‘자세’·‘교정’, `치료제` 속 ‘치료’, `다이어트 제품` 속 ‘다이어트’ 같은 것이다 — 제품 이름 하나를 두 개념군으로 세면 `영양제` 단독(표시만)과 `치료제` 단독(단정 위험)이 갈리는 모순이 생긴다(D-105).
+    **질환 이름에는 적용하지 않는다**(수정 1차) — `암 예방`·`암 수술`·`수술 후유증` 은 질환(D)이면서 안쪽의 효과(‘예방’)·의료 효능어(‘수술’)도 예전처럼 센다. 그래서 `암 예방 100% 보장` 은 질환 + 효과 + 단정이라 단정 위험(중지)이다."""
+    if not raw["product"] or not (raw["symptom"] or raw["effect"] or raw["medical"]):
+        return ()
+    ko_covers = [place for places in _spans_ko(joined, starts, Tables.p).values() for place in places]
+    en_covers = [place for places in _spans_en(tokens, HEALTH_PRODUCT_EN).values() for place in places]
+    inside = []
+    for field, table, words in (("symptom", Tables.s_weak, HEALTH_SYMPTOM_EN), ("effect", Tables.e_gen, HEALTH_EFFECT_EN), ("medical", Tables.e_med, HEALTH_MEDICAL_EN)):
+        inside += [(field, entry) for entry in _only_inside(_spans_ko(joined, starts, table), ko_covers) + _only_inside(_spans_en(tokens, words), en_covers)]
+    return tuple(inside)
+
+
 class HealthSignals(NamedTuple):
     symptom: tuple
     disease: tuple
@@ -254,6 +296,7 @@ class HealthSignals(NamedTuple):
     assert_effect: tuple
     assert_soft: tuple
     warned: bool
+    inside: tuple = ()               # ((칸 이름, 항목), …) — 제품·기기 이름 **안에서만** 찾아진 증상·효과·의료 낱말(D-105, 질환 이름은 해당 없음). 위 여덟 칸의 낱말은 그대로 두고 단계표의 열쇠에서만 뺀다
 
     def key(self):
         symptom = bool(self.symptom or self.disease)
@@ -262,6 +305,16 @@ class HealthSignals(NamedTuple):
         strong = bool(self.assert_strong or self.assert_effect) and not self.warned
         asserting = strong or (bool(self.assert_soft) and target and not self.warned)
         return (int(symptom), int(effect), int(target), int(asserting))
+
+    def counted(self, field):
+        """칸(`symptom`·`effect`·`medical`)의 낱말 가운데 **따로 센** 것 — 제품·기기 이름 안에서만 찾아진 것은 뺀다(D-105)."""
+        return tuple(entry for entry in getattr(self, field) if (field, entry) not in self.inside)
+
+    def concept_key(self):
+        """판정 단계표(`safety.HEALTH_MATRIX`)의 열쇠 — (증상 S, 질환 D, 제품 P, 의료 효능어 M, 효과 E, 단정 A) 여섯 값, 각각 0 또는 1(D-105). `key()` 가 질환·제품·의료 효능어를 하나로 합치던 것을 가른다.
+        S·E·M 은 제품·기기 이름 속 조각을 빼고 센다(질환 이름 속 낱말은 센다). E 는 효과 낱말이나 효과 단정 서술(`assert_effect`)이고, A 는 `key()` 의 단정 계산 그대로다."""
+        return (int(bool(self.counted("symptom"))), int(bool(self.disease)), int(bool(self.product)), int(bool(self.counted("medical"))),
+                int(bool(self.counted("effect") or self.assert_effect)), self.key()[3])
 
 
 def health_signals(texts):
@@ -272,16 +325,20 @@ def health_signals(texts):
     for one in folded:
         tokens += mask_en(english_tokens(one), HEALTH_MASKS_EN) + [SEP]
     percent = ["100%"] if any("100퍼센트" in one for one in folded) else []
+    raw = {
+        "symptom": tuple(find_ko(joined, starts, Tables.s_weak) + find_en(tokens, HEALTH_SYMPTOM_EN)),
+        "disease": tuple(find_ko(joined, starts, Tables.s_strong) + find_en(tokens, HEALTH_DISEASE_EN)),
+        "effect": tuple(find_ko(joined, starts, Tables.e_gen) + find_en(tokens, HEALTH_EFFECT_EN)),
+        "medical": tuple(find_ko(joined, starts, Tables.e_med) + find_en(tokens, HEALTH_MEDICAL_EN)),
+        "product": tuple(find_ko(joined, starts, Tables.p) + find_en(tokens, HEALTH_PRODUCT_EN)),
+    }
     return HealthSignals(
-        symptom=tuple(find_ko(joined, starts, Tables.s_weak) + find_en(tokens, HEALTH_SYMPTOM_EN)),
-        disease=tuple(find_ko(joined, starts, Tables.s_strong) + find_en(tokens, HEALTH_DISEASE_EN)),
-        effect=tuple(find_ko(joined, starts, Tables.e_gen) + find_en(tokens, HEALTH_EFFECT_EN)),
-        medical=tuple(find_ko(joined, starts, Tables.e_med) + find_en(tokens, HEALTH_MEDICAL_EN)),
-        product=tuple(find_ko(joined, starts, Tables.p) + find_en(tokens, HEALTH_PRODUCT_EN)),
+        symptom=raw["symptom"], disease=raw["disease"], effect=raw["effect"], medical=raw["medical"], product=raw["product"],
         assert_strong=tuple(find_assert(joined, starts, Tables.a_strong) + find_en(tokens, HEALTH_ASSERT_EN, negation_guard=True) + percent),
         assert_effect=tuple(find_assert(joined, starts, Tables.a_effect) + find_en(tokens, HEALTH_ASSERT_EFFECT_EN, negation_guard=True)),
         assert_soft=tuple(find_assert(joined, starts, Tables.a_soft) + find_en(tokens, HEALTH_ASSERT_SOFT_EN, negation_guard=True)),
-        warned=bool(find_ko(joined, starts, Tables.warn)) or bool(find_en(tokens, HEALTH_WARNING_EN)))
+        warned=bool(find_ko(joined, starts, Tables.warn)) or bool(find_en(tokens, HEALTH_WARNING_EN)),
+        inside=_pieces_inside_products(joined, starts, tokens, raw))
 
 
 

@@ -1,8 +1,10 @@
-"""규칙 기반 안전 표시 — 후보의 글(주제·핵심 키워드·보조 키워드)과 출처를 **개념군 조합**으로 훑어 '확인 필요' 표시와 사용자 알림을 정한다(P2b 보완, D-50·D-51 — 순수 계산: 파일·네트워크·시계·난수·AI 없음, 같은 입력은 늘 같은 결과).
+"""규칙 기반 안전 표시 — 후보의 글(주제·핵심 키워드·보조 키워드)과 출처를 **개념군 조합**으로 훑어 '확인 필요' 표시와 사용자 알림을 정한다(P2b 보완, D-50·D-51·D-105 — 순수 계산: 파일·네트워크·시계·난수·AI 없음, 같은 입력은 늘 같은 결과).
 
 표시는 다섯 가지이고(`model.SAFETY_FLAGS` — 값·순서 불변) **표시만 한다 — 후보를 지우거나 점수·구간·작업 상태를 바꾸지 않는다**(지울지는 운영자가 정한다). 낱말 표는 `concepts.py` 한 곳에 있고 이 파일은 **신호 → 상태·표시·알림** 만 정한다:
-  · `health_check` — 건강: 증상·효과·고위험 대상(제품·질환·의료 효능어)·단정 네 값의 16칸 표(`HEALTH_MATRIX`)가 세 상태를 정한다 — 일반 생활정보(표시 없음) / 건강 정보 확인 필요(표시 + 경고) / 의료·효과 단정 위험(표시 + 오류 — 자동 초안 중지).
-    '자동 초안 중지' 는 저장하지 않고 `SafetyReport.stop` 으로 계산한다(`mark` 는 표시를 더하기만 해서 낡은 '중지' 가 남지 않게).
+  · `health_check` — 건강(D-105): 증상 S·질환 D·건강 제품 P·의료 효능어 M(= 건강 대상)과 효과 E·단정 A 여섯 값의 64칸 표(`HEALTH_MATRIX`)가 **네 단계**를 정한다 — 일반 생활정보(표시 없음) /
+    **A 표시만**(알림 `HEALTH_TOPIC` — 확인 필요 표시, 감점 0·차단 0) / **B 근거 확인 필요**(`HEALTH_EFFECT` — 표시 + 근거가 없으면 근거 점수 조건부 감점, 차단 0) / **C 의료·효과 단정 위험**(`HEALTH_STOP` — 표시 + 오류, 자동 초안 중지).
+    '자동 초안 중지' 는 저장하지 않고 `SafetyReport.stop` 으로 계산한다(`mark` 는 표시를 더하기만 해서 낡은 '중지' 가 남지 않게). 단계는 `SafetyReport.stage`, 옛 세 상태는 `SafetyReport.health`(A·B 모두 '확인 필요')에 그대로 있다.
+    감점은 건강 낱말 자체가 아니라 **근거가 필요한 주장(B·C)에 근거가 없을 때만** 한다 — 그 계산은 `generate.py`(`needs_evidence`)가 한다.
   · `product_brand` — **예약 값**이다. 일반 낱말('추천'·'비교'·'모델' …)과 글 종류는 신호가 아니라서 이 표시는 자동으로 붙지 않는다(이름은 화면에 '제품·브랜드' 그대로).
   · `experience_claim` — 직접 겪은 일을 단정하는 말: `check/claims.py` 의 `find_violations`(읽기만 한다) ∪ 경험 장르 낱말('사용기'·'체험기' …) ∪ '후기'·'리뷰' 와 경험 표지 ∪ 영어 문구('I used' …).
   · `sponsor_disclosure` — 경제적 이해관계: 협업 **가능성**(`monetization_opportunity` — 협찬 태그·협찬 경로·협찬 준비형·제안 중 협찬 정보)은 표시가 아니고 INFO 알림뿐이다. 글에 협찬 표현이 있으면 **추정**(`economic_relationship` = suspected,
@@ -14,6 +16,9 @@
 
 **경제적 이해관계 유형(`INTEREST_TYPES` — `UNKNOWN` + 9종)은 2026-11-06 전략 원문 대조로 정한 값이다**(D-102 — 옛 5종 이름은 `LEGACY_BENEFIT_NAMES` 로 읽는다). **글에서 협찬을 '추정'하는 낱말 표(`concepts.py`)·알림 문장(`notice.py`)·`Campaign` 의
 모양은 여전히 구현자 초기값이다** — 운영자 요청서의 개념군 낱말을 시작 목록으로 넓힌 것이라 원문 표와 대조할 값이 아니고, 추정(낱말)과 사람이 확인한 값(유형)은 일부러 다른 표로 둔다.
+
+**건강 판정(D-105·D-106)은 2026-11-06 운영자 결정이다** — 전략 원문 §21 의 여섯 낱말(피로·불면·통증·자세·체중·영양제)은 이미 증상 표·제품 표에 있어 낱말 표는 그대로이고, 세 단계와 근거 점수 감점 조건만 새로 적용했다.
+건강의 나머지 낱말과 경험 낱말 표는 여전히 구현자 초기값이다.
 """
 from __future__ import annotations
 
@@ -32,15 +37,41 @@ from .model import SAFETY_FLAGS, TopicCandidate
 FLAG_HEALTH, FLAG_PRODUCT, FLAG_EXPERIENCE, FLAG_SPONSOR, FLAG_PROMISE = SAFETY_FLAGS
 FLAG_KO = wording.SAFETY_FLAG_KO
 
-HEALTH_GENERAL, HEALTH_CHECK, HEALTH_STOP = "general", "check", "stop"
+HEALTH_GENERAL, HEALTH_CHECK, HEALTH_STOP = "general", "check", "stop"             # `SafetyReport.health` — 옛 세 상태(D-50). A·B 는 둘 다 `check`
 HEALTH_STATE_KO = MappingProxyType({HEALTH_GENERAL: "일반 생활정보", HEALTH_CHECK: "건강 정보 확인 필요", HEALTH_STOP: "의료·효과 단정 위험"})
-# (증상 s, 효과 e, 고위험 대상 p, 단정 a) → 상태 — 손으로 푼 16칸(초기값). 식: p 가 1 이면 확인 필요(e·a 가 모두 1 이면 중지), p 가 0 이면 s·e·a 가 모두 1 일 때만 확인 필요 아니면 일반.
-HEALTH_MATRIX = MappingProxyType({
-    (0, 0, 0, 0): HEALTH_GENERAL, (0, 0, 0, 1): HEALTH_GENERAL, (0, 0, 1, 0): HEALTH_CHECK, (0, 0, 1, 1): HEALTH_CHECK,
-    (0, 1, 0, 0): HEALTH_GENERAL, (0, 1, 0, 1): HEALTH_GENERAL, (0, 1, 1, 0): HEALTH_CHECK, (0, 1, 1, 1): HEALTH_STOP,
-    (1, 0, 0, 0): HEALTH_GENERAL, (1, 0, 0, 1): HEALTH_GENERAL, (1, 0, 1, 0): HEALTH_CHECK, (1, 0, 1, 1): HEALTH_CHECK,
-    (1, 1, 0, 0): HEALTH_GENERAL, (1, 1, 0, 1): HEALTH_CHECK, (1, 1, 1, 0): HEALTH_CHECK, (1, 1, 1, 1): HEALTH_STOP,
-})
+
+# 판정 단계 넷(D-105, 운영자 2026-11-06) — 낮은 단계 → 높은 단계 순서. `SafetyReport.stage` 의 값이다.
+STAGE_GENERAL, STAGE_MARK, STAGE_EVIDENCE, STAGE_STOP = "general", "mark", "evidence", "stop"
+HEALTH_STAGES = (STAGE_GENERAL, STAGE_MARK, STAGE_EVIDENCE, STAGE_STOP)
+HEALTH_STAGE_KO = MappingProxyType({STAGE_GENERAL: "일반 생활정보", STAGE_MARK: "건강 정보 확인 필요(표시만)", STAGE_EVIDENCE: "근거 확인 필요", STAGE_STOP: "의료·효과 단정 위험"})
+HEALTH_STAGE_CODE = MappingProxyType({STAGE_MARK: "HEALTH_TOPIC", STAGE_EVIDENCE: "HEALTH_EFFECT", STAGE_STOP: "HEALTH_STOP"})       # 단계 → 알림 코드. `HEALTH_CLAIM` 은 이 표에서 쓰이는 곳이 없다
+HEALTH_STAGE_STATE = MappingProxyType({STAGE_GENERAL: HEALTH_GENERAL, STAGE_MARK: HEALTH_CHECK, STAGE_EVIDENCE: HEALTH_CHECK, STAGE_STOP: HEALTH_STOP})        # 단계 → `SafetyReport.health`
+_G, _A, _B, _C = STAGE_GENERAL, STAGE_MARK, STAGE_EVIDENCE, STAGE_STOP
+# 전체 조합표 — 열쇠 (증상 S, 질환 D, 제품 P, 의료 효능어 M, 효과 E, 단정 A) 64칸을 **손으로 푼** 초기값이다. 한 줄 = 건강 대상 네 값(S·D·P·M) 하나, 네 칸 = 효과·단정 (E·A) = 0·0 / 0·1 / 1·0 / 1·1 일 때의 단계.
+# 식(시험이 이 표와 같은지, 그리고 효능·치료·단정 낱말이 더해지면 단계가 내려가지 않는지 본다):
+#   ① 건강 대상(S·D·P·M)이 하나도 없으면 일반 — 일반 낱말·효능·단정 낱말만 있어도 일반 / ② S·D·P·M 하나만 있으면 A(표시만)
+#   ③ P + (E 또는 S 또는 D) → B / ④ P + (M 또는 A) → C / ⑤ (S·D·P·M 하나 이상) + E + A → C(운영자 예시 3·4)
+#   ⑥ 운영자가 정하지 않은 조합 — 덜 개입하는 쪽, 단 '의료·효과를 단정하는 말'이 들어가면 올린다: S+M·D+M·D+E·M+E → B, M+A → C, S+E·S+A·D+A → A.
+#   ('M+A → C' 는 옛 16칸 표에서도 중지였다 — 치료를 단정하면 대상이 하나뿐이어도 중지. 'D 가 P 와 함께 → B' 는 ③ 의 증상에 질환을 포함시킨 것.)
+_ROWS = (
+    ((0, 0, 0, 0), (_G, _G, _G, _G)),
+    ((1, 0, 0, 0), (_A, _A, _A, _C)),
+    ((0, 1, 0, 0), (_A, _A, _B, _C)),
+    ((1, 1, 0, 0), (_A, _A, _B, _C)),
+    ((0, 0, 1, 0), (_A, _C, _B, _C)),
+    ((1, 0, 1, 0), (_B, _C, _B, _C)),
+    ((0, 1, 1, 0), (_B, _C, _B, _C)),
+    ((1, 1, 1, 0), (_B, _C, _B, _C)),
+    ((0, 0, 0, 1), (_A, _C, _B, _C)),
+    ((1, 0, 0, 1), (_B, _C, _B, _C)),
+    ((0, 1, 0, 1), (_B, _C, _B, _C)),
+    ((1, 1, 0, 1), (_B, _C, _B, _C)),
+    ((0, 0, 1, 1), (_C, _C, _C, _C)),
+    ((1, 0, 1, 1), (_C, _C, _C, _C)),
+    ((0, 1, 1, 1), (_C, _C, _C, _C)),
+    ((1, 1, 1, 1), (_C, _C, _C, _C)),
+)
+HEALTH_MATRIX = MappingProxyType({(*targets, effect, assertion): stage for targets, stages in _ROWS for (effect, assertion), stage in zip(((0, 0), (0, 1), (1, 0), (1, 1)), stages, strict=True)})
 OPPORTUNITY_NONE, OPPORTUNITY_POSSIBLE = "none", "possible"
 RELATION_NONE, RELATION_SUSPECTED, RELATION_CONFIRMED = "none", "suspected", "confirmed"
 MAX_TEXTS, MAX_SHOWN = 50, 4                                                       # MAX_SHOWN: 한 알림에 보여 줄 걸린 말의 최대 수(건강은 증상·효과·제품·단정에서 하나씩)
@@ -164,11 +195,12 @@ class Finding(NamedTuple):
 class SafetyReport(NamedTuple):
     flags: tuple                                    # 붙일 표시 — `SAFETY_FLAGS` 순서
     findings: tuple                                 # `Finding` — 표시·알림마다 하나(표시 없는 INFO 는 맨 뒤)
-    health: str = HEALTH_GENERAL                    # 건강 상태: general·check·stop
+    health: str = HEALTH_GENERAL                    # 건강 상태: general·check·stop (표시만·근거 확인 필요는 둘 다 check)
     relationship: str = RELATION_NONE               # 경제적 이해관계: none·suspected·confirmed
     opportunity: str = OPPORTUNITY_NONE             # 협업 가능성: none·possible
     benefits: tuple = ()                            # 확정된 협찬 정보의 이득 종류(`BENEFIT_KINDS` 순서 — 양성만, `NONE`·`UNKNOWN` 은 들어가지 않는다)
     interests: tuple = (INTEREST_UNKNOWN,)          # 확인된 경제적 이해관계 유형(`INTEREST_TYPES` 순서): 기본 ('UNKNOWN',)=아직 확인 안 함 / 확정된 양성 유형이 있으면 그 유형들(`benefits` 와 같다) / 사용자가 '없다'고만 확인했으면 ('NONE',)
+    stage: str = STAGE_GENERAL                      # 건강 판정 단계(D-105): general·mark(A 표시만)·evidence(B 근거 확인 필요)·stop(C 의료·효과 단정 위험) — 근거 점수 감점이 이것을 본다
 
     @property
     def level(self):
@@ -180,6 +212,11 @@ class SafetyReport(NamedTuple):
     def stop(self):
         """수준이 ERROR 인 알림이 하나라도 있으면 True — 자동 초안 중지. 저장하지 않는 계산값이다."""
         return any(finding.level == notice.LEVEL_ERROR for finding in self.findings)
+
+    @property
+    def stage_name(self):
+        """건강 판정 단계의 한국어 이름(화면용 이름표 `HEALTH_STAGE_KO` — 일반 생활정보 / 건강 정보 확인 필요(표시만) / 근거 확인 필요 / 의료·효과 단정 위험)."""
+        return HEALTH_STAGE_KO[self.stage]
 
 
 def _normalize(texts):
@@ -199,22 +236,30 @@ def _first(*groups):
 
 def _health_shown(signals):
     """개념군마다 첫 낱말을 증상 → 효과 → 제품 → 단정 순서로 모은다(최대 `MAX_SHOWN`) — (낱말들, 개념군 이름들)."""
-    rows = ((concepts.GROUP_KO["symptom"], _first(signals.symptom, signals.disease)), (concepts.GROUP_KO["effect"], _first(signals.effect, signals.medical)),
+    rows = ((concepts.GROUP_KO["symptom"], _first(signals.counted("symptom"), signals.disease)), (concepts.GROUP_KO["effect"], _first(signals.counted("effect"), signals.counted("medical"))),
             (concepts.GROUP_KO["product"], _first(signals.product)), (concepts.GROUP_KO["assertion"], _first(signals.assert_strong, signals.assert_effect, signals.assert_soft)))
     found = [(group, word.rstrip("*")) for group, word in rows if word]
     return tuple(word for _group, word in found)[:MAX_SHOWN], tuple(group for group, _word in found)[:MAX_SHOWN]
 
 
+def needs_evidence(stage):
+    """근거가 필요한 주장인가 — '근거 확인 필요'(B)와 '의료·효과 단정 위험'(C) 단계다(D-106). '표시만'(A)과 일반은 아니다. 단계를 모르면(`None`) 건강 표시가 붙은 것으로 보고 필요하다고 본다(옛 호출과 같은 동작)."""
+    if stage is None:
+        return True
+    if not isinstance(stage, str) or stage not in HEALTH_STAGES:
+        raise ValueError("모르는 건강 판정 단계다")
+    return stage in (STAGE_EVIDENCE, STAGE_STOP)
+
+
 def _health_finding(pieces):
+    """(단계, 알림). 단계는 `HEALTH_MATRIX` 가 정하고 알림 코드는 단계가 정한다(A → HEALTH_TOPIC · B → HEALTH_EFFECT · C → HEALTH_STOP)."""
     signals = concepts.health_signals(pieces)
-    key = signals.key()
-    state = HEALTH_MATRIX[key]
-    if state == HEALTH_GENERAL:
-        return state, None
-    _s, effect, _p, asserting = key
-    code = "HEALTH_STOP" if state == HEALTH_STOP else "HEALTH_CLAIM" if asserting else "HEALTH_EFFECT" if effect else "HEALTH_TOPIC"
+    stage = HEALTH_MATRIX[signals.concept_key()]
+    if stage == STAGE_GENERAL:
+        return stage, None
+    code = HEALTH_STAGE_CODE[stage]
     matched, groups = _health_shown(signals)
-    return state, Finding(FLAG_HEALTH, code, notice.level_of(code), matched, groups)
+    return stage, Finding(FLAG_HEALTH, code, notice.level_of(code), matched, groups)
 
 
 def _experience_finding(pieces):
@@ -259,7 +304,7 @@ def check_text(texts, *, opportunity=False, benefits=(), none_confirmed=False):
     confirmed = tuple(kind for kind in BENEFIT_KINDS if kind in kinds)
     interests = confirmed or ((INTEREST_NONE,) if none_confirmed else (INTEREST_UNKNOWN,))
     found = []
-    state, health = _health_finding(pieces)
+    stage, health = _health_finding(pieces)
     if health is not None:
         found.append(health)
     experience = _experience_finding(pieces)
@@ -273,7 +318,7 @@ def check_text(texts, *, opportunity=False, benefits=(), none_confirmed=False):
         found.append(Finding(FLAG_PROMISE, "RESULT_PROMISE", notice.level_of("RESULT_PROMISE"), promises[:MAX_SHOWN]))
     ordered = tuple(sorted(found, key=lambda finding: SAFETY_FLAGS.index(finding.flag) if finding.flag else len(SAFETY_FLAGS)))
     flags = tuple(flag for flag in SAFETY_FLAGS if any(finding.flag == flag for finding in ordered))
-    return SafetyReport(flags, ordered, state, relation, OPPORTUNITY_POSSIBLE if opportunity else OPPORTUNITY_NONE, confirmed, interests)
+    return SafetyReport(flags, ordered, HEALTH_STAGE_STATE[stage], relation, OPPORTUNITY_POSSIBLE if opportunity else OPPORTUNITY_NONE, confirmed, interests, stage)
 
 
 def assess(candidate, *, campaigns=()):
@@ -312,6 +357,8 @@ def notes(report):
 
 __all__ = [
     "BENEFIT_KINDS", "BENEFIT_KO", "CAMPAIGN_STATUSES", "Campaign", "FLAG_EXPERIENCE", "FLAG_HEALTH", "FLAG_KO", "FLAG_PRODUCT", "FLAG_PROMISE", "FLAG_SPONSOR", "Finding", "HEALTH_CHECK",
-    "HEALTH_GENERAL", "HEALTH_MATRIX", "HEALTH_STATE_KO", "HEALTH_STOP", "INTEREST_KO", "INTEREST_NONE", "INTEREST_TYPES", "INTEREST_UNKNOWN", "LEGACY_BENEFIT_NAMES", "MAX_CAMPAIGNS", "MAX_SHOWN",
-    "MAX_SHOWN_BENEFITS", "MAX_TEXTS", "OPPORTUNITY_NONE", "OPPORTUNITY_POSSIBLE", "RELATION_CONFIRMED", "RELATION_NONE", "RELATION_SUSPECTED", "SafetyReport", "assess", "check_text", "mark", "notes",
+    "HEALTH_GENERAL", "HEALTH_MATRIX", "HEALTH_STAGES", "HEALTH_STAGE_CODE", "HEALTH_STAGE_KO", "HEALTH_STAGE_STATE", "HEALTH_STATE_KO", "HEALTH_STOP", "INTEREST_KO", "INTEREST_NONE",
+    "INTEREST_TYPES", "INTEREST_UNKNOWN", "LEGACY_BENEFIT_NAMES", "MAX_CAMPAIGNS", "MAX_SHOWN", "MAX_SHOWN_BENEFITS", "MAX_TEXTS", "OPPORTUNITY_NONE", "OPPORTUNITY_POSSIBLE",
+    "RELATION_CONFIRMED", "RELATION_NONE", "RELATION_SUSPECTED", "STAGE_EVIDENCE", "STAGE_GENERAL", "STAGE_MARK", "STAGE_STOP", "SafetyReport", "assess", "check_text", "mark",
+    "needs_evidence", "notes",
 ]

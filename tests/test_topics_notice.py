@@ -96,9 +96,14 @@ class RequestSentencesTest(unittest.TestCase):                                  
         self.assertEqual(notice.text(), "주제 구체화 필요\n\n브랜드명만으로는 작성 방향을 판단하기 어렵습니다.\n제품, 기능 또는 비교 목적을 선택해 주세요.")
 
     def test_the_health_notice_is_the_request_card_with_the_concept_groups_as_bullets(self):
+        # 의도적 갱신(WP-B, D-105): '불면을 완화하는 확실한 방법'(증상 + 효과 + 단정)은 옛 '확인 필요(HEALTH_CLAIM)' 에서 단정 위험(HEALTH_STOP)으로 올랐다 — 카드 모양과 개념군 글머리표는 그대로다.
+        # HEALTH_CLAIM 은 새 단계표에서 쓰이는 곳이 없지만 카탈로그에는 남아 있어 그 카드 문장은 따로 못박는다. HEALTH_STOP 설명은 수정 1차에서 '건강 효과나 치료를 단정하는 표현' 으로 바뀌었다(증상만 있는 글의 단정 위험 카드와도 맞게).
         report = sf.check_text(["불면을 완화하는 확실한 방법"])
         notice = nt.from_report(report)[0]
-        self.assertEqual(notice.text(), "건강 정보 확인 필요\n\n효과를 단정하는 표현이 포함되어 있습니다.\n공식 근거를 확인하거나 일반 생활정보 표현으로 수정해 주세요.\n\n- 증상·상태 — 불면\n- 효과·결과 — 완화\n- 단정·보장 — 확실")
+        self.assertEqual(notice.code, "HEALTH_STOP")
+        self.assertEqual(notice.text(), "의료·효과 단정 위험\n\n건강 효과나 치료를 단정하는 표현이 있어 자동 초안을 만들지 않습니다.\n표현을 바꾸거나 공식 근거를 확인한 뒤 직접 검토해 주세요.\n\n- 증상·상태 — 불면\n- 효과·결과 — 완화\n- 단정·보장 — 확실")
+        claim = nt.make("HEALTH_CLAIM", ("증상·상태 — 불면", "효과·결과 — 완화", "단정·보장 — 확실"))
+        self.assertEqual(claim.text(), "건강 정보 확인 필요\n\n효과를 단정하는 표현이 포함되어 있습니다.\n공식 근거를 확인하거나 일반 생활정보 표현으로 수정해 주세요.\n\n- 증상·상태 — 불면\n- 효과·결과 — 완화\n- 단정·보장 — 확실")
 
     def test_the_economic_notice_is_the_request_card(self):
         notice = nt.from_report(sf.check_text(["업체로부터 제품을 제공받음"]))[0]
@@ -113,9 +118,10 @@ class RequestSentencesTest(unittest.TestCase):                                  
 class RenderTest(unittest.TestCase):                                                                           # N3
     def test_a_card_is_title_blank_message_action_and_bullets_after_a_blank(self):
         notice = nt.make("HEALTH_TOPIC", ("제품·행위 — 영양제", "증상·상태 — 불면"))
-        self.assertEqual(notice.lines(), ("건강 정보 확인 필요", "", "질환이나 건강 관련 제품을 다루는 주제입니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요.", "", "- 제품·행위 — 영양제", "- 증상·상태 — 불면"))
+        # 의도적 갱신(WP-B, D-105 → 수정 1차): HEALTH_TOPIC(A 표시만)의 설명이 건강 대상 전부(증상·질환·건강 제품·의료 용어)를 말하게 바뀌었다 — 옛 '질환이나 건강 관련 제품' 은 증상·의료 낱말만 있는 글의 카드와 안 맞았다
+        self.assertEqual(notice.lines(), ("건강 정보 확인 필요", "", "증상·질환·건강 제품이나 치료 같은 의료 용어가 들어 있는 주제입니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요.", "", "- 제품·행위 — 영양제", "- 증상·상태 — 불면"))
         self.assertEqual(notice.text(), "\n".join(notice.lines()))
-        self.assertEqual(notice.one_line(), "건강 정보 확인 필요 — 질환이나 건강 관련 제품을 다루는 주제입니다. 공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요.")
+        self.assertEqual(notice.one_line(), "건강 정보 확인 필요 — 증상·질환·건강 제품이나 치료 같은 의료 용어가 들어 있는 주제입니다. 공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요.")
 
     def test_cards_and_bullet_lines_join_several_notices_without_a_list_shape(self):
         notices = (nt.make("BRAND_ONLY"), nt.make("SHORTAGE", ("씨앗 1개",)))
