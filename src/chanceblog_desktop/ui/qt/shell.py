@@ -33,14 +33,14 @@ def qt_clipboard_set(text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, today=None, clock=None, version_info=None, autoload=True):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, today=today, runner=runner, connections=connections, version=self.version_info)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
         self.setWindowTitle(T["window_title"])
         root = QWidget()

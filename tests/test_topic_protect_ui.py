@@ -23,7 +23,6 @@ from chanceblog_desktop.ui import adapters  # noqa: E402
 from chanceblog_desktop.ui.core import app_state, services, text  # noqa: E402
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-TODAY = datetime.date(2026, 11, 3)                  # 화면의 '오늘' 을 고정한다(`AppState(today=…)` — 실제 시계를 읽지 않는다)
 STAMP = "2026-11-03T00:{minute:02d}:00Z"          # 후보마다 만든 시각을 1분씩 달리해 순서를 정한다(같은 날)
 
 
@@ -37,7 +36,7 @@ def topic(name, blogs=("A",), **fields):
 
 
 def state_with(*topics):
-    state = app_state.AppState(services.FakeHomeProvider(), today=TODAY)
+    state = app_state.AppState(services.FakeHomeProvider())
     state.apply_home(services.HomeData(topics=tuple(topics)))
     return state
 
@@ -247,7 +246,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
                     in_a, in_b = ("naver_a" in blogs) * count, ("naver_b" in blogs) * count
                     self.assertEqual([(blog.key, blog.name, blog.candidates) for blog in data.blogs], [("A", "블로그 A", in_a), ("B", "블로그 B", in_b)])
                     self.assertEqual((data.done, data.pub, data.sample, data.offline, data.partial), (0, 0, False, False, ()))
-                    state = app_state.AppState(adapters.ServiceHomeProvider(), today=TODAY)
+                    state = app_state.AppState(adapters.ServiceHomeProvider())
                     state.apply_home(data)
                     view = state.home_view()
                     self.assertEqual(view["state"], "empty" if count == 0 else "normal")
@@ -263,7 +262,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
         data = self.load([cand(1, ("github_pages",)), cand(2, ("blogger_en", "blogger_ko")), cand(3, ("naver_a",)), cand(4, ("github_pages", "naver_b"))])
         self.assertEqual([item.blogs for item in data.topics], [(), (), ("A",), ("B",)])
         self.assertEqual([(blog.key, blog.candidates) for blog in data.blogs], [("A", 1), ("B", 1)])
-        state = app_state.AppState(adapters.ServiceHomeProvider(), today=TODAY)
+        state = app_state.AppState(adapters.ServiceHomeProvider())
         state.apply_home(data)
         view = state.home_view()
         self.assertEqual([chip["count"] for chip in view["chips"]], [4, 1, 1, 0, 4])
@@ -281,7 +280,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
             data = adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx).load_home(lambda *a: None, lambda: False)
         self.assertEqual([(item.title, item.status) for item in data.topics], [("주제 01", "new"), ("주제 02", "hold"), ("주제 03", "new")])
         self.assertEqual([(blog.key, blog.candidates) for blog in data.blogs], [("A", 2), ("B", 1)])         # 보류한 것은 센 수에서 빠진다
-        state = app_state.AppState(adapters.ServiceHomeProvider(), today=TODAY)
+        state = app_state.AppState(adapters.ServiceHomeProvider())
         state.apply_home(data)
         view = state.home_view()
         self.assertEqual([card["value"] for card in view["cards"]], ["2개", "0개", "0개", "1개"])
@@ -541,9 +540,14 @@ class HomeOutputUnchangedTest(unittest.TestCase):
     """홈 화면 뷰모델의 지문(뷰모델 전체를 JSON 으로 만들어 SHA-256 앞 16자). 홈을 일부러 바꾸는 묶음은 어느 줄이 왜 바뀌는지 적고 이 값을 의식적으로 고친다. 값이 다르면 아래 `diff` 로 어느 시나리오인지 먼저 본다.
     의도적 갱신(UI-C1a, D-171·D-172): 홈 뷰모델은 **정확히 다섯 곳**만 바뀌었다(기준 = UI-C0 가지 `754cf97`, 옛 값과 새 값을 같은 가짜 데이터로 뽑아 키 단위로 견줬다 — 일곱 시나리오 중 홈 여섯에서 같은 다섯 곳):
     ① `date` 삭제(홈 제목 줄의 날짜는 상단 앱 바로 옮겼다) ② 요약 카드 둘(추천 주제·저장된 아이디어)의 `go` 가 `topics` → `None`(미완성 화면으로 가던 길) ③ `section.all`('전체 보기') 삭제
-    ④ `rail.quick` 4개 → 1개(저장된 주제·발행 기록·블로그 설정은 화면으로 가던 단추라 뺐고 '새 초안 만들기' 안내만 남음). 상세 서랍(`drawer_s1`)은 한 글자도 안 바뀌었다. 옛 자리표시 화면 지문(`page_*`)은 화면이 없어져 뺐다."""
-    BASELINE = {"home_normal": "689073ea7efe32ee", "home_empty": "bcab10a473d3ea51", "home_partial": "e5ab23a54fc2ec03", "home_offline": "ab8eb1b305b8ed57", "home_error": "03faf125f1e214ce",
-                "home_filter_b": "16ca1a3f8af491ea", "drawer_s1": "7e6ccf32dcb04a58"}
+    ④ `rail.quick` 4개 → 1개(저장된 주제·발행 기록·블로그 설정은 화면으로 가던 단추라 뺐고 '새 초안 만들기' 안내만 남음). 상세 서랍(`drawer_s1`)은 한 글자도 안 바뀌었다. 옛 자리표시 화면 지문(`page_*`)은 화면이 없어져 뺐다.
+    의도적 갱신(UI-C1c, D-190 — 운영자 2026-11-06 확인 요청 004 의 답 홈 구성·추천 후보·최근 발행): 홈 뷰모델은 **정확히 한 곳**만 바뀌었다 — 새 홈 구역의 값이 새 키 `board` 하나로 **더해졌다**(UI-C1d 가 그린다).
+    옛 키는 한 글자도 안 바뀌었다(기준 = UI-C1a 보완까지의 가지 `a2198ce`, 같은 가짜 데이터로 옛 값과 새 값을 키 단위로 견줬다 — 여섯 시나리오 모두 `board` 하나만 다르다). 그래서 지문 두 벌을 둔다:
+    `BASELINE` 은 `board` 를 포함한 새 값, `LEGACY_BASELINE` 은 `board` 를 뺀 값(= UI-C1a 가 못박은 옛 값 그대로)이다. 상세 서랍 지문(`drawer_s1`)은 그대로다(서랍에는 새 키가 없다)."""
+    LEGACY_BASELINE = {"home_normal": "689073ea7efe32ee", "home_empty": "bcab10a473d3ea51", "home_partial": "e5ab23a54fc2ec03", "home_offline": "ab8eb1b305b8ed57", "home_error": "03faf125f1e214ce",
+                       "home_filter_b": "16ca1a3f8af491ea", "drawer_s1": "7e6ccf32dcb04a58"}
+    BASELINE = {"home_normal": "5227f17a2d018a5b", "home_empty": "866f855a54ac01af", "home_partial": "db7db780e0f0b514", "home_offline": "5bb4a34c3e9ffff1", "home_error": "0b5a76b830336ac3",
+                "home_filter_b": "632baee9d5c01582", "drawer_s1": "7e6ccf32dcb04a58"}
     WHEN = datetime.datetime(2026, 11, 3, 10, 0, 0)
 
     @staticmethod
@@ -555,26 +559,43 @@ class HomeOutputUnchangedTest(unittest.TestCase):
     @staticmethod
     def loaded(scenario):
         provider = services.FakeHomeProvider(scenario)
-        state = app_state.AppState(provider, today=TODAY)
+        state = app_state.AppState(provider)
         state.apply_home(provider.load_home(lambda *a: None, lambda: False))
         return state
 
-    def current(self):
-        out = {f"home_{scenario}": self.digest(self.loaded(scenario).home_view()) for scenario in ("normal", "empty", "partial", "offline")}
-        state = app_state.AppState(services.FakeHomeProvider("error"), today=TODAY)
+    def views(self):
+        """여섯 시나리오의 홈 뷰모델(딕셔너리)과 상세 서랍 — 지문은 이 값들로 만든다."""
+        out = {f"home_{scenario}": self.loaded(scenario).home_view() for scenario in ("normal", "empty", "partial", "offline")}
+        state = app_state.AppState(services.FakeHomeProvider("error"))
         state.apply_failure(services.ServiceFailure("후보를 불러오는 중 연결이 끊겼어요.", code="SAMPLE_NETWORK_DOWN"), self.WHEN)
-        out["home_error"] = self.digest(state.home_view())
+        out["home_error"] = state.home_view()
         state = self.loaded("normal")
         state.set_home_filter("b")
-        out["home_filter_b"] = self.digest(state.home_view())
+        out["home_filter_b"] = state.home_view()
         state.open_drawer("s1")
-        out["drawer_s1"] = self.digest(state.drawer_view())
+        return out, state.drawer_view()
+
+    def current(self, without=()):
+        """지문 — `without` 에 든 키를 뺀 홈 뷰모델로 만든다(`board` 를 빼면 옛 지문이 나와야 한다)."""
+        homes, drawer = self.views()
+        out = {name: self.digest({key: value for key, value in view.items() if key not in without}) for name, view in homes.items()}
+        out["drawer_s1"] = self.digest(drawer)
         return out
 
     def test_the_home_view_models_are_exactly_what_the_shell_bundle_made_them(self):
         got = self.current()
         self.assertEqual({key: (self.BASELINE[key], got[key]) for key in self.BASELINE if got[key] != self.BASELINE[key]}, {}, "홈의 출력이 바뀌었다 — 의도한 변경이면 이유를 적고 지문을 고친다")
         self.assertEqual(set(got), set(self.BASELINE))
+
+    def test_without_the_new_board_key_every_home_view_model_is_byte_identical_to_the_one_the_c1a_shell_made(self):
+        """UI-C1c 는 홈 뷰모델에 새 키 `board` 하나만 더했다 — 그 키를 빼면 여섯 시나리오가 모두 UI-C1a 의 옛 지문과 같다(옛 키는 한 글자도 안 바뀌었다)."""
+        got = self.current(without=("board",))
+        self.assertEqual({key: (self.LEGACY_BASELINE[key], got[key]) for key in self.LEGACY_BASELINE if got[key] != self.LEGACY_BASELINE[key]}, {}, "옛 키가 바뀌었다 — 새 값은 `board` 로만 들어가야 한다")
+        homes, _drawer = self.views()
+        for name, view in homes.items():
+            self.assertIn("board", view, name)
+            self.assertEqual(sorted(key for key in view if key != "board"),
+                             sorted(["title", "sub", "sample", "sample_tag", "state", "fetched", "cards", "chips", "section", "rows", "selected", "banner", "loading", "empty", "error", "rail"]), name)
 
 
 if __name__ == "__main__":

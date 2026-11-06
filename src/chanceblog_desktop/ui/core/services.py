@@ -50,6 +50,77 @@ class BlogInfo:
     candidates: object = None         # 후보 수
 
 
+# ---- 홈 데이터(UI-C1c) — 읽기만 한다 ----------------------------------------------------------------------------------------------------------
+# 새 홈(Naver A·B 추천·작성 중 초안·최근 발행·연결 요약)이 쓸 값. **아래 값에는 쓰기 메서드도 월 검색량·문서 수 칸도 없다**(운영자 2026-11-06 확인 요청 004 의 답 — 홈 구성·추천 후보·최근 발행).
+# 구역마다 따로 읽어 따로 성공·실패한다 — 한 구역(또는 글 하나)을 읽지 못해도 홈 전체를 막지 않는다. 지금 화면은 이 값을 그리지 않는다(새 홈 모양 UI-C1d 가 그린다).
+HOME_LIMIT = 5                                 # 홈의 구역마다 최대 5개 — 채널별 추천(A·B)·작성 중 초안·최근 발행
+HOME_CHANNELS = ("A", "B")                     # 홈이 읽는 채널 — 네이버 A·B(코드 안의 채널 이름은 어댑터만 안다)
+INTERESTS = ("rising", "flat", "falling")      # 관심도(최근 상대값의 방향) — 영문 값은 내부 이름이고 화면은 문구표로만 말한다. 모르면 None(관심도 데이터 부족)
+STAGES = ("generated", "review")               # 작성 중 초안의 단계 — 초안 생성됨 · 검토 필요(둘 다 승인 전)
+NO_STORE = ("missing", "old")                  # 주제 엔진 보관함이 아직 없다 · 옛 구조라 읽지 않았다 — 읽기만 하는 화면이라 만들지도 올리지도 않는다
+
+
+@dataclass(frozen=True)
+class RecommendRow:
+    """주제 엔진 후보 한 줄. `score` 는 엔진의 최종 점수(정수) 또는 None(점수 계산 전), `prev_score` 는 이전 점수(없으면 None — 변화량을 숨긴다). `id` 는 어댑터가 건네는 내부 번호이고 뷰모델에는 나가지 않는다."""
+    id: str
+    title: str
+    score: object = None
+    prev_score: object = None
+    interest: object = None           # rising · flat · falling · None(관심도 데이터 부족)
+    sample: bool = False              # 가짜(예시) 값인가 — 참이면 줄에 '예시' 표시
+
+
+@dataclass(frozen=True)
+class ChannelRead:
+    """홈이 읽은 채널 하나(A·B)의 추천 구역 — 이름·후보 생성 사용 여부·우수 후보 줄들. 구역마다 따로 성공·실패한다."""
+    key: str                          # "A" · "B"
+    name: str = ""                    # 표시 이름 — 런타임에 채널 프로필에서 읽는다(코드·시험·문서에 실제 이름이 없다)
+    enabled: object = None            # 후보 생성이 켜져 있나(True·False, 모르면 None)
+    state: str = "ok"                 # ok · unavailable(보관함이 없거나 옛 구조라 읽지 않았다) · failed
+    reason: str = ""                  # unavailable 일 때 `NO_STORE` 중 하나
+    rows: tuple = ()                  # RecommendRow — 많아야 `HOME_LIMIT` 개(읽는 쪽이 자른다)
+    skipped: int = 0                  # 점수를 확인할 수 없어 뺀 후보 수(서비스가 알려 준 만큼)
+    failure: object = None            # failed 일 때 ServiceFailure(쉬운 문장 + 진단 코드)
+
+
+@dataclass(frozen=True)
+class DraftRow:
+    """작성 중 초안 한 줄(승인 전 — 초안 생성됨·검토 필요)."""
+    id: str
+    title: str
+    stage: str = "generated"          # `STAGES`
+    updated: str = ""                 # 마지막으로 고친 때(UTC `YYYY-MM-DDTHH:MM:SSZ`) — 모르면 ""
+    sample: bool = False
+
+
+@dataclass(frozen=True)
+class RecentRow:
+    """최근 발행 한 줄."""
+    id: str
+    title: str
+    published: object = None          # 발행한 때(UTC `YYYY-MM-DDTHH:MM:SSZ`) — 모르면 None('발행일 확인 불가'). 마지막으로 고친 때(`updated_at`)로 대신하지 않는다
+    sample: bool = False
+
+
+@dataclass(frozen=True)
+class ListRead:
+    """글 구역(작성 중 초안·최근 발행) 하나를 읽은 결과 — 글 하나를 읽지 못해도 구역은 남고(`skipped`), 구역 전체를 못 읽으면 `failed`."""
+    state: str = "ok"                 # ok · failed
+    rows: tuple = ()                  # DraftRow 또는 RecentRow — 많아야 `HOME_LIMIT` 개
+    skipped: int = 0                  # 읽지 못해 건너뛴 글 수
+    failure: object = None            # failed 일 때 ServiceFailure
+
+
+@dataclass(frozen=True)
+class BoardData:
+    """홈의 새 구역 데이터 — 채널 둘의 추천·작성 중 초안·최근 발행. 이 값이 없으면(`HomeData.board` 가 None) 그 공급자는 새 구역을 읽지 않는다 = '연결 전'."""
+    channels: tuple = ()              # ChannelRead — A, B 순서
+    drafts: ListRead = ListRead()
+    recent: ListRead = ListRead()
+    sample: bool = False              # 가짜(예시) 데이터인가
+
+
 @dataclass(frozen=True)
 class HomeData:
     topics: tuple = ()
@@ -62,6 +133,7 @@ class HomeData:
     fetched: str = ""                 # 마지막 조회(사람이 읽는 글)
     offline: bool = False             # 저장해 둔 값으로 보여 주는 중
     partial: tuple = field(default_factory=tuple)      # 못 가져온 지표 이름들(예: ("trend",))
+    board: object = None              # BoardData — 새 홈 구역의 값(UI-C1c). None 이면 이 공급자는 읽지 않는다('연결 전')
 
 
 class HomeProvider:
@@ -126,14 +198,39 @@ def sample_topics(count=None):
     return tuple(topics)
 
 
+# 가짜 홈 구역(UI-C1c) — 이름·점수·날짜는 모두 예시다(`sample=True` 라 줄마다 '예시' 표시가 붙는다). 점수 없음·관심도 없음·이전 점수 없음·점수가 오르고 내림·발행일 모름이 한 번씩 들어 있다.
+_SAMPLE_RECOMMEND = {         # 채널 → ((제목, 점수, 이전 점수, 관심도), …)
+    "A": (("자취방 곰팡이 없애는 순서", 92, 88, "rising"), ("전기요금 절약 방법", 84, 84, "flat"), ("노트북 배터리 오래 쓰는 법", 79, 83, "falling"),
+          ("겨울철 실내 습도 관리", 71, None, None), ("에어프라이어 세척 순서", None, None, None)),
+    "B": (("프리랜서 종합소득세 신고 순서", 88, 80, "rising"), ("에어프라이어 고르는 기준", 80, 80, "flat"), ("무선 이어폰 비교 포인트", 68, 70, "falling"),
+          ("주말 근교 조용한 카페 모음", 65, None, "rising")),
+}
+_SAMPLE_DRAFTS = (("프리랜서 종합소득세 신고 순서", "review", "2026-11-06T02:10:00Z"), ("전기요금 절약 방법", "generated", "2026-11-05T09:30:00Z"), ("노트북 배터리 오래 쓰는 법", "review", "2026-11-04T23:40:00Z"))
+_SAMPLE_RECENT = (("자취방 곰팡이 없애는 순서", "2026-11-03T01:00:00Z"), ("에어프라이어 고르는 기준", "2026-10-30T05:20:00Z"), ("겨울철 실내 습도 관리", None))
+
+
+def sample_board(scenario="normal"):
+    """가짜 홈 구역들(같은 입력이면 같은 결과). `empty` 는 채널·글 구역이 모두 정상 빈 상태이고 `partial`(관심도를 못 가져옴)은 모든 줄의 관심도가 비어 있다. 모두 예시라 줄마다 `sample=True`."""
+    if scenario not in SCENARIOS:
+        raise ValueError(scenario)
+    empty, partial = scenario == "empty", scenario == "partial"
+    channels = tuple(ChannelRead(key, f"블로그 {key}", True, "ok", "", () if empty else tuple(
+        RecommendRow(f"r{key}{number}", title, score, prev, None if partial else interest, True) for number, (title, score, prev, interest) in enumerate(_SAMPLE_RECOMMEND[key], start=1)))
+        for key in HOME_CHANNELS)
+    drafts = () if empty else tuple(DraftRow(f"d{number}", title, stage, updated, True) for number, (title, stage, updated) in enumerate(_SAMPLE_DRAFTS, start=1))
+    recent = () if empty else tuple(RecentRow(f"p{number}", title, published, True) for number, (title, published) in enumerate(_SAMPLE_RECENT, start=1))
+    return BoardData(channels, ListRead("ok", drafts), ListRead("ok", recent), True)
+
+
 class FakeHomeProvider(HomeProvider):
-    """네트워크·파일·서비스 층을 부르지 않는 가짜 공급자. `scenario` 로 화면의 여섯 상태를 만든다: normal · empty · error · partial · offline(+ 느린 일은 `delay`)."""
+    """네트워크·파일·서비스 층을 부르지 않는 가짜 공급자. `scenario` 로 화면의 여섯 상태를 만든다: normal · empty · error · partial · offline(+ 느린 일은 `delay`).
+    `board` 는 새 홈 구역(UI-C1c)의 값 — 기본 `"auto"` 는 시나리오에 맞는 예시(`sample_board`), `None` 이면 새 구역을 읽지 않는 공급자('연결 전'), `BoardData` 면 그대로 쓴다."""
     sample = True
 
-    def __init__(self, scenario="normal", delay=0.0, count=None):
+    def __init__(self, scenario="normal", delay=0.0, count=None, board="auto"):
         if scenario not in SCENARIOS:
             raise ValueError(scenario)
-        self.scenario, self.delay, self.count = scenario, delay, count
+        self.scenario, self.delay, self.count, self.board = scenario, delay, count, board
         self.calls = 0
 
     def load_home(self, progress, cancelled):
@@ -144,8 +241,9 @@ class FakeHomeProvider(HomeProvider):
         topics = () if self.scenario == "empty" else sample_topics(self.count)
         if self.scenario == "partial":
             topics = tuple(Topic(**{**t.__dict__, "trend": None}) for t in topics)
+        board = sample_board(self.scenario) if isinstance(self.board, str) and self.board == "auto" else self.board
         return HomeData(topics=topics, blogs=() if self.scenario == "empty" else _BLOGS, done=3, done_week=3, pub=2, pub_week=2, sample=True, fetched="오늘 09:12",
-                        offline=self.scenario == "offline", partial=("trend",) if self.scenario == "partial" else ())
+                        offline=self.scenario == "offline", partial=("trend",) if self.scenario == "partial" else (), board=board)
 
 
 # ---- 연결 관리(설정 화면) — 키 값은 어디에도 없다: 이름·상태·사용량 숫자뿐이다 -------------------------------------------------------------
