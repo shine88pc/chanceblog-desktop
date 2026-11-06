@@ -342,7 +342,8 @@ class DocsAndScopeTest(unittest.TestCase):
     def test_the_decisions_d42_to_d80_exist_once_each_in_order(self):                       # P3 수정 5차 의도적 갱신: 결정 D-80 이 이어 붙었다(수정 2차: D-75~D-79)
         text = (ts.ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
         found = re.findall(r"^\| (D-\d{2}) \|", text, re.M)
-        self.assertEqual(found[-39:], [f"D-{number}" for number in range(42, 81)])
+        start = found.index("D-42")                    # 의도적 갱신(P3+P4a 병합): D-42~D-80 이 연달아 한 번씩 있다는 것만 본다 — 그 뒤에 붙는 다른 묶음의 번호(화면 묶음 D-90~ 등)는 이 시험이 보지 않는다
+        self.assertEqual(found[start:start + 39], [f"D-{number}" for number in range(42, 81)])
         self.assertEqual(len(found), len(set(found)))
         rows = {line.split(" | ")[0].lstrip("| "): line for line in text.splitlines() if line.startswith("| D-4")}
         self.assertIn("search_count_source", rows["D-43"])

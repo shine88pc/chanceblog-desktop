@@ -3,6 +3,7 @@
 화면 이동·동작은 `AppState`(`ui/core/app_state.py`)가 하고 여기서는 그 결과를 다시 그리기만 한다. 후보 불러오기 같은 긴 일은 작업 스레드(`ui/core/jobs.py`)에서 돌고,
 진행·완료·실패·취소는 시그널로 화면 스레드에 넘어온다 — 일하는 중에도 창이 반응한다.
 서랍·대화상자가 열려 있는 동안 Tab 은 그 안에서만 돌고, Esc 로 닫으며(대화상자 먼저), 닫으면 열었던 곳으로 포커스가 돌아온다.
+어느 메뉴가 어느 화면인지는 `screens.SCREEN_BUILDERS` 표가 정하고 `render()` 는 그 표만 거친다. 설정 화면의 연결 정보도 작업 스레드(`settings-load`)에서 읽고 시그널로 받는다 — 홈 불러오기와 따로다.
 """
 from __future__ import annotations
 
@@ -36,9 +37,9 @@ def _version():
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, clipboard=None, runner=None, today=None, autoload=True):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, today=None, autoload=True):
         super().__init__()
-        self.state = AppState(provider, today=today, runner=runner)
+        self.state = AppState(provider, today=today, runner=runner, connections=connections)
         self._clipboard = clipboard or qt_clipboard_set
         self.setWindowTitle(T["window_title"])
         root = QWidget()
@@ -73,6 +74,10 @@ class AppShell(QMainWindow):
         self.bridge.loaded.connect(self._on_loaded)
         self.bridge.failed.connect(self._on_failed)
         self.bridge.cancelled.connect(self._on_cancelled)
+        self.conn_bridge = JobBridge(self)                                              # 설정 화면(연결 관리)을 읽는 작업의 다리 — 홈 불러오기와 따로 돈다
+        self.conn_bridge.loaded.connect(self._on_conn_loaded)
+        self.conn_bridge.failed.connect(self._on_conn_failed)
+        self.conn_bridge.cancelled.connect(self._on_conn_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -159,7 +164,7 @@ class AppShell(QMainWindow):
         key, previous = self._focus_key(), self.scroll.verticalScrollBar().value()
         same_page = getattr(self, "_rendered_page", None) == state.page
         self.refresh_button = self.cancel_button = None
-        widget = S.home_screen(self, state.home_view()) if state.page == "home" else S.placeholder_screen(self, state.page_view())
+        widget = S.SCREEN_BUILDERS[state.page](self)                          # 메뉴 → 화면 만드는 함수 표(`screens.SCREEN_BUILDERS`)
         self.screen_widget = widget
         holder = QWidget()                                                    # 넓은 창에서는 본문 폭을 제한하고 가운데에 둔다
         row = QHBoxLayout(holder)
@@ -268,8 +273,9 @@ class AppShell(QMainWindow):
             except RuntimeError:
                 pass
 
-    def show_sample_info(self):
-        self.show_dialog(T["sample_dialog_title"], T["sample_dialog_body"])
+    def show_sample_info(self, screen="home"):
+        """'예시 데이터' 설명 — 화면마다 보이는 것이 달라 설명도 그 화면 것이다(홈은 주제·숫자, 설정은 키 이름·사용량 숫자)."""
+        self.show_dialog(T["sample_dialog_title"], T["conn_sample_dialog_body"] if screen == "settings" else T["sample_dialog_body"])
 
     def escape(self):
         if self.dialog.is_open:
@@ -296,6 +302,8 @@ class AppShell(QMainWindow):
     def go(self, key):
         if self.state.nav(key):
             self.close_drawer_silently()
+            if key == "settings":                                                     # 설정 화면은 열 때마다 읽는다(이미 읽는 중이면 그대로 둔다) — 읽기는 작업 스레드에서
+                self.state.start_conn_load(**self.conn_bridge.callbacks())
             self.render()
 
     def close_drawer_silently(self):
@@ -381,11 +389,59 @@ class AppShell(QMainWindow):
         self.render()
         self.notify(T["load_cancelled"])
 
-    def _guarded(self, work, *args):
+    # ---- 설정 화면(연결 관리) 읽기 — 홈 불러오기와 같은 틀(작업 스레드·시그널·슬롯 보호), 이름만 따로다 ----
+    def reload_connections(self, *_):
+        """설정 화면의 연결 정보를 다시 읽는다(작업 스레드 — 보관소 읽기도 거기서). 이미 읽는 중이면(중복 클릭) 안내만 한다."""
+        job = self.state.start_conn_load(**self.conn_bridge.callbacks())
+        if job is None:
+            self.notify(T["load_busy"])
+            return False
+        self.render()
+        return True
+
+    def set_group_open(self, key, opened):
+        """접이식을 펴고 접은 것을 기억한다(파일에는 쓰지 않는다). 화면은 이미 바뀌었으므로 다시 그리지 않는다."""
+        self.state.set_group_open(key, opened)
+
+    def _on_conn_loaded(self, data):
+        self._guarded(self._show_conn_loaded, data, recover=self._recover_conn)
+
+    def _on_conn_failed(self, failure):
+        self._guarded(self._show_conn_failed, failure, recover=self._recover_conn)
+
+    def _on_conn_cancelled(self):
+        self._guarded(self._show_conn_cancelled, recover=self._recover_conn)
+
+    def _render_settings(self):
+        if self.state.page == "settings":                                             # 다른 화면을 보는 중이면 값만 받아 두고 다시 그리지 않는다
+            self.render()
+
+    def _show_conn_loaded(self, data):
+        self.state.apply_connections(data, datetime.datetime.now())
+        self._render_settings()
+
+    def _show_conn_failed(self, failure):
+        self.state.apply_conn_failure(failure, datetime.datetime.now())
+        self._render_settings()
+
+    def _show_conn_cancelled(self):
+        self.state.apply_conn_cancelled()
+        self._render_settings()
+
+    def _recover_conn(self, error):
+        """설정 화면의 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
+        report_unexpected(type(error), error)
+        self.state.apply_conn_unexpected(error, datetime.datetime.now())
+        try:
+            self._render_settings()
+        except Exception:
+            self.notify(T["job_failed"])
+
+    def _guarded(self, work, *args, recover=None):
         try:
             work(*args)
         except Exception as error:
-            self._recover(error)
+            (recover or self._recover)(error)
 
     def _recover(self, error):
         """화면 스레드에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에, 내용·경로는 싣지 않는다). 오류 화면마저 못 그리면 안내만 한다."""
