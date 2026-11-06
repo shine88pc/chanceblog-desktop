@@ -271,10 +271,11 @@ class CiWorkflowTest(unittest.TestCase):
 
     def test_ci_time_limit_leaves_room_for_the_slowest_cell(self):
         # Windows 칸이 14~15분까지 늘었다(2026-11-03). 20분 한도에 닿아 빨간 칸이 나오면 병합 부탁이 막힌다(D-28).
+        # 의도적 갱신(D-176, 2026-11-07): 시험이 늘어 Windows 칸이 21~29분(M013 가지 28분 34초)이라 30분 한도에 1분 반만 남았다 — 40 이상으로 조인다.
         ci = read(".github/workflows/ci.yml")
         found = re.search(r"^\s+timeout-minutes:\s*(\d+)", ci, re.M)
         self.assertIsNotNone(found)
-        self.assertGreaterEqual(int(found.group(1)), 30)
+        self.assertGreaterEqual(int(found.group(1)), 40)
 
 
 if __name__ == "__main__":
