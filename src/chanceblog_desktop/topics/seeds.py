@@ -7,6 +7,8 @@
   · '마지막 선택일' 은 이 씨앗에서 나온 후보를 운영자가 고른 날이다. 한 번도 고르지 않았으면 None 이다. '사용 시작일'(`active_since`)은 씨앗이 **사용 중으로 바뀐 가장 최근 날**이다(제안을 승인했거나 쉬게 했다가 다시 켠 날 —
     처음부터 사용 중으로 등록했으면 None). 쉬는 동안 시계가 흐르지 않게, 180일의 기준은 **마지막 선택일·사용 시작일·등록일 중 가장 늦은 날**이다 — 날짜가 없는 씨앗을 '오래 안 쓴 씨앗' 으로 치지 않는다(모름 ≠ 0, P2b 독립 검증 M4).
   · **180일 이상 선택하지 않은 사용 중 씨앗은 '쉬게 할지' 제안만 한다**(`idle_proposals`) — 이 모듈이 스스로 상태를 바꾸지 않는다. 운영자가 승인한 뒤에야 호출하는 쪽이 `change_state` 로 바꾼다.
+    **단, 계절형(`seasonal`)은 제안 대상이 아니다**(원문 §8.4, D-103) — 비수기라는 이유로 쉬게 하지 않는다. 계절 씨앗의 우선순위 필드(`prepare_from`·`publish_from`·`publish_until`·`peak_period`·`recurrence`·`seasonal_priority_state`)와
+    그 동작(범위 밖이면 우선순위만 낮추고 준비 시작일에 복원 등)은 **아직 없다 — P3b-1 의 몫**이다(다음 몫).
   · 처음 목록의 크기(공통 30개 + 채널마다 20개)는 한도가 아니라 **처음 크기**다(`INITIAL_COMMON`·`INITIAL_PER_CHANNEL`). 파일 전체의 안전 한도는 `MAX_SEEDS` 이다.
 **실제 씨앗 목록은 이 저장소에 두지 않는다** — 스키마·빈 틀(`seeds_to_dict(())`)·시험용 예시만 두고, 실제 목록은 이 PC 의 사용자 데이터(`seeds.json`)에만 둔다. 읽고 쓰기는 사전(dict)까지만 하고 파일은 다음 묶음(저장)의 몫이다.
 JSON 모양은 `channels.profiles_from_dict` 처럼 엄격하다 — `schema` 1·정확한 칸·모르는 칸·잘못된 타입·같은 씨앗 두 번은 `CONTENT_INVALID` 로 거절하고 어느 칸이 왜 안 되는지 쉬운 한국어로 알린다.
@@ -30,6 +32,7 @@ SCHEMA = 1
 SUBJECT = "씨앗"
 
 SEED_TYPES = tuple(PER_SEED)                                         # general·priority·seasonal·realtime·sponsorable — `channels.PER_SEED` 의 이름과 순서 그대로
+SEED_SEASONAL = "seasonal"                                           # 계절형 — 180일 '쉬게 할까요' 제안(`idle_proposals`)에서 제외한다(D-103)
 SCOPE_COMMON = "common"
 SCOPES = (SCOPE_COMMON, *CHANNELS)                                    # 공통 또는 코드의 채널 키 하나(입력 별칭은 저장하지 않는다)
 STATE_PROPOSED, STATE_ACTIVE, STATE_INACTIVE = "proposed", "active", "inactive"
@@ -230,7 +233,9 @@ def idle_days(seed, today):
 
 def idle_proposals(seeds, today, days=IDLE_DAYS):
     """사용 중(`active`) 씨앗 중 마지막 선택일(없으면 등록일)로부터 `days`일(기본 180, 포함) 이상 지난 것을 **쉬게 할지 제안**으로 돌려준다 — 오래된 순, 같으면 씨앗 번호순.
-    제안만 돌려준다: 씨앗은 하나도 바뀌지 않는다(운영자가 승인한 뒤에야 `change_state`). 제안 상태·쉬는 중 씨앗은 대상이 아니다."""
+    제안만 돌려준다: 씨앗은 하나도 바뀌지 않는다(운영자가 승인한 뒤에야 `change_state`). 제안 상태·쉬는 중 씨앗은 대상이 아니다.
+    **계절형(`seed_type == "seasonal"`)은 얼마나 묵었어도 제안하지 않는다** — 비수기라는 이유로 쉬게 하지 않는다(원문 §8.4, D-103). 사용자가 직접 쉬게 한 씨앗만 후보 생성에서 빠지는 지금 동작은 그대로다.
+    계절 우선순위(준비 시작일·발행 기간·피크·반복·우선순위 상태 칸과 범위 밖 하향·준비 시작일 복원 같은 동작)는 이 함수의 일이 아니라 **P3b-1 의 몫**이다."""
     pool = tuple(seeds)
     if not all(isinstance(seed, Seed) for seed in pool):
         raise TypeError("씨앗(Seed)만 넘길 수 있다")
@@ -239,7 +244,7 @@ def idle_proposals(seeds, today, days=IDLE_DAYS):
         raise _invalid("미선택 날수", "1~3650 사이의 정수여야 한다")
     found = []
     for seed in pool:
-        if seed.state != STATE_ACTIVE:
+        if seed.state != STATE_ACTIVE or seed.seed_type == SEED_SEASONAL:           # 계절형은 비수기라는 이유로 쉬게 하자고 제안하지 않는다(원문 §8.4, D-103)
             continue
         idle = idle_days(seed, today)
         if idle >= days:
@@ -307,6 +312,6 @@ def _check_all(pool):
 
 
 __all__ = [
-    "BASIS_REGISTERED", "BASIS_SELECTED", "BASIS_STARTED", "IDLE_DAYS", "INITIAL_COMMON", "INITIAL_PER_CHANNEL", "IdleProposal", "MAX_SEEDS", "SCHEMA", "SCOPES", "SCOPE_COMMON", "SEED_TYPES", "STATES", "STATE_ACTIVE", "STATE_INACTIVE", "STATE_KO",
+    "BASIS_REGISTERED", "BASIS_SELECTED", "BASIS_STARTED", "IDLE_DAYS", "INITIAL_COMMON", "INITIAL_PER_CHANNEL", "IdleProposal", "MAX_SEEDS", "SCHEMA", "SCOPES", "SCOPE_COMMON", "SEED_SEASONAL", "SEED_TYPES", "STATES", "STATE_ACTIVE", "STATE_INACTIVE", "STATE_KO",
     "STATE_PROPOSED", "Seed", "TRANSITIONS", "basis_of", "change_state", "idle_days", "idle_proposals", "quota_of", "seeds_from_dict", "seeds_to_dict", "selected", "usable_seeds",
 ]

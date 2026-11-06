@@ -6,7 +6,7 @@
   S3) 생활 습관 표현은 일반으로 남고, 의료적 주장이 붙은 습관 표현은 일반이 아니다.
   S4) 협찬: 태그·경로·유형·제안 중 협찬 정보는 가능성일 뿐이라 표시 없이 INFO 알림, 글 낱말은 추정, 브랜드 이름은 0, 확정된 협찬 정보만 표시를 강제한다. S5) `Campaign` 의 검증·연결·왕복.
   S6) 결과 약속은 기존 판정을 읽는다. S7) 경험 단정. S8) 입력 오류·표시 순서·`mark` 는 표시 칸만 바꿈. S9) `notes` 형식·길이. S10) 표시 값·`product_brand` 예약·`MAX_SHOWN`.
-**표는 초기값(전략 원문 확인 전)이다** — 표 값 못박기는 `test_topics_concepts` 가 한다. 네트워크·파일·실제 시계·난수 없이 돈다.
+**낱말 표는 구현자 초기값이다 — 전략 원문과 2026-11-06 에 대조했고 원문이 정한 표가 아니다(이해관계 유형만 원문 대조로 정한 값, D-102·D-104).** 낱말 표 값 못박기는 `test_topics_concepts` 가, 이해관계 유형·충돌은 `test_topics_interest` 가 한다. 네트워크·파일·실제 시계·난수 없이 돈다.
 """
 import dataclasses
 import sys
@@ -187,9 +187,10 @@ class SponsorTest(unittest.TestCase):                                           
         for text in ("제습기 구매 전 확인 기준", "업체로부터 제품을 제공받음"):
             with self.subTest(text=text):
                 report = sf.check_text([text], benefits=("goods", "affiliate"))
-                self.assertEqual((report.flags, report.relationship, report.benefits), (("sponsor_disclosure",), "confirmed", ("goods", "affiliate")))
+                # 의도적 갱신(전략 맞춤 1차, D-102): 옛 이름 입력은 그대로 받고, 결과는 새 이름(`PRODUCT_PROVIDED` …)·운영자 표시 이름('제휴 수수료')이다.
+                self.assertEqual((report.flags, report.relationship, report.benefits), (("sponsor_disclosure",), "confirmed", ("PRODUCT_PROVIDED", "AFFILIATE_COMMISSION")))
                 self.assertEqual([finding.code for finding in report.findings], ["ECONOMIC_CONFIRMED"], "추정 알림을 겹쳐 내지 않는다")
-                self.assertEqual(report.findings[0].groups, ("제품 제공", "제휴·수수료"))
+                self.assertEqual(report.findings[0].groups, ("제품 제공", "제휴 수수료"))
 
     def test_the_possibility_is_kept_beside_the_flag_and_the_confirmed_state_is_not_downgraded(self):
         report = sf.check_text(["업체로부터 제품을 제공받음"], opportunity=True)
@@ -199,12 +200,16 @@ class SponsorTest(unittest.TestCase):                                           
     def test_the_assess_path_uses_campaigns_that_reach_the_candidate(self):
         made = ts.make(content_type="explainer", seed_id="seed-gpu", source_topic_id="src-a")
         confirmed = sf.assess(made, campaigns=(campaign(),))
-        self.assertEqual((confirmed.flags, confirmed.relationship, confirmed.benefits), (("sponsor_disclosure",), "confirmed", ("goods",)))
+        self.assertEqual((confirmed.flags, confirmed.relationship, confirmed.benefits), (("sponsor_disclosure",), "confirmed", ("PRODUCT_PROVIDED",)))                   # 의도적 갱신(D-102): 새 이름으로 보관·보고
         proposed = sf.assess(made, campaigns=(campaign(status="proposed"),))
         self.assertEqual((proposed.flags, proposed.opportunity, proposed.relationship), ((), "possible", "none"))
         other = sf.assess(made, campaigns=(campaign(seed_id="other"),))
         self.assertEqual((other.flags, other.opportunity), ((), "none"), "이어지지 않은 협찬 정보는 닿지 않는다")
         self.assertEqual(sf.assess(made).flags, (), "협찬 정보를 안 주면 그 부분만 빠진다")
+
+    def test_a_proposed_campaign_that_does_not_reach_the_candidate_is_not_counted_as_a_possibility(self):
+        # 기준부터 있던 줄(독립 검증 V20 — `reaching` 대신 `listed` 로 바꿔도 시험이 못 잡던 빈틈): 후보에 닿지 않는 제안 중 협찬은 협업 가능성이 아니다.
+        self.assertEqual(sf.assess(ts.make(seed_id="seed-gpu"), campaigns=(campaign(status="proposed", seed_id="other"),)).opportunity, "none")
 
     def test_the_module_never_makes_a_disclosure_sentence(self):
         text = Path(sf.__file__).read_text(encoding="utf-8") + Path(nt.__file__).read_text(encoding="utf-8")
@@ -215,8 +220,9 @@ class SponsorTest(unittest.TestCase):                                           
 class CampaignTest(unittest.TestCase):                                                                  # S5
     def test_a_valid_campaign_keeps_its_values_and_turns_a_list_into_a_tuple(self):
         item = sf.Campaign(campaign_id="camp-1", benefits=["goods", "payment"], status="proposed", source_topic_id="src-a", channel="naver_a")
-        self.assertEqual((item.benefits, item.status, item.channel, item.seed_id), (("goods", "payment"), "proposed", "naver_a", None))
-        self.assertEqual(sf.BENEFIT_KINDS, ("goods", "service", "payment", "affiliate", "reward"))
+        # 의도적 갱신(전략 맞춤 1차, D-102): 옛 이름(`goods`·`payment`)으로 만들어도 새 이름으로 보관하고, 이득 종류는 `UNKNOWN`·`NONE` 을 뺀 양성 8개다(운영자 표 — 값은 test_topics_interest 가 못박는다).
+        self.assertEqual((item.benefits, item.status, item.channel, item.seed_id), (("PRODUCT_PROVIDED", "HONORARIUM"), "proposed", "naver_a", None))
+        self.assertEqual(sf.BENEFIT_KINDS, ("PRODUCT_PROVIDED", "SERVICE_PROVIDED", "VISIT_OR_MEAL_PROVIDED", "HONORARIUM", "DISCOUNT_OR_COUPON", "AFFILIATE_COMMISSION", "CONDITIONAL_REWARD", "OTHER"))
         self.assertEqual(sf.CAMPAIGN_STATUSES, ("confirmed", "proposed"))
         self.assertEqual(sf.MAX_CAMPAIGNS, 200)
 

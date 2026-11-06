@@ -1121,7 +1121,7 @@ class CampaignsInputTest(unittest.TestCase):
         for candidate in mine:
             self.assertEqual(candidate.safety_flags, ("sponsor_disclosure",))
             self.assertTrue(candidate.selection_reasons[1].startswith("경제적 이해관계 표시 필요 — "), candidate.selection_reasons[1])
-            self.assertIn("(걸린 말: 제품 제공, 금전 제공(원고료 등))", candidate.selection_reasons[1])
+            self.assertIn("(걸린 말: 제품 제공, 원고료)", candidate.selection_reasons[1])                       # 의도적 갱신(전략 맞춤 1차, D-102): 이득 종류 이름이 운영자 표시 이름('원고료')으로 바뀌었다
         self.assertTrue(all(c.safety_flags == () for c in others))
         self.assertEqual(run(A, pool, target=100).candidates[0].safety_flags, (), "협찬 정보를 안 주면 표시가 없다")
 

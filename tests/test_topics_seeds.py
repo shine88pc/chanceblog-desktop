@@ -6,6 +6,7 @@
   3) 180일 미선택 제안은 **제안만 돌려주고 씨앗을 바꾸지 않는다** — 정확히 180일(포함)부터이고 기준은 마지막 선택일(없으면 등록일), 사용 중 씨앗만 대상이다. 179일은 아직이다.
   4) `seeds.json` 모양은 엄격하다(schema 1·정확한 칸·모르는 칸·잘못된 타입·같은 번호·같은 소속의 같은 낱말 거절, 어느 번째 씨앗인지 쉬운 한국어로 안내) — 왕복하면 같은 씨앗들이다.
   5) 이 저장소에는 실제 씨앗 목록이 없다 — 시험 자료는 모두 '예시' 로 시작하는 지어낸 낱말이다.
+  6) 전략 맞춤 1차(D-103): **계절형(`seasonal`) 씨앗은 180일 '쉬게 할까요' 제안에서 제외**한다(전략 원문 §8.4) — `SeasonalIdleTest`. 계절 우선순위 필드·동작은 P3b-1 의 몫이다.
 네트워크·파일·실제 시계·난수 없이 돈다(날짜는 늘 인자).
 """
 import copy
@@ -352,6 +353,95 @@ class IdleProposalTest(unittest.TestCase):
             sd.idle_proposals([{"state": "active"}], ago(0))
         with self.assertRaises(TypeError):
             sd.idle_days({"registered_on": "2026-01-01"}, ago(0))
+
+
+class SeasonalIdleTest(unittest.TestCase):
+    """전략 맞춤 1차(D-103, 전략 원문 §8.4) — 계절형 씨앗은 180일 '쉬게 할까요' 제안에서 제외한다(비수기라는 이유로 쉬게 하지 않는다). 나머지 동작(기준일·정렬·메시지·`days`·검사·상태 필터)은 그대로다.
+    계절 우선순위 필드·동작(`prepare_from` 등, 범위 밖 하향·준비 시작일 복원)은 P3b-1 의 몫이라 여기서 다루지 않는다."""
+
+    def test_a_seasonal_seed_is_never_proposed_however_long_it_has_been_idle(self):
+        self.assertEqual(sd.SEED_SEASONAL, "seasonal")
+        self.assertIn(sd.SEED_SEASONAL, sd.SEED_TYPES)
+        for days in (180, 181, 365, 1000, 3000):
+            with self.subTest(days=days):
+                old = seed(seed_id="z1", seed_type="seasonal", registered_on=ago(days + 30), last_selected_on=ago(days))
+                self.assertEqual(sd.idle_proposals([old], ago(0)), ())
+        never_selected = seed(seed_id="z2", seed_type="seasonal", registered_on=ago(1000))
+        self.assertEqual(sd.idle_proposals([never_selected], ago(0)), ())
+        self.assertEqual(sd.idle_days(never_selected, ago(0)), 1000, "묵은 날수 계산 자체는 그대로다 — 제안에서만 뺀다")
+
+    def test_the_same_conditions_with_any_other_seed_type_are_still_proposed_with_the_same_sentence(self):
+        for kind in ("general", "priority", "realtime", "sponsorable"):
+            extra = {"sponsor_tag": "pc_parts"} if kind == "sponsorable" else {}
+            with self.subTest(kind=kind):
+                found = sd.idle_proposals([seed(seed_id="k1", keyword="예시 씨앗 둘", seed_type=kind, registered_on=ago(400), **extra)], ago(0))
+                self.assertEqual([(item.seed_id, item.idle_days, item.since, item.basis, item.never_selected) for item in found], [("k1", 400, ago(400), "registered", True)])
+                self.assertEqual(found[0].message(), "씨앗 ‘예시 씨앗 둘’ 은(는) 등록한 뒤 한 번도 선택하지 않았고 400일이 지났습니다 — 쉬게 할지 운영자가 정합니다(승인 전에는 바뀌지 않습니다)")
+
+    def test_a_seasonal_seed_among_others_changes_neither_their_order_nor_their_count(self):
+        pool = [seed(seed_id="b", registered_on=ago(300)), seed(seed_id="z", seed_type="seasonal", registered_on=ago(900)), seed(seed_id="a", registered_on=ago(300)),
+                seed(seed_id="y", seed_type="seasonal", registered_on=ago(250)), seed(seed_id="c", registered_on=ago(500)), seed(seed_id="d", seed_type="priority", registered_on=ago(190))]
+        without = [item for item in pool if item.seed_type != "seasonal"]
+        expected = sd.idle_proposals(without, ago(0))
+        self.assertEqual([item.seed_id for item in expected], ["c", "a", "b", "d"])
+        for order in itertools.permutations(pool):
+            self.assertEqual(sd.idle_proposals(order, ago(0)), expected)
+
+    def test_the_days_argument_the_checks_and_the_state_filter_are_unchanged(self):
+        old = {"registered_on": ago(400)}
+        pool = [seed(seed_id="z", seed_type="seasonal", **old), seed(seed_id="g", **old)]
+        self.assertEqual([item.seed_id for item in sd.idle_proposals(pool, ago(0), days=400)], ["g"])
+        self.assertEqual(sd.idle_proposals(pool, ago(0), days=401), ())
+        for bad in (0, -1, 3651, True, 180.0, None, "180"):
+            with self.subTest(days=bad):
+                with self.assertRaises(AppError):
+                    sd.idle_proposals([seed(seed_type="seasonal")], ago(0), days=bad)
+        for bad in ("어제", None, "2026-13-01", 20261105):
+            with self.subTest(today=bad):
+                with self.assertRaises(AppError):
+                    sd.idle_proposals([seed(seed_type="seasonal")], bad)
+        with self.assertRaises(TypeError):
+            sd.idle_proposals([seed(seed_type="seasonal"), {"state": "active"}], ago(0))
+        states = [seed(seed_id=name, state=state, **old) for name, state in (("a", "active"), ("p", "proposed"), ("i", "inactive"))]
+        self.assertEqual([item.seed_id for item in sd.idle_proposals(states, ago(0))], ["a"], "제안·쉬는 중은 여전히 대상이 아니다")
+        self.assertEqual(sd.idle_proposals([seed(seed_id=f"z{state}", seed_type="seasonal", state=state, **old) for state in sd.STATES], ago(0)), ())
+        self.assertEqual(sd.IDLE_DAYS, 180)
+
+    def test_the_seasonal_exclusion_holds_for_a_small_days_argument_too(self):
+        # 독립 검증 V30: 제외는 `days`(기본 180) 값과 무관하다 — `days=1`·100 처럼 작아도, 1,000일 묵은 계절형도 제안에 없다. 같은 조건의 일반 씨앗은 오른다.
+        old = {"registered_on": ago(1000)}
+        seasonal, general = seed(seed_id="z", seed_type="seasonal", **old), seed(seed_id="g", **old)
+        for days in (1, 100, 179, 180, 999, 1000):
+            with self.subTest(days=days):
+                self.assertEqual([item.seed_id for item in sd.idle_proposals([seasonal, general], ago(0), days=days)], ["g"])
+                self.assertEqual(sd.idle_proposals([seasonal], ago(0), days=days), ())
+        fresh = {"registered_on": ago(1)}
+        found = sd.idle_proposals([seed(seed_id="z2", seed_type="seasonal", **fresh), seed(seed_id="g2", **fresh)], ago(0), days=1)
+        self.assertEqual([(item.seed_id, item.idle_days) for item in found], [("g2", 1)], "하루 묵은 계절형도 days=1 에서 제안에 오르지 않는다")
+
+    def test_a_seasonal_seed_marked_as_priority_is_excluded_too_and_other_types_marked_as_priority_stay(self):
+        # 독립 검증 V31: 우선 표시(`priority=True`)는 계절형 제외를 풀지 못한다. 반대로 다른 유형의 우선 표시 씨앗은 제안에 그대로 남는다(우선 표시가 제안을 막지도 않는다).
+        marked = {"registered_on": ago(400), "priority": True}
+        pool = [seed(seed_id="zp", seed_type="seasonal", **marked), seed(seed_id="gp", seed_type="general", **marked), seed(seed_id="pp", seed_type="priority", **marked),
+                seed(seed_id="rp", seed_type="realtime", **marked), seed(seed_id="sp", seed_type="sponsorable", sponsor_tag="pc_parts", **marked), seed(seed_id="zn", seed_type="seasonal", registered_on=ago(400))]
+        self.assertEqual(sorted(item.seed_id for item in sd.idle_proposals(pool, ago(0))), ["gp", "pp", "rp", "sp"])
+        self.assertEqual(sd.idle_proposals([item for item in pool if item.seed_type == "seasonal"], ago(0)), ())
+
+    def test_a_seasonal_seed_is_left_alone_it_stays_active_and_is_still_used_for_candidates(self):
+        made = seed(seed_id="z", seed_type="seasonal", registered_on=ago(900))
+        before = made.to_dict()
+        self.assertEqual(sd.idle_proposals([made], ago(0)), ())
+        self.assertEqual(made.to_dict(), before)
+        self.assertEqual(made.state, "active")
+        self.assertEqual(sd.usable_seeds([made], "naver_a"), (made,), "제안에서만 뺀다 — 후보를 만드는 데 쓰는 씨앗은 그대로다")
+        self.assertEqual(sd.basis_of(made), (ago(900), "registered"))
+
+    def test_only_a_rest_the_user_chose_takes_a_seasonal_seed_out_of_candidate_generation(self):
+        made = seed(seed_id="z", seed_type="seasonal")
+        rested = sd.change_state(made, "inactive")
+        self.assertEqual(sd.usable_seeds([rested], "naver_a"), ())
+        back = sd.change_state(rested, "active", "2026-11-05")
+        self.assertEqual(sd.usable_seeds([back], "naver_a"), (back,))
 
 
 class UsableSeedsTest(unittest.TestCase):
