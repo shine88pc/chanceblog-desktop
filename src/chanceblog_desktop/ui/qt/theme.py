@@ -6,12 +6,14 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import QByteArray, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QIconEngine, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QGraphicsDropShadowEffect, QWidget
 
-from ..core import icons, tokens as K
+from ..core import gauges, icons, tokens as K
 
 WEIGHTS = {400: QFont.Normal, 500: QFont.Medium, 600: QFont.DemiBold, 700: QFont.Bold}
 _THEME = [K.DEFAULT_THEME]
@@ -130,10 +132,28 @@ def _tones(c):
     return "\n".join(f'QLabel[tone="{name}"] {{ color: {c[keys[2]]}; }}' for name, keys in K.TONES.items())
 
 
+def _semantic(c):
+    """의미별 배지 11종 — 배경·글자 쌍은 토큰(`badge_<종류>_bg/_text`)에서만 온다."""
+    return "\n".join(f'QLabel[semantic="{kind}"] {{ background: {c[f"badge_{kind}_bg"]}; color: {c[f"badge_{kind}_text"]}; }}' for kind in K.BADGE_KINDS)
+
+
+def _scores(c):
+    """점수 구간 이름(우선 추천·일반 후보·보류·제외)과 변화량(상승·하락·변화 없음)의 글자 색 — 색과 함께 늘 글자가 있다."""
+    bands = "\n".join(f'QLabel[scoreband="{band.key}"] {{ color: {c[band.text_key]}; font-weight: 600; }}' for band in gauges.BANDS)
+    deltas = "\n".join(f'QLabel[delta="{kind}"] {{ color: {c[key]}; font-weight: 600; }}' for kind, key in (("up", "success_text"), ("down", "danger_text"), ("flat", "text_secondary")))
+    return bands + "\n" + deltas
+
+
+def _card_states(c):
+    """카드 3상태(기본·가리킴·선택) — 기본은 `QFrame[card="true"]` 자체이고, 상태는 `cardstate` 속성으로 테두리 두께·색만 바꾼다(`K.CARD_STATES`). 그림자는 `shadow_effect` 가 입힌다."""
+    return "\n".join(f'QFrame[card="true"][cardstate="{state}"] {{ border: {width}px solid {c[color_key]}; }}' for state, (width, color_key, _shadow) in K.CARD_STATES.items() if state != "default")
+
+
 def build_qss(c):
     """토큰의 색 사전 `c` 로 앱 전체 스타일시트를 만든다. 색은 모두 `c` 에서만 온다(여기에 `#rrggbb` 를 쓰지 않는다 — 시험이 지킨다)."""
     r, S, ty = K.RADIUS, K.SIZE, K.TYPE
     px = lambda name: ty[name].size                                           # noqa: E731
+    sp = lambda name: K.SPACE[name]                                           # noqa: E731
     chip_r = S["chip_h"] // 2
     scrim = K.rgba(c["scrim"], K.SCRIM_ALPHA)
     return f"""
@@ -148,7 +168,8 @@ QFrame#topbar {{ background: {c['surface']}; border-bottom: 1px solid {c['border
 QFrame#sidebar {{ background: {c['bg_sidebar']}; border-right: 1px solid {c['border']}; }}
 QFrame#brandcard {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
-QFrame[card="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
+QFrame[card="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
+{_card_states(c)}
 QFrame[card="warm"] {{ background: {c['success_100']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="plain"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QFrame[card="quiet"] {{ background: {c['disabled_bg']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
@@ -157,16 +178,19 @@ QPushButton[nav="true"] {{ background: transparent; border: 2px solid transparen
 QPushButton[nav="true"]:hover {{ background: {c['surface_hover']}; }}
 QPushButton[nav="true"]:checked {{ background: {c['primary_100']}; color: {c['primary_text']}; }}
 QPushButton[nav="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
-QPushButton[kind="secondary"] {{ background: {c['surface']}; color: {c['text_primary']}; border: 1px solid {c['border_strong']}; border-radius: {r['button']}px; padding: 0 16px; }}
+QPushButton[kind="secondary"] {{ background: {c['surface']}; color: {c['secondary_text']}; border: 1px solid {c['secondary_border']}; border-radius: {r['button']}px; padding: 0 16px; }}
 QPushButton[kind="secondary"]:hover {{ background: {c['surface_hover']}; border-color: {c['primary']}; }}
 QPushButton[kind="secondary"]:pressed {{ background: {c['primary_100']}; }}
 QPushButton[kind="primary"] {{ background: {c['primary']}; color: {c['on_primary']}; border: 1px solid {c['primary']}; border-radius: {r['button']}px; padding: 0 20px; }}
-QPushButton[kind="primary"]:hover, QPushButton[kind="primary"]:pressed {{ background: {c['primary_600']}; border-color: {c['primary_600']}; }}
-QPushButton[kind="primary"]:focus, QPushButton[kind="danger"]:focus {{ border: 2px solid {c['inverse_bg']}; }}
+QPushButton[kind="primary"]:hover {{ background: {c['primary_700']}; border-color: {c['primary_700']}; }}
+QPushButton[kind="primary"]:pressed {{ background: {c['primary_pressed']}; border-color: {c['primary_pressed']}; }}
+QPushButton[kind="primary"]:focus, QPushButton[kind="danger"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['inverse_bg']}; }}
 QPushButton[kind="ghost"] {{ background: transparent; color: {c['primary_text']}; border: 1px solid transparent; border-radius: {r['button']}px; padding: 0 12px; }}
 QPushButton[kind="ghost"]:hover {{ background: {c['primary_100']}; }}
 QPushButton[kind="danger"] {{ background: {c['danger']}; color: {c['on_primary']}; border: 1px solid {c['danger']}; border-radius: {r['button']}px; padding: 0 20px; }}
 QPushButton[kind="danger"]:hover, QPushButton[kind="danger"]:pressed {{ background: {c['danger_text']}; border-color: {c['danger_text']}; }}
+QPushButton[kind="danger_ghost"] {{ background: transparent; color: {c['danger_text']}; border: 1px solid transparent; border-radius: {r['button']}px; padding: 0 12px; }}
+QPushButton[kind="danger_ghost"]:hover {{ background: {c['danger_100']}; }}
 QPushButton[kind="icon"] {{ background: transparent; border: 1px solid transparent; border-radius: {r['button']}px; padding: 0; }}
 QPushButton[kind="icon"]:hover {{ background: {c['surface_hover']}; }}
 QPushButton[size="sm"] {{ margin: 1px 0; padding: 0 14px; }}
@@ -174,6 +198,7 @@ QPushButton[copied="true"] {{ background: {c['success_100']}; border: 1px solid 
 QPushButton:focus {{ border: 2px solid {c['border_focus']}; }}
 QPushButton:disabled {{ background: {c['disabled_bg']}; border-color: {c['disabled_bg']}; color: {c['text_disabled']}; }}
 QPushButton[kind="icon"]:disabled {{ background: transparent; border-color: transparent; }}
+QPushButton[kind="primary"]:disabled, QPushButton[kind="danger"]:disabled {{ background: {c['disabled_fill']}; border-color: {c['disabled_fill']}; color: {c['on_primary']}; }}
 QPushButton[chip="true"] {{ background: {c['surface_2']}; color: {c['text_secondary']}; border: 1px solid {c['border']}; border-radius: {chip_r}px; padding: 0 14px; margin: 1px 0; font-weight: 600; }}
 QPushButton[chip="true"]:hover {{ background: {c['surface_hover']}; border-color: {c['border_strong']}; }}
 QPushButton[chip="true"]:checked {{ background: {c['primary']}; border-color: {c['primary']}; color: {c['on_primary']}; }}
@@ -182,7 +207,7 @@ QPushButton[chip="true"]:checked:focus {{ border: 2px solid {c['inverse_bg']}; }
 QFrame[quick] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QFrame[quick]:hover {{ background: {c['surface_hover']}; border-color: {c['border_strong']}; }}
 QFrame[quick="primary"] {{ background: {c['primary']}; border-color: {c['primary']}; }}
-QFrame[quick="primary"]:hover {{ background: {c['primary_600']}; }}
+QFrame[quick="primary"]:hover {{ background: {c['primary_700']}; }}
 QFrame[quick]:focus {{ border: 2px solid {c['border_focus']}; }}
 QFrame[quick="primary"]:focus {{ border: 2px solid {c['inverse_bg']}; }}
 QFrame[quick="primary"] QLabel {{ color: {c['on_primary']}; }}
@@ -197,7 +222,7 @@ QLabel[badge="b"] {{ background: {c['blog_b_bg']}; color: {c['blog_b_text']}; }}
 QLabel[badge="ok"] {{ background: {c['success_100']}; color: {c['success_text']}; }}
 QLabel[badge="warning"] {{ background: {c['warning_100']}; color: {c['warning_text']}; }}
 QLabel[badge="danger"] {{ background: {c['danger_100']}; color: {c['danger_text']}; }}
-QLabel[badge="info"] {{ background: {c['primary_100']}; color: {c['primary_text']}; }}
+QLabel[badge="info"] {{ background: {c['info_100']}; color: {c['info_text']}; }}
 QLabel[badge="muted"] {{ background: {c['surface_2']}; color: {c['text_secondary']}; border: 1px solid {c['border']}; }}
 QPushButton[badge="warning"] {{ background: {c['warning_100']}; color: {c['warning_text']}; border: 1px solid transparent; border-radius: {r['badge']}px; padding: 0 10px; font-size: {px('caption')}px; font-weight: 700; }}
 QPushButton[badge="warning"]:hover {{ border-color: {c['warning']}; }}
@@ -225,6 +250,22 @@ QLineEdit:focus {{ border: 2px solid {c['border_focus']}; }}
 QLineEdit:disabled {{ background: {c['disabled_bg']}; color: {c['text_disabled']}; }}
 QLabel#toast {{ background: {c['inverse_bg']}; color: {c['inverse_text']}; padding: 12px 18px; border-radius: {r['button']}px; font-weight: 600; font-size: {px('body')}px; }}
 QPlainTextEdit[mono="true"], QLabel[mono="true"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; padding: 10px 12px; color: {c['text_primary']}; }}
+QLabel[semantic] {{ border-radius: {r['badge']}px; padding: 0 {sp('3')}px; font-size: {px('caption')}px; font-weight: 600; }}
+{_semantic(c)}
+{_scores(c)}
+QLabel[usage="warn"] {{ color: {c['warning_text']}; font-weight: 600; }}
+QLabel[usage="danger"] {{ color: {c['danger_text']}; font-weight: 600; }}
+QFrame#tabbar {{ background: transparent; border-bottom: 1px solid {c['divider']}; }}
+QPushButton[tab="true"] {{ background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 0 {sp('4')}px; color: {c['text_secondary']}; font-size: {px('body')}px; font-weight: 500; }}
+QPushButton[tab="true"]:hover {{ background: {c['surface_hover']}; color: {c['text_primary']}; }}
+QPushButton[tab="true"]:checked {{ color: {c['primary_700']}; border-bottom: 2px solid {c['primary_700']}; font-weight: 600; }}
+QPushButton[tab="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; border-radius: 6px; }}
+QPushButton[tab="true"]:checked:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; border-bottom-color: {c['primary_700']}; border-radius: 6px; }}
+QFrame#actionbar {{ background: {c['surface']}; border-top: 1px solid {c['divider']}; }}
+QMenu {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['tooltip']}px; padding: {sp('1')}px; }}
+QMenu::item {{ padding: {sp('2')}px {sp('4')}px; border-radius: 6px; color: {c['text_primary']}; font-size: {px('body')}px; }}
+QMenu::item:selected {{ background: {c['primary_100']}; color: {c['primary_700']}; }}
+QMenu::separator {{ height: 1px; background: {c['divider']}; margin: {sp('1')}px {sp('2')}px; }}
 QScrollArea {{ border: 0; background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 12px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: {c['border_strong']}; border-radius: 4px; min-height: 36px; }}
@@ -243,3 +284,32 @@ def apply(app, name=K.DEFAULT_THEME):
 
 def text_color(role):
     return QColor(K.role_color(colors(), role))
+
+
+# ---- 카드 그림자·3상태(한 곳) ---------------------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class CardLook:
+    border_px: int
+    border_color: str
+    shadow: str
+
+
+def card_look(state):
+    """카드 상태(`default`·`hover`·`selected`) → 테두리 두께·색·그림자 이름. 값은 모두 토큰(`K.CARD_STATES`·팔레트)에서 온다 — 선택은 2px 파란 테두리."""
+    if state not in K.CARD_STATES:
+        raise ValueError(f"카드 상태가 아니에요: {state!r}")
+    width, color_key, shadow = K.CARD_STATES[state]
+    return CardLook(width, colors()[color_key], shadow)
+
+
+def shadow_effect(kind, parent=None):
+    """카드 그림자 3종(`card`·`hover`·`selected`) 중 하나의 `QGraphicsDropShadowEffect` — Qt 스타일시트로는 그림자를 못 그려서 **카드 틀에만** 이 효과를 입힌다(글자가 든 위젯 전체에 입히지 않는다).
+    그림자는 위젯 밖으로 번지므로 효과를 입힌 카드의 부모에 번짐만큼(`blur` + 오프셋) 여백이 있어야 잘리지 않는다."""
+    style = K.SHADOW[kind]
+    effect = QGraphicsDropShadowEffect(parent)
+    effect.setOffset(style.dx, style.dy)
+    effect.setBlurRadius(style.blur)
+    color = QColor(colors()[style.color_key])
+    color.setAlphaF(style.alpha)
+    effect.setColor(color)
+    return effect

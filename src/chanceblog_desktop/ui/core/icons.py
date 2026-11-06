@@ -37,6 +37,7 @@ ICONS = {
     "external": '<path d="M13 5h6v6"/><path d="m19 5-8 8"/><path d="M17 14v5H5V7h5"/>',
     "refresh": '<path d="M19.500 12a7.500 7.500 0 1 1-2.500-5.600"/><path d="M18 3.500v4h-4"/>',
     "more": '<circle cx="6" cy="12" r="1.200"/><circle cx="12" cy="12" r="1.200"/><circle cx="18" cy="12" r="1.200"/>',
+    "more_vertical": '<circle cx="12" cy="6" r="1.200"/><circle cx="12" cy="12" r="1.200"/><circle cx="12" cy="18" r="1.200"/>',
     "clock": '<circle cx="12" cy="12" r="8.500"/><path d="M12 7.500V12l3 2"/>',
     "user": '<circle cx="12" cy="8" r="3.500"/><path d="M5 20c.5-4 3.500-5.500 7-5.500s6.500 1.500 7 5.500"/>',
     # 상태 화면
@@ -83,5 +84,5 @@ MEANING = {
     "copy": ("copy", "blue"), "external": ("external", "slate"), "hold": ("pause_circle", "orange"), "error": ("alert", "red"), "info": ("info_circle", "blue"),
     "image": ("image", "blue"), "key": ("key", "slate"), "delete": ("trash", "red"), "upload": ("upload", "slate"), "secure": ("lock", "green"),
     "empty": ("inbox", "blue"), "offline": ("cloud_off", "orange"), "partial": ("alert", "orange"), "refresh": ("refresh", "blue"), "close": ("x", "slate"), "detail": ("chevron_right", "slate"),
-    "quick_new": ("plus", "blue"), "quick_saved": ("folder", "slate"), "quick_history": ("history", "slate"), "quick_blogs": ("settings", "slate"), "tip": ("bulb", "green"),
+    "more_menu": ("more_vertical", "slate"), "quick_new": ("plus", "blue"), "quick_saved": ("folder", "slate"), "quick_history": ("history", "slate"), "quick_blogs": ("settings", "slate"), "tip": ("bulb", "green"),
 }

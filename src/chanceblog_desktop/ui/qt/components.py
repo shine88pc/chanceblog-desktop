@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QLayout, Q
 from ..core import tokens as K
 from ..core.attribution import UTM_SOURCE, check_url, with_utm
 from ..core.notify import ToastPolicy
+from ..core.part_rules import BADGE_MAX_CHARS, clip_text
 from ..core.text import T
 from . import theme
 
@@ -126,7 +127,8 @@ def with_tooltip(widget, text):
 
 # ---- 단추 ---------------------------------------------------------------------------------------------------------------------
 def Button(kind, text, icon_name=None, size=None, accessible=None, focus_key=None):
-    """PrimaryButton·SecondaryButton·GhostButton·DangerButton — kind: primary | secondary | ghost | danger. size: None(표준 40) | "lg"(큰 주 단추 44) | "sm"(작은 단추 — 누르는 칸 36)."""
+    """PrimaryButton·SecondaryButton·GhostButton·DangerButton — kind: primary | secondary | ghost | danger | danger_ghost(위험한 3차 행동 — 배경 없는 빨간 글자, 일반 카드의 `제외` 같은 곳).
+    size: None(표준 40) | "lg"(큰 주 단추 44) | "sm"(작은 단추 — 누르는 칸 36)."""
     button = QPushButton(text)
     button.setAutoDefault(True)                                           # Enter 로도 눌린다(대화상자 밖의 단추는 기본이 Space 뿐이다)
     button.setProperty("kind", kind)
@@ -136,7 +138,7 @@ def Button(kind, text, icon_name=None, size=None, accessible=None, focus_key=Non
     button.setCursor(Qt.PointingHandCursor)
     c = theme.colors()
     if icon_name:
-        color = {"primary": c["on_primary"], "secondary": c["text_primary"], "ghost": c["primary_text"], "danger": c["on_primary"]}[kind]
+        color = {"primary": c["on_primary"], "secondary": c["secondary_text"], "ghost": c["primary_text"], "danger": c["on_primary"], "danger_ghost": c["danger_text"]}[kind]
         side = K.ICON["button_sm"] if size == "sm" else K.ICON["button"]
         button.setIcon(theme.icon(icon_name, color, disabled_color=c["text_disabled"]))
         button.setIconSize(QSize(side, side))
@@ -221,6 +223,27 @@ def Badge(kind, text):
     return badge
 
 
+class SemanticBadge(QLabel):
+    """의미별 배지(공공데이터·추천·해외비교·문화행사·가격변화·여행·기술·정책·생활·주의·차단 — `K.BADGE_KINDS`) — **색과 글자를 함께**(색만으로 뜻을 알리지 않는다), 한 줄, 높이 24.
+    글이 길면 `…` 로 줄이고(`BADGE_MAX_CHARS`) 전체는 툴팁에 둔다. 모르는 종류는 ValueError(코드 실수). 글을 안 주면 그 종류의 한국어 이름이 글이다."""
+
+    def __init__(self, kind, text=None):
+        if kind not in K.BADGE_KINDS:
+            raise ValueError(f"배지 종류가 아니에요: {kind!r}")
+        name = K.badge_label(kind)
+        full = " ".join(str(text if text else name).split())
+        shown = clip_text(full, BADGE_MAX_CHARS)
+        super().__init__(shown)
+        self.kind, self.full_text = kind, full
+        self.setProperty("semantic", kind)
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumHeight(K.SIZE["badge_h"])
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.setAccessibleName(name if full == name else f"{name}: {full}")
+        if shown != full:
+            self.setToolTip(full)
+
+
 def BlogBadge(blog, text):
     """블로그 A·B 배지 — 색만이 아니라 글자('블로그 A')도 함께 보인다."""
     return Badge(blog.lower(), text)
@@ -266,6 +289,25 @@ def Card(padding=(24, 20, 24, 20), kind="true"):
     layout.setContentsMargins(*padding)
     layout.setSpacing(12)
     return frame, layout
+
+
+def set_card_state(frame, state, layout=None):
+    """카드 틀에 상태(`default` 기본·`hover` 가리킴·`selected` 선택 — 선택은 2px 파란 테두리)와 그림자를 입힌다. 값은 `theme.card_look`(토큰)에서만 온다 — 상태를 정하는 한 곳.
+    테두리가 두꺼워진 만큼 안쪽 여백을 줄여(`layout` 을 주면) 안의 글이 밀리지 않게 한다. 그림자는 틀 하나에만 입힌다(번짐이 잘리지 않게 부모에 여백이 있어야 한다)."""
+    look = theme.card_look(state)
+    frame.setProperty("card", "true")
+    frame.setProperty("cardstate", state)
+    if layout is not None:
+        base = frame.property("_base_margins")
+        if base is None:
+            margins = layout.contentsMargins()
+            base = (margins.left(), margins.top(), margins.right(), margins.bottom())
+            frame.setProperty("_base_margins", base)
+        extra = look.border_px - theme.card_look("default").border_px
+        layout.setContentsMargins(*(max(0, value - extra) for value in base))
+    frame.setGraphicsEffect(theme.shadow_effect(look.shadow, frame))
+    repolish(frame)
+    return look
 
 
 class FlowLayout(QLayout):
@@ -490,7 +532,7 @@ class TopicRow(Pressable):
         grid.addWidget(ImagePlaceholder(vm["thumb"]), 0, Qt.AlignVCenter)
         text = QVBoxLayout()
         text.setSpacing(2)
-        text.addWidget(label(vm["title"], "body_lg", wrap=True))
+        text.addWidget(label(vm["title"], "h3", wrap=True))                  # 행 제목 = 카드 제목 역할(C-Type h3 17/600) — 본문 큰 글씨(15/400)로 두면 굵기 위계가 사라진다
         text.addWidget(ElidedLabel(vm["desc"], "small"))
         text.addSpacing(2)
         text.addWidget(chip_row([KeywordChip(k) for k in vm["keywords"]]))

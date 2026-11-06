@@ -1,10 +1,12 @@
 """화면(홈·상태 화면·서랍·대화상자·툴팁·토스트와 설정 화면의 접이식·여섯 상태·실제 어댑터 모습)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
 
 실행(저장소 맨 위 폴더에서, PySide6 가 있는 파이썬으로):
-    python scripts/ui_capture.py <저장 폴더> --env 1366x768@100 [--env 1920x1080@125 …] [--check]
+    python scripts/ui_capture.py <저장 폴더> --env 1366x768@100 [--env 1920x1080@125 …] [--check] [--gallery]
 검증 환경 `가로x세로@배율%`: 필수 1366x768@100 · 1920x1080@100 · 1920x1080@125, 조건부 1920x1080@150. **이 PC 에서는 윈도 배율을 바꾸지 않으므로** 배율은
 Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 — 프로세스를 시작할 때 정해야 하므로 환경마다 자식 프로세스로 돌리고(앱 코드에는 배율 값이 없다), 창의 논리 크기는 화면 크기를 배율로 나눈 값이다.
 실제 윈도 125·150% 렌더·한글 입력기·화면 읽기·개인 PC 확인은 운영자 PC 검증으로 남는다. `--check` 는 사진을 저장하지 않고 점검 결과(JSON)만 낸다.
+`--gallery`(개발용, UI-C0) 는 앱 화면 대신 **공통 부품 모음**(`scripts/ui_gallery.py` — 배지·점수 링·구성 막대·사용량 막대·탭·행동 줄·카드 그림자)을 한 장에 담아 찍고 같은 환경에서 글자 잘림·가로 넘침을 점검한다.
+사용자 화면·메뉴에는 없는 도구이고 `gui` 명령의 동작·이 도구의 기본 인자는 바뀌지 않는다.
 """
 from __future__ import annotations
 
@@ -25,8 +27,38 @@ def parse_env(text):
     return int(width), int(height), int(percent or 100)
 
 
+def gallery_child(args):
+    """한 환경에서 부품 모음 한 장의 사진·점검(`--gallery`) — 배율 환경 변수가 켜진 채 시작된 자식 프로세스."""
+    sys.path.insert(0, str(HERE))
+    import ui_gallery
+    import ui_offscreen
+    ui_offscreen.prepare_environment()
+    from chanceblog_desktop.ui.qt import app as qapp
+    general, fixed = ui_offscreen.install_system_fonts()
+    app = qapp.make_app()
+    width, height, percent = parse_env(args.env)
+    logical = (round(width * 100 / percent), round(height * 100 / percent))
+    out = Path(args.out)
+    if not args.check:
+        out.mkdir(parents=True, exist_ok=True)
+    page, parts = ui_gallery.build_gallery(logical[0])
+    ui_gallery.fit(page, app, ui_offscreen)
+    pixmap = page.grab()
+    if not args.check:
+        pixmap.save(str(out / f"{args.env.replace('@', '_')}_gallery.png"))
+    over = ui_gallery.overflow(page)
+    report = {"env": args.env, "logical": logical, "scale_factor_env": os.environ.get("QT_SCALE_FACTOR", "1"), "fonts": [general, fixed],
+              "shots": {"gallery": [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]},
+              "checks": {"gallery": {"clipped": ui_offscreen.find_clipping(page), "horizontal_scroll": bool(over), "overflow": over,
+                                     "counts": {key: (len(value) if isinstance(value, list) else int(value is not None)) for key, value in parts.items()}}}}
+    print(json.dumps(report, ensure_ascii=False))
+    return 0
+
+
 def child(args):
     """한 환경(배율 하나)에서 사진·점검 — 이 프로세스는 배율 환경 변수가 켜진 채 시작되었다."""
+    if getattr(args, "gallery", False):
+        return gallery_child(args)
     sys.path.insert(0, str(HERE))
     import ui_offscreen
     ui_offscreen.prepare_environment()
@@ -222,6 +254,7 @@ def main(argv=None):
     parser.add_argument("out", nargs="?", default="ui_shots")
     parser.add_argument("--env", action="append", default=None, help="가로x세로@배율% (여러 번 줄 수 있다)")
     parser.add_argument("--check", action="store_true", help="사진을 저장하지 않고 점검만")
+    parser.add_argument("--gallery", action="store_true", help="앱 화면 대신 공통 부품 모음(개발용)을 찍고 점검한다")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.child:
@@ -234,7 +267,7 @@ def main(argv=None):
         environment.pop("QT_SCALE_FACTOR", None)
         if percent != 100:
             environment["QT_SCALE_FACTOR"] = str(percent / 100)
-        command = [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), args.out, "--env", env, "--child"] + (["--check"] if args.check else [])
+        command = [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), args.out, "--env", env, "--child"] + (["--check"] if args.check else []) + (["--gallery"] if args.gallery else [])
         done = subprocess.run(command, env=environment, capture_output=True, text=True, encoding="utf-8", creationflags=0x08000000 if os.name == "nt" else 0)
         if done.returncode != 0:
             print(f"[{env}] 실패(종료 코드 {done.returncode}) — 오류 마지막 줄: {(done.stderr.strip().splitlines() or [''])[-1][:200]}", file=sys.stderr)

@@ -103,6 +103,15 @@ T = {
     "conn_partial_usage": "사용량 기록을 읽지 못한 곳은 '확인할 수 없어요' 로 보여 드려요.",
     "conn_offline": "오프라인 상태예요. 이 PC 에 저장해 둔 정보만 보여 드려요.",
     "advanced_title": "고급",
+    # C-Type 공통 부품(UI-C0) — 아직 어떤 화면에도 연결하지 않은 부품의 글. 점수 구간 이름은 엔진의 구간(80/65/50)과 같은 말이다.
+    "band_high": "우선 추천", "band_good": "일반 후보", "band_mid": "보류", "band_low": "제외",
+    "cd_score_missing": "데이터 부족", "cd_score_a11y": "점수 {score}", "cd_score_none_a11y": "점수 데이터 부족",
+    "cd_delta_up": "{n} 상승", "cd_delta_down": "{n} 하락", "cd_delta_flat": "변화 없음", "cd_delta_flat_visible": "― 변화 없음",
+    "cd_bar_total": "최종 점수", "cd_bar_a11y": "점수 구성", "cd_bar_empty": "구성 정보 없음",
+    "cd_usage_unknown": "확인할 수 없어요", "cd_usage_warn": "주의", "cd_usage_danger": "위험", "cd_usage_over": "한도 넘음",
+    "cd_usage_a11y": "{text}, {percent}%", "cd_usage_a11y_state": "{text}, {percent}%, {state}",
+    "cd_more_a11y": "더보기 메뉴 열기", "cd_actions_a11y": "행동 줄", "cd_tab_a11y": "{name} 탭, {total}개 중 {index}번째", "cd_tabs_a11y": "탭",
+    "cd_gallery_title": "부품 모음", "cd_gallery_sub": "새 화면에서 쓸 공통 부품을 한곳에 늘어놓은 개발용 화면이에요. 모든 이름·숫자는 예시예요.",
     # 진단 정보 영역은 고정폭이라 영문·숫자만 둔다(기본 화면에는 나가지 않는다)
     "diag_purposes": "purposes", "diag_entries": "entries", "diag_keystore": "keystore", "diag_usage": "usage", "diag_ok": "ok", "diag_unavailable": "unavailable",
 }
