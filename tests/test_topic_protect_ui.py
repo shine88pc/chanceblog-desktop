@@ -97,6 +97,34 @@ def function_named(tree, name):
     return found[0]
 
 
+def builder_table(tree, name="SCREEN_BUILDERS"):
+    """`screens.py` 의 '메뉴 → 화면 만드는 함수' 표 — 모듈 맨 위의 `SCREEN_BUILDERS = {"메뉴 열쇠": 함수 이름, …}` 를 `ast` 로 읽어 {열쇠: 함수 이름}. 표가 없거나 줄 모양이 다르면 그 자리에서 실패한다."""
+    found = [node for node in tree.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)]
+    assert len(found) == 1 and isinstance(found[0].value, ast.Dict), f"`{name}` 표가 모듈 맨 위에 하나 있어야 한다 — 화면 틀을 고쳤다면 이 시험을 의식적으로 고친다"
+    table = {}
+    for key, value in zip(found[0].value.keys, found[0].value.values, strict=True):
+        assert isinstance(key, ast.Constant) and isinstance(key.value, str) and isinstance(value, ast.Name), "표의 줄은 '메뉴 열쇠': 함수 이름 이어야 한다"
+        assert key.value not in table, f"메뉴 `{key.value}` 가 두 번 나온다"
+        table[key.value] = value.id
+    return table
+
+
+def calls_in(function):
+    """함수 안에서 부르는 것들의 이름(`S.home_screen(…)` 이면 `home_screen`)."""
+    return [called_name(node) for node in ast.walk(function) if isinstance(node, ast.Call)]
+
+
+def viewmodel_of(function, screen):
+    """화면 만드는 함수가 `screen(shell, shell.state.<뷰모델>())` 꼴로 화면 함수에 넘기는 뷰모델 만드는 이름(`home_view` 등). 꼴이 다르면 그 자리에서 실패한다."""
+    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call) and called_name(node) == screen]
+    assert len(calls) == 1 and len(calls[0].args) == 2, f"`{screen}` 은 `{screen}(shell, 뷰모델)` 꼴로 한 번만 불려야 한다 — 화면 틀을 고쳤다면 이 시험을 의식적으로 고친다"
+    view = calls[0].args[1]
+    assert isinstance(view, ast.Call) and isinstance(view.func, ast.Attribute), "뷰모델은 `shell.state.<이름>()` 으로 만들어 넘긴다"
+    owner = view.func.value
+    assert isinstance(owner, ast.Attribute) and owner.attr == "state" and isinstance(owner.value, ast.Name) and owner.value.id == "shell", "뷰모델은 이 창의 상태(`shell.state`)에서 온다"
+    return view.func.attr
+
+
 def is_section_all(node):
     """`vm["section"]["all"]` — 홈 '전체 보기' 단추의 글."""
     return (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == "all" and isinstance(node.value, ast.Subscript)
@@ -381,13 +409,17 @@ class TopicsPlaceholderTest(unittest.TestCase):
         state = state_with(topic("하나"))
         self.assertEqual((state.quick("new"), state.page), (text.T["soon_toast"].format(name=text.T["q_new"]), "home"))
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_every_screen_but_home_shows_the_same_placeholder_text_with_its_own_name(self):
-        for key, label, _icon in app_state.NAV[1:]:
+    # 의식적으로 다시 씀(P4a, D-90): 설정은 새 화면이 되어 자리표시에서 빠졌다 — 나머지 네 화면의 문구·이름·동작은 그대로다(설정 화면은 `test_ui_settings.py` 가 지킨다).
+    PLACEHOLDERS = ("topics", "draft", "history", "blogs")
+
+    def test_every_screen_but_home_and_settings_shows_the_same_placeholder_text_with_its_own_name(self):
+        labels = {key: label for key, label, _icon in app_state.NAV}
+        self.assertEqual([key for key, _label, _icon in app_state.NAV[1:]], list(self.PLACEHOLDERS) + ["settings"])           # 메뉴 순서 — 홈 다음 넷은 자리표시, 마지막이 설정
+        for key in self.PLACEHOLDERS:
             state = state_with(topic("하나"))
             self.assertTrue(state.nav(key))
             with self.subTest(key=key):
-                self.assertEqual(state.page_view(), {"key": key, "name": text.T[label], "title": "이 화면은 아직 만들고 있어요.",
+                self.assertEqual(state.page_view(), {"key": key, "name": text.T[labels[key]], "title": "이 화면은 아직 만들고 있어요.",
                                                     "desc": "다음 단계에서 이어서 만들어요. 지금은 홈에서 주제 추천을 볼 수 있어요.", "button": "홈으로"})
         state = state_with(topic("하나"))
         self.assertTrue(state.nav("topics"))
@@ -404,15 +436,30 @@ class TopicsPlaceholderTest(unittest.TestCase):
         self.assertTrue(state.open_drawer("하나"))                                                            # 뷰모델은 어느 화면에서든 연다 — '홈에서만' 은 아래의 Qt 틀이 정한다
         self.assertIsNotNone(state.drawer_view())
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_the_qt_shell_source_picks_home_or_the_placeholder_and_shows_the_drawer_on_home_only(self):
-        # Qt 를 불러오지 않고 소스를 `ast` 로 읽는다(순수 뷰모델에는 '어느 화면을 그릴지' 가 없다) — 글자 모양이 아니라 규칙을 본다: 조건을 변수에 담거나 줄을 바꾸거나 주석을 달아도
-        # 같은 규칙이면 통과하고, 서랍이 홈 밖에서도 보이거나 홈 조건이 사라지면 옛 줄을 주석으로 남겨도 깨진다. 다음 묶음(P4)이 화면 표로 바꿀 때 이 시험을 의식적으로 고친다.
+    # 의식적으로 다시 씀(P4a, D-90): 옛 시험은 `render` 가 '홈이면 홈, 아니면 자리표시' 로 가르는지를 읽었다. 이제 `render` 는 '메뉴 → 화면 만드는 함수' 표 한 곳만 거치고 표가 홈·설정·자리표시 넷을 정한다
+    # (홈 화면은 한 글자도 안 바뀌었다 — 아래 `HomeOutputUnchangedTest`). 서랍은 여전히 홈에서만 열고 홈의 '전체 보기' 는 여전히 '주제 후보' 로 간다.
+    def test_the_qt_shell_draws_every_menu_through_one_table_and_shows_the_drawer_on_home_only(self):
+        # Qt 를 불러오지 않고 소스를 `ast` 로 읽는다(순수 뷰모델에는 '어느 화면을 그릴지' 가 없다) — 글자 모양이 아니라 규칙을 본다.
         shell = ast.parse((QT_DIR / "shell.py").read_text(encoding="utf-8"))
         screens = ast.parse((QT_DIR / "screens.py").read_text(encoding="utf-8"))
+        table = builder_table(screens)
+        self.assertEqual(list(table), [key for key, _label, _icon in app_state.NAV], "표의 줄은 메뉴 여섯 개와 같은 열쇠·같은 순서다 — 빠진 메뉴가 없고 표에만 있는 화면도 없다")
+        self.assertEqual(table, {"home": "_home_builder", "topics": "_placeholder_builder", "draft": "_placeholder_builder", "history": "_placeholder_builder", "blogs": "_placeholder_builder",
+                                 "settings": "_settings_builder"})
+        for builder, screen in (("_home_builder", "home_screen"), ("_placeholder_builder", "placeholder_screen"), ("_settings_builder", "settings_screen")):
+            self.assertEqual([name for name in calls_in(function_named(screens, builder)) if name.endswith("_screen")], [screen], f"{builder} 는 자기 화면 함수 하나만 부른다")
+        # 점검 M3 — CI 에는 Qt 가 없어 이 시험이 유일한 방어선이다: 빌더마다 자기 뷰모델을 연결하고(설정 화면에 홈 뷰모델을 넘기면 안 된다) 표는 현재 화면 열쇠(`state.page`)로 찾는다.
+        self.assertEqual({builder: viewmodel_of(function_named(screens, builder), screen) for builder, screen in (("_home_builder", "home_screen"), ("_placeholder_builder", "placeholder_screen"),
+                                                                                                                  ("_settings_builder", "settings_screen"))},
+                         {"_home_builder": "home_view", "_placeholder_builder": "page_view", "_settings_builder": "settings_view"}, "빌더가 다른 화면의 뷰모델을 넘긴다")
         render, overlays = function_named(shell, "render"), function_named(shell, "_sync_overlays")
-        self.assertEqual(home_branches(render, "home_screen"), [frozenset({"참"})], "홈 화면은 홈일 때만 그린다")
-        self.assertEqual(home_branches(render, "placeholder_screen"), [frozenset({"거짓"})], "자리표시 화면은 홈이 아닐 때만 그린다")
+        self.assertEqual([name for name in calls_in(render) if name.endswith("_screen")], [], "render 는 화면 함수를 직접 부르지 않고 표만 거친다(표를 건너뛰는 길이 없다)")
+        lookups = [node for node in ast.walk(render) if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "SCREEN_BUILDERS"]
+        self.assertEqual(len(lookups), 1, "render 는 표를 한 번 찾는다")
+        key = lookups[0].slice
+        self.assertTrue(isinstance(key, ast.Attribute) and key.attr == "page" and isinstance(key.value, ast.Name) and key.value.id == "state", "표는 현재 화면 열쇠(`state.page`)로 찾는다 — 늘 홈만 그리면 안 된다")
+        self.assertEqual([node.args[0].id for node in ast.walk(render) if isinstance(node, ast.Call) and isinstance(node.func, ast.Subscript) and node.func is lookups[0] and node.args],
+                         ["self"], "찾은 화면 만드는 함수에는 이 창(`self`)을 넘긴다")
         self.assertEqual(home_branches(overlays, "drawer_view"), [frozenset({"참"})], "서랍은 홈에서만 연다")
         self.assertEqual(all_link_targets(screens), ["topics"], "홈의 '전체 보기' 는 '주제 후보' 로 간다")
 
@@ -489,6 +536,49 @@ class LegacyDemandLabelTest(unittest.TestCase):
         shown = {field["label"]: field["value"] for field in fields}
         self.assertEqual((shown["월간 검색량"], shown["관련 블로그 검색 결과 수"]), ("8,600회", "4,120건"))
         self.assertNotIn("상대값", " ".join(shown))                                                                          # 서랍 항목 이름 어디에도 상대값 이름은 없다(기존 추세 항목 `최근 트렌드` 이름 변경은 상관없다)
+
+
+class HomeOutputUnchangedTest(unittest.TestCase):
+    """홈 화면과 자리표시 네 화면의 **출력이 P4a(설정 화면) 앞뒤로 한 글자도 안 바뀌었다**는 지문 — 기준(`origin/main` `85996f6`)의 코드로 뽑은 값을 못박는다(뷰모델 전체를 JSON 으로 만들어 SHA-256 앞 16자).
+    홈을 일부러 바꾸는 묶음(P4b 의 채널 배지·P4c 의 주제 후보 …)은 어느 줄이 왜 바뀌는지 적고 이 값을 의식적으로 고친다. 값이 다르면 아래 `diff` 로 어느 시나리오인지 먼저 본다."""
+    BASELINE = {"home_normal": "9e783a9d9189dcf0", "home_empty": "bbfae4b68aa31e24", "home_partial": "c9c5addbf22c332a", "home_offline": "93cb52a1ae8cb079", "home_error": "9bf971e15a50ff71",
+                "home_filter_b": "fb58c88e578ce335", "drawer_s1": "7e6ccf32dcb04a58", "page_topics": "6eada1a4b394367a", "page_draft": "eb2d60d21a73412d", "page_history": "eee507ea60a07dc2",
+                "page_blogs": "926d84bbc0cbdcea"}
+    WHEN = datetime.datetime(2026, 11, 3, 10, 0, 0)
+
+    @staticmethod
+    def digest(value):
+        import hashlib
+        import json
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def loaded(scenario):
+        provider = services.FakeHomeProvider(scenario)
+        state = app_state.AppState(provider, today=TODAY)
+        state.apply_home(provider.load_home(lambda *a: None, lambda: False))
+        return state
+
+    def current(self):
+        out = {f"home_{scenario}": self.digest(self.loaded(scenario).home_view()) for scenario in ("normal", "empty", "partial", "offline")}
+        state = app_state.AppState(services.FakeHomeProvider("error"), today=TODAY)
+        state.apply_failure(services.ServiceFailure("후보를 불러오는 중 연결이 끊겼어요.", code="SAMPLE_NETWORK_DOWN"), self.WHEN)
+        out["home_error"] = self.digest(state.home_view())
+        state = self.loaded("normal")
+        state.set_home_filter("b")
+        out["home_filter_b"] = self.digest(state.home_view())
+        state.open_drawer("s1")
+        out["drawer_s1"] = self.digest(state.drawer_view())
+        for key in TopicsPlaceholderTest.PLACEHOLDERS:
+            state = self.loaded("normal")
+            state.nav(key)
+            out[f"page_{key}"] = self.digest(state.page_view())
+        return out
+
+    def test_the_home_view_models_and_the_four_placeholder_screens_are_exactly_what_they_were_before_the_settings_screen(self):
+        got = self.current()
+        self.assertEqual({key: (self.BASELINE[key], got[key]) for key in self.BASELINE if got[key] != self.BASELINE[key]}, {}, "홈·자리표시의 출력이 바뀌었다 — 의도한 변경이면 이유를 적고 지문을 고친다")
+        self.assertEqual(set(got), set(self.BASELINE))
 
 
 if __name__ == "__main__":

@@ -151,6 +151,7 @@ QFrame[card="true"] {{ background: {c['surface']}; border: 1px solid {c['border'
 QFrame[card="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QFrame[card="warm"] {{ background: {c['success_100']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="plain"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
+QFrame[card="quiet"] {{ background: {c['disabled_bg']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QPushButton {{ font-size: {px('button')}px; font-weight: {ty['button'].weight}; outline: none; }}
 QPushButton[nav="true"] {{ background: transparent; border: 2px solid transparent; border-radius: {r['button']}px; text-align: left; padding: 0 12px; color: {c['text_secondary']}; font-weight: 600; }}
 QPushButton[nav="true"]:hover {{ background: {c['surface_hover']}; }}
@@ -185,14 +186,17 @@ QFrame[quick="primary"]:hover {{ background: {c['primary_600']}; }}
 QFrame[quick]:focus {{ border: 2px solid {c['border_focus']}; }}
 QFrame[quick="primary"]:focus {{ border: 2px solid {c['inverse_bg']}; }}
 QFrame[quick="primary"] QLabel {{ color: {c['on_primary']}; }}
-QPushButton[acc="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; text-align: left; padding: 8px 14px; font-weight: 600; }}
+QPushButton[acc="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; text-align: left; padding: 8px 14px; font-size: {px('h2')}px; font-weight: {ty['h2'].weight}; color: {c['text_strong']}; }}
 QPushButton[acc="true"]:hover {{ background: {c['surface_hover']}; }}
+QPushButton[acc="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QPushButton[link="true"] {{ background: transparent; border: 1px solid transparent; padding: 0 4px; color: {c['primary_text']}; text-decoration: underline; }}
 QPushButton[link="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QLabel[badge] {{ border-radius: {r['badge']}px; padding: 0 10px; font-size: {px('caption')}px; font-weight: 700; }}
 QLabel[badge="a"] {{ background: {c['blog_a_bg']}; color: {c['blog_a_text']}; }}
 QLabel[badge="b"] {{ background: {c['blog_b_bg']}; color: {c['blog_b_text']}; }}
 QLabel[badge="ok"] {{ background: {c['success_100']}; color: {c['success_text']}; }}
+QLabel[badge="warning"] {{ background: {c['warning_100']}; color: {c['warning_text']}; }}
+QLabel[badge="danger"] {{ background: {c['danger_100']}; color: {c['danger_text']}; }}
 QLabel[badge="info"] {{ background: {c['primary_100']}; color: {c['primary_text']}; }}
 QLabel[badge="muted"] {{ background: {c['surface_2']}; color: {c['text_secondary']}; border: 1px solid {c['border']}; }}
 QPushButton[badge="warning"] {{ background: {c['warning_100']}; color: {c['warning_text']}; border: 1px solid transparent; border-radius: {r['badge']}px; padding: 0 10px; font-size: {px('caption')}px; font-weight: 700; }}

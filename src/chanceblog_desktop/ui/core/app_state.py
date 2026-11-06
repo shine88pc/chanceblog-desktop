@@ -9,9 +9,10 @@ import datetime
 import re
 import sys
 
+from . import settings_view as sv
 from .jobs import JobFailure, JobRunner
 from .notify import ToastPolicy
-from .services import PRIORITY_RANK, FakeHomeProvider
+from .services import GROUP_ORDER, PRIORITY_RANK, FakeConnectionsProvider, FakeHomeProvider
 from .text import NO_DATA, T, date_text, fmt_demand, fmt_docs
 
 NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("draft", "nav_draft", "draft"), ("history", "nav_history", "history"),
@@ -21,6 +22,7 @@ LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
 HOME_CHIPS = (("all", "chip_all"), ("a", "chip_a"), ("b", "chip_b"), ("hot", "chip_hot"), ("new", "chip_new"))
 HOME_ROWS = 5                                                        # 홈의 추천 행은 다섯 개까지
 LOAD_KEY = "home-load"
+CONN_KEY = "settings-load"                                           # 설정 화면(연결 관리)을 읽는 작업의 이름 — 홈 불러오기와 따로 돈다
 BLOG_NAMES = {"A": "블로그 A", "B": "블로그 B"}
 STATUS_LABEL = {"new": "새 후보", "selected": "선택됨", "hold": "보류"}
 TREND_ICON = {"up": "trend_up", "flat": "trend_flat", "down": "trend_down"}
@@ -118,7 +120,7 @@ def topic_vm(topic, selected=False):
 
 
 class AppState:
-    def __init__(self, provider=None, *, today=None, runner=None):
+    def __init__(self, provider=None, *, today=None, runner=None, connections=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.today = today                                           # 시험에서 날짜를 고정할 때
@@ -133,6 +135,16 @@ class AppState:
         self.tip_visible = True
         self.drawer_id = None
         self.load_count = 0                                          # 불러오기를 시작한 횟수(시험·진단용)
+        # 설정 화면(연결 관리) — 홈과 따로 읽고 따로 상태를 가진다(같은 여섯 상태 틀)
+        paired = getattr(self.provider, "connections_provider", None)
+        self.conn_provider = connections if connections is not None else (paired() if paired else FakeConnectionsProvider())
+        self.conn_state = "loading"
+        self.conn_data = None
+        self.conn_failure = None
+        self.conn_failed_at = None
+        self.conn_loaded_at = None
+        self.conn_open = None                                        # 펼친 묶음 이름들 — None 이면 아직 정하지 않았다(처음 받은 데이터로 정한다). 화면을 껐다 켜도 기억할 뿐 파일에는 쓰지 않는다
+        self.conn_load_count = 0
 
     # ---- 메뉴 ----
     def nav(self, key):
@@ -313,6 +325,66 @@ class AppState:
         """홈이 아닌 화면 — 아직 만들지 않은 화면은 솔직하게 '만들고 있어요' 라고 알린다."""
         names = {key: T[label] for key, label, _icon in NAV}
         return {"key": self.page, "name": names.get(self.page, ""), "title": T["soon_title"], "desc": T["soon_desc"], "button": T["soon_btn"]}
+
+    # ---- 설정 화면(연결 관리) — 읽기만 한다 ----
+    @property
+    def conn_loading(self):
+        return self.runner.running(CONN_KEY)
+
+    def start_conn_load(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """연결 정보(키 항목의 이름·상태, 사용량 기록)를 작업 스레드에서 읽는다 — 보관소 읽기도 여기서 한다(화면 스레드를 막지 않는다). 이미 읽는 중이면(중복 클릭) None 을 돌려주고 아무것도 하지 않는다.
+        처음이거나 오류 뒤에는 '읽는 중' 모습이 되고, 이미 보이는 내용이 있으면 그대로 둔 채 새 값이 오면 바꾼다. 콜백은 **작업 스레드에서** 불린다."""
+        job = self.runner.start(CONN_KEY, self.conn_provider.load_connections, on_progress=on_progress, on_done=on_done, on_error=on_error, on_cancel=on_cancel)
+        if job is None:
+            return None
+        self.conn_load_count += 1
+        if self.conn_data is None or self.conn_state == "error":
+            self.conn_state = "loading"
+        return job
+
+    @staticmethod
+    def _conn_state_for(data):
+        if data is None or not data.purposes:
+            return "empty"
+        return "offline" if data.offline else "partial" if data.partial else "normal"
+
+    def apply_connections(self, data, when=None):
+        """읽은 연결 정보를 받아 상태를 정한다(화면 스레드에서 부른다). 처음 받을 때 처음 펼칠 묶음(문제가 있는 첫 묶음, 없으면 '데이터')을 정하고, 그 뒤에는 사용자가 펴고 접은 대로 둔다."""
+        self.conn_data, self.conn_failure, self.conn_loaded_at = data, None, when
+        self.conn_state = self._conn_state_for(data)
+        if self.conn_open is None:
+            self.conn_open = {sv.default_open(data.purposes)}
+
+    def apply_conn_failure(self, failure, when=None):
+        """읽기가 실패했다 — 이전에 보이던 정보는 지우지 않는다. 상태에는 **비밀 모양을 가린 글**만 남긴다."""
+        self.conn_failure, self.conn_failed_at = clean_failure(failure), when
+        self.conn_state = "error"
+
+    def apply_conn_unexpected(self, error, when=None):
+        """화면 스레드의 슬롯 안에서 예상하지 못한 예외가 났다 — 받아 둔 값을 버리고 오류 상태로(쉬운 문장 + 예외 이름만 진단 정보에)."""
+        self.conn_data = None
+        self.conn_failure, self.conn_failed_at = clean_failure(JobFailure(T["job_failed"], code=type(error).__name__)), when
+        self.conn_state = "error"
+
+    def apply_conn_cancelled(self):
+        self.conn_state = self._conn_state_for(self.conn_data)
+
+    def set_group_open(self, key, opened):
+        """접이식 묶음을 펴거나 접는다(기억만 하고 파일에는 쓰지 않는다 — 읽기 전용). 모르는 묶음 이름은 False."""
+        if key not in GROUP_ORDER:
+            return False
+        keep = set(self.conn_open or ())
+        if opened:
+            keep.add(key)
+        else:
+            keep.discard(key)
+        self.conn_open = keep
+        return True
+
+    def settings_view(self):
+        """설정 화면 뷰모델 — 만드는 일은 `settings_view.py`(순수)가 한다. 오류 상태의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        diag = diagnostic_text(self.conn_failure, self.conn_failed_at) if self.conn_failure else ""
+        return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open)
 
     # ---- 눌림 → 안내 문구 ----
     def soon(self, name):

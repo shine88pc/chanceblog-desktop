@@ -1,4 +1,4 @@
-"""화면(홈·상태 화면·서랍·대화상자·툴팁·토스트)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
+"""화면(홈·상태 화면·서랍·대화상자·툴팁·토스트와 설정 화면의 접이식·여섯 상태·실제 어댑터 모습)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
 
 실행(저장소 맨 위 폴더에서, PySide6 가 있는 파이썬으로):
     python scripts/ui_capture.py <저장 폴더> --env 1366x768@100 [--env 1920x1080@125 …] [--check]
@@ -124,8 +124,97 @@ def child(args):
     shoot(window, "toast")
     report["checks"]["toast"] = {"clipped": ui_offscreen.find_clipping(window)}
     window.close()
+    settings_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
+
+
+def real_settings_provider(tmp):
+    """실제 어댑터로 읽는 설정 화면 사진용 — 임시 폴더의 데이터 폴더 + 프로그램 안의 가짜 보관소(자격 증명 관리자는 건드리지 않는다)에 **가짜 이름·가짜 값**의 키 항목 셋을 넣는다."""
+    from chanceblog_desktop.security.keystore import MemoryStore
+    from chanceblog_desktop.service import connections
+    from chanceblog_desktop.service.context import Context, Settings, Workspace
+    from chanceblog_desktop.ui.adapters import ServiceConnectionsProvider
+    workspace = Workspace(Path(tmp) / "data")
+    ctx = Context(workspace, Settings(workspace.settings_path), backend=None, keystore=MemoryStore())
+    for purpose, name, fields in (("naver_apihub", "예시 키 1", {"client_id": "example-client-001", "client_secret": "example-secret-0001"}), ("image_provider", "예시 키 2", {"access_key": "example-access-key-0002"}),
+                                  ("ai_assist", "예시 키 3", {"key": "example-ai-key-0000003"})):
+        connections.add_entry(ctx, purpose, name=name, fields=fields, keystore=ctx.keystore)
+    return ServiceConnectionsProvider(context_factory=lambda data_dir=None: ctx)
+
+
+def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """설정 화면(P4a) 사진·점검 — 접이식 기본 모습·모두 펼침(페이지 전체)·읽는 중·빈·오류(진단 정보 펼침)·일부만·오프라인·실제 어댑터 모습. 같은 환경에서 글자 잘림·가로 스크롤도 잰다."""
+    import tempfile
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QApplication, QWidget
+    from chanceblog_desktop.ui.core.services import FakeConnectionsProvider, FakeHomeProvider
+    from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    def make(provider, wait=True):
+        window = AppShell(FakeHomeProvider(), connections=provider, autoload=False)
+        window.resize(*logical)
+        window.show()
+        window.go("settings")
+        if wait:
+            ui_offscreen.wait_until(app, lambda: window.state.conn_state != "loading", 10)
+        ui_offscreen.settle(app)
+        return window
+
+    def open_all(window):
+        for accordion in window.screen_widget.findChildren(UI.Accordion):
+            if not accordion.is_open:
+                accordion.flip()
+        ui_offscreen.settle(app)
+
+    def audit(window, name):
+        report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0}
+
+    def shoot(window, name, whole=False):
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+        if whole:                                                                      # 페이지 전체 — 창을 아주 길게 늘려 찍고 마지막 눌리는 곳·글자 아래까지만 남긴다
+            window.resize(logical[0], 6000)
+            ui_offscreen.settle(app, 8)
+            bottom = max(w.mapTo(window, w.rect().bottomLeft()).y() for w in window.screen_widget.findChildren(QWidget) if w.isVisible()) + 40
+            pixmap = window.grab()
+            pixmap = pixmap.copy(QRect(0, 0, pixmap.width(), min(pixmap.height(), round(bottom * pixmap.devicePixelRatio()))))
+            window.resize(*logical)
+            ui_offscreen.settle(app)
+        else:
+            ui_offscreen.settle(app, 3)
+            pixmap = window.grab()
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    window = make(FakeConnectionsProvider("normal"))                                     # 기본 모습 — 문제(한도)가 있는 데이터 묶음만 펼쳐져 있다
+    shoot(window, "settings")
+    audit(window, "settings")
+    open_all(window)                                                                   # 네 묶음을 모두 펼친 페이지 전체 — 연결 상태 다섯 가지·준비 중·한도 줄·예시 꼬리표가 한 장에 보인다
+    shoot(window, "settings_all", whole=True)
+    audit(window, "settings_all")
+    window.close()
+    window = make(FakeConnectionsProvider("normal", delay=30), wait=False)               # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
+    shoot(window, "settings_loading")
+    audit(window, "settings_loading")
+    window.close()
+    for scenario in ("empty", "error", "partial", "offline"):
+        window = make(FakeConnectionsProvider(scenario))
+        if scenario == "error":
+            window.screen_widget.findChild(UI.Disclosure).flip()                        # 진단 정보를 펼쳐 코드·시각만 있는 것을 보인다
+            ui_offscreen.settle(app)
+        shoot(window, f"settings_{scenario}")
+        audit(window, f"settings_{scenario}")
+        window.close()
+    with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 예시 표시·꼬리표가 없고 '연결됨' 이 없으며 사용량은 실제 값(0)이다
+        window = make(real_settings_provider(tmp))
+        open_all(window)
+        shoot(window, "settings_real", whole=True)
+        audit(window, "settings_real")
+        window.close()
 
 
 def main(argv=None):

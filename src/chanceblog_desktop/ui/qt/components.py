@@ -212,7 +212,7 @@ def KeywordChip(text):
 
 
 def Badge(kind, text):
-    """배지 — kind: a · b(블로그, 색과 글자를 함께) · ok · info · muted."""
+    """배지 — kind: a · b(블로그, 색과 글자를 함께) · ok · warning · danger · info · muted(상태 배지는 색만이 아니라 늘 글자를 함께 쓴다)."""
     badge = QLabel(text)
     badge.setProperty("badge", kind)
     badge.setAlignment(Qt.AlignCenter)
@@ -226,15 +226,15 @@ def BlogBadge(blog, text):
     return Badge(blog.lower(), text)
 
 
-def SampleBadge(on_click=None):
-    """'예시 데이터' 표시 — 눌러서(Enter·Space 포함) 설명을 볼 수 있다."""
+def SampleBadge(on_click=None, tip=None):
+    """'예시 데이터' 표시 — 눌러서(Enter·Space 포함) 설명을 볼 수 있다. `tip` 은 화면마다 다른 한 줄 설명(없으면 홈의 설명)."""
     badge = QPushButton(T["sample_tag"])
     badge.setAutoDefault(True)
     badge.setProperty("badge", "warning")
     badge.setMinimumHeight(K.SIZE["hit"])
     badge.setCursor(Qt.PointingHandCursor)
     badge.setAccessibleName(T["sample_tag"])
-    with_tooltip(badge, T["sample_tip"])
+    with_tooltip(badge, tip or T["sample_tip"])
     if on_click:
         badge.clicked.connect(on_click)
     return badge
@@ -605,10 +605,10 @@ class Toggle(QCheckBox):
 
 
 # ---- 상태 부품(스켈레톤·빈/오류 상태·배너·진단 영역) ---------------------------------------------------------------------------------
-def Skeleton(rows=5):
-    """LoadingState — 전체 화면 스피너 대신 행 모양 자리 표시(움직이지 않는다)."""
+def Skeleton(rows=5, accessible=None):
+    """LoadingState — 전체 화면 스피너 대신 행 모양 자리 표시(움직이지 않는다). 접근 이름은 화면마다 다르다(없으면 홈의 `후보를 불러오는 중`)."""
     box = QWidget()
-    box.setAccessibleName(T["loading_a11y"])
+    box.setAccessibleName(accessible or T["loading_a11y"])
     layout = QVBoxLayout(box)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(8)
@@ -643,9 +643,9 @@ def Skeleton(rows=5):
 
 
 class Disclosure(QWidget):
-    """접고 펴는 영역 — 기본은 접혀 있다. 진단 정보처럼 보통은 숨겨 둘 내용에 쓴다(고정폭 글꼴)."""
+    """접고 펴는 영역 — 기본은 접혀 있다. 진단 정보처럼 보통은 숨겨 둘 내용에 쓴다(고정폭 글꼴). `left` 면 단추를 왼쪽에 붙인다(가운데가 기본)."""
 
-    def __init__(self, show_text, hide_text, content, mono=True):
+    def __init__(self, show_text, hide_text, content, mono=True, left=False):
         super().__init__()
         self._show, self._hide = show_text, hide_text
         layout = QVBoxLayout(self)
@@ -653,7 +653,7 @@ class Disclosure(QWidget):
         layout.setSpacing(8)
         self.toggle = Button("ghost", show_text, "chevron_down", accessible=show_text)
         self.toggle.clicked.connect(self.flip)
-        layout.addWidget(self.toggle, 0, Qt.AlignHCenter)
+        layout.addWidget(self.toggle, 0, Qt.AlignLeft if left else Qt.AlignHCenter)
         self.body = label(content, "mono", wrap=True, mono=mono)
         self.body.setProperty("mono", True)
         self.body.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -674,6 +674,54 @@ class Disclosure(QWidget):
 
     def set_content(self, text):
         self.body.set_text(text)
+
+
+class Accordion(QWidget):
+    """접이식 한 칸 — 머리 한 줄(제목 + 요약 칩)과 몸(펼치면 보이는 위젯). `Disclosure` 와 같은 여닫기 규칙(기본은 접힘, 머리를 누르거나 Enter·Space 로 펴고 접고, 접근 이름이 지금 상태를 말한다)을
+    제목·요약 칩이 있는 머리 한 줄로 넓힌 것이다 — 새 키보드 규칙은 없다(머리는 보통 단추 하나라 Tab 한 정거장). 접어 둬도 머리의 칩으로 문제가 보인다.
+    펴고 접으면 `toggled(이름, 펼침)` 신호가 나간다(화면 틀이 기억만 하고 다시 그리지 않는다). 칩은 마우스를 받지 않아 칩을 눌러도 머리가 눌린다."""
+    toggled = Signal(str, bool)
+
+    def __init__(self, key, title, chips, body, opened=False, open_text="", closed_text="", summary="", focus_key=None):
+        super().__init__()
+        self.key, self.body, self._title, self._summary, self._texts, self._opened = key, body, title, summary, (closed_text, open_text), bool(opened)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self.toggle = QPushButton("  " + title)                                # 아이콘과 글자 사이 간격(스타일시트로는 못 정해 앞에 공백을 둔다 — `NavButton` 과 같다)
+        self.toggle.setAutoDefault(True)
+        self.toggle.setProperty("acc", True)
+        self.toggle.setProperty("focus_key", focus_key or "acc:" + key)
+        self.toggle.setMinimumHeight(K.SIZE["acc_h"])
+        self.toggle.setCursor(Qt.PointingHandCursor)
+        row = QHBoxLayout(self.toggle)                                        # 칩은 머리 단추 위에 얹는다(단추는 제목·아이콘만 그린다)
+        row.setContentsMargins(0, 0, 14, 0)
+        row.setSpacing(8)
+        row.addStretch(1)
+        for chip in chips:
+            badge = Badge(chip["tone"], chip["text"])
+            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+            row.addWidget(badge, 0, Qt.AlignVCenter)
+        self.toggle.clicked.connect(self.flip)
+        layout.addWidget(self.toggle)
+        layout.addWidget(body)
+        self._sync()
+
+    @property
+    def is_open(self):
+        return self._opened
+
+    def _sync(self):
+        self.body.setVisible(self._opened)
+        self.toggle.setIcon(theme.icon("chevron_up" if self._opened else "chevron_down", theme.colors()["text_secondary"]))
+        self.toggle.setIconSize(QSize(K.ICON["button"], K.ICON["button"]))
+        self.toggle.setAccessibleName(", ".join(part for part in (self._title, self._summary, self._texts[1 if self._opened else 0]) if part))
+        self.toggle.setProperty("expanded", self._opened)
+
+    def flip(self):
+        self._opened = not self._opened
+        self._sync()
+        self.toggled.emit(self.key, self._opened)
 
 
 def StateCard(icon_name, tone_name, title, desc, button_text=None, on_click=None, extra=None):

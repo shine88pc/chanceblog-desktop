@@ -75,7 +75,7 @@ SHADOW_COLOR_KEY = "text_primary"
 # ---- 크기 — 단추 높이: 큰 주 단추 44 · 표준 40 · 작은 34(그려지는 높이) · 아이콘 단독 36 · 누르는 칸은 모두 36 이상(`hit`)
 SIZE = {
     "hit": 36, "control": 40, "control_primary": 44, "control_sm": 34, "icon_button": 36, "chip_h": 34, "menu_h": 44, "badge_h": 24, "sum_min_h": 108, "row_min_h": 96,
-    "thumb": 64, "thumb_radius": 12, "input_h": 40, "toggle_w": 44, "toggle_h": 26, "skeleton_line": 14,
+    "thumb": 64, "thumb_radius": 12, "input_h": 40, "toggle_w": 44, "toggle_h": 26, "skeleton_line": 14, "acc_h": 52,       # acc_h: 접이식 머리 한 줄의 최소 높이(누르는 칸 36 이상)
 }
 ICON = {"nav": 18, "card": 22, "button": 18, "button_sm": 16, "empty": 44, "box": 40, "box_radius": 12, "gap": 10, "badge": 14, "trend": 16}
 LAYOUT = {

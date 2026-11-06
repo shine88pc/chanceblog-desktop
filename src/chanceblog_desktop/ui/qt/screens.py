@@ -1,6 +1,7 @@
 """Qt 화면(View) — 뷰모델(`ui/core/app_state.py` 가 만든 딕셔너리)을 공통 부품(`components.py`)으로 조립하기만 한다.
 목록을 거르거나 문구를 만들거나 어떤 상태인지 정하는 일은 하지 않고, Qt 기본 위젯(QPushButton·QLabel·QLineEdit …)을 직접 만들지도 않는다(시험이 지킨다). 눌림은 `shell`(AppShell)의 메서드로 넘긴다.
-폭이 바뀌면 배치를 다시 고른다 — 요약 카드 4열→2열→1열, 오른쪽 패널 옆→아래, 추천 행의 지표 칸 접기 — 가로 스크롤은 없다.
+폭이 바뀌면 배치를 다시 고른다 — 요약 카드 4열→2열→1열, 오른쪽 패널 옆→아래, 추천 행의 지표 칸 접기, 설정 화면의 용도 카드 2열→1열 — 가로 스크롤은 없다.
+화면은 홈(`home_screen`)·설정(`settings_screen` — 접이식 네 묶음과 용도 카드, 읽기만)·자리표시(`placeholder_screen`) 셋이고, 어느 메뉴가 어느 화면인지는 맨 아래 `SCREEN_BUILDERS` 표(메뉴 → 화면 만드는 함수) 한 곳이 정한다.
 """
 from __future__ import annotations
 
@@ -279,6 +280,134 @@ def placeholder_screen(shell, vm):
     outer.addWidget(UI.StateCard("info_circle", "blue", vm["title"], vm["desc"], vm["button"], lambda: shell.go("home")))
     outer.addStretch(1)
     return page
+
+
+# ---- 설정(연결 관리) ----------------------------------------------------------------------------------------------------------------
+def badge_line(caption, badge):
+    """'준비' · '연결' 배지 한 줄 — 둘은 따로 보인다(준비 중이라는 것과 연결 상태는 다른 말이다)."""
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    row.addWidget(UI.label(caption, "caption"))
+    row.addWidget(UI.Badge(badge["tone"], badge["text"]))
+    row.addStretch(1)
+    return row
+
+
+def purpose_card(card):
+    """용도 카드 — 이름·한 줄 설명·배지 두 줄·안내·한도에 닿았을 때 계속하는 방법·키 항목·한도 줄. 준비 중인 용도는 회색 톤이다. 읽기만 하는 화면이라 누르는 것이 하나도 없다."""
+    frame, inner = UI.Card((18, 16, 18, 16), kind="quiet" if card["gray"] else "true")
+    inner.setSpacing(6)
+    inner.addWidget(UI.label(card["name"], "body_lg", wrap=True))
+    if card["desc"]:
+        inner.addWidget(UI.label(card["desc"], "small", wrap=True))
+    inner.addLayout(badge_line(card["ready_caption"], card["ready"]))
+    if card["conn"]:
+        inner.addLayout(badge_line(card["conn_caption"], card["conn"]))
+    for key in ("note", "policy"):
+        if card[key]:
+            inner.addWidget(UI.label(card[key], "small", wrap=True))
+    if card["limit"]:                                                                       # 한도에 닿으면 어떻게 계속하는지 — 한 줄 + 작은 설명
+        inner.addWidget(UI.label(card["limit"]["title"], "small", wrap=True))
+        if card["limit"]["desc"]:
+            inner.addWidget(UI.label(card["limit"]["desc"], "caption", wrap=True))
+    if card["choices"]:
+        inner.addWidget(UI.label(f"{card['choices']['label']}: {' · '.join(card['choices']['items'])}", "caption", wrap=True))
+    if card["entries"]:
+        inner.addSpacing(4)
+        inner.addWidget(UI.label(card["entries_title"], "small"))
+        for entry in card["entries"]:
+            inner.addWidget(UI.ElidedLabel(entry["name"], "body"))
+            inner.addWidget(UI.label(entry["state_line"], "caption"))
+            if entry["missing"]:
+                inner.addWidget(UI.label(entry["missing"], "caption", wrap=True))
+    if card["usage"]:
+        inner.addSpacing(4)
+        inner.addWidget(UI.label(card["usage"]["title"], "small"))
+        for row_vm in card["usage"]["rows"]:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            row.addWidget(UI.label(row_vm["text"], "caption" if row_vm["note"] else "body", wrap=True), 1)
+            if row_vm["tag"]:
+                row.addWidget(UI.Badge("muted", row_vm["tag"]), 0, Qt.AlignTop)             # 예시 데이터의 숫자 옆 꼬리표
+            inner.addLayout(row)
+    inner.addStretch(1)
+    frame.setAccessibleName(card["a11y"])
+    return frame
+
+
+def settings_screen(shell, vm):
+    """설정 — ① 연결 관리(접이식 네 묶음) ② 안내 한 줄 ③ 고급 > 진단 정보(접힘). 읽기만 한다(키 입력 창은 다음 묶음). 홈과 같은 여섯 상태 틀을 쓴다."""
+    page = QWidget()
+    outer = QVBoxLayout(page)
+    margin = K.LAYOUT["page_margin"]
+    outer.setContentsMargins(margin, margin, margin, margin)
+    outer.setSpacing(K.LAYOUT["gap"])
+    rights = [UI.SampleBadge(lambda: shell.show_sample_info("settings"), T["conn_sample_tip"])] if vm["sample"] else []
+    outer.addLayout(page_head(vm["title"], vm["sub"], rights))
+    section, inner = UI.Card((24, 20, 24, 20))
+    refresh = UI.IconButton("refresh", vm["refresh"], focus_key="refresh-conn")
+    refresh.setEnabled(vm["state"] != "loading")
+    refresh.clicked.connect(shell.reload_connections)
+    inner.addLayout(section_title(vm["section"]["title"], vm["section"]["desc"], (refresh,)))
+    if vm["fetched"]:
+        inner.addWidget(UI.label(vm["fetched"], "caption"))
+    for icon, message in vm["banners"]:
+        inner.addWidget(UI.Banner(icon, message))
+    state = vm["state"]
+    if state == "loading":
+        inner.addWidget(UI.Skeleton(CONN_SKELETON_ROWS, vm["loading"]["a11y"]))
+        note = UI.label(vm["loading"]["text"], "sub")
+        note.setAlignment(Qt.AlignCenter)
+        inner.addWidget(note)
+    elif state == "empty":
+        inner.addWidget(UI.StateCard("inbox", "blue", vm["empty"]["title"], vm["empty"]["desc"], vm["empty"]["button"], shell.reload_connections))
+    elif state == "error":
+        diag = UI.Disclosure(T["diag_show"], T["diag_hide"], vm["error"]["diag"])
+        holder = QWidget()
+        box = QVBoxLayout(holder)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(diag)
+        box.addWidget(UI.label(T["diag_note"], "caption", wrap=True))
+        inner.addWidget(UI.StateCard("alert", "red", vm["error"]["title"], vm["error"]["user"] or vm["error"]["desc"], vm["error"]["button"], shell.reload_connections, holder))
+    else:
+        for group in vm["groups"]:
+            grid = FlowGrid([purpose_card(card) for card in group["cards"]], (2, 1), 440)
+            accordion = UI.Accordion(group["key"], group["title"], group["chips"], grid, group["open"], T["conn_group_open"], T["conn_group_closed"], group["summary"])
+            accordion.toggled.connect(shell.set_group_open)                         # 펴고 접은 것은 기억만 한다(다시 그리지 않는다)
+            inner.addWidget(accordion)
+    outer.addWidget(section)
+    if state in ("normal", "partial", "offline"):
+        outer.addWidget(UI.label(vm["keys_note"], "sub", wrap=True))
+        outer.addWidget(UI.label(vm["advanced"]["title"], "h2"))
+        advanced = QWidget()
+        box = QVBoxLayout(advanced)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(UI.Disclosure(vm["advanced"]["show"], vm["advanced"]["hide"], vm["advanced"]["diag"], left=True))
+        box.addWidget(UI.label(vm["advanced"]["note"], "caption", wrap=True))
+        outer.addWidget(advanced)
+    outer.addStretch(1)
+    return page
+
+
+CONN_SKELETON_ROWS = 3
+
+
+# ---- 메뉴 → 화면 만드는 함수 표 -------------------------------------------------------------------------------------------------------
+def _home_builder(shell):
+    return home_screen(shell, shell.state.home_view())
+
+
+def _placeholder_builder(shell):
+    return placeholder_screen(shell, shell.state.page_view())
+
+
+def _settings_builder(shell):
+    return settings_screen(shell, shell.state.settings_view())
+
+
+# 메뉴 여섯 개마다 한 줄(`app_state.NAV` 와 같은 열쇠 — 시험이 지킨다). 아직 만들지 않은 화면은 모두 같은 자리표시이고, 다음 묶음이 한 줄씩 새 화면으로 바꾼다. 홈은 한 글자도 바뀌지 않았다.
+SCREEN_BUILDERS = {"home": _home_builder, "topics": _placeholder_builder, "draft": _placeholder_builder, "history": _placeholder_builder, "blogs": _placeholder_builder,
+                   "settings": _settings_builder}
 
 
 # ---- 상세 서랍 ---------------------------------------------------------------------------------------------------------------------
