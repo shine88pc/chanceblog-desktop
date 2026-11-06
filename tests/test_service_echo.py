@@ -14,9 +14,14 @@
 import argparse
 import ast
 import base64
+import builtins
+import contextlib
+import errno
+import io
 import json
 import os
 import random
+import re
 import string
 import subprocess
 import sys
@@ -24,6 +29,7 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
@@ -351,12 +357,212 @@ class TableTest(unittest.TestCase):
                          "draft plan", "show", "edit", "approve", "revoke", "delete", "publish-pages", "check-deploy", "naver-package", "naver-done", "review", "preview", "restore",
                          "keys remove", "keys state", "keys order", "keys test"):
             self.assertIn(expected, names)
-        self.assertEqual(len([1 for _path, _parser, slots in NUMBER_COMMANDS for _slot in slots]), 27, "번호 자리의 수 — 새 번호 자리가 생기면 이 숫자를 고친다(표는 저절로 따라온다)")
+        self.assertEqual(len([1 for _path, _parser, slots in NUMBER_COMMANDS for _slot in slots]), 29, "번호 자리의 수 — 새 번호 자리가 생기면 이 숫자를 고친다(표는 저절로 따라온다 — P3 가 `topics show`·`topics restore` 둘을 더해 27 → 29)")
         self.assertGreaterEqual(len({item["kind"] for item in CANARIES}), 28)
 
     def test_two_number_slots_of_one_command_are_both_swept(self):
         link = [slots for path, _parser, slots in NUMBER_COMMANDS if path == ("candidates", "link")]
         self.assertEqual([len(slots) for slots in link], [2])
+
+
+# ---- 2b) 리눅스의 파일 이름 길이 한계 흉내 — 백업 파일 자리에 너무 긴 글을 쳐도 그 글이 오류 문구로 되풀이되지 않는다(D-80) --------------------------------------------------------
+# 우분투 검사에서만 `topics restore <너무 긴 글> --verbose` 의 표준 오류에 친 글이 되풀이됐다: 리눅스는 이름 한 마디가 255바이트(NAME_MAX)를 넘거나 경로가 4096바이트를 넘으면
+# `os.stat` 가 `OSError(ENAMETOOLONG, 'File name too long: <그 이름>')` 을 내고, `pathlib.Path.is_dir()` 는 ENOENT·ENOTDIR·EBADF·ELOOP 만 삼켜 그 오류가 올라왔다(윈도는 '없는 파일' 로 돌려줘 안 보였다).
+# 아래는 그 동작을 윈도에서도 똑같이 흉내 내서(`os.stat`·`os.lstat`·`pathlib.Path.stat`·열기·목록) 같은 표 시험을 돌린다 — 어느 PC 에서도 같은 자리에서 빨개진다.
+LINUX_NAME_MAX = 255                                           # 이름 한 마디의 한계(바이트)
+LINUX_PATH_MAX = 4096                                          # 경로 전체의 한계(바이트)
+PATH_SLOT = "백업파일"                                          # 친 글이 파일 시스템 경로로 쓰이는 번호 자리(명령 둘 — `topics restore`·`restore`)
+
+
+def beyond_linux_limits(path):
+    """리눅스라면 `ENAMETOOLONG` 을 낼 경로인가 — 이름 한 마디가 255바이트를 넘거나 전체가 4096바이트 이상이다(`/`·`\\` 를 둘 다 마디 구분으로 본다 — 윈도에서 도는 이 시험의 임시 폴더 경로도 같은 눈으로 본다)."""
+    if path is None or isinstance(path, int):
+        return False
+    try:
+        text = os.fsdecode(path)
+    except TypeError:
+        return False
+
+    def size(piece):
+        return len(piece.encode("utf-8", "surrogatepass"))
+
+    return size(text) >= LINUX_PATH_MAX or any(size(piece) > LINUX_NAME_MAX for piece in re.split(r"[\\/]", text))
+
+
+def _limited(real):
+    def limited(*args, **kwargs):
+        target = args[0] if args else kwargs.get("path", kwargs.get("file"))
+        if beyond_linux_limits(target):
+            raise OSError(errno.ENAMETOOLONG, "File name too long", target)          # 리눅스처럼 파일 이름(= 친 글)이 오류 문구에 들어간다
+        return real(*args, **kwargs)
+
+    return limited
+
+
+@contextlib.contextmanager
+def linux_name_limits():
+    """`with` 로 쓴다 — 그 안에서는 파일 시스템 호출이 너무 긴 이름에 리눅스처럼 `OSError(ENAMETOOLONG, 'File name too long', 이름)` 을 낸다(윈도에서도 같게).
+    파이썬 3.10 의 `pathlib` 은 `os.stat` 를 클래스를 만들 때 붙잡아 두어 `os.stat` 만 바꿔서는 `Path.is_dir()` 에 닿지 않으므로 `Path.stat` 도 직접 바꾼다."""
+    with contextlib.ExitStack() as stack:
+        for owner, name in ((os, "stat"), (os, "lstat"), (os, "listdir"), (os, "scandir"), (os, "open"), (os, "mkdir"), (Path, "stat"), (builtins, "open"), (io, "open")):
+            stack.enter_context(mock.patch.object(owner, name, _limited(getattr(owner, name))))
+        yield
+
+
+def path_variants(parser):
+    """`--json`·`--verbose`·`--yes` 와 그 조합 — 우분투에서 샌 길은 `--verbose`(오류 세부)였고, `--yes` 를 같이 줄 때 복원이 더 깊이 들어간다."""
+    flags = {flag for action in parser._actions for flag in action.option_strings}
+    found = [(), ("--json",), ("--verbose",), ("--verbose", "--json")]
+    if "--yes" in flags:
+        found += [("--yes",), ("--yes", "--json"), ("--yes", "--verbose"), ("--yes", "--verbose", "--json")]
+    return found
+
+
+def sweep_path_slots(world, typed):
+    """친 글 `typed`([(이름, 글, 찾을 글들)…])을 백업 파일 자리에 넣고 모든 변형으로 돌린다 → (샌 것들, 돌린 횟수, {(명령, 이름, 변형): (종료 코드, 출력, 오류)}).
+    종료 코드는 처리된 오류(1)나 사용법 오류(2)여야 하고 스택 추적이 없어야 한다."""
+    leaks, runs, results = [], 0, {}
+    for path, parser, slots in NUMBER_COMMANDS:
+        for slot in (item for item in slots if label_of(item) == PATH_SLOT):
+            for name, value, needles in typed:
+                for extra in path_variants(parser):
+                    code, out, err = ss.run_cli(world.ctx, *world.argv(path, parser, slot, value, extra))
+                    runs += 1
+                    results[(" ".join(path), name, extra)] = (code, out, err)
+                    where = f"{' '.join(path)} {' '.join(extra) or '기본'}"
+                    for channel, blob in (("표준 출력", out), ("표준 오류", err)):
+                        if scan_text(blob, needles):
+                            leaks.append((where, name, channel))
+                    if code not in (1, 2):
+                        leaks.append((where, name, f"종료 코드 {code}"))
+                    if "Traceback" in err:
+                        leaks.append((where, name, "스택 추적"))
+    return leaks, runs, results
+
+
+def long_names(seed=20261106):
+    """리눅스가 `ENAMETOOLONG` 을 내는(또는 한계 딱인) 여러 모양의 긴 글 → [(이름, 친 글, 찾을 글들)]. 찾을 글은 무작위 알맹이와 그 조각이다(앱이 일부러 되풀이하는 백업 이름 `topic-…` 은 찾지 않는다)."""
+    maker = Maker(seed)
+    found = []
+
+    def add(name, core, value):
+        found.append((name, value, needles_of({"value": core, "core": core})))
+
+    core = maker.text(256); add("name-256", core, core)
+    core = maker.text(300); add("name-300", core, core)
+    core = maker.text(4000); add("name-4000", core, core)
+    core = maker.text(100); add("path-over-4096", core, "/".join([core] * 51))
+    core = maker.text(300); add("long-directory-then-backup-name", core, core + "/topic-20261106-120000")
+    core = maker.text(300); add("backup-name-then-long", core, "topic-20261106-120000/" + core)
+    core = maker.text(300); add("climbing-then-long", core, "../" + core)
+    core = maker.text(300); add("backslashes", core, "C:\\" + core + "\\topic-20261106-120000")
+    add("hangul-258-bytes", "가" * 86, "가" * 86 + "/topic-20261106-120000")
+    core = maker.text(255); add("name-255-at-the-limit", core, core)
+    return found
+
+
+class LinuxNameLimitTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.world = World(True)
+        cls.canaries = [(item["kind"], item["value"], NEEDLES[item["kind"]]) for item in CANARIES]
+        cls.longs = long_names()
+        with linux_name_limits():
+            cls.result = sweep_path_slots(cls.world, cls.canaries + cls.longs)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.world.close()
+
+    def test_the_emulation_raises_what_linux_raises(self):
+        """흉내 자체의 시험 — 너무 긴 이름은 `OSError(ENAMETOOLONG)` 이고 오류 문구에 이름이 들어 있다(그것이 샌 길이다). 한계 안의 이름과 짧은 경로는 그대로 지나간다."""
+        long_name = "q" * 300
+        with linux_name_limits():
+            for call in (lambda: Path(long_name).is_dir(), lambda: Path(long_name).exists(), lambda: Path(long_name).is_file(), lambda: Path(long_name).stat(), lambda: os.stat(long_name),
+                         lambda: os.lstat(long_name), lambda: open(long_name, "rb"), lambda: os.listdir(long_name)):
+                with self.assertRaises(OSError) as caught:
+                    call()
+                self.assertEqual(caught.exception.errno, errno.ENAMETOOLONG)
+                self.assertIn(long_name, str(caught.exception))
+            self.assertFalse(Path("q" * 255).is_dir(), "한계 딱 그만큼은 그냥 '없는 폴더'")
+            self.assertFalse(os.path.exists(long_name), "`os.path.exists` 는 어떤 OS 오류든 삼킨다")
+            with tempfile.TemporaryDirectory() as tmp:
+                self.assertTrue(Path(tmp).is_dir())
+        self.assertTrue(beyond_linux_limits("/".join(["w" * 100] * 50)), "마디는 짧아도 전체가 4096바이트 이상")
+        self.assertTrue(beyond_linux_limits("가" * 86), "글자는 86자여도 258바이트")
+        self.assertFalse(beyond_linux_limits("가" * 85), "255바이트 딱")
+        self.assertFalse(beyond_linux_limits(3))
+        self.assertFalse(beyond_linux_limits(None))
+
+    def test_no_path_taking_command_repeats_a_long_or_key_shaped_text_even_with_verbose_and_yes(self):
+        leaks, runs, results = self.result
+        self.assertEqual(leaks[:12], [], f"{len(leaks)}곳에서 샜다")
+        self.assertEqual({command for command, _name, _extra in results}, {"topics restore", "restore"}, "친 글을 경로로 쓰는 명령은 이 둘이다 — 새 명령이 백업 파일 자리를 가지면 여기에 저절로 걸린다")
+        self.assertGreater(runs, 550, "표가 너무 작다(지금은 명령 2 × 친 글 38종 × 변형 8가지 = 608번)")
+
+    def test_a_text_that_cannot_be_a_backup_ends_in_the_plain_not_found_error_on_every_variant(self):
+        """`topics restore` 는 친 글이 어떤 모양이든 같은 '백업을 찾을 수 없음'(TOPIC_BACKUP_INVALID)이고 종료 코드 1 이다."""
+        _leaks, _runs, results = self.result
+        for name, _value, _needles in self.longs:
+            for extra in (("--json",), ("--yes", "--json"), ("--verbose", "--json"), ("--yes", "--verbose", "--json")):
+                with self.subTest(name=name, extra=" ".join(extra)):
+                    code, out, err = results[("topics restore", name, extra)]
+                    self.assertEqual(code, 1)
+                    self.assertEqual(json.loads(out)["error"]["code"], "TOPIC_BACKUP_INVALID")
+        for kind, value, _needles in self.canaries:
+            with self.subTest(kind=kind):
+                code, out, err = results[("topics restore", kind, ("--yes", "--verbose", "--json"))]
+                if value.startswith("-"):
+                    self.assertEqual(code, 2, "`-` 로 시작하는 글은 옵션으로 읽혀 사용법 오류다")
+                else:
+                    self.assertEqual((code, json.loads(out)["error"]["code"]), (1, "TOPIC_BACKUP_INVALID"))
+
+    def test_the_outcome_does_not_depend_on_what_the_operating_system_does_with_the_name(self):
+        """흉내 안과 밖(진짜 이 PC)의 화면이 글자까지 같다 — 모양이 이상한 글은 OS 에 묻기 전에 걸러 어느 OS 에서나 같은 길을 탄다."""
+        _leaks, _runs, results = self.result
+        path, parser, slots = next(item for item in NUMBER_COMMANDS if item[0] == ("topics", "restore"))
+        for name, value, _needles in self.longs:
+            for extra in (("--json",), ("--verbose",)):
+                with self.subTest(name=name, extra=" ".join(extra)):
+                    outside = ss.run_cli(self.world.ctx, *self.world.argv(path, parser, slots[0], value, extra))
+                    self.assertEqual(results[("topics restore", name, extra)], outside)
+
+    def test_no_number_slot_of_any_command_repeats_the_too_long_text_when_the_filesystem_has_linux_limits(self):
+        """우분투 검사가 돈 표(번호 자리 전부 × 변형)에서 샌 것은 `too-long`(5,000자) 하나였다 — 그 가짜 키를 모든 번호 자리·모든 변형에 넣어 흉내 아래에서 다시 돌린다.
+        (가짜 키 28종 전부를 흉내 아래에서 돌린 것도 샌 곳 0 이었다 — 시간이 길어 이 시험에는 넣지 않았다.)"""
+        with linux_name_limits():
+            leaks, runs = sweep(self.world, thorough=True, kinds={"too-long"})
+        self.assertEqual(leaks[:12], [], f"{len(leaks)}곳에서 샜다")
+        self.assertGreater(runs, 90, "표가 너무 작다(지금은 번호 자리 29곳 × 변형 3~5가지 = 99번)")
+
+    def test_a_long_text_typed_for_a_folder_option_is_not_repeated_either(self):
+        """번호 자리가 아닌 경로 옵션(`--repo`·`--data-dir`)에 친 5,000자 글도 같다 — 고치기 전에는 `--data-dir` 의 글이 기본 화면에도, `--repo` 의 글이 `--verbose` 에 되풀이됐다
+        (예상 못 한 OS 오류의 세부 — 모든 명령이 쓰는 `unexpected_error` 한 곳이 고쳤다). 데이터 폴더는 임시 폴더로 따로 준다(사용자의 진짜 폴더를 건드리지 않는다)."""
+        typed = Maker(20261107).text(5000)
+        needles = needles_of({"value": typed, "core": typed})
+        found, runs = [], 0
+        with linux_name_limits(), tempfile.TemporaryDirectory() as tmp:
+            under_tmp = str(Path(tmp) / typed)                      # 폴더 자리에 줄 값 — 임시 폴더 아래의 긴 이름(상대 경로로 주면 이 시험을 도는 자리가 저장소 안일 때 '저장소 안은 안 됩니다' 가 경로를 보여 줘 시험이 흔들린다)
+            cases = [("--repo", ("topics", "status")), ("--repo", ("topics", "check")), ("--repo", ("topics", "plan", "--today", "2026-11-10")), ("--data-dir", ("topics", "status")),
+                     ("--data-dir", ("topics", "restore", "--latest")), ("--data-dir", ("list",)), ("--data-dir", ("connect", under_tmp))]
+            for option, command in cases:
+                for extra in ((), ("--verbose",), ("--json",), ("--verbose", "--json")):
+                    out, err = io.StringIO(), io.StringIO()
+                    argv = [*(("--data-dir", tmp) if option == "--repo" else ()), option, typed if option == "--repo" else under_tmp, *command, *extra]
+                    code = cli.main(argv, out=out, err=err, env={})
+                    runs += 1
+                    where = f"{option} {' '.join(command[:2]) if command[0] != 'connect' else 'connect'} {' '.join(extra) or '기본'}"
+                    if scan_text(out.getvalue() + err.getvalue(), needles):
+                        found.append((where, "글이 되풀이됨"))
+                    if code not in (0, 1, 2) or "Traceback" in err.getvalue():
+                        found.append((where, f"종료 코드 {code} 또는 스택 추적"))
+        self.assertEqual(found[:12], [], f"{len(found)}곳에서 샜다")
+        self.assertEqual(runs, 28)
+
+    def test_no_text_reaches_a_file_name_or_the_content_of_any_file_in_the_data_folder_either(self):
+        for name, _value, needles in self.canaries + self.longs:
+            with self.subTest(name=name):
+                self.assertEqual(scan_tree(self.world.root, needles), [])
 
 
 # ---- 3) 오류를 만드는 소스 ---------------------------------------------------------------------------------------------------------------
@@ -445,7 +651,7 @@ class NormalPathTest(unittest.TestCase):
     def commands(self):
         """후보·글 번호 자리(키 보관 `keys` 와 백업 파일은 따로 본다)."""
         for path, parser, slots in NUMBER_COMMANDS:
-            if path[0] == "keys" or path == ("restore",):
+            if path[0] == "keys" or path in (("restore",), ("topics", "restore")):          # P3 의도적 갱신: `topics restore` 도 기존 `restore` 처럼 백업 이름 자리라 번호 시험에서 빼고 따로 본다(`test_service_topics_cli` 가 이름 모양만 되풀이함을 못박는다)
                 continue
             for slot in slots:
                 yield path, parser, slot
@@ -467,7 +673,7 @@ class NormalPathTest(unittest.TestCase):
                     if "--json" not in extra:
                         self.assertIn("코드: ", text, where)
                         self.assertIn("하실 일: ", text, where)
-        self.assertEqual(seen, 88, "후보·글 번호 자리 22곳 × 번호 2가지 × 변형 2가지")
+        self.assertEqual(seen, 92, "후보·글 번호 자리 23곳(P3 가 `topics show` 를 더했다) × 번호 2가지 × 변형 2가지")
 
     def test_a_key_gets_the_same_error_code_exit_code_and_advice_as_a_missing_number_only_the_typed_words_differ(self):
         canary = next(item for item in CANARIES if item["kind"] == "random40")["value"]
@@ -482,7 +688,7 @@ class NormalPathTest(unittest.TestCase):
                 self.assertEqual(same(typed, PLACEHOLDER), same(known, "a1b2c3d4"), where)
                 self.assertIn(PLACEHOLDER, typed[1] + typed[2], where)
                 compared += 1
-        self.assertEqual(compared, 66, "후보·글 번호 자리 22곳 × 변형 3가지")
+        self.assertEqual(compared, 69, "후보·글 번호 자리 23곳(P3 가 `topics show` 를 더했다) × 변형 3가지")
 
     def test_an_ordinal_past_the_end_is_said_with_its_number_and_a_real_short_number_is_found(self):
         code, out, err = ss.run_cli(self.world.ctx, "candidates", "show", "999")

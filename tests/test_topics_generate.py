@@ -28,6 +28,7 @@ from chanceblog_desktop.topics import history as hs  # noqa: E402
 from chanceblog_desktop.topics import model as md  # noqa: E402
 from chanceblog_desktop.topics import safety as sf  # noqa: E402
 from chanceblog_desktop.topics import score as sc  # noqa: E402
+from chanceblog_desktop.topics import slots  # noqa: E402
 from chanceblog_desktop.topics import wording  # noqa: E402
 
 A, B, G = ts.PROFILES["naver_a"], ts.PROFILES["naver_b"], ts.PROFILES["github_pages"]
@@ -1347,32 +1348,66 @@ class ExistingCountTodayTest(unittest.TestCase):
 
 
 class ExistingCountP3Test(unittest.TestCase):
-    """P2b 보완 P2 — **예상 동작**(P3 TODO, D-56): `remaining_slots = target_count − active_existing_count − pending_review_count`. 지금은 구현하지 않아 `expectedFailure`/`skip` 이다 —
-    P3 가 구현해 통과시키면 '예상 밖 성공' 으로 알려 주니 그때 데코레이터를 의식적으로 뗀다. P3 는 호출 방식(새 인자 등)을 바꿔도 되지만 시나리오와 결과 숫자는 유지한다."""
+    """P2b 보완 P2 가 '예상 동작' 으로 둔 세 시험 — **P3 가 통과시켰고 `expectedFailure`·`skip` 을 의식적으로 뗐다**(D-59, 계획 11.1). `generate(existing=…)` 자체의 동작은 바꾸지 않았다(위 `ExistingCountTodayTest` 가 그대로 못박는다) —
+    **세는 일은 `slots.count_slots`(순수 부품)가 하고 호출하는 쪽(서비스)이 `target=남은 자리` 로 부른다**. 시나리오와 결과 숫자(새 1·새 2·합계 3)는 P2b 때와 같다. 세 번째는 글 상태(DRAFTING·DRAFT_READY)를 호출하는 쪽이
+    `draft_states={후보 번호: 글 상태}` 로 알려 주는 것으로 입력 방법이 정해져 `skip` 을 풀었다."""
+
+    NOW = "2026-11-10T00:00:00Z"
 
     def world(self):
         return ExistingCountTodayTest.world(self)
 
-    @unittest.expectedFailure
+    def remaining(self, existing, target=3, **options):
+        return slots.count_slots(existing, target, self.NOW, **options).remaining
+
     def test_p3_two_valid_existing_of_a_target_of_three_leave_one_new_slot(self):
         pool, calendar, history = self.world()
         first = gn.generate(A, pool, calendar, history, TODAY, target=3)
         existing = first.candidates[:2]
-        again = gn.generate(A, pool, calendar, history, TODAY, existing=existing, target=3)
+        again = gn.generate(A, pool, calendar, history, TODAY, existing=existing, target=self.remaining(existing))
         self.assertEqual(len(again.candidates), 1)                                   # remaining_slots = 3 − 2 − 0 = 1
         self.assertEqual(len(existing) + len(again.candidates), 3)
 
-    @unittest.expectedFailure
     def test_p3_a_rejected_existing_candidate_does_not_take_a_slot(self):
         pool, calendar, history = self.world()
         first = gn.generate(A, pool, calendar, history, TODAY, target=3)
         existing = [first.candidates[0], dataclasses.replace(first.candidates[1], work_status="REJECTED")]
-        again = gn.generate(A, pool, calendar, history, TODAY, existing=existing, target=3)
+        again = gn.generate(A, pool, calendar, history, TODAY, existing=existing, target=self.remaining(existing))
         self.assertEqual(len(again.candidates), 2)                                   # 제외된 것은 개수에서 빠지므로 3 − 1 = 2
+        self.assertFalse({c.candidate_id for c in again.candidates} & {c.candidate_id for c in existing}, "제외된 후보의 번호도 다시 만들지 않는다")
 
-    @unittest.skip("P3: 초안 단계(DRAFTING·DRAFT_READY)는 글(프로젝트) 상태로 계산하는 값이라 P3 가 입력 방법을 정한 뒤 쓴다 — 계획 11.1")
     def test_p3_candidates_in_drafting_or_draft_ready_take_a_slot(self):
-        self.fail("P3")                                                                # 시나리오: 기존 후보 2개가 DRAFTING·DRAFT_READY 이면 목표 3 에서 새 후보는 1개다
+        pool, calendar, history = self.world()
+        first = gn.generate(A, pool, calendar, history, TODAY, target=3)
+        existing = [dataclasses.replace(candidate, work_status="SELECTED") for candidate in first.candidates[:2]]
+        states = {existing[0].candidate_id: slots.DRAFTING, existing[1].candidate_id: slots.DRAFT_READY}
+        again = gn.generate(A, pool, calendar, history, TODAY, existing=existing, target=self.remaining(existing, draft_states=states))
+        self.assertEqual(len(again.candidates), 1)                                   # 시나리오: 기존 후보 2개가 DRAFTING·DRAFT_READY 이면 목표 3 에서 새 후보는 1개다
+        self.assertEqual(len(existing) + len(again.candidates), 3)
+        labelled = slots.count_slots(existing, 3, self.NOW, draft_states=states)
+        plain = slots.count_slots(existing, 3, self.NOW)
+        self.assertEqual([verdict.why for _key, verdict in labelled.verdicts], [slots.WHY_DRAFTING, slots.WHY_DRAFT_READY], "글 상태를 주면 그 후보가 그 상태로 분류된다 — 입력이 실제로 쓰인다")
+        self.assertEqual([verdict.why for _key, verdict in plain.verdicts], [slots.WHY_SELECTED, slots.WHY_SELECTED], "주지 않으면 작업 상태(선택됨)로 센다")
+        self.assertEqual((labelled.remaining, labelled.active_existing), (plain.remaining, plain.active_existing), "초안 단계는 분류 이름만 바꾸고 자리 수는 그대로다(제외 조건이 먼저)")
+        held = [dataclasses.replace(candidate, work_status="NEW", scores=ts.flat_card(60), review_expires_at="2027-02-08T00:00:00Z") for candidate in first.candidates[:2]]
+        lifted = slots.count_slots(held, 3, self.NOW, draft_states={held[0].candidate_id: slots.DRAFTING})
+        self.assertEqual((lifted.active_existing, lifted.pending_review), (1, 1), "유효한 보류(검토 대기)였던 후보도 초안 단계를 주면 활성으로 옮겨 센다")
+
+    def test_p3_the_target_shrinks_through_route_targets_not_by_cutting_the_result(self):
+        pool, calendar, history = self.world()
+        first = gn.generate(A, pool, calendar, history, TODAY, target=3)
+        existing = first.candidates[:2]
+        left = self.remaining(existing)
+        self.assertEqual(gn.route_targets(left, gn.mix_for(A)), {"seed": 1, "follow_up": 0, "seasonal": 0, "realtime": 0, "sponsor": 0}, "줄어든 몫은 route_targets 로 다시 나뉜다")
+        again = gn.generate(A, pool, calendar, history, TODAY, existing=existing, target=left)
+        self.assertEqual([report.target for report in again.routes], [1, 0, 0, 0, 0])
+
+    def test_p3_a_full_channel_asks_for_nothing(self):
+        pool, calendar, history = self.world()
+        first = gn.generate(A, pool, calendar, history, TODAY, target=3)
+        self.assertEqual(self.remaining(first.candidates), 0)
+        again = gn.generate(A, pool, calendar, history, TODAY, existing=first.candidates, target=0)
+        self.assertEqual(again.candidates, ())
 
 
 class PublicNamesTest(unittest.TestCase):

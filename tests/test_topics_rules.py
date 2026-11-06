@@ -27,13 +27,15 @@ TOPICS = ts.TOPICS
 SRC = ts.ROOT / "src" / "chanceblog_desktop"
 FILES = sorted(TOPICS.glob("*.py"))
 # 모듈을 더하거나 빼면 이 두 목록과 `docs/ARCHITECTURE.md` §5 의 `topics/` 행을 의식적으로 함께 고친다(P1 → P2a 에서 `dedupe`·`history`·`hold`·`schedule`·`seeds` 를, P2a → P2b 에서 `expand`·`feasibility`·`generate`·`safety` 를,
-# P2b 보완에서 `wording`·`concepts`·`notice`·`brand` 를 더했다).
+# P2b 보완에서 `wording`·`concepts`·`notice`·`brand` 를, P3 에서 `slots`·`trend` 를 더했다).
 EXPECTED_FILES = ["__init__.py", "brand.py", "channels.py", "concepts.py", "dedupe.py", "expand.py", "feasibility.py", "generate.py", "history.py", "hold.py", "layout.py", "link.py", "model.py", "notice.py",
-                  "safety.py", "schedule.py", "score.py", "seeds.py", "select.py", "wording.py"]
-TOPIC_MODULES = {"brand", "channels", "concepts", "dedupe", "expand", "feasibility", "generate", "history", "hold", "layout", "link", "model", "notice", "safety", "schedule", "score", "seeds", "select", "wording"}
+                  "safety.py", "schedule.py", "score.py", "seeds.py", "select.py", "slots.py", "trend.py", "wording.py"]
+TOPIC_MODULES = {"brand", "channels", "concepts", "dedupe", "expand", "feasibility", "generate", "history", "hold", "layout", "link", "model", "notice", "safety", "schedule", "score", "seeds", "select", "slots", "trend",
+                 "wording"}
 P2A_MODULES = ("seeds.py", "schedule.py", "dedupe.py", "history.py", "hold.py")
 P2B_MODULES = ("expand.py", "feasibility.py", "safety.py", "generate.py")
 P2B_FIX_MODULES = ("wording.py", "concepts.py", "notice.py", "brand.py")
+P3_MODULES = ("slots.py", "trend.py")
 ALLOWED_STDLIB = {"__future__", "collections", "dataclasses", "datetime", "enum", "fractions", "functools", "itertools", "math", "re", "types", "typing", "unicodedata"}
 ALLOWED_INTERNAL = {"content.status", "content.candidates", "content.profiles", "errors", "check.claims"}
 FORBIDDEN_CALLS = {"open", "print", "input", "exec", "eval", "compile", "__import__", "breakpoint", "exit", "quit"}
@@ -97,6 +99,12 @@ class PackageFilesTest(unittest.TestCase):
 
     def test_the_p2b_fix_modules_are_in_the_list_the_checks_run_over_too(self):
         for name in P2B_FIX_MODULES:
+            with self.subTest(module=name):
+                self.assertIn(name, [path.name for path in FILES])
+                self.assertIn(name[:-3], TOPIC_MODULES)
+
+    def test_the_p3_modules_are_in_the_list_the_checks_run_over_too(self):
+        for name in P3_MODULES:
             with self.subTest(module=name):
                 self.assertIn(name, [path.name for path in FILES])
                 self.assertIn(name[:-3], TOPIC_MODULES)
@@ -235,10 +243,12 @@ class HygieneTest(unittest.TestCase):
         self.assertIn("CONTENT_INVALID", CATALOG)
         self.assertIn("CANDIDATE_INVALID", CATALOG)
 
-    def test_nothing_outside_the_package_uses_it_yet_so_no_existing_behaviour_changed(self):
+    def test_only_the_p3_storage_and_service_layers_use_the_package_so_no_other_behaviour_changed(self):
+        # P3 의도적 갱신: 예전에는 쓰는 곳이 0 이었다(P1~P2b). P3 가 저장 계층(`topicdb/`)과 서비스·명령줄에 처음 이었다 — 그 밖의 곳(화면·글·발행·검사·보안…)은 여전히 이 패키지를 모른다.
         pattern = re.compile(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topics\b|import\s+(?:[\w.]*\.)?topics\b|from\s+\.+\s+import\s+[^#\n]*\btopics\b)")
-        users = [str(path.relative_to(SRC)) for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8"))]
-        self.assertEqual(users, [], "P1 은 새 모듈뿐이다 — 이 패키지를 쓰는 연결은 다음 묶음에서 의식적으로 더한다(그때 이 시험을 고친다)")
+        users = sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8")))
+        self.assertEqual(users, ["service/cli.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py"],
+                         "이 패키지를 쓰는 곳을 늘리는 것은 의식적인 변경이다 — 이 목록과 결정 기록을 함께 고친다")
 
     def test_the_pattern_that_looks_for_users_of_the_package_works(self):
         pattern = re.compile(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topics\b|import\s+(?:[\w.]*\.)?topics\b|from\s+\.+\s+import\s+[^#\n]*\btopics\b)")
@@ -325,14 +335,14 @@ class DocsAndScopeTest(unittest.TestCase):
         plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")
         self.assertNotIn("**아직 코드에 없고** 해당 단계(P1~)", plan)
         self.assertNotIn("계획이다. `topics/`·`service/topics.py`", plan, "한계 첫 줄의 낡은 문장")
-        for stage in ("P1 (병합됨, PR #23)", "| P2a (검증 끝·병합 부탁 대기) |", "| **P2b** (지금) |"):                  # P2b 의도적 갱신: P2a 는 병합 부탁 대기, 지금은 P2b
+        for stage in ("P1 (병합됨, PR #23)", "| P2a (병합됨, PR #24) |", "| P2b (병합됨, PR #25) |", "| **P3** (지금) |"):                  # P3 의도적 갱신: P2a·P2b 는 병합됐고 지금은 P3
             with self.subTest(stage=stage):
                 self.assertIn(stage, plan)
 
-    def test_the_decisions_d43_to_d58_exist_once_each_in_order(self):
+    def test_the_decisions_d42_to_d80_exist_once_each_in_order(self):                       # P3 수정 5차 의도적 갱신: 결정 D-80 이 이어 붙었다(수정 2차: D-75~D-79)
         text = (ts.ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
         found = re.findall(r"^\| (D-\d{2}) \|", text, re.M)
-        self.assertEqual(found[-17:], ["D-42", "D-43", "D-44", "D-45", "D-46", "D-47", "D-48", "D-49", "D-50", "D-51", "D-52", "D-53", "D-54", "D-55", "D-56", "D-57", "D-58"])
+        self.assertEqual(found[-39:], [f"D-{number}" for number in range(42, 81)])
         self.assertEqual(len(found), len(set(found)))
         rows = {line.split(" | ")[0].lstrip("| "): line for line in text.splitlines() if line.startswith("| D-4")}
         self.assertIn("search_count_source", rows["D-43"])
@@ -355,6 +365,30 @@ class DocsAndScopeTest(unittest.TestCase):
             for needle in needles:
                 with self.subTest(decision=number, needle=needle):
                     self.assertIn(needle, fix[number])
+
+    def test_the_p3_decisions_say_what_they_decided_in_words_the_code_and_tests_use(self):
+        text = (ts.ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
+        rows = {line.split(" | ")[0].lstrip("| "): line for line in text.splitlines() if line.startswith("| D-59 |") or line.startswith("| D-6")}
+        for number, needles in (("D-59", ("slots", "remaining_slots", "draft_states", "ExistingCountP3Test", "UNRATED", "route_targets", "같은 후보")), ("D-60", ("TrendProvider", "NoTrend", "FakeTrend", "unavailable", "느린 응답", "interest_outage")),
+                                ("D-61", ("topicdb", "application_id", "test_topicdb_rules", "FILE_WRITERS", "topic_engine", "한 바이트도")), ("D-62", ("처음 보류함에 든 때", "re_evaluate", "hold_box", "90일")),
+                                ("D-63", ("MANIFEST", "before-restore", "has_key_shape", "TOPIC_BACKUP_INVALID")), ("D-64", ("--yes", "campaigns", "detail", "history_ledger", "TOPIC_STORE_CORRUPT"))):
+            for needle in needles:
+                with self.subTest(decision=number, needle=needle):
+                    self.assertIn(needle, rows[number])
+
+    def test_the_changelog_and_the_architecture_name_the_p3_modules_and_the_storage_package(self):
+        log = (ts.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("'P3'", log)
+        for name in (*P3_MODULES, "topicdb/", "topics.py", "topic_files.py", "topic_format.py"):
+            with self.subTest(name=name):
+                self.assertIn(name, log)
+        row = next(line for line in self.ARCH.splitlines() if line.startswith("| `topicdb/` |"))
+        for name in ("file.py", "store.py", "backup.py"):
+            self.assertIn(f"`{name}`", row)
+        self.assertEqual(sum(line.startswith("| `topicdb/` |") for line in self.ARCH.splitlines()), 1)
+        service_row = next(line for line in self.ARCH.splitlines() if line.startswith("| `service/` |"))
+        for name in ("topics.py", "topic_files.py", "topic_format.py"):
+            self.assertIn(f"`{name}`", service_row)
 
     def test_the_plan_has_the_p3_todo_section_with_the_counting_rule_and_the_same_candidate_rule(self):
         plan = (ts.ROOT / "docs" / "TOPIC_ENGINE_PLAN.md").read_text(encoding="utf-8")

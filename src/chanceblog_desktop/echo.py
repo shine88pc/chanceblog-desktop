@@ -15,6 +15,7 @@ import re
 
 NUMBER_REF = re.compile(r"[0-9A-Fa-f]{1,8}")                          # 순번·번호 앞부분 — 8자는 화면에 보이는 짧은 번호(`short_id`)의 길이이고, 이보다 긴 16진수는 키 조각일 수 있다
 BACKUP_FILE = re.compile(r"chanceblog-[0-9]{8}-[0-9]{6}\.db")         # `Store.backup` 이 만드는 이름(`\d` 는 다른 나라 숫자도 받아서 ASCII 숫자만)
+TOPIC_BACKUP_FILE = re.compile(r"topic-[0-9]{8}-[0-9]{6}(?:-[0-9]{1,3})?")        # `topicdb.backup.make_backup` 이 만드는 주제 엔진 백업 폴더 이름(P3) — 기존 `chanceblog-…db` 와 따로다
 TYPED_NUMBER = "(입력한 번호)"
 TYPED_FILE = "(입력한 파일)"
 
@@ -32,3 +33,8 @@ def shown_ref(text):
 def shown_backup(name):
     """오류 문구에 넣을 백업 파일 이름 — 앱이 만드는 이름 모양(`BACKUP_FILE`)이면 그대로, 아니면 `(입력한 파일)`. 경로가 아니라 파일 이름만 받는다."""
     return _shown(name, BACKUP_FILE, TYPED_FILE)
+
+
+def shown_topic_backup(name):
+    """오류 문구에 넣을 주제 엔진 백업 이름 — 앱이 만드는 폴더 이름 모양(`TOPIC_BACKUP_FILE`)이면 그대로, 아니면 `(입력한 파일)`. 경로가 아니라 이름만 받는다."""
+    return _shown(name, TOPIC_BACKUP_FILE, TYPED_FILE)
