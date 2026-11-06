@@ -28,16 +28,18 @@
 
 | 뜻 | 아이콘 | 색 계열 |
 |---|---|---|
-| 홈·주제 후보·초안 작성·발행 기록·블로그 관리·설정 | `home`·`search`·`draft`·`history`·`blogs`·`settings` | 파랑·파랑·파랑·보라·회색·회색 |
+| 홈·주제 후보·초안 작성·발행 기록·Seed 관리·블로그 관리·설정 | `home`·`search`·`draft`·`calendar_check`·`sprout`·`book`·`settings`(기어) | 파랑·파랑·파랑·보라·초록·회색·회색 |
 | 추천 주제·작성 완료·발행 완료·저장된 아이디어 | `draft`·`check_circle`·`calendar_check`·`bulb` | 파랑·초록·보라·주황 |
 | 추세 상승·보통·하락 | `trend_up`·`trend_flat`·`trend_down` | 초록·주황·빨강 |
 | 복사·바깥 열기·보류·오류·안내 | `copy`·`external`·`pause_circle`·`alert`·`info_circle` | 파랑·회색·주황·빨강·파랑 |
 | 빈 화면·오프라인·일부만·다시 불러오기·닫기·상세 | `inbox`·`cloud_off`·`alert`·`refresh`·`x`·`chevron_right` | 파랑·주황·주황·파랑·회색·회색 |
-| 빠른 작업 새 초안·저장된 주제·발행 기록·블로그 설정·팁 | `plus`·`folder`·`history`·`settings`·`bulb` | 파랑·회색·회색·회색·초록 |
+| 빠른 작업 새 초안·팁 | `plus`·`bulb` | 파랑·초록 |
 | 이미지·키·삭제·올리기·보안 | `image`·`key`·`trash`·`upload`·`lock` | 파랑·회색·빨강·회색·초록 |
 | 더보기 메뉴(아래 고정 행동 줄의 `⋮`) | `more_vertical` | 회색 |
 
 주제 이미지 자리 표시용 아이콘(`t_droplet`·`t_bolt`·`t_laptop`·`t_calc`·`t_box`·`t_headphones`·`t_coffee`·`t_spark`)은 장식이다 — 예시 데이터에서는 후보의 분야와 짝이 맞지만(`services.SAMPLE_CATEGORY`), 분야를 모르는 실제 후보에는 돌려 가며 쓰므로 **분야를 뜻하지 않는다**(접근 이름·툴팁도 분야를 말하지 않고 `이미지 자리 표시` 라고만 한다).
+
+**C-Type 의미표와 UI-C1a 의 정리**(운영자 문서 §6.2, D-172): 집=홈·전구(`bulb`)=추천 이유·**원통(`database`)=공공데이터**·**슬라이더(`sliders`)=조합·필터**·씨앗(`sprout`)=Seed·캘린더=일정·**차트(`chart`)=분석**·**기어(`settings`)=설정**·방패(`shield`)=안전·정책·삼각형(`alert`)=주의. 이 표에 맞춰 설정을 **기어**로 바꾸고(코드로 그린 선 아이콘 — 선 1.75·24 눈금), 옛 이름을 옮겼다: 옛 `blogs`(원통)→`database`·옛 `history`(막대 차트)→`chart`·옛 `settings`(슬라이더)→`sliders`. 블로그 관리는 새 `book`, 발행 기록은 `calendar_check`, Seed 관리는 `sprout` 이다. `database`·`sliders`·`chart` 는 그 뜻의 화면(공공데이터·주제 조합·분석)이 생기면 쓴다. 의미표의 색 계열은 위 표를 따른다.
 
 ## 4. 새 아이콘을 더할 때
 

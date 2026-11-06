@@ -163,9 +163,9 @@ QToolTip {{ background: {c['inverse_bg']}; color: {c['inverse_text']}; border: 0
 {_roles(c)}
 {_tones(c)}
 QLabel[role="ok"] {{ color: {c['success_text']}; font-weight: 600; }}
-QLabel#brandname {{ font-size: {px('h1')}px; font-weight: 700; color: {c['text_strong']}; }}
 QFrame#topbar {{ background: {c['surface']}; border-bottom: 1px solid {c['border']}; }}
-QFrame#sidebar {{ background: {c['bg_sidebar']}; border-right: 1px solid {c['border']}; }}
+QFrame#sidebar {{ background: {c['bg_sidebar']}; border-right: 1px solid {c['sidebar_border']}; }}
+QLabel[soon="true"] {{ color: {c['soon_text']}; }}
 QFrame#brandcard {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
@@ -174,9 +174,9 @@ QFrame[card="warm"] {{ background: {c['success_100']}; border: 1px solid {c['bor
 QFrame[card="plain"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QFrame[card="quiet"] {{ background: {c['disabled_bg']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QPushButton {{ font-size: {px('button')}px; font-weight: {ty['button'].weight}; outline: none; }}
-QPushButton[nav="true"] {{ background: transparent; border: 2px solid transparent; border-radius: {r['button']}px; text-align: left; padding: 0 12px; color: {c['text_secondary']}; font-weight: 600; }}
+QPushButton[nav="true"] {{ background: transparent; border: 2px solid transparent; border-radius: {r['nav']}px; text-align: left; padding: 0 12px; color: {c['text_secondary']}; font-weight: 600; }}
 QPushButton[nav="true"]:hover {{ background: {c['surface_hover']}; }}
-QPushButton[nav="true"]:checked {{ background: {c['primary_100']}; color: {c['primary_text']}; }}
+QPushButton[nav="true"]:checked {{ background: {c['nav_current_bg']}; color: {c['nav_current_text']}; }}
 QPushButton[nav="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QPushButton[kind="secondary"] {{ background: {c['surface']}; color: {c['secondary_text']}; border: 1px solid {c['secondary_border']}; border-radius: {r['button']}px; padding: 0 16px; }}
 QPushButton[kind="secondary"]:hover {{ background: {c['surface_hover']}; border-color: {c['primary']}; }}
@@ -187,7 +187,7 @@ QPushButton[kind="primary"]:pressed {{ background: {c['primary_pressed']}; borde
 QPushButton[kind="primary"]:focus, QPushButton[kind="danger"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['inverse_bg']}; }}
 QPushButton[kind="ghost"] {{ background: transparent; color: {c['primary_text']}; border: 1px solid transparent; border-radius: {r['button']}px; padding: 0 12px; }}
 QPushButton[kind="ghost"]:hover {{ background: {c['primary_100']}; }}
-QPushButton[kind="danger"] {{ background: {c['danger']}; color: {c['on_primary']}; border: 1px solid {c['danger']}; border-radius: {r['button']}px; padding: 0 20px; }}
+QPushButton[kind="danger"] {{ background: {c['danger_fill']}; color: {c['on_primary']}; border: 1px solid {c['danger_fill']}; border-radius: {r['button']}px; padding: 0 20px; }}
 QPushButton[kind="danger"]:hover, QPushButton[kind="danger"]:pressed {{ background: {c['danger_text']}; border-color: {c['danger_text']}; }}
 QPushButton[kind="danger_ghost"] {{ background: transparent; color: {c['danger_text']}; border: 1px solid transparent; border-radius: {r['button']}px; padding: 0 12px; }}
 QPushButton[kind="danger_ghost"]:hover {{ background: {c['danger_100']}; }}
@@ -224,6 +224,7 @@ QLabel[badge="warning"] {{ background: {c['warning_100']}; color: {c['warning_te
 QLabel[badge="danger"] {{ background: {c['danger_100']}; color: {c['danger_text']}; }}
 QLabel[badge="info"] {{ background: {c['info_100']}; color: {c['info_text']}; }}
 QLabel[badge="muted"] {{ background: {c['surface_2']}; color: {c['text_secondary']}; border: 1px solid {c['border']}; }}
+QLabel[badge][compact="true"] {{ padding: 0 {sp('2')}px; font-size: {px('micro')}px; }}
 QPushButton[badge="warning"] {{ background: {c['warning_100']}; color: {c['warning_text']}; border: 1px solid transparent; border-radius: {r['badge']}px; padding: 0 10px; font-size: {px('caption')}px; font-weight: 700; }}
 QPushButton[badge="warning"]:hover {{ border-color: {c['warning']}; }}
 QPushButton[badge="warning"]:focus {{ border: 2px solid {c['border_focus']}; }}

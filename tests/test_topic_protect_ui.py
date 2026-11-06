@@ -385,53 +385,54 @@ class ChannelTwoAssumptionTest(unittest.TestCase):
         self.assertEqual(names({"naver_a": {"display_name": "   "}, "naver_b": {"display_name": 5}}), {"A": "블로그 A", "B": "블로그 B"})
 
 
-class TopicsPlaceholderTest(unittest.TestCase):
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_the_menu_keys_and_icons_put_topics_second_and_the_label_says_topic_candidates(self):
-        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "topics", "draft", "history", "blogs", "settings"])
-        self.assertEqual([icon for _key, _label, icon in app_state.NAV], ["home", "search", "draft", "history", "blogs", "settings"])
-        self.assertEqual(text.T["nav_topics"], "주제 후보")
-        self.assertEqual(app_state.MAX_NAV, 6)
+class CompletedScreensOnlyTest(unittest.TestCase):
+    """의식적으로 다시 씀(UI-C1a, D-172): 옛 `TopicsPlaceholderTest` 는 '메뉴 6개·주제 후보가 둘째·홈 카드와 전체 보기와 빠른 작업이 주제 후보·발행 기록·블로그 관리로 간다·자리표시 네 화면' 을 **그때 모습 그대로** 못박았다.
+    운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 Navigation 이고 미완성 화면으로 가는 이동 경로는 0개다. 아래는 같은 자리에 새 규칙을 못박는다(서랍은 홈에서만 열린다는 규칙은 그대로)."""
+    PLACEHOLDERS = ("topics", "draft", "history", "blogs")                                                     # 옛 자리표시 화면 넷(지금은 열 수 없다) — '다음 단계' 목록에 이름만 있다
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_the_home_cards_for_recommended_topics_and_saved_ideas_go_to_topics_and_the_others_go_nowhere(self):
-        cards = {card["key"]: card for card in state_with(topic("하나")).home_view()["cards"]}
-        self.assertEqual({key: card["go"] for key, card in cards.items()}, {"topics": "topics", "done": None, "pub": None, "ideas": "topics"})
-        self.assertIn(app_state.NAV[1][0], {card["go"] for card in cards.values()})
-        self.assertEqual(state_with(topic("하나")).home_view()["section"]["all"], "전체 보기")
+    def test_the_menu_keys_and_icons_are_home_and_settings_only_and_the_label_still_says_topic_candidates(self):
+        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "settings"])
+        self.assertEqual([icon for _key, _label, icon in app_state.NAV], ["home", "settings"])
+        self.assertEqual(text.T["nav_topics"], "주제 후보")                                                       # 이름은 '다음 단계' 목록이 쓴다
+        self.assertFalse(hasattr(app_state, "MAX_NAV"))
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
-    def test_the_quick_actions_that_move_go_to_topics_history_and_blogs_and_the_rest_only_say_soon(self):
-        for key, page in (("saved", "topics"), ("history", "history"), ("blogs", "blogs")):
+    def test_the_home_cards_and_the_section_have_no_route_any_more(self):
+        view = state_with(topic("하나")).home_view()
+        self.assertEqual({card["key"]: card["go"] for card in view["cards"]}, {"topics": None, "done": None, "pub": None, "ideas": None})
+        self.assertNotIn("all", view["section"])                                                              # 옛 '전체 보기'(주제 후보로 가던 단추)
+        self.assertNotIn("전체 보기", repr(view))
+
+    def test_the_quick_actions_that_moved_are_gone_and_the_rest_only_says_soon(self):
+        view = state_with(topic("하나")).home_view()
+        self.assertEqual([item["key"] for item in view["rail"]["quick"]], ["new"])                          # 화면으로 가던 셋(저장된 주제·발행 기록·블로그 설정)을 뺐다
+        for key in ("new", "saved", "history", "blogs"):
             state = state_with(topic("하나"))
             with self.subTest(key=key):
-                self.assertEqual((state.quick(key), state.page), ("", page))
-        state = state_with(topic("하나"))
-        self.assertEqual((state.quick("new"), state.page), (text.T["soon_toast"].format(name=text.T["q_new"]), "home"))
+                self.assertEqual((state.quick(key), state.page), (text.T["soon_toast"].format(name=text.T["q_new"]), "home"))
 
-    # 의식적으로 다시 씀(P4a, D-90): 설정은 새 화면이 되어 자리표시에서 빠졌다 — 나머지 네 화면의 문구·이름·동작은 그대로다(설정 화면은 `test_ui_settings.py` 가 지킨다).
-    PLACEHOLDERS = ("topics", "draft", "history", "blogs")
-
-    def test_every_screen_but_home_and_settings_shows_the_same_placeholder_text_with_its_own_name(self):
-        labels = {key: label for key, label, _icon in app_state.NAV}
-        self.assertEqual([key for key, _label, _icon in app_state.NAV[1:]], list(self.PLACEHOLDERS) + ["settings"])           # 메뉴 순서 — 홈 다음 넷은 자리표시, 마지막이 설정
-        for key in self.PLACEHOLDERS:
+    def test_the_next_steps_list_names_the_five_unfinished_screens_and_none_of_them_can_be_opened(self):
+        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], ["topics", "draft", "history", "seed", "blogs"])
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NEXT_STEPS], ["주제 후보", "초안 작성", "발행 기록", "Seed 관리", "블로그 관리"])
+        self.assertEqual([icon for _key, _label, icon in app_state.NEXT_STEPS], ["search", "draft", "calendar_check", "sprout", "book"])
+        self.assertFalse({key for key, _label, _icon in app_state.NEXT_STEPS} & {key for key, _label, _icon in app_state.NAV}, "다음 단계 항목은 실제 메뉴에 없다")
+        for key, _label, _icon in app_state.NEXT_STEPS:
             state = state_with(topic("하나"))
-            self.assertTrue(state.nav(key))
-            with self.subTest(key=key):
-                self.assertEqual(state.page_view(), {"key": key, "name": text.T[labels[key]], "title": "이 화면은 아직 만들고 있어요.",
-                                                    "desc": "다음 단계에서 이어서 만들어요. 지금은 홈에서 주제 추천을 볼 수 있어요.", "button": "홈으로"})
-        state = state_with(topic("하나"))
-        self.assertTrue(state.nav("topics"))
-        self.assertFalse(state.nav("topics"))                                                                  # 지금 화면으로는 다시 가지 않는다
-        self.assertTrue(state.nav("home"))
+            self.assertFalse(state.nav(key), key)
+            self.assertEqual(state.page, "home", key)
 
-    # 특성 시험(P0): 현재 동작을 못박는다. 바꾸려면 새 결정(D-nn)을 쓰고 이 시험을 의식적으로 고친다.
+    def test_groups_show_a_name_only_when_they_have_a_real_menu(self):
+        self.assertEqual([(key, label, [item[0] for item in items]) for key, label, items in app_state.nav_groups()],
+                         [("core", "nav_group_core", ["home"]), ("system", "nav_group_system", ["settings"])], "데이터·관리 묶음은 지금 실제 메뉴가 없어 이름도 보이지 않는다")
+        self.assertEqual([text.T[label] for _key, label, _menus in app_state.NAV_GROUPS], ["핵심 작업", "데이터·관리", "시스템"])
+        in_groups = [menu for _key, _label, menus in app_state.NAV_GROUPS for menu in menus]
+        self.assertEqual(sorted(in_groups), sorted(key for key, _label, _icon in app_state.NAV), "모든 실제 메뉴가 묶음 하나에 한 번씩 있다")
+
+    # 특성 시험(P0, UI-C1a 에서 '주제 후보' → '설정' 으로 옮김): 서랍은 홈에서만 열리고 홈을 떠나면 닫힌다.
     def test_leaving_home_closes_the_drawer_and_a_drawer_opened_on_another_page_is_only_a_view_model_fact(self):
         state = state_with(topic("하나", priority="높음"))
         self.assertTrue(state.open_drawer("하나"))
         self.assertIsNotNone(state.drawer_view())
-        self.assertTrue(state.nav("topics"))
+        self.assertTrue(state.nav("settings"))
         self.assertEqual((state.drawer_id, state.drawer_view()), (None, None))
         self.assertTrue(state.open_drawer("하나"))                                                            # 뷰모델은 어느 화면에서든 연다 — '홈에서만' 은 아래의 Qt 틀이 정한다
         self.assertIsNotNone(state.drawer_view())
@@ -443,15 +444,13 @@ class TopicsPlaceholderTest(unittest.TestCase):
         shell = ast.parse((QT_DIR / "shell.py").read_text(encoding="utf-8"))
         screens = ast.parse((QT_DIR / "screens.py").read_text(encoding="utf-8"))
         table = builder_table(screens)
-        self.assertEqual(list(table), [key for key, _label, _icon in app_state.NAV], "표의 줄은 메뉴 여섯 개와 같은 열쇠·같은 순서다 — 빠진 메뉴가 없고 표에만 있는 화면도 없다")
-        self.assertEqual(table, {"home": "_home_builder", "topics": "_placeholder_builder", "draft": "_placeholder_builder", "history": "_placeholder_builder", "blogs": "_placeholder_builder",
-                                 "settings": "_settings_builder"})
-        for builder, screen in (("_home_builder", "home_screen"), ("_placeholder_builder", "placeholder_screen"), ("_settings_builder", "settings_screen")):
+        self.assertEqual(list(table), [key for key, _label, _icon in app_state.NAV], "표의 줄은 실제 메뉴(완성된 화면)와 같은 열쇠·같은 순서다 — 빠진 메뉴가 없고 표에만 있는 화면도 없다(자리표시 화면은 없앴다)")
+        self.assertEqual(table, {"home": "_home_builder", "settings": "_settings_builder"})
+        for builder, screen in (("_home_builder", "home_screen"), ("_settings_builder", "settings_screen")):
             self.assertEqual([name for name in calls_in(function_named(screens, builder)) if name.endswith("_screen")], [screen], f"{builder} 는 자기 화면 함수 하나만 부른다")
         # 점검 M3 — CI 에는 Qt 가 없어 이 시험이 유일한 방어선이다: 빌더마다 자기 뷰모델을 연결하고(설정 화면에 홈 뷰모델을 넘기면 안 된다) 표는 현재 화면 열쇠(`state.page`)로 찾는다.
-        self.assertEqual({builder: viewmodel_of(function_named(screens, builder), screen) for builder, screen in (("_home_builder", "home_screen"), ("_placeholder_builder", "placeholder_screen"),
-                                                                                                                  ("_settings_builder", "settings_screen"))},
-                         {"_home_builder": "home_view", "_placeholder_builder": "page_view", "_settings_builder": "settings_view"}, "빌더가 다른 화면의 뷰모델을 넘긴다")
+        self.assertEqual({builder: viewmodel_of(function_named(screens, builder), screen) for builder, screen in (("_home_builder", "home_screen"), ("_settings_builder", "settings_screen"))},
+                         {"_home_builder": "home_view", "_settings_builder": "settings_view"}, "빌더가 다른 화면의 뷰모델을 넘긴다")
         render, overlays = function_named(shell, "render"), function_named(shell, "_sync_overlays")
         self.assertEqual([name for name in calls_in(render) if name.endswith("_screen")], [], "render 는 화면 함수를 직접 부르지 않고 표만 거친다(표를 건너뛰는 길이 없다)")
         lookups = [node for node in ast.walk(render) if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "SCREEN_BUILDERS"]
@@ -461,7 +460,7 @@ class TopicsPlaceholderTest(unittest.TestCase):
         self.assertEqual([node.args[0].id for node in ast.walk(render) if isinstance(node, ast.Call) and isinstance(node.func, ast.Subscript) and node.func is lookups[0] and node.args],
                          ["self"], "찾은 화면 만드는 함수에는 이 창(`self`)을 넘긴다")
         self.assertEqual(home_branches(overlays, "drawer_view"), [frozenset({"참"})], "서랍은 홈에서만 연다")
-        self.assertEqual(all_link_targets(screens), ["topics"], "홈의 '전체 보기' 는 '주제 후보' 로 간다")
+        self.assertEqual(all_link_targets(screens), [], "의도적 갱신(UI-C1a, D-172): 홈의 '전체 보기' 단추는 아직 만들지 않은 '주제 후보' 로 가던 길이라 없앴다 — 어느 단추도 화면으로 가지 않는다")
 
 
 class HomeConditionReaderTest(unittest.TestCase):
@@ -539,11 +538,12 @@ class LegacyDemandLabelTest(unittest.TestCase):
 
 
 class HomeOutputUnchangedTest(unittest.TestCase):
-    """홈 화면과 자리표시 네 화면의 **출력이 P4a(설정 화면) 앞뒤로 한 글자도 안 바뀌었다**는 지문 — 기준(`origin/main` `85996f6`)의 코드로 뽑은 값을 못박는다(뷰모델 전체를 JSON 으로 만들어 SHA-256 앞 16자).
-    홈을 일부러 바꾸는 묶음(P4b 의 채널 배지·P4c 의 주제 후보 …)은 어느 줄이 왜 바뀌는지 적고 이 값을 의식적으로 고친다. 값이 다르면 아래 `diff` 로 어느 시나리오인지 먼저 본다."""
-    BASELINE = {"home_normal": "9e783a9d9189dcf0", "home_empty": "bbfae4b68aa31e24", "home_partial": "c9c5addbf22c332a", "home_offline": "93cb52a1ae8cb079", "home_error": "9bf971e15a50ff71",
-                "home_filter_b": "fb58c88e578ce335", "drawer_s1": "7e6ccf32dcb04a58", "page_topics": "6eada1a4b394367a", "page_draft": "eb2d60d21a73412d", "page_history": "eee507ea60a07dc2",
-                "page_blogs": "926d84bbc0cbdcea"}
+    """홈 화면 뷰모델의 지문(뷰모델 전체를 JSON 으로 만들어 SHA-256 앞 16자). 홈을 일부러 바꾸는 묶음은 어느 줄이 왜 바뀌는지 적고 이 값을 의식적으로 고친다. 값이 다르면 아래 `diff` 로 어느 시나리오인지 먼저 본다.
+    의도적 갱신(UI-C1a, D-171·D-172): 홈 뷰모델은 **정확히 다섯 곳**만 바뀌었다(기준 = UI-C0 가지 `754cf97`, 옛 값과 새 값을 같은 가짜 데이터로 뽑아 키 단위로 견줬다 — 일곱 시나리오 중 홈 여섯에서 같은 다섯 곳):
+    ① `date` 삭제(홈 제목 줄의 날짜는 상단 앱 바로 옮겼다) ② 요약 카드 둘(추천 주제·저장된 아이디어)의 `go` 가 `topics` → `None`(미완성 화면으로 가던 길) ③ `section.all`('전체 보기') 삭제
+    ④ `rail.quick` 4개 → 1개(저장된 주제·발행 기록·블로그 설정은 화면으로 가던 단추라 뺐고 '새 초안 만들기' 안내만 남음). 상세 서랍(`drawer_s1`)은 한 글자도 안 바뀌었다. 옛 자리표시 화면 지문(`page_*`)은 화면이 없어져 뺐다."""
+    BASELINE = {"home_normal": "689073ea7efe32ee", "home_empty": "bcab10a473d3ea51", "home_partial": "e5ab23a54fc2ec03", "home_offline": "ab8eb1b305b8ed57", "home_error": "03faf125f1e214ce",
+                "home_filter_b": "16ca1a3f8af491ea", "drawer_s1": "7e6ccf32dcb04a58"}
     WHEN = datetime.datetime(2026, 11, 3, 10, 0, 0)
 
     @staticmethod
@@ -569,15 +569,11 @@ class HomeOutputUnchangedTest(unittest.TestCase):
         out["home_filter_b"] = self.digest(state.home_view())
         state.open_drawer("s1")
         out["drawer_s1"] = self.digest(state.drawer_view())
-        for key in TopicsPlaceholderTest.PLACEHOLDERS:
-            state = self.loaded("normal")
-            state.nav(key)
-            out[f"page_{key}"] = self.digest(state.page_view())
         return out
 
-    def test_the_home_view_models_and_the_four_placeholder_screens_are_exactly_what_they_were_before_the_settings_screen(self):
+    def test_the_home_view_models_are_exactly_what_the_shell_bundle_made_them(self):
         got = self.current()
-        self.assertEqual({key: (self.BASELINE[key], got[key]) for key in self.BASELINE if got[key] != self.BASELINE[key]}, {}, "홈·자리표시의 출력이 바뀌었다 — 의도한 변경이면 이유를 적고 지문을 고친다")
+        self.assertEqual({key: (self.BASELINE[key], got[key]) for key in self.BASELINE if got[key] != self.BASELINE[key]}, {}, "홈의 출력이 바뀌었다 — 의도한 변경이면 이유를 적고 지문을 고친다")
         self.assertEqual(set(got), set(self.BASELINE))
 
 

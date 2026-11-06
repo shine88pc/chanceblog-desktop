@@ -139,7 +139,8 @@ class Base(unittest.TestCase):
 
 
 class ShellTest(Base):
-    def test_the_menu_and_the_top_bar_icon_both_open_the_new_settings_screen(self):
+    def test_the_menu_opens_the_new_settings_screen_and_the_top_bar_has_no_settings_icon_any_more(self):
+        """의도적 갱신(UI-C1a, D-171): 상단 앱 바의 설정 아이콘은 사이드바 '설정' 과 겹쳐 지웠다(운영자 2026-11-06 확인 요청 004) — 옛 시험은 그 아이콘 눌림도 확인했다. 이제는 아이콘이 없다는 것과 사이드바로 여는 것을 본다."""
         window = self.make(settings=False)
         self.assertEqual(window.state.page, "home")
         window.nav_buttons["settings"].click()
@@ -148,30 +149,27 @@ class ShellTest(Base):
         self.assertEqual(window.state.page, "settings")
         self.assertTrue(window.nav_buttons["settings"].isChecked())
         self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 4)
-        self.assertNotIn(text.T["soon_title"], self.labels(window))
+        self.assertNotIn(text.T["home_title"], self.labels(window))                                  # (자리표시 화면은 없어졌다 — UI-C1a) 지금은 설정 화면이다
         window.go("home")
-        top = next(b for b in window.findChildren(QAbstractButton) if b.property("focus_key") == "top-settings")
-        top.click()
+        self.assertEqual([b for b in window.findChildren(QAbstractButton) if b.property("focus_key") == "top-settings"], [], "상단 앱 바에는 설정 아이콘이 없다")
+        self.assertEqual(window.topbar.findChildren(QAbstractButton), [])
+        window.nav_buttons["settings"].click()                                                  # 설정으로 가는 길은 사이드바 하나
         ui_offscreen.wait_until(self.app, lambda: window.state.conn_state != "loading", 10)
         self.settle()
         self.assertEqual((window.state.page, len(window.screen_widget.findChildren(UI.Accordion))), ("settings", 4))
 
-    def test_the_screen_table_has_one_builder_per_menu_and_the_four_others_still_draw_the_same_placeholder(self):
+    def test_the_screen_table_has_one_builder_per_real_menu_and_the_old_placeholder_screens_cannot_be_opened(self):
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 '나머지 넷이 같은 자리표시를 그린다' 를 보았다. 이제 표는 완성된 화면(홈·설정)뿐이고 옛 자리표시 화면 이름을 불러도 열리지 않는다."""
         self.assertEqual(list(S.SCREEN_BUILDERS), [key for key, _label, _icon in app_state.NAV])
-        self.assertIs(S.SCREEN_BUILDERS["topics"], S.SCREEN_BUILDERS["blogs"])
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "settings"])
         self.assertIsNot(S.SCREEN_BUILDERS["settings"], S.SCREEN_BUILDERS["home"])
         window = self.make(settings=False)
         for key in ("topics", "draft", "history", "blogs"):
             window.go(key)
             self.settle()
-            self.assertIn(text.T["soon_title"], self.labels(window), key)
-            self.assertIn(text.T["soon_desc"], self.labels(window), key)
-            self.assertEqual(window.screen_widget.findChildren(UI.Accordion), [], key)
-            self.assertIsNone(window.screen_widget.findChild(UI.TopicRow), key)
-            button = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.text() == text.T["soon_btn"])
-            QTest.mouseClick(button, Qt.LeftButton)
-            self.settle()
-            self.assertEqual(window.state.page, "home", key)                                             # 자리표시의 '홈으로' 도 그대로 동작한다
+            self.assertEqual(window.state.page, "home", key)
+            self.assertEqual(window.screen_widget.findChildren(UI.Accordion), [], key)                   # 설정도 아니고 자리표시도 아니다 — 지금 화면은 그대로 홈이다
+            self.assertTrue(window.nav_buttons["home"].isChecked(), key)
 
     def test_the_home_screen_still_builds_the_same_parts(self):
         window = self.make(settings=False)
@@ -230,11 +228,11 @@ class ShellTest(Base):
         provider = Static(services.ConnectionsData(purposes=services.sample_connections("normal"), sample=True))
         window = self.make(provider, settings=False)
         window.go("settings")
-        window.go("history")                                                                              # 읽는 중에 다른 화면으로 갔다
+        window.go("home")                                                                                 # 읽는 중에 다른 화면(홈)으로 갔다 — 의도적 갱신(UI-C1a): 옛 시험은 자리표시 화면으로 갔다
         ui_offscreen.wait_until(self.app, lambda: window.state.conn_state != "loading", 5)
         self.settle()
-        self.assertEqual(window.state.page, "history")
-        self.assertIn(text.T["soon_title"], self.labels(window))
+        self.assertEqual(window.state.page, "home")
+        self.assertIn(text.T["home_title"], self.labels(window))
         self.assertEqual(window.state.conn_state, "normal")
         window.go("settings")
         ui_offscreen.wait_until(self.app, lambda: not window.state.conn_loading, 5)
@@ -376,7 +374,7 @@ class AccessibilityTest(Base):
         self.assertIn(text.T["conn_refresh"], names)
         self.assertIn(text.T["diag_show"], names)
         self.assertIn("예시 데이터", names)
-        self.assertEqual(sum(1 for w in seen if w.property("nav")), 6)
+        self.assertEqual(sum(1 for w in seen if w.property("nav")), 2)                                    # 의도적 갱신(UI-C1a, D-172): 실제 메뉴는 홈·설정 둘뿐(옛 값 6) — '다음 단계' 항목은 정거장이 아니다
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
         window = self.make()

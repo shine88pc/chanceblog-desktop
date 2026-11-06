@@ -1,4 +1,4 @@
-"""앱 틀(AppShell) — 상단바 + 왼쪽 사이드바(메뉴 6개) + 본문(스크롤) + 오른쪽 패널(홈 안에서 좁으면 아래로) + 겹쳐 뜨는 서랍·대화상자·토스트.
+"""앱 틀(AppShell) — 상단 앱 바(`topbar.py`) + 왼쪽 사이드바(`sidebar.py` — 홈·설정 메뉴와 '다음 단계' 목록) + 본문(스크롤) + 오른쪽 패널(홈 안에서 좁으면 아래로) + 겹쳐 뜨는 서랍·대화상자·토스트.
 
 화면 이동·동작은 `AppState`(`ui/core/app_state.py`)가 하고 여기서는 그 결과를 다시 그리기만 한다. 후보 불러오기 같은 긴 일은 작업 스레드(`ui/core/jobs.py`)에서 돌고,
 진행·완료·실패·취소는 시그널로 화면 스레드에 넘어온다 — 일하는 중에도 창이 반응한다.
@@ -7,19 +7,23 @@
 """
 from __future__ import annotations
 
-import datetime
-
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
 from ..core import tokens as K
-from ..core.app_state import NAV, AppState, report_unexpected
+from ..core.app_state import AppState, report_unexpected
+from ..core.clock import SystemClock
 from ..core.text import T
+from ..core.version import read_version
 from . import components as UI
 from . import screens as S
-from . import theme
+from .sidebar import Sidebar
+from .topbar import TopBar
 from .workers import JobBridge
+
+
+RELAYOUT_AFTER_RESIZE_MS = 30                                                     # 창 크기가 바뀐 뒤 배치를 다시 계산하기까지 기다리는 시간 — 끌어 바꾸는 동안 계속 미루어진다
 
 
 def qt_clipboard_set(text):
@@ -28,17 +32,14 @@ def qt_clipboard_set(text):
     return True
 
 
-def _version():
-    from pathlib import Path
-    try:
-        return (Path(__file__).resolve().parents[4] / "VERSION").read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, today=None, autoload=True):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, today=None, clock=None, version_info=None, autoload=True):
         super().__init__()
+        self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
+        self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
+        self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
+        self._relayout_timer.setSingleShot(True)
+        self._relayout_timer.timeout.connect(self._relayout)
         self.state = AppState(provider, today=today, runner=runner, connections=connections)
         self._clipboard = clipboard or qt_clipboard_set
         self.setWindowTitle(T["window_title"])
@@ -96,52 +97,15 @@ class AppShell(QMainWindow):
 
     # ---- 틀 ----
     def _topbar(self):
-        bar = QFrame()
-        bar.setObjectName("topbar")
-        bar.setMinimumHeight(K.LAYOUT["topbar"])
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(24, 0, 16, 0)
-        row.setSpacing(12)
-        row.addWidget(theme.IconWidget("leaf", theme.colors()["primary"], 26))
-        row.addWidget(UI.label(T["app_name"], "h1"))
-        row.addStretch(1)
-        settings = UI.IconButton("settings", T["settings_btn"], focus_key="top-settings")
-        settings.clicked.connect(lambda: self.go("settings"))
-        row.addWidget(settings)
-        return bar
+        """상단 앱 바 — 잎·이름·한 줄 소개·날짜·시간(`qt/topbar.py`). 설정 아이콘은 없다(사이드바 '설정' 과 겹친다)."""
+        self.topbar = TopBar(self.clock)
+        return self.topbar
 
     def _sidebar(self):
-        side = QFrame()
-        side.setObjectName("sidebar")
-        side.setFixedWidth(K.LAYOUT["sidebar"])
-        side.setAccessibleName(T["nav_menu"])
-        layout = QVBoxLayout(side)
-        layout.setContentsMargins(12, 16, 12, 16)
-        layout.setSpacing(4)
-        self.nav_buttons = {}
-        for key, label_key, icon_name in NAV:
-            button = UI.NavButton(T[label_key], icon_name, T["nav_a11y"].format(name=T[label_key]))
-            button.setProperty("focus_key", "nav:" + key)
-            button.clicked.connect(lambda _=False, k=key: self.go(k))
-            layout.addWidget(button)
-            self.nav_buttons[key] = button
-        layout.addStretch(1)
-        card = QFrame()
-        card.setObjectName("brandcard")
-        inner = QVBoxLayout(card)
-        inner.setContentsMargins(16, 16, 16, 12)
-        inner.setSpacing(8)
-        sprout = theme.IconWidget("sprout", theme.colors()["success"], 28)
-        inner.addWidget(sprout, 0, Qt.AlignHCenter)
-        line = UI.label(T["brand_line"], "sub", wrap=True)
-        line.setAlignment(Qt.AlignCenter)
-        inner.addWidget(line)
-        number = _version()
-        version = UI.label(f"{T['brand_version']} v{number}" if number else T["brand_version"], "caption", wrap=True)
-        version.setAlignment(Qt.AlignCenter)
-        inner.addWidget(version)
-        layout.addWidget(card)
-        return side
+        """왼쪽 사이드바 — 묶음 메뉴(홈·설정)·'다음 단계' 목록·브랜드와 버전(`qt/sidebar.py`). 화면으로 가는 길은 `self.go` 하나뿐이다."""
+        self.sidebar = Sidebar(self.go, self.version_info)
+        self.nav_buttons = self.sidebar.nav_buttons
+        return self.sidebar
 
     # ---- 그리기 ----
     def _focus_key(self):
@@ -184,6 +148,10 @@ class AppShell(QMainWindow):
         self._sync_overlays()
         if key and self._modal() is None:
             self._restore_focus(key)
+        self._relayout_timer.start(0)                                         # 새 위젯이 보이고 글꼴이 입혀진 다음 한 번 더 배치를 맞춘다
+
+    def _relayout(self):
+        S.relayout_screen(self.scroll.widget())
 
     # ---- 겹쳐 뜨는 것(서랍·대화상자) ----
     def _modal(self):
@@ -285,6 +253,7 @@ class AppShell(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._relayout_timer.start(RELAYOUT_AFTER_RESIZE_MS)                  # 끌어 바꾸는 동안은 미루고 멈춘 뒤 한 번만
         self.drawer.place()
         if self.dialog.is_open:
             self.dialog.place()
@@ -381,7 +350,7 @@ class AppShell(QMainWindow):
         self.render()
 
     def _show_failed(self, failure):
-        self.state.apply_failure(failure, datetime.datetime.now())
+        self.state.apply_failure(failure, self.clock.now())
         self.render()
 
     def _show_cancelled(self):
@@ -417,11 +386,11 @@ class AppShell(QMainWindow):
             self.render()
 
     def _show_conn_loaded(self, data):
-        self.state.apply_connections(data, datetime.datetime.now())
+        self.state.apply_connections(data, self.clock.now())
         self._render_settings()
 
     def _show_conn_failed(self, failure):
-        self.state.apply_conn_failure(failure, datetime.datetime.now())
+        self.state.apply_conn_failure(failure, self.clock.now())
         self._render_settings()
 
     def _show_conn_cancelled(self):
@@ -431,7 +400,7 @@ class AppShell(QMainWindow):
     def _recover_conn(self, error):
         """설정 화면의 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
         report_unexpected(type(error), error)
-        self.state.apply_conn_unexpected(error, datetime.datetime.now())
+        self.state.apply_conn_unexpected(error, self.clock.now())
         try:
             self._render_settings()
         except Exception:
@@ -446,7 +415,7 @@ class AppShell(QMainWindow):
     def _recover(self, error):
         """화면 스레드에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에, 내용·경로는 싣지 않는다). 오류 화면마저 못 그리면 안내만 한다."""
         report_unexpected(type(error), error)                                           # 원인은 한 줄(예외 이름 + 가리고 경로를 지운 글)로 표준 오류에 남긴다 — 화면에는 쉬운 문장뿐이라 조용한 실패가 되지 않게
-        self.state.apply_unexpected(error, datetime.datetime.now())
+        self.state.apply_unexpected(error, self.clock.now())
         try:
             self.render()
         except Exception:

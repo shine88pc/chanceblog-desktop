@@ -13,12 +13,22 @@ from . import settings_view as sv
 from .jobs import JobFailure, JobRunner
 from .notify import ToastPolicy
 from .services import GROUP_ORDER, PRIORITY_RANK, FakeConnectionsProvider, FakeHomeProvider
-from .text import NO_DATA, T, date_text, fmt_demand, fmt_docs
+from .text import NO_DATA, T, fmt_demand, fmt_docs
 
-NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("draft", "nav_draft", "draft"), ("history", "nav_history", "history"),
-       ("blogs", "nav_blogs", "blogs"), ("settings", "nav_settings", "settings"))
-MAX_NAV = 6                                                          # 사이드바 메뉴는 6개를 넘기지 않는다(운영자 기준)
+# 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
+# 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
+NAV = (("home", "nav_home", "home"), ("settings", "nav_settings", "settings"))
+# 묶음(핵심 작업 / 데이터·관리 / 시스템) — (묶음 열쇠, 이름 문구 열쇠, 그 묶음의 실제 메뉴 열쇠들). **묶음 이름은 그 묶음에 실제 메뉴가 있을 때만 보인다**(`nav_groups`).
+NAV_GROUPS = (("core", "nav_group_core", ("home",)), ("data", "nav_group_data", ()), ("system", "nav_group_system", ("settings",)))
+# '다음 단계' 목록 — 아직 만들지 않은 화면의 **이름만**(열 수 없다: 메뉴·화면 이동·단추가 없다). 화면이 완성되면 여기서 빼고 NAV 에 더한다. (열쇠, 이름 문구 열쇠, 아이콘)
+NEXT_STEPS = (("topics", "nav_topics", "search"), ("draft", "nav_draft", "draft"), ("history", "nav_history", "calendar_check"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"))
 LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
+
+
+def nav_groups():
+    """보이는 메뉴 묶음 — 실제 메뉴가 하나라도 있는 묶음만 `[(묶음 열쇠, 이름 문구 열쇠, [(메뉴 열쇠, 이름 문구 열쇠, 아이콘), …]), …]`. 비어 있는 묶음은 이름도 보이지 않는다."""
+    items = {item[0]: item for item in NAV}
+    return [(key, label, [items[menu] for menu in menus]) for key, label, menus in NAV_GROUPS if menus]
 HOME_CHIPS = (("all", "chip_all"), ("a", "chip_a"), ("b", "chip_b"), ("hot", "chip_hot"), ("new", "chip_new"))
 HOME_ROWS = 5                                                        # 홈의 추천 행은 다섯 개까지
 LOAD_KEY = "home-load"
@@ -257,10 +267,10 @@ class AppState:
             return "" if week_value is None else T["sum_week_sub"].format(n=week_value)
 
         cards = [
-            self._card("topics", "draft", "blue", T["sum_topics"], len(live) if data else None, T["sum_topics_sub"].format(n=new) if data else T["sum_unavailable"], "topics"),
+            self._card("topics", "draft", "blue", T["sum_topics"], len(live) if data else None, T["sum_topics_sub"].format(n=new) if data else T["sum_unavailable"], None),
             self._card("done", "check_circle", "green", T["sum_done"], done, week(done, data.done_week if data else None), None),
             self._card("pub", "calendar_check", "purple", T["sum_pub"], pub, week(pub, data.pub_week if data else None), None),
-            self._card("ideas", "bulb", "orange", T["sum_ideas"], len(held) if data else None, T["sum_ideas_sub"] if data else T["sum_unavailable"], "topics"),
+            self._card("ideas", "bulb", "orange", T["sum_ideas"], len(held) if data else None, T["sum_ideas_sub"] if data else T["sum_unavailable"], None),
         ]
         count = lambda key: sum(1 for topic in live if self._match(topic, key))        # noqa: E731
         chips = [{"key": key, "label": T[label], "count": count(key), "active": key == self.home_filter} for key, label in HOME_CHIPS]
@@ -278,16 +288,11 @@ class AppState:
         blogs = [{"key": blog.key, "name": shown(blog.name, 40), "category": shown(blog.category, 40), "total": blog.total, "month": blog.month, "candidates": blog.candidates,
                   "total_text": NO_DATA if blog.total is None else f"{blog.total:,}", "month_text": NO_DATA if blog.month is None else f"{blog.month:,}",
                   "candidates_text": "" if blog.candidates is None else f"{blog.candidates:,}"} for blog in (data.blogs if data else ())]
-        quick = [
-            {"key": "new", "icon": "plus", "title": T["q_new"], "desc": T["q_new_d"], "primary": True},
-            {"key": "saved", "icon": "folder", "title": T["q_saved"], "desc": T["q_saved_d"], "primary": False},
-            {"key": "history", "icon": "history", "title": T["q_hist"], "desc": T["q_hist_d"], "primary": False},
-            {"key": "blogs", "icon": "settings", "title": T["q_set"], "desc": T["q_set_d"], "primary": False},
-        ]
+        quick = [{"key": "new", "icon": "plus", "title": T["q_new"], "desc": T["q_new_d"], "primary": True}]       # 화면으로 가던 나머지 셋(저장된 주제·발행 기록·블로그 설정)은 이동 길을 끊으며 뺐다(UI-C1a, D-172)
         return {
-            "title": T["home_title"], "sub": T["home_sub"], "date": date_text(self.today), "sample": bool(data and data.sample), "sample_tag": T["sample_tag"], "state": state,
+            "title": T["home_title"], "sub": T["home_sub"], "sample": bool(data and data.sample), "sample_tag": T["sample_tag"], "state": state,
             "fetched": T["last_fetch"].format(when=data.fetched) if data and data.fetched else "", "cards": cards, "chips": chips,
-            "section": {"title": T["rec_title"], "desc": T["rec_desc"], "all": T["rec_all"], "refresh": T["refresh"]}, "rows": views, "selected": selected, "banner": banner,
+            "section": {"title": T["rec_title"], "desc": T["rec_desc"], "refresh": T["refresh"]}, "rows": views, "selected": selected, "banner": banner,
             "loading": {"text": T["loading"], "cancel": T["load_cancel"], "a11y": T["loading_a11y"]},
             "empty": {"title": T["empty_title"], "desc": T["empty_desc"], "button": T["empty_btn"]},
             "error": {"title": T["error_title"], "desc": T["error_desc"], "button": T["retry"], "diag": diagnostic_text(self.failure, self.failed_at) if self.failure else "",
@@ -320,11 +325,6 @@ class AppState:
     def close_drawer(self):
         opened, self.drawer_id = self.drawer_id, None
         return opened
-
-    def page_view(self):
-        """홈이 아닌 화면 — 아직 만들지 않은 화면은 솔직하게 '만들고 있어요' 라고 알린다."""
-        names = {key: T[label] for key, label, _icon in NAV}
-        return {"key": self.page, "name": names.get(self.page, ""), "title": T["soon_title"], "desc": T["soon_desc"], "button": T["soon_btn"]}
 
     # ---- 설정 화면(연결 관리) — 읽기만 한다 ----
     @property
@@ -392,11 +392,7 @@ class AppState:
         return T["soon_toast"].format(name=name)
 
     def quick(self, key):
-        """빠른 작업 — 화면 이동이면 이동하고 문구는 비운다, 만들지 않은 기능이면 안내 문구를 돌려준다."""
-        target = {"saved": "topics", "history": "history", "blogs": "blogs"}.get(key)
-        if target:
-            self.nav(target)
-            return ""
+        """빠른 작업 — 화면으로 이동하는 길은 없다(옛 이동 길은 아직 만들지 않은 화면으로 가서 끊었다). 아직 만들지 않은 기능이라 안내 문구만 돌려준다."""
         return self.soon(T["q_new"])
 
     def draft_requested(self, topic_id, blog):

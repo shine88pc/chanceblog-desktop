@@ -144,23 +144,25 @@ class TokensTest(unittest.TestCase):
     def test_the_tokens_nobody_uses_yet_are_the_documented_ones(self):
         """문서(UI_DESIGN_SPEC §2)가 '안 쓰는 값' 이라고 적은 토큰을 화면 코드가 정말 쓰지 않는지 — 쓰기 시작하면 이 시험이 문서를 고치라고 알린다. 쓰는 토큰은 반대로 쓰이고 있어야 한다(죽은 토큰이 아니다).
         의도적 갱신(UI-C0, D-150~): 간격 `SPACE` 와 그림자 `SHADOW`(와 카드 상태 `CARD_STATES`)는 새 부품·`theme.py` 가 쓰기 시작해 '안 쓰는 값' 에서 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·
-        새 틀 크기(`FRAME`)·카드 규격(`CARD`)이다."""
+        새 틀 크기(`FRAME`)·카드 규격(`CARD`)이다.
+        의도적 갱신(UI-C1a, D-171·D-172·D-174): 새 틀 크기 `FRAME`(상단 앱 바·사이드바·서랍·상세 창 규칙)이 쓰기 시작해 '쓰는 값' 으로 옮겼다('다음 단계' 흐림은 토큰 색 `soon_text` 하나로 쓰고 `SOON_OPACITY` 는 그 값을 정한 비율이다) — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·카드 규격(`CARD`)이다."""
         others = "\n".join(source_of(path) for path in SOURCES if path.name != "tokens.py")
-        for name in ("COPY_FEEDBACK_MS", "FRAME", "CARD"):
+        for name in ("COPY_FEEDBACK_MS", "CARD"):
             self.assertNotRegex(others, rf"\b(?:K|tokens)\.{name}\b", name)
         self.assertNotRegex(others, r"MOTION_MS\[[\"'](?:hover|page)[\"']\]")
-        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO"):
+        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO", "FRAME"):
             self.assertRegex(others, rf"\b{name}\b", name)
         documented = (ROOT / "docs" / "UI_DESIGN_SPEC.md").read_text(encoding="utf-8")
         for word in ("SPACE", "SHADOW", "COPY_FEEDBACK_MS", "FRAME", "CARD", "안 쓰는 값"):
             self.assertIn(word, documented, word)
 
     def test_the_frame_sizes_stay_inside_the_ranges_the_operator_gave(self):
-        """앱 틀의 크기는 명세가 정한 범위 안이다(손으로 적은 범위 — 값이 슬며시 바뀌지 않게): 사이드바 200~220·오른쪽 패널 280~320·위 막대 64~72·모서리 10~14·말풍선 모서리 8.
-        의도적 갱신(UI-C0, D-150~): 새 기준(C-Type)에서 **입력 칸 모서리가 8**(문서 §11.1)이라 '입력' 은 10~14 묶음에서 빼 8 로 따로 못박았고, 카드·행은 14 → 12 로 바뀌어도 이 범위 안이다."""
-        self.assertTrue(200 <= tokens.LAYOUT["sidebar"] <= 220, tokens.LAYOUT["sidebar"])
+        """앱 틀의 크기는 명세가 정한 범위 안이다(손으로 적은 범위 — 값이 슬며시 바뀌지 않게): 사이드바 184~208·오른쪽 패널 280~320·위 막대 56~64·모서리 10~14·말풍선 모서리 8.
+        의도적 갱신(UI-C0, D-150~): 새 기준(C-Type)에서 **입력 칸 모서리가 8**(문서 §11.1)이라 '입력' 은 10~14 묶음에서 빼 8 로 따로 못박았고, 카드·행은 14 → 12 로 바뀌어도 이 범위 안이다.
+        의도적 갱신(UI-C1a, D-171·D-172): 사이드바 폭은 200~220 → **184~208**, 위 막대 높이는 64~72 → **56~64**(새 기준 C-Type §2 — 운영자 2026-11-06 확인 요청 004 가 새 틀로 진행하라고 함). 값은 새 틀 상수 `FRAME`(208·60)에서 읽는다."""
+        self.assertTrue(184 <= tokens.FRAME["sidebar"] <= 208, tokens.FRAME["sidebar"])
         self.assertTrue(280 <= tokens.LAYOUT["rail"] <= 320, tokens.LAYOUT["rail"])
-        self.assertTrue(64 <= tokens.LAYOUT["topbar"] <= 72, tokens.LAYOUT["topbar"])
+        self.assertTrue(56 <= tokens.FRAME["app_bar"] <= 64, tokens.FRAME["app_bar"])
         for name in ("button", "card", "badge", "thumb", "row"):
             self.assertTrue(10 <= tokens.RADIUS[name] <= 14, (name, tokens.RADIUS[name]))
         self.assertEqual(tokens.RADIUS["input"], 8)
@@ -595,14 +597,19 @@ class ServicesAndStateTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             services.FakeHomeProvider("nope")
 
-    def test_the_menu_has_exactly_six_entries_in_the_operator_order(self):
-        self.assertLessEqual(len(app_state.NAV), app_state.MAX_NAV)
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "발행 기록", "블로그 관리", "설정"])
+    def test_the_menu_has_only_the_completed_screens_and_no_size_cap_any_more(self):
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 '메뉴 6개 이하(`MAX_NAV`)·운영자 순서' 와 자리표시 화면(`page_view`)을 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — **완성된 화면만 실제 Navigation**(홈·설정)이고
+        메뉴는 화면이 완성될 때마다 늘어난다(D-155 ⑤ 개수 제한 없음). 그래서 개수 상한과 자리표시 화면은 없앴고, 새 규칙은 '메뉴의 열쇠 = 만들어진 화면의 열쇠'(아래 시험)다."""
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "설정"])
+        self.assertFalse(hasattr(app_state, "MAX_NAV"))
         state = load()
         self.assertFalse(state.nav("home"))                                           # 지금 화면은 다시 안 간다
-        self.assertTrue(state.nav("topics"))
-        self.assertFalse(state.nav("nope"))
-        self.assertEqual(state.page_view()["button"], text.T["soon_btn"])
+        for unfinished in ("topics", "draft", "history", "seed", "blogs", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다
+            self.assertFalse(state.nav(unfinished), unfinished)
+            self.assertEqual(state.page, "home", unfinished)
+        self.assertFalse(hasattr(state, "page_view"))                                  # '아직 만들고 있어요' 자리표시 화면이 없다
+        self.assertTrue(state.nav("settings"))
+        self.assertEqual(state.page, "settings")
 
     def test_home_view_has_four_cards_five_rows_and_five_chips(self):
         view = load().home_view()
@@ -611,7 +618,7 @@ class ServicesAndStateTest(unittest.TestCase):
         self.assertEqual([chip["label"] for chip in view["chips"]], ["전체", "블로그 A", "블로그 B", "트렌드 급상승", "신규 키워드"])
         self.assertTrue(view["sample"])
         self.assertEqual([row["selected"] for row in view["rows"]], [True, False, False, False, False])
-        self.assertEqual(view["date"], "2026년 11월 3일 (화)")
+        self.assertNotIn("date", view)                                                  # 의도적 갱신(UI-C1a, D-171): 홈 제목 줄의 날짜는 상단 앱 바(컴퓨터 시계)로 옮겼다
 
     def test_chips_filter_rows_and_keep_a_valid_selection(self):
         state = load()
@@ -776,11 +783,9 @@ class ServicesAndStateTest(unittest.TestCase):
         self.assertIn("다음 단계", state.draft_requested("s1", "A"))
         self.assertEqual(state.draft_requested("zzz", "A"), "")
         self.assertIn("다음 단계", state.quick("new"))
-        self.assertEqual(state.quick("history"), "")
-        self.assertEqual(state.page, "history")
-        for key, page in (("saved", "topics"), ("history", "history"), ("blogs", "blogs")):                  # 빠른 작업마다 가는 곳이 다르다
-            moved = load()
-            self.assertEqual((moved.quick(key), moved.page), ("", page), key)
+        for key in ("new", "saved", "history", "blogs", "nope"):                        # 의도적 갱신(UI-C1a, D-172): 빠른 작업에는 화면으로 가는 길이 없다 — 어느 열쇠든 안내만 하고 화면은 그대로
+            stay = load()
+            self.assertEqual((stay.quick(key), stay.page), (stay.soon(text.T["q_new"]), "home"), key)
 
     def test_a_key_shaped_text_in_a_candidate_is_masked_everywhere_it_is_shown(self):
         fake = "AI" + "za" + "D" * 35                                                    # 구글 키 모양의 가짜 값(조각을 이어 만들어 저장소에는 키 문자열이 없다)

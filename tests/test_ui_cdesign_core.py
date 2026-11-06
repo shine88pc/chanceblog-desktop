@@ -44,10 +44,12 @@ class DocumentValuesTest(unittest.TestCase):
                          {"text_strong": "#0B1736", "text_primary": "#14213D", "text_secondary": "#5F6B7A", "text_muted": "#8491A3", "text_disabled": "#AAB4C3"})
 
     def test_the_eleven_semantic_badge_pairs_equal_the_document(self):
-        document = (("public_data", "공공데이터", "#DCEBFF", "#1E63C6"), ("recommend", "추천", "#FFF0CA", "#B36A00"), ("global_compare", "해외비교", "#EEE4FF", "#7545B8"),
-                    ("culture_event", "문화행사", "#FFE3E3", "#B93A3A"), ("price_change", "가격변화", "#E8F7DF", "#478327"), ("travel", "여행", "#E5F1FF", "#2C6FAE"),
+        # 의도적 갱신(UI-C1a, D-170): 추천·가격변화·주의의 **글자 색**은 문서 값(#B36A00·#478327·#A86500)이 아니라 운영자가 정한 접근성 색이다 — 운영자 2026-11-06 확인 요청 004 의 답(대비 4.5 이상).
+        # 나머지 8쌍과 11쌍의 배경은 문서 값 그대로다.
+        document = (("public_data", "공공데이터", "#DCEBFF", "#1E63C6"), ("recommend", "추천", "#FFF0CA", "#9D5F07"), ("global_compare", "해외비교", "#EEE4FF", "#7545B8"),
+                    ("culture_event", "문화행사", "#FFE3E3", "#B93A3A"), ("price_change", "가격변화", "#E8F7DF", "#437B28"), ("travel", "여행", "#E5F1FF", "#2C6FAE"),
                     ("tech", "기술", "#E6EAF2", "#354665"), ("policy", "정책", "#F2E8DE", "#7B573A"), ("life", "생활", "#E4F4FF", "#2F759A"),
-                    ("caution", "주의", "#FFF2D6", "#A86500"), ("blocked", "차단", "#FDE6E6", "#B92F2F"))
+                    ("caution", "주의", "#FFF2D6", "#9F6003"), ("blocked", "차단", "#FDE6E6", "#B92F2F"))
         self.assertEqual(tokens.SEMANTIC_BADGES, document)
         self.assertEqual(len(tokens.BADGE_KINDS), 11)
         colors = tokens.palette()
@@ -55,18 +57,17 @@ class DocumentValuesTest(unittest.TestCase):
             self.assertEqual(tokens.badge_colors(colors, kind), (bg, fg), kind)
             self.assertEqual(tokens.badge_label(kind), label)
 
-    def test_badge_text_contrast_is_measured_and_the_three_below_4_5_are_the_known_ones(self):
-        """문서 값 그대로 쓴 배지 글자의 대비 — 11쌍 중 8쌍은 4.5 이상이고 **추천·가격변화·주의** 세 쌍은 4.5 미만(3.73·4.14·4.18)이다. 값은 운영자 문서 그대로라 바꾸지 않았고(D-150~), 세 쌍은 운영자 확인 항목이다.
-        누가 값을 고쳐 목록이 달라지면 이 시험이 문서(UI_DESIGN_SPEC §2)를 고치라고 알린다. 아무리 낮아도 3 이상(큰 글씨 기준)이고 늘 글자가 함께 있다."""
+    def test_badge_text_contrast_is_measured_and_all_eleven_pairs_reach_4_5(self):
+        """의도적 갱신(UI-C1a, D-170 — 운영자 2026-11-06 확인 요청 004 의 답: 4.5 이상 접근성 색으로 변경): 문서 값 그대로였을 때는 **추천·가격변화·주의** 세 쌍이 4.5 미만(3.73·4.14·4.18)이라 그 세 쌍만
+        4.5 미만임을 못박았다. 운영자가 글자 색을 `#9D5F07`·`#437B28`·`#9F6003` 으로 바꿔 **11쌍 모두 4.5 이상**이다 — 새 단언은 '11쌍 전부 4.5 이상' 이고, 바꾼 세 쌍은 4.56·4.58·4.56 이다.
+        누가 값을 고쳐 대비가 4.5 아래로 내려가면 이 시험이 알린다(늘 글자가 함께 있어 색만으로 뜻을 알리지 않는다)."""
         colors = tokens.palette()
-        low = {}
+        ratios = {}
         for kind in tokens.BADGE_KINDS:
             bg, fg = tokens.badge_colors(colors, kind)
-            ratio = tokens.contrast(fg, bg)
-            self.assertGreaterEqual(ratio, 3.0, kind)
-            if ratio < 4.5:
-                low[kind] = round(ratio, 2)
-        self.assertEqual(low, {"recommend": 3.73, "price_change": 4.14, "caution": 4.18})
+            ratios[kind] = tokens.contrast(fg, bg)
+            self.assertGreaterEqual(ratios[kind], 4.5, kind)
+        self.assertEqual({kind: round(ratios[kind], 2) for kind in ("recommend", "price_change", "caution")}, {"recommend": 4.56, "price_change": 4.58, "caution": 4.56})
 
     def test_score_band_colors_and_bar_colors_equal_the_document(self):
         colors = tokens.palette()
@@ -147,13 +148,19 @@ class DocumentValuesTest(unittest.TestCase):
         self.assertEqual(size["usage_h"], 8)
         self.assertTrue(0.10 <= tokens.RING_STROKE_RATIO <= 0.12)
 
-    def test_the_frame_and_card_constants_are_decided_but_not_used_yet(self):
+    def test_the_frame_and_card_constants_equal_the_decisions(self):
+        # 의도적 갱신(UI-C1a, D-174): 틀 상수(`FRAME`)는 이제 상단 앱 바·사이드바·서랍이 쓴다(옛 이름 '아직 안 쓰는 값' 에서 옮김). 상세 창은 운영자 결정(2026-11-06 확인 요청 004)이 문서 값을 이긴다 —
+        # 고정 420~500(문서는 420~520)·좁은 폭 고정 400(문서는 400~440). 카드 규격(`CARD`)은 아직 안 쓴다(주제 후보 화면과 함께).
         frame = tokens.FRAME
-        self.assertEqual((frame["app_bar"], frame["app_bar_range"], frame["sidebar_range"], frame["detail_range"], frame["detail_narrow_range"]), (60, (56, 64), (184, 208), (420, 520), (400, 440)))
+        self.assertEqual((frame["app_bar"], frame["app_bar_range"], frame["sidebar_range"], frame["detail_range"], frame["detail_narrow"]), (60, (56, 64), (184, 208), (420, 500), 400))
         self.assertEqual((frame["window_min"], frame["window_default"], frame["fixed_detail_min"], frame["narrow_detail_min"]), ((1180, 720), (1600, 960), 1600, 1366))
+        self.assertEqual((frame["detail_max_at"], frame["detail_columns_wide"], frame["detail_columns_narrow"], frame["drawer"], frame["drawer_max_ratio"]), (1920, 3, 2, 420, 0.92))
         self.assertTrue(frame["sidebar_range"][0] <= frame["sidebar"] <= frame["sidebar_range"][1] and frame["detail_range"][0] <= frame["detail"] <= frame["detail_range"][1])
         self.assertEqual((tokens.CARD["pad"], tokens.CARD["gap"], tokens.CARD["gap_narrow"], tokens.CARD["min_w"], tokens.CARD["w_range"], tokens.CARD["h_range"]), (16, 16, 12, 230, (260, 300), (280, 330)))
-        self.assertEqual(tokens.LAYOUT["window_min"], (900, 560))                       # 옛 틀(`LAYOUT`)은 이 묶음에서 그대로 — 새 틀은 다음 묶음이 쓴다
+        self.assertEqual(tokens.LAYOUT["window_min"], (900, 560))                       # 최소 창은 지금 그대로(UI-C1a 지시) — 상단 앱 바·사이드바 크기만 새 틀(`FRAME`)로 옮겼다
+        self.assertNotIn("topbar", tokens.LAYOUT)                                       # 새 틀로 옮겨 간 옛 값은 지웠다(죽은 토큰을 두지 않는다)
+        self.assertNotIn("sidebar", tokens.LAYOUT)
+        self.assertNotIn("drawer", tokens.LAYOUT)
 
     def test_the_space_scale_is_the_four_pixel_grid(self):
         self.assertEqual(tokens.SPACE["1"], 4)

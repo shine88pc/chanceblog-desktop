@@ -559,7 +559,7 @@ class ExistingPartsFollowTheNewTokensTest(PartsBase):
         self.assertEqual(hexed(image, image.width() // 2, 0), COLORS["secondary_border"].upper())          # 보조 단추 테두리
         self.assertGreater(count_color(image, COLORS["secondary_text"], 24), 5)                          # 보조 단추 글자
         self.assertEqual(hexed(primary.grab().toImage(), 8, primary.height() // 2), COLORS["primary"].upper())
-        self.assertEqual(hexed(danger.grab().toImage(), 8, danger.height() // 2), COLORS["danger"].upper())
+        self.assertEqual(hexed(danger.grab().toImage(), 8, danger.height() // 2), COLORS["danger_fill"].upper())          # 의도적 갱신(UI-C1a, D-170): 위험 단추 배경 = 접근성 색 #CE4646
         self.assertEqual(hexed(quiet.grab().toImage(), 8, quiet.height() // 2), COLORS["disabled_bg"].upper())          # 꺼진 보조는 옅은 바탕(그대로)
         for button in (disabled_primary, disabled_danger):                                               # 꺼진 주요·위험은 꺼진 채움 + 흰 글자
             image = button.grab().toImage()
@@ -612,10 +612,10 @@ class ExistingPartsFollowTheNewTokensTest(PartsBase):
         ui_offscreen.wait_until(self.app, lambda: window.state.list_state != "loading", 10)
         self.settle()
         image = window.grab().toImage()
-        self.assertEqual(hexed(image, tokens.LAYOUT["sidebar"] + 6, 600), COLORS["bg_app"].upper())      # 본문 바탕 #F4F7FB
+        self.assertEqual(hexed(image, tokens.FRAME["sidebar"] + 6, 600), COLORS["bg_app"].upper())       # 본문 바탕 #F4F7FB — 사이드바 폭은 새 틀 상수(UI-C1a: 옛 LAYOUT 값은 지웠다)
         self.assertEqual(hexed(image, 4, 400), COLORS["bg_sidebar"].upper())                              # 사이드바 바탕 #F7F9FC
         self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()][:1], ["홈 메뉴로 이동"])
-        self.assertEqual(len(window.nav_buttons), 6)                                                      # 메뉴 동작·개수는 이 묶음에서 그대로
+        self.assertEqual(len(window.nav_buttons), 2)                                                      # 의도적 갱신(UI-C1a, D-172): 실제 메뉴는 완성된 화면(홈·설정)뿐 — 옛 값은 6
 
 
 class GalleryTest(PartsBase):

@@ -1,7 +1,7 @@
 """Qt 화면(View) — 뷰모델(`ui/core/app_state.py` 가 만든 딕셔너리)을 공통 부품(`components.py`)으로 조립하기만 한다.
 목록을 거르거나 문구를 만들거나 어떤 상태인지 정하는 일은 하지 않고, Qt 기본 위젯(QPushButton·QLabel·QLineEdit …)을 직접 만들지도 않는다(시험이 지킨다). 눌림은 `shell`(AppShell)의 메서드로 넘긴다.
 폭이 바뀌면 배치를 다시 고른다 — 요약 카드 4열→2열→1열, 오른쪽 패널 옆→아래, 추천 행의 지표 칸 접기, 설정 화면의 용도 카드 2열→1열 — 가로 스크롤은 없다.
-화면은 홈(`home_screen`)·설정(`settings_screen` — 접이식 네 묶음과 용도 카드, 읽기만)·자리표시(`placeholder_screen`) 셋이고, 어느 메뉴가 어느 화면인지는 맨 아래 `SCREEN_BUILDERS` 표(메뉴 → 화면 만드는 함수) 한 곳이 정한다.
+화면은 홈(`home_screen`)·설정(`settings_screen` — 접이식 네 묶음과 용도 카드, 읽기만) 둘이고(UI-C1a 에서 '아직 만들고 있어요' 자리표시 화면을 없앴다 — 완성된 화면만 연다), 어느 메뉴가 어느 화면인지는 맨 아래 `SCREEN_BUILDERS` 표(메뉴 → 화면 만드는 함수) 한 곳이 정한다.
 """
 from __future__ import annotations
 
@@ -21,6 +21,21 @@ def refit_scroll_area(widget):
         area = area.parentWidget()
     if area is not None:
         QApplication.postEvent(area, QEvent(QEvent.LayoutRequest))
+
+
+def relayout_screen(root):
+    """화면 위젯 안의 모든 배치를 무효로 하고 처음부터 다시 계산한다 — 다시 그린 직후나 창 크기를 바꾼 직후에 일부 배치가 옛 값으로 굳는 일을 막는다(UI-C1a: 논리 1280×720 에서 홈 추천 행이
+    '누르는 칸 최소 높이' 로 눌려 제목이 잘리는 것이 드러났다 — 폭에 따라 줄 수가 바뀌는 글과 폭 문턱에서 접히는 칸이 있는 행의 높이가 위쪽 배치에 반영되지 않은 채 굳는다. 같은 일이 옛 코드의 창 크기 끌기에서도 있었다).
+    위젯마다 가진 배치를 모두 무효로 한 뒤 맨 위 배치를 다시 맞추고 스크롤 영역이 안쪽 크기를 다시 재게 알린다 — 홈 위젯 165개에 6~8ms 라 눈에 띄지 않고 여러 번 불러도 결과가 같다."""
+    if root is None:
+        return
+    for widget in (root, *root.findChildren(QWidget)):
+        layout = widget.layout()
+        if layout is not None:
+            layout.invalidate()
+    if root.layout() is not None:
+        root.layout().activate()
+    refit_scroll_area(root)
 
 
 class FlowGrid(QWidget):
@@ -139,7 +154,7 @@ def home_screen(shell, vm):
     margin = K.LAYOUT["page_margin"]
     outer.setContentsMargins(margin, margin, margin, margin)
     outer.setSpacing(K.LAYOUT["gap"])
-    rights = ([UI.SampleBadge(shell.show_sample_info)] if vm["sample"] else []) + [UI.label(vm["date"], "sub")]
+    rights = [UI.SampleBadge(shell.show_sample_info)] if vm["sample"] else []              # 날짜는 상단 앱 바로 옮겼다(UI-C1a, D-171)
     outer.addLayout(page_head(vm["title"], vm["sub"], rights))
     main = QWidget()
     column = QVBoxLayout(main)
@@ -147,8 +162,7 @@ def home_screen(shell, vm):
     column.setSpacing(K.LAYOUT["gap"])
     cards = []
     for card in vm["cards"]:
-        widget = UI.SummaryCard(card)
-        widget.clicked.connect(shell.go)
+        widget = UI.SummaryCard(card)                                                       # 요약 카드는 눌러서 가는 곳이 없다(옛 이동 길은 아직 만들지 않은 화면으로 가서 끊었다 — UI-C1a, D-172)
         cards.append(widget)
     column.addWidget(FlowGrid(cards, (4, 2, 1), 190))
     column.addWidget(_recommend(shell, vm))
@@ -163,10 +177,7 @@ def _recommend(shell, vm):
     refresh.setEnabled(vm["state"] != "loading")
     refresh.clicked.connect(shell.reload)
     shell.refresh_button = refresh
-    all_link = UI.Button("ghost", vm["section"]["all"], "arrow_right", focus_key="all-topics")
-    all_link.setLayoutDirection(Qt.RightToLeft)
-    all_link.clicked.connect(lambda: shell.go("topics"))
-    inner.addLayout(section_title(vm["section"]["title"], vm["section"]["desc"], (refresh, all_link)))
+    inner.addLayout(section_title(vm["section"]["title"], vm["section"]["desc"], (refresh,)))         # '전체 보기' 는 아직 만들지 않은 화면으로 가는 단추라 없앴다(UI-C1a, D-172)
     if vm["fetched"]:
         inner.addWidget(UI.label(vm["fetched"], "caption"))
     inner.addWidget(chip_flow(vm["chips"], shell.chip_home))
@@ -267,19 +278,6 @@ def _rail(shell, rail):
         inner.addStretch(1)
         cards.append(tip)
     return cards
-
-
-# ---- 아직 만들지 않은 화면 ----------------------------------------------------------------------------------------------------------
-def placeholder_screen(shell, vm):
-    page = QWidget()
-    outer = QVBoxLayout(page)
-    margin = K.LAYOUT["page_margin"]
-    outer.setContentsMargins(margin, margin, margin, margin)
-    outer.setSpacing(K.LAYOUT["gap"])
-    outer.addLayout(page_head(vm["name"], vm["desc"]))
-    outer.addWidget(UI.StateCard("info_circle", "blue", vm["title"], vm["desc"], vm["button"], lambda: shell.go("home")))
-    outer.addStretch(1)
-    return page
 
 
 # ---- 설정(연결 관리) ----------------------------------------------------------------------------------------------------------------
@@ -397,17 +395,12 @@ def _home_builder(shell):
     return home_screen(shell, shell.state.home_view())
 
 
-def _placeholder_builder(shell):
-    return placeholder_screen(shell, shell.state.page_view())
-
-
 def _settings_builder(shell):
     return settings_screen(shell, shell.state.settings_view())
 
 
-# 메뉴 여섯 개마다 한 줄(`app_state.NAV` 와 같은 열쇠 — 시험이 지킨다). 아직 만들지 않은 화면은 모두 같은 자리표시이고, 다음 묶음이 한 줄씩 새 화면으로 바꾼다. 홈은 한 글자도 바뀌지 않았다.
-SCREEN_BUILDERS = {"home": _home_builder, "topics": _placeholder_builder, "draft": _placeholder_builder, "history": _placeholder_builder, "blogs": _placeholder_builder,
-                   "settings": _settings_builder}
+# 실제 메뉴마다 한 줄(`app_state.NAV` 와 같은 열쇠 — 시험이 지킨다). **완성된 화면만** 둔다 — 아직 만들지 않은 화면은 이 표에도 메뉴에도 없고(자리표시 화면을 없앴다), 화면이 완성되면 메뉴 한 줄과 이 표 한 줄을 같이 더한다.
+SCREEN_BUILDERS = {"home": _home_builder, "settings": _settings_builder}
 
 
 # ---- 상세 서랍 ---------------------------------------------------------------------------------------------------------------------
