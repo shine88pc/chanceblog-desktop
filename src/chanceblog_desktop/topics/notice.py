@@ -21,13 +21,14 @@ MAX_LINE = 300                                                                  
 
 # 알림 카탈로그(초기값) — 코드(내부) → (수준, 제목, 설명, 권장 행동). 순서가 곧 같은 수준 안의 정렬 순서다.
 _CATALOG_ROWS = (
-    # 안전 표시 9
+    # 안전 표시 10 — `ECONOMIC_CONFLICT` 는 전략 맞춤 1차(D-102)에서 더했다: 저장된 상태가 ‘없음’인데 글에서 협찬이 추정될 때 `ECONOMIC_CHECK` 대신 이것 하나만 낸다
     ("HEALTH_TOPIC", LEVEL_WARNING, "건강 정보 확인 필요", "질환이나 건강 관련 제품을 다루는 주제입니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요."),
     ("HEALTH_EFFECT", LEVEL_WARNING, "건강 정보 확인 필요", "건강 제품이나 질환의 효과를 말하는 표현이 있습니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요."),
     ("HEALTH_CLAIM", LEVEL_WARNING, "건강 정보 확인 필요", "효과를 단정하는 표현이 포함되어 있습니다.", "공식 근거를 확인하거나 일반 생활정보 표현으로 수정해 주세요."),
     ("HEALTH_STOP", LEVEL_ERROR, "의료·효과 단정 위험", "건강 제품이나 질환의 효과를 단정하는 표현이 있어 자동 초안을 만들지 않습니다.", "표현을 바꾸거나 공식 근거를 확인한 뒤 직접 검토해 주세요."),
     ("EXPERIENCE_CLAIM", LEVEL_WARNING, "직접 겪은 경험 확인 필요", "직접 사용하거나 방문하거나 구매한 경험을 이미 한 것처럼 쓴 표현이 있습니다.", "직접 겪은 일이 아니면 주제에서 빼거나 바꿔 주세요."),
     ("ECONOMIC_CHECK", LEVEL_WARNING, "경제적 이해관계 확인 필요", "제품·서비스 제공 또는 제휴 보상이 있는지 확인해 주세요.", "대가가 있다면 본문 첫 부분에 표시 문구가 필요합니다."),
+    ("ECONOMIC_CONFLICT", LEVEL_WARNING, "경제적 이해관계 확인 필요", "저장된 상태는 ‘없음’인데 글에는 협찬이나 광고로 보이는 표현이 있어 서로 맞지 않습니다.", "협찬·광고 여부를 다시 확인해 저장된 상태를 고치거나 표현을 바꿔 주세요."),
     ("ECONOMIC_CONFIRMED", LEVEL_WARNING, "경제적 이해관계 표시 필요", "등록된 협찬 정보가 있어 이 글에는 경제적 이해관계가 있습니다.", "본문 첫 부분에 표시 문구가 필요합니다. 표시 문구는 다음 단계에서 정합니다."),
     ("COLLAB_POSSIBLE", LEVEL_INFO, "협업 가능성 참고", "협업할 수 있는 주제로 분류된 후보입니다. 아직 협찬이 확정된 것은 아닙니다.", "실제로 제품·서비스·대가를 받기로 했다면 협찬 정보를 입력해 주세요."),
     ("RESULT_PROMISE", LEVEL_ERROR, "결과 약속 표현", "결과를 약속하는 표현이 있어 이 글로는 후보를 만들 수 없습니다.", "약속하는 말을 빼고, 확인할 수 있는 내용으로 바꿔 주세요."),
@@ -169,7 +170,7 @@ def _finding_details(finding):
     code, matched, groups = finding.code, tuple(finding.matched), tuple(getattr(finding, "groups", ()))
     if code.startswith("HEALTH_"):
         return tuple(f"{groups[index]} — {_word(word)}" if index < len(groups) and groups[index] else _word(word) for index, word in enumerate(matched))
-    if code in ("ECONOMIC_CHECK", "ECONOMIC_CONFIRMED"):
+    if code in ("ECONOMIC_CHECK", "ECONOMIC_CONFLICT", "ECONOMIC_CONFIRMED"):
         return tuple(dict.fromkeys(groups))
     if code in ("EXPERIENCE_CLAIM", "RESULT_PROMISE"):
         return tuple(_word(word) for word in matched)

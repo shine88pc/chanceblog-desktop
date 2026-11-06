@@ -37,7 +37,7 @@ CAND = dict(candidate_id="cand0001", source_type="seed", candidate_type="evergre
             content_type="buying_guide", topic_cluster="local-ai", topic_angle="memory-requirements", target_reader="일반 사용자", created_at="2026-11-04T09:56:00Z")
 RAW_VALUES = tuple(sorted({*ch.CHANNELS, *ch.LANGUAGES, *ch.TREND_USES, *ch.FACTOR_NAMES, *sd.SEED_TYPES, *sd.SCOPES, *sd.STATES, *sc.REPEATS, *md.SOURCE_TYPES, *md.CANDIDATE_TYPES, *md.SEARCH_INTENTS,
                           *md.CONTENT_TYPES, *md.SAFETY_FLAGS, *md.DUPLICATE_STATUSES, *se.DATA_STATUSES, *se.TREND_STATUSES, *STATUSES, *se.BANDS, *gn.ROUTES, *gn.DROP_REASONS, *ex.BLOCK_REASONS, *ex.FAMILIES,
-                          *nt.LEVELS} - {"info", "none", "seed", "common", "partial", "flat", "falling", "rising", "primary", "reference", "supporting", "comparison", "information", "invalid", "sources", "language"}))
+                          *nt.LEVELS, *sf.INTEREST_TYPES} - {"info", "none", "seed", "common", "partial", "flat", "falling", "rising", "primary", "reference", "supporting", "comparison", "information", "invalid", "sources", "language"}))
 INPUT_QUOTE = re.compile("‘[^’]*’")
 HYPHEN_ID = re.compile(r"(?<![0-9A-Za-z-])(?=[a-z0-9-]*[a-z])[a-z0-9]+(?:-[a-z0-9]+)+(?![0-9A-Za-z-])")
 FAMILY_WORDS = tuple(ex.FAMILIES)                                              # 확장 계열 이름은 영어 방향 낱말(‘low-pressure habit’)과 겹칠 수 있어 따옴표 밖에서만 본다
@@ -108,7 +108,13 @@ def build_probes():
                ("campaign id", lambda: sf.Campaign(campaign_id="a b", benefits=("goods",), status="confirmed", seed_id="s1")), ("campaign benefits", lambda: sf.Campaign(campaign_id="c1", benefits=("zzz",), status="confirmed", seed_id="s1")),
                ("campaign status", lambda: sf.Campaign(campaign_id="c1", benefits=("goods",), status="zzz", seed_id="s1")), ("campaign no link", lambda: sf.Campaign(campaign_id="c1", benefits=("goods",), status="confirmed")),
                ("campaign channel", lambda: sf.Campaign(campaign_id="c1", benefits=("goods",), status="confirmed", seed_id="s1", channel="blogger_a")),
-               ("campaign dict", lambda: sf.Campaign.from_dict({"zzz": 1}))]
+               ("campaign dict", lambda: sf.Campaign.from_dict({"zzz": 1})),
+               # 전략 맞춤 1차(D-102)가 더한 오류 경로 — `UNKNOWN`(기본 상태)·`NONE` 섞기·제안 중 `NONE`·같은 뜻 두 번(옛 이름과 새 이름)
+               ("campaign unknown", lambda: sf.Campaign(campaign_id="c1", benefits=("UNKNOWN",), status="confirmed", seed_id="s1")),
+               ("campaign none mixed", lambda: sf.Campaign(campaign_id="c1", benefits=("NONE", "OTHER"), status="confirmed", seed_id="s1")),
+               ("campaign none proposed", lambda: sf.Campaign(campaign_id="c1", benefits=("NONE",), status="proposed", seed_id="s1")),
+               ("campaign same meaning twice", lambda: sf.Campaign(campaign_id="c1", benefits=("goods", "PRODUCT_PROVIDED"), status="confirmed", seed_id="s1")),
+               ("campaign too many", lambda: sf.Campaign(campaign_id="c1", benefits=sf.BENEFIT_KINDS + ("NONE",), status="confirmed", seed_id="s1"))]
     return probes
 
 

@@ -949,7 +949,7 @@ class CheckStatusTest(unittest.TestCase):
         good = tp.check_files(self.world.ctx, today=TODAY)
         self.assertTrue(good.ok)
         self.assertEqual((good.seeds, good.entries), (3, 1))
-        self.assertEqual(len(good.proposals), 3, "180일 넘게 선택 안 한 씨앗은 제안만 한다")
+        self.assertEqual(len(good.proposals), 2, "180일 넘게 선택 안 한 씨앗은 제안만 한다 — 계절형(z1)은 비수기라는 이유로 쉬게 하지 않아 빠진다(D-103)")        # 의도적 갱신(P3+전략 맞춤 1차 병합): 3 → 2
         self.assertEqual(len(good.evaluations), 1)
         self.world.paths.seeds.write_text('{"schema": 1, "seeds": [{"seed_id": "x"}]}', encoding="utf-8")
         before = self.world.paths.seeds.read_bytes()

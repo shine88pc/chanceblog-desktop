@@ -1,7 +1,7 @@
 """작성 가능성(`topics/feasibility.py`) 시험 — 소제목 뼈대 표(초기값), 검색 의도가 더하는 소제목, 자동 보완 순서, 점수 표, '못 채우면 낮음(0점 아님)', '모르면 None'.
 
 지키는 것:
-  1) **표는 초기값이다 — 전략 원문 확인 전.** 소제목 이름(37개)·글 종류별 기본 뼈대 11개·검색 의도별 추가 소제목 8개·자동 보완 순서(자주 묻는 질문 → 체크리스트 → 비교표 → 주의할 점)·그 글 종류에 안 맞는 보완·점수(90·80·70·60·50·낮음 30)를
+  1) **표는 구현자 초기값이다 — 전략 원문과 2026-11-06 에 대조했고 원문이 정한 값이 아니다(D-104).** 소제목 이름(37개)·글 종류별 기본 뼈대 11개·검색 의도별 추가 소제목 8개·자동 보완 순서(자주 묻는 질문 → 체크리스트 → 비교표 → 주의할 점)·그 글 종류에 안 맞는 보완·점수(90·80·70·60·50·낮음 30)를
      이 시험이 손으로 쓴 값과 같은지 못박는다 — 원문에 맞춰 고칠 때는 `feasibility.py` 한 곳과 이 시험의 같은 표를 의식적으로 함께 고친다.
   2) 글 종류 11개 × 검색 의도 8개 × 소제목 최소 수 1~12 의 모든 조합을 이 시험의 **독립 참조 구현**과 견준다(뼈대·보완·단계·점수 모두).
   3) 소제목 최소 수에 못 미쳐도 보완 순서대로 하나씩만 더하고(이미 있는 것·안 맞는 글 종류는 건너뜀) 그래도 못 채우면 점수를 낮춘다(`LOW_SCORE` — 0점이 아니다). 글 종류나 검색 의도를 모르면 점수도 None 이다(0점으로 치지 않는다).
@@ -59,11 +59,25 @@ def reference(content_type, intent, minimum):
 
 
 class InitialTablesTest(unittest.TestCase):
-    def test_the_module_says_every_table_is_an_initial_value_pending_the_strategy_original(self):
+    def test_the_module_says_the_tables_are_implementer_initial_values_compared_with_the_strategy_original(self):
+        # 의도적 갱신(전략 맞춤 1차 ③, D-104): 머리말이 '전략 원문 확인 전' 에서 '원문과 대조했다 — 이 표는 계획 문서 예에서 온 구현자 초기값, 원문 §16 은 성격이 다른 7단계' 로 바뀌었다. 표 값·소제목 보충 검사는 그대로다.
         doc = Path(fe.__file__).read_text(encoding="utf-8").split('"""', 2)[1]
-        self.assertIn("초기값 — 전략 원문 확인 전", doc)
+        self.assertIn("구현자 초기값", doc)
+        self.assertIn("2026-11-06 에 대조했고", doc)
+        for stale in ("원문 확인 전", "이 PC 에 없어서"):
+            self.assertNotIn(stale, doc)
+        for step in ("넓은 키워드 세분화", "대상 독자·목적 적용", "글 유형 기본 구조 적용", "보조 키워드 추가", "기존 글에서 다루지 않은 관점 적용", "안전한 정보형으로 전환", "작성 가능한 하위 주제 최대 3개 생성"):
+            self.assertIn(step, doc)
+        for needle in ("7단계", "규칙 기반 초안 본문 생성기", "작성 기반 부족", "88조합 중 0", "그대로 둔다"):
+            self.assertIn(needle, doc)
         for name in ("SECTIONS", "BASE_OUTLINES", "INTENT_EXTRAS", "SUPPLEMENT_ORDER", "SUPPLEMENT_NOT_FOR", "SCORES_BY_ADDED", "LOW_SCORE"):
             self.assertIn(name, doc)
+
+    def test_the_header_claim_that_no_ordinary_combination_reaches_low_is_true_for_the_default_minimum(self):
+        # 머리말의 '88조합 중 0' 을 직접 센다 — 소제목 최소 4(기본)에서 글 종류 11 × 검색 의도 8 어느 조합도 '낮음' 이 아니다(그래서 '작성 기반 부족' 보류에 닿지 못한다).
+        combos = [(content_type, intent) for content_type in md.CONTENT_TYPES for intent in md.SEARCH_INTENTS]
+        self.assertEqual(len(combos), 88)
+        self.assertEqual([pair for pair in combos if fe.assess(*pair).level == "low"], [])
 
     def test_the_section_names_are_exactly_these(self):
         self.assertEqual(dict(fe.SECTIONS), LABELS)

@@ -1,7 +1,7 @@
 """사용자 메시지 `Notice`(`topics/notice.py`) 시험 — P2b 보완 N1~N8(D-53).
 
 지키는 것:
-  N1) 카탈로그 29개(안전 9·브랜드 3·진단 15·결과 2)의 코드·수준·제목·설명·행동이 정해진 값이고 후보의 선정 이유 규칙을 통과한다.
+  N1) 카탈로그 30개(안전 10·브랜드 3·진단 15·결과 2 — 전략 맞춤 1차 D-102 가 안전 알림 `ECONOMIC_CONFLICT` 하나를 더해 29 → 30)의 코드·수준·제목·설명·행동이 정해진 값이고 후보의 선정 이유 규칙을 통과한다.
   N2) 요청서 §8 의 세 표시 예(주제 구체화 필요·건강 정보 확인 필요·경제적 이해관계 확인 필요)가 글자 그대로 나온다.
   N3) 렌더(카드·글머리표·한 줄)는 파이썬 목록 꼴이 아니다. N4) 변환기(보고서·진단 행·한 번 돌린 결과·브랜드·보류). N5) **전수 점검** — 사용자에게 보일 수 있는 문장 어디에도 목록 꼴·내부 식별자가 없다.
   N6) 입력 글(`['a', 'b']`·`health_check`·`<b>`)은 `‘ ’` 밖으로 알림 글에 나오지 않는다. N7) 수준 매핑·정렬·`to_dict` 키 여섯 개. N8) 브랜드 알림 셋.
@@ -25,16 +25,16 @@ from chanceblog_desktop.topics import safety as sf  # noqa: E402
 
 A = ts.PROFILES["naver_a"]
 B = ts.PROFILES["naver_b"]
-CODES = ("HEALTH_TOPIC", "HEALTH_EFFECT", "HEALTH_CLAIM", "HEALTH_STOP", "EXPERIENCE_CLAIM", "ECONOMIC_CHECK", "ECONOMIC_CONFIRMED", "COLLAB_POSSIBLE", "RESULT_PROMISE", "BRAND_ONLY", "BRAND_UNFEASIBLE",
+CODES = ("HEALTH_TOPIC", "HEALTH_EFFECT", "HEALTH_CLAIM", "HEALTH_STOP", "EXPERIENCE_CLAIM", "ECONOMIC_CHECK", "ECONOMIC_CONFLICT", "ECONOMIC_CONFIRMED", "COLLAB_POSSIBLE", "RESULT_PROMISE", "BRAND_ONLY", "BRAND_UNFEASIBLE",
          "BRAND_SPECIFIED", "DROP_COMBINATION", "DROP_EXCLUDED_KEYWORD", "DROP_TOO_LONG", "DROP_LANGUAGE", "DROP_NO_SEED", "DROP_NOT_DUE", "DROP_NO_KEYWORD", "DROP_INVALID", "DROP_RESULT_PROMISE",
          "DROP_ALREADY_EXISTS", "DROP_OVER_TARGET", "DROP_PER_SEED_KEEP", "DROP_OTHER_CHANNEL", "DROP_SOURCES", "DROP_UNSTABLE", "SHORTAGE", "HOLD_BAND")
-LEVELS = {"HEALTH_TOPIC": "WARNING", "HEALTH_EFFECT": "WARNING", "HEALTH_CLAIM": "WARNING", "HEALTH_STOP": "ERROR", "EXPERIENCE_CLAIM": "WARNING", "ECONOMIC_CHECK": "WARNING", "ECONOMIC_CONFIRMED": "WARNING",
+LEVELS = {"HEALTH_TOPIC": "WARNING", "HEALTH_EFFECT": "WARNING", "HEALTH_CLAIM": "WARNING", "HEALTH_STOP": "ERROR", "EXPERIENCE_CLAIM": "WARNING", "ECONOMIC_CHECK": "WARNING", "ECONOMIC_CONFLICT": "WARNING", "ECONOMIC_CONFIRMED": "WARNING",
           "COLLAB_POSSIBLE": "INFO", "RESULT_PROMISE": "ERROR", "BRAND_ONLY": "WARNING", "BRAND_UNFEASIBLE": "WARNING", "BRAND_SPECIFIED": "INFO", "DROP_COMBINATION": "INFO", "DROP_EXCLUDED_KEYWORD": "INFO",
           "DROP_TOO_LONG": "INFO", "DROP_LANGUAGE": "INFO", "DROP_NO_SEED": "WARNING", "DROP_NOT_DUE": "INFO", "DROP_NO_KEYWORD": "WARNING", "DROP_INVALID": "WARNING", "DROP_RESULT_PROMISE": "ERROR",
           "DROP_ALREADY_EXISTS": "INFO", "DROP_OVER_TARGET": "INFO", "DROP_PER_SEED_KEEP": "INFO", "DROP_OTHER_CHANNEL": "INFO", "DROP_SOURCES": "WARNING", "DROP_UNSTABLE": "INFO", "SHORTAGE": "INFO",
           "HOLD_BAND": "INFO"}
 TITLES = {"HEALTH_TOPIC": "건강 정보 확인 필요", "HEALTH_EFFECT": "건강 정보 확인 필요", "HEALTH_CLAIM": "건강 정보 확인 필요", "HEALTH_STOP": "의료·효과 단정 위험", "EXPERIENCE_CLAIM": "직접 겪은 경험 확인 필요",
-          "ECONOMIC_CHECK": "경제적 이해관계 확인 필요", "ECONOMIC_CONFIRMED": "경제적 이해관계 표시 필요", "COLLAB_POSSIBLE": "협업 가능성 참고", "RESULT_PROMISE": "결과 약속 표현",
+          "ECONOMIC_CHECK": "경제적 이해관계 확인 필요", "ECONOMIC_CONFLICT": "경제적 이해관계 확인 필요", "ECONOMIC_CONFIRMED": "경제적 이해관계 표시 필요", "COLLAB_POSSIBLE": "협업 가능성 참고", "RESULT_PROMISE": "결과 약속 표현",
           "BRAND_ONLY": "주제 구체화 필요", "BRAND_UNFEASIBLE": "작성 기반 부족", "BRAND_SPECIFIED": "주제 구체화 완료", "SHORTAGE": "목표에 모자란 경로", "HOLD_BAND": "보류 구간"}
 
 
@@ -50,10 +50,10 @@ def run(profile, seeds, **options):
 
 
 class CatalogTest(unittest.TestCase):                                                                          # N1
-    def test_the_catalog_has_the_twenty_nine_codes_in_the_documented_order(self):
+    def test_the_catalog_has_the_thirty_codes_in_the_documented_order(self):                                   # 의도적 갱신(전략 맞춤 1차, D-102): 스물아홉 → 서른 — `ECONOMIC_CONFLICT` 가 `ECONOMIC_CHECK` 바로 뒤에 들어갔다
         self.assertEqual(nt.CODES, CODES)
         self.assertEqual(tuple(nt.CATALOG), CODES)
-        self.assertEqual(len(nt.CATALOG), 29)
+        self.assertEqual(len(nt.CATALOG), 30)
         self.assertEqual((nt.LEVEL_INFO, nt.LEVEL_WARNING, nt.LEVEL_ERROR), ("INFO", "WARNING", "ERROR"))
         self.assertEqual(nt.LEVELS, ("INFO", "WARNING", "ERROR"))
 
