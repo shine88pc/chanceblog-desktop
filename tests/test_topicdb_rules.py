@@ -4,7 +4,7 @@
 늘리지 않으려고 — **같은 규칙을 이 패키지에 (파일, 함수) 단위로** 건다. 새 쓰기가 생기면 아래 `WRITERS` 표에 (파일, 함수)와 이유를 의식적으로 더해야 한다.
 지키는 것:
   1) 네트워크·프로세스·셸 부품(`subprocess`·`socket`·`urllib`·`http`·`ssl`·`ctypes` …)과 `shutil` 을 가져오지 않는다. 가져오는 안쪽 모듈은 정해진 것뿐이고 `service`·`ui`·`publish`·`render` 를 거꾸로 가져오지 않는다.
-  2) 파일을 쓰거나 지우거나 이름을 바꾸는 호출은 `WRITERS` 의 (파일, 함수)에서만 한다. SQL 에는 `DELETE FROM`·`DROP`·`TRUNCATE` 가 없다(후보를 지우는 길이 없다).
+  2) 파일을 쓰거나 지우거나 이름을 바꾸는 호출은 `WRITERS` 의 (파일, 함수)에서만 한다. SQL 에는 `DROP`·`TRUNCATE` 가 없고 `DELETE FROM` 은 90일 뒤 상세 정리(`cleanup_hold` — 운영자 결정 2026-11-06, 사용자가 확인했을 때만) 한 문장뿐이다.
   3) 조용한 실패 금지: 맨 `except:` 와 본문이 `pass` 뿐인 `except` 가 없다. 키 보관소·환경 변수를 읽지 않고 영어 비밀 낱말이 문자열에 없다.
   4) 코드는 파이썬 3.10 문법이고 던지는 오류 코드는 모두 카탈로그에 있다. 이 패키지는 `service/` 말고는 어디서도 쓰이지 않는다.
 """
@@ -47,6 +47,7 @@ FILE_CALLS = {"open", "sqlite3.connect", "os.open", "os.write", "os.fsync", "os.
 FILE_METHODS = {"write_text", "write_bytes", "unlink", "mkdir", "rmdir", "touch", "rename", "rmtree", "chmod", "symlink_to", "hardlink_to", "truncate", "write", "flush", "copy", "copy2", "copyfile", "copytree", "move"}
 SECRET_WORDS = re.compile(r"(?i)\b(api[_ -]?key|secret|token|passw(?:or)?d|credential)s?\b")
 SQL_DANGER = re.compile(r"(?i)\b(DELETE\s+FROM|DROP\s+(TABLE|INDEX|VIEW|TRIGGER)|TRUNCATE)\b")
+ALLOWED_DELETE = "DELETE FROM candidates WHERE candidate_id = ?"           # P3b-1 의도적 갱신: 90일 뒤 상세 정리가 후보 하나를 지우는 문장 — 이것 하나만 허용하고 다른 지우기는 모두 막는다(보류함·점수·출처·연결은 외래 키로 함께 지워진다)
 
 
 def parse(path):
@@ -202,7 +203,10 @@ class WriteRulesTest(unittest.TestCase):
         for path in FILES:
             for text in strings(parse(path)):
                 with self.subTest(file=path.name, text=text[:40]):
-                    self.assertIsNone(SQL_DANGER.search(text), "후보를 지우거나 표를 없애는 문장은 없다(지울지는 운영자가 정한다)")
+                    if text == ALLOWED_DELETE:
+                        self.assertEqual(path.name, "store.py", "허용한 지우기 문장은 보관함 저장소에만 있다")
+                        continue
+                    self.assertIsNone(SQL_DANGER.search(text), "후보를 지우거나 표를 없애는 문장은 허용한 한 문장 말고는 없다(지울지는 운영자가 정한다)")
 
     def test_the_sql_checker_catches_what_it_should(self):
         for text in ("DELETE FROM candidates WHERE 1", "delete  from x", "DROP TABLE a", "drop index i", "TRUNCATE t"):

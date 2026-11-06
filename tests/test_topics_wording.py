@@ -152,7 +152,7 @@ class NameTablesTest(unittest.TestCase):                                        
 
     def test_the_module_says_the_names_are_initial_values_and_every_table_value_is_pinned(self):
         doc = Path(wd.__file__).read_text(encoding="utf-8").split('"""', 2)[1]
-        self.assertIn("초기값 — 전략 원문 확인 전", doc)
+        self.assertIn("구현자가 정한 쉬운 말", doc)                       # P3b-1 의도적 갱신: 원문 대조가 끝났고(2026-11-06) 원문은 화면 낱말을 정하지 않는다 — 이름은 구현자가 정한 쉬운 말이다
         pinned = {
             "SEED_TYPE_KO": {"general": "일반", "priority": "우선", "seasonal": "계절", "realtime": "실시간", "sponsorable": "협찬 가능"},
             "SOURCE_TYPE_KO": {"seed": "씨앗", "follow_up": "후속", "seasonal": "계절", "realtime": "실시간", "sponsor": "협찬"},
@@ -160,7 +160,7 @@ class NameTablesTest(unittest.TestCase):                                        
             "CHANNEL_ALIAS_KO": {"blogger_a": "Blogger A(한글)", "blogger_b": "Blogger B(영문)"},
             "LANGUAGE_KO": {"ko": "한국어", "en": "영어"},
             "TREND_USE_KO": {"primary": "주된 근거로 씀", "supporting": "보조로 씀", "reference": "참고만 함", "none": "쓰지 않음"},
-            "CANDIDATE_TYPE_KO": {"evergreen": "지속형", "seasonal": "계절형", "realtime": "실시간", "follow_up": "후속", "sponsor_prep": "협찬 준비형"},
+            "CANDIDATE_TYPE_KO": {"evergreen": "지속형", "seasonal": "계절형", "realtime": "실시간", "follow_up": "후속", "sponsor_prep": "협찬 준비형", "monthly_recurring": "월별 반복형"},   # P3b-1: 월별 반복형 추가
             "SEARCH_INTENT_KO": {"information": "정보 찾기", "how_to": "하는 법 찾기", "problem_solving": "문제 해결", "selection_guide": "고르기", "comparison": "비교", "local_info": "지역 정보",
                                  "context_explainer": "배경 이해", "routine_building": "습관 만들기"},
             "CONTENT_TYPE_KO": {"explainer": "설명글", "how_to_guide": "따라 하기 안내", "checklist": "점검표", "troubleshooting": "문제 해결", "buying_guide": "구매 안내", "comparison": "비교",

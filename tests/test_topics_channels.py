@@ -48,7 +48,11 @@ def all_changed(p):
     return dataclasses.replace(p, display_name=p.display_name + "!", language="en" if p.language == "ko" else "ko", generation_enabled=not p.generation_enabled,
                                history_enabled=not p.history_enabled, evergreen_pct=p.evergreen_pct + 1, realtime_pct=p.realtime_pct - 1, weights=weights, top_n=p.top_n + 1,
                                cluster_cap=p.cluster_cap + 1, subheading_min=p.subheading_min + 1, trend_use=other_use, dup_cutoffs=(30, 50, 80), topic_clusters=("x-one", "x-two"),
-                               expansion_directions=("바꾼 방향",), monetization_focus=("x_tag",))
+                               expansion_directions=("바꾼 방향",), monetization_focus=("x_tag",),
+                               # P3b-1 의도적 갱신: 판 2 의 새 칸 열여섯 개도 '모든 칸' 에 든다(모두 시험용 예시 값이다)
+                               blog_ref="https://example.org/blog", alias="예시 별명", channel_role="예시 역할", main_topics=("예시 주제",), audience="예시 독자", tone="예시 문체", categories=("예시 분류",),
+                               intro="예시 소개글", color_preset="warm_lifestyle", profile_image="예시/프로필.png", cover_image="예시/커버.png", priority_keywords=("예시 우선",),
+                               exclude_keywords=("예시 제외",), preferred_post_types=("정보형",), home_regions=("예시지역",), day_trip_regions=("예시당일",))
 
 
 def rejected(test, call):
@@ -529,13 +533,16 @@ class JsonShapeTest(unittest.TestCase):
             with self.subTest(channel=key):
                 p = profile(key)
                 data = p.to_dict()
+                # P3b-1 의도적 갱신: 판 2 에서 선택 칸 열여섯 개가 더해졌다(앞의 열여섯 칸은 그대로이고 새 칸은 모두 빈 기본값이다)
                 self.assertEqual(tuple(data), ("key", "display_name", "language", "generation_enabled", "history_enabled", "evergreen_pct", "realtime_pct", "weights", "top_n",
-                                               "cluster_cap", "subheading_min", "trend_use", "dup_cutoffs", "topic_clusters", "expansion_directions", "monetization_focus"))
+                                               "cluster_cap", "subheading_min", "trend_use", "dup_cutoffs", "topic_clusters", "expansion_directions", "monetization_focus",
+                                               "blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "color_preset", "profile_image", "cover_image",
+                                               "priority_keywords", "exclude_keywords", "preferred_post_types", "home_regions", "day_trip_regions"))
                 self.assertEqual(ch.ChannelProfile.from_dict(json.loads(json.dumps(data))), p)
 
     def test_the_whole_set_round_trips_through_json_text(self):
         data = ch.profiles_to_dict(ch.default_profiles())
-        self.assertEqual(data["schema"], 1)
+        self.assertEqual(data["schema"], 2)                                       # P3b-1 의도적 갱신: 쓰는 판 1 → 2(판 1 파일은 그대로 읽힌다)
         self.assertEqual([item["key"] for item in data["profiles"]], list(KEYS))
         self.assertEqual(ch.profiles_from_dict(json.loads(json.dumps(data, ensure_ascii=False))), ch.default_profiles())
 
@@ -569,7 +576,7 @@ class JsonShapeTest(unittest.TestCase):
 
     def test_the_set_needs_the_exact_schema(self):
         good = ch.profiles_to_dict(ch.default_profiles())
-        for schema in (0, 2, "1", 1.0, True, None):
+        for schema in (0, 3, "1", 1.0, True, None):                              # P3b-1 의도적 갱신: 판 2 는 읽히고 더 새로운 판(3)이 거절 대상이다
             with self.subTest(schema=schema):
                 rejected(self, lambda schema=schema: ch.profiles_from_dict({**good, "schema": schema}))
         rejected(self, lambda: ch.profiles_from_dict({"profiles": good["profiles"]}))

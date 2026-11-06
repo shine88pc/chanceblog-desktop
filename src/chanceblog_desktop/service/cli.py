@@ -845,6 +845,13 @@ def topic_day_value(text):
         raise argparse.ArgumentTypeError("2026-11-05 같은 모양의 달력에 있는 날짜(YYYY-MM-DD)를 써야 합니다") from None
 
 
+def topic_token_value(text):
+    """`--confirm` 값 — 미리 보기가 보인 정리 확인 번호(16진수 12자리). 틀리면 친 글을 되풀이하지 않는다."""
+    if not re.fullmatch(r"[0-9A-Fa-f]{12}", text.strip()):
+        raise argparse.ArgumentTypeError("미리 보기에 보인 확인 번호(16진수 12자리)를 그대로 써야 합니다")
+    return text.strip()
+
+
 def topic_target_value(text):
     """`--target` 값 — 1 이상의 정수(상한 안, ASCII 숫자만 — 틀리면 친 글을 되풀이하지 않는다)."""
     value = int(text) if re.fullmatch(r"[0-9]{1,4}", text.strip()) else 0
@@ -959,6 +966,21 @@ def cmd_topics_restore(ctx, args):
                                                "moved_aside": None if result.moved_aside is None else str(result.moved_aside), "moved_json": [str(item) for item in result.moved_json]})
 
 
+def cmd_topics_seeds_import(ctx, args):
+    """씨앗 제안 파일을 승인 전 씨앗으로 불러온다 — `--yes` 가 없으면 미리 보기뿐이다. 친 경로는 `Path` 로만 넘기고(글로 넘기면 `{` 로 시작하는 글을 파일 내용으로 읽는다) 오류 문구에 되풀이하지 않는다."""
+    result = topics.import_seeds(ctx, Path(args.file), apply=getattr(args, "yes", False))
+    return Output(tfmt.import_lines(result), result.to_dict(), 1 if result.blocked else 0)
+
+
+def cmd_topics_hold_cleanup(ctx, args):
+    """90일 뒤에도 변화가 없는 보류 후보의 상세 데이터 정리 — `--yes` 가 없으면 미리 보기뿐이고(확인 번호가 나온다) 정리하려면 `--yes` 와 그 번호(`--confirm`)가 함께 있어야 한다(자동으로는 돌지 않는다)."""
+    yes, token = getattr(args, "yes", False), getattr(args, "confirm", None)
+    if token is not None and not yes:
+        raise UsageError("--confirm 은 --yes 와 함께 씁니다 — 먼저 `topics hold cleanup` 으로 미리 보기를 하면 확인 번호가 나옵니다.")
+    result = topics.cleanup_hold(ctx, confirmed=yes, token=token, today=getattr(args, "today", None))
+    return Output(tfmt.cleanup_lines(result), result.to_dict())
+
+
 def _add_topics_parser(add, common):
     """`topics` 와 그 하위 명령들 — 5채널 주제 엔진(후보 계획·저장·우수 후보·보류함·백업). 읽기 전용이 기본이고 저장·복원·초기화는 `--yes` 가 있어야 합니다."""
     group = add("topics", None, "5채널 주제 엔진 명령들(상태·초기화·검사·후보 계획·후보 저장·우수 후보·목록·상세·보류함 검토·백업·복원)")
@@ -1005,6 +1027,27 @@ def _add_topics_parser(add, common):
     found.add_argument("file", nargs="?", metavar="백업파일", help="되돌릴 백업(backups/topic_engine 안의 topic-날짜-시각 폴더 이름)")
     found.add_argument("--latest", action="store_true", help="가장 최근 백업을 씁니다")
     found.add_argument("--yes", action="store_true", help="지금 파일을 그 백업의 내용으로 정말 바꿉니다")
+    seeds_text = "씨앗 명령들(씨앗 제안 파일 불러오기)"
+    seeds_group = inner.add_parser("seeds", parents=[common], help=seeds_text, description=seeds_text)
+    seeds_inner = seeds_group.add_subparsers(dest="topics_seeds_command", metavar="하위명령", parser_class=KoreanParser)
+    seeds_inner.required = True
+    import_text = "씨앗 제안 파일을 읽어 모두 승인 전 씨앗으로 등록합니다(--yes 가 있어야 저장합니다 — 없으면 개수와 거절 사유만 보여 주는 미리 보기. 이미 있는 씨앗은 덮어쓰지 않고 건너뜁니다. 승인 전 씨앗은 후보 생성에 쓰이지 않습니다)"
+    found = seeds_inner.add_parser("import", parents=[common], help=import_text, description=import_text)
+    found.set_defaults(handler=_quiet(cmd_topics_seeds_import), command_path="topics seeds import")
+    found.add_argument("file", metavar="파일", help="씨앗 제안 파일(JSON)")
+    found.add_argument("--yes", action="store_true", help="정말 씨앗을 등록합니다(저장합니다)")
+    hold_text = "보류 후보 명령들(90일 뒤 상세 정리)"
+    hold_group = inner.add_parser("hold", parents=[common], help=hold_text, description=hold_text)
+    hold_inner = hold_group.add_subparsers(dest="topics_hold_command", metavar="하위명령", parser_class=KoreanParser)
+    hold_inner.required = True
+    cleanup_text = ("최초로 보류함에 든 지 90일이 지나고 그 뒤 변화가 없는 보류 후보의 상세 데이터를 정리합니다(이력만 남습니다 — 기본은 정리할 후보·남는 것·지워지는 것·확인 번호를 보여 주는 미리 보기이고 정리하려면 --yes 와 "
+                    "미리 보기가 보인 확인 번호(--confirm)가 함께 있어야 합니다. 미리 본 뒤 대상이 바뀌면 정리하지 않습니다. 정리하면 되돌릴 수 없으니 직전에 보관함 사본을 남깁니다. "
+                    "보관함이 옛 구조면 --yes 는 구조만 올리고 멈추니 다시 미리 본 뒤 정리하세요. 자동으로는 절대 정리하지 않습니다)")
+    found = hold_inner.add_parser("cleanup", parents=[common], help=cleanup_text, description=cleanup_text)
+    found.set_defaults(handler=_quiet(cmd_topics_hold_cleanup), command_path="topics hold cleanup")
+    options(found, target=False, channel=False)
+    found.add_argument("--yes", action="store_true", help="정말 정리합니다(지웁니다 — --confirm 도 함께 줘야 합니다)")
+    found.add_argument("--confirm", type=topic_token_value, metavar="확인번호", help="미리 보기에 보인 확인 번호(--yes 와 함께 씁니다 — 미리 본 뒤 대상이 바뀌었으면 정리하지 않습니다)")
 
 
 # ---- 사용법(argparse) -------------------------------------------------------------------------------------------------------------

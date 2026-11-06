@@ -36,7 +36,8 @@ P2A_MODULES = ("seeds.py", "schedule.py", "dedupe.py", "history.py", "hold.py")
 P2B_MODULES = ("expand.py", "feasibility.py", "safety.py", "generate.py")
 P2B_FIX_MODULES = ("wording.py", "concepts.py", "notice.py", "brand.py")
 P3_MODULES = ("slots.py", "trend.py")
-ALLOWED_STDLIB = {"__future__", "collections", "dataclasses", "datetime", "enum", "fractions", "functools", "itertools", "math", "re", "types", "typing", "unicodedata"}
+# P3b-1 의도적 갱신(D-120): `hashlib` 을 더했다 — 보류 후보 정리 확인 번호(`hold.cleanup_token`, SHA-256 앞 12자리)와 재생성 후보 번호(`hold.next_recreated_id`)를 만드는 데만 쓴다. 입출력·시계·난수가 없는 결정적인 계산이라 순수 규칙에 어긋나지 않는다.
+ALLOWED_STDLIB = {"__future__", "collections", "dataclasses", "datetime", "enum", "fractions", "functools", "hashlib", "itertools", "math", "re", "types", "typing", "unicodedata"}
 ALLOWED_INTERNAL = {"content.status", "content.candidates", "content.profiles", "errors", "check.claims"}
 FORBIDDEN_CALLS = {"open", "print", "input", "exec", "eval", "compile", "__import__", "breakpoint", "exit", "quit"}
 FORBIDDEN_METHODS = {"now", "utcnow", "today", "monotonic", "perf_counter", "sleep", "random", "randint", "randrange", "choice", "shuffle", "uuid1", "uuid4", "urandom", "token_hex",

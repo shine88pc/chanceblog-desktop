@@ -47,7 +47,8 @@ def rejected(test, **changes):
 class ClosedListsTest(unittest.TestCase):
     def test_the_enumerations_are_exactly_the_documented_values(self):
         self.assertEqual(md.SOURCE_TYPES, ("seed", "follow_up", "seasonal", "realtime", "sponsor"))
-        self.assertEqual(md.CANDIDATE_TYPES, ("evergreen", "seasonal", "realtime", "follow_up", "sponsor_prep"))
+        # P3b-1 의도적 갱신: 운영자 목록(지속형·실시간·계절형·월별 반복형·후속)에 맞추려고 `monthly_recurring` 을 끝에 더했다 — `sponsor_prep` 은 이미 쓰이고 있어 지우지 않았다
+        self.assertEqual(md.CANDIDATE_TYPES, ("evergreen", "seasonal", "realtime", "follow_up", "sponsor_prep", "monthly_recurring"))
         self.assertEqual(md.DUPLICATE_STATUSES, ("different_topic", "similar_elements", "different_angle_needed", "duplicate_or_update"))
 
     def test_search_intents_and_content_types_are_closed_lists_that_hold_the_strategy_examples(self):
@@ -556,11 +557,16 @@ class JsonShapeTest(unittest.TestCase):
     def test_a_missing_required_key_is_refused_but_a_missing_optional_key_takes_its_default(self):
         good = ts.make().to_dict()
         for name in REQUIRED:
+            if name == "candidate_type":
+                continue                                                      # P3b-1 의도적 갱신: 후보 종류가 없는 옛 JSON 은 경로(`source_type`)에서 유도한다(`test_topics_candidate_type`) — 경로도 없으면 여전히 거절이다
             with self.subTest(missing=name):
                 data = dict(good)
                 del data[name]
                 with self.assertRaises(AppError):
                     md.TopicCandidate.from_dict(data)
+        no_source = {key: value for key, value in good.items() if key not in ("candidate_type", "source_type")}
+        with self.assertRaises(AppError):
+            md.TopicCandidate.from_dict(no_source)
         slim = {key: value for key, value in good.items() if key in set(REQUIRED) | {"schema"}}
         self.assertEqual(md.TopicCandidate.from_dict(slim), ts.make())
 

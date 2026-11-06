@@ -12,6 +12,12 @@
   · 블로그(`chanceblog`) 저장소 파일은 **읽기만** 한다 — GitHub Pages 는 `_posts` 머리말, Blogger 영문·한글은 `blogger_history.json`·`blogger_ko_history.json`, 네이버 A·B 는 글 보관함의 발행한 글. 읽은 기록은 보관함의 장부(`history_ledger`)에도 남아
     블로그 쪽에서 글이 없어져도 중복 검사에는 계속 쓰인다. 못 읽은 항목은 건너뛰고 안내로 알린다.
   · 관심도(Trend)는 공급자를 받는 틀만 있다(기본 '없음' = 조회 안 함 — 캘린더만으로 시기를 정한다). 실제 호출은 P5 다.
+  · 보류 90일(P3b-1, D-62 정정): 최초로 보류 구간에 든 시각이 기준이고 사용자가 직접 다시 활성화할 때만 새 주기다. 90일 뒤 변화가 없는 후보의 상세 데이터는 **사용자가 확인했을 때만**(`cleanup_hold(confirmed=True)` — `--yes`) 정리하고
+    이력 13칸만 남긴다 — 기본은 미리 보기(아무것도 안 바뀐다)이고 정리 직전에 보관함 사본을 남기며 정리는 한 트랜잭션이다. 정리한 후보는 이력으로 계속 알아본다(같은 후보가 다시 만들어지지 않는다).
+  · 점검 주기(P3b-1): 계절 캘린더 7일·장기 씨앗 재평가 30일·보류 후보 재평가 30일·씨앗 비활성 검토 180일 — **자동으로 돌지 않는다**. 사용자가 주제 분석(`generate --yes`)을 실행하는 날 네 점검의 마지막 점검일이 같은 트랜잭션으로
+    기록되고, `status` 가 다음 점검일 네 개(기한이 지났으면 '지났다' 표시만 — 지우거나 바꾸는 일은 없다)를 보인다. 한 번도 점검한 적이 없으면 '지금 점검할 수 있음'.
+  · 씨앗 불러오기(`import_seeds`, P3b-1): 씨앗 제안 파일을 읽어 **모두 승인 전(`proposed`)** 으로만 등록한다 — 기본은 미리 보기이고 `confirmed=True`(`--yes`)가 있을 때만 `seeds.json` 에 쓴다. 이미 있는 씨앗은 덮어쓰지 않고
+    건너뛰며, 읽을 수 없는 씨앗이 하나라도 있으면 아무것도 쓰지 않는다. 키·토큰 모양 글이 든 씨앗은 불러오지 않는다(D-68·D-77). 친 파일 경로·파일 안의 글은 오류 문구에 되풀이하지 않는다.
 """
 from __future__ import annotations
 
@@ -23,11 +29,11 @@ from datetime import date, timedelta, timezone
 from pathlib import Path
 
 from ..content import status as st
-from ..content.candidates import FOLLOW_ON, HOLD, STATUS_KO, STATUSES
+from ..content.candidates import FOLLOW_ON, HOLD, STATUS_KO, STATUSES, keyword_key
 from ..echo import shown_ref, shown_topic_backup
 from ..errors import AppError
 from ..topicdb import backup as tbackup
-from ..topicdb.store import history_key, open_for_write, open_read_only
+from ..topicdb.store import CLEANED, CONFLICT, FAILED, SKIPPED, CleanupTokenMismatch, history_key, open_for_write, open_read_only
 from ..topics import brand, dedupe, hold, layout, notice, safety, schedule, score, select, slots, wording
 from ..topics import seeds as seedmod
 from ..topics import generate as gen
@@ -121,14 +127,14 @@ def _read_store(paths):
 
 
 def _existing_candidates(paths):
-    """저장된 후보들(읽기 전용) → (후보들, 상태, 발행 이력 장부, 연결들). 구조가 옛 판이면 읽지 않는다 — 저장하는 명령이 올린다."""
+    """저장된 후보들(읽기 전용) → (후보들, 상태, 발행 이력 장부, 연결들, 정리한 보류 후보의 '같은 후보' 열쇠들). 구조가 옛 판이면 읽지 않는다 — 저장하는 명령이 올린다."""
     store, state = _read_store(paths)
     if store is None or state == STORE_OLD:
         if store is not None:
             store.close()
-        return (), state, (), ()
+        return (), state, (), (), frozenset()
     with store:
-        return tuple(store.list_candidates()), state, tuple(store.history_records()), tuple(store.links())
+        return tuple(store.list_candidates()), state, tuple(store.history_records()), tuple(store.links()), store.hold_history_keys()
 
 
 # ---- 블로그 발행 이력 읽기(읽기 전용) ----------------------------------------------------------------------------------------------
@@ -273,6 +279,7 @@ class ChannelPlan:
     notices: tuple                    # notice.Notice — 진단·모자람
     trend_notes: tuple                # 관심도 안내 줄들
     withheld: tuple = ()              # 키·토큰 모양이 들어 있어 저장하지 않은 후보마다 씨앗 이름 하나(낱말은 없다)
+    needs_region: tuple = ()          # 지역 값이 필요한데 채널 프로필에 지역이 없어 후보를 만들지 않은 씨앗 이름들(오류가 아니라 알림 — P3b-1)
 
     @property
     def name(self):
@@ -284,7 +291,7 @@ class ChannelPlan:
                 "slots": None if info is None else {"active_existing": info.active_existing, "pending_review": info.pending_review, "remaining": info.remaining,
                                                     "ignored": [{"reason": why, "count": count} for why, count in info.ignored]},
                 "new_candidates": [candidate.to_dict() for candidate in self.candidates], "duplicates": self.duplicates, "stopped": self.stopped,
-                "notices": [item.to_dict() for item in self.notices], "trend_notes": list(self.trend_notes)}
+                "notices": [item.to_dict() for item in self.notices], "trend_notes": list(self.trend_notes), "needs_region_seeds": list(self.needs_region)}
 
 
 @dataclass(frozen=True)
@@ -364,9 +371,10 @@ def _generate_channel(profile, inputs, history, existing, today, remaining, inte
     return gen.generate(profile, inputs.seeds, inputs.calendar, history, today, existing=existing, target=remaining, interest=found.interest or None, interest_outage=found.outage, campaigns=())
 
 
-def _filter_same(new, existing):
-    """새로 만든 후보에서 이미 있는 후보(또는 앞서 고른 새 후보)와 같은 후보를 뺀다 → (남은 후보들, 뺀 수). 같은 후보 열쇠(`slots.sameness_keys`)를 사전에 모아 견준다 — 후보가 많아도 쌍마다 견주지 않는다(D-71)."""
-    taken = set()
+def _filter_same(new, existing, ghosts=frozenset()):
+    """새로 만든 후보에서 이미 있는 후보(또는 앞서 고른 새 후보)와 같은 후보를 뺀다 → (남은 후보들, 뺀 수). 같은 후보 열쇠(`slots.sameness_keys`)를 사전에 모아 견준다 — 후보가 많아도 쌍마다 견주지 않는다(D-71).
+    `ghosts` 는 90일 뒤 상세 정리를 한 보류 후보의 열쇠들(`TopicStore.hold_history_keys`)이다 — 후보 상세는 지워져도 같은 후보를 계속 알아본다."""
+    taken = set(ghosts)
     for other in existing:
         taken.update(slots.sameness_keys(other))
     kept, dropped = [], 0
@@ -388,7 +396,7 @@ def _shown_seed(seed_id):
 
 
 def _withhold_key_shaped(kept):
-    """키·토큰처럼 보이는 글이 든 새 후보는 저장하지 않는다 — 보관함에 한 번 들어가면 지우는 길이 없어 백업이 영원히 막히기 때문이다(D-68). → (남은 후보들, 거른 후보마다 씨앗 이름 하나).
+    """키·토큰처럼 보이는 글이 든 새 후보는 저장하지 않는다 — 보관함에 한 번 들어가면 지우는 길이 거의 없어(보류 90일 뒤 정리뿐) 백업이 영원히 막힐 수 있기 때문이다(D-68). → (남은 후보들, 거른 후보마다 씨앗 이름 하나).
     다른 후보는 그대로 저장한다. 낱말은 화면에도 되풀이하지 않는다."""
     safe, names = [], []
     for candidate in kept:
@@ -399,7 +407,7 @@ def _withhold_key_shaped(kept):
     return tuple(safe), tuple(names)
 
 
-def _plan_channels(profiles, inputs, history, existing, today, now, target, channels, interest, draft_states):
+def _plan_channels(profiles, inputs, history, existing, today, now, target, channels, interest, draft_states, ghosts=frozenset()):
     """채널마다 남은 자리를 세고 그 몫만큼 후보를 만든다(순수 계산 — 아무것도 쓰지 않는다)."""
     plans = []
     for profile in profiles:
@@ -414,19 +422,20 @@ def _plan_channels(profiles, inputs, history, existing, today, now, target, chan
         counted = slots.count_slots(mine, goal, now, draft_states={key: value for key, value in draft_states.items() if key in known})
         found = interest.get(profile.key) if interest else None
         generated = _generate_channel(profile, inputs, history, mine, today, counted.remaining, found)
-        kept, dropped = _filter_same(generated.candidates, mine)
+        kept, dropped = _filter_same(generated.candidates, mine, ghosts)
         kept, withheld = _withhold_key_shaped(kept)
         stopped = sum(safety.assess(candidate).stop for candidate in kept)
         notices = notice.from_generated(generated)
-        plans.append(ChannelPlan(profile.key, True, goal, counted, kept, dropped, stopped, notices, () if found is None else found.notes, withheld))
+        missing = tuple(_shown_seed(seed_id) for seed_id in getattr(generated, "region_missing", ()))                  # 지역이 없어 후보를 못 만든 씨앗 — 번호만 보인다(번호가 키 모양이면 가린다)
+        plans.append(ChannelPlan(profile.key, True, goal, counted, kept, dropped, stopped, notices, () if found is None else found.notes, withheld, missing))
     return tuple(plans)
 
 
-def _trend_inputs(provider, profiles, inputs, history, existing, today, now, target, channels, draft_states):
+def _trend_inputs(provider, profiles, inputs, history, existing, today, now, target, channels, draft_states, ghosts=frozenset()):
     """관심도 공급자에게 새 후보의 키워드를 물어 채널별 `TrendResult` 로 모은다(공급자가 '없음' 이면 묻지 않는다). 트랜잭션 **밖에서** 하므로 느린 공급자가 쓰기 잠금을 쥐고 기다리지 않는다."""
     if provider is None or isinstance(provider, trendmod.NoTrend):
         return {}
-    first = _plan_channels(profiles, inputs, history, existing, today, now, target, channels, {}, draft_states)
+    first = _plan_channels(profiles, inputs, history, existing, today, now, target, channels, {}, draft_states, ghosts)
     return {plan.channel: trendmod.collect(provider, [item.primary_keyword for item in plan.candidates], today) for plan in first if plan.enabled}
 
 
@@ -462,13 +471,13 @@ def plan_candidates(ctx, *, today=None, target=None, channel=None, trend=None):
     day, goal, only = today_of(ctx, today), check_target(target), check_channel(channel)
     paths = tf.topic_paths(ctx.workspace)
     inputs = _read_inputs(ctx, paths)
-    existing, state, ledger, links = _existing_candidates(paths)
+    existing, state, ledger, links, ghosts = _existing_candidates(paths)
     history = merge_history(inputs.history_read.records, ledger)
     stamp = now_stamp(ctx, today)
     states, state_notes = _draft_states(ctx, links)
     chosen = (only,) if only else ()
-    interest = _trend_inputs(trend, inputs.profiles, inputs, history, existing, day, stamp, goal, chosen, states)
-    plans = _plan_channels(inputs.profiles, inputs, history, existing, day, stamp, goal, chosen, interest, states)
+    interest = _trend_inputs(trend, inputs.profiles, inputs, history, existing, day, stamp, goal, chosen, states, ghosts)
+    plans = _plan_channels(inputs.profiles, inputs, history, existing, day, stamp, goal, chosen, interest, states, ghosts)
     return PlanResult(day, plans, False, state, inputs.history_read, _overall_notes(inputs.history_read, inputs, state, (*state_notes, *_spread_notes(plans))))
 
 
@@ -480,21 +489,21 @@ def generate_candidates(ctx, *, confirmed, today=None, target=None, channel=None
     day, goal, only = today_of(ctx, today), check_target(target), check_channel(channel)
     paths = tf.topic_paths(ctx.workspace)
     inputs = _read_inputs(ctx, paths)
-    existing_ro, _state, ledger_ro, links = _existing_candidates(paths)
+    existing_ro, _state, ledger_ro, links, ghosts = _existing_candidates(paths)
     stamp = now_stamp(ctx, today)
     states, state_notes = _draft_states(ctx, links)
     chosen = (only,) if only else ()
-    interest = _trend_inputs(trend, inputs.profiles, inputs, merge_history(inputs.history_read.records, ledger_ro), existing_ro, day, stamp, goal, chosen, states)
+    interest = _trend_inputs(trend, inputs.profiles, inputs, merge_history(inputs.history_read.records, ledger_ro), existing_ro, day, stamp, goal, chosen, states, ghosts)
     done = []
 
     def plan(existing):
         history = merge_history(inputs.history_read.records, ledger_ro)
-        plans = _plan_channels(inputs.profiles, inputs, history, existing, day, stamp, goal, chosen, interest, states)
+        plans = _plan_channels(inputs.profiles, inputs, history, existing, day, stamp, goal, chosen, interest, states, ghosts)
         done.append(plans)
         return tuple(candidate for item in plans for candidate in item.candidates)
 
     with open_for_write(paths.database) as store:
-        store.add_candidates(plan, now=ctx.stamp(), history=inputs.history_read.records)
+        store.add_candidates(plan, now=ctx.stamp(), history=inputs.history_read.records, reviewed_on=day)               # 주제 분석을 시작한 날을 네 점검의 마지막 점검일로 적는다(같은 트랜잭션)
     return PlanResult(day, done[0], True, STORE_READY, inputs.history_read, _overall_notes(inputs.history_read, inputs, STORE_READY, (*state_notes, *_spread_notes(done[0]))))
 
 
@@ -539,10 +548,13 @@ class StatusResult:
     enabled: tuple                    # 후보 생성이 켜진 채널들
     history: HistoryReading
     paths: object
+    reviews: tuple = ()               # schedule.ReviewDue 넷 — 다음 점검일(계절 캘린더·장기 씨앗 재평가·보류 후보 재평가·씨앗 비활성 검토 순서)
 
     def to_dict(self):
         return {"files": [item.to_dict() for item in self.files], "store": self.store_state, "store_version": self.store_version, "candidates": {channel: number for channel, number in self.counts},
-                "generation_enabled": list(self.enabled), "history": self.history.to_dict()}
+                "generation_enabled": list(self.enabled), "history": self.history.to_dict(),
+                "next_reviews": [{"kind": item.kind, "name": wording.REVIEW_KIND_KO[item.kind], "period_days": item.period_days, "last_run_on": item.last_run_on, "next_due_on": item.next_due_on,
+                                  "state": item.state, "days_left": item.days_left} for item in self.reviews]}
 
 
 _STORE_STATE_OF = {"TOPIC_STORE_VERSION_UNSUPPORTED": "newer", "TOPIC_STORE_CORRUPT": "corrupt", "TOPIC_STORE_RECOVERY_PENDING": "unreadable", "TOPIC_STORE_LOCKED": "unreadable", "FILE_WRITE_FAILED": "unreadable"}
@@ -557,7 +569,7 @@ def status(ctx):
         files.append(shown)
         if name == layout.CHANNEL_PROFILES_FILE and value is not None:
             profiles = value
-    counts, version = tuple((channel, 0) for channel in CHANNELS), None
+    counts, version, log = tuple((channel, 0) for channel in CHANNELS), None, {}
     try:
         store, state = _read_store(paths)
         if store is not None:
@@ -565,11 +577,13 @@ def status(ctx):
                 version = store.schema_version
                 if state == STORE_READY:
                     counts = tuple((channel, store.count(channel)) for channel in CHANNELS)
+                    log = store.review_log()
     except AppError as error:
         state = _STORE_STATE_OF.get(error.code)
         if state is None:
             raise
-    return StatusResult(tuple(files), state, version, counts, tuple(item.key for item in profiles if item.generation_enabled), read_blog_history(ctx), paths)
+    reviews = schedule.review_dues(log, today_of(ctx))                 # 점검 기록이 없으면(보관함이 없거나 옛 구조) 네 점검 모두 '지금 점검할 수 있음'
+    return StatusResult(tuple(files), state, version, counts, tuple(item.key for item in profiles if item.generation_enabled), read_blog_history(ctx), paths, reviews)
 
 
 @dataclass(frozen=True)
@@ -626,7 +640,7 @@ def check_files(ctx, *, today=None):
     calendar_found = values.get(layout.CALENDAR_FILE) or ()
     profiles = values.get(layout.CHANNEL_PROFILES_FILE) or tf.DEFAULT_VALUES[layout.CHANNEL_PROFILES_FILE]()
     proposals = tuple(item.message() for item in seedmod.idle_proposals(seeds_found, day)) if seeds_found else ()
-    evaluations = tuple(sorted(f"캘린더 항목 ‘{wording.clean_word(entry.name, 30)}’ 은(는) 마지막 평가가 오래되었거나 없어 다시 평가할 때가 되었습니다" for entry in calendar_found if schedule.needs_evaluation(entry, day)))     # 파일 순서와 무관하게 늘 같은 순서
+    evaluations = tuple(sorted(f"캘린더 항목 ‘{wording.clean_word(entry.name, 30)}’ 은(는) 마지막 평가가 오래되었거나 없어 다시 평가할 때가 되었습니다" for entry in calendar_found if schedule.needs_evaluation(entry, day, schedule.SEASONAL_CALENDAR_REVIEW_DAYS)))     # 파일 순서와 무관하게 늘 같은 순서
     notices = []
     for profile in profiles:
         if not profile.generation_enabled:
@@ -688,7 +702,7 @@ def short_ref(candidate_id):
 
 
 def _rows(candidates):
-    """저장소가 준 순서(저장한 순서) 그대로 순번을 붙인다 — 후보를 지우는 길이 없어 한 번 붙은 순번은 바뀌지 않는다(같은 날 두 번 저장해도 그대로, D-70)."""
+    """저장소가 준 순서(저장한 순서) 그대로 순번을 붙인다 — 후보를 지우는 길은 90일 뒤 정리뿐이라 그 전에는 한 번 붙은 순번이 바뀌지 않는다(같은 날 두 번 저장해도 그대로, D-70 — 정리하면 뒤 후보의 순번이 당겨진다)."""
     return [Row(number, item, safety.assess(item).stop) for number, item in enumerate(candidates, start=1)]
 
 
@@ -879,6 +893,192 @@ def _day_of(stamp):
     return date.fromisoformat(stamp[:10])
 
 
+# ---- 보류 후보 90일 뒤 상세 정리 -------------------------------------------------------------------------------------------------------------
+MAX_COPY_NAMES = 20
+
+
+@dataclass(frozen=True)
+class CleanupResult:
+    applied: bool                     # 실제로 정리했는가(미리 보기이거나 정리할 후보가 없으면 거짓)
+    now: str                          # 기한을 견준 시각(UTC)
+    items: tuple                      # topicdb.store.HoldCleanup — 정리할(정리한) 후보
+    store_state: str
+    history_total: int = 0            # 보관함에 남아 있는 보류 이력 수(정리 뒤)
+    copy: object = None               # 정리 직전에 남긴 보관함 사본의 파일 이름(정리했을 때만)
+    upgraded: bool = False            # `--yes` 가 옛 구조(판 1)의 보관함을 만나 구조만 올리고 정리는 멈췄는가(미리 본 적 없는 후보를 지우지 않는다 — D-120). 기본값이 있어 이 칸이 없던 때의 호출과 호환된다
+    token: object = None              # 미리 보기가 보이는 확인 번호(정리 대상이 있을 때만) — `--yes` 는 같은 번호를 `--confirm` 으로 받아야 정리한다(D-120)
+    refused: object = None            # `--yes` 인데 정리하지 않은 까닭: `token_missing`(번호 없음)·`token_mismatch`(번호가 지금 대상과 다름) — 아무것도 지우지 않았다
+    rows: tuple = ()                  # topicdb.store.CleanupRow — 대상 후보마다 한 줄(정리함·건너뜀·충돌·실패). 한 행의 충돌·실패가 나머지 정리를 막지 않는다(D-120)
+
+    @property
+    def counts(self):
+        """행 결과의 상태별 개수(`cleaned`·`skipped`·`conflict`·`failed`)."""
+        return {status: sum(1 for row in self.rows if row.status == status) for status in (CLEANED, SKIPPED, CONFLICT, FAILED)}
+
+    @property
+    def not_cleaned(self):
+        """정리하지 않은 행들(건너뜀·충돌·실패)."""
+        return tuple(row for row in self.rows if row.status != CLEANED)
+
+    def to_dict(self):
+        return {"applied": self.applied, "now": self.now, "store": self.store_state, "candidates": [{"ref": short_ref(item.candidate_id), "channel": item.channel, "topic": item.topic, "expires_at": item.expires_at}
+                                                                                                        for item in self.items],
+                "keeps": list(hold.HISTORY_FIELDS), "erases": [{"table": table, "column": column} for table, column, _what in hold.CLEANUP_ERASES], "history_total": self.history_total,
+                "backup_copy": self.copy, "upgraded": self.upgraded, "confirm_number": self.token, "refused": self.refused, "results": self.counts,
+                "not_cleaned": [{"ref": short_ref(row.candidate_id), "status": row.status, "reason": row.detail} for row in self.not_cleaned]}
+
+
+def _before_cleanup_copy(store, database, stamp):
+    """정리 직전의 보관함 사본 — `topic_engine.db.before-cleanup-날짜.bak`(이미 있으면 -2·-3 … 새 이름, 덮어쓰지 않는다). 사본을 못 만들면 정리를 시작하지 않는다."""
+    base = f"{database.name}.before-cleanup-{stamp[:10].replace('-', '')}"
+    for number in range(1, MAX_COPY_NAMES + 1):
+        target = database.with_name(base + (".bak" if number == 1 else f"-{number}.bak"))
+        if not target.exists():
+            store.copy_to(target)
+            return target.name
+    raise invalid_in(SUBJECT, "정리 직전 사본", f"사본 이름 {MAX_COPY_NAMES}개가 모두 쓰이고 있습니다(오래된 사본을 정리해 주세요)")
+
+
+def _normalized_token(value):
+    """친 확인 번호 → 비교할 글(앞뒤 공백을 떼고 소문자) 또는 None(글이 아니거나 비어 있음). 친 값은 어디에도 되풀이하지 않는다."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip().lower()
+
+
+def cleanup_hold(ctx, *, confirmed, token=None, today=None):
+    """90일 뒤에도 변화가 없는 보류 후보의 상세 데이터를 정리한다 — **기본은 미리 보기**(정리할 후보·남길 이력 칸·지워질 것·**확인 번호**만 보이고 아무것도 안 바뀐다)이고 `confirmed=True`(`--yes`)와 **미리 본 확인 번호**가 함께 있을 때만 정리한다.
+    확인 번호는 정리 대상 후보들(번호·채널·기한)로 만든 번호(`hold.cleanup_token`)라, 미리 본 뒤 대상이 하나라도 바뀌면 달라져 정리하지 않는다(쓰기 잠금을 잡은 **뒤** 대상을 다시 골라 다시 견준다). 번호가 없거나 다르면 아무것도 지우지 않는다.
+    정리는 사본을 먼저 남기고 한 트랜잭션으로 한다(하나라도 안 되면 하나도 정리되지 않는다). 자동으로는 절대 돌지 않는다. 정리할 후보: 최초로 보류함에 든 지 90일이 지났고 지금도 보류 구간이며 사람이 손대지 않았고 초안과 이어지지 않은 것.
+    **구조를 올리는 일과 정리는 한 번의 실행에서 같이 하지 않는다**(D-120): 보관함이 옛 구조(판 1)이면 미리 보기는 대상을 읽지 못하므로 그 상태의 `--yes` 는 구조를 올리기만 하고(`upgraded=True`) 정리는 하지 않는다 —
+    열기 전 상태뿐 아니라 이 실행의 열기가 구조를 올렸는지(`migrated_from`)로도 확인한다. 올린 뒤 다시 미리 보아 확인 번호를 받고 `--yes --confirm` 을 준다. `--today` 를 잘못 쳐도 확인 번호가 그 날짜의 대상 목록에 묶여 있어 번호가 맞지 않는다."""
+    stamp = now_stamp(ctx, today)
+    paths = tf.topic_paths(ctx.workspace)
+    if confirmed is not True:
+        store, state = _read_store(paths)
+        if store is None or state == STORE_OLD:
+            if store is not None:
+                store.close()
+            return CleanupResult(False, stamp, (), state)
+        with store:
+            targets = store.hold_cleanup_targets(stamp)
+            return CleanupResult(False, stamp, targets, state, len(store.hold_history()), token=hold.cleanup_token(targets))
+    if not paths.database.exists() or _is_empty_file(paths.database):
+        return CleanupResult(False, stamp, (), STORE_MISSING if not paths.database.exists() else STORE_EMPTY)
+    try:
+        seen, before = _read_store(paths)                      # 열기 전 구조 — 옛 구조였는지는 쓰기 열기(구조를 올린다)가 끝나면 알 수 없다
+    except AppError:
+        seen, before = None, None                              # 읽기 전용으로 못 읽는 경우(저장 중 꺼진 흔적 …)는 쓰기 열기가 스스로 정리하며 열거나 같은 오류를 낸다 — 올림 여부는 아래 `migrated_from` 이 본다
+    if seen is not None:
+        seen.close()
+    with open_for_write(paths.database) as store:
+        if before == STORE_OLD or store.migrated_from is not None:            # 구조만 올리고 멈춘다 — 미리 본 적 없는 후보를 지우지 않는다(A-M1)
+            return CleanupResult(False, stamp, (), STORE_READY, len(store.hold_history()), upgraded=True)
+        targets = store.hold_cleanup_targets(stamp)
+        if not targets:
+            return CleanupResult(False, stamp, (), STORE_READY, len(store.hold_history()))
+        typed = _normalized_token(token)
+        if typed is None:
+            return CleanupResult(False, stamp, (), STORE_READY, len(store.hold_history()), refused="token_missing")
+        if typed != hold.cleanup_token(targets):               # 정확한 번호를 다시 알려 주지 않는다 — 다시 미리 보기를 해야 새 번호를 본다
+            return CleanupResult(False, stamp, (), STORE_READY, len(store.hold_history()), refused="token_mismatch")
+        copy = _before_cleanup_copy(store, paths.database, stamp)
+        try:
+            rows = store.cleanup_hold(now=stamp, token=typed)
+        except CleanupTokenMismatch:                          # 위 확인과 잠금 사이에 대상이 바뀐 드문 경우 — 사본만 남고 지운 것은 없다
+            return CleanupResult(False, stamp, (), STORE_READY, len(store.hold_history()), copy=copy, refused="token_mismatch")
+        done = {row.candidate_id for row in rows if row.status == CLEANED}
+        return CleanupResult(bool(done), stamp, tuple(item for item in targets if item.candidate_id in done), STORE_READY, len(store.hold_history()), copy, rows=rows)
+
+
+# ---- 씨앗 제안 파일 불러오기 -----------------------------------------------------------------------------------------------------------------
+MAX_SHOWN_IMPORT = 10
+
+
+@dataclass(frozen=True)
+class SeedImport:
+    applied: bool                     # `seeds.json` 에 썼는가(미리 보기이거나 새로 등록할 씨앗이 없으면 거짓)
+    total: int                        # 파일 안의 씨앗 수
+    existing: int                     # 불러오기 전에 이미 있던 씨앗 수
+    new: tuple                        # Seed — 새로 등록할(등록한) 씨앗, 모두 승인 전
+    skipped: tuple                    # (이름, 이유) — 이미 있어서 건너뜀
+    rejected: tuple                   # (이름, 이유) — 읽을 수 없어 뺌
+    notes: tuple                      # 쉬운 말 안내
+    per_channel: tuple                # ((채널, 허용 씨앗 수, 후보 생성 켜짐), …) — 새 씨앗이 승인되면 쓸 수 있는 채널별 수(채널 순서)
+    kept_copy: object = None          # 판 1 파일을 판 2 로 올리며 남긴 사본의 파일 이름(없으면 None)
+
+    @property
+    def blocked(self):
+        return bool(self.rejected)
+
+    def to_dict(self):
+        return {"applied": self.applied, "total": self.total, "existing": self.existing, "new": len(self.new), "new_seed_ids": [_shown_seed(seed.seed_id) for seed in self.new],
+                "skipped": [{"seed": name, "reason": reason} for name, reason in self.skipped], "rejected": [{"seed": name, "reason": reason} for name, reason in self.rejected],
+                "notes": list(self.notes), "per_channel": {channel: {"seeds": number, "generation_enabled": enabled} for channel, number, enabled in self.per_channel},
+                "backup_copy": self.kept_copy}
+
+
+def _read_import_text(source):
+    """불러올 파일(경로)이나 JSON 글 → 파이썬 값. 친 경로·파일 이름은 오류 문구에 되풀이하지 않는다(경로를 읽다 난 OS 오류의 글에도 친 이름이 들어 있다)."""
+    item = "씨앗 제안 파일"
+    if isinstance(source, (bytes, bytearray)):
+        raw = bytes(source)
+    elif isinstance(source, str) and source.lstrip().startswith("{"):
+        raw = source.encode("utf-8")
+    else:
+        try:
+            path = Path(source)
+            if path.stat().st_size > MAX_JSON_BYTES:
+                raise invalid_in(SUBJECT, item, f"파일이 너무 큽니다(최대 {MAX_JSON_BYTES // (1024 * 1024)}MB)")
+            raw = path.read_bytes()
+        except (OSError, ValueError, TypeError):
+            raise invalid_in(SUBJECT, item, "파일을 읽을 수 없습니다 — 파일이 있는지, 경로가 맞는지, 열 수 있는 파일인지 확인해 주세요") from None
+    try:
+        return json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise invalid_in(SUBJECT, item, "UTF-8 JSON 글자로 읽을 수 없습니다(메모장이라면 '다른 이름으로 저장' 에서 인코딩을 UTF-8 로 저장했는지 확인해 주세요)") from None
+
+
+def import_seeds(ctx, source, *, apply=False, today=None):
+    """씨앗 제안 파일을 읽어 **모두 승인 전(`proposed`)** 으로만 등록한다. 기본은 미리 보기(개수·거절 사유만 — 아무것도 쓰지 않는다)이고 `apply=True`(`--yes`)일 때만 `seeds.json` 에 쓴다.
+    이미 있는 씨앗(같은 번호이거나 같은 소속의 같은 낱말)은 덮어쓰지 않고 건너뛴다. 읽을 수 없는 씨앗(칸 오류·파일 안 중복·키·토큰 모양 글)이 하나라도 있으면 **아무것도 쓰지 않는다**(어느 씨앗이 왜인지는 `rejected` 에).
+    `seeds.json` 이 판 1 이면 판 2 로 올려 쓰면서 옛 모양 사본(`seeds.json.v1.bak`)을 남긴다. 승인 전 씨앗은 후보 생성에 쓰이지 않는다.
+    `apply` 는 `cleanup_hold`·`generate` 의 `confirmed` 와 같이 **진짜 `True` 일 때만** 쓴다 — 참/거짓처럼 보이는 값(`"false"`·`1`·`"yes"`)은 쓰기로 읽지 않고 미리 보기로 둔다(D-120)."""
+    writing = apply is True
+    day = today_of(ctx, today)
+    paths = tf.topic_paths(ctx.workspace)
+    read = seedmod.parse_proposals(_read_import_text(source), day)
+    existing = tf.load_seeds(paths).value
+    rejected = [(_shown_seed(name), reason) for name, reason in read.rejected]
+    usable = []
+    for seed in read.seeds:
+        if tbackup.scan_key_shape(json.dumps(seed.to_dict(), ensure_ascii=False)):
+            rejected.append((_shown_seed(seed.seed_id), "키·토큰처럼 보이는 글이 들어 있어 불러오지 않습니다 — 그 글을 지운 뒤 다시 해 주세요"))
+        else:
+            usable.append(seed)
+    have_ids = {seed.seed_id for seed in existing}
+    have_words = {(seed.scope, keyword_key(seed.keyword)) for seed in existing}
+    new, skipped = [], []
+    for seed in usable:
+        if seed.seed_id in have_ids:
+            skipped.append((_shown_seed(seed.seed_id), "같은 씨앗 번호가 이미 등록되어 있어 건너뜁니다(덮어쓰지 않습니다)"))
+        elif (seed.scope, keyword_key(seed.keyword)) in have_words:
+            skipped.append((_shown_seed(seed.seed_id), "같은 소속에 같은 씨앗 낱말이 이미 등록되어 있어 건너뜁니다(덮어쓰지 않습니다)"))
+        else:
+            new.append(seed)
+    if len(existing) + len(new) > seedmod.MAX_SEEDS:
+        raise invalid_in(SUBJECT, "씨앗 목록", f"불러오면 씨앗이 {seedmod.MAX_SEEDS}개를 넘습니다(지금 {len(existing)}개 + 새 씨앗 {len(new)}개)")
+    profiles = {profile.key: profile.generation_enabled for profile in tf.load_profiles(paths).value}
+    per_channel = tuple((channel, sum(1 for seed in new if channel in seed.allowed_channels), profiles.get(channel, False)) for channel in CHANNELS)
+    notes = list(read.notes)
+    if rejected:
+        notes.append("읽을 수 없는 씨앗이 있어 아무것도 저장하지 않았습니다 — 위 이유대로 파일을 고친 뒤 다시 해 주세요" if writing else "읽을 수 없는 씨앗이 있으면 저장하지 않습니다 — 위 이유대로 파일을 고친 뒤 다시 해 주세요")
+    kept = None
+    if writing and not rejected and new:
+        kept = tf.save_seeds(paths, (*existing, *new))
+    return SeedImport(bool(writing and not rejected and new), read.total, len(existing), tuple(new), tuple(skipped), tuple(rejected), tuple(notes), per_channel, kept)
+
+
 # ---- 백업·복원 ---------------------------------------------------------------------------------------------------------------------
 def backups_folder(ctx):
     return Path(ctx.workspace.backups_dir) / "topic_engine"
@@ -904,7 +1104,7 @@ def restore_topics(ctx, ref=None, *, latest=False, confirmed):
 
 
 __all__ = [
-    "ChannelPlan", "CheckResult", "FileState", "HistoryChannel", "HistoryReading", "InitResult", "ListResult", "PlanResult", "ReviewItem", "ReviewResult", "Row", "ShowResult", "StatusResult", "TopChannel",
-    "TopResult", "backup_topics", "backups_folder", "check_channel", "check_files", "check_target", "check_today", "generate_candidates", "init_topics", "list_candidates", "merge_history", "now_stamp",
+    "ChannelPlan", "CheckResult", "CleanupResult", "FileState", "HistoryChannel", "HistoryReading", "InitResult", "ListResult", "PlanResult", "ReviewItem", "ReviewResult", "Row", "SeedImport", "ShowResult", "StatusResult", "TopChannel",
+    "TopResult", "backup_topics", "backups_folder", "check_channel", "check_files", "check_target", "check_today", "cleanup_hold", "generate_candidates", "import_seeds", "init_topics", "list_candidates", "merge_history", "now_stamp",
     "plan_candidates", "read_blog_history", "resolve", "restore_topics", "review_holds", "short_ref", "show_candidate", "status", "today_of", "top_candidates",
 ]

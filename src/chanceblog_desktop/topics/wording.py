@@ -3,7 +3,7 @@
 이 모듈은 `topics/` 의 맨 아래다 — 표준 라이브러리(`unicodedata`·`types`)만 가져오고 `topics` 의 다른 모듈은 가져오지 않는다(시험이 지킨다). 새 문장은 모두 이 도우미나 `notice.py` 의 카탈로그로만 만든다:
   · `quote`·`quoted`·`one_of`·`unknown_and_missing` 은 운영자가 적은 값을 `‘ ’` 로 감싸 되돌려 보이고(곡선 따옴표가 든 값은 그 따옴표를 지운다), 닫힌 목록의 값은 아래 **값 이름 표**의 쉬운 한국어 이름으로 바꾼다.
   · `object_particle` 은 마지막 글자에 받침이 있는지 보고 '을/를' 을 고른다.
-값 이름 표는 닫힌 목록의 **모든 값**에 이름이 있다(시험이 빠짐·남음·겹침을 본다). **표의 이름은 모두 초기값 — 전략 원문 확인 전이다**(원문이 오면 이 파일의 표만 고친다).
+값 이름 표는 닫힌 목록의 **모든 값**에 이름이 있다(시험이 빠짐·남음·겹침을 본다). 표의 이름은 **구현자가 정한 쉬운 말**이다 — 전략 원문(2026-11-06 대조 끝)은 개념과 숫자를 정할 뿐 화면 낱말을 정하지 않는다. 운영자가 정한 이름은 대상 유형(제품·장소·숙박·서비스·SaaS·PC 부품·문제·생활 습관·실시간 이슈·정책·API)과 후보 종류의 월별 반복형이다. 이름을 바꿀 때는 이 파일의 표만 고친다.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def object_particle(text):
     return "를"
 
 
-# ---- 값 이름 표(초기값 — 전략 원문 확인 전) -------------------------------------------------------------------------------------------------
+# ---- 값 이름 표(구현자가 정한 쉬운 말 — 대상 유형 이름은 운영자 결정) --------------------------------------------------------------------------------------------
 SEED_TYPE_KO = MappingProxyType({"general": "일반", "priority": "우선", "seasonal": "계절", "realtime": "실시간", "sponsorable": "협찬 가능"})
 SOURCE_TYPE_KO = MappingProxyType({"seed": "씨앗", "follow_up": "후속", "seasonal": "계절", "realtime": "실시간", "sponsor": "협찬"})
 CHANNEL_KO = MappingProxyType({"github_pages": "GitHub Pages", "blogger_en": "Blogger 영문", "blogger_ko": "Blogger 한글", "naver_a": "네이버 A", "naver_b": "네이버 B"})
@@ -69,7 +69,7 @@ SCOPE_KO = MappingProxyType({"common": "공통", **CHANNEL_KO})
 CHANNEL_ALIAS_KO = MappingProxyType({"blogger_a": "Blogger A(한글)", "blogger_b": "Blogger B(영문)"})
 LANGUAGE_KO = MappingProxyType({"ko": "한국어", "en": "영어"})
 TREND_USE_KO = MappingProxyType({"primary": "주된 근거로 씀", "supporting": "보조로 씀", "reference": "참고만 함", "none": "쓰지 않음"})
-CANDIDATE_TYPE_KO = MappingProxyType({"evergreen": "지속형", "seasonal": "계절형", "realtime": "실시간", "follow_up": "후속", "sponsor_prep": "협찬 준비형"})
+CANDIDATE_TYPE_KO = MappingProxyType({"evergreen": "지속형", "seasonal": "계절형", "realtime": "실시간", "follow_up": "후속", "sponsor_prep": "협찬 준비형", "monthly_recurring": "월별 반복형"})
 SEARCH_INTENT_KO = MappingProxyType({
     "information": "정보 찾기", "how_to": "하는 법 찾기", "problem_solving": "문제 해결", "selection_guide": "고르기", "comparison": "비교", "local_info": "지역 정보", "context_explainer": "배경 이해",
     "routine_building": "습관 만들기"})
@@ -86,6 +86,20 @@ CLUSTER_KO = MappingProxyType({
     "industry-impact": "산업 영향", "ai-and-compute": "AI와 컴퓨팅", "energy-and-infrastructure": "에너지와 인프라", "privacy-and-data": "개인정보와 데이터", "platform-policy": "플랫폼 정책",
     "api-transition": "API 전환", "digital-organization": "디지털 정리", "schedule-management": "일정 관리", "memo-and-information": "메모와 정보", "smartphone-settings": "스마트폰 설정",
     "shopping-habits": "쇼핑 습관", "time-management": "시간 관리", "household-budget": "가계부", "personal-productivity": "생산성"})
+# ---- P3b-1 이 더한 값 이름 표(2026-11-06 운영자 결정 — 대상 유형·반복·계절 상태·프로필 색·보류 이력·점검 종류) ------------------------------------------------------------------
+# 대상 유형: 운영자가 정한 11개(제품·장소·숙박·서비스·SaaS·PC 부품·문제·생활 습관·실시간 이슈·정책·API)와, 전략 원문 §10.3 표의 묶음 행 셋(장소·숙박 / 서비스·SaaS / 정책·API — 씨앗 제안 파일이 쓰는 이름)
+TARGET_TYPE_KO = MappingProxyType({
+    "product": "제품", "place": "장소", "lodging": "숙박", "service": "서비스", "saas": "SaaS", "pc_part": "PC 부품", "problem": "문제", "life_habit": "생활 습관", "realtime_issue": "실시간 이슈",
+    "policy": "정책", "api": "API", "place_lodging": "장소·숙박", "service_saas": "서비스·SaaS", "policy_api": "정책·API"})
+RECURRENCE_KO = MappingProxyType({"yearly": "매년", "monthly": "매월"})
+SEASONAL_STATE_KO = MappingProxyType({"off_season": "시즌 밖(우선순위 낮춤)", "preparing": "준비 중(일반 우선순위)", "publishing": "발행 기간(우선 추천 평가)"})
+COLOR_PRESET_KO = MappingProxyType({"warm_lifestyle": "따뜻한 생활 톤", "cool_technology": "차분한 기술 톤"})
+# 보류 이력(90일 뒤 상세 정리 때 남기는 11칸) — 칸 이름 → 쉬운 한국어
+HOLD_HISTORY_FIELD_KO = MappingProxyType({
+    "normalized_keyword": "정규화 키워드", "topic_summary": "주제 요약", "first_created_on": "처음 생성일", "last_evaluated_on": "마지막 평가일", "hold_reason": "보류 사유", "exclusion_reason": "제외 사유",
+    "normalized_topic_hash": "주제 비교 번호", "seed_id": "씨앗 번호", "channel": "채널", "search_intent": "검색 의도", "topic_angle": "관점"})
+# 점검 종류 넷(자동 실행은 없다 — 사용자가 주제 분석을 시작할 때 날짜가 기록된다)
+REVIEW_KIND_KO = MappingProxyType({"seasonal_calendar": "계절 캘린더 점검", "long_term_seed": "장기 씨앗 재평가", "hold_candidate": "보류 후보 재평가", "seed_inactive": "씨앗 비활성 검토"})
 FILE_KEY_KO = MappingProxyType({"schema": "저장 형식 번호", "profiles": "채널 프로필 목록", "seeds": "씨앗 목록", "entries": "캘린더 항목 목록"})
 
 
@@ -95,6 +109,7 @@ def tag_name(tag):
 
 
 __all__ = [
-    "CANDIDATE_TYPE_KO", "CHANNEL_ALIAS_KO", "CHANNEL_KO", "CLUSTER_KO", "CONTENT_TYPE_KO", "DATA_STATUS_KO", "DUPLICATE_STATUS_KO", "FILE_KEY_KO", "LANGUAGE_KO", "SAFETY_FLAG_KO", "SCOPE_KO",
-    "SEARCH_INTENT_KO", "SEED_TYPE_KO", "SOURCE_TYPE_KO", "TAG_KO", "TREND_USE_KO", "clean_word", "object_particle", "one_of", "quote", "quoted", "tag_name", "unknown_and_missing",
+    "CANDIDATE_TYPE_KO", "CHANNEL_ALIAS_KO", "CHANNEL_KO", "CLUSTER_KO", "COLOR_PRESET_KO", "CONTENT_TYPE_KO", "DATA_STATUS_KO", "DUPLICATE_STATUS_KO", "FILE_KEY_KO", "HOLD_HISTORY_FIELD_KO", "LANGUAGE_KO", "RECURRENCE_KO",
+    "REVIEW_KIND_KO", "SAFETY_FLAG_KO", "SCOPE_KO", "SEARCH_INTENT_KO", "SEASONAL_STATE_KO", "SEED_TYPE_KO", "SOURCE_TYPE_KO", "TAG_KO", "TARGET_TYPE_KO", "TREND_USE_KO", "clean_word", "object_particle", "one_of", "quote",
+    "quoted", "tag_name", "unknown_and_missing",
 ]

@@ -4,8 +4,8 @@
   1) 낯선 파일(기존 글 보관함 포함)·더 새로운 판·깨진 파일·모양이 다른 파일은 **한 바이트도 안 바꾸고** 거절한다. 읽기 전용 열기는 파일이나 폴더를 만들지 않고 수정 시각까지 그대로다.
   2) 판을 올릴 때는 쓰기 잠금 뒤 판 번호를 다시 읽고, 사전 사본(`.v1.bak`)을 두며(이미 있는 다른 사본은 덮어쓰지 않는다) 한 트랜잭션으로 올리고 실패하면 원래대로이며 여러 창이 동시에 열어도 안전하다.
   3) 후보 저장은 읽고 판단하고 쓰는 것이 한 트랜잭션이라 중간에 실패하면 하나도 저장되지 않는다(발행 이력 장부 포함). 같은 후보를 두 곳에서 동시에 더해도 겹치지 않는다.
-  4) 보류 기한의 기준은 처음 보류함에 든 때이고 다시 평가해도 앞당기거나 미루지 않는다. 구간 밖으로 나갔다 다시 들어오면 새로 센다.
-  5) 후보를 지우는 길이 없고, 점수 스냅샷·관심도 캐시·연결·출처·장부가 정해진 규칙대로 쓰인다. 기존 보관함 `chanceblog.db` 와 서로 모른다.
+  4) 보류 기한의 기준은 최초로 보류함에 든 때이고 다시 평가해도 앞당기거나 미루지 않는다. 구간 밖으로 나갔다 자동으로 돌아와도 최초 시각을 유지하고 새 주기는 사용자가 직접 다시 활성화할 때만이다(P3b-1, D-62 정정).
+  5) 후보를 지우는 길은 90일 뒤 상세 정리(사용자 확인 뒤 한 트랜잭션) 하나뿐이고, 점수 스냅샷·관심도 캐시·연결·출처·장부가 정해진 규칙대로 쓰인다. 기존 보관함 `chanceblog.db` 와 서로 모른다.
 """
 import contextlib
 import dataclasses
@@ -76,6 +76,18 @@ def raw(path, sql, params=()):
         return connection.execute(sql, params).fetchall()
 
 
+def v1_class():
+    """P3 병합 시점의 판 1 파일을 만드는 서브클래스 — 옛 DDL(새 표 둘을 뺀 앞부분) 그대로 새 파일을 만든다. 실제 판 1 → 판 2 올리기와 '낡은 프로그램이 판 2 를 거절하는지' 를 시험하는 데 쓴다(P3b-1)."""
+    class V1(TopicStore):
+        SCHEMA_VERSION = 1
+        SCHEMA = topic_store._SCHEMA[:-len(topic_store._NEW_TABLES)]
+        SHAPES = {1: topic_store._SHAPES_V1}
+        MIGRATIONS = {}
+        _retired_ids = staticmethod(lambda db: set())                       # D-120: 판 1 흉내는 정리 이력·관계 표가 없다 — 옛 프로그램에는 '정리한 번호' 가 없었으니 거절할 번호도 없다
+
+    return V1
+
+
 def v2_class(fail=False, calls=None):
     """판 2 를 흉내 내는 서브클래스 — 새 표 하나를 더하는 올리기 단계가 있다(`fail` 이면 단계가 도중에 실패한다)."""
     def step(db):
@@ -103,11 +115,11 @@ class OpenRulesTest(unittest.TestCase):
 
     def test_a_new_file_gets_its_own_name_tag_version_and_the_exact_shape(self):
         with TopicStore.open(self.path) as store:
-            self.assertEqual((store.schema_version, store.needs_migration, store.read_only, store.check(), store.count()), (1, False, False, [], 0))
+            self.assertEqual((store.schema_version, store.needs_migration, store.read_only, store.check(), store.count()), (2, False, False, [], 0))        # P3b-1 의도적 갱신: 새 파일은 판 2
         self.assertEqual(raw(self.path, "PRAGMA application_id")[0][0], topic_store.APPLICATION_ID)
         self.assertEqual(raw(self.path, "PRAGMA user_version")[0][0], topic_store.SCHEMA_VERSION)
         with connect(self.path) as connection:
-            self.assertIsNone(TopicStore(self.path, connection)._shape_problem(connection, 1, indexes=True))
+            self.assertIsNone(TopicStore(self.path, connection)._shape_problem(connection, 2, indexes=True))
 
     def test_the_name_tag_differs_from_the_existing_post_store_and_the_two_files_do_not_know_each_other(self):
         from chanceblog_desktop.content import store as post_store
@@ -186,7 +198,7 @@ class OpenRulesTest(unittest.TestCase):
         with TopicStore.open(self.path):
             pass
         with connect(self.path) as connection:
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")                     # P3b-1 의도적 갱신: 지금 판이 2 라서 '더 새로운 판' 은 3 이다
         before = (digest(self.path), sorted(os.listdir(self.path.parent)))
         for migrate in (True, False):
             with self.subTest(migrate=migrate):
@@ -211,7 +223,7 @@ class OpenRulesTest(unittest.TestCase):
         damaged[(root - 1) * page_size: root * page_size] = b"\xff" * page_size                # 색인 한 쪽만 망가뜨린다 — 이름표·판 번호·표 모양은 멀쩡해서 '구조 점검' 만이 알아챈다
         self.path.write_bytes(bytes(damaged))
         with connect(self.path) as connection:                                                 # 시험이 맞는 곳을 깼는지 확인한다
-            self.assertEqual((connection.execute("PRAGMA application_id").fetchone()[0], connection.execute("PRAGMA user_version").fetchone()[0]), (topic_store.APPLICATION_ID, 1))
+            self.assertEqual((connection.execute("PRAGMA application_id").fetchone()[0], connection.execute("PRAGMA user_version").fetchone()[0]), (topic_store.APPLICATION_ID, 2))
             self.assertEqual(len(connection.execute("SELECT name FROM pragma_table_info('hold_box')").fetchall()), 4)
             self.assertNotEqual(connection.execute("PRAGMA quick_check").fetchone()[0], "ok")
         before = (digest(self.path), self.path.stat().st_mtime_ns, sorted(os.listdir(self.path.parent)))
@@ -265,12 +277,21 @@ class OpenRulesTest(unittest.TestCase):
             self.assertEqual(store.count(), 1)
 
     def test_the_schema_is_pinned_so_changing_the_released_shape_is_a_conscious_change(self):
+        # P3b-1 의도적 갱신: 지금 판이 2 다. 판 1 의 DDL(새 표 둘을 뺀 앞부분)은 한 글자도 바뀌지 않았고(기준값 그대로) 판 2 의 DDL 은 새 기준값으로 못박는다.
+        v1_part = hashlib.sha256("\n".join(topic_store._SCHEMA[:-len(topic_store._NEW_TABLES)]).encode("utf-8")).hexdigest()
+        self.assertEqual(v1_part, PINNED_SCHEMA_HASH, "판 1 의 DDL 은 바뀌지 않았다 — 고치려면 새 판의 올리기 단계를 만들고 이 값과 결정 기록을 함께 고친다")
         pinned = hashlib.sha256("\n".join(topic_store._SCHEMA).encode("utf-8")).hexdigest()
-        self.assertEqual(pinned, PINNED_SCHEMA_HASH, "판 1 의 DDL 을 고치려면 새 판의 올리기 단계를 만들고 이 값과 결정 기록을 함께 고친다")
-        self.assertEqual((topic_store.APPLICATION_ID, topic_store.SCHEMA_VERSION), (0x43425445, 1))
+        self.assertEqual(pinned, PINNED_SCHEMA_V2_HASH, "판 2 의 DDL 을 고치려면 새 판의 올리기 단계를 만들고 이 값과 결정 기록을 함께 고친다")
+        self.assertEqual((topic_store.APPLICATION_ID, topic_store.SCHEMA_VERSION), (0x43425445, 2))
         self.assertEqual(set(topic_store._SHAPES[1]), {"candidates", "hold_box", "score_snapshots", "trend_cache", "candidate_links", "provenance", "history_ledger"})
+        # D-120 의도적 갱신(판 2 는 배포 전이라 같은 판 2 안에서 고쳤다): 보류 이력이 11칸 → 13칸(`first_created_on` → `first_created_at`, `cleaned_at`·`cleanup_reason` 추가)이고 재생성 관계 표 `candidate_lineage` 가 더해졌다
+        self.assertEqual(set(topic_store._SHAPES[2]), set(topic_store._SHAPES[1]) | {"review_log", "hold_history", "candidate_lineage"})
+        self.assertEqual(topic_store._SHAPES[2]["hold_history"], ("candidate_id", *topic_store.HOLD_HISTORY_FIELDS))
+        self.assertEqual(topic_store._SHAPES[2]["candidate_lineage"], ("candidate_id", "recreated_from", "relation", "created_at"))
+        self.assertEqual(len(topic_store.HOLD_HISTORY_FIELDS), 13, "보류 이력 13칸")
 
 
+PINNED_SCHEMA_V2_HASH = "26f8253315dc9791de9e72218925f7ac0c6b6c0d7302ecc9f70a4a2ef05ff8d7"          # 판 2 의 DDL 문장들 전체의 SHA-256 — D-120 의도적 갱신: 보류 이력 13칸·재생성 관계 표(`candidate_lineage`)로 새 기준값(앞 값 `5a7e9c38…` 은 11칸·표 둘)
 PINNED_SCHEMA_HASH = "5bb1fc020652892044220de588d480cac7afb3188d61275a44f861863e22d730"      # 판 1 의 DDL 문장들을 줄바꿈으로 이은 글의 SHA-256 — 낱말 하나만 고쳐도 달라진다
 
 
@@ -279,7 +300,7 @@ class MigrationTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "topic_engine.db"
-        with TopicStore.open(self.path) as store:
+        with v1_class().open(self.path) as store:                           # P3b-1 의도적 갱신: 지금 판이 2 라서 '올리기 전 파일' 은 판 1 흉내 클래스로 만든다
             store.add_candidates(lambda existing: [cand(1), hold_cand(2)], now=NOW)
         self.before_dump = self.dump()
 
@@ -306,7 +327,7 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(code_of(v2_class(fail=True).open, self.path), "MIGRATION_FAILED")
         self.assertEqual(self.dump(), self.before_dump)
         self.assertEqual(raw(self.path, "PRAGMA user_version")[0][0], 1)
-        with TopicStore.open(self.path) as store:
+        with v1_class().open(self.path) as store:
             self.assertEqual(store.count(), 2, "원래 판으로 다시 열린다")
 
     def test_a_read_only_open_of_an_older_file_reports_it_and_changes_nothing(self):
@@ -345,7 +366,7 @@ class MigrationTest(unittest.TestCase):
 
     def test_an_existing_copy_with_the_same_tag_and_version_but_other_rows_is_not_reused(self):
         other = Path(self.tmp.name) / "other" / "topic_engine.db"
-        with TopicStore.open(other) as store:
+        with v1_class().open(other) as store:
             store.add_candidates(lambda existing: [cand(7)], now=NOW)                    # 이름표·판·표 모양은 같고 행만 다르다
         stale = self.path.parent / "topic_engine.db.v1.bak"
         stale.write_bytes(other.read_bytes())
@@ -461,9 +482,12 @@ class CandidateWriteTest(unittest.TestCase):
 
     def test_there_is_no_way_to_delete_a_candidate(self):
         names = {name for name in dir(TopicStore) if not name.startswith("_")}
-        self.assertFalse({name for name in names if "delete" in name or "remove" in name or "drop" in name or "purge" in name or "clear" in name}, "후보를 지우는 길은 없다 — 지울지는 운영자가 정한다")
+        self.assertFalse({name for name in names if "delete" in name or "remove" in name or "drop" in name or "purge" in name or "clear" in name}, "지우는 이름의 도구는 없다 — 지울지는 운영자가 정한다")
         source = Path(topic_store.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("DELETE FROM candidates", source)
+        # P3b-1 의도적 갱신(2026-11-06 운영자 결정 — 90일 뒤 변화가 없으면 상세 데이터 정리, 자동 삭제 금지): 후보를 지우는 길은 `cleanup_hold` 하나뿐이다(사용자가 `--yes` 로 확인했을 때만 서비스가 부른다)
+        self.assertEqual(source.count("DELETE FROM candidates"), 1)
+        body = source[source.index("    def cleanup_hold(self"):source.index("    def hold_history(self")]
+        self.assertIn("DELETE FROM candidates", body, "그 한 곳이 `cleanup_hold` 안이다")
 
     def test_nothing_is_saved_when_the_plan_fails_halfway_or_gives_a_wrong_object_or_a_taken_number(self):
         record = hs.HistoryRecord(channel="naver_a", title="예시 이력 글", ref="p1", origin="naver_items")
@@ -534,7 +558,7 @@ class CandidateWriteTest(unittest.TestCase):
         self.assertEqual(code_of(self.store.set_work_status, "cid-001", "NEW"), "CANDIDATE_TRANSITION_INVALID")
         self.store.set_work_status("cid-001", "REJECTED")
         self.assertEqual(code_of(self.store.set_work_status, "cid-001", "SELECTED"), "CANDIDATE_TRANSITION_INVALID", "제외한 후보는 검토 중으로만 되살린다")
-        self.assertEqual(self.store.set_work_status("cid-001", "REVIEW").work_status, "REVIEW")
+        self.assertEqual(self.store.set_work_status("cid-001", "REVIEW", now=NOW).work_status, "REVIEW")        # P3b-1 의도적 갱신: 보류함에 든 적이 있는 후보를 제외에서 되살리는 것은 '직접 다시 활성화' 라 지금 시각이 필요하다
         self.assertEqual(code_of(self.store.set_work_status, "cid-404", "REVIEW"), "TOPIC_CANDIDATE_NOT_FOUND")
         self.assertEqual(code_of(self.store.set_work_status, "cid-001", "DONE"), "CANDIDATE_INVALID")
         self.assertEqual(code_of(self.store.set_work_status, "bad id!", "REVIEW"), "CANDIDATE_INVALID")
@@ -626,14 +650,15 @@ class HoldBasisTest(unittest.TestCase):
         earlier = dataclasses.replace(hold_cand(1), review_expires_at="2026-11-12T00:00:00Z")
         self.assertEqual(self.store.re_evaluate(earlier, evaluated_at="2026-11-11T00:00:00Z").review_expires_at, DAY90)
 
-    def test_leaving_the_band_closes_the_stay_and_coming_back_starts_a_new_ninety_days(self):
+    def test_leaving_the_band_closes_the_stay_and_coming_back_keeps_the_first_time(self):
+        # P3b-1 의도적 갱신(D-62 정정): 예전에는 '나갔다 다시 들어오면 그때부터 새로 센다' 였다 — 이제 자동으로 돌아와도 최초 시각(과 기한)을 그대로 쓴다. 새 주기는 사용자가 직접 다시 활성화할 때만이다.
         left = self.store.re_evaluate(dataclasses.replace(hold_cand(1), scores=ts.flat_card(72), review_expires_at=None), evaluated_at="2026-12-01T00:00:00Z")
         self.assertEqual((left.recommendation_band, left.review_expires_at), ("GENERAL", None))
         self.assertEqual([tuple(stay) for stay in self.store.hold_stays()], [])
         self.assertEqual([tuple(stay) for stay in self.store.hold_stays(open_only=False)], [("cid-001", CREATED, DAY90, "2026-12-01T00:00:00Z")])
         back = self.store.re_evaluate(dataclasses.replace(hold_cand(1), scores=ts.flat_card(55)), evaluated_at="2027-01-10T00:00:00Z")
-        self.assertEqual(back.review_expires_at, "2027-04-10T00:00:00Z", "나갔다 다시 들어오면 그때부터 90일")
-        self.assertEqual([tuple(stay) for stay in self.store.hold_stays()], [("cid-001", "2027-01-10T00:00:00Z", "2027-04-10T00:00:00Z", None)])
+        self.assertEqual(back.review_expires_at, DAY90, "나갔다 자동으로 돌아와도 최초 시각의 기한 그대로다")
+        self.assertEqual([tuple(stay) for stay in self.store.hold_stays()], [("cid-001", CREATED, DAY90, None)])
 
     def test_a_candidate_that_was_not_on_hold_gets_its_stay_when_it_first_falls_into_the_band(self):
         fell = self.store.re_evaluate(dataclasses.replace(cand(2, final=70), scores=ts.flat_card(60)), evaluated_at="2026-12-01T00:00:00Z")

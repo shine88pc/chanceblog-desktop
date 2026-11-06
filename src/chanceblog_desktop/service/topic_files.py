@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import NamedTuple
 
@@ -82,6 +83,47 @@ def load_seeds(paths):
 
 def load_calendar(paths):
     return load_json_set(layout.CALENDAR_FILE, paths.calendar)
+
+
+MAX_COPY_NAMES = 20                                          # 옛 판 사본 이름(.v1.bak → .v1.2.bak …)을 이만큼까지 찾아본다
+
+
+def _same_json(path, data):
+    try:
+        return json.loads(Path(path).read_bytes().decode("utf-8-sig")) == data
+    except (OSError, ValueError, RecursionError):
+        return False
+
+
+def _keep_old_copy(path):
+    """`seeds.json` 이 판 1 모양이면 판 2 로 올려 쓰기 전에 옛 모양 그대로의 사본(`seeds.json.v1.bak`)을 남긴다 → 사본의 파일 이름(남길 것이 없으면 None). 이미 있는 사본은 덮어쓰지 않는다 —
+    같은 내용이면 그것을 쓰고 다르면 다음 이름(`.v1.2.bak` …)으로 새로 만든다. 읽을 수 없는 파일은 여기서 만들지 않고 부른 쪽이 먼저 막았다."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        old = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        raise AppError("TOPIC_FILE_INVALID", {"파일": path.name}, detail="사본을 남기려고 읽었지만 읽을 수 없다") from None
+    if not isinstance(old, dict) or old.get("schema") != 1:
+        return None
+    for number in range(1, MAX_COPY_NAMES + 1):
+        target = path.with_name(f"{path.name}.v1.bak" if number == 1 else f"{path.name}.v1.{number}.bak")
+        if not target.exists():
+            write_json(target, old)
+            return target.name
+        if _same_json(target, old):
+            return target.name
+    raise AppError("TOPIC_FILE_INVALID", {"파일": path.name}, detail=f"옛 판 사본 이름 {MAX_COPY_NAMES}개가 모두 쓰이고 있다")
+
+
+def save_seeds(paths, seeds):
+    """씨앗 목록을 `seeds.json`(판 2)에 쓴다 — 쓰기는 `write_json`(임시 파일 → 디스크 → 이름 바꾸기)뿐이다. 옛 판 1 파일을 올려 쓰면 먼저 옛 모양 사본을 남기고 그 파일 이름을 돌려준다(아니면 None).
+    모양은 `seeds_to_dict` 가 먼저 검사한다(같은 번호·같은 낱말 두 번 등 — 틀리면 아무것도 쓰지 않는다)."""
+    payload = seeds_to_dict(seeds)
+    kept = _keep_old_copy(paths.seeds)
+    write_json(paths.seeds, payload)
+    return kept
 
 
 def is_blank_file(path):

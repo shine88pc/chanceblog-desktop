@@ -26,7 +26,8 @@ from ..echo import shown_topic_backup
 from ..errors import AppError
 from ..security.mask import has_key_shape
 from ..topics import layout
-from ..topics.channels import profiles_from_dict
+from ..topics import wording
+from ..topics.channels import invalid_in, profiles_from_dict
 from ..topics.schedule import entries_from_dict
 from ..topics.seeds import seeds_from_dict
 from .file import detail_of
@@ -37,7 +38,21 @@ MANIFEST_SCHEMA = 1
 KEEP_BACKUPS = 10
 SAFETY_FOLDER = "before-restore"
 BACKUP_NAME = re.compile(r"topic-[0-9]{8}-[0-9]{6}(?:-[0-9]{1,3})?")
-JSON_LOADERS = {layout.CHANNEL_PROFILES_FILE: profiles_from_dict, layout.SEEDS_FILE: seeds_from_dict, layout.CALENDAR_FILE: entries_from_dict}
+PROFILE_TEXT_KEYS = ("blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "profile_image", "cover_image", "priority_keywords", "exclude_keywords", "home_regions",
+                     "day_trip_regions")      # 판 2 에서 더한 글칸 — 사용자가 쓰는 글이라 키·토큰 모양이 있으면 읽지 않는다(D-68·D-77 과 같은 모양 검사)
+
+
+def _profiles_without_keys(parsed):
+    """채널 프로필을 엄격하게 읽고, 새 글칸(`PROFILE_TEXT_KEYS`)에 키·토큰 모양이 있으면 `CONTENT_INVALID` 로 거절한다(글은 되풀이하지 않고 채널 이름만 말한다)."""
+    profiles = profiles_from_dict(parsed)
+    for profile in profiles:
+        data = profile.to_dict()
+        if scan_key_shape(json.dumps({key: data[key] for key in PROFILE_TEXT_KEYS}, ensure_ascii=False)):
+            raise invalid_in("채널 프로필", f"{wording.CHANNEL_KO[profile.key]} 의 새 글칸", "이름·소개글·경로·낱말 목록 중에 키·토큰처럼 보이는 글이 있어 읽지 않습니다 — 그 글을 지워 주세요", dev="키 모양")
+    return profiles
+
+
+JSON_LOADERS = {layout.CHANNEL_PROFILES_FILE: _profiles_without_keys, layout.SEEDS_FILE: seeds_from_dict, layout.CALENDAR_FILE: entries_from_dict}
 BACKUP_FILES = layout.USER_DATA_FILES                           # 백업에 들어갈 수 있는 파일 이름 넷(그 밖의 이름은 거절)
 MAX_JSON_BYTES = 8 * 1024 * 1024                                 # JSON 한 파일의 상한(실수로 거대한 파일을 읽지 않게)
 MAX_NAMES = 99                                                   # 같은 초에 만든 백업 이름 번호(-2 … -99)

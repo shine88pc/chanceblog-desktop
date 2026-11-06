@@ -67,9 +67,9 @@ class MissingFilesTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.paths.folder)), sorted(layout.JSON_FILES))
         self.assertEqual(tf.load_profiles(self.paths).value, channels.default_profiles())
         self.assertEqual((tf.load_seeds(self.paths).value, tf.load_calendar(self.paths).state), ((), tf.STATE_OK))
-        self.assertEqual(json.loads(self.paths.seeds.read_text(encoding="utf-8")), {"schema": 1, "seeds": []})
+        self.assertEqual(json.loads(self.paths.seeds.read_text(encoding="utf-8")), {"schema": 2, "seeds": []})        # P3b-1 의도적 갱신: 새로 만드는 씨앗 파일은 판 2(판 1 파일은 그대로 읽힌다)
         self.assertEqual(json.loads(self.paths.calendar.read_text(encoding="utf-8")), {"schema": 1, "entries": []})
-        self.assertEqual(json.loads(self.paths.profiles.read_text(encoding="utf-8"))["schema"], 1)
+        self.assertEqual(json.loads(self.paths.profiles.read_text(encoding="utf-8"))["schema"], 2)        # P3b-1 의도적 갱신: 새로 만드는 프로필 파일은 판 2
         self.paths.seeds.write_text(json.dumps(seeds.seeds_to_dict([ts.example_seed()])), encoding="utf-8")
         my_seeds = self.paths.seeds.read_bytes()
         self.assertEqual(tf.init_files(self.paths), ((), layout.JSON_FILES))
@@ -92,7 +92,7 @@ class MissingFilesTest(unittest.TestCase):
         tf.init_files(self.paths)
         self.assertEqual(calls, [(layout.CHANNEL_PROFILES_FILE, ["profiles", "schema"]), (layout.SEEDS_FILE, ["schema", "seeds"]), (layout.CALENDAR_FILE, ["entries", "schema"])])
         text = self.paths.seeds.read_text(encoding="utf-8")
-        self.assertTrue(text.endswith("\n") and '"schema": 1' in text, "write_json 의 모양(들여쓰기·끝 줄바꿈)")
+        self.assertTrue(text.endswith("\n") and '"schema": 2' in text, "write_json 의 모양(들여쓰기·끝 줄바꿈) — P3b-1 의도적 갱신: 씨앗 파일은 판 2")
         self.assertEqual(sorted(name for name in os.listdir(self.paths.folder) if name.endswith(".tmp")), [], "임시 파일을 남기지 않는다")
 
 
@@ -119,7 +119,7 @@ class StrictReadingTest(unittest.TestCase):
     def test_text_that_is_not_utf8_json_is_a_file_error_and_a_value_error_is_a_content_error(self):
         cases = (
             (b"\xff\xfe\x00broken", "TOPIC_FILE_INVALID"), (b"{not json", "TOPIC_FILE_INVALID"), (b"", "TOPIC_FILE_INVALID"), (b"[1, 2, 3]", "CONTENT_INVALID"), (b"{}", "CONTENT_INVALID"),
-            (json.dumps({"schema": 2, "seeds": []}).encode(), "CONTENT_INVALID"), (json.dumps({"schema": 1, "seeds": [], "extra": 1}).encode(), "CONTENT_INVALID"),
+            (json.dumps({"schema": 3, "seeds": []}).encode(), "CONTENT_INVALID"), (json.dumps({"schema": 1, "seeds": [], "extra": 1}).encode(), "CONTENT_INVALID"),        # P3b-1 의도적 갱신: 판 2 는 읽히고 더 새로운 판(3)이 거절 대상이다
             (json.dumps({"schema": "1", "seeds": []}).encode(), "CONTENT_INVALID"), (json.dumps({"schema": 1, "seeds": "none"}).encode(), "CONTENT_INVALID"),
             (json.dumps({"schema": 1, "seeds": [{"seed_id": "x"}]}).encode(), "CONTENT_INVALID"),
             (json.dumps({"schema": 1, "seeds": [{**ts.example_seed().to_dict(), "unknown": 1}]}).encode(), "CONTENT_INVALID"),

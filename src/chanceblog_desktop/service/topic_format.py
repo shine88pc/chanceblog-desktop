@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from ..content.candidates import STATUS_KO
-from ..topics import slots, wording
+from ..topics import hold, slots, wording
 from ..topics.channels import FACTOR_LABELS, FACTOR_NAMES
 from ..topics.score import BAND_KO, BAND_UNRATED, TREND_STATUS_KO
 from .topics import short_ref
@@ -17,6 +17,7 @@ STORE_KO = {"missing": "아직 없음(`topics init --yes` 나 `topics generate -
             "unreadable": "다른 곳에서 쓰는 중이거나 정리 안 된 저장이 있어 지금은 읽지 못했습니다(잠시 뒤 다시 해 보세요)"}
 HISTORY_KO = {"read": "읽음", "not_connected": "블로그 저장소가 연결되지 않아 읽지 못함", "missing": "이력 파일이 없음", "unreadable": "읽을 수 없음", "no_store": "글 보관함이 없음"}
 SHOWN_PER_CHANNEL = 10                                       # 계획 미리 보기에서 채널마다 보이는 새 후보 수(`--verbose` 는 모두)
+MAX_SHOWN_IMPORT = 10                                          # 씨앗 불러오기에서 건너뜀·거절 줄을 이만큼까지 보인다
 
 
 def _score_text(candidate):
@@ -64,8 +65,23 @@ def status_lines(result):
     lines += ["", "블로그 발행 이력(읽기만 합니다 — 블로그 저장소는 바꾸지 않습니다)"] + [history_line(item) for item in result.history.channels]
     lines += [f"  주의: {text}" for text in result.history.warnings]
     lines += ["", "후보 생성이 켜진 채널: " + (", ".join(wording.CHANNEL_KO[channel] for channel in result.enabled) or "없음")]
+    if result.reviews:
+        lines += ["", "다음 점검일(자동으로 돌지 않습니다 — 주제 분석 `topics generate --yes` 를 실행하는 날 점검일이 기록됩니다)"] + [review_line(item) for item in result.reviews]
     lines += ["", "다음: `topics check` 로 씨앗·캘린더를 검사 → `topics plan` 으로 후보 미리 보기 → `topics generate --yes` 로 저장"]
     return lines
+
+
+def review_line(item):
+    """점검 하나의 다음 점검일 한 줄 — 기한이 지나도 표시만 한다(아무것도 자동으로 하지 않는다)."""
+    head = f"  - {wording.REVIEW_KIND_KO[item.kind]}({item.period_days}일마다): "
+    if item.state == "never":
+        return head + "아직 점검한 적이 없어 지금 점검할 수 있습니다"
+    when = f"마지막 점검 {item.last_run_on}"
+    if item.state == "due":
+        return head + f"오늘이 점검일입니다({when})"
+    if item.state == "overdue":
+        return head + f"점검 기한이 {-item.days_left}일 지났습니다(다음 점검일은 {item.next_due_on} 이었습니다 — 표시만 하고 아무것도 바꾸지 않았습니다)"
+    return head + f"다음 점검일 {item.next_due_on}({item.days_left}일 뒤 — {when})"
 
 
 def init_lines(result):
@@ -119,6 +135,9 @@ def _plan_channel_lines(plan, verbose):
         lines.append(f"   … 그 밖에 {len(plan.candidates) - len(shown)}개(`--verbose` 로 모두 봅니다)")
     lines += _notice_lines(plan.notices)
     lines += [f"  관심도: {text}" for text in plan.trend_notes]
+    if plan.needs_region:
+        names = "·".join(f"‘{name}’" for name in dict.fromkeys(plan.needs_region))
+        lines.append(f"  - 지역 값이 필요한 씨앗 {len(plan.needs_region)}개(씨앗 {names})는 후보를 만들지 않았습니다 — 채널 프로필에 상시 이동권이나 당일 이동권 지역을 적으면 만들 수 있습니다(오류가 아니라 알림입니다)")
     if plan.withheld:
         names = "·".join(f"‘{name}’" for name in dict.fromkeys(plan.withheld))
         lines.append(f"  - 키·토큰처럼 보이는 글이 든 후보 {len(plan.withheld)}개는 저장하지 않았습니다(씨앗 {names}) — 그 씨앗의 글에서 키처럼 보이는 낱말을 지운 뒤 다시 하세요. 후보는 한 번 저장되면 지울 수 없고 백업이 막히기 때문입니다")
@@ -133,6 +152,96 @@ def plan_lines(result, *, verbose=False):
     lines += [f"안내: {text}" for text in result.notes]
     if not result.saved:
         lines.append("저장하려면 `topics generate --yes` 를 실행합니다(그때 남은 자리를 다시 세어 저장합니다).")
+    return [line for number, line in enumerate(lines) if line or (number and lines[number - 1])]
+
+
+def cleanup_lines(result):
+    """보류 후보 90일 뒤 상세 정리의 쉬운 말 출력 — 기본은 미리 보기이고 무엇이 남고 무엇이 지워지는지 보인다. 옛 구조의 보관함에 `--yes` 를 주면 구조만 올리고 멈췄다고 알린다(미리 본 적 없는 후보를 지우지 않는다)."""
+    if result.upgraded:
+        return ["보류 후보 상세 정리 — 이번에는 아무것도 정리하지 않았습니다(후보 보관함이 옛 구조라 새 구조로 올리기만 했습니다 — 옛 구조의 사본을 보관함 옆에 남겨 두었습니다)",
+                "구조를 올렸습니다. 다시 미리 보기(`topics hold cleanup`)를 실행해 정리할 후보와 확인 번호를 본 뒤 `--yes --confirm 확인번호` 로 정리해 주세요. 미리 본 적 없는 후보는 지우지 않습니다."]
+    if result.refused == "token_missing":
+        return ["보류 후보 상세 정리 — 확인 번호가 없어 아무것도 정리하지 않았습니다",
+                "먼저 `topics hold cleanup` 으로 미리 보기를 하고 그때 보인 확인 번호를 `--yes --confirm 확인번호` 로 함께 주세요(미리 볼 때 `--today` 를 썼다면 같은 값을 함께 줍니다)."]
+    if result.refused == "token_mismatch":
+        return ["보류 후보 상세 정리 — 확인 번호가 지금 정리 대상과 맞지 않아 아무것도 정리하지 않았습니다(미리 본 뒤 대상이 바뀌었거나 번호를 잘못 썼습니다)",
+                "다시 미리 보기를 해 주세요 — 지금 대상과 새 확인 번호가 나옵니다." + (f" 정리 직전 사본은 만들어 두었습니다: {result.copy}" if result.copy else "")]
+    if result.store_state in ("missing", "empty", "old_structure"):
+        return ["보류 후보 상세 정리 — 정리할 것이 없습니다(후보 보관함이 " + {"missing": "아직 없습니다", "empty": "비어 있습니다", "old_structure": "옛 구조라 아직 읽지 않았습니다"}[result.store_state] + ")",
+                *(["구조를 올리려면 같은 명령 끝에 --yes 를 붙입니다 — 구조만 올리고 정리는 하지 않으니, 올린 뒤 다시 미리 보기를 해 주세요."] if result.store_state == "old_structure" else [])]
+    if result.rows and not result.applied:
+        return ["보류 후보 상세 정리 — 정리된 후보가 없습니다(아래 이유로 모두 정리하지 않았습니다)", "", *_not_cleaned_lines(result),
+                *([f"정리 직전의 보관함 사본은 만들어 두었습니다: {result.copy}"] if result.copy else [])]
+    if result.applied:
+        head = f"보류 후보 {len(result.items)}개의 상세 데이터를 정리했습니다 — 이력 {len(hold_fields())}칸만 남았습니다(지금 남은 보류 이력 {result.history_total}개)"
+    elif not result.items:
+        return ["보류 후보 상세 정리 — 지금 정리할 후보가 없습니다(최초로 보류함에 든 지 90일이 지나고 그 뒤 변화가 없는 후보만 정리합니다)", f"  지금 남은 보류 이력 {result.history_total}개"]
+    else:
+        head = f"보류 후보 상세 정리 미리 보기 — 아무것도 지우지 않았습니다(정리할 수 있는 후보 {len(result.items)}개)"
+    lines = [head, ""]
+    for number, item in enumerate(result.items[:MAX_SHOWN_IMPORT], start=1):
+        lines.append(f"  {number:>2}. {short_ref(item.candidate_id)}  {wording.CHANNEL_KO[item.channel]:<9}  기한 {item.expires_at[:10]}  {item.topic}")
+    if len(result.items) > MAX_SHOWN_IMPORT:
+        lines.append(f"  … 그 밖에 {len(result.items) - MAX_SHOWN_IMPORT}개")
+    lines += ["", "남기는 이력 " + f"{len(hold_fields())}칸: " + ", ".join(hold.HISTORY_FIELD_KO[name] for name in hold_fields())]
+    lines += ["지워지는 것: " + " · ".join(what for _table, _column, what in hold_erases())]
+    if result.applied:
+        lines += [f"정리 직전의 보관함 사본을 남겼습니다: {result.copy} (지우려던 상세를 그대로 담고 있으니 필요 없어지면 직접 지워 주세요)",
+                  "정리한 후보는 목록에서 사라지고(남은 후보의 순번은 다시 매겨집니다 — 번호는 그대로) 이력으로만 남습니다. 같은 후보가 다시 만들어지지는 않고 정리한 번호는 다시 쓰지 않습니다."]
+        if result.not_cleaned:
+            lines += ["", *_not_cleaned_lines(result)]
+    else:
+        lines += ["정리하면 되돌릴 수 없습니다(점수·선정 이유가 사라집니다) — 정리 직전에 보관함 사본을 자동으로 남기고, `topics backup` 으로 따로 백업해 둘 수도 있습니다.",
+                  "정리 대상은 사람이 한 번도 손대지 않았고 초안과 이어지지 않은 후보뿐입니다(검토·선택·보류·제외한 후보와 초안에 쓴 후보는 정리하지 않습니다).",
+                  f"확인 번호: {result.token}",
+                  f"정리하려면 같은 명령 끝에 --yes --confirm {result.token} 을 붙입니다(미리 볼 때 `--today` 를 썼다면 같은 값을 함께 줍니다). 미리 본 뒤 대상이 바뀌면 번호가 달라져 정리하지 않습니다. 자동으로는 절대 정리하지 않습니다."]
+    return lines
+
+
+def _not_cleaned_lines(result):
+    """정리하지 않은 행(건너뜀·충돌·실패)의 개수와 후보별 이유 — 한 후보의 충돌·실패가 나머지 정리를 막지 않았다."""
+    counts = result.counts
+    lines = [f"정리하지 않은 후보 {len(result.not_cleaned)}개 — 건너뜀 {counts['skipped']} · 충돌 {counts['conflict']} · 실패 {counts['failed']}"]
+    for row in result.not_cleaned[:MAX_SHOWN_IMPORT]:
+        lines.append(f"  - {short_ref(row.candidate_id)}: {row.detail}")
+    if len(result.not_cleaned) > MAX_SHOWN_IMPORT:
+        lines.append(f"  - 그 밖에 {len(result.not_cleaned) - MAX_SHOWN_IMPORT}개")
+    return lines
+
+
+def hold_fields():
+    return hold.HISTORY_FIELDS
+
+
+def hold_erases():
+    return hold.CLEANUP_ERASES
+
+
+def import_lines(result):
+    """씨앗 제안 불러오기의 쉬운 말 출력 — 개수·건너뜀·거절 사유·채널별 허용 씨앗 수. 파일 안의 낱말은 되풀이하지 않고 씨앗 번호와 이유만 보인다."""
+    if result.applied:
+        head = f"씨앗 제안을 불러왔습니다 — 새로 등록한 씨앗 {len(result.new)}개(모두 승인 전)"
+    elif result.blocked:
+        head = "씨앗 제안 불러오기 — 읽을 수 없는 씨앗이 있어 저장하지 않았습니다(아무것도 바뀌지 않았습니다)"
+    elif not result.new:
+        head = "씨앗 제안 불러오기 — 새로 등록할 씨앗이 없습니다(저장할 것이 없어 아무것도 바뀌지 않았습니다)"
+    else:
+        head = "씨앗 제안 불러오기 미리 보기 — 아무것도 저장하지 않았습니다"
+    lines = [head, "", f"  파일 안 씨앗 {result.total}개 · 새로 등록할 씨앗 {len(result.new)}개 · 이미 있어 건너뜀 {len(result.skipped)}개 · 읽을 수 없어 뺀 씨앗 {len(result.rejected)}개(지금 등록된 씨앗 {result.existing}개)"]
+    for title, rows in (("이미 있어 건너뜀", result.skipped), ("읽을 수 없어 뺌", result.rejected)):
+        if rows:
+            lines += ["", f"{title}"] + [f"  - 씨앗 ‘{name}’: {reason}" for name, reason in rows[:MAX_SHOWN_IMPORT]]
+            if len(rows) > MAX_SHOWN_IMPORT:
+                lines.append(f"  - 그 밖에 {len(rows) - MAX_SHOWN_IMPORT}건")
+    if result.new:
+        lines += ["", "새 씨앗이 승인되면 채널마다 쓸 수 있는 수(허용 채널 기준)"]
+        lines += [f"  - {wording.CHANNEL_KO[channel]}: {number}개 — " + ("후보 생성 켜짐" if enabled else "후보 생성 꺼짐(씨앗은 등록·승인할 수 있고 후보 생성만 꺼져 있습니다)") for channel, number, enabled in result.per_channel]
+    if result.kept_copy:
+        lines += ["", f"옛 모양(판 1)의 씨앗 파일은 지우지 않고 사본으로 남겼습니다: {result.kept_copy}"]
+    lines += ["", *[f"안내: {text}" for text in result.notes]]
+    lines.append("승인 전 씨앗은 후보 생성에 쓰이지 않습니다 — 승인하면 사용 중이 됩니다.")
+    if not result.applied and not result.blocked and result.new:
+        lines.append("저장하려면 같은 명령 끝에 --yes 를 붙입니다.")
     return [line for number, line in enumerate(lines) if line or (number and lines[number - 1])]
 
 
@@ -230,4 +339,4 @@ def restore_lines(result):
     return lines
 
 
-__all__ = ["backup_lines", "check_lines", "init_lines", "list_lines", "plan_lines", "restore_lines", "review_lines", "show_lines", "status_lines", "top_lines"]
+__all__ = ["backup_lines", "check_lines", "cleanup_lines", "import_lines", "init_lines", "list_lines", "plan_lines", "restore_lines", "review_line", "review_lines", "show_lines", "status_lines", "top_lines"]

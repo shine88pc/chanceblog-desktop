@@ -26,7 +26,9 @@ SCHEMA = 1
 
 # ---- 닫힌 목록 ------------------------------------------------------------------------------------------------------------------
 SOURCE_TYPES = ("seed", "follow_up", "seasonal", "realtime", "sponsor")                  # 후보가 생긴 경로(비율은 `channels.SOURCE_MIX`)
-CANDIDATE_TYPES = ("evergreen", "seasonal", "realtime", "follow_up", "sponsor_prep")
+# 후보 종류(`candidate_type`) — 운영자 목록(2026-11-06 결정 3)은 지속형·실시간·계절형·월별 반복형·후속 다섯이다. `sponsor_prep`(협찬 준비형)은 그 목록에 없지만 협찬 경로가 이미 쓰고 `safety.py` 가 읽으므로 지우지 않고 남겼다
+# (보고서 ⑧ — 운영자 목록에 없는 값 하나가 남아 있다). 후보는 이 값을 **기록만** 한다 — 비율에 억지로 맞추지 않는다(비율 값은 채널 프로필에 값으로만 있다).
+CANDIDATE_TYPES = ("evergreen", "seasonal", "realtime", "follow_up", "sponsor_prep", "monthly_recurring")
 # 안전 표시(규칙 기반 — `safety.py`) — 표시일 뿐이고 후보를 지우지 않는다(P2b, 결정 D-47). 결과를 약속하는 표현(`result_promise`)은 후보의 글칸이 처음부터 거절하므로 보통 후보에는 없고, 후보를 만들기 전의 글을 검사할 때 쓴다.
 SAFETY_FLAGS = ("health_check", "product_brand", "experience_claim", "sponsor_disclosure", "result_promise")
 DUPLICATE_STATUSES = ("different_topic", "similar_elements", "different_angle_needed", "duplicate_or_update")      # 비어 있으면(None) 아직 중복 확인 전
@@ -86,6 +88,8 @@ _KEYS = ("schema", "candidate_id", "source_topic_id", "seed_id", "source_type", 
          "work_status", "created_at", "review_expires_at")
 _REQUIRED = frozenset({"schema", "candidate_id", "source_type", "candidate_type", "channel", "language", "topic", "primary_keyword", "search_intent", "content_type", "topic_cluster",
                        "topic_angle", "target_reader", "created_at"})
+# 후보 종류가 없는 옛 JSON 은 경로(`source_type`)에서 같은 규칙으로 유도한다(P3b-1) — `generate.ROUTE_TYPES` 의 두 번째 값과 같다. 월별 반복형은 계절 씨앗의 일정(`recurrence`)이 정하므로 경로만으로는 유도되지 않는다.
+CANDIDATE_TYPE_OF_SOURCE = MappingProxyType({"seed": "evergreen", "follow_up": "follow_up", "seasonal": "seasonal", "realtime": "realtime", "sponsor": "sponsor_prep"})
 
 
 def _choice(value, allowed, item, names):
@@ -353,10 +357,14 @@ class TopicCandidate:
         if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SCHEMA:
             raise _invalid("엔진 후보 저장 형식", f"{wording.FILE_KEY_KO['schema']}가 {SCHEMA}인 엔진 후보가 아닙니다", detail="저장된 엔진 후보의 모양(schema 1)이 아닙니다")
         keys = set(data)
-        unknown, missing = sorted(map(str, keys - set(_KEYS))), sorted(_REQUIRED - keys)
+        source = data.get("source_type")
+        derivable = "candidate_type" not in keys and isinstance(source, str) and source in CANDIDATE_TYPE_OF_SOURCE            # 후보 종류가 없는 옛 JSON — 경로에서 유도한다
+        unknown, missing = sorted(map(str, keys - set(_KEYS))), sorted((_REQUIRED - {"candidate_type"} if derivable else _REQUIRED) - keys)
         if unknown or missing:
             raise _invalid("엔진 후보 저장 형식", wording.unknown_and_missing(unknown, missing, LABELS), detail=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
         values = {name: value for name, value in data.items() if name != "schema"}
+        if derivable:
+            values["candidate_type"] = CANDIDATE_TYPE_OF_SOURCE[source]
         if "scores" in values:
             values["scores"] = ScoreCard.from_dict(values["scores"])
         return cls(**values)
@@ -389,6 +397,6 @@ def check_candidate_expiry(candidate):
 
 
 __all__ = [
-    "CANDIDATE_TYPES", "CONTENT_TO_POST_TYPE", "CONTENT_TYPES", "DUPLICATE_STATUSES", "Factors", "LABELS", "SAFETY_FLAGS", "SCHEMA", "SEARCH_INTENTS", "SOURCE_TYPES", "ScoreCard", "TopicCandidate",
+    "CANDIDATE_TYPES", "CANDIDATE_TYPE_OF_SOURCE", "CONTENT_TO_POST_TYPE", "CONTENT_TYPES", "DUPLICATE_STATUSES", "Factors", "LABELS", "SAFETY_FLAGS", "SCHEMA", "SEARCH_INTENTS", "SOURCE_TYPES", "ScoreCard", "TopicCandidate",
     "check_candidate_expiry", "check_candidate_score", "check_search_demand", "check_trend", "display_id", "stored_id", "to_post_type", "trend_word_in",
 ]

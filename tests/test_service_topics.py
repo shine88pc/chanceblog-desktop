@@ -279,7 +279,7 @@ class ReadOnlyPromiseTest(unittest.TestCase):
             self.assertEqual((done.made, done.kept, done.store_created), (layout.JSON_FILES, (), True))
             self.assertEqual(sorted(os.listdir(world.paths.folder)), sorted(layout.USER_DATA_FILES))
             with open_read_only(world.paths.database) as store:
-                self.assertEqual((store.schema_version, store.count()), (1, 0))
+                self.assertEqual((store.schema_version, store.count()), (2, 0))                # P3b-1 의도적 갱신: 새 보관함은 판 2
             again = tp.init_topics(world.ctx, confirmed=True)
             self.assertEqual((again.made, again.kept, again.store_created), ((), layout.JSON_FILES, False))
 
@@ -629,7 +629,7 @@ class ZeroByteStoreTest(unittest.TestCase):
         self.assertTrue(preview.store_created, "0바이트는 만들 예정으로 알린다")
         done = tp.init_topics(second.ctx, confirmed=True)
         self.assertTrue(done.store_created)
-        self.assertEqual((tp.status(second.ctx).store_state, tp.status(second.ctx).store_version), ("ready", 1))
+        self.assertEqual((tp.status(second.ctx).store_state, tp.status(second.ctx).store_version), ("ready", 2))             # P3b-1 의도적 갱신: 새 보관함은 판 2
 
 
 class ZeroByteSettingsFileTest(unittest.TestCase):
@@ -991,7 +991,7 @@ class CheckStatusTest(unittest.TestCase):
         self.assertEqual(tp.status(self.world.ctx).store_state, "missing")
         self.world.generate(target=4)
         ready = tp.status(self.world.ctx)
-        self.assertEqual((ready.store_state, ready.store_version), ("ready", 1))
+        self.assertEqual((ready.store_state, ready.store_version), ("ready", 2))             # P3b-1 의도적 갱신: 새 보관함은 판 2
         self.assertEqual(dict(ready.counts)["naver_a"] + dict(ready.counts)["naver_b"], len(self.world.stored()))
         self.assertEqual(ready.enabled, ("naver_a", "naver_b"))
         self.assertEqual(next(item for item in ready.files if item.name == layout.SEEDS_FILE).count, 3)
@@ -1107,10 +1107,10 @@ class ListShowTopReviewTest(unittest.TestCase):
         self.assertEqual(tp.review_holds(self.world.ctx, today=TODAY).to_dict()["expired"], 0)
 
     def test_an_old_structure_store_is_reported_not_read(self):
-        class V2(TopicStore):
-            SCHEMA_VERSION = 2
-            SHAPES = {**TopicStore.SHAPES, 2: TopicStore.SHAPES[1]}
-            MIGRATIONS = {1: lambda db: None}
+        class V2(TopicStore):                                                # P3b-1 의도적 갱신: 지금 판이 2 라서 '옛 구조' 를 흉내 내려면 한 판 더 높은 클래스(3)로 연다
+            SCHEMA_VERSION = 3
+            SHAPES = {**TopicStore.SHAPES, 3: TopicStore.SHAPES[2]}
+            MIGRATIONS = {2: lambda db: None}
 
         self.add(self.cand("0001", 85))
         with mock.patch.object(tp, "open_read_only", lambda path: V2.open(path, migrate=False)):
