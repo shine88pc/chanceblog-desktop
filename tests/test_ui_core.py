@@ -43,7 +43,7 @@ def source_of(path):
 
 def load(provider=None, **kwargs):
     provider = provider or services.FakeHomeProvider()
-    state = app_state.AppState(provider, today=__import__("datetime").date(2026, 11, 3), **kwargs)
+    state = app_state.AppState(provider, **kwargs)
     state.apply_home(provider.load_home(lambda *a: None, lambda: False))
     return state
 

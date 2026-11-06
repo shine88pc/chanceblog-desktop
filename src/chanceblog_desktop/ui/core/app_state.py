@@ -9,6 +9,7 @@ import datetime
 import re
 import sys
 
+from . import board_view as bv
 from . import settings_view as sv
 from .jobs import JobFailure, JobRunner
 from .notify import ToastPolicy
@@ -130,10 +131,9 @@ def topic_vm(topic, selected=False):
 
 
 class AppState:
-    def __init__(self, provider=None, *, today=None, runner=None, connections=None, version=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
-        self.today = today                                           # 시험에서 날짜를 고정할 때
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
         self.toasts = ToastPolicy()
         self.page = "home"
@@ -300,6 +300,7 @@ class AppState:
                       "user": getattr(self.failure, "user_message", "") if self.failure else ""},
             "rail": {"blogs_title": T["rail_blogs"], "blogs_sub": T["rail_blogs_sub"].format(n=len(blogs)), "blogs": blogs, "quick_title": T["rail_quick"], "quick": quick,
                      "tip": {"visible": self.tip_visible, "title": T["tip_title"], "text": T["tip_text"], "close": T["tip_close"]}},
+            "board": bv.build_board_view(data, state, conn_data=self.conn_data, conn_state=self.conn_state, conn_loading=self.conn_loading),       # 새 홈 구역(UI-C1c) — 지금 화면은 그리지 않는다(UI-C1d)
         }
 
     def drawer_view(self):

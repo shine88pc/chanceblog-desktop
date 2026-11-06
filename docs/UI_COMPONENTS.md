@@ -8,6 +8,7 @@
 tokens.py(값) → theme.py(스타일시트·글꼴·SVG 아이콘 엔진·그림자 효과) → components.py·gauges.py·bars.py(부품) → screens.py(화면 조립) → shell.py(앱 틀·서랍·대화상자·토스트·포커스·작업 스레드 연결)
 core/text.py(문구) ─┘                                                       ▲ core/app_state.py(뷰모델) 가 만든 딕셔너리를 그리기만 한다
 core/gauges.py·part_rules.py(점수·막대·사용량·행동 줄·탭의 순수 계산 — PySide6 없이 시험) ─ ui/qt/gauges.py·bars.py 가 이 값만 그린다
+core/board_view.py(홈 새 구역 — Naver A·B 추천·작성 중 초안·최근 발행·KPI·연결 요약의 뷰모델, UI-C1c — **아직 어느 부품도 그리지 않는다**, UI-C1d 가 점수 링·카드·행으로 그린다)
 core/gallery_data.py(예시 값) + scripts/ui_gallery.py(개발용 부품 모음 — 사용자 화면·메뉴에 없다, `ui_capture.py --gallery` 와 시험이 쓴다)
 ```
 
