@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QLayout, Q
 from ..core import tokens as K
 from ..core.attribution import UTM_SOURCE, check_url, with_utm
 from ..core.notify import ToastPolicy
-from ..core.part_rules import BADGE_MAX_CHARS, clip_text
+from ..core.part_rules import BADGE_MAX_CHARS, clip_text, drawer_width
 from ..core.text import T
 from . import theme
 
@@ -172,7 +172,7 @@ def NavButton(text, icon_name, accessible):
     button.setProperty("nav", True)
     button.setCheckable(True)
     button.setMinimumHeight(K.SIZE["menu_h"])
-    button.setIcon(theme.icon(icon_name, c["text_secondary"], on_color=c["primary_text"]))
+    button.setIcon(theme.icon(icon_name, c["text_secondary"], on_color=c["nav_current_text"]))
     button.setIconSize(QSize(K.ICON["nav"], K.ICON["nav"]))
     button.setCursor(Qt.PointingHandCursor)
     button.setAccessibleName(accessible)
@@ -917,7 +917,7 @@ class Drawer(QFrame):
         self.scroll.setWidget(widget)
 
     def width_px(self):
-        return min(K.LAYOUT["drawer"], int(self.parentWidget().width() * 0.92))
+        return drawer_width(self.parentWidget().width())                      # 정해진 폭(420)이되 창의 92% 이하 — 규칙은 `part_rules.drawer_width`
 
     def place(self):
         parent = self.parentWidget()

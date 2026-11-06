@@ -13,9 +13,13 @@ ICONS = {
     "home": '<path d="M4 11.5 12 4.5l8 7"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/>',
     "search": '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
     "draft": '<path d="M7 3.5h7.5l4 4v13H7z"/><path d="M14.5 3.5v4h4"/><path d="M9.5 12.5H16M9.5 16H16"/>',
-    "history": '<path d="M5.5 20v-8M12 20V5M18.5 20v-5"/><path d="M3.5 20.5h17"/>',
-    "blogs": '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v11c0 1.7 3.1 3 7 3s7-1.3 7-3v-11"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
-    "settings": '<path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="none"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/>',
+    # UI-C1a(D-172): 새 의미표(C-Type §6.2 — 원통=공공데이터·차트=분석·기어=설정·슬라이더=조합·필터·씨앗=Seed)에 맞춰 이름과 모양을 정리했다.
+    # 옛 `history`(막대 차트)는 `chart`(분석)로, 옛 `blogs`(원통)는 `database`(공공데이터)로, 옛 `settings`(슬라이더)는 `sliders`(조합·필터)로 이름만 바뀌었고, `settings` 는 **기어**가 되었다.
+    "chart": '<path d="M5.5 20v-8M12 20V5M18.5 20v-5"/><path d="M3.5 20.5h17"/>',
+    "database": '<ellipse cx="12" cy="6.5" rx="7" ry="3"/><path d="M5 6.5v11c0 1.7 3.1 3 7 3s7-1.3 7-3v-11"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+    "sliders": '<path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="none"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/>',
+    "settings": '<path d="M10.28 5.11L10.55 2.81 L13.45 2.81 L13.72 5.11A7.1 7.1 0 0 1 15.66 5.91L17.47 4.48 L19.52 6.53 L18.09 8.34A7.1 7.1 0 0 1 18.89 10.28L21.19 10.55 L21.19 13.45 L18.89 13.72A7.1 7.1 0 0 1 18.09 15.66L19.52 17.47 L17.47 19.52 L15.66 18.09A7.1 7.1 0 0 1 13.72 18.89L13.45 21.19 L10.55 21.19 L10.28 18.89A7.1 7.1 0 0 1 8.34 18.09L6.53 19.52 L4.48 17.47 L5.91 15.66A7.1 7.1 0 0 1 5.11 13.72L2.81 13.45 L2.81 10.55 L5.11 10.28A7.1 7.1 0 0 1 5.91 8.34L4.48 6.53 L6.53 4.48 L8.34 5.91A7.1 7.1 0 0 1 10.28 5.11z"/><circle cx="12" cy="12" r="3"/>',
+    "book": '<path d="M12 6.5C10.5 5.3 8.2 4.8 5 4.8v13c3.2 0 5.5.5 7 1.7 1.5-1.2 3.8-1.7 7-1.7v-13c-3.2 0-5.5.5-7 1.7z"/><path d="M12 6.5v13"/>',
     # 동작
     "bell": '<path d="M6 17v-6a6 6 0 0 1 12 0v6l1.5 1.5h-15z"/><path d="M10 21h4"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
@@ -78,11 +82,11 @@ def svg(name, size=20, color="currentColor", stroke=STROKE):
 
 # 기능 → (아이콘, 강조 색 계열) — 명세 §4.2 의 의미 표. 같은 의미는 어느 화면에서나 같은 아이콘을 쓴다(docs/ICON_SYSTEM.md).
 MEANING = {
-    "home": ("home", "blue"), "topics": ("search", "blue"), "draft": ("draft", "blue"), "history": ("history", "purple"), "blogs": ("blogs", "slate"), "settings": ("settings", "slate"),
+    "home": ("home", "blue"), "topics": ("search", "blue"), "draft": ("draft", "blue"), "history": ("calendar_check", "purple"), "seed": ("sprout", "green"), "blogs": ("book", "slate"), "settings": ("settings", "slate"),
     "recommended": ("draft", "blue"), "done": ("check_circle", "green"), "published": ("calendar_check", "purple"), "ideas": ("bulb", "orange"),
     "trend_up": ("trend_up", "green"), "trend_flat": ("trend_flat", "orange"), "trend_down": ("trend_down", "red"),
     "copy": ("copy", "blue"), "external": ("external", "slate"), "hold": ("pause_circle", "orange"), "error": ("alert", "red"), "info": ("info_circle", "blue"),
     "image": ("image", "blue"), "key": ("key", "slate"), "delete": ("trash", "red"), "upload": ("upload", "slate"), "secure": ("lock", "green"),
     "empty": ("inbox", "blue"), "offline": ("cloud_off", "orange"), "partial": ("alert", "orange"), "refresh": ("refresh", "blue"), "close": ("x", "slate"), "detail": ("chevron_right", "slate"),
-    "more_menu": ("more_vertical", "slate"), "quick_new": ("plus", "blue"), "quick_saved": ("folder", "slate"), "quick_history": ("history", "slate"), "quick_blogs": ("settings", "slate"), "tip": ("bulb", "green"),
+    "more_menu": ("more_vertical", "slate"), "quick_new": ("plus", "blue"), "tip": ("bulb", "green"),
 }

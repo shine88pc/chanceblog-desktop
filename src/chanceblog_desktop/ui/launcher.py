@@ -61,6 +61,11 @@ def build_parser():
 def main(argv=None, *, out=None):
     out = out or sys.stdout
     args = build_parser().parse_args(argv)
+    from .core import version as app_version
+    problem = app_version.release_problem(app_version.read_version(), app_version.is_release())      # Release 인데 버전을 못 읽으면 쉬운 안내로 끝낸다(개발 화면은 '개발 버전' 으로 계속) — 새 오류 코드 없음, UI-C1a D-173
+    if problem:
+        print(problem, file=out)
+        return 1
     if not has_pyside6():
         print(NEEDS_PYSIDE6, file=out)
         return 1

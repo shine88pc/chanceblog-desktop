@@ -9,9 +9,14 @@ NO_DATA = "데이터 없음"
 SAMPLE_TAG = "예시 데이터"
 
 T = {
-    "app_name": "ChanceBlog", "settings_btn": "설정", "brand_line": "고르고 · 만들고 · 복사하기", "brand_version": "ChanceBlog Desktop",
+    "app_name": "ChanceBlog", "brand_line": "고르고 · 만들고 · 복사하기", "brand_version": "ChanceBlog Desktop",
+    # 새 틀(UI-C1a) — 상단 앱 바의 시계, 사이드바 묶음·'다음 단계' 목록, 버전
+    "clock_a11y": "현재 날짜와 시간 {text}", "topbar_a11y": "상단 앱 바", "dev_version": "개발 버전",
+    "version_release_error": "설치된 프로그램의 버전 정보를 읽지 못했어요. 프로그램을 다시 설치하거나 최신 설치 파일로 업데이트한 뒤 다시 열어 주세요.",
+    "nav_group_core": "핵심 작업", "nav_group_data": "데이터·관리", "nav_group_system": "시스템",
+    "nav_soon_title": "다음 단계", "nav_soon_a11y": "준비 중 — 아직 열 수 없는 화면", "nav_soon_item_a11y": "{name}, 준비 중",
     "window_title": "ChanceBlog Desktop",
-    "nav_home": "홈", "nav_topics": "주제 후보", "nav_draft": "초안 작성", "nav_history": "발행 기록", "nav_blogs": "블로그 관리", "nav_settings": "설정",
+    "nav_home": "홈", "nav_topics": "주제 후보", "nav_draft": "초안 작성", "nav_history": "발행 기록", "nav_seed": "Seed 관리", "nav_blogs": "블로그 관리", "nav_settings": "설정",
     "nav_menu": "주 메뉴", "body_area": "본문", "nav_a11y": "{name} 메뉴로 이동",
     # 예시 데이터 표시와 설명 대화상자
     "sample_tag": SAMPLE_TAG, "sample_tip": "화면에 보이는 주제와 숫자는 예시예요. 실제 수치가 아닙니다.",
@@ -22,7 +27,7 @@ T = {
     "home_title": "오늘은 어떤 주제로 써 볼까요?", "home_sub": "블로그에 어울리는 주제를 고르면 바로 초안까지 만들어 드려요.",
     "sum_topics": "추천 주제", "sum_done": "작성 완료", "sum_pub": "발행 완료", "sum_ideas": "저장된 아이디어",
     "sum_topics_sub": "새 후보 {n}개 포함", "sum_week_sub": "이번 주 +{n}", "sum_ideas_sub": "보류한 주제 기준", "sum_unavailable": "아직 집계하지 않아요", "sum_none": "–",
-    "rec_title": "맞춤 주제 추천", "rec_desc": "내 블로그에 어울릴 만한 주제를 모아 두었어요.", "rec_all": "전체 보기",
+    "rec_title": "맞춤 주제 추천", "rec_desc": "내 블로그에 어울릴 만한 주제를 모아 두었어요.",
     "chip_all": "전체", "chip_a": "블로그 A", "chip_b": "블로그 B", "chip_hot": "트렌드 급상승", "chip_new": "신규 키워드",
     "make_primary": "이 주제로 초안 만들기", "make_small": "초안 만들기", "make_a11y": "{title} 초안 만들기", "detail_a11y": "{title} 자세히 보기",
     "demand": "월 검색량", "docs": "블로그 문서 수", "unit_demand": "회", "unit_docs": "건",
@@ -31,8 +36,7 @@ T = {
     "row_a11y": "{title}, {blog}, 작성 우선도 {priority}", "priority": "작성 우선도",
     "rail_blogs": "내 블로그 현황", "rail_blogs_sub": "관리 중인 블로그 {n}개", "rail_total": "총 글", "rail_month": "이번 달", "rail_candidates": "후보", "rail_unit": "개",
     "rail_quick": "빠른 작업",
-    "q_new": "새 초안 만들기", "q_new_d": "고른 주제로 바로 시작", "q_saved": "저장된 주제 보기", "q_saved_d": "보류한 주제 다시 보기",
-    "q_hist": "발행 기록 보기", "q_hist_d": "발행한 글 확인하기", "q_set": "블로그 설정", "q_set_d": "블로그 기본값 바꾸기",
+    "q_new": "새 초안 만들기", "q_new_d": "고른 주제로 바로 시작",
     "tip_title": "활용 팁", "tip_text": "마음에 드는 주제는 '보류'로 두었다가 나중에 다시 꺼내 볼 수 있어요.", "tip_close": "활용 팁 닫기",
     "list_count": "{n}개 후보", "refresh": "다시 불러오기", "last_fetch": "마지막 조회 {when}",
     # 상세 서랍
@@ -47,7 +51,6 @@ T = {
     "partial": "검색 추세는 불러오지 못했지만 나머지 정보는 그대로 쓸 수 있어요.", "offline": "오프라인 상태예요. 저장해 둔 초안은 계속 고칠 수 있어요.",
     "diag_show": "진단 정보 보기", "diag_hide": "진단 정보 숨기기", "diag_title": "진단 정보", "diag_note": "도움을 받을 때 함께 알려 주세요. 키와 입력한 글은 담기지 않아요.",
     "diag_code": "code", "diag_when": "time",                                  # 진단 정보는 고정폭 글꼴 영역이라 영문·숫자만 둔다(한글은 글꼴이 바뀌어 모양이 달라진다)
-    "soon_title": "이 화면은 아직 만들고 있어요.", "soon_desc": "다음 단계에서 이어서 만들어요. 지금은 홈에서 주제 추천을 볼 수 있어요.", "soon_btn": "홈으로",
     # 안내(토스트)
     "soon_toast": "'{name}' 은(는) 다음 단계에서 열려요.", "load_cancelled": "불러오기를 취소했어요. 보이던 내용은 그대로예요.", "load_busy": "이미 불러오는 중이에요.",
     "load_failed_toast": "불러오지 못했어요. 다시 시도해 주세요.", "job_failed": "작업을 마치지 못했어요. 입력한 내용은 그대로 남아 있어요.", "job_cancelled": "작업을 취소했어요. 입력한 내용은 그대로예요.",
@@ -131,9 +134,9 @@ def fmt_docs(value):
     return NO_DATA if value is None else f"{value:,}{T['unit_docs']}"
 
 
-_WEEK = "월화수목금토일"
+WEEKDAYS = "월화수목금토일"
 
 
 def date_text(day=None):
     day = day or datetime.date.today()
-    return f"{day.year}년 {day.month}월 {day.day}일 ({_WEEK[day.weekday()]})"
+    return f"{day.year}년 {day.month}월 {day.day}일 ({WEEKDAYS[day.weekday()]})"

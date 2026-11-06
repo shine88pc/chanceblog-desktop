@@ -116,9 +116,10 @@ class QtBase(unittest.TestCase):
 
 
 class ShellTest(QtBase):
-    def test_shell_has_six_menus_and_the_home_shows_cards_chips_and_five_rows(self):
+    def test_shell_has_the_two_completed_menus_and_the_home_shows_cards_chips_and_five_rows(self):
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 메뉴 6개를 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 메뉴다."""
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "draft", "history", "blogs", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "settings"])
         self.assertTrue(window.nav_buttons["home"].isChecked())
         self.assertEqual(len(window.screen_widget.findChildren(UI.SummaryCard)), 4)
         self.assertEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
@@ -127,18 +128,17 @@ class ShellTest(QtBase):
         self.assertEqual([row.property("selected") for row in window.screen_widget.findChildren(UI.TopicRow)], [True, False, False, False, False])
         self.assertTrue(any(b.accessibleName() == "예시 데이터" for b in window.findChildren(QAbstractButton)))
 
-    def test_other_menus_open_an_honest_not_yet_page_and_come_back(self):
+    def test_unfinished_screens_cannot_be_opened_at_all_and_the_page_stays_where_it_was(self):
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 다른 메뉴가 '아직 만들고 있어요' 자리표시 화면을 열고 '홈으로' 로 돌아오는 것을 보았다. 이제 그 화면은 없다 — 화면 이름을 직접 불러도 열리지 않고 지금 화면이 그대로다."""
         window = self.make()
-        window.go("history")
-        self.settle()
-        self.assertTrue(window.nav_buttons["history"].isChecked())
-        self.assertIsNone(window.screen_widget.findChild(UI.TopicRow))
-        labels = [label.plain_text() for label in window.screen_widget.findChildren(UI.Label)]
-        self.assertIn(text.T["soon_title"], labels)
-        home_button = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.text() == text.T["soon_btn"])
-        QTest.mouseClick(home_button, Qt.LeftButton)
-        self.settle()
-        self.assertEqual(window.state.page, "home")
+        before = window.screen_widget
+        for key in ("topics", "draft", "history", "seed", "blogs", "nope"):
+            window.go(key)
+            self.settle()
+            self.assertEqual(window.state.page, "home", key)
+            self.assertIs(window.screen_widget, before, key)                                  # 다시 그리지도 않았다
+            self.assertTrue(window.nav_buttons["home"].isChecked(), key)
+        self.assertEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
 
     def test_a_redraw_never_deletes_the_old_page_inside_the_click_that_caused_it(self):
         """눌린 단추가 자기 눌림 처리 안에서 지워지면 위험하다 — 옛 화면은 처리가 끝난 다음 차례에 지워진다."""
@@ -224,7 +224,7 @@ class AccessibilityTest(QtBase):
         window.open_drawer(window.state.home_rows()[0].id)
         self.settle()
         found = self.interactive(window)
-        self.assertGreater(len(found), 25)
+        self.assertGreaterEqual(len(found), 24)                                           # 의도적 갱신(UI-C1a, D-172): '시험이 비어 있지 않다' 는 하한을 25 → 24 로 — 실제 메뉴 4·상단 설정 아이콘·전체 보기·빠른 작업 3·눌리는 요약 카드 2가 없어져 새 값은 24 다(독립 검증이 20 으로 느슨해진 하한을 24 로 조이라고 권했다 — 이름·크기 점검은 그대로 모두 본다)
         for widget in found:
             self.assertTrue(widget.accessibleName().strip(), f"접근 이름이 없다: {type(widget).__name__} {getattr(widget, 'text', lambda: '')()!r}")
             if isinstance(widget, QAbstractButton):
@@ -286,7 +286,8 @@ class AccessibilityTest(QtBase):
         card = window.screen_widget.findChildren(UI.SummaryCard)[0]
         QTest.keyClick(card, Qt.Key_Return)
         self.settle()
-        self.assertEqual(window.state.page, "topics")
+        self.assertEqual(window.state.page, "home")                                       # 의도적 갱신(UI-C1a, D-172): 요약 카드는 눌러서 가는 곳이 없다(미완성 '주제 후보' 로 가던 길을 끊었다)
+        self.assertEqual(card.focusPolicy(), Qt.NoFocus)
 
     def test_clicking_a_chip_with_the_keyboard_keeps_the_focus_on_it(self):
         window = self.make()
@@ -423,7 +424,7 @@ class OverlayTest(QtBase):
         wide = QWidget()
         wide.resize(2000, 900)
         self.addCleanup(wide.close)
-        self.assertEqual(UI.Drawer(wide).width_px(), tokens.LAYOUT["drawer"])              # 넓은 창에서는 정해진 폭
+        self.assertEqual(UI.Drawer(wide).width_px(), tokens.FRAME["drawer"])               # 넓은 창에서는 정해진 폭(UI-C1a: 옛 `LAYOUT["drawer"]` 를 새 틀 상수 `FRAME["drawer"]` 로 옮겼다 — 값 420 은 그대로)
         dialog = UI.Dialog(host)
         dialog.present()
         self.assertEqual(dialog.width(), 282)                                             # 300 의 94%
@@ -501,13 +502,15 @@ class ToastAndActionTest(QtBase):
         self.settle()
         self.assertEqual(len(window.screen_widget.findChild(S.ResponsiveBody).rail._widgets), 2)
 
-    def test_quick_actions_navigate_or_say_not_yet(self):
+    def test_the_quick_action_that_is_left_only_says_not_yet_and_never_navigates(self):
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 빠른 작업 4개 중 둘째가 '주제 후보' 로 가는 것을 보았다. 화면으로 가던 셋은 뺐고 남은 '새 초안 만들기' 는 안내만 한다."""
         window = self.make()
         actions = window.screen_widget.findChildren(UI.QuickAction)
-        self.assertEqual(len(actions), 4)
-        QTest.keyClick(actions[1], Qt.Key_Return)
+        self.assertEqual(len(actions), 1)
+        QTest.keyClick(actions[0], Qt.Key_Return)
         self.settle()
-        self.assertEqual(window.state.page, "topics")
+        self.assertEqual(window.state.page, "home")
+        self.assertIn("다음 단계", window.toast.text())
 
     def test_source_credit_copies_two_lines_and_says_copied(self):
         window = self.make()
@@ -1076,7 +1079,7 @@ class ComponentsTest(QtBase):
             image = button.grab().toImage()
             found[kind] = image.pixelColor(8, image.height() // 2).name().upper()
         self.assertEqual(found["primary"], colors["primary"].upper())
-        self.assertEqual(found["danger"], colors["danger"].upper())
+        self.assertEqual(found["danger"], colors["danger_fill"].upper())             # 의도적 갱신(UI-C1a, D-170): 위험 단추 배경은 접근성 색 `danger_fill`(#CE4646) — 운영자 2026-11-06 확인 요청 004 의 답
         self.assertEqual(found["secondary"], colors["surface"].upper())
         self.assertEqual(len(set(found.values())), 4 - (1 if found["ghost"] in (found["secondary"], found["primary"], found["danger"]) else 0))
         large = UI.Button("primary", "큰 단추", size="lg")
@@ -1297,7 +1300,7 @@ class NativeFocusRectTest(QtBase):
     def test_no_native_focus_rectangle_is_drawn_inside_a_focused_menu_button_and_the_old_stylesheet_did_draw_one(self):
         self.use_style("windows11")
         window = self.make(size=(1366, 768))
-        button = window.nav_buttons["topics"]
+        button = window.nav_buttons["settings"]                                            # 의도적 갱신(UI-C1a): 옛 시험은 '주제 후보' 메뉴였다 — 실제 메뉴는 홈·설정뿐이다
         self.assertTrue(self.tab_to(window, button))
         self.assertEqual(self.black_dots(button.grab().toImage()), 0)                      # 고친 스타일시트: 윈도 기본 포커스 사각형이 없다
         self.app.setStyleSheet(theme.build_qss(theme.colors()).replace("outline: none;", ""))      # 대조: 옛 스타일시트(outline 없음)
@@ -1327,12 +1330,12 @@ class SourceRulesTest(unittest.TestCase):
 
     def test_screens_and_the_shell_never_build_raw_widgets(self):
         raw = re.compile(r"\b(?:QPushButton|QLabel|QLineEdit|QCheckBox|QToolButton|QRadioButton|QComboBox|QTextEdit|QPlainTextEdit|QSpinBox)\(")
-        for name in ("screens.py", "shell.py"):
+        for name in ("screens.py", "shell.py", "topbar.py", "sidebar.py"):                 # 새 틀 파일(UI-C1a)도 같은 규칙
             self.assertEqual(raw.findall(self.read(name)), [], name)
         self.assertNotIn("UI.QLabel", self.read("shell.py"))
 
     def test_no_inline_styles_or_literal_colors_or_fonts_outside_the_theme(self):
-        for name in ("components.py", "screens.py", "shell.py", "workers.py", "imagecheck.py", "app.py"):
+        for name in ("components.py", "screens.py", "shell.py", "workers.py", "imagecheck.py", "app.py", "topbar.py", "sidebar.py"):
             source = self.read(name)
             self.assertNotIn("setStyleSheet(", source, name)
             self.assertNotRegex(source, r"#[0-9A-Fa-f]{6}\b", name)
@@ -1340,7 +1343,7 @@ class SourceRulesTest(unittest.TestCase):
         self.assertEqual(self.read("theme.py").count("setStyleSheet("), 1)                 # 앱 전체 스타일시트 한 곳
 
     def test_the_app_code_never_calls_the_font_source_override(self):
-        for name in ("components.py", "screens.py", "shell.py", "app.py", "workers.py"):
+        for name in ("components.py", "screens.py", "shell.py", "app.py", "workers.py", "topbar.py", "sidebar.py"):
             self.assertNotIn("use_font_source", self.read(name), name)
 
 

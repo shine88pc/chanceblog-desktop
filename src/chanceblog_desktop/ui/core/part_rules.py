@@ -1,9 +1,14 @@
-"""공통 부품의 순수 규칙 — 아래 고정 행동 줄이 좁을 때 무엇을 `더보기 ⋮` 로 접을지, 탭의 키보드 이동, 한 줄 배지의 글자 줄임. PySide6 없이 시험한다(C-Type §5.4·§8.2·§8.3·§10.5).
+"""공통 부품의 순수 규칙 — 아래 고정 행동 줄이 좁을 때 무엇을 `더보기 ⋮` 로 접을지, 탭의 키보드 이동, 한 줄 배지의 글자 줄임, **상세 창을 고정으로 둘지 서랍으로 할지**(논리 폭 기준). PySide6 없이 시험한다(C-Type §5.4·§8.2·§8.3·§10.5·§16.2).
 
 행동 줄의 규칙: 주요 행동 **1개**(늘 보인다) · 보조 최대 3개 · 3차(글자만) 여러 개 · 위험 3차 최대 1개 · `더보기 ⋮`(접힌 것이 있거나 처음부터 더보기 항목이 있을 때만).
 자리가 모자라면 **위험·3차 → 보조** 순서로(각각 뒤에 있는 것부터) 더보기 메뉴로 접고, 그래도 모자라면 주요 행동 하나만 남는다.
 """
 from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from . import tokens as K
 
 ACTION_KINDS = ("primary", "secondary", "tertiary", "danger")
 SECONDARY_MAX = 3                                    # 보조 행동은 최대 3개
@@ -67,3 +72,32 @@ def tab_move(index, count, key):
     if key == "end":
         return count - 1
     return index
+
+
+@dataclass(frozen=True)
+class DetailLayout:
+    mode: str                                          # `fixed`(옆에 붙은 고정 상세 창) | `drawer`(오른쪽에서 밀려 나오는 서랍)
+    detail_width: int                                  # 고정이면 상세 창 폭(px), 서랍이면 0 — 서랍 폭은 `drawer_width`
+    columns: int                                       # 목록 카드 열 수
+
+
+def detail_layout(logical_width):
+    """창의 **Qt 논리 폭**(`QWidget.width()` — 윈도 배율이 이미 나뉜 값, 물리 해상도가 아니다) → 상세 창 방식과 카드 열 수(운영자 결정 2026-11-06 확인 요청 004, D-174).
+    논리 폭 ≥ 1600: 고정 상세 창 420~500(1600 에서 420, `detail_max_at`=1920 이상에서 500, 사이는 비례)·카드 3열 / 1366~1599: 고정 400·카드 2열 / 1366 미만: 서랍·카드 2열.
+    예) 1920×1080 물리 100% = 논리 1920 → 고정 500·3열 · 1920 물리 125% = 논리 1536 → 고정 400·2열 · 1366 물리 100% = 논리 1366 → 고정 400·2열 · 1366 물리 125% = 논리 1093 → 서랍·2열.
+    숫자가 아니거나(불리언·글자·NaN·무한대) 0 이하면 ValueError — 위젯 폭을 잘못 넘긴 코드 실수를 드러낸다."""
+    if isinstance(logical_width, bool) or not isinstance(logical_width, (int, float)) or not math.isfinite(logical_width) or logical_width <= 0:
+        raise ValueError(f"창 폭이 올바른 숫자가 아니에요: {logical_width!r}")
+    frame = K.FRAME
+    if logical_width >= frame["fixed_detail_min"]:
+        low, high = frame["detail_range"]
+        share = min(1.0, (logical_width - frame["fixed_detail_min"]) / (frame["detail_max_at"] - frame["fixed_detail_min"]))
+        return DetailLayout("fixed", low + int(round((high - low) * share)), frame["detail_columns_wide"])
+    if logical_width >= frame["narrow_detail_min"]:
+        return DetailLayout("fixed", frame["detail_narrow"], frame["detail_columns_narrow"])
+    return DetailLayout("drawer", 0, frame["detail_columns_narrow"])
+
+
+def drawer_width(window_width):
+    """서랍 폭 — 정해진 폭(420)이되 창의 92% 를 넘지 않는다(지금 홈의 서랍이 쓰던 규칙 그대로, 이름만 토큰으로 옮김)."""
+    return min(K.FRAME["drawer"], int(window_width * K.FRAME["drawer_max_ratio"]))

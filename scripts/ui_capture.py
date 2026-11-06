@@ -7,10 +7,12 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 실제 윈도 125·150% 렌더·한글 입력기·화면 읽기·개인 PC 확인은 운영자 PC 검증으로 남는다. `--check` 는 사진을 저장하지 않고 점검 결과(JSON)만 낸다.
 `--gallery`(개발용, UI-C0) 는 앱 화면 대신 **공통 부품 모음**(`scripts/ui_gallery.py` — 배지·점수 링·구성 막대·사용량 막대·탭·행동 줄·카드 그림자)을 한 장에 담아 찍고 같은 환경에서 글자 잘림·가로 넘침을 점검한다.
 사용자 화면·메뉴에는 없는 도구이고 `gui` 명령의 동작·이 도구의 기본 인자는 바뀌지 않는다.
+**시계는 고정한다**(UI-C1a): 상단 앱 바의 날짜·시간은 컴퓨터 시계라 다시 찍을 때마다 달라지므로, 사진은 가짜 시계 `FixedClock`(2026-11-06 20:10)로 찍는다 — 같은 코드·같은 환경이면 같은 사진이다(진단 시각 줄도 같은 시계).
 """
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import subprocess
@@ -19,6 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ENVS = ("1366x768@100", "1920x1080@100", "1920x1080@125", "1920x1080@150")
+CAPTURE_TIME = datetime.datetime(2026, 11, 6, 20, 10)                    # 사진용 고정 시각(금요일 20:10) — 상단 앱 바·진단 시각에 쓴다
 
 
 def parse_env(text):
@@ -65,6 +68,7 @@ def child(args):
     from PySide6.QtCore import QPoint, Qt
     from PySide6.QtGui import QPainter
     from PySide6.QtWidgets import QApplication, QPushButton, QToolTip
+    from chanceblog_desktop.ui.core.clock import FixedClock
     from chanceblog_desktop.ui.core.services import FakeHomeProvider
     from chanceblog_desktop.ui.qt import app as qapp
     from chanceblog_desktop.ui.qt import components as UI
@@ -80,7 +84,7 @@ def child(args):
     report = {"env": args.env, "logical": logical, "scale_factor_env": os.environ.get("QT_SCALE_FACTOR", "1"), "fonts": [general, fixed], "shots": {}, "checks": {}}
 
     def make(scenario):
-        window = AppShell(FakeHomeProvider(scenario), autoload=False)
+        window = AppShell(FakeHomeProvider(scenario), autoload=False, clock=FixedClock(CAPTURE_TIME))
         window.resize(*logical)
         window.show()
         window.reload()
@@ -180,12 +184,13 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
     import tempfile
     from PySide6.QtCore import QRect
     from PySide6.QtWidgets import QApplication, QWidget
+    from chanceblog_desktop.ui.core.clock import FixedClock
     from chanceblog_desktop.ui.core.services import FakeConnectionsProvider, FakeHomeProvider
     from chanceblog_desktop.ui.qt import components as UI
     from chanceblog_desktop.ui.qt.shell import AppShell
 
     def make(provider, wait=True):
-        window = AppShell(FakeHomeProvider(), connections=provider, autoload=False)
+        window = AppShell(FakeHomeProvider(), connections=provider, autoload=False, clock=FixedClock(CAPTURE_TIME))
         window.resize(*logical)
         window.show()
         window.go("settings")
