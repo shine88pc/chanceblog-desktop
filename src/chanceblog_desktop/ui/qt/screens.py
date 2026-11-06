@@ -297,7 +297,7 @@ def purpose_card(card):
     """용도 카드 — 이름·한 줄 설명·배지 두 줄·안내·한도에 닿았을 때 계속하는 방법·키 항목·한도 줄. 준비 중인 용도는 회색 톤이다. 읽기만 하는 화면이라 누르는 것이 하나도 없다."""
     frame, inner = UI.Card((18, 16, 18, 16), kind="quiet" if card["gray"] else "true")
     inner.setSpacing(6)
-    inner.addWidget(UI.label(card["name"], "body_lg", wrap=True))
+    inner.addWidget(UI.label(card["name"], "h3", wrap=True))                 # 용도 카드 이름 = 카드 제목 역할(h3)
     if card["desc"]:
         inner.addWidget(UI.label(card["desc"], "small", wrap=True))
     inner.addLayout(badge_line(card["ready_caption"], card["ready"]))

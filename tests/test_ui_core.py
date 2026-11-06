@@ -142,24 +142,28 @@ class TokensTest(unittest.TestCase):
         self.assertEqual(icons.STROKE, 1.75)
 
     def test_the_tokens_nobody_uses_yet_are_the_documented_ones(self):
-        """문서(UI_DESIGN_SPEC §2)가 '안 쓰는 값' 이라고 적은 토큰을 화면 코드가 정말 쓰지 않는지 — 쓰기 시작하면 이 시험이 문서를 고치라고 알린다. 쓰는 토큰은 반대로 쓰이고 있어야 한다(죽은 토큰이 아니다)."""
+        """문서(UI_DESIGN_SPEC §2)가 '안 쓰는 값' 이라고 적은 토큰을 화면 코드가 정말 쓰지 않는지 — 쓰기 시작하면 이 시험이 문서를 고치라고 알린다. 쓰는 토큰은 반대로 쓰이고 있어야 한다(죽은 토큰이 아니다).
+        의도적 갱신(UI-C0, D-150~): 간격 `SPACE` 와 그림자 `SHADOW`(와 카드 상태 `CARD_STATES`)는 새 부품·`theme.py` 가 쓰기 시작해 '안 쓰는 값' 에서 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·
+        새 틀 크기(`FRAME`)·카드 규격(`CARD`)이다."""
         others = "\n".join(source_of(path) for path in SOURCES if path.name != "tokens.py")
-        for name in ("SPACE", "SHADOW", "SHADOW_COLOR_KEY", "COPY_FEEDBACK_MS"):
+        for name in ("COPY_FEEDBACK_MS", "FRAME", "CARD"):
             self.assertNotRegex(others, rf"\b(?:K|tokens)\.{name}\b", name)
         self.assertNotRegex(others, r"MOTION_MS\[[\"'](?:hover|page)[\"']\]")
-        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES"):
+        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO"):
             self.assertRegex(others, rf"\b{name}\b", name)
         documented = (ROOT / "docs" / "UI_DESIGN_SPEC.md").read_text(encoding="utf-8")
-        for word in ("SPACE", "SHADOW", "COPY_FEEDBACK_MS", "안 쓰는 값"):
+        for word in ("SPACE", "SHADOW", "COPY_FEEDBACK_MS", "FRAME", "CARD", "안 쓰는 값"):
             self.assertIn(word, documented, word)
 
     def test_the_frame_sizes_stay_inside_the_ranges_the_operator_gave(self):
-        """앱 틀의 크기는 명세가 정한 범위 안이다(손으로 적은 범위 — 값이 슬며시 바뀌지 않게): 사이드바 200~220·오른쪽 패널 280~320·위 막대 64~72·모서리 10~14·말풍선 모서리 8."""
+        """앱 틀의 크기는 명세가 정한 범위 안이다(손으로 적은 범위 — 값이 슬며시 바뀌지 않게): 사이드바 200~220·오른쪽 패널 280~320·위 막대 64~72·모서리 10~14·말풍선 모서리 8.
+        의도적 갱신(UI-C0, D-150~): 새 기준(C-Type)에서 **입력 칸 모서리가 8**(문서 §11.1)이라 '입력' 은 10~14 묶음에서 빼 8 로 따로 못박았고, 카드·행은 14 → 12 로 바뀌어도 이 범위 안이다."""
         self.assertTrue(200 <= tokens.LAYOUT["sidebar"] <= 220, tokens.LAYOUT["sidebar"])
         self.assertTrue(280 <= tokens.LAYOUT["rail"] <= 320, tokens.LAYOUT["rail"])
         self.assertTrue(64 <= tokens.LAYOUT["topbar"] <= 72, tokens.LAYOUT["topbar"])
-        for name in ("button", "input", "card", "badge", "thumb", "row"):
+        for name in ("button", "card", "badge", "thumb", "row"):
             self.assertTrue(10 <= tokens.RADIUS[name] <= 14, (name, tokens.RADIUS[name]))
+        self.assertEqual(tokens.RADIUS["input"], 8)
         self.assertEqual(tokens.RADIUS["tooltip"], 8)
         self.assertEqual((tokens.SIZE["menu_h"], tokens.SIZE["badge_h"], tokens.SIZE["icon_button"], tokens.SIZE["chip_h"]), (44, 24, 36, 34))
         self.assertTrue(0.3 <= tokens.SCRIM_ALPHA <= 0.5, tokens.SCRIM_ALPHA)                 # 뒤를 덮는 막 — 뒤가 비쳐 보이는 어둠
@@ -167,10 +171,11 @@ class TokensTest(unittest.TestCase):
         self.assertTrue(1500 <= tokens.COPY_FEEDBACK_MS <= 2000, tokens.COPY_FEEDBACK_MS)      # 복사 표시 1.5~2초(아직 안 쓰는 값이어도 정한 값은 지킨다)
 
     def test_every_text_role_keeps_its_agreed_size_weight_and_text_token(self):
-        """글자 역할 하나하나의 크기·굵기·글자 색(Text Token)을 손으로 적은 표로 고정한다 — 한 글자 역할의 값이 바뀌면 화면 전체의 위계가 달라진다."""
-        agreed = {"display": (28, 700, "text_strong"), "h1": (22, 700, "text_strong"), "h2": (18, 700, "text_strong"), "metric": (28, 700, "text_strong"),
-                  "body_lg": (15, 600, "text_primary"), "body": (14, 400, "text_primary"), "button": (14, 600, "text_primary"), "mono": (13, 400, "text_primary"),
-                  "small": (13, 400, "text_secondary"), "caption": (12, 400, "text_secondary"), "sub": (14, 400, "text_secondary"), "muted": (14, 400, "text_muted")}
+        """글자 역할 하나하나의 크기·굵기·글자 색(Text Token)을 손으로 적은 표로 고정한다 — 한 글자 역할의 값이 바뀌면 화면 전체의 위계가 달라진다.
+        의도적 갱신(UI-C0, D-150~): 새 기준(C-Type §5.2)으로 h1 22→24·h2 18→20·본문 큰 글씨 15/600→15/400 이 되었고 `h3`(17/600)·`micro`(11/500)가 새로 생겼다. 나머지는 그대로다."""
+        agreed = {"display": (28, 700, "text_strong"), "h1": (24, 700, "text_strong"), "h2": (20, 700, "text_strong"), "h3": (17, 600, "text_strong"), "metric": (28, 700, "text_strong"),
+                  "body_lg": (15, 400, "text_primary"), "body": (14, 400, "text_primary"), "button": (14, 600, "text_primary"), "mono": (13, 400, "text_primary"),
+                  "small": (13, 400, "text_secondary"), "caption": (12, 400, "text_secondary"), "micro": (11, 500, "text_secondary"), "sub": (14, 400, "text_secondary"), "muted": (14, 400, "text_muted")}
         self.assertEqual(set(agreed), set(tokens.ROLE_TEXT))
         for role, (size, weight, key) in agreed.items():
             style = tokens.type_style(role)
