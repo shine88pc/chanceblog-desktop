@@ -26,7 +26,8 @@ jobs:
     name: 시험 (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
     # Windows 칸이 14~15분까지 늘었다(2026-11-03). 20분 한도에 닿아 빨간 칸이 나오면 병합 부탁이 막히므로 여유를 둔다(D-28, 시험이 지킨다).
-    timeout-minutes: 30
+    # 그 뒤 시험이 늘어 Windows 칸이 21~29분이 됐다(2026-11-07 — 같은 코드도 러너에 따라 ±20%): 30분 한도에 1분 반만 남아 40분으로 올린다(D-176, 시험이 지킨다).
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
