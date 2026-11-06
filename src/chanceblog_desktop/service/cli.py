@@ -26,8 +26,10 @@ from ..content.profiles import POST_TYPES
 from ..echo import shown_backup
 from ..errors import AppError
 from ..security.mask import MAX_MASK_INPUT, mask
-from . import candidates, connections, draft, naver_flow, pages_flow, projects, quota, review, suggestions
+from ..topics.score import BAND_KO, BANDS
+from . import candidates, connections, draft, naver_flow, pages_flow, projects, quota, review, suggestions, topics
 from . import format as fmt
+from . import topic_format as tfmt
 from .context import make_context
 from .doctor import doctor_ok, run_doctor
 from .naver_flow import NaverOptions
@@ -834,6 +836,177 @@ def _add_keys_parser(add, common):
     found.add_argument("ref", metavar="항목", help="항목의 순번이나 번호(앞 4자 이상)")
 
 
+# ---- 주제 엔진(topics) ------------------------------------------------------------------------------------------------------------------
+def topic_day_value(text):
+    """`--today` 값 — `YYYY-MM-DD`(달력에 있는 날). 틀리면 친 글을 되풀이하지 않는다."""
+    try:
+        return topics.check_today(text.strip())
+    except AppError:
+        raise argparse.ArgumentTypeError("2026-11-05 같은 모양의 달력에 있는 날짜(YYYY-MM-DD)를 써야 합니다") from None
+
+
+def topic_target_value(text):
+    """`--target` 값 — 1 이상의 정수(상한 안, ASCII 숫자만 — 틀리면 친 글을 되풀이하지 않는다)."""
+    value = int(text) if re.fullmatch(r"[0-9]{1,4}", text.strip()) else 0
+    try:
+        return topics.check_target(value)
+    except AppError:
+        raise argparse.ArgumentTypeError("채널당 후보 수는 1 이상의 정수(상한 안)여야 합니다") from None
+
+
+def topic_channel_value(text):
+    """`--channel` 값 — 채널 이름(github_pages·blogger_en·blogger_ko·naver_a·naver_b, 전략 문서의 blogger_a·blogger_b 도 됩니다). 틀리면 친 글을 되풀이하지 않는다."""
+    try:
+        return topics.check_channel(text.strip())
+    except AppError:
+        raise argparse.ArgumentTypeError("알 수 없는 채널입니다 — 다음 중 하나여야 합니다: " + ", ".join(st.PLATFORMS)) from None
+
+
+def topic_band_value(text):
+    """`--band` 값 — 추천 구간의 한국어 이름(우선 추천·일반 후보·보류함(점수 구간)·제외·점수 없음)이나 영문 코드."""
+    wanted = csvmod.flat(text)
+    for code in BANDS:
+        if wanted in (csvmod.flat(code), csvmod.flat(BAND_KO[code])):
+            return code
+    raise argparse.ArgumentTypeError("다음 중 하나여야 합니다: " + ", ".join(BAND_KO[code] for code in BANDS))
+
+
+def _quiet(handler):
+    """`topics` 명령의 오류에서 개발자용 세부(`AppError.detail` — 영어 SQLite 문장·예외 이름·내부 값)를 화면·`--json` 에 내지 않는다. `--verbose`(또는 `--debug`)일 때만 보인다 — 쉬운 이유와 할 일은 오류 문구가
+    이미 말하고 알려 줄 값(겹치는 후보·후보 수 …)은 문구의 항목에 들어 있다. 예상하지 못한 예외도 같은 규칙으로 쉬운 오류(UNEXPECTED_ERROR)가 된다(`--debug` 는 그대로 던져 추적을 보인다 — D-67)."""
+    def run(ctx, args):
+        shown = _verbose(args) or getattr(args, "debug", False)
+        try:
+            return handler(ctx, args)
+        except AppError as error:
+            if not shown:
+                error.detail = ""
+            raise
+        except UsageError:
+            raise
+        except Exception as problem:
+            if getattr(args, "debug", False):
+                raise
+            error = unexpected_error(problem)
+            if not shown:
+                error.detail = ""
+            raise error from None
+
+    run.__name__ = handler.__name__
+    return run
+
+
+def _topic_options(args):
+    return {"today": getattr(args, "today", None), "target": getattr(args, "target", None), "channel": getattr(args, "channel", None)}
+
+
+def cmd_topics_status(ctx, args):
+    result = topics.status(ctx)
+    return Output(tfmt.status_lines(result), result.to_dict())
+
+
+def cmd_topics_init(ctx, args):
+    result = topics.init_topics(ctx, confirmed=getattr(args, "yes", False))
+    return Output(tfmt.init_lines(result), result.to_dict())
+
+
+def cmd_topics_check(ctx, args):
+    result = topics.check_files(ctx, today=getattr(args, "today", None))
+    return Output(tfmt.check_lines(result), result.to_dict(), 0 if result.ok else 1)
+
+
+def cmd_topics_plan(ctx, args):
+    result = topics.plan_candidates(ctx, **_topic_options(args))
+    return Output(tfmt.plan_lines(result, verbose=_verbose(args)), result.to_dict())
+
+
+def cmd_topics_generate(ctx, args):
+    result = topics.generate_candidates(ctx, confirmed=getattr(args, "yes", False), **_topic_options(args))
+    return Output(tfmt.plan_lines(result, verbose=_verbose(args)), result.to_dict())
+
+
+def cmd_topics_top(ctx, args):
+    result = topics.top_candidates(ctx, channel=getattr(args, "channel", None))
+    return Output(tfmt.top_lines(result), result.to_dict())
+
+
+def cmd_topics_list(ctx, args):
+    result = topics.list_candidates(ctx, channel=getattr(args, "channel", None), status=getattr(args, "status", None), band=getattr(args, "band", None))
+    return Output(tfmt.list_lines(result), result.to_dict())
+
+
+def cmd_topics_show(ctx, args):
+    result = topics.show_candidate(ctx, args.ref)
+    return Output(tfmt.show_lines(result), result.to_dict())
+
+
+def cmd_topics_review(ctx, args):
+    result = topics.review_holds(ctx, today=getattr(args, "today", None))
+    return Output(tfmt.review_lines(result), result.to_dict())
+
+
+def cmd_topics_backup(ctx, args):
+    result = topics.backup_topics(ctx)
+    return Output(tfmt.backup_lines(result), {"backup": str(result.path), "files": list(result.files), "missing": list(result.missing)})
+
+
+def cmd_topics_restore(ctx, args):
+    file, latest = getattr(args, "file", None), getattr(args, "latest", False)
+    if (file is None) == (not latest):
+        raise UsageError("백업 이름을 적거나(`topics restore 이름`) 가장 최근 백업을 쓰려면 --latest 를 쓰세요 — 둘 중 하나만 씁니다.")
+    result = topics.restore_topics(ctx, file, latest=latest, confirmed=getattr(args, "yes", False))
+    return Output(tfmt.restore_lines(result), {"restored_from": str(result.source), "restored": list(result.restored), "kept": list(result.kept), "safety_backup": None if result.safety is None else str(result.safety),
+                                               "moved_aside": None if result.moved_aside is None else str(result.moved_aside), "moved_json": [str(item) for item in result.moved_json]})
+
+
+def _add_topics_parser(add, common):
+    """`topics` 와 그 하위 명령들 — 5채널 주제 엔진(후보 계획·저장·우수 후보·보류함·백업). 읽기 전용이 기본이고 저장·복원·초기화는 `--yes` 가 있어야 합니다."""
+    group = add("topics", None, "5채널 주제 엔진 명령들(상태·초기화·검사·후보 계획·후보 저장·우수 후보·목록·상세·보류함 검토·백업·복원)")
+    group.epilog = ("처음이라면: topics status → topics init --yes → seeds.json 에 씨앗을 적고 → topics check → topics plan(미리 보기) → topics generate --yes(저장) → topics top / list / show 순번.\n"
+                    "읽기만 하는 명령은 아무것도 만들거나 바꾸지 않습니다. 저장하는 명령(init·generate)과 되돌리는 명령(restore)은 끝에 --yes 를 붙여야 실행됩니다. 기존 `candidates`·`backup` 명령은 그대로입니다.")
+    inner = group.add_subparsers(dest="topics_command", metavar="하위명령", parser_class=KoreanParser)
+    inner.required = True
+
+    def leaf(name, handler, help_text):
+        found = inner.add_parser(name, parents=[common], help=help_text, description=help_text)
+        found.set_defaults(handler=_quiet(handler), command_path=f"topics {name}")
+        return found
+
+    def options(found, *, today=True, target=True, channel=True):
+        if today:
+            found.add_argument("--today", type=topic_day_value, metavar="YYYY-MM-DD", help="기준일(없으면 오늘 — 한국 시간). 같은 기준일과 같은 입력이면 같은 후보가 나옵니다")
+        if target:
+            found.add_argument("--target", type=topic_target_value, metavar="개수", help="채널마다 갖고 싶은 후보 수(기본 20, 이미 있는 후보를 뺀 남은 자리만큼만 새로 만듭니다)")
+        if channel:
+            found.add_argument("--channel", type=topic_channel_value, metavar="채널", help="이 채널만(github_pages·blogger_en·blogger_ko·naver_a·naver_b)")
+
+    leaf("status", cmd_topics_status, "주제 엔진의 설정 파일·보관함·후보 수·블로그 이력을 읽을 수 있는지 보여 줍니다(읽기만 합니다)")
+    found = leaf("init", cmd_topics_init, "주제 엔진 폴더·설정 파일(채널 프로필·씨앗·캘린더)·후보 보관함을 처음 만듭니다(--yes 가 있어야 만듭니다 — 이미 있는 파일은 그대로 둡니다)")
+    found.add_argument("--yes", action="store_true", help="정말 만듭니다")
+    found = leaf("check", cmd_topics_check, "씨앗·캘린더·채널 프로필 파일을 검사합니다(읽기만 합니다 — 180일 미선택 씨앗·다시 평가할 캘린더·브랜드 이름만 있는 씨앗도 알려 줍니다)")
+    options(found, target=False, channel=False)
+    found = leaf("plan", cmd_topics_plan, "후보 생성이 켜진 채널마다 남은 자리만큼 후보를 만들어 미리 보여 줍니다(읽기만 합니다 — 아무것도 저장하지 않습니다)")
+    options(found)
+    found = leaf("generate", cmd_topics_generate, "후보를 만들어 보관함에 저장합니다(--yes 가 있어야 저장합니다 — 없으면 plan 과 같은 미리 보기. 저장은 한 번에 모두 되거나 하나도 안 됩니다)")
+    options(found)
+    found.add_argument("--yes", action="store_true", help="정말 저장합니다")
+    found = leaf("top", cmd_topics_top, "채널별 우수 후보 상위 5개를 보여 줍니다(읽기만 합니다)")
+    options(found, today=False, target=False)
+    found = leaf("list", cmd_topics_list, "저장된 후보 목록을 보여 줍니다(읽기만 합니다)")
+    options(found, today=False, target=False)
+    found.add_argument("--status", type=status_value, metavar="상태", help="이 작업 상태의 후보만: 새 후보·검토 중·선택됨·보류·제외")
+    found.add_argument("--band", type=topic_band_value, metavar="구간", help="이 추천 구간의 후보만: 우선 추천·일반 후보·보류함(점수 구간)·제외·점수 없음")
+    found = leaf("show", cmd_topics_show, "후보 하나의 자세한 내용과 안전 표시 알림을 보여 줍니다(읽기만 합니다)")
+    found.add_argument("ref", metavar="번호", help="목록의 순번(1, 2, 3 … 999)이나 번호(16진수 앞 4자 이상)")
+    found = leaf("review", cmd_topics_review, "보류함 검토 — 보류 중인 후보와 기한을 보이고 기한이 지난 것을 표시합니다(읽기만 합니다 — 지우지 않습니다)")
+    options(found, target=False, channel=False)
+    leaf("backup", cmd_topics_backup, "주제 엔진 보관함과 설정 파일의 점검한 백업을 새 폴더에 만듭니다(읽기 전용 기본의 유일한 예외 — `--yes` 없이 만들지만 기존 데이터는 바꾸지 않고, 최근 10개만 보관해 오래된 백업은 지웁니다. 기존 backup 과 따로입니다. 키는 담지 않습니다)")
+    found = leaf("restore", cmd_topics_restore, "백업으로 주제 엔진 보관함·설정 파일을 되돌립니다(--yes 가 있어야 합니다 — 되돌리기 직전 상태는 따로 백업합니다)")
+    found.add_argument("file", nargs="?", metavar="백업파일", help="되돌릴 백업(backups/topic_engine 안의 topic-날짜-시각 폴더 이름)")
+    found.add_argument("--latest", action="store_true", help="가장 최근 백업을 씁니다")
+    found.add_argument("--yes", action="store_true", help="지금 파일을 그 백업의 내용으로 정말 바꿉니다")
+
+
 # ---- 사용법(argparse) -------------------------------------------------------------------------------------------------------------
 def _common():
     common = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
@@ -969,6 +1142,7 @@ def build_parser():
     _add_candidates_parser(add, common)
     _add_keys_parser(add, common)
     _add_draft_parser(add, common)
+    _add_topics_parser(add, common)
     return parser
 
 
@@ -1008,7 +1182,11 @@ def mask_block(text):
 
 def _error_payload(error):
     shown = fmt.shown_error(error)
-    return {"code": shown.code, "message": shown.message, "action": shown.action, "retry": shown.retry_text, "detail": " ".join(str(error.detail or "").split())[:700]}
+    payload = {"code": shown.code, "message": shown.message, "action": shown.action, "retry": shown.retry_text, "detail": " ".join(str(error.detail or "").split())[:700]}
+    notes = [str(note) for note in getattr(error, "notes", ())]
+    if notes:
+        payload["notes"] = notes                                  # 쉬운 말 덧붙임 줄이 있을 때만(다른 오류의 출력은 그대로)
+    return payload
 
 
 KEYS_WORDS = frozenset({"keys", "purposes", "list", "add", "remove", "state", "order", "usage", "policy", "test", "save", "failover", *connections.PURPOSES, *connections.STATE_TEXT.values(), *connections.STATES,
@@ -1032,8 +1210,19 @@ def redact_usage(message, argv):
     return message
 
 
+def _os_error_kind(problem):
+    """OS 오류의 종류만(번호·OS 가 붙인 설명) — 파일 이름은 뺀다. 리눅스는 파일 이름이 너무 길면 `File name too long: '<그 이름>'` 처럼 이름을 문구에 담는데 그 이름이 사용자가 친 글일 수 있다(D-80)."""
+    parts = [f"errno={problem.errno}"]
+    if getattr(problem, "winerror", None) is not None:
+        parts.append(f"winerror={problem.winerror}")
+    parts.append(" ".join(str(problem.strerror or "").split()))
+    return " ".join(part for part in parts if part)
+
+
 def unexpected_error(problem):
-    """예상하지 못한 예외 → UNEXPECTED_ERROR(예외 이름과 가린 한 줄만 — 스택 추적·키는 화면에 내지 않는다)."""
+    """예상하지 못한 예외 → UNEXPECTED_ERROR(예외 이름과 가린 한 줄만 — 스택 추적·키는 화면에 내지 않는다). OS 오류(번호가 있는 `OSError`)는 문구가 파일 이름을 품으므로 이름 없이 종류만 남긴다(D-80)."""
+    if isinstance(problem, OSError) and problem.errno is not None:
+        return AppError("UNEXPECTED_ERROR", detail=f"{type(problem).__name__}: {mask(_os_error_kind(problem))[:200]}")
     return AppError("UNEXPECTED_ERROR", detail=f"{type(problem).__name__}: {mask(str(problem))[:200]}")
 
 
@@ -1098,8 +1287,13 @@ def main(argv=None, *, out=None, err=None, ctx=None, env=None, stdin=None, promp
     return output.code
 
 
+def _error_text(error, verbose):
+    """오류의 화면 줄들 — 코드 문구 줄(`fmt.error_lines`) 뒤에 오류의 쉬운 말 덧붙임(`notes` — 되돌리다 또 실패한 파일 이름 같은 것, 주제 엔진 복원 D-76)을 '참고:' 줄로 붙인다. 노트가 없는 오류의 출력은 그대로다."""
+    return [*fmt.error_lines(error, verbose=verbose), *(f"  참고: {note}" for note in getattr(error, "notes", ()))]
+
+
 def _report_error(out, err, command, error, as_json, verbose):
     if as_json:
         print(json.dumps(_mask_deep({"ok": False, "command": command, "error": _error_payload(error)}), ensure_ascii=False, indent=2), file=out)
         return
-    print(mask_block("\n".join(fmt.error_lines(error, verbose=verbose))), file=err)
+    print(mask_block("\n".join(_error_text(error, verbose))), file=err)

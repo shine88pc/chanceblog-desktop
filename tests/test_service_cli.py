@@ -6,6 +6,7 @@
   3) 화면에 나가는 모든 글(일반·오류·JSON)은 비밀 모양을 가린다 — 원고·제목·오류 세부에 키 모양 문자열이 있어도 출력에는 없다. 키·토큰은 읽지 않는다.
   4) `--json` 은 `{"ok", "command", "data"}`(오류면 `error`)이고, 전역 옵션은 명령 앞뒤 어디에 써도 된다. 예상하지 못한 오류는 UNEXPECTED_ERROR 로 안내하고 `--debug` 에서만 그대로 낸다.
 """
+import errno
 import io
 import json
 import os
@@ -172,6 +173,42 @@ class MaskingLayersTest(unittest.TestCase):
         self.assertLessEqual(len(error.detail), 230)
         self.assertNotIn(ss.KEY, error.log_line())
 
+    def test_an_os_error_keeps_its_kind_in_the_catch_all_detail_but_never_the_file_name(self):
+        """리눅스는 이름이 너무 길면 `File name too long: '<그 이름>'` 처럼 파일 이름(사용자가 친 글일 수 있다)을 문구에 담는다 — 세부에는 종류(번호·OS 설명)만 남는다(D-80)."""
+        typed = "typed-" + "z" * 300
+        for number in (errno.ENAMETOOLONG, errno.EACCES, errno.ENOENT, errno.EIO):
+            with self.subTest(errno=errno.errorcode.get(number, number)):
+                problem = OSError(number, os.strerror(number), typed)
+                self.assertIn(typed, str(problem), "이 시험이 막으려는 것 — OS 오류의 문구에는 이름이 들어 있다")
+                error = cli.unexpected_error(problem)
+                self.assertEqual(error.code, "UNEXPECTED_ERROR")
+                self.assertNotIn("zzzzzz", error.detail + error.log_line() + error.rendered().message + error.rendered().action)
+                self.assertTrue(error.detail.startswith(f"{type(problem).__name__}: errno={number} "), error.detail)
+                self.assertIn(os.strerror(number), error.detail)
+        error = cli.unexpected_error(FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), typed))
+        self.assertTrue(error.detail.startswith("FileNotFoundError: errno="), error.detail)
+        self.assertNotIn("zzzzzz", error.detail)
+        error = cli.unexpected_error(OSError(errno.EXDEV, "Invalid cross-device link", "first-" + typed, None, "second-" + typed))
+        self.assertNotIn("zzzzzz", error.detail, "이름 둘(바꾸기·옮기기)도 모두 뺀다")
+        self.assertLessEqual(len(error.detail), 230)
+
+    def test_a_real_os_error_from_the_filesystem_loses_its_file_name_too(self):
+        """만든 오류가 아니라 진짜 OS 가 낸 오류(없는 파일 — 윈도에서는 `winerror` 도 있다)로도 같다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / ("typed-" + "m" * 30) / "file.txt"
+            with self.assertRaises(OSError) as caught:
+                os.stat(missing)
+        self.assertIn("mmmmmm", str(caught.exception), "진짜 OS 오류의 문구에도 이름이 들어 있다")
+        error = cli.unexpected_error(caught.exception)
+        self.assertNotIn("mmmmmm", error.detail)
+        self.assertTrue(error.detail.startswith("FileNotFoundError: errno="), error.detail)
+        if sys.platform == "win32":
+            self.assertIn("winerror=", error.detail)
+
+    def test_an_os_error_without_a_number_and_other_exceptions_keep_their_message(self):
+        self.assertEqual(cli.unexpected_error(OSError("그냥 글 하나")).detail, "OSError: 그냥 글 하나")
+        self.assertEqual(cli.unexpected_error(ValueError("값이 이상하다")).detail, "ValueError: 값이 이상하다")
+
 
 class StreamTest(unittest.TestCase):
     def test_a_stream_that_can_be_reconfigured_is_told_to_replace_characters_it_cannot_show(self):
@@ -237,6 +274,20 @@ class HandledErrorTest(Base):
         self.assertIn("RuntimeError", err)
         self.assertNotIn(ss.KEY, err)
         self.assertNotIn("Traceback", err)
+
+    def test_an_os_error_that_carries_a_typed_file_name_is_announced_by_its_kind_only_in_every_output_mode(self):
+        typed = "chosen-" + "z" * 300
+        problem = OSError(errno.ENAMETOOLONG, "File name too long", typed)
+        with mock.patch.object(cli, "cmd_list", side_effect=problem):
+            for argv in (("list",), ("--verbose", "list"), ("--json", "list"), ("--json", "--verbose", "list")):
+                with self.subTest(argv=" ".join(argv)):
+                    code, out, err = self.cli(*argv)
+                    self.assertEqual(code, 1)
+                    self.assertIn("UNEXPECTED_ERROR", out + err)
+                    self.assertNotIn("zzzzzz", out + err)
+                    self.assertNotIn("Traceback", err)
+            code, out, err = self.cli("list")
+            self.assertIn("errno=", err, "종류는 남는다")
 
     def test_debug_lets_an_unexpected_error_through_for_developers(self):
         with mock.patch.object(cli, "cmd_list", side_effect=RuntimeError("boom")):
