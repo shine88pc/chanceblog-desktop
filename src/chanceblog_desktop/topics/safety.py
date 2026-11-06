@@ -19,10 +19,14 @@
 
 **건강 판정(D-105·D-106)은 2026-11-06 운영자 결정이다** — 전략 원문 §21 의 여섯 낱말(피로·불면·통증·자세·체중·영양제)은 이미 증상 표·제품 표에 있어 낱말 표는 그대로이고, 세 단계와 근거 점수 감점 조건만 새로 적용했다.
 건강의 나머지 낱말과 경험 낱말 표는 여전히 구현자 초기값이다.
+
+**건강 판정 문맥 구분(D-130~D-135, 운영자 2026-11-06 ~19:55 결정 ①②③)**: 단정 낱말이 글에 있다는 이유만으로 판정하지 않고 **행동 순서를 꾸미는지 효과 결과를 꾸미는지** 가른다(`concepts.scope_of`). 영양제 + `바로·즉시` 가 행동 순서면 중지가 아니고(A, 복용 허용 질문이면 B),
+증상 + 효과 결과를 꾸미는 `즉시·바로·완전히·확실히·무조건` 은 단정 위험(C)이며, 질환 단독은 근거 확인 필요(B)·질환 + 강한 단정은 효과 동사가 없어도 C 다. **옛 중지(C)를 느슨하게 만들지 않는 바닥**(`LEGACY_STOP_KEYS`)이 있어 영양제 + 행동 순서 `바로·즉시` 만 예외로 내려간다.
 """
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import re
 from types import MappingProxyType
 from typing import NamedTuple
@@ -49,15 +53,15 @@ HEALTH_STAGE_STATE = MappingProxyType({STAGE_GENERAL: HEALTH_GENERAL, STAGE_MARK
 _G, _A, _B, _C = STAGE_GENERAL, STAGE_MARK, STAGE_EVIDENCE, STAGE_STOP
 # 전체 조합표 — 열쇠 (증상 S, 질환 D, 제품 P, 의료 효능어 M, 효과 E, 단정 A) 64칸을 **손으로 푼** 초기값이다. 한 줄 = 건강 대상 네 값(S·D·P·M) 하나, 네 칸 = 효과·단정 (E·A) = 0·0 / 0·1 / 1·0 / 1·1 일 때의 단계.
 # 식(시험이 이 표와 같은지, 그리고 효능·치료·단정 낱말이 더해지면 단계가 내려가지 않는지 본다):
-#   ① 건강 대상(S·D·P·M)이 하나도 없으면 일반 — 일반 낱말·효능·단정 낱말만 있어도 일반 / ② S·D·P·M 하나만 있으면 A(표시만)
+#   ① 건강 대상(S·D·P·M)이 하나도 없으면 일반 — 일반 낱말·효능·단정 낱말만 있어도 일반 / ② S·P·M 하나만 있으면 A(표시만) — **질환 D 가 있으면(S+D 도) 효과·단정이 없어도 B**(D-134, 운영자 2026-11-06 ~19:55 ③ — 정정: 옛 ② 는 D 도 A)
 #   ③ P + (E 또는 S 또는 D) → B / ④ P + (M 또는 A) → C / ⑤ (S·D·P·M 하나 이상) + E + A → C(운영자 예시 3·4)
-#   ⑥ 운영자가 정하지 않은 조합 — 덜 개입하는 쪽, 단 '의료·효과를 단정하는 말'이 들어가면 올린다: S+M·D+M·D+E·M+E → B, M+A → C, S+E·S+A·D+A → A.
-#   ('M+A → C' 는 옛 16칸 표에서도 중지였다 — 치료를 단정하면 대상이 하나뿐이어도 중지. 'D 가 P 와 함께 → B' 는 ③ 의 증상에 질환을 포함시킨 것.)
+#   ⑥ 운영자가 정하지 않은 조합 — 덜 개입하는 쪽, 단 '의료·효과를 단정하는 말'이 들어가면 올린다: S+M·D+M·D+E·M+E → B, M+A → C, S+E·S+A → A. **D+A → C**(D-134 ③ — 질환 + 강한 단정은 효과 동사가 없어도 단정 위험, 운영자 ③ 정정: 옛 ⑥ 은 D+A → A)
+#   ('M+A → C' 는 옛 16칸 표에서도 중지였다 — 치료를 단정하면 대상이 하나뿐이어도 중지. 'D 가 P 와 함께 → B' 는 ③ 의 증상에 질환을 포함시킨 것. A 는 '단정 낱말이 있다' 가 아니라 `concepts.HealthSignals.counted_assert`(효과 결과를 꾸미는 단정) 다.)
 _ROWS = (
     ((0, 0, 0, 0), (_G, _G, _G, _G)),
     ((1, 0, 0, 0), (_A, _A, _A, _C)),
-    ((0, 1, 0, 0), (_A, _A, _B, _C)),
-    ((1, 1, 0, 0), (_A, _A, _B, _C)),
+    ((0, 1, 0, 0), (_B, _C, _B, _C)),
+    ((1, 1, 0, 0), (_B, _C, _B, _C)),
     ((0, 0, 1, 0), (_A, _C, _B, _C)),
     ((1, 0, 1, 0), (_B, _C, _B, _C)),
     ((0, 1, 1, 0), (_B, _C, _B, _C)),
@@ -71,6 +75,9 @@ _ROWS = (
     ((0, 1, 1, 1), (_C, _C, _C, _C)),
     ((1, 1, 1, 1), (_C, _C, _C, _C)),
 )
+# 옛 중지 바닥(D-130) — 옛 단계표(D-105, `d5dcb8c`)에서 중지(C)이던 열쇠. 식: 건강 대상(S·D·P·M)이 있고 (단정 + 제품·의료) 또는 (효과 + 단정) 또는 (제품 + 의료). 새 판정이 이보다 낮아도 `HealthSignals.floor_key()` 가 여기에 들면 중지로 둔다 —
+# 단정 범위 구분(단정이 행동 순서를 꾸미면 세지 않음)이 옛 중지를 의도 밖으로 느슨하게 만들지 않게 하는 안전망이다. 예외는 운영자 결정 ① 하나(영양제 + 행동 순서 `바로·즉시`)뿐이고 `floor_key` 가 그 낱말을 단정에서 뺀다.
+LEGACY_STOP_KEYS = frozenset(key for key in itertools.product((0, 1), repeat=6) if any(key[:4]) and ((key[5] and (key[2] or key[3])) or (key[4] and key[5]) or (key[2] and key[3])))
 HEALTH_MATRIX = MappingProxyType({(*targets, effect, assertion): stage for targets, stages in _ROWS for (effect, assertion), stage in zip(((0, 0), (0, 1), (1, 0), (1, 1)), stages, strict=True)})
 OPPORTUNITY_NONE, OPPORTUNITY_POSSIBLE = "none", "possible"
 RELATION_NONE, RELATION_SUSPECTED, RELATION_CONFIRMED = "none", "suspected", "confirmed"
@@ -234,10 +241,19 @@ def _first(*groups):
     return None
 
 
-def _health_shown(signals):
+def _assert_shown(signals, stage):
+    """알림에 보일 단정 낱말 — 단계표가 **센** 단정(`counted_assert`)만 보인다(D-130, 행동 순서를 꾸미는 `바로 알기` 의 ‘바로’ 는 안 보인다). 센 낱말이 없는데 옛 중지 바닥으로 중지가 된 글만 옛 단정 낱말을 보인다."""
+    counted = signals.counted_assert()
+    if counted or stage != STAGE_STOP:
+        return counted[0] if counted else None
+    relaxed = signals.relaxed_words()
+    return _first(tuple(word for word in signals.assert_strong if word not in relaxed), signals.assert_effect, tuple(word for word in signals.assert_soft if word not in relaxed))
+
+
+def _health_shown(signals, stage=STAGE_STOP):
     """개념군마다 첫 낱말을 증상 → 효과 → 제품 → 단정 순서로 모은다(최대 `MAX_SHOWN`) — (낱말들, 개념군 이름들)."""
-    rows = ((concepts.GROUP_KO["symptom"], _first(signals.counted("symptom"), signals.disease)), (concepts.GROUP_KO["effect"], _first(signals.counted("effect"), signals.counted("medical"))),
-            (concepts.GROUP_KO["product"], _first(signals.product)), (concepts.GROUP_KO["assertion"], _first(signals.assert_strong, signals.assert_effect, signals.assert_soft)))
+    rows = ((concepts.GROUP_KO["symptom"], _first(signals.counted("symptom"), signals.counted("disease"))), (concepts.GROUP_KO["effect"], _first(signals.counted("effect"), signals.counted("medical"))),
+            (concepts.GROUP_KO["product"], _first(signals.product)), (concepts.GROUP_KO["assertion"], _assert_shown(signals, stage)))
     found = [(group, word.rstrip("*")) for group, word in rows if word]
     return tuple(word for _group, word in found)[:MAX_SHOWN], tuple(group for group, _word in found)[:MAX_SHOWN]
 
@@ -255,10 +271,12 @@ def _health_finding(pieces):
     """(단계, 알림). 단계는 `HEALTH_MATRIX` 가 정하고 알림 코드는 단계가 정한다(A → HEALTH_TOPIC · B → HEALTH_EFFECT · C → HEALTH_STOP)."""
     signals = concepts.health_signals(pieces)
     stage = HEALTH_MATRIX[signals.concept_key()]
+    if stage != STAGE_STOP and signals.floor_key() in LEGACY_STOP_KEYS:
+        stage = STAGE_STOP                                                              # 옛 중지 바닥(D-130) — 영양제 + 행동 순서 `바로·즉시` 만 예외로 내려간다
     if stage == STAGE_GENERAL:
         return stage, None
     code = HEALTH_STAGE_CODE[stage]
-    matched, groups = _health_shown(signals)
+    matched, groups = _health_shown(signals, stage)
     return stage, Finding(FLAG_HEALTH, code, notice.level_of(code), matched, groups)
 
 
@@ -358,7 +376,7 @@ def notes(report):
 __all__ = [
     "BENEFIT_KINDS", "BENEFIT_KO", "CAMPAIGN_STATUSES", "Campaign", "FLAG_EXPERIENCE", "FLAG_HEALTH", "FLAG_KO", "FLAG_PRODUCT", "FLAG_PROMISE", "FLAG_SPONSOR", "Finding", "HEALTH_CHECK",
     "HEALTH_GENERAL", "HEALTH_MATRIX", "HEALTH_STAGES", "HEALTH_STAGE_CODE", "HEALTH_STAGE_KO", "HEALTH_STAGE_STATE", "HEALTH_STATE_KO", "HEALTH_STOP", "INTEREST_KO", "INTEREST_NONE",
-    "INTEREST_TYPES", "INTEREST_UNKNOWN", "LEGACY_BENEFIT_NAMES", "MAX_CAMPAIGNS", "MAX_SHOWN", "MAX_SHOWN_BENEFITS", "MAX_TEXTS", "OPPORTUNITY_NONE", "OPPORTUNITY_POSSIBLE",
+    "INTEREST_TYPES", "INTEREST_UNKNOWN", "LEGACY_BENEFIT_NAMES", "LEGACY_STOP_KEYS", "MAX_CAMPAIGNS", "MAX_SHOWN", "MAX_SHOWN_BENEFITS", "MAX_TEXTS", "OPPORTUNITY_NONE", "OPPORTUNITY_POSSIBLE",
     "RELATION_CONFIRMED", "RELATION_NONE", "RELATION_SUSPECTED", "STAGE_EVIDENCE", "STAGE_GENERAL", "STAGE_MARK", "STAGE_STOP", "SafetyReport", "assess", "check_text", "mark",
     "needs_evidence", "notes",
 ]

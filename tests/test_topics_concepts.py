@@ -53,8 +53,8 @@ class TableValuesTest(unittest.TestCase):                                       
 
     def test_the_sizes_are_the_documented_ones(self):
         sizes = {"HEALTH_SYMPTOM_KO": 39, "HEALTH_SYMPTOM_EN": 15, "HEALTH_DISEASE_KO": 71, "HEALTH_DISEASE_EN": 26, "HEALTH_EFFECT_KO": 34, "HEALTH_EFFECT_EN": 13, "HEALTH_MEDICAL_KO": 6,
-                 "HEALTH_MEDICAL_EN": 11, "HEALTH_PRODUCT_KO": 34, "HEALTH_PRODUCT_EN": 22, "HEALTH_ASSERT_KO": 12, "HEALTH_ASSERT_EN": 10, "HEALTH_ASSERT_EFFECT_KO": 16, "HEALTH_ASSERT_EFFECT_EN": 10,
-                 "HEALTH_ASSERT_SOFT_KO": 7, "HEALTH_ASSERT_SOFT_EN": 5, "HEALTH_MASKS_KO": 33, "HEALTH_MASKS_EN": 11, "HEALTH_WARNING_KO": 19, "HEALTH_WARNING_EN": 11, "NEGATION_TOKENS_EN": 5,
+                 "HEALTH_MEDICAL_EN": 11, "HEALTH_PRODUCT_KO": 45, "HEALTH_PRODUCT_EN": 22, "HEALTH_ASSERT_KO": 12, "HEALTH_ASSERT_EN": 10, "HEALTH_ASSERT_EFFECT_KO": 16, "HEALTH_ASSERT_EFFECT_EN": 10,
+                 "HEALTH_ASSERT_SOFT_KO": 7, "HEALTH_ASSERT_SOFT_EN": 5, "HEALTH_MASKS_KO": 48, "HEALTH_MASKS_EN": 11, "HEALTH_WARNING_KO": 19, "HEALTH_WARNING_EN": 11, "NEGATION_TOKENS_EN": 5,
                  "SPONSOR_MARKERS_KO": 18, "SPONSOR_MASKS_KO": 15, "SPONSOR_STRONG_EN": 23, "SPONSOR_WEAK_EN": 7, "SPONSOR_MARKERS_EN": 8, "EXPERIENCE_GENRE_STRONG_KO": 7, "EXPERIENCE_GENRE_WEAK_KO": 2,
                  "EXPERIENCE_MARKERS_KO": 11, "EXPERIENCE_MASKS_KO": 13, "EXPERIENCE_PHRASES_EN": 19, "GENERAL_WORDS": 57}
         for name, size in sizes.items():
@@ -513,7 +513,7 @@ class WordBoundaryTest(unittest.TestCase):                                      
                                  f"예시 가{entry[0]} {entry[1:]} 글"):                                               # 앞 낱말의 끝글자가 걸쳐 있다
                         blocked += 1
                         self.assertNotIn(entry, hits(table, text), text)
-        self.assertEqual((natural, blocked), (197, 411), "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다")
+        self.assertEqual((natural, blocked), (212, 444), "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(제품 표 +11: 처방약 낱말 열한 개 D-133·D-137, 마스크 +7: 기기 암 여섯 D-136 · 보험 보장 하나 D-134 — 옛 (204, 423))")
 
     def test_names_written_as_whole_words_with_spaces_are_still_read(self):
         for text, field, entry in (("허리 디스크 운동", "disease", "허리디스크"), ("목 디스크 증상", "disease", "목디스크"), ("건강 식품 고르기", "product", "건강식품"), ("건강 기능 식품 고르기", "product", "건강기능식품"),

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import topics_corpus as corpus  # noqa: E402
 import topics_support as ts  # noqa: E402
 
+from chanceblog_desktop.topics import concepts as cn  # noqa: E402
 from chanceblog_desktop.topics import expand as ex  # noqa: E402
 from chanceblog_desktop.topics import generate as gn  # noqa: E402
 from chanceblog_desktop.topics import safety as sf  # noqa: E402
@@ -77,7 +78,7 @@ class RiskCorpusTest(unittest.TestCase):
     def test_the_risk_corpus_has_the_documented_size(self):
         # 의도적 갱신(WP-B, D-105): 옛 (12, 28, …) — 옛 '확인 필요' 28 중 5개(증상 + 효과 + 단정)가 단정 위험으로 올라가 중지 17·확인 필요 23(근거 확인 필요 10 + 표시만 13)이 되었다
         self.assertEqual((len(corpus.RISK_HEALTH_STOP), len(corpus.RISK_HEALTH_CHECK), len(corpus.RISK_PROMISE), len(corpus.RISK_SPONSOR), len(corpus.RISK_EXPERIENCE)), (17, 23, 6, 22, 17))
-        self.assertEqual((len(corpus.RISK_HEALTH_EVIDENCE), len(corpus.RISK_HEALTH_MARK)), (10, 13))
+        self.assertEqual((len(corpus.RISK_HEALTH_EVIDENCE), len(corpus.RISK_HEALTH_MARK)), (17, 6), "의도적 갱신(D-134): 질환 낱말만 든 글 7개가 표시만에서 근거 확인 필요로 옮김 — 옛 (10, 13)")
         self.assertEqual(corpus.RISK_HEALTH_CHECK, corpus.RISK_HEALTH_EVIDENCE + corpus.RISK_HEALTH_MARK)
         everything = corpus.RISK_HEALTH_STOP + corpus.RISK_HEALTH_EVIDENCE + corpus.RISK_HEALTH_MARK
         self.assertEqual(len(everything), len(set(everything)), "세 단계에 겹치는 문장이 없다")
@@ -168,7 +169,8 @@ class EngineShapedTest(unittest.TestCase):
                 report = sf.check_text(engine_texts(seed, direction))
                 self.assertEqual((report.health, report.stop), ("check", False), (seed, direction))
                 # WP-B(D-105): 건강 씨앗만으로는 '표시만(A)' 이고, 방향 낱말이 효과 낱말('생활 부담 줄이기' 의 ‘줄이’)을 더하면 '근거 확인 필요(B)' 다 — 어느 쪽도 중지가 아니다
-                self.assertEqual(report.stage, "evidence" if direction == "생활 부담 줄이기" else "mark", (seed, direction))
+                # D-134(운영자 ③) 의도적 갱신: 질환 낱말이 든 씨앗(당뇨·고혈압·탈모·불면증·콜레스테롤·관절염·치매)은 어느 방향이든 근거 확인 필요다 — 질환 단독 = B
+                self.assertEqual(report.stage, "evidence" if direction == "생활 부담 줄이기" or cn.health_signals([seed]).disease else "mark", (seed, direction))
         self.assertEqual(count, 276)
 
 
