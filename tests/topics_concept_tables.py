@@ -37,16 +37,16 @@ TABLES = {
     'HEALTH_EFFECT_KO': ('회복', '개선', '완화', '예방', '교정', '감량', '증진', '향상', '해소', '강화', '극복', '효과', '효능', '도움', '좋아지', '나아지', '낮추', '낮아지', '높이', '높아지', '줄이', '풀어', '풀리', '늘리', '올리', '키우', '되찾', '없애', '없어지', '사라지', '다스리', '낫는', '돕는', '도와'),
     # HEALTH_MASKS_EN — 11
     'HEALTH_MASKS_EN': ('economic depression', 'great depression', 'pain point*', 'treat yourself', 'supplement your', 'diet of', 'blood pressure monitor*', 'blood sugar monitor*', 'stress test*', 'supplements to the', 'weight of'),
-    # HEALTH_MASKS_KO — 33
-    'HEALTH_MASKS_KO': ('소화기', '소화전', '혈압계', '체중계', '처방전', '자세히', '자세한', '자세하게', '스트레스 테스트', '불확실', '완전 정복', '완전 초보', '완전판', '완전 자동', '완전 무료', '보장성', '보장 범위', '보장금', '보장 내용', '보증금', '보증서', '보증 기간', '보증보험', '디지털 디톡스', '스마트폰 디톡스', 'SNS 디톡스', '알림 피로', '피로도', '불안정', '바로잡', '바로가기', '바로미터', '불완전'),
+    # HEALTH_MASKS_KO — 48 (D-140: ARM·게임·장비 문맥 '암' 여덟 더함 · (D-136: 기기 '암' 여섯 더함 · D-138: 보험 보장 마스크는 `보험 보장` 하나) (D-134: 보험 '보장' 낱말 여섯을 더했다 — 시험을 의식적으로 함께 고침)
+    'HEALTH_MASKS_KO': ('소화기', '소화전', '혈압계', '체중계', '처방전', '자세히', '자세한', '자세하게', '스트레스 테스트', '불확실', '완전 정복', '완전 초보', '완전판', '완전 자동', '완전 무료', '보장성', '보장 범위', '보장금', '보장 내용', '보증금', '보증서', '보증 기간', '보증보험', '디지털 디톡스', '스마트폰 디톡스', 'SNS 디톡스', '알림 피로', '피로도', '불안정', '바로잡', '바로가기', '바로미터', '불완전', '보험 보장', '모니터 암', '모니터암', '로봇 암', '로봇암', '암 거치대', '암거치대', '암 프로세서', '암 기반', '암 아키텍처', '암 서버', '암 레벨', '암 클라이밍', '암 모양', '로봇 팔 암'),
     # HEALTH_MEDICAL_EN — 11
     'HEALTH_MEDICAL_EN': ('cure*', 'treatment*', 'therapy', 'heal', 'heals', 'healed', 'healing', 'remedy', 'remedies', 'prescription*', 'prescribe*'),
     # HEALTH_MEDICAL_KO — 6
     'HEALTH_MEDICAL_KO': ('치료', '완치', '처방', '시술', '수술', '투약'),
     # HEALTH_PRODUCT_EN — 22
     'HEALTH_PRODUCT_EN': ('supplements', 'supplement for', 'dietary supplement*', 'vitamin', 'vitamins', 'probiotic*', 'multivitamin*', 'medication', 'medications', 'medicine', 'medicines', 'diet pill*', 'weight loss pill*', 'fat burner*', 'detox tea', 'detox juice', 'detox cleanse', 'posture corrector*', 'medical device*', 'collagen', 'melatonin', 'creatine'),
-    # HEALTH_PRODUCT_KO — 34
-    'HEALTH_PRODUCT_KO': ('영양제', '건강기능식품', '건강식품', '보충제', '비타민', '유산균', '프로바이오틱스', '오메가3', '루테인', '콜라겐', '홍삼', '밀크씨슬', '크레아틴', '의료기기', '자세교정기', '다이어트 제품', '다이어트 약', '다이어트 보조제', '다이어트 식품', '운동 처방', '식이요법', '해독 주스', '해독주스', '해독차', '디톡스', '의약품', '한약', '보약', '민간요법', '자연치유', '치료제', '진통제', '수면제', '항생제'),
+    # HEALTH_PRODUCT_KO — 45 (D-137: 처방약 낱말 일곱 더함) (D-133: 처방약 낱말 넷을 더했다 — 시험을 의식적으로 함께 고침)
+    'HEALTH_PRODUCT_KO': ('영양제', '건강기능식품', '건강식품', '보충제', '비타민', '유산균', '프로바이오틱스', '오메가3', '루테인', '콜라겐', '홍삼', '밀크씨슬', '크레아틴', '의료기기', '자세교정기', '다이어트 제품', '다이어트 약', '다이어트 보조제', '다이어트 식품', '운동 처방', '식이요법', '해독 주스', '해독주스', '해독차', '디톡스', '의약품', '한약', '보약', '민간요법', '자연치유', '치료제', '진통제', '수면제', '항생제', '해열제', '스테로이드', '처방약', '항우울제', '혈압약', '당뇨약', '인슐린', '항암제', '피임약', '항응고제', '스타틴'),
     # HEALTH_SYMPTOM_EN — 15
     'HEALTH_SYMPTOM_EN': ('fatigue', 'stress', 'anxiety', 'pain', 'headache', 'sleep', 'weight loss', 'weight', 'diet', 'burnout', 'bloating', 'acne', 'constipation', 'posture', 'focus'),
     # HEALTH_SYMPTOM_KO — 39

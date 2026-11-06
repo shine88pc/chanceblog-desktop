@@ -9,6 +9,8 @@
   H7) 알림 문장: 코드 이름 목록 불변·새 문장에 파이썬 목록 꼴·영문 값 이름 없음. H8) `SAFETY_FLAGS`·표시 칸 모양 불변, 점수는 근거 한 항목만 바뀜. H9) 영어 문장. H10) 실시간 이슈(공식 출처 있음)는 B 이어도 감점 0.
   H11) 근거 점수 함수 `_evidence` 의 단계 인자·`needs_evidence`. H12) 제품·기기 이름 속 조각(`치료제` 속 ‘치료’)은 따로 세지 않는다 — 제품 표 항목 하나하나가 단독이면 표시만이다. **질환 이름 속 낱말은 센다**(수정 1차 —
       `암 예방 100% 보장` 은 질환 + 효과 + 단정이라 중지) — 옛 코드 차분에서 '옛 중지 → 새 중지 아님' 0. H13) 문서(D-105·D-106)·머리말 정정. H14) 알림 문장이 단계 뜻에 맞다·단조성의 예외 목록(수정 1차).
+  H15) **건강 판정 문맥 구분(D-130~D-135, 운영자 2026-11-06 ~19:55 결정 ①②③)으로 의도적으로 갱신한 시험** — 이유는 각 시험의 주석에 있다: 64칸 표의 질환 두 줄(질환 단독 = 근거 확인 필요·질환 + 단정 = 단정 위험)·단정 칸이 '낱말이 있다' 가 아니라
+      '효과 결과를 꾸민다' 로 바뀐 데 따른 칸 대표 글·질환 항목 전수의 기대·영양제 + 바로·즉시 시험. 새 시험은 `test_topics_health_context.py` 에 있다.
 네트워크·파일·실제 시계·난수 없이 돈다. 시험 글은 모두 지어낸 일반 문장이다.
 """
 import dataclasses
@@ -64,8 +66,8 @@ G_, A_, B_, C_ = GENERAL, MARK, EVIDENCE, STOP
 HAND_TABLE = {
     (0, 0, 0, 0): (G_, G_, G_, G_),
     (1, 0, 0, 0): (A_, A_, A_, C_),
-    (0, 1, 0, 0): (A_, A_, B_, C_),
-    (1, 1, 0, 0): (A_, A_, B_, C_),
+    (0, 1, 0, 0): (B_, C_, B_, C_),                 # D-134 의도적 갱신 — 질환 단독 = 근거 확인 필요, 질환 + 단정 = 단정 위험(운영자 ③, 옛: A_, A_, B_, C_)
+    (1, 1, 0, 0): (B_, C_, B_, C_),                 # 같은 이유(증상 + 질환도 질환이 있으므로)
     (0, 0, 1, 0): (A_, C_, B_, C_),
     (1, 0, 1, 0): (B_, C_, B_, C_),
     (0, 1, 1, 0): (B_, C_, B_, C_),
@@ -87,14 +89,15 @@ def rule_stage(s, d, p, m, e, a):
     """운영자 결정 + 내 제안(⑥)을 식으로 다시 쓴 것 — 코드의 표와 따로 쓴 두 번째 기준이다."""
     if not (s or d or p or m):
         return GENERAL                                              # ① 건강 대상이 없으면 일반(효능·단정·일반 낱말만 있어도)
-    if (p and (m or a)) or (e and a) or (m and a):                  # ④ P + (M 또는 A) · ⑤ (대상) + E + A · M + A(치료를 단정 — 옛 16칸 표에서도 중지)
+    if (p and (m or a)) or (e and a) or (m and a) or (d and a):    # ④ P + (M 또는 A) · ⑤ (대상) + E + A · M + A(치료를 단정 — 옛 16칸 표에서도 중지) · D + A(D-134 ③: 질환 + 강한 단정은 효과 동사가 없어도)
         return STOP
-    if (p and (e or s or d)) or (m and (s or d or e)) or (d and e):   # ③ P + (E 또는 S) (+ D) · S+M·D+M·M+E·D+E(⑥ 내 제안)
+    if (p and (e or s or d)) or (m and (s or d or e)) or d:        # ③ P + (E 또는 S) (+ D) · S+M·D+M·M+E(⑥ 내 제안) · **D 하나라도 있으면 근거 확인 필요**(D-134 ② 정정: 옛 ② 는 D 단독도 표시만, D+E 만 근거 확인 필요)
         return EVIDENCE
-    return MARK                                                      # ② S·D·P·M 하나만 · S+E·S+A·D+A(⑥)
+    return MARK                                                      # ② S·P·M 하나만 · S+E·S+A(⑥)
 
 
-KO_WORDS = {"s": "피로", "d": "당뇨", "p": "영양제", "m": "치료", "e": "개선", "a": "확실히"}
+# 단정 칸(A)의 한국어 낱말 — 의도적 갱신(D-130): '확실히' 는 뒤에서 꾸미는 서술어가 없으면 단정으로 세지 않으므로(범위 낱말) 늘 단정인 '100% 보장' 으로 바꿨다
+KO_WORDS = {"s": "피로", "d": "당뇨", "p": "영양제", "m": "치료", "e": "개선", "a": "100% 보장"}
 EN_WORDS = {"s": "fatigue", "d": "diabetes", "p": "supplements", "m": "treatment", "e": "relief", "a": "guaranteed"}
 
 
@@ -180,11 +183,12 @@ class EffectAssertionSentenceTest(unittest.TestCase):                           
             with self.subTest(text=text):
                 self.assertEqual(stage(text), GENERAL, "건강 대상이 없으면 효과 단정 서술만으로는 일반이다")
 
-    def test_a_light_assertion_word_counts_only_beside_a_product_a_disease_or_a_medical_word_and_a_warning_word_turns_it_off(self):
-        # `key()` 의 단정 계산 그대로(D-105 ⑨): '즉시·바로' 는 제품·질환·의료 효능어가 있을 때만 단정이고, 경고 낱말(과장·허위·속지 …)이 있으면 모든 단정이 꺼진다
-        self.assertEqual(stage("피로가 즉시 풀리는 방법"), MARK)
-        self.assertEqual(stage("영양제 바로 먹는 법"), STOP)
-        self.assertEqual(stage("당뇨 식단 바로 시작하기"), MARK)
+    def test_a_light_assertion_word_counts_only_when_it_modifies_an_effect_result_and_a_warning_word_turns_it_off(self):
+        # 의도적 갱신(D-130·D-132, 운영자 2026-11-06 ~19:55 ①②): '즉시·바로' 는 제품·질환이 곁에 있다는 이유가 아니라 **효과 결과 서술어를 꾸밀 때** 단정이다 — 증상 + 즉시 + 효과 결과 = 단정 위험(옛: 표시만),
+        # 영양제 + 행동 순서 바로 = 표시만(옛: 중지), 질환 단독은 근거 확인 필요(옛: 표시만). 경고 낱말(과장·허위·속지 …)이 있으면 모든 단정이 꺼진다는 규칙은 그대로다.
+        self.assertEqual(stage("피로가 즉시 풀리는 방법"), STOP)
+        self.assertEqual(stage("영양제 바로 먹는 법"), MARK)
+        self.assertEqual(stage("당뇨 식단 바로 시작하기"), EVIDENCE)
         self.assertEqual(stage("즉시 적용하는 단축키 모음"), GENERAL)
         self.assertEqual(stage("영양제 효과를 보장한다는 광고"), STOP)
         self.assertEqual(stage("영양제 효과를 보장한다는 광고에 속지 않는 법"), EVIDENCE, "경고 낱말이 단정을 끈다 — 효과 낱말만 남아 근거 확인 필요")
@@ -240,7 +244,7 @@ class CombinationTableTest(unittest.TestCase):                                  
     def test_the_stage_counts_are_what_the_operator_would_expect_to_see_at_a_glance(self):
         counts = {name: sum(1 for value in sf.HEALTH_MATRIX.values() if value == name) for name in sf.HEALTH_STAGES}
         self.assertEqual(sum(counts.values()), 64)
-        self.assertEqual(counts, {GENERAL: 4, MARK: 9, EVIDENCE: 16, STOP: 35}, "건강 대상이 없는 4칸만 일반이다")
+        self.assertEqual(counts, {GENERAL: 4, MARK: 5, EVIDENCE: 18, STOP: 37}, "건강 대상이 없는 4칸만 일반이다 — 의도적 갱신(D-134): 질환 두 줄의 표시만 4칸이 근거 확인 필요 2·단정 위험 2 로 올랐다(옛 일반 4·표시만 9·근거 확인 필요 16·단정 위험 35)")
 
     def test_the_fixed_criteria_hold_in_every_cell(self):
         for s, d, p, m, e, a in ALL_KEYS:
@@ -249,8 +253,12 @@ class CombinationTableTest(unittest.TestCase):                                  
             with self.subTest(key=key):
                 if not (s or d or p or m):
                     self.assertEqual(result, GENERAL, "① 건강 대상 낱말이 없으면 일반 — 효능·단정 낱말만 있어도")
-                if (s, d, p, m, e, a) in ((1, 0, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0), (0, 0, 1, 0, 0, 0), (0, 0, 0, 1, 0, 0)):
-                    self.assertEqual(result, MARK, "② 증상·질환·제품·의료 효능어 단독은 표시만")
+                if (s, d, p, m, e, a) in ((1, 0, 0, 0, 0, 0), (0, 0, 1, 0, 0, 0), (0, 0, 0, 1, 0, 0)):
+                    self.assertEqual(result, MARK, "② 증상·제품·의료 효능어 단독은 표시만")
+                if (s, d, p, m, e, a) == (0, 1, 0, 0, 0, 0):
+                    self.assertEqual(result, EVIDENCE, "② 정정(D-134, 운영자 ③): 질환 단독은 근거 확인 필요")
+                if d and a and not (s or p or m or e):
+                    self.assertEqual(result, STOP, "⑦ 질환 + 강한 단정은 효과 동사가 없어도 단정 위험(D-134, 운영자 ③)")
                 if p and not m and not a and (e or s):
                     self.assertEqual(result, EVIDENCE, "③ 영양제 + (효능 또는 증상) → 근거 확인 필요")
                 if p and (m or a):
@@ -260,7 +268,7 @@ class CombinationTableTest(unittest.TestCase):                                  
 
     def test_the_unspecified_combinations_follow_the_documented_proposal(self):
         for key, expected in (((1, 0, 0, 1, 0, 0), EVIDENCE), ((0, 1, 0, 0, 1, 0), EVIDENCE), ((0, 1, 0, 1, 0, 0), EVIDENCE), ((1, 0, 0, 0, 1, 0), MARK), ((1, 0, 0, 0, 0, 1), MARK),
-                              ((0, 1, 0, 0, 0, 1), MARK), ((0, 0, 0, 1, 1, 0), EVIDENCE), ((0, 0, 0, 1, 0, 1), STOP), ((0, 1, 1, 0, 0, 0), EVIDENCE)):
+                              ((0, 1, 0, 0, 0, 1), STOP), ((0, 0, 0, 1, 1, 0), EVIDENCE), ((0, 0, 0, 1, 0, 1), STOP), ((0, 1, 1, 0, 0, 0), EVIDENCE)):         # D+A 는 의도적 갱신(D-134 — 옛 MARK)
             with self.subTest(key=key):
                 self.assertEqual(sf.HEALTH_MATRIX[key], expected)
 
@@ -371,7 +379,8 @@ class NoticeWordingTest(unittest.TestCase):                                     
     def test_the_three_stage_sentences_are_these_and_the_unused_claim_sentence_is_kept(self):
         # 수정 1차(독립 검증 낮음 2): 문장을 단계 뜻에 맞췄다 — A 건강 대상(증상·질환·건강 제품·의료 용어)이 든 주제 / B 건강에 도움이 된다고 읽힐 수 있어 근거 확인이 필요한 표현 / C 효과·치료를 단정
         self.assertEqual(nt.CATALOG["HEALTH_TOPIC"], ("WARNING", "건강 정보 확인 필요", "증상·질환·건강 제품이나 치료 같은 의료 용어가 들어 있는 주제입니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요."))
-        self.assertEqual(nt.CATALOG["HEALTH_EFFECT"], ("WARNING", "건강 정보 확인 필요", "건강에 도움이 된다고 읽힐 수 있는 표현이 있어 근거 확인이 필요합니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요."))
+        # 의도적 갱신(D-134): B 문장 한 줄 — 질환 단독과 복용 허용 질문도 B 가 되어 '질환이나 복용을 다루거나' 를 앞에 더했다(옛: '건강에 도움이 된다고 읽힐 수 있는 표현이 있어 …')
+        self.assertEqual(nt.CATALOG["HEALTH_EFFECT"], ("WARNING", "건강 정보 확인 필요", "질환이나 복용을 다루거나 건강에 도움이 된다고 읽힐 수 있는 표현이 있어 근거 확인이 필요합니다.", "공식 근거를 확인하고, 효과를 단정하지 않는 표현으로 써 주세요."))
         self.assertEqual(nt.CATALOG["HEALTH_STOP"], ("ERROR", "의료·효과 단정 위험", "건강 효과나 치료를 단정하는 표현이 있어 자동 초안을 만들지 않습니다.", "표현을 바꾸거나 공식 근거를 확인한 뒤 직접 검토해 주세요."))
         self.assertEqual(nt.CATALOG["HEALTH_CLAIM"], ("WARNING", "건강 정보 확인 필요", "효과를 단정하는 표현이 포함되어 있습니다.", "공식 근거를 확인하거나 일반 생활정보 표현으로 수정해 주세요."))
         source = Path(nt.__file__).read_text(encoding="utf-8")
@@ -403,7 +412,7 @@ class NoticeWordingTest(unittest.TestCase):                                     
     def test_a_selection_reason_line_for_each_stage_starts_with_the_title(self):
         lines = {name: sf.notes(sf.check_text([text])) for name, text in ((MARK, "영양제 구매 기준"), (EVIDENCE, "영양제 효능 정리"), (STOP, "불면을 확실히 치료하는 방법"))}
         self.assertTrue(lines[MARK][0].startswith("건강 정보 확인 필요 — 증상·질환·건강 제품이나 치료 같은 의료 용어가 들어 있는 주제입니다."))
-        self.assertTrue(lines[EVIDENCE][0].startswith("건강 정보 확인 필요 — 건강에 도움이 된다고 읽힐 수 있는 표현이 있어 근거 확인이 필요합니다."))
+        self.assertTrue(lines[EVIDENCE][0].startswith("건강 정보 확인 필요 — 질환이나 복용을 다루거나 건강에 도움이 된다고 읽힐 수 있는 표현이 있어 근거 확인이 필요합니다."))
         self.assertTrue(lines[STOP][0].startswith("의료·효과 단정 위험 — 건강 효과나 치료를 단정하는 표현이 있어 자동 초안을 만들지 않습니다."))
 
     def test_each_sentence_fits_the_cells_of_its_stage_including_the_ones_that_used_to_fit_badly(self):
@@ -475,7 +484,7 @@ class ShapeUnchangedTest(unittest.TestCase):                                    
 class EnglishStagesTest(unittest.TestCase):                                                                     # H9
     def test_english_sentences_follow_the_same_stages(self):
         for text, expected in (("This supplement will cure diabetes", STOP), ("vitamin D guaranteed to cure fatigue", STOP), ("supplements for better sleep", EVIDENCE), ("supplements guide for beginners", MARK),
-                               ("How to relieve stress and improve sleep", MARK), ("sleep tips for beginners", MARK), ("diabetes diet notes", MARK), ("how to relieve diabetes symptoms", EVIDENCE),
+                               ("How to relieve stress and improve sleep", MARK), ("sleep tips for beginners", MARK), ("diabetes diet notes", EVIDENCE), ("how to relieve diabetes symptoms", EVIDENCE),
                                ("stress test results for servers", GENERAL), ("the weight of the box", GENERAL), ("best laptop for programming", GENERAL), ("improve your python skills", GENERAL),
                                ("guaranteed delivery tracking", GENERAL), ("Handling remediation steps in the security backlog", GENERAL)):
             with self.subTest(text=text):
@@ -619,8 +628,8 @@ class NamesInsideNamesTest(unittest.TestCase):                                  
             holding += [entry] if inner else []
             with self.subTest(entry=entry, inner=inner):
                 self.assertEqual(alone.inside, (), "질환 항목에는 이름 속 조각 규칙을 걸지 않는다")
-                self.assertEqual(stage(f"예시 {show(entry)} 글"), EVIDENCE if inner else MARK, "질환 + 안쪽의 효과·의료 낱말 → 근거 확인 필요(옛 코드도 확인 필요였다)")
-                self.assertEqual(stage(f"예시 {show(entry)} 100% 보장 글"), STOP if inner else MARK, "안쪽의 효과·의료 낱말이 있으면 단정이 붙을 때 단정 위험 — 없으면 질환 + 단정 = 표시만(운영자 확인 대기)")
+                self.assertEqual(stage(f"예시 {show(entry)} 글"), EVIDENCE, "질환 단독은 근거 확인 필요 — 의도적 갱신(D-134, 운영자 ③: 질환 단독 = B). 옛: 안쪽의 효과·의료 낱말이 있을 때만 근거 확인 필요, 아니면 표시만")
+                self.assertEqual(stage(f"예시 {show(entry)} 100% 보장 글"), STOP, "질환 + 강한 단정은 항목에 상관없이 단정 위험 — 의도적 갱신(D-134, 운영자 ③: 옛: 안쪽의 효과·의료 낱말이 없으면 표시만)")
                 self.assertEqual(stage(f"예시 {show(entry)} 확실히 효과 글"), STOP, "질환 + 효과 + 단정은 항목에 상관없이 단정 위험")
         self.assertEqual(sorted(holding), sorted(["암 예방", "암 수술", "수술 후유증"]), "효과·의료 낱말을 품은 질환 항목은 이 셋뿐이다 — 표가 바뀌면 의식적으로 함께 고친다")
 
@@ -642,10 +651,10 @@ class NamesInsideNamesTest(unittest.TestCase):                                  
         stops = flagged = 0
         for text in texts:
             signals = cn.health_signals([text])
-            old, new = old_state(signals), sf.HEALTH_MATRIX[signals.concept_key()]
+            old, new = old_state(signals), sf.check_text([text]).stage          # 의도적 갱신(D-130): 표만이 아니라 실제 판정(옛 중지 바닥 포함)으로 견준다
             if old == "stop":
                 stops += 1
-                self.assertEqual(new, STOP, f"옛 중지가 풀렸다: {text!r}")
+                self.assertTrue(new == STOP or signals.relaxed_words(), f"옛 중지가 풀렸다: {text!r}")          # 의도적 갱신(D-137·D-138): 결정으로 푼 곳(영양제·처방약 + 행동 순서, 치료 + 행동 순서)만 예외
             if old != "general":
                 flagged += 1
                 self.assertNotEqual(new, GENERAL, f"옛 표시가 사라졌다: {text!r}")
@@ -676,7 +685,8 @@ class NamesInsideNamesTest(unittest.TestCase):                                  
         def show(entry):
             return entry + "x" if entry.endswith("*") else entry
         # 질환 표는 항목 안에 효과·의료 낱말을 품은 셋(`암 예방`·`암 수술`·`수술 후유증`)만 근거 확인 필요(수정 1차 — 위 전수 시험이 프로그램으로 찾아 못박는다), 나머지는 표시만이다
-        groups = (("symptom", cn.HEALTH_SYMPTOM_KO + cn.HEALTH_SYMPTOM_EN, MARK), ("disease", tuple(item for item in cn.HEALTH_DISEASE_KO + cn.HEALTH_DISEASE_EN if item not in ("암 예방", "암 수술", "수술 후유증")), MARK),
+        # 의도적 갱신(D-134): 질환 표 항목은 어느 것이든 단독이면 근거 확인 필요(운영자 ③) — 옛 시험은 안쪽 낱말이 없는 질환 항목을 표시만으로 못박았다
+        groups = (("symptom", cn.HEALTH_SYMPTOM_KO + cn.HEALTH_SYMPTOM_EN, MARK), ("disease", tuple(item for item in cn.HEALTH_DISEASE_KO + cn.HEALTH_DISEASE_EN if item not in ("암 예방", "암 수술", "수술 후유증")), EVIDENCE),
                   ("disease_holding", ("암 예방", "암 수술", "수술 후유증"), EVIDENCE), ("product", cn.HEALTH_PRODUCT_KO + cn.HEALTH_PRODUCT_EN, MARK),
                   ("medical", cn.HEALTH_MEDICAL_KO + cn.HEALTH_MEDICAL_EN, MARK), ("effect", cn.HEALTH_EFFECT_KO + cn.HEALTH_EFFECT_EN, GENERAL), ("assert", cn.HEALTH_ASSERT_KO + cn.HEALTH_ASSERT_EN, GENERAL),
                   ("assert_soft", cn.HEALTH_ASSERT_SOFT_KO + cn.HEALTH_ASSERT_SOFT_EN, GENERAL))
@@ -685,13 +695,13 @@ class NamesInsideNamesTest(unittest.TestCase):                                  
             for entry in entries:
                 checked += 1
                 with self.subTest(group=name, entry=entry):
-                    self.assertEqual(stage(f"예시 {show(entry)} 글"), expected)
+                    self.assertEqual(stage(f"예시 {show(entry)} 글"), EVIDENCE if entry in ("혈압약", "당뇨약", "항암제") else expected)          # 의도적 갱신(D-137): 이름 속에 질환 낱말이 든 처방약 셋은 옛 코드가 질환 단독(B)으로 읽었으므로 B 를 지킨다(약화 금지)
         medical_assertions = ("치료된다", "치료됩니다", "치료가 된다", "완치된다", "will cure", "guaranteed to cure")
         for entry in cn.HEALTH_ASSERT_EFFECT_KO + cn.HEALTH_ASSERT_EFFECT_EN:
             checked += 1
             with self.subTest(group="assert_effect", entry=entry):
                 self.assertEqual(stage(f"예시 {show(entry)} 글"), STOP if entry in medical_assertions else GENERAL)
-        self.assertEqual(checked, 54 + 97 + 56 + 17 + 47 + 22 + 12 + 26, "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다")
+        self.assertEqual(checked, 54 + 97 + 67 + 17 + 47 + 22 + 12 + 26, "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(제품 표 56 → 67: 처방약 낱말 열한 개, D-133·D-137)")
 
 
 class DocumentsTest(unittest.TestCase):                                                                         # H13
@@ -731,7 +741,7 @@ class DocumentsTest(unittest.TestCase):                                         
             self.assertIn(word, concepts_doc)
 
     def test_the_health_word_tables_are_not_changed_by_this_work(self):
-        self.assertEqual((len(cn.HEALTH_SYMPTOM_KO), len(cn.HEALTH_DISEASE_KO), len(cn.HEALTH_PRODUCT_KO), len(cn.HEALTH_MEDICAL_KO), len(cn.HEALTH_EFFECT_KO)), (39, 71, 34, 6, 34))
+        self.assertEqual((len(cn.HEALTH_SYMPTOM_KO), len(cn.HEALTH_DISEASE_KO), len(cn.HEALTH_PRODUCT_KO), len(cn.HEALTH_MEDICAL_KO), len(cn.HEALTH_EFFECT_KO)), (39, 71, 45, 6, 34), "제품 표만 34 → 45(처방약 낱말 넷 D-133 + 일곱 D-137, 의도적 갱신)")
         for word in ("피로", "불면", "통증", "자세", "체중"):
             self.assertIn(word, cn.HEALTH_SYMPTOM_KO)
         self.assertIn("영양제", cn.HEALTH_PRODUCT_KO)
