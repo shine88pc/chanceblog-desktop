@@ -1,7 +1,8 @@
 """규칙 기반 안전 표시(`topics/safety.py`) 시험 — P2b 보완(D-50·D-51)으로 다시 썼다: 낱말 하나가 아니라 **개념군 조합**으로 상태·표시·알림을 정한다.
 
 지키는 것(S1~S10):
-  S1) 건강은 (증상 s, 효과 e, 고위험 대상 p, 단정 a) 네 값의 16칸 표(`HEALTH_MATRIX`)가 세 상태를 정한다 — 일반 생활정보 / 건강 정보 확인 필요 / 의료·효과 단정 위험(자동 초안 중지). 칸마다 대표 예문이 그 칸으로 판정된다.
+  S1) 건강은 (증상 S, 질환 D, 제품 P, 의료 효능어 M, 효과 E, 단정 A) 여섯 값의 64칸 표(`HEALTH_MATRIX`)가 네 단계를 정한다(WP-B, D-105) — 일반 생활정보 / A 표시만 / B 근거 확인 필요 / C 의료·효과 단정 위험(자동 초안 중지).
+      칸마다 대표 예문이 그 칸으로 판정된다(64칸 전체·고정 기준·단조성·운영자 예시는 `test_topics_health_stages.py`).
   S2) 운영자 요청서의 예문(§2 정상·검토 필요, §3 건강·놓치던 8표현, §11 일반·건강·협찬·영어)이 요청서가 말한 대로 판정된다 — 일반 낱말(비교·모델·추천 …)은 표시도 감점도 없다.
   S3) 생활 습관 표현은 일반으로 남고, 의료적 주장이 붙은 습관 표현은 일반이 아니다.
   S4) 협찬: 태그·경로·유형·제안 중 협찬 정보는 가능성일 뿐이라 표시 없이 INFO 알림, 글 낱말은 추정, 브랜드 이름은 0, 확정된 협찬 정보만 표시를 강제한다. S5) `Campaign` 의 검증·연결·왕복.
@@ -26,25 +27,31 @@ from chanceblog_desktop.topics import model as md  # noqa: E402
 from chanceblog_desktop.topics import notice as nt  # noqa: E402
 from chanceblog_desktop.topics import safety as sf  # noqa: E402
 
+# 의도적 갱신(WP-B, D-105): 예전에는 (증상 s, 효과 e, 고위험 대상 p, 단정 a) 16칸이었다. 이제 열쇠는 (증상 S, 질환 D, 제품 P, 의료 효능어 M, 효과 E, 단정 A) 여섯 값이고 단계는 네 가지다.
+# 대표 예문 16개(칸 → (단계, 글)) — 64칸 전부는 `test_topics_health_stages.py` 가 낱말을 조합해 만든 글로 본다.
 CELLS = {
-    (0, 0, 0, 0): ("general", "잠들기 전 스마트폰 알림을 정리하는 루틴"), (0, 0, 0, 1): ("general", "API 호출 설정을 완전히 정리하는 방법"), (0, 0, 1, 0): ("check", "영양제 구매 기준"),
-    (0, 0, 1, 1): ("check", "영양제 확실한 선택법"), (0, 1, 0, 0): ("general", "성능 개선을 위한 캐시 설정"), (0, 1, 0, 1): ("general", "확실히 개선되는 설정 모음"),
-    (0, 1, 1, 0): ("check", "치료 방법 비교"), (0, 1, 1, 1): ("stop", "이 영양제는 반드시 효과가 있습니다"), (1, 0, 0, 0): ("general", "수면 환경을 정리하는 생활 습관"),
-    (1, 0, 0, 1): ("general", "스트레스 받는 날 완전히 비우는 책상 정리"), (1, 0, 1, 0): ("check", "당뇨 환자 식단 정리"), (1, 0, 1, 1): ("check", "당뇨 환자에게 확실한 식단"),
-    (1, 1, 0, 0): ("general", "피로 해소를 위한 주말 정리 루틴"), (1, 1, 0, 1): ("check", "불면을 완화하는 확실한 방법"), (1, 1, 1, 0): ("check", "불면을 치료하는 영양제 추천"),
-    (1, 1, 1, 1): ("stop", "영양제로 피로가 완전히 회복됩니다"),
+    (0, 0, 0, 0, 0, 0): ("general", "잠들기 전 스마트폰 알림을 정리하는 루틴"), (0, 0, 0, 0, 0, 1): ("general", "API 호출 설정을 완전히 정리하는 방법"), (0, 0, 0, 0, 1, 0): ("general", "성능 개선을 위한 캐시 설정"),
+    (0, 0, 0, 0, 1, 1): ("general", "확실히 개선되는 설정 모음"), (0, 0, 1, 0, 0, 0): ("mark", "영양제 구매 기준"), (0, 0, 1, 0, 0, 1): ("stop", "영양제 확실한 선택법"),
+    (0, 0, 1, 0, 1, 0): ("evidence", "영양제 효능 정리"), (0, 0, 0, 1, 0, 0): ("mark", "치료 방법 비교"), (0, 1, 0, 0, 0, 0): ("mark", "당뇨 환자 식단 정리"),
+    (1, 0, 0, 0, 0, 0): ("mark", "수면 환경을 정리하는 생활 습관"), (1, 0, 0, 0, 1, 0): ("mark", "피로 해소를 위한 주말 정리 루틴"), (1, 0, 0, 0, 0, 1): ("mark", "스트레스 받는 날 완전히 비우는 책상 정리"),
+    (1, 0, 0, 0, 1, 1): ("stop", "불면을 완화하는 확실한 방법"), (1, 0, 1, 1, 0, 0): ("stop", "불면을 치료하는 영양제 추천"), (0, 0, 1, 0, 1, 1): ("stop", "이 영양제는 반드시 효과가 있습니다"),
+    (1, 0, 1, 0, 1, 1): ("stop", "영양제로 피로가 완전히 회복됩니다"),
 }
 # 요청서 예문 — (글, 건강 상태, 표시, 알림 코드). 알림 코드가 빈 글이면 알림이 없어야 한다.
 REQUEST_ROWS = (
     ("AI 모델 비교", "general", (), ""), ("노트북 추천 기준", "general", (), ""), ("PC 부품 선택 가이드", "general", (), ""), ("업무 자동화 도구 추천", "general", (), ""),
     ("무료·유료 SaaS 비교", "general", (), ""), ("소형가전 구매 기준", "general", (), ""), ("PC 부품 추천 기준", "general", (), ""), ("노트북 선택 가이드", "general", (), ""),
     ("업무 자동화 도구 비교", "general", (), ""), ("SaaS 기능 비교", "general", (), ""), ("그래픽카드 모델별 VRAM 비교", "general", (), ""),
-    ("수익을 보장하는 투자 종목 추천", "general", ("result_promise",), "RESULT_PROMISE"), ("불면을 치료하는 영양제 추천", "check", ("health_check",), "HEALTH_EFFECT"),
-    ("통증을 완전히 없애는 의료기기 추천", "stop", ("health_check",), "HEALTH_STOP"), ("무조건 효과가 있는 다이어트 방법", "check", ("health_check",), "HEALTH_CLAIM"),
-    ("한 달 안에 수익을 보장하는 AI 서비스", "general", ("result_promise",), "RESULT_PROMISE"), ("수면 환경을 정리하는 생활 습관", "general", (), ""),
-    ("잠들기 전 화면 사용을 줄이는 루틴", "general", (), ""), ("잠들기 전 스마트폰 알림을 정리하는 루틴", "general", (), ""), ("불면을 완화하는 확실한 방법", "check", ("health_check",), "HEALTH_CLAIM"),
-    ("영양제로 피로가 완전히 회복됩니다", "stop", ("health_check",), "HEALTH_STOP"), ("숙면", "general", (), ""), ("활력", "general", (), ""), ("붓기", "general", (), ""), ("피로 해소", "general", (), ""),
-    ("자세 개선", "general", (), ""), ("체형 관리", "general", (), ""), ("속 편한 습관", "general", (), ""), ("집중력 향상", "general", (), ""),
+    # 의도적 갱신(WP-B, D-105 — 운영자 2026-11-06 세 단계): ① (증상 + 효과 + 단정)·(증상 + 치료 + 제품)은 '확인 필요' 에서 단정 위험(중지)으로 올랐다(불면 완화 확실·불면 치료 영양제·무조건 효과 다이어트).
+    # ② 증상 낱말만 있는 문장(수면 환경·숙면·활력·붓기·피로 해소·자세 개선·체형 관리·속 편한 습관·집중력 향상)은 '일반' 에서 '표시만(A)' 이 되었다 — 감점 0·중지 아님.
+    ("수익을 보장하는 투자 종목 추천", "general", ("result_promise",), "RESULT_PROMISE"), ("불면을 치료하는 영양제 추천", "stop", ("health_check",), "HEALTH_STOP"),
+    ("통증을 완전히 없애는 의료기기 추천", "stop", ("health_check",), "HEALTH_STOP"), ("무조건 효과가 있는 다이어트 방법", "stop", ("health_check",), "HEALTH_STOP"),
+    ("한 달 안에 수익을 보장하는 AI 서비스", "general", ("result_promise",), "RESULT_PROMISE"), ("수면 환경을 정리하는 생활 습관", "check", ("health_check",), "HEALTH_TOPIC"),
+    ("잠들기 전 화면 사용을 줄이는 루틴", "general", (), ""), ("잠들기 전 스마트폰 알림을 정리하는 루틴", "general", (), ""), ("불면을 완화하는 확실한 방법", "stop", ("health_check",), "HEALTH_STOP"),
+    ("영양제로 피로가 완전히 회복됩니다", "stop", ("health_check",), "HEALTH_STOP"), ("숙면", "check", ("health_check",), "HEALTH_TOPIC"), ("활력", "check", ("health_check",), "HEALTH_TOPIC"),
+    ("붓기", "check", ("health_check",), "HEALTH_TOPIC"), ("피로 해소", "check", ("health_check",), "HEALTH_TOPIC"),
+    ("자세 개선", "check", ("health_check",), "HEALTH_TOPIC"), ("체형 관리", "check", ("health_check",), "HEALTH_TOPIC"), ("속 편한 습관", "check", ("health_check",), "HEALTH_TOPIC"),
+    ("집중력 향상", "check", ("health_check",), "HEALTH_TOPIC"),
     ("투자 수익을 보장하는 종목 추천", "general", ("result_promise",), "RESULT_PROMISE"), ("제습기 구매 전 확인 기준", "general", (), ""),
     ("업체로부터 제품을 제공받음", "general", ("sponsor_disclosure",), "ECONOMIC_CHECK"), ("제휴 링크를 통한 수수료 수령", "general", ("sponsor_disclosure",), "ECONOMIC_CHECK"),
     ("I used this product for two weeks.", "general", ("experience_claim",), "EXPERIENCE_CLAIM"), ("This model is widely used in automation.", "general", (), ""),
@@ -64,29 +71,27 @@ def campaign(**changes):
 
 
 class HealthMatrixTest(unittest.TestCase):                                                              # S1
-    def test_the_sixteen_cells_are_pinned_by_hand_and_equal_the_formula(self):
-        expected = {(0, 0, 0, 0): "general", (0, 0, 0, 1): "general", (0, 0, 1, 0): "check", (0, 0, 1, 1): "check", (0, 1, 0, 0): "general", (0, 1, 0, 1): "general", (0, 1, 1, 0): "check",
-                    (0, 1, 1, 1): "stop", (1, 0, 0, 0): "general", (1, 0, 0, 1): "general", (1, 0, 1, 0): "check", (1, 0, 1, 1): "check", (1, 1, 0, 0): "general", (1, 1, 0, 1): "check",
-                    (1, 1, 1, 0): "check", (1, 1, 1, 1): "stop"}
-        self.assertEqual(dict(sf.HEALTH_MATRIX), expected)
-        for (s, e, p, a), state in sf.HEALTH_MATRIX.items():
-            formula = ("stop" if e and a else "check") if p else ("check" if s and e and a else "general")
-            self.assertEqual(state, formula, (s, e, p, a))
+    def test_the_matrix_is_the_sixty_four_cell_table_and_the_old_three_states_are_unchanged(self):
+        # 의도적 갱신(WP-B, D-105): 예전 16칸 (s, e, p, a) 표가 64칸 (S, D, P, M, E, A) 표가 되었다 — 칸 값 하나하나와 식은 `test_topics_health_stages.py` 가 손으로 쓴 표와 맞춰 본다
+        self.assertEqual(len(sf.HEALTH_MATRIX), 64)
+        self.assertEqual(set(sf.HEALTH_MATRIX), {(s, d, p, m, e, a) for s in (0, 1) for d in (0, 1) for p in (0, 1) for m in (0, 1) for e in (0, 1) for a in (0, 1)})
+        self.assertEqual(set(sf.HEALTH_MATRIX.values()), set(sf.HEALTH_STAGES))
         self.assertEqual((sf.HEALTH_GENERAL, sf.HEALTH_CHECK, sf.HEALTH_STOP), ("general", "check", "stop"))
         self.assertEqual(dict(sf.HEALTH_STATE_KO), {"general": "일반 생활정보", "check": "건강 정보 확인 필요", "stop": "의료·효과 단정 위험"})
 
     def test_every_cell_has_a_representative_sentence_that_lands_in_it(self):
-        for key, (state, text) in CELLS.items():
+        for key, (stage, text) in CELLS.items():
             with self.subTest(cell=key, text=text):
-                self.assertEqual(cn.health_signals([text]).key(), key)
+                self.assertEqual(cn.health_signals([text]).concept_key(), key)
                 report = sf.check_text([text])
-                self.assertEqual(report.health, state)
-                self.assertEqual(sf.HEALTH_MATRIX[key], state)
+                self.assertEqual(report.stage, stage)
+                self.assertEqual(report.health, {"general": "general", "mark": "check", "evidence": "check", "stop": "stop"}[stage])
+                self.assertEqual(sf.HEALTH_MATRIX[key], stage)
 
     def test_a_general_text_has_no_flag_a_check_has_a_warning_and_a_stop_has_an_error_that_stops(self):
-        general = sf.check_text(["수면 환경을 정리하는 생활 습관"])
+        general = sf.check_text(["잠들기 전 화면 사용을 줄이는 생활 습관"])
         self.assertEqual((general.flags, general.findings, general.level, general.stop), ((), (), None, False))
-        check = sf.check_text(["불면을 완화하는 확실한 방법"])
+        check = sf.check_text(["영양제 효능 정리"])                                      # 의도적 갱신(D-105): 옛 예문 '불면을 완화하는 확실한 방법' 은 이제 단정 위험이라 경고가 아니라 오류다
         self.assertEqual((check.flags, check.level, check.stop), (("health_check",), "WARNING", False))
         stop = sf.check_text(["영양제로 피로가 완전히 회복됩니다"])
         self.assertEqual((stop.flags, stop.level, stop.stop), (("health_check",), "ERROR", True))
@@ -97,8 +102,9 @@ class HealthMatrixTest(unittest.TestCase):                                      
         self.assertEqual(sf.check_text(["로컬 AI 사양 확인"], opportunity=True).level, "INFO")
 
     def test_the_alert_code_follows_the_reason_for_the_check(self):
-        for text, code in (("영양제 구매 기준", "HEALTH_TOPIC"), ("치료 방법 비교", "HEALTH_EFFECT"), ("불면을 완화하는 확실한 방법", "HEALTH_CLAIM"), ("영양제 확실한 선택법", "HEALTH_CLAIM"),
-                           ("당뇨 환자 식단 정리", "HEALTH_TOPIC"), ("영양제로 피로가 완전히 회복됩니다", "HEALTH_STOP")):
+        # 의도적 갱신(D-105): 알림 코드는 단계가 정한다 — A 표시만 HEALTH_TOPIC · B 근거 확인 필요 HEALTH_EFFECT · C 단정 위험 HEALTH_STOP. 옛 HEALTH_CLAIM 은 이 표에서 쓰이지 않는다
+        for text, code in (("영양제 구매 기준", "HEALTH_TOPIC"), ("치료 방법 비교", "HEALTH_TOPIC"), ("영양제 효능 정리", "HEALTH_EFFECT"), ("불면을 완화하는 확실한 방법", "HEALTH_STOP"),
+                           ("영양제 확실한 선택법", "HEALTH_STOP"), ("당뇨 환자 식단 정리", "HEALTH_TOPIC"), ("영양제로 피로가 완전히 회복됩니다", "HEALTH_STOP")):
             with self.subTest(text=text):
                 self.assertEqual([finding.code for finding in sf.check_text([text]).findings], [code])
 
@@ -112,7 +118,7 @@ class HealthMatrixTest(unittest.TestCase):                                      
 
     def test_english_wording_is_judged_the_same_way_and_a_security_word_is_not_medicine(self):
         self.assertEqual(sf.check_text(["This supplement will cure diabetes"]).health, "stop")
-        self.assertEqual(sf.check_text(["How to relieve stress and improve sleep"]).health, "general")
+        self.assertEqual(sf.check_text(["How to relieve stress and improve sleep"]).stage, "mark", "의도적 갱신(D-105): 증상 낱말(stress·sleep)이 있으면 영어도 표시만(A) 이다 — 옛 '일반' 에서 바뀜")
         self.assertEqual(sf.check_text(["Handling remediation steps in the security backlog"]).health, "general")
 
 
@@ -137,12 +143,21 @@ class RequestExamplesTest(unittest.TestCase):                                   
 
 
 class LifeHabitTest(unittest.TestCase):                                                                 # S3
-    def test_life_habit_expressions_stay_general(self):
-        self.assertEqual(len(corpus.NORMAL_KO_HABIT), 24)
+    def test_life_habit_expressions_without_a_symptom_word_stay_general(self):
+        # 의도적 갱신(D-105): 증상 낱말(피로·스트레스·수면·집중력·체중·붓기·소화 …)이 든 14문장은 이 목록에서 `NOTE_SYMPTOM_WORDS` 로 옮겨 가 24 → 10 이 되었다
+        self.assertEqual(len(corpus.NORMAL_KO_HABIT), 10)
         for text in corpus.NORMAL_KO_HABIT:
             with self.subTest(text=text):
                 self.assertEqual(sf.check_text([text]).health, "general")
                 self.assertEqual(sf.check_text([text]).flags, ())
+
+    def test_life_habit_expressions_with_a_symptom_word_are_only_marked(self):
+        habits = corpus.NOTE_SYMPTOM_WORDS[10:24]                                          # 옛 NORMAL_KO_HABIT 14
+        self.assertEqual(len(habits), 14)
+        for text in habits:
+            with self.subTest(text=text):
+                report = sf.check_text([text])
+                self.assertEqual((report.stage, report.flags, report.stop), ("mark", ("health_check",), False))
 
     def test_a_medical_claim_does_not_become_general_because_the_word_routine_or_habit_is_in_it(self):
         self.assertEqual(len(NOT_GENERAL_HABITS), 8)

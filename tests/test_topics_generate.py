@@ -501,12 +501,17 @@ class FactorRulesTest(unittest.TestCase):
         outside = run(A, [seed(seed_type="sponsorable", sponsor_tag="ai_service")], target=100)
         self.assertEqual({c.scores.factors.monetization for c in outside.candidates if c.source_type == "sponsor"}, {60})
 
-    def test_flags_that_a_health_word_raises_lower_the_evidence_of_the_whole_candidate(self):
-        found = run(A, [seed(keyword="예시 영양제", seed_type="priority", priority=True)], target=100)
-        for candidate in found.candidates:
-            self.assertEqual(candidate.safety_flags[0], "health_check")
-            self.assertNotIn("product_brand", candidate.safety_flags)
-            self.assertEqual(candidate.scores.factors.evidence, gn.EVIDENCE_BASE[candidate.content_type] - 20)
+    def test_a_health_flag_lowers_the_evidence_of_the_whole_candidate_only_when_the_claim_needs_evidence(self):
+        # 의도적 갱신(WP-B, D-106): 옛 시험은 건강 표시가 있으면 늘 −20 이었다. 이제 영양제 단독(A 표시만)은 감점 0, 효능을 말하면(B 근거 확인 필요)·단정하면(C 단정 위험) 근거가 없으므로 −20 이다.
+        for keyword, stage, cut in (("예시 영양제", "mark", 0), ("예시 영양제 효능", "evidence", 20), ("예시 영양제 효과 보장", "stop", 20)):
+            found = run(A, [seed(keyword=keyword, seed_type="priority", priority=True)], target=100)
+            self.assertTrue(found.candidates, keyword)
+            for candidate in found.candidates:
+                with self.subTest(keyword=keyword, topic=candidate.topic):
+                    self.assertEqual(candidate.safety_flags[0], "health_check")
+                    self.assertNotIn("product_brand", candidate.safety_flags)
+                    self.assertEqual(sf.assess(candidate).stage, stage)
+                    self.assertEqual(candidate.scores.factors.evidence, gn.EVIDENCE_BASE[candidate.content_type] - cut)
 
     def test_the_differentiation_is_a_hundred_minus_the_most_alike_existing_post_and_unknown_without_posts(self):
         self.assertIsNone(run(A, [seed()], target=100).candidates[0].scores.factors.differentiation)
@@ -1075,10 +1080,16 @@ class RegressionBeforeAfterTest(unittest.TestCase):
         # 수정 전: 제품 비교 (74, 근거 50, product_brand) · 수정 후 (75, 근거 60, 표시 없음)
         self.assertEqual(self.rows(found), {"예시 난방 관리 방법": (77, "GENERAL", 80, ()), "예시 난방 제품 비교": (75, "GENERAL", 60, ()), "예시 난방 방법": (74, "GENERAL", 80, ())})
 
-    def test_s4_a_health_seed_still_gets_the_health_flag_and_the_twenty_point_cut(self):
+    def test_s4_a_health_seed_still_gets_the_health_flag_but_the_twenty_point_cut_only_when_the_claim_needs_evidence(self):
         found = run(A, [seed(keyword="예시 영양제", seed_type="priority", priority=True)], target=100)
-        # 수정 전: 관리 방법 79·방법 76·체크리스트 76 (근거 60, health_check) · 수정 후: 제품 비교(근거 40 = 60 − 20)가 체크리스트 대신 남는다
-        self.assertEqual(self.rows(found), {"예시 영양제 관리 방법": (79, "GENERAL", 60, ("health_check",)), "예시 영양제 제품 비교": (77, "GENERAL", 40, ("health_check",)), "예시 영양제 방법": (76, "GENERAL", 60, ("health_check",))})
+        # 수정 전: 관리 방법 79·방법 76·체크리스트 76 (근거 60, health_check) · P2b 보완 후: 제품 비교(근거 40 = 60 − 20)가 체크리스트 대신 남는다
+        # 의도적 갱신(WP-B, D-106): 영양제 단독은 표시만(A) — 표시는 그대로 붙지만 근거 감점이 없어 건강 표시 없는 씨앗(s2)과 점수가 같다(관리 방법은 79 → 82 로 오르고 구간이 일반 → 우선 추천)
+        self.assertEqual(self.rows(found), {"예시 영양제 관리 방법": (82, "RECOMMENDED", 80, ("health_check",)), "예시 영양제 제품 비교": (79, "GENERAL", 60, ("health_check",)), "예시 영양제 방법": (79, "GENERAL", 80, ("health_check",))})
+        plain = run(A, [seed(keyword="예시 로봇청소기", seed_type="priority", priority=True)], target=40)
+        self.assertEqual(sorted(c.scores.final for c in found.candidates), sorted(c.scores.final for c in plain.candidates), "건강 표시만 다르고 점수는 같다")
+        # 효능을 말하면(B 근거 확인 필요) 예전과 같은 −20 이다 — 옛 값 79·77·76 이 그대로 나온다
+        evidence = run(A, [seed(keyword="예시 영양제 효능", seed_type="priority", priority=True)], target=100)
+        self.assertEqual(self.rows(evidence), {"예시 영양제 효능 관리 방법": (79, "GENERAL", 60, ("health_check",)), "예시 영양제 효능 제품 비교": (77, "GENERAL", 40, ("health_check",)), "예시 영양제 효능 방법": (76, "GENERAL", 60, ("health_check",))})
 
     def test_s5_a_sponsorable_seed_loses_the_disclosure_flag_and_keeps_the_scores(self):
         found = run(A, [seed(seed_id="sp1", keyword="예시 호텔", major="여행", minor="숙박", seed_type="sponsorable", sponsor_tag="lodging_travel")], target=100)

@@ -15,7 +15,8 @@
   · 작성 가능성: `feasibility.assess_candidate` 의 점수.
   · 차별성: 같은 채널의 기존 글과 가장 비슷한 정도(%)를 100 에서 뺀 값 — **견줄 기존 글이 없으면 None**(0점·100점이 아니라 모름).
   · 시기: 캘린더 상태(`schedule.state_of`)와 관심도 상태로 `score.timing_score`(채널의 관심도 사용 정도를 따른다). '시기 도달 + 관심도 하락' 도 보류 구간으로 강제하지 않고 점수만 낮춘다(R-149 의 C=0).
-  · 근거: 글 종류별 기본 점수(`EVIDENCE_BASE`) − 건강 표시 20·경험 단정 표시 10(두 표시뿐 — 일반 낱말·글 종류로는 깎지 않는다) + 기존 글의 후속 10, 운영자가 넣은 이슈는 공식 출처가 있으면 90·독립 출처 둘이면 75.
+  · 근거: 글 종류별 기본 점수(`EVIDENCE_BASE`) − 건강 20(**근거가 필요한 주장 — 건강 판정 B 근거 확인 필요·C 의료·효과 단정 위험 — 이면서 근거가 없을 때만**, A 표시만은 0, D-106)·경험 단정 표시 10(두 가지뿐 — 일반 낱말·글 종류로는 깎지 않는다)
+    + 기존 글의 후속 10, 운영자가 넣은 이슈는 공식 출처가 있으면 90·독립 출처 둘이면 75(근거 있음 — 감점하지 않는다). 씨앗·후속·계절·협찬 경로는 아직 근거 자료 칸이 없어 B·C 에서 감점된다(알려진 한계).
   · 수익화: 채널이 우선 수익화 분야를 정하지 않았으면 None, 협찬 태그가 채널 분야에 있으면 100(없으면 60), 태그가 없으면 주제 묶음이 채널 분야와 이어질 때 70(아니면 30).
 점수·추천 구간(`score.band_of`)·보류 만료일(`hold.expiry_for`)·중복 표시(`dedupe.marked`)·안전 표시(`safety.mark`)는 모두 기존 부품이 정한다 — 이 모듈은 숫자만으로 후보를 지우거나 제외하지 않는다(경로별 상한을 넘는 것만 세어서 뺀다).
 
@@ -72,7 +73,7 @@ EVIDENCE_BASE = MappingProxyType({
     "explainer": 70, "how_to_guide": 80, "checklist": 80, "troubleshooting": 75, "buying_guide": 60, "comparison": 60, "place_guide": 60, "news_analysis": 50, "routine_plan": 85, "dev_log": 85,
     "service_intro": 65,
 })
-EVIDENCE_PENALTY = MappingProxyType({"health_check": 20, "experience_claim": 10})        # 근거 감점은 이 둘뿐이다(P2b 보완 D-54 — 일반 낱말·글 종류로는 감점하지 않는다)
+EVIDENCE_PENALTY = MappingProxyType({"health_check": 20, "experience_claim": 10})        # 근거 감점은 이 둘뿐이다(P2b 보완 D-54 — 일반 낱말·글 종류로는 감점하지 않는다). 건강 20 은 B·C 단계에서 근거가 없을 때만(D-106)
 EVIDENCE_OWN_POST_BONUS = 10
 EVIDENCE_OFFICIAL, EVIDENCE_INDEPENDENT = 90, 75
 CLUSTER_MONETIZATION = MappingProxyType({
@@ -329,12 +330,15 @@ def _channel_fit(profile, cluster, extra):
     return min(100, FIT_BASE + (FIT_CLUSTER if cluster in profile.topic_clusters else 0))
 
 
-def _evidence(candidate, flags, extra):
+def _evidence(candidate, flags, extra, stage=None):
+    """근거 점수. '근거 있음'(공식 출처 1개 이상 → 90, 서로 독립인 출처 2곳 이상 → 75 — 운영자가 넣은 이슈뿐)이면 감점하지 않고 그 값이다. 근거가 없으면 글 종류별 기본 점수에서 경험 단정 10 을 빼고,
+    건강 20 은 **근거가 필요한 주장일 때만** 뺀다 — `stage`(`SafetyReport.stage`)가 B 근거 확인 필요·C 의료·효과 단정 위험일 때(D-106). A 표시만·일반은 0 이다. `stage` 를 안 주면(`None`) 건강 표시가 있으면 뺀다(옛 호출과 같다)."""
     if extra.official >= MIN_OFFICIAL:
         return EVIDENCE_OFFICIAL
     if extra.independent >= MIN_INDEPENDENT:
         return EVIDENCE_INDEPENDENT
-    points = EVIDENCE_BASE[candidate.content_type] - sum(EVIDENCE_PENALTY[flag] for flag in flags if flag in EVIDENCE_PENALTY) + (EVIDENCE_OWN_POST_BONUS if extra.own_post else 0)
+    cut = sum(EVIDENCE_PENALTY[flag] for flag in flags if flag in EVIDENCE_PENALTY and (flag != safety.FLAG_HEALTH or safety.needs_evidence(stage)))
+    points = EVIDENCE_BASE[candidate.content_type] - cut + (EVIDENCE_OWN_POST_BONUS if extra.own_post else 0)
     return max(0, min(100, points))
 
 
@@ -372,7 +376,7 @@ def _finish(ctx, base, extra):
     feasible = feasibility.assess_candidate(base, profile)
     factors = score.Factors(
         channel_fit=_channel_fit(profile, base.topic_cluster, extra), feasibility=feasible.score, differentiation=None if found.highest is None else 100 - found.highest,
-        timing=timing.score, evidence=_evidence(base, report.flags, extra), monetization=_monetization(profile, base, extra))
+        timing=timing.score, evidence=_evidence(base, report.flags, extra, report.stage), monetization=_monetization(profile, base, extra))
     result = score.score(profile, factors)
     if found.compared == 0:
         similar = "견줄 기존 글이 없어 차별성은 모름으로 두었습니다(0점·100점이 아닙니다)"
