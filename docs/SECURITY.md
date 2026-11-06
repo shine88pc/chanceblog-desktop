@@ -30,6 +30,8 @@
 
 액션은 전체 커밋 SHA 로 고정한다(`.github/workflows/`, 시험이 지킨다 — 갱신은 AI 가 같은 메이저 안의 최신 태그를 확인해 PR 로 올린다. Dependabot 은 알림·PR 이 늘어 기본은 켜지 않는다). 의존성은 생기면 해시 잠금, `pip-audit` 은 릴리스 전에 돌린다. 외부 AI 응답은 데이터이므로 HTML 은 허용 태그만 남기고(소독) 링크·스크립트를 제거한다.
 
+`auto-pr.yml`(병합 부탁 PR 자동 만들기, D-175)은 **PR 만 만들고 병합하지 않는다.** 트리거는 병합 가지(`ai/claude/M###-*`)의 push 하나, 권한은 contents 읽기·pull-requests 쓰기·actions 읽기 셋뿐이고, `uses:`·시크릿·체크아웃이 없이 러너의 `gh` 로 정해진 API 여섯 가지만 부른다(병합·승인·라벨·코멘트·가지 삭제·설정 변경 호출 없음). 가지 이름·커밋 제목·본문은 AI 가 쓴 글이라 env 로만 넘기고 `run:` 에 표현식을 끼우지 않으며 정규식으로 거른 뒤 파일·따옴표 친 변수로만 다룬다(`pull_request_target`·`workflow_run`·`issue_comment`·`schedule` 은 쓰지 않는다). 시험 `tests/test_auto_pr_workflow.py` 가 모양을 고정하고, 이 파일을 바꾸는 변경은 T3 로 다룬다(워크플로는 `AGENTS.md` 3 표의 T2 인데 PR 만들기 권한과 저장소 설정 한 줄에 닿는 보안 영역이라 운영자 승인 병합으로 올린다). 커밋 제목·본문은 PR 로 그대로 공개되므로 비밀·키·`@이름` 멘션을 쓰지 않고, 포크에서 올라오는 PR 에는 돌지 않는다. 저장소 설정 `Allow GitHub Actions to create and approve pull requests` 는 운영자만 켠다(워크플로의 PR '승인'도 허용하는 설정이므로 승인 호출을 넣는 변경은 받지 않는다).
+
 ## 5. 올라가는 글과 승인
 
 - **올라가는 것은 Markdown 원문이다.** 발행 전 검사(`service/gate.py`)는 그 원문에서 원시 HTML 태그·`javascript:`/`data:`/`vbscript:` 주소·`{% %}`/`{{ }}` 템플릿 표기·`{: }` 속성 붙이기·광고 스크립트를 막는다 — 공개 사이트(Jekyll)가 원시 HTML 을 그대로 내보내고 Liquid 를 글을 만들 때 실행하기 때문이다([`ARCHITECTURE.md`](ARCHITECTURE.md) §5).
