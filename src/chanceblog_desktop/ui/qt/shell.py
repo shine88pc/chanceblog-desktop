@@ -40,7 +40,7 @@ class AppShell(QMainWindow):
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, today=today, runner=runner, connections=connections)
+        self.state = AppState(provider, today=today, runner=runner, connections=connections, version=self.version_info)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
         self.setWindowTitle(T["window_title"])
         root = QWidget()

@@ -5,9 +5,10 @@
   · 호출 코드가 없는 용도(`implemented` 가 거짓)는 '준비 중' 이고 연결 배지가 '연결됨' 일 수 없다 — 공급자가 '연결됨' 이라고 해도 '연결 확인 필요' 로 낮춘다(지어내지 않는다).
   · 키를 하나만 두거나(`max_entries == 1`) 어떤 오류에도 다른 키로 넘어가지 않는(`rotation == "never"`) 용도에는 '예비' 종류도 '키 더하기' 도 없다 — 이 규칙은 `single_choice` 한 곳이다.
   · 옛 용도(`legacy`)와 필요할 때만 보이는 용도(`on_demand`)는 항목이 남아 있거나 실제로 연결돼 있을 때만 카드로 보인다(`visible`).
-  · 한도 줄은 '오늘 12 / 100회 · 이번 달 340 / 27,000회' 꼴이고 서비스 고정 멈춤 문구는 한도에 실제로 닿았을 때만 보인다(어댑터가 거른다).
+  · 한도 줄은 기간마다 막대 한 줄('오늘 12 / 100회'·'이번 달 340 / 27,000회' — 뷰모델은 막대에 줄 숫자 칸 `bar` 만 더하고 색·퍼센트는 `gauges.usage_view` 규칙이 정한다)이고 서비스 고정 멈춤 문구는 한도에 실제로 닿았을 때만 보인다(어댑터가 거른다).
   · 항목의 '사용·예비·꺼짐' 은 연결 배지와 떼어 항목 줄의 작은 글("키 사용 설정: 사용")로만 보인다.
   · 예시 데이터(`sample`)는 모든 사용량 줄 끝에 '예시' 꼬리표가 붙는다. 못 읽은 사용량은 숫자 대신 '확인할 수 없어요' 이다.
+  · 접이식 묶음은 다섯이다(UI-C1b) — 용도 묶음 넷(데이터 Provider·이미지·AI 보조·발행·연결 = `groups`)과 마지막 '정보'(`info` — 버전 + 접어 둔 진단 정보). 새 이름·구조는 운영자 2026-11-06 확인 요청 004 의 답 7.
   · 영문 상태 이름(`needs_check`·`rotation`·`standby` …)은 뷰모델의 글에 담기지 않는다 — 글은 문구표(`T`)에서만 온다(`key`·`tone`·`icon` 은 글이 아니라 그림·묶음을 고르는 값이다).
   · 특정 사람의 블로그에 맞춘 문장이 없다 — 용도 목록은 서비스 표에서, 문장은 문구표에서, 색은 토큰에서 온다.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import datetime
 
+from . import gauges as G
 from .services import CONN_PROBLEMS, CONN_STATUSES, GROUP_ORDER, PURPOSE_GROUPS
 from .text import T
 
@@ -24,6 +26,7 @@ CHIP_ORDER = ("auth_error", "rate_limited", "needs_check", "connected")      # �
 FALLBACK_GROUP = "data"                                                       # 표에 없는 새 용도가 숨지 않고 보이는 곳(표와 서비스 표가 어긋나면 시험이 알린다)
 STATES = ("active", "standby", "off")
 PARTIAL_TEXT = {"keystore": "conn_partial_keystore", "usage": "conn_partial_usage"}
+INFO_GROUP = "info"                                                           # '정보' 묶음의 이름 — 서비스(용도) 묶음이 아니라 앱 정보라 `GROUP_ORDER`(용도 묶음 네 개)에는 없고 목록의 마지막 줄이다(UI-C1b)
 
 
 def _shown(value, limit=300):
@@ -84,27 +87,39 @@ def entry_vm(info, entry):
             "missing": T["entry_missing"] if entry.key_found is False else ""}
 
 
+def _text_row(text, tag, note):
+    return {"text": text, "tag": tag, "note": note, "bar": None}
+
+
+def _bar_row(span, used, limit, tag):
+    """기간 하나의 사용량 줄 — `text`(`오늘 12 / 100회`)와 막대에 줄 **숫자 칸** `bar`(기간 이름·쓴 수·한도·단위, 반올림한 정수). 숫자가 없거나 숫자가 아니거나 음수·한도 0 이하면 숫자를 지어내지 않고
+    `오늘 확인할 수 없어요` 이고 `bar` 의 숫자는 None 이다(화면은 막대 없이 글만 그린다 — 0 으로 채우지 않는다). 글은 막대 부품과 같은 규칙(`gauges.usage_view`) 한 곳에서 나온다."""
+    title, unit = _shown(span, 30), T["usage_unit"]
+    view = G.usage_view(used, limit, unit, title)
+    return {"text": view.text, "tag": tag, "note": False, "bar": {"title": title, "used": view.used, "limit": view.limit, "unit": unit}}
+
+
 def usage_vm(info, sample):
-    """한도 줄 — 읽은 숫자는 그대로, 못 읽었으면 숫자를 지어내지 않고 '확인할 수 없어요'. 예시 데이터는 줄마다 '예시' 꼬리표. 보일 것이 없으면 None."""
+    """한도 줄 — **기간마다 막대 한 줄**(`bar` 칸의 숫자를 화면이 `UsageBar` 로 그린다: 오늘 12 / 100회·이번 달 340 / 27,000회), 읽은 숫자는 그대로, 못 읽었으면 숫자를 지어내지 않고 막대 없이 '확인할 수 없어요'.
+    콘솔 한도·한도 단계·멈춤 문구는 막대가 없는 작은 글 줄(`bar` 가 None). 예시 데이터는 줄마다 '예시' 꼬리표. 보일 것이 없으면 None."""
     usage = info.usage
     if usage is None:
         return None
     tag = T["usage_sample"] if sample else ""
     rows = []
     if not usage.readable:
-        rows.append({"text": T["usage_unreadable_closed"] if usage.fail_closed else T["usage_unreadable"], "tag": tag, "note": False})
+        rows.append(_text_row(T["usage_unreadable_closed"] if usage.fail_closed else T["usage_unreadable"], tag, False))
         if usage.stop_cause:                                                  # 왜 못 믿는지 한 줄(서비스가 쉬운 한국어로 준다)
-            rows.append({"text": _shown(usage.stop_cause, 200), "tag": tag, "note": True})
+            rows.append(_text_row(_shown(usage.stop_cause, 200), tag, True))
     else:
-        parts = [T["usage_count"].format(span=span, used=f"{int(used):,}", limit=f"{int(limit):,}") for span, used, limit in usage.rows]
-        if parts:
-            rows.append({"text": " · ".join(parts), "tag": tag, "note": False})
+        rows.extend(_bar_row(span, used, limit, tag) for span, used, limit in usage.rows)
+        if usage.rows:
             small = ([T["usage_console"].format(n=f"{usage.console_limit:,}")] if usage.console_limit else []) + ([T["usage_attempts_note"]] if usage.attempts else [])
-            if small:                                                             # 콘솔 한도·'실패한 호출도 센다' 는 작은 글로 따로 — 숫자 줄은 '오늘 12 / 100회' 만 말한다
-                rows.append({"text": " · ".join(small), "tag": tag, "note": True})
+            if small:                                                             # 콘솔 한도·'실패한 호출도 센다' 는 작은 글로 따로 — 막대 줄은 '오늘 12 / 100회' 만 말한다
+                rows.append(_text_row(" · ".join(small), tag, True))
         for note in (usage.stage_text, usage.stop_text, usage.stop_cause, usage.resume_text):
             if note:
-                rows.append({"text": _shown(note, 200), "tag": tag, "note": True})
+                rows.append(_text_row(_shown(note, 200), tag, True))
     return {"title": T["usage_title"], "rows": rows} if rows else None
 
 
@@ -174,6 +189,17 @@ def group_vm(key, infos, opened, sample):
             "a11y": ", ".join(part for part in (title, summary, state) if part)}
 
 
+def info_vm(data, opened, loaded_at, version):
+    """'정보' 묶음(UI-C1b) — **버전**(UI-C1a 의 버전 규칙 그대로: 읽으면 `v0.0.0`, 못 읽으면 개발 화면의 `개발 버전`)과 접어 둔 **진단 정보**(+ '키와 입력한 글은 담기지 않아요' 안내). 요약 칩은 없다.
+    버전은 앱이 이미 읽어 둔 값(`VersionInfo`)을 받는다 — 이 순수 규칙이 파일을 읽지 않는다. 못 받았으면 개발 화면과 같은 `개발 버전`. 읽기만 한다(키·항목 이름·값은 어디에도 없다)."""
+    title = T["conn_group_info"]
+    state = T["conn_group_open"] if opened else T["conn_group_closed"]
+    shown = version.text if version is not None else T["dev_version"]
+    return {"key": INFO_GROUP, "title": title, "open": opened, "chips": [], "summary": "", "a11y": ", ".join((title, state)),
+            "version": {"label": T["info_version"], "text": shown},
+            "diag": {"show": T["diag_show"], "hide": T["diag_hide"], "note": T["diag_note"], "text": diag_text(data, loaded_at) if data else ""}}
+
+
 def diag_text(data, when=None):
     """설정 화면의 '진단 정보'(기본 화면에는 안 보이고 펼칠 때만) — 읽은 시각·용도와 항목 수·읽은 곳(보관소·사용량)의 성공 여부뿐이다. 키 값도, 항목 이름도, 끝 글자도 담지 않는다."""
     stamp = (when or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
@@ -183,8 +209,9 @@ def diag_text(data, when=None):
                       f"{T['diag_keystore']}: {answer('keystore')}", f"{T['diag_usage']}: {answer('usage')}"))
 
 
-def build_settings_view(data, state, *, failure=None, error_diag="", loaded_at=None, open_groups=None):
-    """설정 화면 하나의 뷰모델. `state` 는 홈과 같은 여섯 상태(loading · normal · empty · error · partial · offline)이고 `open_groups` 는 펼친 묶음 이름들이다."""
+def build_settings_view(data, state, *, failure=None, error_diag="", loaded_at=None, open_groups=None, version=None):
+    """설정 화면 하나의 뷰모델. `state` 는 홈과 같은 여섯 상태(loading · normal · empty · error · partial · offline)이고 `open_groups` 는 펼친 묶음 이름들(용도 묶음 넷 + `info`)이다.
+    묶음은 다섯 — 용도 묶음 넷(`groups`: 데이터 Provider·이미지·AI 보조·발행·연결)과 마지막 `info`('정보' — 버전 + 진단 정보)."""
     sample = bool(data and data.sample)
     opened = set(open_groups or ())
     groups = [group_vm(key, infos, key in opened, sample) for key, infos in grouped(data.purposes)] if data and state in ("normal", "partial", "offline") else []
@@ -197,7 +224,7 @@ def build_settings_view(data, state, *, failure=None, error_diag="", loaded_at=N
         "title": T["settings_title"], "sub": T["settings_sub"], "sample": sample, "sample_tag": T["sample_tag"], "state": state,
         "fetched": T["last_fetch"].format(when=data.fetched) if data and data.fetched else "", "banners": banners, "refresh": T["conn_refresh"],
         "section": {"title": T["conn_title"], "desc": T["conn_desc"]}, "groups": groups, "keys_note": T["conn_keys_note"],
-        "advanced": {"title": T["advanced_title"], "show": T["diag_show"], "hide": T["diag_hide"], "note": T["diag_note"], "diag": diag_text(data, loaded_at) if data else ""},
+        "info": info_vm(data, INFO_GROUP in opened, loaded_at, version),
         "loading": {"text": T["conn_loading"], "a11y": T["conn_loading_a11y"]},
         "empty": {"title": T["conn_empty_title"], "desc": T["conn_empty_desc"], "button": T["conn_empty_btn"]},
         "error": {"title": T["conn_error_title"], "desc": T["conn_error_desc"], "button": T["retry"], "diag": error_diag,

@@ -2,8 +2,8 @@
 
 - `ScoreRing`: 원형 점수 링 — **링 안에는 숫자만**. 구간 이름·변화량은 링 옆·아래의 별도 글(라벨)이라 `ScoreWithLabel` 이 합쳐 준다(카드형·상세형 두 배치). 데이터 부족은 링을 그리지 않는다.
 - `BarGauge`: 구성 막대(높이 12·반경 6, 구성마다 고정색) + 아래에 이름·숫자 + 오른쪽에 큰 총점. 색만 보지 않도록 이름과 값이 글자로 늘 함께 있다.
-- `UsageBar`: 사용량 막대(높이 8, 80% 경고색·90% 위험색) + `이번 달 12,400 / 27,000회` + `46%`(경고·위험이면 `주의`·`위험` 글도).
-어떤 화면에도 아직 연결하지 않은 독립 부품이다(샘플 값으로 시험·사진을 찍는다).
+- `UsageBar`: 사용량 막대(높이 8, 80% 경고색·90% 위험색) + `이번 달 12,400 / 27,000회` + `46%`(경고·위험이면 `주의`·`위험` 글도). 모르는 값은 막대 없이 글만(UI-C1b 에서 고침).
+`UsageBar` 는 설정 화면의 용도 카드가 쓴다(UI-C1b). 점수 링·구성 막대는 아직 어떤 화면에도 연결하지 않은 독립 부품이다(샘플 값으로 시험·사진을 찍는다).
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from ..core import gauges as G, tokens as K
 from ..core.text import T
 from . import theme
-from .components import ElidedLabel, label, repolish
+from .components import Badge, ElidedLabel, label, repolish
 
 
 class ScoreRing(QWidget):
@@ -214,12 +214,14 @@ class BarGauge(QWidget):
 
 class UsageBar(QWidget):
     """사용량 막대 — `이번 달 12,400 / 27,000회` + `46%`(숫자와 단위를 늘 함께). 표시한 퍼센트가 80 이상이면 경고색·90 이상이면 위험색이고 색과 함께 `주의`·`위험`(한도를 넘으면 `한도 넘음`) 글이 붙는다.
-    사용량을 모르면(없음·음수·한도 0 이하) 막대를 채우지 않고 `확인할 수 없어요` 만 보인다."""
+    사용량을 모르면(없음·음수·한도 0 이하) **막대를 아예 만들지 않고**(빈 길도 없다 — 빈 길이 남으면 0% 로 읽힌다) `확인할 수 없어요` 글만 보인다(`track` 은 None).
+    UI-C1b 에서 고침: 옛 부품은 모르는 값에도 빈 길을 그렸다(UI-C0 독립 검증 M1) — 운영자 2026-11-06 확인 요청 004 의 답 7 '값을 읽지 못하면 Bar 없이 `확인할 수 없어요`'.
+    `tag` 는 줄 끝에 붙는 작은 꼬리표(예시 값이면 `예시`)이고 접근 이름에도 같이 들어간다."""
 
-    def __init__(self, used, limit, unit="회", title=""):
+    def __init__(self, used, limit, unit="회", title="", tag=""):
         super().__init__()
         self.view = G.usage_view(used, limit, unit, title)
-        self.setAccessibleName(self.view.spoken)
+        self.setAccessibleName(", ".join(part for part in (self.view.spoken, tag) if part))
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(K.SPACE["2"])
@@ -235,7 +237,13 @@ class UsageBar(QWidget):
                 self.percent_label.setProperty("usage", self.view.state)             # warn | danger — 글자 색(`QLabel[usage]`)
                 repolish(self.percent_label)
             row.addWidget(self.percent_label)
+        self.tag_label = None
+        if tag:
+            self.tag_label = Badge("muted", tag)                                         # 예시 값의 꼬리표 — 줄 끝(퍼센트 뒤)
+            row.addWidget(self.tag_label, 0, Qt.AlignVCenter)
         outer.addLayout(row)
-        fill = [(self.view.fraction, self.view.color_key)] if self.view.known and self.view.fraction > 0 else []
-        self.track = _Track(K.SIZE["usage_h"], K.RADIUS["usage"], fill, rounded_fill=True)
-        outer.addWidget(self.track)
+        self.track = None                                                                # 모르는 값에는 막대(빈 길 포함)가 없다
+        if self.view.known:
+            fill = [(self.view.fraction, self.view.color_key)] if self.view.fraction > 0 else []
+            self.track = _Track(K.SIZE["usage_h"], K.RADIUS["usage"], fill, rounded_fill=True)
+            outer.addWidget(self.track)

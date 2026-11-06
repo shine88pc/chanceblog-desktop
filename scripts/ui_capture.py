@@ -1,4 +1,4 @@
-"""화면(홈·상태 화면·서랍·대화상자·툴팁·토스트와 설정 화면의 접이식·여섯 상태·실제 어댑터 모습)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
+"""화면(홈·상태 화면·서랍·대화상자·툴팁·토스트와 설정 화면의 접이식·여섯 상태·실제 어댑터 모습·사용량 막대 상태)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
 
 실행(저장소 맨 위 폴더에서, PySide6 가 있는 파이썬으로):
     python scripts/ui_capture.py <저장 폴더> --env 1366x768@100 [--env 1920x1080@125 …] [--check] [--gallery]
@@ -179,8 +179,28 @@ def real_settings_provider(tmp):
     return ServiceConnectionsProvider(context_factory=lambda data_dir=None: ctx)
 
 
+def usage_states_provider():
+    """설정 카드의 사용량 막대 상태를 한 장에 보이는 예시 공급자(UI-C1b) — 파랑(79%)·노랑(80%)·빨강(90%)·한도 넘음(120%)·읽지 못함(막대 없이 글). 숫자는 모두 지어낸 예시다(화면에도 `예시` 꼬리표가 붙는다)."""
+    from dataclasses import replace
+    from chanceblog_desktop.ui.core import services
+    usage = {"naver_apihub": services.UsageInfo((("오늘", 79, 100), ("이번 달", 21600, 27000)), True, 30000, "이번 달 사용량이 NAVER API HUB 콘솔 한도의 70%를 넘었습니다 — 아직 정상이지만 사용량을 살펴 주세요.", fail_closed=True),
+             "image_provider": services.UsageInfo((("최근 60분", 45, 50),)),
+             "ai_assist": services.UsageInfo((("오늘", 120, 100),)),
+             "blogger": services.UsageInfo(readable=False)}
+    purposes = tuple(replace(item, usage=usage[item.key], entries=item.entries or (services.EntryInfo("예시 키 1", "active", True),)) if item.key in usage else item
+                     for item in services.sample_connections("normal"))
+
+    class UsageStates(services.ConnectionsProvider):
+        sample = True
+
+        def load_connections(self, progress, cancelled):
+            return services.ConnectionsData(purposes=purposes, sample=True, fetched="오늘 09:12")
+
+    return UsageStates()
+
+
 def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
-    """설정 화면(P4a) 사진·점검 — 접이식 기본 모습·모두 펼침(페이지 전체)·읽는 중·빈·오류(진단 정보 펼침)·일부만·오프라인·실제 어댑터 모습. 같은 환경에서 글자 잘림·가로 스크롤도 잰다."""
+    """설정 화면(P4a) 사진·점검 — 접이식 기본 모습·모두 펼침(페이지 전체)·읽는 중·빈·오류(진단 정보 펼침)·일부만·오프라인·실제 어댑터 모습·사용량 막대 상태(UI-C1b). 같은 환경에서 글자 잘림·가로 스크롤도 잰다."""
     import tempfile
     from PySide6.QtCore import QRect
     from PySide6.QtWidgets import QApplication, QWidget
@@ -252,6 +272,11 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
         shoot(window, "settings_real", whole=True)
         audit(window, "settings_real")
         window.close()
+    window = make(usage_states_provider())                                              # 사용량 막대의 모든 상태(파랑·노랑·빨강·한도 넘음·못 읽음) — 예시 숫자
+    open_all(window)
+    shoot(window, "settings_usage", whole=True)
+    audit(window, "settings_usage")
+    window.close()
 
 
 def main(argv=None):

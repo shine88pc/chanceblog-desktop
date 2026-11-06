@@ -337,6 +337,25 @@ class UsageRulesTest(unittest.TestCase):
     def test_the_boundaries_are_the_documented_ones(self):
         self.assertEqual((gauges.USAGE_WARN, gauges.USAGE_DANGER), (80, 90))
 
+    def test_the_color_lines_are_the_same_percent_for_every_limit_the_settings_cards_use(self):
+        """UI-C1b — 설정 카드의 한도는 하루 100·시간당 50·월 27,000 이다. 색은 **표시한 퍼센트**로 정하므로 한도가 달라도 79/80/89/90% 에서 같은 모양으로 갈린다(0~79 파랑·80~89 노랑·90 이상 빨강 — 운영자 2026-11-06 확인 요청 004 의 답 7)."""
+        for limit, edges in ((100, (0, 79, 80, 89, 90, 100)), (50, (0, 39, 40, 44, 45, 50)), (27000, (0, 21400, 21500, 24100, 24200, 27000))):
+            states = [gauges.usage_view(used, limit, "회", "").state for used in edges]
+            self.assertEqual(states, ["ok", "ok", "warn", "warn", "danger", "danger"], (limit, edges))
+            colors = [gauges.usage_view(used, limit, "회", "").color_key for used in edges]
+            self.assertEqual(colors, ["primary", "primary", "warning", "warning", "danger", "danger"], (limit, edges))
+
+    def test_the_numbers_the_view_hands_to_a_bar_are_the_shown_whole_numbers_and_none_when_unknown(self):
+        """UI-C1b — 설정 화면 뷰모델이 막대에 건네는 숫자 칸(`used`·`limit`)은 표시하는 정수이고 모르면 None 이다(그대로 다시 `usage_view` 에 넣어도 같은 결과)."""
+        v = gauges.usage_view(12.6, 100.2, "회", "오늘")
+        self.assertEqual((v.used, v.limit, v.text), (13, 100, "오늘 13 / 100회"))
+        again = gauges.usage_view(v.used, v.limit, "회", "오늘")
+        self.assertEqual((again.used, again.limit, again.text, again.percent, again.spoken), (v.used, v.limit, v.text, v.percent, v.spoken))
+        for used, limit in ((None, 100), (-1, 100), (5, 0), (True, 5), ("1", 5)):
+            unknown = gauges.usage_view(used, limit, "회", "오늘")
+            self.assertEqual((unknown.used, unknown.limit), (None, None), (used, limit))
+        self.assertEqual((gauges.usage_view(0, 27000).used, gauges.usage_view(0, 27000).limit), (0, 27000))                     # 실제 0회는 모르는 값이 아니다
+
 
 class PartRulesTest(unittest.TestCase):
     KINDS = ["primary", "secondary", "secondary", "tertiary", "tertiary", "danger"]
