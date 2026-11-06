@@ -61,11 +61,15 @@ def fnv(text):
 
 
 class InitialTablesTest(unittest.TestCase):
-    def test_the_module_says_every_table_is_an_initial_value_pending_the_strategy_original(self):
+    def test_the_module_says_which_tables_come_from_the_strategy_original_and_which_are_implementer_initial_values(self):
+        # P3b-1 의도적 갱신: 전략 원문 대조가 끝났다(2026-11-06) — 새 규칙의 표는 원문 §10.1·§10.3 에서 옮긴 것이고, 옛 규칙의 표(`DIRECTIONS`·`LEGACY_*`)와 `CLUSTER_LABELS` 는 구현자 초기값이다. 머리말이 그것을 사실대로 말한다.
         text = Path(ex.__file__).read_text(encoding="utf-8")
-        self.assertIn("초기값 — 전략 원문 확인 전", text)
-        for name in ("DIRECTIONS", "COMMON_DIRECTIONS", "ALLOWED_FAMILIES", "CLUSTER_LABELS"):
-            self.assertIn(name, text.split("초기값 — 전략 원문 확인 전", 1)[1].split('"""', 1)[0], name)
+        doc = text.split('"""', 2)[1]
+        self.assertIn("구현자 초기값", doc)
+        self.assertNotIn("전략 원문 확인 전", doc, "더 이상 '원문 확인 전' 이 아니다")
+        for name in ("STRATEGY_COMMON_DIRECTIONS", "TARGET_EXPANSION_WORDS", "TARGET_ALLOWED_FAMILIES", "TARGET_WORD_FAMILY", "LEGACY_COMMON_DIRECTIONS", "LEGACY_ALLOWED_FAMILIES", "원문 §10.1", "원문 §10.3"):
+            self.assertIn(name, doc, name)
+        self.assertIn("옛 규칙", doc)
 
     def test_the_families_and_their_plain_korean_names(self):
         self.assertEqual(ex.FAMILIES, ("choose", "howto", "fix", "context", "place", "habit", "case", "info"))

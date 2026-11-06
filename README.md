@@ -105,6 +105,8 @@ python -m chanceblog_desktop topics show 3                      # 후보 하나�
 python -m chanceblog_desktop topics review                      # 보류함 검토(기한이 지난 후보를 표시합니다 — 지우지 않습니다)
 python -m chanceblog_desktop topics backup                      # 점검한 백업을 새 폴더에 만듭니다 — 읽기 전용 기본의 유일한 예외(`--yes` 없이 만들지만 기존 데이터는 안 바꾸고 최근 10개만 보관해 오래된 백업을 지웁니다)
 python -m chanceblog_desktop topics restore --latest --yes      # 백업으로 되돌립니다(직전 상태를 따로 백업하고, 지금 파일에 키 모양이 있으면 아무것도 바꾸지 않고 멈추며, 깨진 지금 파일은 지우지 않고 옆에 옮깁니다)
+python -m chanceblog_desktop topics seeds import 제안.json       # 씨앗 제안 파일을 모두 승인 전 씨앗으로 불러옵니다(미리 보기 — `--yes` 를 붙여야 저장합니다. 승인 전 씨앗은 후보 생성에 쓰이지 않습니다)
+python -m chanceblog_desktop topics hold cleanup               # 90일 뒤에도 변화가 없는 보류 후보의 상세 정리 미리 보기(미리 보기가 확인 번호를 보여 주고 `--yes --confirm 확인번호` 를 붙여야 정리하며 이력 13칸만 남깁니다 — 자동으로는 절대 정리하지 않습니다)
 ```
 
 - 글·설정·백업은 PC 의 사용자 데이터 폴더(Windows: `%LOCALAPPDATA%\ChanceblogDesktop`)에만 두고 저장소 안에는 두지 않습니다(`--data-dir` 로 바꿀 수 있지만 저장소 폴더 안은 거절합니다). `backup`·`restore` 로 백업과 복구를 합니다(`restore` 는 지금 글 저장소를 그 백업의 내용으로 통째로 바꾸므로 `--yes` 가 있어야 합니다 — `restore --latest` 만 쓰면 `CONFIRMATION_REQUIRED` 와 함께 어느 백업인지 알려 주니 맞으면 같은 명령 끝에 `--yes` 를 붙입니다). 키·토큰은 읽지도 보이지도 않고, 화면에 나가는 모든 글은 비밀 모양(`sk-proj-…`·`sk-ant-api03-…`·`sk-or-v1-…` 포함)을 가립니다(영문·숫자에 바로 붙은 `abcAKIA…` 와 밑줄·하이픈 앞의 JWT 는 알아보지 못합니다 — 기준이 되는 가리기 규칙과 같은 한계입니다). 후보·글 번호 자리나 `restore` 파일 자리에 키를 잘못 쳐도 오류 문구는 친 글이 번호 모양(16진수 8자 이하·앱이 만든 백업 이름)일 때만 되풀이하고 아니면 `(입력한 번호)`·`(입력한 파일)` 로 보입니다.

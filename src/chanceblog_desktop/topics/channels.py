@@ -3,7 +3,11 @@
 ① 채널 이름은 코드의 다섯 키(`content.status.PLATFORMS`)를 **그대로** 쓴다. 전략 문서의 Blogger A(한글)·B(영문)는 `CHANNEL_ALIAS` 로만 받는 입력 별칭이고 저장하는 값은 늘 코드 키다.
 ② 프로필의 숫자는 **기본값**이다(운영자가 고칠 수 있다): 여섯 항목 가중치(합 100)·지속형/실시간 비율(합 100)·채널당 보여 줄 후보 수·같은 주제 묶음 상한·글 소제목 최소 수·중복 판정 기준·관심도(Trend) 사용 정도.
 ③ '후보 생성'(`generation_enabled`)과 '이력 읽기·중복 검사용 정규화'(`history_enabled`)는 따로 켠다 — 지금은 네이버 A·B 만 후보 생성을 켜고, 나머지 세 채널은 프로필과 이력 읽기만 한다.
-④ 사람이 고치는 JSON 파일을 읽고 쓰는 일은 다음 묶음의 몫이다. 여기서는 사전(dict) 변환(`profiles_to_dict`·`profiles_from_dict`, `schema` 1)까지만 하고, 모르는 칸·합 불일치·범위 밖은 기존 오류 체계(`CONTENT_INVALID`)로 거절한다(고쳐 받지 않는다).
+④ 사람이 고치는 JSON 파일을 읽고 쓰는 일은 서비스(`service/topic_files.py`)의 몫이다. 여기서는 사전(dict) 변환(`profiles_to_dict`·`profiles_from_dict`)까지만 하고, 모르는 칸·합 불일치·범위 밖은 기존 오류 체계(`CONTENT_INVALID`)로 거절한다(고쳐 받지 않는다).
+⑤ **판 2(P3b-1)**: 저장 모양을 2 로 올려 쓰고 1·2 를 모두 읽는다(판 1 은 새 칸을 빈 기본값으로 채우고 파일은 다시 쓰지 않는다 — 더 새로운 판은 거절). 새 칸 열여섯 개는 모두 **선택 칸(기본값 비어 있음)** 이고 프로필 입력 화면(P4b)이 쓸 것이다:
+   블로그 ID 또는 URL(`blog_ref`)·별명(`alias`)·채널 역할(`channel_role`)·주요 주제(`main_topics`)·대상 독자(`audience`)·문체(`tone`)·카테고리(`categories`)·소개글(`intro`)·색 프리셋(`color_preset` — 없음이거나 `warm_lifestyle`·`cool_technology`)·
+   프로필 이미지 경로(`profile_image`)·커버 이미지 경로(`cover_image` — 경로 글만, 파일이 있는지 보지 않는다)·우선 키워드(`priority_keywords`)·제외 키워드(`exclude_keywords`)·선호 글 유형(`preferred_post_types`)·상시 이동권 지역(`home_regions`)·당일 이동권 지역(`day_trip_regions`).
+   협찬 가능 분야는 새로 만들지 않고 이미 있는 `monetization_focus` 를 쓴다. **실제 블로그 이름·아이디·주소·별명·지역은 이 저장소 어디에도 없다** — 이 PC 사용자 데이터(`channel_profiles.json`)에만 두는 값이다(기본 프로필은 빈 값). 길이·개수 상한은 `docs/TOPIC_ENGINE_PLAN.md` 의 표와 같다.
 순수 계산이다 — 파일·네트워크·시계·난수를 쓰지 않는다.
 """
 from __future__ import annotations
@@ -14,13 +18,15 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import NamedTuple
 
+from ..content.profiles import POST_TYPES
 from ..content.profiles import _invalid as _base_invalid
 from ..content.profiles import _no_markup, _number, _text, _words
 from ..content.status import PLATFORMS
 from ..errors import AppError
 from . import wording
 
-SCHEMA = 1
+SCHEMA = 2                                            # 쓰는 판 — 1 도 읽는다(`SCHEMAS`)
+SCHEMAS = (1, 2)
 
 
 def invalid_in(subject, item, detail="", *, dev=""):
@@ -111,6 +117,12 @@ MAX_SUBHEADING_MIN = 20
 MAX_CLUSTERS = 30
 MAX_DIRECTIONS = 20
 MAX_FOCUS = 10
+# 판 2 의 새 칸 한도(P3b-1) — P4b 프로필 입력 화면이 같은 상한을 쓴다(표는 `docs/TOPIC_ENGINE_PLAN.md`)
+MAX_BLOG_REF, MAX_ALIAS, MAX_ROLE, MAX_AUDIENCE, MAX_TONE, MAX_INTRO, MAX_IMAGE_PATH = 200, 30, 60, 120, 120, 300, 260
+MAX_MAIN_TOPICS, MAX_TOPIC_WORD, MAX_CATEGORIES, MAX_CATEGORY_WORD, MAX_KEYWORDS, MAX_KEYWORD_WORD, MAX_REGIONS, MAX_REGION_WORD = 10, 30, 30, 40, 20, 30, 20, 30
+COLOR_PRESETS = ("warm_lifestyle", "cool_technology")   # 색 프리셋 — 값은 이 둘뿐이다(색 값 표는 화면 쪽 몫, 색 직접 입력은 없다)
+_BLOG_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+_BLOG_URL = re.compile(r"https://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?::[0-9]{1,5})?(?:/[^\s#]*)?")      # https://주소 — 계정 정보(`사용자@`)·# 뒤 글·공백이 없다
 SLUG_MAX = 60                                         # 주제 묶음·관점 식별자(영문 소문자·숫자·붙임표)의 최대 길이
 TAG_MAX = 40                                          # 수익화 태그(영문 소문자·숫자·밑줄)의 최대 길이
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -200,12 +212,45 @@ def _identifiers(values, item, *, count, check, shape):
     return names
 
 
-_KEYS = ("key", "display_name", "language", "generation_enabled", "history_enabled", "evergreen_pct", "realtime_pct", "weights", "top_n", "cluster_cap", "subheading_min",
-         "trend_use", "dup_cutoffs", "topic_clusters", "expansion_directions", "monetization_focus")
+def _blog_ref(value):
+    """블로그 ID(영문·숫자·`._-` 64자까지) 또는 https 주소(200자까지, 공백·계정 정보·바탕 글 없는 모양). 비워 둘 수 있다."""
+    item = PROFILE_FIELD_KO["blog_ref"]
+    if value == "":
+        return ""
+    if not isinstance(value, str) or len(value) > MAX_BLOG_REF or any(char.isspace() for char in value):
+        raise _invalid(item, detail=f"공백 없이 {MAX_BLOG_REF}자까지 쓰는 블로그 ID 나 https 주소여야 한다")
+    _no_markup(value, item)
+    if value.lower().startswith("http"):
+        if _BLOG_URL.fullmatch(value) is None:
+            raise _invalid(item, detail="https://블로그주소 모양이어야 한다(계정 정보나 # 뒤 글은 쓸 수 없다)")
+        return value
+    if _BLOG_ID.fullmatch(value) is None:
+        raise _invalid(item, detail="블로그 ID 는 영문·숫자와 . _ - 만 쓰는 64자까지의 글이고 주소는 https:// 로 시작해야 한다")
+    return value
+
+
+def _image_path(value, item):
+    """이미지 경로 글 — 한 줄·260자까지·제어 문자 없음·`data:` 같은 내용 직접 넣기와 위험한 표기가 없다. **파일이 있는지는 보지 않는다**(경로 글만 저장한다 — 이미지 내용을 담지 않는다)."""
+    if not isinstance(value, str):
+        raise _invalid(item, detail="경로 글이어야 한다")
+    text = _no_markup(_text(value, item, low=0, high=MAX_IMAGE_PATH), item)
+    if text.lower().startswith(("data:", "javascript:", "vbscript:")):
+        raise _invalid(item, detail="이미지 내용을 직접 넣을 수 없다 — 파일 경로만 적는다")
+    return text
+
+
+_KEYS_V1 = ("key", "display_name", "language", "generation_enabled", "history_enabled", "evergreen_pct", "realtime_pct", "weights", "top_n", "cluster_cap", "subheading_min",
+            "trend_use", "dup_cutoffs", "topic_clusters", "expansion_directions", "monetization_focus")
+_NEW_KEYS = ("blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "color_preset", "profile_image", "cover_image", "priority_keywords", "exclude_keywords",
+             "preferred_post_types", "home_regions", "day_trip_regions")
+_KEYS = _KEYS_V1 + _NEW_KEYS                          # 지금 판(2)의 칸 — 판 1 은 앞의 열여섯 칸이다
 PROFILE_FIELD_KO = MappingProxyType({"key": "채널 이름", "display_name": "표시 이름", "language": "언어", "generation_enabled": "후보 생성 켜기", "history_enabled": "이력 읽기 켜기",
                                      "evergreen_pct": "지속형 비율", "realtime_pct": "실시간 비율", "weights": "항목별 가중치", "top_n": "채널당 후보 수", "cluster_cap": "주제 묶음 상한",
                                      "subheading_min": "소제목 최소 수", "trend_use": "관심도 사용 정도", "dup_cutoffs": "중복 판정 기준", "topic_clusters": "주제 묶음",
-                                     "expansion_directions": "확장 방향", "monetization_focus": "우선 수익화 분야"})        # 칸 이름 → 쉬운 한국어(오류 안내용)
+                                     "expansion_directions": "확장 방향", "monetization_focus": "우선 수익화 분야", "blog_ref": "블로그 ID 또는 주소", "alias": "별명", "channel_role": "채널 역할",
+                                     "main_topics": "주요 주제", "audience": "대상 독자", "tone": "문체", "categories": "카테고리", "intro": "소개글", "color_preset": "색 프리셋", "profile_image": "프로필 이미지 경로",
+                                     "cover_image": "커버 이미지 경로", "priority_keywords": "우선 키워드", "exclude_keywords": "제외 키워드", "preferred_post_types": "선호 글 유형", "home_regions": "상시 이동권 지역",
+                                     "day_trip_regions": "당일 이동권 지역"})        # 칸 이름 → 쉬운 한국어(오류 안내용)
 
 
 @dataclass(frozen=True)
@@ -225,7 +270,24 @@ class ChannelProfile:
     dup_cutoffs: tuple = (40, 60, 75)                 # 중복 판정 유사도(%) 기준 세 개
     topic_clusters: tuple = ()                        # 이 채널이 다루는 주제 묶음(영문 소문자-붙임표 식별자)
     expansion_directions: tuple = ()                  # 이 채널의 후보 확장 방향 낱말
-    monetization_focus: tuple = ()                    # 우선 수익화 분야 태그(영문 소문자-밑줄)
+    monetization_focus: tuple = ()                    # 우선 수익화 분야 태그(영문 소문자-밑줄) — 협찬 가능 분야는 새로 만들지 않고 이 칸을 쓴다
+    # ---- 판 2 에서 더한 선택 칸(모두 기본값이 비어 있다 — P4b 프로필 입력 화면이 쓴다) ----
+    blog_ref: str = ""                                # 블로그 ID 또는 https 주소(비워 둘 수 있다)
+    alias: str = ""                                   # 별명(30자까지)
+    channel_role: str = ""                            # 채널 역할(60자까지)
+    main_topics: tuple = ()                           # 주요 주제 낱말(10개까지)
+    audience: str = ""                                # 대상 독자(120자까지)
+    tone: str = ""                                    # 문체(120자까지)
+    categories: tuple = ()                            # 카테고리 낱말(30개까지)
+    intro: str = ""                                   # 소개글(300자까지 한 줄)
+    color_preset: str | None = None                   # 색 프리셋: None·warm_lifestyle·cool_technology
+    profile_image: str = ""                           # 프로필 이미지 경로 글(파일이 있는지 보지 않는다)
+    cover_image: str = ""                             # 커버 이미지 경로 글
+    priority_keywords: tuple = ()                     # 우선 키워드(20개까지)
+    exclude_keywords: tuple = ()                      # 제외 키워드(20개까지)
+    preferred_post_types: tuple = ()                  # 선호 글 유형(`content.profiles.POST_TYPES` 중 — 중복 없이)
+    home_regions: tuple = ()                          # 상시 이동권 지역 낱말(`{기준 지역}` 씨앗의 자리를 채운다 — 실제 값은 저장소에 없다)
+    day_trip_regions: tuple = ()                      # 당일 이동권 지역 낱말
 
     def __post_init__(self):
         try:
@@ -258,6 +320,32 @@ class ChannelProfile:
         put("topic_clusters", _identifiers(self.topic_clusters, "주제 묶음", count=MAX_CLUSTERS, check=is_slug, shape="영문 소문자·숫자·붙임표(-)로 된 식별자"))
         put("expansion_directions", _words(self.expansion_directions, "확장 방향", count=MAX_DIRECTIONS, high=40, sequence_only=True, markup_free=True))
         put("monetization_focus", _identifiers(self.monetization_focus, "우선 수익화 분야", count=MAX_FOCUS, check=is_tag, shape="영문 소문자·숫자·밑줄(_)로 된 태그"))
+        self._check_v2(put)
+
+    def _check_v2(self, put):
+        def line(name, limit):
+            label = PROFILE_FIELD_KO[name]
+            put(name, _no_markup(_text(getattr(self, name), label, low=0, high=limit), label))
+
+        def words(name, count, high):
+            put(name, _words(getattr(self, name), PROFILE_FIELD_KO[name], count=count, high=high, sequence_only=True, markup_free=True))
+
+        put("blog_ref", _blog_ref(self.blog_ref))
+        for name, limit in (("alias", MAX_ALIAS), ("channel_role", MAX_ROLE), ("audience", MAX_AUDIENCE), ("tone", MAX_TONE), ("intro", MAX_INTRO)):
+            line(name, limit)
+        for name, count, high in (("main_topics", MAX_MAIN_TOPICS, MAX_TOPIC_WORD), ("categories", MAX_CATEGORIES, MAX_CATEGORY_WORD), ("priority_keywords", MAX_KEYWORDS, MAX_KEYWORD_WORD),
+                                  ("exclude_keywords", MAX_KEYWORDS, MAX_KEYWORD_WORD), ("home_regions", MAX_REGIONS, MAX_REGION_WORD), ("day_trip_regions", MAX_REGIONS, MAX_REGION_WORD)):
+            words(name, count, high)
+        if {item.casefold() for item in self.priority_keywords} & {item.casefold() for item in self.exclude_keywords}:
+            raise _invalid("우선 키워드", detail="제외 키워드에 있는 낱말은 우선 키워드로 쓸 수 없다")
+        if self.color_preset is not None and (not isinstance(self.color_preset, str) or self.color_preset not in COLOR_PRESETS):
+            raise _invalid(PROFILE_FIELD_KO["color_preset"], detail=wording.one_of(COLOR_PRESETS, wording.COLOR_PRESET_KO) + " — 비워 둘 수도 있습니다", dev="값: " + ", ".join(COLOR_PRESETS))
+        for name in ("profile_image", "cover_image"):
+            put(name, _image_path(getattr(self, name), PROFILE_FIELD_KO[name]))
+        kinds = self.preferred_post_types
+        if not isinstance(kinds, (list, tuple)) or len(kinds) > len(POST_TYPES) or not all(isinstance(item, str) and item in POST_TYPES for item in kinds) or len(set(kinds)) != len(kinds):
+            raise _invalid(PROFILE_FIELD_KO["preferred_post_types"], detail="다음 글 유형 중에서 한 번씩만 고를 수 있습니다: " + wording.quoted(POST_TYPES))
+        put("preferred_post_types", tuple(kinds))
 
     def to_dict(self):
         return {
@@ -265,14 +353,21 @@ class ChannelProfile:
             "evergreen_pct": self.evergreen_pct, "realtime_pct": self.realtime_pct, "weights": {name: self.weights[name] for name in FACTOR_NAMES}, "top_n": self.top_n,
             "cluster_cap": self.cluster_cap, "subheading_min": self.subheading_min, "trend_use": self.trend_use, "dup_cutoffs": list(self.dup_cutoffs),
             "topic_clusters": list(self.topic_clusters), "expansion_directions": list(self.expansion_directions), "monetization_focus": list(self.monetization_focus),
+            "blog_ref": self.blog_ref, "alias": self.alias, "channel_role": self.channel_role, "main_topics": list(self.main_topics), "audience": self.audience, "tone": self.tone,
+            "categories": list(self.categories), "intro": self.intro, "color_preset": self.color_preset, "profile_image": self.profile_image, "cover_image": self.cover_image,
+            "priority_keywords": list(self.priority_keywords), "exclude_keywords": list(self.exclude_keywords), "preferred_post_types": list(self.preferred_post_types),
+            "home_regions": list(self.home_regions), "day_trip_regions": list(self.day_trip_regions),
         }
 
     @classmethod
-    def from_dict(cls, data):
-        """저장된 모양을 엄격하게 읽는다 — 정확히 이 칸들이어야 하고(모르는 칸·빠진 칸 거절) 값은 `__post_init__` 이 검사한다."""
+    def from_dict(cls, data, *, schema=None):
+        """저장된 모양을 엄격하게 읽는다 — 정확히 이 칸들이어야 하고(모르는 칸·빠진 칸 거절) 값은 `__post_init__` 이 검사한다. `schema` 를 주면 그 판의 칸(1 은 열여섯 칸·2 는 서른두 칸)이어야 하고,
+        안 주면 둘 중 하나의 모양이면 된다(판 1 칸 묶음은 새 칸이 빈 기본값이다)."""
         if not isinstance(data, dict):
             raise _invalid("채널 프로필", detail="칸이 있는 묶음(JSON 객체)이어야 한다")
-        unknown, missing = sorted(map(str, set(data) - set(_KEYS))), sorted(set(_KEYS) - set(data))
+        keys = set(data)
+        expected = _KEYS_V1 if schema == 1 else _KEYS if schema == 2 else (_KEYS_V1 if keys <= set(_KEYS_V1) else _KEYS)
+        unknown, missing = sorted(map(str, keys - set(expected))), sorted(set(expected) - keys)
         if unknown or missing:
             raise _invalid("채널 프로필", detail=wording.unknown_and_missing(unknown, missing, PROFILE_FIELD_KO), dev=f"모르는 칸 {unknown}, 빠진 칸 {missing}")
         return cls(**data)
@@ -332,25 +427,29 @@ def _ordered(profiles):
 
 
 def profiles_to_dict(profiles):
-    """채널 프로필 다섯 개 → 저장 모양(`schema` 1). 다시 `profiles_from_dict` 로 읽으면 같은 프로필이 된다."""
+    """채널 프로필 다섯 개 → 저장 모양(`schema` 2). 다시 `profiles_from_dict` 로 읽으면 같은 프로필이 된다."""
     return {"schema": SCHEMA, "profiles": [item.to_dict() for item in _ordered(profiles)]}
 
 
 def profiles_from_dict(data):
-    """저장된 모양 → 채널 프로필 다섯 개(코드의 채널 순서). `schema`·정확한 칸을 요구하고 모르는 칸·빠진 채널·겹친 채널·틀린 값은 `CONTENT_INVALID` 로 거절한다."""
-    if not isinstance(data, dict) or type(data.get("schema")) is not int or data["schema"] != SCHEMA:
-        raise _invalid("채널 프로필 저장 형식", detail=f"{wording.FILE_KEY_KO['schema']}가 {SCHEMA}인 채널 프로필 파일이 아닙니다", dev="저장된 채널 프로필의 모양(schema 1)이 아니다")
+    """저장된 모양 → 채널 프로필 다섯 개(코드의 채널 순서). `schema`(1 이나 2)·정확한 칸을 요구하고 모르는 칸·빠진 채널·겹친 채널·틀린 값은 `CONTENT_INVALID` 로 거절한다. 판 1 은 새 칸이 빈 기본값으로 채워진다(파일은 바뀌지 않는다).
+    더 새로운 판(3 이상)은 이 프로그램이 읽을 수 없어 거절한다."""
+    version = data.get("schema") if isinstance(data, dict) else None
+    if not isinstance(data, dict) or type(version) is not int or version not in SCHEMAS:
+        newer = isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA
+        raise _invalid("채널 프로필 저장 형식", detail=f"{wording.FILE_KEY_KO['schema']}가 1이나 2인 채널 프로필 파일이 아닙니다" + (" — 더 새로운 프로그램이 만든 파일이면 프로그램을 업데이트하세요" if newer else ""),
+                       dev="저장된 채널 프로필의 모양(schema 1·2)이 아니다")
     if set(data) != {"schema", "profiles"}:
         raise _invalid("채널 프로필 저장 형식", detail=wording.quoted(("schema", "profiles"), names=wording.FILE_KEY_KO) + " 두 칸만 있어야 합니다", dev="schema 와 profiles 두 칸만 있어야 한다")
     items = data["profiles"]
     if not isinstance(items, list):
         raise _invalid("채널 프로필 저장 형식", detail=f"{wording.quote(wording.FILE_KEY_KO['profiles'])} 은 여러 개를 담는 목록이어야 합니다", dev="profiles 는 목록이어야 한다")
-    return _ordered(ChannelProfile.from_dict(item) for item in items)
+    return _ordered(ChannelProfile.from_dict(item, schema=version) for item in items)
 
 
 __all__ = [
-    "CHANNELS", "CHANNEL_ALIAS", "ChannelProfile", "DEFAULT_PROFILES", "FACTOR_LABELS", "FACTOR_NAMES", "FOLLOW_UP_PER_POST", "GRADE_CUTOFFS", "HOLD_DAYS", "LANGUAGES", "MAX_CHANNELS_PER_TOPIC",
-    "PER_SEED", "PROFILE_FIELD_KO", "SCHEMA", "SOURCE_MIX", "SeedQuota", "TREND_USES", "USE_NONE", "USE_PRIMARY", "USE_REFERENCE", "USE_SUPPORTING", "Weights", "at_entry", "canonical", "default_profiles", "explain", "invalid_in",
+    "CHANNELS", "CHANNEL_ALIAS", "COLOR_PRESETS", "ChannelProfile", "DEFAULT_PROFILES", "FACTOR_LABELS", "FACTOR_NAMES", "FOLLOW_UP_PER_POST", "GRADE_CUTOFFS", "HOLD_DAYS", "LANGUAGES", "MAX_CHANNELS_PER_TOPIC",
+    "PER_SEED", "PROFILE_FIELD_KO", "SCHEMA", "SCHEMAS", "SOURCE_MIX", "SeedQuota", "TREND_USES", "USE_NONE", "USE_PRIMARY", "USE_REFERENCE", "USE_SUPPORTING", "Weights", "at_entry", "canonical", "default_profiles", "explain", "invalid_in",
     "is_slug", "is_tag",
     "profiles_from_dict", "profiles_to_dict",
 ]

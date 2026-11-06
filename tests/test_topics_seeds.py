@@ -76,8 +76,10 @@ class SeedShapeTest(unittest.TestCase):
         made = seed()
         self.assertEqual((made.priority, made.excluded_keywords, made.sponsor_tag, made.last_selected_on, made.active_since), (False, (), None, None, None))
         # P2b(독립 검증 M4) 의도적 갱신: 사용 시작일(`active_since`) 칸이 하나 늘었다 — `seeds.json` 을 처음 저장하기 전이라 이관이 필요 없다.
+        # P3b-1 의도적 갱신: 판 2 에서 열두 칸(대상 유형·허용 채널·우선 키워드·제안 이유·지역 값 필요·브랜드 예외·계절 일정 여섯)이 더해졌다 — 모두 기본값이 있어 판 1 파일이 그대로 읽힌다.
         self.assertEqual(tuple(made.to_dict()), ("seed_id", "major", "minor", "keyword", "seed_type", "scope", "priority", "excluded_keywords", "sponsor_tag", "state", "registered_on",
-                                                 "last_selected_on", "active_since"))
+                                                 "last_selected_on", "active_since", "target_type", "allowed_channels", "priority_keywords", "reason", "needs_region", "brand_case", "prepare_from",
+                                                 "publish_from", "publish_until", "peak_period", "recurrence", "seasonal_priority_state"))
 
     def test_the_state_has_no_default_so_an_automatic_proposal_cannot_become_active_by_accident(self):
         with self.assertRaises(TypeError):
@@ -510,7 +512,9 @@ class JsonShapeTest(unittest.TestCase):
                 seed(seed_id="s4", keyword="예시 씨앗 넷", state="inactive", last_selected_on="2026-07-01")]
 
     def test_the_empty_template_has_the_schema_and_an_empty_list(self):
-        self.assertEqual(sd.seeds_to_dict(()), {"schema": 1, "seeds": []})
+        # P3b-1 의도적 갱신: 쓰는 판이 1 → 2 로 올랐다(새 칸 열두 개). 판 1 의 빈 틀은 여전히 읽힌다.
+        self.assertEqual(sd.seeds_to_dict(()), {"schema": 2, "seeds": []})
+        self.assertEqual(sd.seeds_from_dict({"schema": 2, "seeds": []}), ())
         self.assertEqual(sd.seeds_from_dict({"schema": 1, "seeds": []}), ())
 
     def test_the_seeds_round_trip_in_the_same_order(self):
@@ -522,7 +526,7 @@ class JsonShapeTest(unittest.TestCase):
 
     def test_a_wrong_schema_or_top_level_shape_is_refused(self):
         good = sd.seeds_to_dict(self.several())
-        for bad in (None, [], "x", 3, {}, dict(good, schema=0), dict(good, schema=2), dict(good, schema=True), dict(good, schema="1"), dict(good, schema=1.0), dict(good, extra=1),
+        for bad in (None, [], "x", 3, {}, dict(good, schema=0), dict(good, schema=3), dict(good, schema=True), dict(good, schema="1"), dict(good, schema=1.0), dict(good, extra=1),
                     {"schema": 1}, {"seeds": []}, dict(good, seeds={}), dict(good, seeds="x"), dict(good, seeds=None)):
             with self.subTest(bad=repr(bad)[:40]):
                 with self.assertRaises(AppError) as caught:
@@ -607,7 +611,7 @@ class NoRealSeedsTest(unittest.TestCase):
     def test_the_module_holds_no_seed_list_only_the_schema_rules_and_the_empty_template(self):
         lists = [name for name, value in vars(sd).items() if isinstance(value, (tuple, list)) and value and all(isinstance(item, sd.Seed) for item in value)]
         self.assertEqual(lists, [])
-        self.assertEqual(sd.seeds_to_dict(()), {"schema": 1, "seeds": []})
+        self.assertEqual(sd.seeds_to_dict(()), {"schema": 2, "seeds": []})            # P3b-1 의도적 갱신: 쓰는 판 1 → 2
 
     def test_every_seed_used_in_the_tests_is_marked_as_an_example(self):
         for made in (ts.example_seed(), *UsableSeedsTest().pool(), *JsonShapeTest().several()):

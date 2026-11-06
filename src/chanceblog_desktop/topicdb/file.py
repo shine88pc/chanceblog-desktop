@@ -94,6 +94,7 @@ class EngineFile:
         self._busy = busy_seconds
         self._read_only = read_only
         self._version = self.SCHEMA_VERSION                # 열 때 파일의 실제 구조 판으로 다시 적힌다
+        self.migrated_from = None                          # 이 열기가 구조를 올렸으면 올리기 전 판 번호(아니면 None) — 구조를 올린 실행에서 파괴적인 일을 이어서 하지 않게 부르는 쪽이 본다
         self._lock = threading.RLock()
 
     # ---- 열기·닫기 ---------------------------------------------------------------------------------------------------------
@@ -254,11 +255,13 @@ class EngineFile:
             if missing is not None:
                 raise RuntimeError(f"버전 {missing} 에서 올리는 단계가 없다")
             self._keep_copy(version)
+            started = version
             while version < self.SCHEMA_VERSION:
                 self.MIGRATIONS[version](self._db)
                 version += 1
             self._db.execute(f"PRAGMA user_version = {version}")
             self._db.execute("COMMIT")
+            self.migrated_from = started
         except AppError:
             self._rollback()
             raise

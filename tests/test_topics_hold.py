@@ -188,7 +188,8 @@ class DeadlineMatchesBandTest(unittest.TestCase):
 
 class NamesTest(unittest.TestCase):
     def test_the_public_names_are_these(self):
-        self.assertEqual(sorted(hold.__all__), ["MAX_DAYS", "expiry_for", "is_expired", "review_expires_at"])
+        self.assertEqual(sorted(hold.__all__), ["CLEANUP_ERASES", "CLEANUP_REASON", "HISTORY_FIELDS", "HISTORY_FIELD_KO", "MAX_DAYS", "MAX_GENERATION", "RECREATED_PREFIX", "RELATION_RECREATED", "RecreationInput", "TOKEN_VERSION", "cleanup_token",
+                                                    "expiry_for", "history_row", "is_expired", "next_recreated_id", "recreation_input", "review_expires_at"])        # P3b-1 의도적 갱신: 이력 13칸과 정리 목록·정리 확인 번호·다시 만들 후보의 도우미(D-120)가 더해졌다
         self.assertEqual(hold.MAX_DAYS, 3650)
         self.assertEqual(hold.BAND_HOLD, "HOLD")
 

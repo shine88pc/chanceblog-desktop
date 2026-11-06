@@ -46,6 +46,12 @@ KEY_ROWS = {
     "trend_cache": ("INSERT INTO trend_cache (keyword_key, period, compared_hash, queried_on, status, ratio, data_status, stored_at, data) VALUES (?, 'p', 'h', '2026-11-06', 'ok', 1, 'ok', '2026-11-06T00:00:00Z', '{}')", (FAKE_KEY,)),
     "candidate_links": ("INSERT INTO candidate_links (engine_candidate_id, legacy_candidate_id, draft_plan_id, source_topic_id, seed_id, channel, saved_at, data) VALUES ('cid-001', ?, NULL, NULL, NULL, 'naver_a', '2026-11-06T00:00:00Z', '{}')", (FAKE_KEY,)),
     "provenance": ("INSERT INTO provenance (engine_candidate_id, taken_at, data) VALUES ('cid-001', '2026-11-06T00:00:00Z', ?)", (FAKE_KEY,)),
+    # P3b-1 의도적 갱신: 판 2 의 새 표 둘(점검 기록·보류 이력)도 키 모양 검사에 걸려야 한다(사용자가 쓴 글이 들어갈 수 있는 표는 모두 훑는다)
+    "review_log": ("INSERT INTO review_log (kind, last_run_on) VALUES (?, '2026-11-06')", (FAKE_KEY,)),
+    # D-120 의도적 갱신: 보류 이력이 13칸이 되고(`first_created_at`·`cleaned_at`·`cleanup_reason`) 재생성 관계 표(`candidate_lineage`)가 더해졌다 — 새 표도 키 모양 검사에 걸려야 한다
+    "hold_history": ("INSERT INTO hold_history (candidate_id, normalized_keyword, topic_summary, first_created_at, last_evaluated_on, hold_reason, exclusion_reason, normalized_topic_hash, seed_id, channel, search_intent, topic_angle,"
+                     " cleaned_at, cleanup_reason) VALUES ('cid-777', ?, '요약', '2026-08-01T00:00:00Z', '2026-11-01', '', '', 'h', 's', 'naver_a', 'information', 'angle', '2026-11-06T00:00:00Z', 'hold_90d_unchanged')", (FAKE_KEY,)),
+    "candidate_lineage": ("INSERT INTO candidate_lineage (candidate_id, recreated_from, relation, created_at) VALUES (?, 'cid-777', 'RECREATED_FROM', '2026-11-06T00:00:00Z')", (FAKE_KEY,)),
     "history_ledger": ("INSERT INTO history_ledger (channel, record_key, title, keywords, date, url, language, topic, ref, origin, first_seen_at, last_seen_at) VALUES ('naver_a', 'k1', ?, '[]', NULL, NULL, NULL, NULL, 'p1', 'naver_items', '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z')", (FAKE_KEY,)),
 }
 
@@ -111,6 +117,7 @@ class MakeBackupTest(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as tmp:
                     path = World(tmp).data / layout.ENGINE_DB_FILE
                     with contextlib.closing(sqlite3.connect(str(path))) as connection:
+                        connection.execute("PRAGMA foreign_keys = OFF")                  # 일부러 규칙을 어기는 한 줄(관계 표의 옛 번호가 이력에 없음)은 시스템 SQLite 빌드의 외래 키 기본값에 기대지 않는다
                         with connection:
                             connection.execute(statement, values)
                     self.assertEqual(bk._database_key_shaped(path), table != "history_ledger", f"{table} 표의 키 모양")

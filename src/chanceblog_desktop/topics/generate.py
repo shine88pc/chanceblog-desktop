@@ -34,16 +34,22 @@ from typing import NamedTuple
 from ..content.candidates import keyword_key, parse_stamp
 from ..errors import AppError
 from . import brand, dedupe, expand, feasibility, hold, safety, schedule, score, wording
-from .channels import CHANNELS, FOLLOW_UP_PER_POST, PER_SEED, SOURCE_MIX, ChannelProfile
+from .channels import CHANNELS, FOLLOW_UP_PER_POST, PER_SEED, SOURCE_MIX, USE_NONE, ChannelProfile
 from .history import HistoryRecord, valid_day
 from .model import TopicCandidate, check_candidate_expiry, check_candidate_score
 from .schedule import CalendarEntry
-from .seeds import Seed, usable_seeds
+from .seeds import Seed, usable_seeds, with_region
 
 ROUTES = tuple(SOURCE_MIX)                                        # seed·follow_up·seasonal·realtime·sponsor — 경로 순서(나눌 때의 동점 순서)
 ROUTE_TYPES = MappingProxyType({"seed": ("seed", "evergreen"), "follow_up": ("follow_up", "follow_up"), "seasonal": ("seasonal", "seasonal"), "realtime": ("realtime", "realtime"),
                                 "sponsor": ("sponsor", "sponsor_prep")})        # 경로 → (후보가 생긴 경로 `source_type`, 후보 종류 `candidate_type`)
 ROUTE_KO = MappingProxyType({"seed": "씨앗", "follow_up": "후속", "seasonal": "계절", "realtime": "실시간", "sponsor": "협찬"})
+# 계절 씨앗이 가진 일정의 그날 상태(`schedule.seasonal_state`) → 시기 점수에 넘기는 캘린더 상태(P3b-1, 운영자 결정 6): 발행 기간 안이면 우선 추천 평가(`due`), 준비 시작일에 닿으면 일반 우선순위로 돌아와 시기가 가산도
+# 감점도 하지 않고(`unknown` — 점수 계산이 빼고 다시 나눈다), 시즌 밖이면 활성은 그대로 두고 우선순위만 낮춘다(`out_of_range`). 점수 표는 그대로다 — 어느 경우에도 씨앗을 쉬게 하거나 후보 생성에서 빼지 않는다.
+SEASON_CALENDAR = MappingProxyType({schedule.SEASON_PUBLISHING: score.CALENDAR_DUE, schedule.SEASON_PREPARING: score.CALENDAR_UNKNOWN, schedule.SEASON_OFF: score.CALENDAR_OUT_OF_RANGE})
+# 관심도(Trend)가 없어 시기를 캘린더만으로 봤을 때 계절 후보의 선정 이유에 붙는 말(운영자 2026-11-06 지시 3: 관심도 값이 없으면 캘린더 점수를 유지하고 데이터 부족 상태를 표시한다 — 글만 더하고 점수는 바뀌지 않는다).
+# 관심도를 아예 쓰지 않는 채널(`trend_use` 가 none)은 부족한 것이 아니라 쓰지 않는 것이라 붙이지 않는다. 자료 상태 `insufficient`(값 없음·부족)와 `unavailable`(조회 불가)만 말한다.
+TREND_SHORTAGE_NOTES = MappingProxyType({score.DATA_INSUFFICIENT: "관심도 데이터가 부족해 시기는 캘린더만으로 봤습니다", score.DATA_UNAVAILABLE: "관심도를 조회할 수 없어 시기는 캘린더만으로 봤습니다"})
 SPONSOR_CHANNELS = ("naver_a", "naver_b")                         # 협찬 몫(15%)을 적용하는 채널 — 후보 생성이 켜진 네이버 A·B 뿐이다(R-149 B=1)
 DEFAULT_TARGET, MAX_TARGET = 20, 200                              # 채널당 후보 수 목표(초기값)와 상한
 REALTIME_STABLE_HOURS = 48                                        # 이슈가 처음 알려진 뒤 이만큼(포함) 지나야 쓴다(48시간 안정화 — 결정 H)
@@ -248,6 +254,7 @@ class Generated(NamedTuple):
     routes: tuple                                   # `RouteReport` 다섯 개(경로 순서)
     dropped: tuple                                  # `Dropped` — 경로·이유 순서
     notes: tuple                                    # 전체 안내(쉬운 한국어)
+    region_missing: tuple = ()                      # 지역 값이 필요한데 채널 프로필에 지역이 없어 후보를 만들지 않은 씨앗 번호들(오류가 아니다 — 알림만 한다, P3b-1)
 
     def shortages(self):
         """모자란 경로의 이름과 모자란 수 — 진단용."""
@@ -282,6 +289,7 @@ class _Ctx(NamedTuple):
 
 class _Extra(NamedTuple):
     """후보 하나를 점수 매길 때 경로가 더 알려 주는 것."""
+    season: str | None = None                       # 씨앗이 가진 계절 일정의 그날 상태(`schedule.SEASON_STATES`) — 일정이 없는 씨앗은 None(옛 규칙: 캘린더 항목으로만 시기를 본다)
     seed: Seed | None = None
     direction_source: str | None = None             # channel·common(씨앗 경로에서 방향이 어디서 왔나)
     own_post: bool = False                          # 같은 채널의 기존 글에서 나온 후보인가
@@ -310,6 +318,15 @@ def _distinct(primary, words):
 def _promised(*texts):
     """글에 결과를 약속하는 표현(`safety.FLAG_PROMISE`)이 있는가 — 후보를 만들기 **전에** 본다(후보의 글칸은 약속 표현을 오류로 거절하므로, 그 전에 가려야 '쓰지 않는 이유' 가 정확히 남는다)."""
     return safety.FLAG_PROMISE in safety.check_text(list(texts)).flags
+
+
+def candidate_type_of(route, seed=None):
+    """경로(와 씨앗) → 후보 종류(`candidate_type`) — 만들 때 정하고 **기록만** 한다(후보를 비율에 맞추려고 늘리거나 줄이지 않는다). 경로의 값은 `ROUTE_TYPES` 그대로(씨앗 → 지속형·후속·계절형·실시간·협찬 준비형)이고,
+    계절 경로의 씨앗이 매월 반복(`recurrence == monthly` — 원문 '월별')이면 월별 반복형(`monthly_recurring`)이다."""
+    kind = ROUTE_TYPES[route][1]
+    if kind == "seasonal" and seed is not None and getattr(seed, "recurrence", None) == schedule.RECURRENCE_MONTHLY:
+        return "monthly_recurring"
+    return kind
 
 
 def _candidate_id(channel, route, *parts):
@@ -352,6 +369,48 @@ def _monetization(profile, candidate, extra):
     return MONETIZATION_CLUSTER_IN_FOCUS if CLUSTER_MONETIZATION.get(candidate.topic_cluster) in focus else MONETIZATION_NONE
 
 
+ORDER_FIX_NOTE = "관심도 데이터 부족으로 최소 순서 보정"           # 보정이 일어난 후보의 선정 이유 줄에 들어가는 말(운영자 2026-11-06 22시대 지시 — 낱말 그대로)
+
+
+class OrderFix(NamedTuple):
+    factors: score.Factors                          # 보정한(또는 그대로인) 여섯 항목 점수 — 최종 점수는 늘 이 항목들의 가중 평균이다
+    note: str | None                                # 보정이 일어났을 때만 선정 이유 줄 글, 아니면 None
+
+
+def minimum_order(profile, factors, calendar, trend_used):
+    """관심도(Trend)가 없을 때 계절 후보의 **최소 순서** — 발행 기간 점수 ≥ 준비 기간 점수 > 시즌 밖 점수(운영자 지시). 승인된 점수표(`TIMING_*`·가중치·구간)는 그대로 두고 **계산 지점에서만** 고친다.
+    ① 준비 기간 점수 = 이 후보에서 시기 항목을 뺀 나머지 항목의 가중 평균(준비 중은 시기 항목을 빼고 다시 나누므로 같은 값이다) ② 발행 기간(`due`)인데 점수가 준비 기간 점수보다 낮으면 **최종 점수를 덮어쓰지 않고**
+    시기 항목 값을 `max(표의 값, 준비 기간 점수)` 로 올린다 — 준비 기간 점수(정수)를 시기 항목 값으로 쓰면 가중 평균이 [점수 − 0.5, 점수 + 0.5) 안에 있어 반올림 뒤 최종 점수가 준비 기간 점수와 정확히 같다(점수 묶음 일관성 `check_card` 통과)
+    ③ 시즌 밖(`out_of_range`)인데 점수가 준비 기간 점수 이상이면 시기 항목 값을 최종 점수가 준비 기간 점수보다 낮아지는 가장 큰 값으로 낮춘다(다른 항목이 모두 아주 낮을 때만 생기는 극단 — 맞추는 값이 없으면 그대로).
+    관심도를 썼거나(`trend_used`)·시기 항목이 없거나·준비 중이거나·평가할 항목이 없으면 아무것도 바꾸지 않는다(한 글자도 안 바뀐다). 순수 계산 — 시계·난수·파일 없음."""
+    if trend_used or calendar not in (score.CALENDAR_DUE, score.CALENDAR_OUT_OF_RANGE) or factors.timing is None:
+        return OrderFix(factors, None)
+    prepared = score.score(profile, dataclasses.replace(factors, timing=None)).final
+    now = score.score(profile, factors).final
+    if prepared is None or now is None:
+        return OrderFix(factors, None)
+    if calendar == score.CALENDAR_DUE:
+        if now >= prepared:
+            return OrderFix(factors, None)
+        raised = max(score.TIMING_CALENDAR_ONLY[score.CALENDAR_DUE], prepared)
+        fixed = dataclasses.replace(factors, timing=raised)
+        return OrderFix(fixed, f"{ORDER_FIX_NOTE}: 발행 기간의 시기 점수를 {factors.timing}점에서 {raised}점으로 올려 준비 기간 점수({prepared}점)보다 낮지 않게 했습니다(승인된 점수표는 그대로입니다)")
+    if now < prepared:
+        return OrderFix(factors, None)
+    for value in range(factors.timing - 1, -1, -1):
+        fixed = dataclasses.replace(factors, timing=value)
+        if score.score(profile, fixed).final < prepared:
+            return OrderFix(fixed, f"{ORDER_FIX_NOTE}: 시즌 밖의 시기 점수를 {factors.timing}점에서 {value}점으로 낮춰 준비 기간 점수({prepared}점)보다 높지 않게 했습니다(승인된 점수표는 그대로입니다)")
+    return OrderFix(factors, None)
+
+
+def _season_line(seed, season, data_status=score.DATA_SUFFICIENT, trend_use=None):
+    names = {schedule.SEASON_PUBLISHING: "발행 기간 안이라 우선 추천으로 평가했습니다", schedule.SEASON_PREPARING: "준비 시작일이 지나 일반 우선순위로 평가했습니다", schedule.SEASON_OFF: "시즌 밖이라 우선순위를 낮췄습니다(씨앗은 그대로 사용 중입니다)"}
+    line = f"계절 일정: 씨앗의 일정(준비 시작 {seed.prepare_from} · 발행 {seed.publish_from}~{seed.publish_until})으로 보면 {names[season]}"
+    shortage = None if trend_use == USE_NONE else TREND_SHORTAGE_NOTES.get(data_status)
+    return line if shortage is None else f"{line} — {shortage}"
+
+
 def _calendar_line(state):
     if state.state == score.CALENDAR_DUE:
         names = ", ".join(item.name for item in state.matched if item.phase == schedule.PHASE_PUBLISHING)
@@ -367,22 +426,30 @@ def _finish(ctx, base, extra):
     found = dedupe.find_duplicates(base, ctx.records, profile)
     marked = dedupe.marked(base, found.matches, compared=found.compared)
     state = schedule.state_of(base, ctx.entries, ctx.today)
+    calendar = state.state
+    if extra.season is not None and calendar != score.CALENDAR_DUE:                  # 캘린더 항목이 '발행 기간 안' 이라 하면 그쪽이 이긴다(위로만) — 아니면 씨앗 자신의 일정이 정한다
+        calendar = SEASON_CALENDAR[extra.season]
     reading = ctx.interest.get(keyword_key(base.primary_keyword))
     if reading is None and extra.seed is not None:
         reading = ctx.interest.get(keyword_key(extra.seed.keyword))
     trend = reading if reading is not None else InterestReading(score.TREND_INSUFFICIENT)
-    timing = score.timing_score(state.state, trend.status, trend_use=profile.trend_use, outage=ctx.outage)
+    timing = score.timing_score(calendar, trend.status, trend_use=profile.trend_use, outage=ctx.outage)
     report = safety.assess(base, campaigns=ctx.campaigns)
     feasible = feasibility.assess_candidate(base, profile)
     factors = score.Factors(
         channel_fit=_channel_fit(profile, base.topic_cluster, extra), feasibility=feasible.score, differentiation=None if found.highest is None else 100 - found.highest,
         timing=timing.score, evidence=_evidence(base, report.flags, extra, report.stage), monetization=_monetization(profile, base, extra))
+    fix = minimum_order(profile, factors, calendar, timing.trend_used) if extra.season is not None else OrderFix(factors, None)             # 계절 씨앗 경로 후보에만 — 관심도가 없을 때 발행 ≥ 준비 > 시즌 밖
+    factors = fix.factors
     result = score.score(profile, factors)
     if found.compared == 0:
         similar = "견줄 기존 글이 없어 차별성은 모름으로 두었습니다(0점·100점이 아닙니다)"
     else:
         similar = f"차별성: 같은 채널의 기존 글 {found.compared}개와 견줬고 가장 비슷한 글은 {found.highest}% 입니다"
-    reasons = (*extra.lines, *safety.notes(report), _calendar_line(state), similar, *feasible.reasons)[:10]            # 안전 줄을 경로 줄 바로 다음에 둔다 — 10줄 한도에 가장 중요한 줄이 먼저 잘리지 않게
+    season_lines = () if extra.season is None else (_season_line(extra.seed, extra.season, timing.data_status, profile.trend_use),)
+    if fix.note is not None:
+        season_lines = (*season_lines, fix.note)
+    reasons = (*extra.lines, *safety.notes(report), _calendar_line(state), *season_lines, similar, *feasible.reasons)[:10]            # 안전 줄을 경로 줄 바로 다음에 둔다 — 10줄 한도에 가장 중요한 줄이 먼저 잘리지 않게
     trend_fields = ({"trend_status": trend.status, "trend_ratio": trend.ratio, "trend_period": trend.period, "trend_compared_group": tuple(trend.compared_group), "trend_queried_on": trend.queried_on}
                     if reading is not None else {})
     final = dataclasses.replace(
@@ -395,8 +462,9 @@ def _finish(ctx, base, extra):
     return final
 
 
-def _base(ctx, route, **values):
-    source_type, candidate_type = ROUTE_TYPES[route]
+def _base(ctx, route, *, seed=None, **values):
+    source_type = ROUTE_TYPES[route][0]
+    candidate_type = candidate_type_of(route, seed)
     profile = ctx.profile
     values.setdefault("target_reader", TARGET_READERS[profile.key])
     return TopicCandidate(source_type=source_type, candidate_type=candidate_type, channel=profile.key, language=profile.language, created_at=ctx.created_at, **values)
@@ -423,7 +491,7 @@ def _seed_candidates(ctx, route, seeds, drops, *, as_type=None):
                 continue
             try:
                 candidate = _base(
-                    ctx, route, candidate_id=_candidate_id(ctx.profile.key, route, seed.seed_id, item.angle, item.direction),
+                    ctx, route, seed=seed, candidate_id=_candidate_id(ctx.profile.key, route, seed.seed_id, item.angle, item.direction),
                     source_topic_id=_source_topic_id(keyword_key(seed.keyword), item.angle), seed_id=seed.seed_id,
                     topic=topic, primary_keyword=item.keyword,
                     secondary_keywords=_distinct(item.keyword, (seed.keyword, item.direction)), search_intent=item.search_intent, content_type=item.content_type,
@@ -433,7 +501,7 @@ def _seed_candidates(ctx, route, seeds, drops, *, as_type=None):
                     continue
                 lines = (f"씨앗 ‘{seed.keyword}’ 에서 ‘{item.direction}’({expand.FAMILY_KO[item.family]} 계열)로 넓힌 {ROUTE_KO[route]} 후보입니다" +
                          (f" — 협업 가능 유형 {wording.tag_name(seed.sponsor_tag)}(협찬이 확정된 것은 아닙니다)" if route == "sponsor" else ""),)
-                made.append((_finish(ctx, candidate, _Extra(seed=seed, direction_source=item.source, lines=lines)), order, item_order))
+                made.append((_finish(ctx, candidate, _Extra(seed=seed, direction_source=item.source, lines=lines, season=schedule.seasonal_state(seed, ctx.today))), order, item_order))
             except AppError as error:
                 drops.add(route, DROP_INVALID, f"씨앗 ‘{seed.keyword}’ 의 ‘{item.direction}’ 후보가 규칙에 맞지 않습니다: {_why(error)}")
         made.sort(key=lambda row: (row[0].scores.final is None, -(row[0].scores.final or 0), row[2]))
@@ -465,7 +533,7 @@ def _brand_candidates(ctx, route, seed, order, view, drops, *, as_type):
             source_topic = _source_topic_id("brand", keyword_key(view.hits[0].display), sub.angle)
         try:
             candidate = _base(
-                ctx, route, candidate_id=candidate_id, source_topic_id=source_topic, seed_id=seed.seed_id, topic=sub.topic, primary_keyword=sub.keyword,
+                ctx, route, seed=seed, candidate_id=candidate_id, source_topic_id=source_topic, seed_id=seed.seed_id, topic=sub.topic, primary_keyword=sub.keyword,
                 secondary_keywords=_distinct(sub.keyword, (seed.keyword, sub.direction)), search_intent=sub.search_intent, content_type=sub.content_type,
                 topic_cluster=expand.cluster_of(seed, ctx.profile), topic_angle=sub.angle, monetization_tags=(seed.sponsor_tag,) if route == "sponsor" else ())
             if candidate.candidate_id in ctx.existing:
@@ -473,7 +541,7 @@ def _brand_candidates(ctx, route, seed, order, view, drops, *, as_type):
                 continue
             lines = (f"브랜드 ‘{seed.keyword}’ 만 있던 씨앗을 ‘{brand.TYPE_KO[view.brand_type]}’ 유형으로 구체화한 {ROUTE_KO[route]} 후보입니다 — 유형은 {brand.BASIS_KO[view.basis]} 정했고 ‘{sub.direction}’ 방향입니다" +
                      (f" — 협업 가능 유형 {wording.tag_name(seed.sponsor_tag)}(협찬이 확정된 것은 아닙니다)" if route == "sponsor" else ""),)
-            made.append((_finish(ctx, candidate, _Extra(seed=seed, direction_source=sub.source, lines=lines)), order, item_order))
+            made.append((_finish(ctx, candidate, _Extra(seed=seed, direction_source=sub.source, lines=lines, season=schedule.seasonal_state(seed, ctx.today))), order, item_order))
         except AppError as error:
             drops.add(route, DROP_INVALID, f"씨앗 ‘{seed.keyword}’ 의 ‘{sub.direction}’ 후보가 규칙에 맞지 않습니다: {_why(error)}")
     made.sort(key=lambda row: (row[0].scores.final is None, -(row[0].scores.final or 0), row[2]))
@@ -558,6 +626,27 @@ def _realtime_candidates(ctx, items, drops):
     return pool
 
 
+def _with_regions(profile, usable, drops):
+    """지역 값이 필요한 씨앗(`needs_region` — 낱말의 `{기준 지역}` 자리표시)을 채널 프로필의 지역 값으로 채운다 → (쓸 씨앗들, 지역이 없어 뺀 씨앗 번호들). 지역은 상시 이동권 목록의 첫 낱말, 없으면 당일 이동권 목록의 첫 낱말이다
+    (여러 지역을 돌려 쓰는 것은 P4b 이후 정한다). **지역이 하나도 없으면 후보를 만들지 않고 뺀 번호를 알린다 — 오류가 아니다.** 채운 낱말이 씨앗 규칙(길이·표현)에 안 맞으면 그 씨앗만 이유와 함께 뺀다."""
+    needy = [seed for seed in usable if seed.needs_region]
+    if not needy:
+        return usable, ()
+    regions = (*profile.home_regions, *profile.day_trip_regions)
+    if not regions:
+        return tuple(seed for seed in usable if not seed.needs_region), tuple(sorted(seed.seed_id for seed in needy))
+    kept = []
+    for seed in usable:
+        if not seed.needs_region:
+            kept.append(seed)
+            continue
+        try:
+            kept.append(with_region(seed, regions[0]))
+        except AppError as error:
+            drops.add("seed", DROP_INVALID, f"씨앗 ‘{seed.seed_id}’ 에 지역 값을 넣으면 규칙에 맞지 않습니다: {_why(error)}")
+    return tuple(kept), ()
+
+
 def _check_inputs(profile, seeds, calendar, history, today, existing, interest, realtime, target, created_at, campaigns=()):
     if not isinstance(profile, ChannelProfile):
         raise TypeError("generate(채널 프로필, 씨앗들, 캘린더, 기존 글들, 기준일) 로 불러야 한다")
@@ -605,13 +694,17 @@ def generate(profile, seeds, calendar, history, today, *, existing=(), interest=
         return Generated(profile.key, (), reports, (), tuple(notes))
     ctx = _Ctx(profile, entries, records, today, stamp, dict(interest or {}), interest_outage, frozenset(item.candidate_id for item in known),
                tuple(item for item in campaign_list if item.channel is None or item.channel == profile.key))
-    usable = usable_seeds(seed_list, profile.key)
+    usable = usable_seeds(seed_list, profile)                          # 사용 중이고 허용 채널에 이 채널이 든 씨앗(채널 켜짐도 본다 — 위에서 꺼진 채널은 이미 돌아갔다)
+    usable, region_missing = _with_regions(profile, usable, drops)
     if not usable:
         drops.add("seed", DROP_NO_SEED, "이 채널에서 쓸 수 있는(사용 중이고 공통이거나 이 채널 전용인) 씨앗이 없습니다")
     pools["seed"] = _seed_candidates(ctx, "seed", [seed for seed in usable if seed.seed_type in ("general", "priority")], drops)
     seasonal = []
     for seed in (seed for seed in usable if seed.seed_type == "seasonal"):
-        found = schedule.calendar_state(entries, (seed.keyword,), today, profile.key)
+        if schedule.seasonal_state(seed, today) is not None:                  # 자기 일정이 있는 씨앗 — 시즌 밖이어도 활성을 유지한다(후보 생성에서 빼지 않는다). 우선순위는 시기 점수가 낮춘다(`SEASON_CALENDAR`)
+            seasonal.append(seed)
+            continue
+        found = schedule.calendar_state(entries, (seed.keyword,), today, profile.key)             # 일정이 없는 계절 씨앗(판 1) — 옛 규칙: 캘린더 항목이 발행 기간 안일 때만
         if found.state == score.CALENDAR_DUE:
             seasonal.append(seed)
         else:
@@ -641,7 +734,7 @@ def generate(profile, seeds, calendar, history, today, *, existing=(), interest=
     short = [f"{ROUTE_KO[report.route]} {report.shortage}개" for report in reports if report.shortage]
     if short:
         notes.append("목표에 모자란 경로: " + ", ".join(short) + " — 모자란 자리는 다른 경로가 채우지 않았습니다")
-    return Generated(profile.key, tuple(candidate for candidate, _route in ordered), tuple(reports), drops.rows(), tuple(notes))
+    return Generated(profile.key, tuple(candidate for candidate, _route in ordered), tuple(reports), drops.rows(), tuple(notes), region_missing)
 
 
 def generate_all(profiles, seeds, calendar, history, today, **options):
@@ -654,7 +747,7 @@ def generate_all(profiles, seeds, calendar, history, today, **options):
 
 
 __all__ = [
-    "CLUSTER_MONETIZATION", "DEFAULT_TARGET", "DROP_BRAND_ONLY", "DROP_BRAND_UNFEASIBLE", "DROP_REASONS", "Dropped", "EVIDENCE_BASE", "FOLLOW_UP_TEMPLATES", "Generated", "InterestReading", "MAX_TARGET", "REALTIME_STABLE_HOURS", "ROUTES", "ROUTE_KO",
-    "ROUTE_TYPES", "RealtimeItem", "RealtimeVerdict", "RouteReport", "SPONSOR_CHANNELS", "Source", "TARGET_READERS", "TOPIC_TEMPLATES_KO", "check_realtime", "generate", "generate_all", "mix_for",
+    "CLUSTER_MONETIZATION", "DEFAULT_TARGET", "DROP_BRAND_ONLY", "DROP_BRAND_UNFEASIBLE", "DROP_REASONS", "Dropped", "EVIDENCE_BASE", "FOLLOW_UP_TEMPLATES", "Generated", "InterestReading", "MAX_TARGET", "ORDER_FIX_NOTE", "OrderFix", "REALTIME_STABLE_HOURS", "ROUTES", "ROUTE_KO",
+    "ROUTE_TYPES", "RealtimeItem", "RealtimeVerdict", "RouteReport", "SEASON_CALENDAR", "SPONSOR_CHANNELS", "Source", "TARGET_READERS", "TOPIC_TEMPLATES_KO", "TREND_SHORTAGE_NOTES", "candidate_type_of", "check_realtime", "generate", "generate_all", "minimum_order", "mix_for",
     "route_targets", "site_key",
 ]
