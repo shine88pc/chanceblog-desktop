@@ -193,6 +193,8 @@ class UsageView:
     percent_text: str       # `46%`
     state_text: str         # 경고·위험이면 `주의`·`위험`(한도를 넘으면 `한도 넘음`) — 색과 함께 보이는 글
     spoken: str             # 접근 이름
+    used: object = None     # 표시하는 쓴 수(반올림한 정수) — 모르면 None. 설정 화면 뷰모델이 막대에 건네는 '숫자 칸'(UI-C1b)이라 글자도 비밀도 아닌 숫자뿐이다
+    limit: object = None    # 표시하는 한도(반올림한 정수) — 모르면 None
 
 
 def usage_view(used, limit, unit="회", label=""):
@@ -221,4 +223,4 @@ def usage_view(used, limit, unit="회", label=""):
         spoken = T["cd_usage_a11y_state"].format(text=text, percent=percent, state=state_text)
     else:
         spoken = T["cd_usage_a11y"].format(text=text, percent=percent)
-    return UsageView(True, state, percent, min(1.0, u / cap), color, text, percent_text, state_text, spoken)
+    return UsageView(True, state, percent, min(1.0, u / cap), color, text, percent_text, state_text, spoken, u, cap)

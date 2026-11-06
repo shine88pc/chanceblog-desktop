@@ -1,11 +1,11 @@
 """설정 화면(연결 관리, P4a)의 순수 부분 시험 — PySide6 없이 돈다(네트워크·실제 보관소·시크릿 없음). 뷰모델·가짜 공급자·실제 서비스 어댑터·접이식 묶음·'연결됨' 정직 표시·키 값 비노출·예시 꼬리표.
 
 지키는 것:
-  1) 용도 일곱이 네 묶음(데이터·이미지·AI·발행)에 빠짐·겹침 없이 나뉘고 옛 용도는 항목이 남아 있을 때만 보인다. 묶음 머리의 요약 칩은 용도 상태를 그대로 센다.
+  1) 용도 일곱이 네 묶음(데이터 Provider·이미지·AI 보조·발행·연결)에 빠짐·겹침 없이 나뉘고 옛 용도는 항목이 남아 있을 때만 보인다. 묶음 머리의 요약 칩은 용도 상태를 그대로 센다. 다섯째 묶음 '정보' 는 버전 + 접어 둔 진단 정보다(UI-C1b).
   2) 호출 코드가 없는 동안(`implemented=False`) 어떤 글에도 '연결됨' 이 없다 — 반대로 호출 코드가 있고 시험 성공이 24시간 안이면 '연결됨' 이 나온다. 준비 배지와 연결 배지는 따로, 키 사용 설정은 항목 줄의 작은 글로만.
   3) 키를 하나만 두는 용도(NAVER API HUB)에는 '예비' 선택지도 '키 더하기' 도 없고 '다른 키로 넘어가지 않아요' 가 보인다. 다른 용도는 사용·예비·꺼짐.
   4) 키 값(끝 4자 포함)은 화면·진단·기록 어디에도 없다 — 어댑터는 보관소에 '있나' 만 묻고 값을 꺼내지 않는다. 읽기만 한다(파일을 만들거나 바꾸지 않는다).
-  5) 예시 데이터는 모든 사용량 줄에 '예시' 꼬리표가 붙고 실제 데이터에는 없다. 못 읽은 사용량은 숫자 대신 '확인할 수 없어요'.
+  5) 예시 데이터는 모든 사용량 줄에 '예시' 꼬리표가 붙고 실제 데이터에는 없다. 못 읽은 사용량은 숫자 대신 '확인할 수 없어요'. 한도 줄은 기간마다 막대 한 줄이고 뷰모델은 막대용 숫자 칸(`bar`)만 더한다(UI-C1b).
   6) 영문 상태 이름·내부 열쇠가 뷰모델의 글에 없고, 실제 블로그 이름·아이디·색 이름이 코드·시험에 없다(범용 원칙).
 """
 import contextlib
@@ -33,7 +33,8 @@ from chanceblog_desktop.security.keystore import MemoryStore  # noqa: E402
 from chanceblog_desktop.service import connections as cn  # noqa: E402
 from chanceblog_desktop.service import quota  # noqa: E402
 from chanceblog_desktop.ui import adapters  # noqa: E402
-from chanceblog_desktop.ui.core import app_state, jobs, services, text, tokens  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, gauges, jobs, services, text, tokens  # noqa: E402
+from chanceblog_desktop.ui.core import version as app_version  # noqa: E402
 from chanceblog_desktop.ui.core import settings_view as sv  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
@@ -119,7 +120,7 @@ class GroupsTest(Base):
 
     def test_the_four_group_titles_and_every_purpose_has_its_own_sentence(self):
         view = view_of(*[info(key) for key, spec in cn.PURPOSES.items() if not spec.legacy_to])
-        self.assertEqual([group["title"] for group in view["groups"]], ["데이터", "이미지", "AI", "발행·연결"])         # 통합 전달서 §34 — 마지막 묶음 이름은 '발행·연결'(Blogger·GitHub)
+        self.assertEqual([group["title"] for group in view["groups"]], ["데이터 Provider", "이미지", "AI 보조", "발행·연결"])         # 의도적 갱신(UI-C1b): 새 기준 이름 — 운영자 2026-11-06 확인 요청 004 의 답 7 (옛 이름 '데이터'·'AI'). 마지막 묶음 이름은 그대로 '발행·연결'(통합 전달서 §34 — Blogger·GitHub)
         for key in cn.PURPOSES:
             self.assertTrue(text.T.get("purpose_" + key), f"{key} 의 한 줄 설명이 문구표에 없다")
         self.assertEqual({key: card["desc"] for key, card in cards_of(view).items()}, {key: text.T["purpose_" + key] for key in cards_of(view)})
@@ -204,7 +205,7 @@ class ChipsTest(unittest.TestCase):
     def test_the_group_name_for_a_screen_reader_says_the_title_the_summary_and_whether_it_is_open(self):
         view = sv.build_settings_view(services.ConnectionsData(purposes=services.sample_connections("normal"), sample=True), "normal", open_groups={"data"})
         names = {group["key"]: group["a11y"] for group in view["groups"]}
-        self.assertEqual(names["data"], "데이터, 준비 중 2 · 요청 한도 도달 1 · 연결 확인 필요 1, 펼쳐져 있어요")
+        self.assertEqual(names["data"], "데이터 Provider, 준비 중 2 · 요청 한도 도달 1 · 연결 확인 필요 1, 펼쳐져 있어요")         # 의도적 갱신(UI-C1b): 새 묶음 이름(옛 '데이터')
         self.assertEqual(names["image"], "이미지, 연결됨 1, 접혀 있어요")
 
     def test_a_problem_is_a_problem_even_for_a_purpose_that_is_only_getting_ready(self):
@@ -383,7 +384,12 @@ class SingleKeyRuleTest(unittest.TestCase):
     def test_the_card_has_no_field_for_an_action_so_nothing_can_look_pressable_yet(self):
         """읽기만 하는 화면 — 용도 카드·묶음·화면 뷰모델의 칸이 이 목록뿐이다(키 더하기·지우기·시험 같은 동작 칸은 다음 묶음(P4f)이 더하면서 이 시험을 고친다)."""
         view = view_of(info("naver_apihub"))
-        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "banners", "refresh", "section", "groups", "keys_note", "advanced", "loading", "empty", "error"})
+        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "banners", "refresh", "section", "groups", "keys_note", "info", "loading", "empty", "error"})         # 의도적 갱신(UI-C1b): 옛 칸 `advanced`(고급 > 진단 정보) 가 '정보' 묶음 `info`(버전 + 진단 정보)로 옮겨 갔다
+        self.assertEqual(set(view["info"]), {"key", "title", "open", "chips", "summary", "a11y", "version", "diag"})
+        self.assertEqual((set(view["info"]["version"]), set(view["info"]["diag"])), ({"label", "text"}, {"show", "hide", "note", "text"}))
+        usage = cards_of(view_of(info("naver_apihub", usage=services.UsageInfo((("오늘", 1, 100),), True, 30000))))["naver_apihub"]["usage"]
+        self.assertEqual({tuple(sorted(row)) for row in usage["rows"]}, {("bar", "note", "tag", "text")})          # 한도 줄의 칸도 글·꼬리표·작은 글 여부·막대 숫자뿐이다(동작 칸 없음)
+        self.assertEqual(set(usage["rows"][0]["bar"]), {"title", "used", "limit", "unit"})
         self.assertEqual(set(view["groups"][0]), {"key", "title", "open", "chips", "summary", "cards", "a11y"})
         self.assertEqual(set(view["groups"][0]["cards"][0]), {"key", "name", "desc", "gray", "ready", "conn", "ready_caption", "conn_caption", "note", "policy", "limit", "choices", "entries_title",
                                                                "entries", "usage", "a11y"})
@@ -396,12 +402,12 @@ class SingleKeyRuleTest(unittest.TestCase):
 class CardTextTest(unittest.TestCase):
     def test_the_getting_ready_card_is_gray_and_says_there_is_no_connecting_function_yet(self):
         card = cards_of(view_of(info("naver_searchad")))["naver_searchad"]
-        self.assertEqual((card["gray"], card["ready"]["text"], card["note"]), (True, "준비 중", "아직 실제로 연결하는 기능이 없어요. 키가 없어도 핵심 기능은 그대로예요."))
+        self.assertEqual((card["gray"], card["ready"]["text"], card["note"]), (True, "준비 중", "아직 연결 기능이 없어요. 키가 없어도 핵심 기능은 그대로예요."))         # 의도적 갱신(UI-C1b, D-183 카드 글 줄이기): 옛 문장 '아직 실제로 연결하는 기능이 없어요. …' — 뜻(연결 기능 없음 + 핵심 기능은 그대로)은 같다
 
     def test_github_takes_no_key_and_has_no_connection_badge(self):
         card = cards_of(view_of(info("github_repo")))["github_repo"]
         self.assertEqual((card["ready"]["text"], card["conn"], card["note"], card["choices"], card["policy"], card["gray"]),
-                         ("키 없음", None, "키를 받지 않아요. 컴퓨터의 Git 로그인을 써요. 로그인 확인은 아직 못 해요.", None, "", False))      # 연결 상태를 말하지 않는 대신 '확인은 아직 못 한다' 고 알린다(L5)
+                         ("키 없음", None, "키를 받지 않고 컴퓨터의 Git 로그인을 써요. 로그인 확인은 아직 못 해요.", None, "", False))      # 연결 상태를 말하지 않는 대신 '확인은 아직 못 한다' 고 알린다(L5). 의도적 갱신(UI-C1b, D-183): 앞 두 문장을 하나로 줄였다 — 뜻은 같다
         self.assertEqual(card["entries"], [])
 
     def test_no_card_says_the_core_features_stay_the_same_twice(self):
@@ -438,6 +444,83 @@ class CardTextTest(unittest.TestCase):
             self.assertNotRegex(value, r"keys |--|`|\['|\"\]|Traceback", key)                             # 명령줄 글·백틱·파이썬 목록 꼴이 없다
             self.assertNotRegex(value, UPPER_CODE, key)
 
+    CARD_SENTENCES = ("purpose_", "prep_note", "nokey_note", "legacy_note", "policy_", "usage_unreadable", "entry_missing", "choices_label")
+    OPERATOR_WORDS = ("limit_naver_apihub", "limit_desc_naver_apihub")                                     # 통합 전달서 §34 — 운영자가 정한 문장이라 줄이지 않는다(위 시험이 글자 그대로 못박는다)
+
+    def test_every_guidance_sentence_on_a_card_stays_short_and_the_meaning_and_safety_words_stay(self):
+        """UI-C1b(D-183 카드 글 줄이기) — C-Type §7.4 '설명은 80~120자 이내'·운영자 확인 요청 004. 카드에 들어가는 안내 글은 44자 이내이고(기준 커밋에는 45·47·51자가 셋 있었고 좁은 카드에서 두 줄로 꺾였다),
+        예외는 두 문장으로 된 `policy_never`(49자 — 서비스 문구 '저장해 둔 값이나 데이터 없음으로 계속' 의 뜻을 지키려 둔다)뿐이다. 줄이면서 뜻·안전 안내가 빠지지 않았다."""
+        keys = [key for key in text.T if key.startswith(self.CARD_SENTENCES) and key not in self.OPERATOR_WORDS]
+        self.assertGreater(len(keys), 14)
+        self.assertEqual({key: len(text.T[key]) for key in keys if len(text.T[key]) > 44}, {"policy_never": 49})
+        must = {"prep_note": ("연결 기능이 없어요", "핵심 기능은 그대로예요"), "nokey_note": ("키를 받지 않", "Git 로그인", "로그인 확인은 아직 못 해요"), "legacy_note": ("호출하지 않아요", "새 키는 더할 수 없고", "저장된 키는 지우지 않았어요"),
+                "policy_single": ("키는 1개만", "다른 키로 넘어가지 않아요"), "policy_never": ("자동으로 다른 키로 넘어가지 않아요", "한도에 닿으면", "저장된 값", "기본 값"),
+                "policy_failover": ("한도·일시 오류일 때만", "다음 키로 넘어가요"), "purpose_image_provider": ("이미지", "원본 주소로만"),
+                "usage_unreadable": ("확인할 수 없어요",), "usage_unreadable_closed": ("확인할 수 없어요", "새 조회를 멈추고 저장된 정보로 계속해요"),
+                "diag_note": ("키와 입력한 글은 담기지 않아요",), "conn_keys_note": ("키를 넣는 기능은 아직 없어요",), "conn_sample_tip": ("예시", "실제 값이 아니에요")}
+        for key, words in must.items():
+            for word in words:
+                self.assertIn(word, text.T[key], (key, word))
+        self.assertEqual(text.T["limit_naver_apihub"], "한도 도달 시 저장된 데이터로 계속")                        # 운영자 문장은 그대로
+        self.assertEqual(text.T["limit_desc_naver_apihub"], "새 API 호출을 중지하고 Seed, 캘린더와 기존 발행 이력으로 후보를 생성합니다.")
+
+
+class InfoGroupTest(unittest.TestCase):
+    """UI-C1b — 다섯째 묶음 '정보' = 버전 + 접어 둔 진단 정보(옛 '고급 > 진단 정보' 가 옮겨 옴). 운영자 2026-11-06 확인 요청 004 의 답 7: 5개 아코디언 — 데이터 Provider·이미지·AI 보조·발행·연결·정보."""
+    DATA = services.ConnectionsData(purposes=services.sample_connections("normal"), sample=True)
+    WHEN = datetime.datetime(2026, 11, 6, 20, 10, 0)
+
+    def test_there_are_five_groups_in_the_agreed_order_four_for_services_and_the_info_group_last(self):
+        view = sv.build_settings_view(self.DATA, "normal", loaded_at=self.WHEN)
+        self.assertEqual([group["title"] for group in view["groups"]] + [view["info"]["title"]], ["데이터 Provider", "이미지", "AI 보조", "발행·연결", "정보"])
+        self.assertEqual([group["key"] for group in view["groups"]] + [view["info"]["key"]], ["data", "image", "ai", "publish", "info"])
+        self.assertNotIn(sv.INFO_GROUP, services.GROUP_ORDER)                                              # 정보는 서비스(용도) 묶음이 아니다
+        self.assertNotIn(sv.INFO_GROUP, services.PURPOSE_GROUPS.values())
+
+    def test_the_info_group_holds_the_version_and_the_folded_diagnostics_and_has_no_cards_or_chips(self):
+        info_view = sv.build_settings_view(self.DATA, "normal", loaded_at=self.WHEN, version=app_version.VersionInfo("v1.2.3", "file"))["info"]
+        self.assertEqual((info_view["open"], info_view["chips"], info_view["summary"], info_view["a11y"]), (False, [], "", "정보, 접혀 있어요"))
+        self.assertEqual(info_view["version"], {"label": "버전", "text": "v1.2.3"})
+        self.assertEqual(info_view["diag"], {"show": "진단 정보 보기", "hide": "진단 정보 숨기기", "note": text.T["diag_note"], "text": sv.diag_text(self.DATA, self.WHEN)})
+        self.assertIn("키와 입력한 글은 담기지 않아요", info_view["diag"]["note"])                            # 비밀 값 안내는 그대로
+        self.assertNotIn("cards", info_view)
+        opened = sv.build_settings_view(self.DATA, "normal", open_groups={"info"})
+        self.assertEqual((opened["info"]["open"], opened["info"]["a11y"]), (True, "정보, 펼쳐져 있어요"))
+        self.assertEqual([group["open"] for group in opened["groups"]], [False] * 4)                       # 정보를 펴도 다른 묶음은 그대로
+
+    def test_the_version_follows_the_version_rule_of_the_frame_and_is_the_dev_version_when_unknown(self):
+        """버전은 UI-C1a 의 규칙 그대로 — 읽으면 `v0.0.0`, 못 읽으면(또는 못 받으면) 개발 화면의 `개발 버전`."""
+        def broken(_path):
+            raise OSError("읽기 실패")
+        cases = ((None, "개발 버전"), (app_version.read_version(reader=lambda path: "0.0.0\n"), "v0.0.0"), (app_version.read_version(reader=lambda path: "0.1.0-beta"), "v0.1.0-beta"),
+                 (app_version.read_version(reader=lambda path: "엉뚱한 글"), "개발 버전"), (app_version.read_version(reader=broken), "개발 버전"))
+        for given, shown in cases:
+            self.assertEqual(sv.build_settings_view(self.DATA, "normal", version=given)["info"]["version"]["text"], shown, shown)
+        self.assertEqual(text.T["dev_version"], "개발 버전")
+
+    def test_the_info_group_is_in_every_state_but_holds_diagnostics_only_when_there_is_data(self):
+        for state in ("loading", "empty", "error"):
+            view = sv.build_settings_view(None, state)
+            self.assertEqual((view["groups"], view["info"]["diag"]["text"], view["info"]["title"]), ([], "", "정보"), state)
+        self.assertTrue(sv.build_settings_view(self.DATA, "normal", loaded_at=self.WHEN)["info"]["diag"]["text"].startswith("time: 2026-11-06 20:10:00"))
+
+    def test_the_state_remembers_the_info_group_like_any_other_and_takes_the_version_it_is_given(self):
+        state = app_state.AppState(services.FakeHomeProvider(), connections=services.FakeConnectionsProvider(), version=app_version.VersionInfo("v9.9.9", "file"))
+        state.apply_connections(self.DATA)
+        self.assertEqual(state.conn_open, {"data"})
+        self.assertTrue(state.set_group_open("info", True))
+        self.assertEqual(state.conn_open, {"data", "info"})
+        view = state.settings_view()
+        self.assertEqual((view["info"]["open"], view["info"]["version"]["text"]), (True, "v9.9.9"))
+        self.assertTrue(state.set_group_open("info", False))
+        self.assertEqual(state.conn_open, {"data"})
+        for wrong in ("nope", "", "INFO", "advanced", None):                                               # 옛 이름('고급')이나 대소문자 다른 이름은 받지 않는다
+            self.assertFalse(state.set_group_open(wrong, True), wrong)
+        self.assertEqual(state.conn_open, {"data"})
+        default = app_state.AppState(services.FakeHomeProvider(), connections=services.FakeConnectionsProvider())
+        default.apply_connections(self.DATA)
+        self.assertEqual(default.settings_view()["info"]["version"]["text"], "개발 버전")                    # 버전을 못 받은 상태 — 개발 화면과 같다
+
 
 class UsageTest(unittest.TestCase):
     def rows(self, usage, sample=False):
@@ -445,9 +528,12 @@ class UsageTest(unittest.TestCase):
         return None if shown is None else shown["rows"]
 
     def test_the_api_hub_usage_line_reads_like_the_operator_example(self):
+        """의도적 갱신(UI-C1b): 옛 시험은 한 줄 `오늘 12 / 100회 · 이번 달 340 / 27,000회` 를 못박았다. 사용량 막대는 **기간마다 한 줄**이라 같은 글·같은 숫자가 둘로 나뉘고 줄마다 막대에 줄 숫자 칸(`bar`)이 붙는다
+        (운영자 2026-11-06 확인 요청 004 의 답 7 '숫자, 기간, 사용량과 한도를 함께 표시'). 콘솔 한도·세는 방식은 막대 없는 작은 글 줄 그대로다."""
         usage = services.UsageInfo((("오늘", 12, 100), ("이번 달", 340, 27000)), True, 30000, fail_closed=True)
-        self.assertEqual(self.rows(usage), [{"text": "오늘 12 / 100회 · 이번 달 340 / 27,000회", "tag": "", "note": False},                                    # 통합 전달서 §34 — '오늘 00 / 00회'
-                                            {"text": "서비스 콘솔 월 한도 30,000회 · 실패한 호출도 세어요", "tag": "", "note": True}])                      # 콘솔 한도·세는 방식은 작은 글로 따로
+        self.assertEqual(self.rows(usage), [{"text": "오늘 12 / 100회", "tag": "", "note": False, "bar": {"title": "오늘", "used": 12, "limit": 100, "unit": "회"}},                                  # 통합 전달서 §34 — '오늘 00 / 00회'
+                                            {"text": "이번 달 340 / 27,000회", "tag": "", "note": False, "bar": {"title": "이번 달", "used": 340, "limit": 27000, "unit": "회"}},
+                                            {"text": "서비스 콘솔 월 한도 30,000회 · 실패한 호출도 세어요", "tag": "", "note": True, "bar": None}])                      # 콘솔 한도·세는 방식은 작은 글로 따로
         self.assertNotIn("시도", " ".join(row["text"] for row in self.rows(usage)))
         no_console = self.rows(services.UsageInfo((("오늘", 1, 100),), True))
         self.assertEqual([row["text"] for row in no_console], ["오늘 1 / 100회", "실패한 호출도 세어요"])
@@ -455,7 +541,7 @@ class UsageTest(unittest.TestCase):
 
     def test_a_usage_that_could_not_be_read_shows_no_numbers_but_the_sentence(self):
         closed = self.rows(services.UsageInfo(readable=False, fail_closed=True))
-        self.assertEqual(closed, [{"text": "확인할 수 없어요. 새 조회를 멈추고 저장된 정보로 계속해요.", "tag": "", "note": False}])
+        self.assertEqual(closed, [{"text": "확인할 수 없어요. 새 조회를 멈추고 저장된 정보로 계속해요.", "tag": "", "note": False, "bar": None}])          # 의도적 갱신(UI-C1b): 행마다 `bar` 칸이 생겼다 — 못 읽은 값은 None(막대 없이 글만)
         plain = self.rows(services.UsageInfo(readable=False, rows=(("오늘", 50, 100),)))
         self.assertEqual([row["text"] for row in plain], ["확인할 수 없어요. 사용량 기록을 읽지 못했어요."])
         for rows in (closed, plain):
@@ -474,7 +560,7 @@ class UsageTest(unittest.TestCase):
         self.assertIsNone(self.rows(None))
         self.assertIsNone(self.rows(services.UsageInfo()))
         rows = self.rows(services.UsageInfo((("최근 60분", 7, 50),)), sample=True)
-        self.assertEqual(rows, [{"text": "최근 60분 7 / 50회", "tag": "예시", "note": False}])
+        self.assertEqual(rows, [{"text": "최근 60분 7 / 50회", "tag": "예시", "note": False, "bar": {"title": "최근 60분", "used": 7, "limit": 50, "unit": "회"}}])          # 의도적 갱신(UI-C1b): `bar` 칸
 
     def test_the_adapter_turns_the_service_usage_into_the_same_values(self):
         spec = cn.PURPOSES["naver_apihub"]
@@ -514,6 +600,64 @@ class UsageTest(unittest.TestCase):
             self.assertEqual([banner[1] for banner in view["banners"]], [text.T["conn_partial_usage"]])
             self.assertEqual(cards_of(view)["naver_apihub"]["usage"]["rows"][0]["text"], text.T["usage_unreadable_closed"])
             self.assertTrue(all(card["usage"] is None for key, card in cards_of(view).items() if key != "naver_apihub"))      # 키 항목이 없는 용도는 셀 것도 없다
+
+    def test_each_period_gets_its_own_bar_row_and_its_numbers_are_plain_whole_numbers(self):
+        """UI-C1b — 뷰모델은 막대에 줄 **숫자 칸**(`bar`: 기간 이름·쓴 수·한도·단위)만 더한다. 글은 막대 부품과 같은 규칙(`gauges.usage_view`) 한 곳에서 나오므로 둘이 어긋날 수 없고, 실제 0회는 모르는 값이 아니다."""
+        rows = self.rows(services.UsageInfo((("오늘", 12, 100), ("이번 달", 340, 27000), ("최근 60분", 0, 50))))
+        bars = [row for row in rows if row["bar"] is not None]
+        self.assertEqual([row["bar"]["title"] for row in bars], ["오늘", "이번 달", "최근 60분"])
+        for row in bars:
+            self.assertEqual(set(row["bar"]), {"title", "used", "limit", "unit"})
+            for name in ("used", "limit"):
+                self.assertTrue(isinstance(row["bar"][name], int) and not isinstance(row["bar"][name], bool), (row, name))
+            self.assertEqual(row["text"], gauges.usage_view(row["bar"]["used"], row["bar"]["limit"], row["bar"]["unit"], row["bar"]["title"]).text)       # 글 = 막대 부품이 그리는 글
+            self.assertFalse(row["note"])
+        self.assertEqual((bars[2]["bar"]["used"], bars[2]["text"]), (0, "최근 60분 0 / 50회"))
+        self.assertTrue(all(row["bar"] is None and row["note"] for row in rows[len(bars):]), rows)                                              # 막대 줄 다음은 모두 막대 없는 작은 글 줄
+
+    def test_the_console_limit_note_needs_a_period_row_but_a_pause_note_does_not(self):
+        """UI-C1b(변이 점검이 찾은 틈) — 콘솔 한도·`실패한 호출도 세어요` 는 숫자(기간 줄)가 있을 때만 말한다. 기간 줄이 없으면(한도를 모르는 용도) 그 작은 글도 없다 — 다시 열리는 때 같은 다른 안내는 그대로 나온다."""
+        self.assertIsNone(self.rows(services.UsageInfo((), True, 30000)))                                          # 숫자가 없으면 콘솔 한도 이야기도 없다 → 보일 것이 없다
+        rows = self.rows(services.UsageInfo((), True, 30000, resume_text="내일 00:00 이후 자동 재개"))
+        self.assertEqual([(row["text"], row["note"], row["bar"]) for row in rows], [("내일 00:00 이후 자동 재개", True, None)])
+
+    def test_a_row_without_usable_numbers_keeps_the_period_and_says_it_cannot_be_checked_with_no_numbers(self):
+        """UI-C1b — 숫자가 없거나·음수·한도 0 이하·숫자가 아니면(불리언·글자·NaN) 0 으로 채우거나 지어내지 않고 `오늘 확인할 수 없어요`(막대 숫자는 None — 화면은 막대 없이 글만 그린다)."""
+        for used, limit in ((None, 100), (-1, 100), (5, 0), (5, None), (True, 100), ("12", 100), (5, "100"), (float("nan"), 100), (5, -1), (float("inf"), 100)):
+            row = self.rows(services.UsageInfo((("오늘", used, limit),)))[0]
+            self.assertEqual((row["text"], row["bar"]), ("오늘 확인할 수 없어요", {"title": "오늘", "used": None, "limit": None, "unit": "회"}), (used, limit))
+            self.assertFalse(re.search(r"\d", row["text"]))
+        mixed = self.rows(services.UsageInfo((("오늘", 12, 100), ("이번 달", None, 27000))))
+        self.assertEqual([(row["text"], row["bar"]["used"]) for row in mixed], [("오늘 12 / 100회", 12), ("이번 달 확인할 수 없어요", None)])      # 한 기간을 몰라도 다른 기간은 그대로
+
+    def test_a_key_shaped_period_name_is_masked_in_the_row_text_and_in_the_bar_numbers(self):
+        row = self.rows(services.UsageInfo((("기간 " + GOOGLE_KEY, 1, 10),)))[0]
+        for shown in (row["text"], row["bar"]["title"]):
+            self.assertEqual(leaks(shown, GOOGLE_KEY, 6), [], shown)
+
+    def test_the_bar_color_never_contradicts_the_service_stage_of_the_api_hub(self):
+        """UI-C1b(D-181) — 막대 색은 **월 한도 27,000 대비** 80·90% 로, 서비스 단계 안내는 **콘솔 한도 30,000 대비** 70·80·90% 로 정한다(분모가 달라 같은 사용량에서 퍼센트 숫자가 다르다 — 막대 옆에 늘 분모가 보이고 안내문은
+        '콘솔 한도의 70%' 처럼 기준을 스스로 말한다). 모순이 없다는 것은 ① 안내가 '자동 새로고침 중지' 이상이면 막대가 파랑이 아니고 ② 막대가 노랑이면 안내가 이미 시작됐고 ③ 막대가 빨강이면 '자동 새로고침 중지' 이상이며 ④ 한도를 넘으면 빨강이라는 것이다.
+        서비스의 단계 비율이나 한도를 바꾸면 이 시험이 알려 결정 기록을 다시 쓰게 한다."""
+        provider = cn.PURPOSES["naver_apihub"].providers[0]
+        self.assertEqual((provider.console_limit, cn.APIHUB_INTERNAL_MONTH), (30000, 27000))
+        level = {None: 0, cn.STAGE_NOTICE: 1, cn.STAGE_LIMITED: 2, cn.STAGE_CLOSED: 3}
+        for used in range(0, 30001):
+            bar = gauges.usage_view(used, cn.APIHUB_INTERNAL_MONTH, "회", "이번 달")
+            for ahead in (0, 1):                                                                            # 두 모델: 호출 전 사용량 기준(0) · 실제 화면이 쓰는 '다음 호출 기준'(1 — 독립 검증 L1: 단계가 21,000/24,000/27,000회부터 보인다)
+                stage = cn.stage_of(provider, used + ahead)
+                stage_level = level[stage.name if stage else None]
+                if stage_level >= level[cn.STAGE_LIMITED]:
+                    self.assertNotEqual(bar.state, "ok", (used, ahead))
+                if bar.state == "warn":
+                    self.assertGreaterEqual(stage_level, level[cn.STAGE_NOTICE], (used, ahead))
+                if bar.state == "danger":
+                    self.assertGreaterEqual(stage_level, level[cn.STAGE_LIMITED], (used, ahead))
+            if used > cn.APIHUB_INTERNAL_MONTH:
+                self.assertEqual(bar.state, "danger", used)
+        for stage in provider.stages:                                                                       # 안내문은 색 이름을 말하지 않는다(색은 막대의 몫이고 글자 라벨이 따로 있다)
+            for color_word in ("파랑", "노랑", "빨강", "초록", "주황"):
+                self.assertNotIn(color_word, stage.text)
 
 
 class SampleTagTest(unittest.TestCase):
@@ -835,7 +979,7 @@ class KeyHygieneTest(Base):
         finally:
             root.removeHandler(handler)
             root.setLevel(previous_level)
-        shown = json.dumps(view, ensure_ascii=False) + repr(data) + sv.diag_text(data) + view["advanced"]["diag"] + out.getvalue() + err.getvalue() + " ".join(records)
+        shown = json.dumps(view, ensure_ascii=False) + repr(data) + sv.diag_text(data) + view["info"]["diag"]["text"] + out.getvalue() + err.getvalue() + " ".join(records)         # 의도적 갱신(UI-C1b): 옛 칸 `advanced` → `info`
         for name, secret in secrets.items():
             self.assertEqual(leaks(shown, secret, 6), [], f"{name} 의 조각이 보인다")
             self.assertNotIn("****" + secret[-4:], shown, name)                                           # `list_entries` 가 만드는 끝 4자 표시도 없다
@@ -933,7 +1077,7 @@ class AppStateTest(unittest.TestCase):
     def test_the_six_states_follow_the_data_and_each_state_has_its_own_view_model_shape(self):
         state = app_state.AppState(services.FakeHomeProvider(), connections=services.FakeConnectionsProvider())
         loading = state.settings_view()
-        self.assertEqual((loading["state"], loading["groups"], loading["advanced"]["diag"], loading["banners"]), ("loading", [], "", []))
+        self.assertEqual((loading["state"], loading["groups"], loading["info"]["diag"]["text"], loading["banners"]), ("loading", [], "", []))         # 의도적 갱신(UI-C1b): 옛 칸 `advanced` → `info`
         for scenario, wanted, banners in (("normal", "normal", 0), ("partial", "partial", 2), ("offline", "offline", 1), ("empty", "empty", 0)):
             state.apply_connections(services.FakeConnectionsProvider(scenario).load_connections(lambda *a: None, lambda: False))
             view = state.settings_view()

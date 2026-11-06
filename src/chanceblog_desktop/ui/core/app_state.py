@@ -130,10 +130,11 @@ def topic_vm(topic, selected=False):
 
 
 class AppState:
-    def __init__(self, provider=None, *, today=None, runner=None, connections=None):
+    def __init__(self, provider=None, *, today=None, runner=None, connections=None, version=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.today = today                                           # 시험에서 날짜를 고정할 때
+        self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
         self.toasts = ToastPolicy()
         self.page = "home"
         self.list_state = "loading"
@@ -370,8 +371,8 @@ class AppState:
         self.conn_state = self._conn_state_for(self.conn_data)
 
     def set_group_open(self, key, opened):
-        """접이식 묶음을 펴거나 접는다(기억만 하고 파일에는 쓰지 않는다 — 읽기 전용). 모르는 묶음 이름은 False."""
-        if key not in GROUP_ORDER:
+        """접이식 묶음을 펴거나 접는다(기억만 하고 파일에는 쓰지 않는다 — 읽기 전용). 묶음은 용도 묶음 넷과 '정보'(`sv.INFO_GROUP`) 다섯이고, 모르는 묶음 이름은 False."""
+        if key not in GROUP_ORDER and key != sv.INFO_GROUP:
             return False
         keep = set(self.conn_open or ())
         if opened:
@@ -384,7 +385,7 @@ class AppState:
     def settings_view(self):
         """설정 화면 뷰모델 — 만드는 일은 `settings_view.py`(순수)가 한다. 오류 상태의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         diag = diagnostic_text(self.conn_failure, self.conn_failed_at) if self.conn_failure else ""
-        return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open)
+        return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open, version=self.version)
 
     # ---- 눌림 → 안내 문구 ----
     def soon(self, name):

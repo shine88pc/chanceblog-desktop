@@ -312,13 +312,45 @@ class UsageBarTest(PartsBase):
         self.assertEqual(bar.percent_label.text(), "한도 넘음 · 111%")
         self.assertEqual(bar.accessibleName(), "이번 달 30,000 / 27,000회, 111%, 한도 넘음")
 
-    def test_unknown_usage_has_no_fill_and_no_percent(self):
-        bar, image = self.fill_probe(None)
-        self.assertEqual(hexed(image, 4, 4), COLORS["track"].upper())
+    def test_unknown_usage_has_no_bar_at_all_only_the_sentence(self):
+        """의도적 갱신(UI-C1b, UI-C0 독립 검증 M1): 옛 시험은 모르는 값에서도 **빈 길(트랙)의 색**이 있음을 확인해 못박았다 — 빈 길은 0% 로 읽힌다. 이제는 막대(빈 길 포함)가 아예 없고 글만 있다
+        (운영자 2026-11-06 확인 요청 004 의 답 7: 값을 읽지 못하면 Bar 없이 '확인할 수 없어요'). 실제 0회는 모르는 값이 아니라서 빈 길이 그대로 있다(아래 시험)."""
+        for used, limit in ((None, 27000), (-1, 27000), (5, 0), (5, None), ("12", 100), (float("nan"), 100)):
+            bar = gauges.UsageBar(used, limit, "회", "이번 달")
+            self.host(bar, width=600)
+            self.assertIsNone(bar.track, (used, limit))
+            self.assertEqual(bar.findChildren(gauges._Track), [], (used, limit))                                    # 어떤 막대 위젯도 없다
+            image = bar.grab().toImage()
+            for key in ("track", "primary", "warning", "danger"):                                                   # 빈 길 색도 채움 색도 한 점 없다
+                self.assertEqual(count_color(image, COLORS[key]), 0, (used, limit, key))
+            self.assertIsNone(bar.percent_label)
+            self.assertEqual(bar.text_label.toolTip(), "이번 달 확인할 수 없어요")
+            self.assertEqual(bar.accessibleName(), "이번 달 확인할 수 없어요")
+            self.assertFalse(bar.view.known)
+            self.assertEqual(bar.height(), bar.text_label.height())                                                 # 글 한 줄 높이뿐 — 막대 자리(8px + 간격)가 없다
+
+    def test_a_real_zero_is_not_unknown_so_its_empty_track_and_0_percent_stay(self):
+        bar, image = self.fill_probe(0)
+        self.assertIsNotNone(bar.track)
+        self.assertEqual(hexed(image, 4, 4), COLORS["track"].upper())                                               # 채움 없이 빈 길만
         self.assertEqual(hexed(image, image.width() // 2, 4), COLORS["track"].upper())
-        self.assertIsNone(bar.percent_label)
-        self.assertEqual(bar.text_label.toolTip(), "이번 달 확인할 수 없어요")
-        self.assertFalse(bar.view.known)
+        self.assertEqual((bar.text_label.toolTip(), bar.percent_label.text()), ("이번 달 0 / 27,000회", "0%"))
+        self.assertTrue(bar.view.known)
+
+    def test_a_tag_sits_at_the_end_of_the_label_row_and_is_in_the_accessible_name_too(self):
+        """UI-C1b — 예시 값의 `예시` 꼬리표는 줄 끝(퍼센트 뒤)에 붙고 접근 이름에도 같은 정보가 들어간다. 꼬리표를 안 주면 없다."""
+        bar = gauges.UsageBar(22000, 27000, "회", "이번 달", "예시")
+        self.host(bar, width=600)
+        self.assertEqual((bar.tag_label.text(), bar.tag_label.property("badge")), ("예시", "muted"))
+        left = lambda widget: widget.mapTo(bar, widget.rect().topLeft()).x()                                        # noqa: E731
+        self.assertGreater(left(bar.tag_label), left(bar.percent_label) + bar.percent_label.width() - 2)           # 퍼센트 뒤
+        self.assertEqual(bar.accessibleName(), "이번 달 22,000 / 27,000회, 81%, 주의, 예시")
+        unknown = gauges.UsageBar(None, 27000, "회", "이번 달", "예시")
+        self.host(unknown, width=600)
+        self.assertEqual((unknown.accessibleName(), unknown.tag_label.text(), unknown.track), ("이번 달 확인할 수 없어요, 예시", "예시", None))
+        plain = gauges.UsageBar(1, 10)
+        self.assertIsNone(plain.tag_label)
+        self.assertEqual(plain.accessibleName(), "1 / 10회, 10%")
 
 
 class SemanticBadgeTest(PartsBase):

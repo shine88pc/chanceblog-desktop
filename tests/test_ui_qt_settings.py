@@ -1,4 +1,4 @@
-"""설정 화면(연결 관리, P4a)의 PySide6 시험 — 창을 화면에 띄우지 않고(offscreen) 접이식 네 묶음·용도 카드·여섯 상태·키보드·접근 이름·'메뉴 → 화면' 표·읽기 전용·키 값 비노출을 확인한다.
+"""설정 화면(연결 관리, P4a)의 PySide6 시험 — 창을 화면에 띄우지 않고(offscreen) 접이식 다섯 묶음(용도 묶음 넷 + '정보')·용도 카드·사용량 막대·여섯 상태·키보드·접근 이름·'메뉴 → 화면' 표·읽기 전용·키 값 비노출을 확인한다.
 **PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다). 사용자의 클립보드·보관소·데이터 폴더는 건드리지 않는다(가짜 공급자·임시 폴더의 가짜 보관소).
 
 지키는 것:
@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 from chanceblog_desktop.ui import adapters  # noqa: E402  (PySide6 를 모르는 부분 — PySide6 가 없어도 불러온다)
 from chanceblog_desktop.ui.core import app_state, jobs, services, text, tokens  # noqa: E402
+from chanceblog_desktop.ui.core import version as app_version  # noqa: E402
 
 HAVE = importlib.util.find_spec("PySide6") is not None
 if HAVE:
@@ -35,6 +36,7 @@ if HAVE:
     from PySide6.QtWidgets import QAbstractButton, QApplication, QFrame, QLabel, QLineEdit, QWidget
     from chanceblog_desktop.ui.qt import app as qapp
     from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt import gauges
     from chanceblog_desktop.ui.qt import screens as S
     from chanceblog_desktop.ui.qt import shell as shell_module
     from chanceblog_desktop.ui.qt import theme
@@ -99,9 +101,9 @@ class Base(unittest.TestCase):
         self.settle(2)
         self.assertIs(QApplication.focusWidget(), widget)
 
-    def make(self, connections=None, size=(1440, 900), settings=True, wait=True):
-        """홈 공급자는 가짜(불러오지 않는다) — 설정 공급자만 시험이 고른다. 기본은 예시(`normal`)."""
-        window = shell_module.AppShell(services.FakeHomeProvider(), connections=connections or services.FakeConnectionsProvider(), autoload=False)
+    def make(self, connections=None, size=(1440, 900), settings=True, wait=True, **shell_kwargs):
+        """홈 공급자는 가짜(불러오지 않는다) — 설정 공급자만 시험이 고른다. 기본은 예시(`normal`). `shell_kwargs` 는 앱 틀에 그대로 넘긴다(예: `version_info`)."""
+        window = shell_module.AppShell(services.FakeHomeProvider(), connections=connections or services.FakeConnectionsProvider(), autoload=False, **shell_kwargs)
         window.resize(*size)
         window.show()
         self.addCleanup(window.close)
@@ -148,7 +150,7 @@ class ShellTest(Base):
         self.settle()
         self.assertEqual(window.state.page, "settings")
         self.assertTrue(window.nav_buttons["settings"].isChecked())
-        self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 4)
+        self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 5)                    # 의도적 갱신(UI-C1b): 옛 값 4 — 다섯째 묶음 '정보'(옛 '고급 > 진단 정보')
         self.assertNotIn(text.T["home_title"], self.labels(window))                                  # (자리표시 화면은 없어졌다 — UI-C1a) 지금은 설정 화면이다
         window.go("home")
         self.assertEqual([b for b in window.findChildren(QAbstractButton) if b.property("focus_key") == "top-settings"], [], "상단 앱 바에는 설정 아이콘이 없다")
@@ -156,7 +158,7 @@ class ShellTest(Base):
         window.nav_buttons["settings"].click()                                                  # 설정으로 가는 길은 사이드바 하나
         ui_offscreen.wait_until(self.app, lambda: window.state.conn_state != "loading", 10)
         self.settle()
-        self.assertEqual((window.state.page, len(window.screen_widget.findChildren(UI.Accordion))), ("settings", 4))
+        self.assertEqual((window.state.page, len(window.screen_widget.findChildren(UI.Accordion))), ("settings", 5))
 
     def test_the_screen_table_has_one_builder_per_real_menu_and_the_old_placeholder_screens_cannot_be_opened(self):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 '나머지 넷이 같은 자리표시를 그린다' 를 보았다. 이제 표는 완성된 화면(홈·설정)뿐이고 옛 자리표시 화면 이름을 불러도 열리지 않는다."""
@@ -191,7 +193,7 @@ class ShellTest(Base):
         ui_offscreen.wait_until(self.app, lambda: provider.calls == 2 and not window.state.conn_loading, 10)
         self.settle()
         self.assertEqual(provider.calls, 2)
-        self.assertEqual({key: accordion.is_open for key, accordion in self.accordions(window).items()}, {"data": True, "image": True, "ai": False, "publish": False})
+        self.assertEqual({key: accordion.is_open for key, accordion in self.accordions(window).items()}, {"data": True, "image": True, "ai": False, "publish": False, "info": False})         # 의도적 갱신(UI-C1b): '정보' 묶음이 더해졌다
         self.assertEqual(window.state.conn_state, "normal")                                              # 다시 읽는 동안에도 보이던 내용은 그대로였다
 
     def test_reading_runs_on_a_worker_thread_and_the_result_is_received_on_the_screen_thread(self):
@@ -237,7 +239,7 @@ class ShellTest(Base):
         window.go("settings")
         ui_offscreen.wait_until(self.app, lambda: not window.state.conn_loading, 5)
         self.settle()
-        self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 4)
+        self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 5)                    # 의도적 갱신(UI-C1b): 옛 값 4
 
     def test_a_second_read_request_while_one_is_running_only_says_so_and_closing_cancels_it(self):
         window = self.make(services.FakeConnectionsProvider(delay=5), settings=False)
@@ -250,13 +252,14 @@ class ShellTest(Base):
 
 
 class AccordionTest(Base):
-    def test_there_are_four_headers_named_after_the_groups_with_the_summary_and_the_state(self):
+    def test_there_are_five_headers_named_after_the_groups_with_the_summary_and_the_state(self):
+        """의도적 갱신(UI-C1b): 옛 시험은 머리 넷(데이터·이미지·AI·발행·연결)을 봤다 — 운영자 2026-11-06 확인 요청 004 의 답 7: 아코디언 다섯(데이터 Provider·이미지·AI 보조·발행·연결·정보)."""
         window = self.make()
         names = {key: accordion.toggle.accessibleName() for key, accordion in self.accordions(window).items()}
-        self.assertEqual(names, {"data": "데이터, 준비 중 2 · 요청 한도 도달 1 · 연결 확인 필요 1, 펼쳐져 있어요", "image": "이미지, 연결됨 1, 접혀 있어요", "ai": "AI, 준비 중 1, 접혀 있어요",
-                                 "publish": "발행·연결, 준비 중 1 · 인증 정보 오류 1, 접혀 있어요"})
-        self.assertEqual(list(self.accordions(window)), ["data", "image", "ai", "publish"])
-        self.assertEqual([accordion.is_open for accordion in self.accordions(window).values()], [True, False, False, False])         # 문제(한도)가 있는 묶음만 처음부터 펼쳐진다
+        self.assertEqual(names, {"data": "데이터 Provider, 준비 중 2 · 요청 한도 도달 1 · 연결 확인 필요 1, 펼쳐져 있어요", "image": "이미지, 연결됨 1, 접혀 있어요", "ai": "AI 보조, 준비 중 1, 접혀 있어요",
+                                 "publish": "발행·연결, 준비 중 1 · 인증 정보 오류 1, 접혀 있어요", "info": "정보, 접혀 있어요"})
+        self.assertEqual(list(self.accordions(window)), ["data", "image", "ai", "publish", "info"])
+        self.assertEqual([accordion.is_open for accordion in self.accordions(window).values()], [True, False, False, False, False])         # 문제(한도)가 있는 묶음만 처음부터 펼쳐진다 — '정보' 는 늘 접혀서 시작
         for accordion in self.accordions(window).values():
             self.assertEqual(accordion.body.isVisibleTo(window), accordion.is_open)
 
@@ -296,7 +299,7 @@ class AccordionTest(Base):
         self.assertEqual(window.state.conn_open, {"publish"})
         window.render()
         self.settle()
-        self.assertEqual({key: accordion.is_open for key, accordion in self.accordions(window).items()}, {"data": False, "image": False, "ai": False, "publish": True})
+        self.assertEqual({key: accordion.is_open for key, accordion in self.accordions(window).items()}, {"data": False, "image": False, "ai": False, "publish": True, "info": False})         # 의도적 갱신(UI-C1b): '정보' 묶음이 더해졌다
 
     def test_the_keyboard_focus_stays_on_the_same_header_after_a_redraw(self):
         window = self.make()
@@ -339,7 +342,7 @@ class AccessibilityTest(Base):
         window = self.make()
         self.open_all(window)
         found = self.interactive(window)
-        self.assertGreaterEqual(len(found), 9)                                                            # 메뉴 6 + 위 막대 + 예시 표시·새로 읽기·머리 넷·진단 정보
+        self.assertGreaterEqual(len(found), 9)                                                            # 메뉴 + 예시 표시·새로 읽기·머리 다섯·진단 정보
         for widget in found:
             self.assertTrue(widget.accessibleName().strip(), f"접근 이름이 없다: {type(widget).__name__} {getattr(widget, 'text', lambda: '')()!r}")
             if isinstance(widget, QAbstractButton):
@@ -349,11 +352,13 @@ class AccessibilityTest(Base):
                     self.assertEqual(widget.toolTip(), widget.accessibleName())
         names = [w.accessibleName() for w in found]
         self.assertIn(text.T["conn_refresh"], names)
-        self.assertEqual(len([w for w in found if w.property("acc")]), 4)
+        self.assertEqual(len([w for w in found if w.property("acc")]), 5)                                 # 의도적 갱신(UI-C1b): 옛 값 4 — '정보' 머리
         self.assertEqual(ui_offscreen.find_clipping(window), [])
 
     def test_tab_goes_all_the_way_around_and_the_new_parts_are_stops(self):
         window = self.make()
+        self.accordions(window)["info"].flip()                                                            # 의도적 갱신(UI-C1b): '진단 정보 보기' 단추는 이제 접힌 '정보' 묶음 안에 있다 — 펴야 정거장이다(옛 화면은 늘 보였다)
+        self.settle()
         start = window.nav_buttons["settings"]
         self.focus(start)
         seen, current = [], start
@@ -370,17 +375,24 @@ class AccessibilityTest(Base):
         names = [w.accessibleName() for w in seen]
         self.assertTrue(all(name.strip() for name in names), names)
         self.assertEqual(len(seen), len(set(map(id, seen))))                                              # 같은 곳을 두 번 지나지 않는다(갇히지 않는다)
-        self.assertEqual(sum(1 for w in seen if w.property("acc")), 4)                                    # 접이식 머리 넷이 모두 정거장
+        self.assertEqual(sum(1 for w in seen if w.property("acc")), 5)                                    # 접이식 머리 다섯이 모두 정거장(의도적 갱신 UI-C1b: 옛 값 4)
         self.assertIn(text.T["conn_refresh"], names)
         self.assertIn(text.T["diag_show"], names)
         self.assertIn("예시 데이터", names)
         self.assertEqual(sum(1 for w in seen if w.property("nav")), 2)                                    # 의도적 갱신(UI-C1a, D-172): 실제 메뉴는 홈·설정 둘뿐(옛 값 6) — '다음 단계' 항목은 정거장이 아니다
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
+        """의도적 갱신(UI-C1b): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 단추 하나만 는다(옛 '고급' 영역의 단추가 옮겨 온 것)."""
         window = self.make()
         before = len(self.interactive(window))
-        self.open_all(window)
-        self.assertEqual(len(self.interactive(window)), before)                                           # 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드)
+        for key, accordion in self.accordions(window).items():
+            if key != "info" and not accordion.is_open:
+                accordion.flip()
+        self.settle()
+        self.assertEqual(len(self.interactive(window)), before)                                           # 서비스 묶음을 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드)
+        self.accordions(window)["info"].flip()
+        self.settle()
+        self.assertEqual(len(self.interactive(window)), before + 1)                                       # 정보를 펴면 '진단 정보 보기' 하나만
         card_buttons = [w for w in window.screen_widget.findChildren(QAbstractButton) if not w.property("acc") and w.isVisible()]
         self.assertTrue(all(w.accessibleName() in (text.T["conn_refresh"], text.T["diag_show"], "예시 데이터") for w in card_buttons), [w.accessibleName() for w in card_buttons])
 
@@ -459,6 +471,205 @@ class LayoutTest(Base):
         self.assertEqual(publish, [("준비 중 1", "muted"), ("인증 정보 오류 1", "danger")])
 
 
+COLORS = tokens.palette()
+
+
+def hexed(image, x, y):
+    return image.pixelColor(int(round(x)), int(round(y))).name().upper()
+
+
+def usage_data(rows, sample=False):
+    """키 항목이 하나 있는 NAVER API HUB 카드 하나 — 사용량 줄만 시험이 정한다(가짜 이름·가짜 값)."""
+    purpose = services.PurposeInfo("naver_apihub", "NAVER API HUB 검색어 트렌드", max_entries=1, rotation="never", status="needs_check", entries=(services.EntryInfo("예시 키 1", "active", True),),
+                                   usage=services.UsageInfo(rows))
+    return services.ConnectionsData(purposes=(purpose,), sample=sample)
+
+
+class UsageBarsTest(Base):
+    """UI-C1b — 설정 카드의 한도 줄은 기간마다 사용량 막대다(운영자 2026-11-06 확인 요청 004 의 답 7: 0~79% 파랑·80~89% 노랑·90% 이상 빨강·읽지 못하면 막대 없이 '확인할 수 없어요'·숫자·기간·사용량과 한도를 함께)."""
+
+    def bars(self, window):
+        self.open_all(window)
+        return window.screen_widget.findChildren(gauges.UsageBar)
+
+    def test_every_period_with_numbers_is_a_usage_bar_inside_its_card_with_label_percent_and_tag(self):
+        window = self.make()
+        bars = self.bars(window)
+        self.assertEqual([bar.view.text for bar in bars], ["오늘 12 / 100회", "이번 달 340 / 27,000회", "최근 60분 7 / 50회"])                          # 기간·쓴 수·한도를 함께
+        self.assertEqual([bar.percent_label.text() for bar in bars], ["12%", "1%", "14%"])                                                    # 퍼센트도 함께
+        self.assertEqual([bar.accessibleName() for bar in bars], ["오늘 12 / 100회, 12%, 예시", "이번 달 340 / 27,000회, 1%, 예시", "최근 60분 7 / 50회, 14%, 예시"])     # 접근 이름에도 같은 정보 + 예시 표시
+        for bar in bars:
+            self.assertTrue(bar.isVisible())
+            self.assertEqual(bar.track.height(), tokens.SIZE["usage_h"])                                                                      # 막대 높이 8
+            self.assertEqual((bar.tag_label.text(), bar.tag_label.property("badge")), ("예시", "muted"))                                      # 예시 값은 '예시' 꼬리표
+            self.assertLessEqual(bar.text_label.fontMetrics().horizontalAdvance(bar.text_label._full), bar.text_label.width(), bar.view.text)  # 글 라벨이 줄임표로 잘리지 않는다(독립 검증 L2 — `find_clipping` 은 ElidedLabel 을 제외하므로 따로 본다)
+            self.assertGreater(bar.percent_label.x(), bar.text_label.x(), bar.view.text)                                                      # 퍼센트는 글 오른쪽에 있다(줄 왼쪽으로 가지 않는다)
+        cards = [w for w in window.screen_widget.findChildren(QFrame) if w.property("card") in ("true", "plain", "quiet") and w.accessibleName()]
+        owners = [next(card.accessibleName().split(",")[0] for card in cards if card.isAncestorOf(bar)) for bar in bars]
+        self.assertEqual(owners, ["NAVER API HUB 검색어 트렌드", "NAVER API HUB 검색어 트렌드", "이미지 공급자"])                                       # 허브 카드에 둘(오늘·이번 달), 이미지 카드에 하나
+
+    def test_the_fill_colors_follow_the_agreed_lines_at_79_80_89_90_and_over_the_limit_inside_the_cards(self):
+        rows = (("칸 0", 0, 100), ("칸 79", 79, 100), ("칸 80", 80, 100), ("칸 89", 89, 100), ("칸 90", 90, 100), ("칸 100", 100, 100), ("칸 넘음", 120, 100))
+        window = self.make(Static(usage_data(rows)))
+        bars = self.bars(window)
+        expected = (("track", "0%", None, "track"), ("primary", "79%", None, "track"), ("warning", "주의 · 80%", "warn", "track"), ("warning", "주의 · 89%", "warn", "track"),
+                    ("danger", "위험 · 90%", "danger", "track"), ("danger", "위험 · 100%", "danger", "danger"), ("danger", "한도 넘음 · 120%", "danger", "danger"))
+        self.assertEqual(len(bars), len(expected))
+        for bar, (left, shown, flag, right) in zip(bars, expected, strict=True):
+            image = bar.track.grab().toImage()
+            middle = image.height() // 2
+            self.assertEqual(hexed(image, 4, middle), COLORS[left].upper(), bar.view.text)                                                    # 왼쪽 끝의 색(0 은 채움 없이 빈 길)
+            self.assertEqual(hexed(image, image.width() * 0.995, middle), COLORS[right].upper(), bar.view.text)                               # 오른쪽 끝 — 100% 이상만 끝까지 찬다
+            self.assertEqual((bar.percent_label.text(), bar.percent_label.property("usage")), (shown, flag), bar.view.text)                   # 색만이 아니라 글(주의·위험·한도 넘음)도 함께
+            self.assertEqual(bar.tag_label, None)                                                                                             # 실제 값에는 꼬리표가 없다
+
+    def test_a_usage_that_could_not_be_read_has_no_bar_in_its_card_only_the_sentence(self):
+        window = self.make(services.FakeConnectionsProvider("partial"))
+        self.open_all(window)
+        hub = next(w for w in window.screen_widget.findChildren(QFrame) if w.accessibleName().startswith("NAVER API HUB"))
+        self.assertEqual((hub.findChildren(gauges.UsageBar), hub.findChildren(gauges._Track)), ([], []))                                       # 빈 길도 없다
+        self.assertIn(text.T["usage_unreadable_closed"], [label.plain_text() for label in hub.findChildren(UI.Label)])
+        other = window.screen_widget.findChildren(gauges.UsageBar)
+        self.assertEqual([bar.view.text for bar in other], ["최근 60분 7 / 50회"])                                                            # 읽을 수 있는 다른 용도의 막대는 그대로
+
+    def test_a_period_with_unknown_numbers_keeps_its_name_and_draws_no_bar_while_the_other_period_does(self):
+        window = self.make(Static(usage_data((("오늘", None, 100), ("이번 달", 340, 27000)))))
+        bars = self.bars(window)
+        self.assertEqual([(bar.view.text, bar.track is None) for bar in bars], [("오늘 확인할 수 없어요", True), ("이번 달 340 / 27,000회", False)])
+        self.assertEqual([bar.percent_label is None for bar in bars], [True, False])
+
+    def test_the_bars_of_every_scenario_say_what_the_view_model_says(self):
+        for scenario in ("normal", "partial", "offline", "not_connected", "needs_check", "connected", "auth_error", "rate_limited"):
+            window = self.make(services.FakeConnectionsProvider(scenario))
+            bars = self.bars(window)
+            rows = [row for group in window.state.settings_view()["groups"] for card in group["cards"] if card["usage"] for row in card["usage"]["rows"] if row["bar"] is not None]
+            self.assertEqual([bar.view.text for bar in bars], [row["text"] for row in rows], scenario)
+            self.assertEqual([bar.tag_label is not None for bar in bars], [bool(row["tag"]) for row in rows], scenario)
+            window.close()
+
+    def test_a_real_data_view_draws_bars_with_no_example_tag(self):
+        window = self.make(Static(usage_data((("오늘", 12, 100),))))
+        bar = self.bars(window)[0]
+        self.assertIsNone(bar.tag_label)
+        self.assertEqual(bar.accessibleName(), "오늘 12 / 100회, 12%")
+
+    def test_the_longest_bar_labels_fit_every_size_and_add_no_tab_stop(self):
+        """가장 긴 줄(`한도 넘음 · 111%` + 예시 꼬리표)도 최소 창(900×560)·논리 1280(1920@150%)에서 잘리지 않고 가로 스크롤이 없다. 막대는 누르는 곳이 아니라 Tab 정거장도 늘지 않는다."""
+        rows = (("이번 달", 30000, 27000), ("오늘", 95, 100), ("최근 60분", 41, 50), ("하루 한도를 넘은 날", 119, 100))
+        window = self.make(Static(usage_data(rows, sample=True)), size=SIZES[0])
+        bars = self.bars(window)
+        self.assertEqual(len(bars), 4)
+        for bar in bars:                                                                                  # 막대는 누르는 곳이 아니다 — 포커스를 받지 않고 단추도 없다
+            self.assertEqual(bar.focusPolicy(), Qt.NoFocus)
+            self.assertEqual(bar.findChildren(QAbstractButton), [])
+        for size in SIZES + ((1280, 720),):
+            window.resize(*size)
+            self.settle()
+            ui_offscreen.wait_until(self.app, lambda w=window: w.scroll.horizontalScrollBar().maximum() == 0, 2)
+            self.assertEqual(window.scroll.horizontalScrollBar().maximum(), 0, size)
+            self.assertEqual(ui_offscreen.find_clipping(window), [], size)
+            for bar in bars:                                                                              # 글 라벨은 ElidedLabel 이라 `find_clipping` 이 제외한다 — 줄임표로 잘리지 않는지 크기마다 따로 본다(독립 검증 L2, 변이 Q20)
+                self.assertLessEqual(bar.text_label.fontMetrics().horizontalAdvance(bar.text_label._full), bar.text_label.width(), (size, bar.view.text))
+                self.assertGreater(bar.percent_label.x(), bar.text_label.x(), (size, bar.view.text))
+        self.assertTrue(all(w.accessibleName().strip() for w in self.interactive(window)))
+
+
+class CardTextFitTest(Base):
+    """UI-C1b(D-183 카드 글 줄이기) — 줄인 안내 문장이 실제로 좁은 카드에서 덜 꺾이는지 **그려진 폭**으로 잰다."""
+
+    @staticmethod
+    def wrapped_lines(window):
+        """카드 안의 줄바꿈 글 중 한 줄이면 들어갈 글이 두 줄 이상으로 꺾인 것들의 글."""
+        cards = [w for w in window.screen_widget.findChildren(QFrame) if w.property("card") in ("true", "plain", "quiet") and w.accessibleName()]
+        found = []
+        for card in cards:
+            for label in card.findChildren(UI.Label):
+                if label.isVisible() and label.wordWrap() and label.heightForWidth(label.width()) > label.heightForWidth(100000):
+                    found.append(label.plain_text())
+        return found
+
+    def test_only_the_two_sentence_policy_wraps_in_the_narrowest_two_column_card(self):
+        """논리 폭 1280(= 1920×1080 의 150%)은 두 열 카드가 가장 좁은 크기다(카드 안쪽 약 440px). 기준 커밋에서는 문장 셋(`purpose_naver_apihub`·`purpose_image_provider`·`policy_never`)이 여기서 두 줄로 꺾였다 — 이제는 서비스 문구의 뜻을 지키려 두 문장 그대로 둔 `policy_never` 하나뿐이다."""
+        window = self.make(size=(1280, 720))
+        self.open_all(window)
+        grid = self.accordions(window)["data"].body
+        first, second = grid._widgets[:2]
+        self.assertEqual(first.y(), second.y())                                                                                     # 두 열이다
+        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]])
+
+    def test_nothing_wraps_in_the_wider_two_column_cards_except_the_same_one_and_the_single_column_window_shows_all_on_one_line(self):
+        window = self.make(size=(1366, 768))
+        self.open_all(window)
+        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]])
+        window.resize(*SIZES[-1])                                                                                                   # 최소 창(900×560) — 한 열이라 카드가 더 넓다
+        self.settle()
+        ui_offscreen.wait_until(self.app, lambda: self.wrapped_lines(window) == [], 3)
+        self.assertEqual(self.wrapped_lines(window), [])
+
+
+class InfoGroupTest(Base):
+    """UI-C1b — 다섯째 묶음 '정보' = 버전 + 접어 둔 진단 정보(옛 '고급 > 진단 정보' 가 옮겨 옴). 구조는 아코디언 그대로(탭·2단으로 바꾸지 않았다)."""
+
+    def info(self, window):
+        return self.accordions(window)["info"]
+
+    def test_the_info_group_is_the_last_of_five_starts_folded_and_opens_to_the_version_and_the_folded_diagnostics(self):
+        window = self.make()
+        info = self.info(window)
+        ys = [accordion.toggle.mapTo(window.screen_widget, accordion.toggle.rect().topLeft()).y() for accordion in self.accordions(window).values()]
+        self.assertEqual((list(self.accordions(window)), ys == sorted(ys)), (["data", "image", "ai", "publish", "info"], True))              # 위에서 아래로 데이터 Provider·이미지·AI 보조·발행·연결·정보
+        self.assertEqual([accordion.toggle.text().strip() for accordion in self.accordions(window).values()], ["데이터 Provider", "이미지", "AI 보조", "발행·연결", "정보"])
+        self.assertFalse(info.is_open)
+        self.assertFalse(info.body.isVisibleTo(window))
+        self.assertEqual(info.toggle.findChildren(QLabel), [])                                                                               # 요약 칩 없음
+        info.flip()
+        self.settle()
+        labels = [label.plain_text() for label in info.body.findChildren(UI.Label)]
+        self.assertEqual(labels[:2], ["버전", window.version_info.text])
+        self.assertIn(text.T["diag_note"], labels)                                                                                           # 키와 입력한 글은 담기지 않는다는 안내
+        diag = info.body.findChild(UI.Disclosure)
+        self.assertFalse(diag.is_open)
+        self.assertEqual(diag.toggle.accessibleName(), text.T["diag_show"])
+        diag.flip()
+        self.settle()
+        self.assertTrue(diag.body.isVisible())
+        self.assertTrue(diag.body.plain_text().startswith("time: "))
+        self.assertNotIn("예시 키", diag.body.plain_text())
+
+    def test_the_version_in_the_info_group_is_the_one_in_the_sidebar_and_the_dev_version_when_unknown(self):
+        for given in (app_version.VersionInfo("v1.2.3", "file"), app_version.VersionInfo(text.T["dev_version"], "dev")):
+            window = self.make(version_info=given)
+            self.info(window).flip()
+            self.settle()
+            shown = [label.plain_text() for label in self.info(window).body.findChildren(UI.Label)][:2]
+            sidebar = window.sidebar.findChild(QFrame, "brandcard").version_label.text()
+            self.assertEqual((shown, sidebar), (["버전", given.text], given.text))
+            window.close()
+
+    def test_the_info_header_works_with_the_keyboard_and_stays_open_across_a_redraw(self):
+        window = self.make()
+        header = self.info(window).toggle
+        self.focus(header)
+        QTest.keyClick(header, Qt.Key_Return)
+        self.assertTrue(self.info(window).is_open)
+        self.assertEqual(window.state.conn_open, {"data", "info"})                                                                           # 기억만 한다(파일에는 쓰지 않는다)
+        window.render()
+        self.settle()
+        self.assertTrue(self.info(window).is_open)
+        focus = QApplication.focusWidget()
+        self.assertEqual(focus.property("focus_key"), "acc:info")
+        QTest.keyClick(focus, Qt.Key_Space)
+        self.assertFalse(self.info(window).is_open)
+        self.assertEqual(window.state.conn_open, {"data"})
+
+    def test_the_old_advanced_block_is_gone_and_only_one_diagnostic_disclosure_is_left(self):
+        window = self.make()
+        self.open_all(window)
+        self.assertNotIn("고급", self.labels(window))
+        self.assertEqual(len(window.screen_widget.findChildren(UI.Disclosure)), 1)                                                           # 진단 정보 하나(정보 묶음 안)
+        self.assertEqual([label.plain_text() for label in window.screen_widget.findChildren(UI.Label) if label.property("role") == "h2"], [])      # 별도 소제목('고급')이 없다
+
+
 class StatesTest(Base):
     def test_the_first_read_shows_a_skeleton_with_its_own_name_and_a_disabled_refresh_button_then_the_groups(self):
         window = self.make(services.FakeConnectionsProvider(delay=3), wait=False)                  # 느린 PC·다른 일이 겹쳐도 읽는 중 모습을 볼 시간이 있게 넉넉히
@@ -473,7 +684,7 @@ class StatesTest(Base):
         self.assertFalse(any(b.accessibleName() == "예시 데이터" for b in window.findChildren(QAbstractButton)))       # 아직 무엇을 읽는지 모른다
         self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.conn_state != "loading", 10))
         self.settle()
-        self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 4)
+        self.assertEqual(len(window.screen_widget.findChildren(UI.Accordion)), 5)                    # 의도적 갱신(UI-C1b): 옛 값 4
         refresh = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.accessibleName() == text.T["conn_refresh"])
         self.assertTrue(refresh.isEnabled())
 
@@ -505,17 +716,25 @@ class StatesTest(Base):
         QTest.mouseClick(retry, Qt.LeftButton)
         ui_offscreen.wait_until(self.app, lambda: provider.calls == 2 and not window.state.conn_loading, 10)
         self.settle()
-        self.assertEqual((window.state.conn_state, len(window.screen_widget.findChildren(UI.Accordion))), ("normal", 4))
+        self.assertEqual((window.state.conn_state, len(window.screen_widget.findChildren(UI.Accordion))), ("normal", 5))         # 의도적 갱신(UI-C1b): 옛 값 4
         self.assertIsNone(window.state.conn_failure)
 
     def test_the_diagnostics_always_come_with_the_line_saying_no_key_and_no_typed_text_is_in_them(self):
-        """점검 Q13 — 진단 정보를 펼치기 전에도 그 아래 '키와 입력한 글은 담기지 않아요' 줄이 보인다(오류 상태·고급 영역 둘 다)."""
+        """점검 Q13 — 진단 정보를 펼치기 전에도 그 아래 '키와 입력한 글은 담기지 않아요' 줄이 보인다(오류 상태·정보 묶음 둘 다).
+        의도적 갱신(UI-C1b): 옛 '고급' 영역은 늘 보였다 — 이제 진단 정보는 접힌 '정보' 묶음 안에 있어, 묶음을 펴면 '진단 정보 보기' 단추와 안내 줄이 함께 보이고(접힌 동안은 둘 다 안 보인다) 단추를 눌러 펼치기 전에도 안내 줄은 보인다."""
         self.assertIn("키와 입력한 글은 담기지 않아요", text.T["diag_note"])
         for provider in (Flaky(failures=1, code="SAMPLE_DOWN"), None):
             window = self.make(provider) if provider else self.make()
+            if provider is None:
+                self.assertFalse(next(w for w in window.screen_widget.findChildren(UI.Label) if w.plain_text() == text.T["diag_note"]).isVisible())         # 접힌 '정보' 묶음 안 — 안 보인다
+                self.accordions(window)["info"].flip()
+                self.settle()
             notes = [label for label in window.screen_widget.findChildren(UI.Label) if label.plain_text() == text.T["diag_note"]]
             self.assertEqual(len(notes), 1, provider)
             self.assertTrue(notes[0].isVisible())
+            toggle = next((b for b in window.screen_widget.findChildren(QAbstractButton) if b.accessibleName() == text.T["diag_show"] and b.isVisible()), None)
+            self.assertIsNotNone(toggle, provider)                                                        # 안내 줄이 보이는 곳에는 접어 둔 진단 정보 단추가 함께 있다
+            self.assertFalse(window.screen_widget.findChild(UI.Disclosure).is_open, provider)             # 진단 정보 자체는 접힌 그대로
             window.close()
 
     def test_an_empty_answer_has_a_next_step_button_that_reads_again(self):
@@ -547,7 +766,7 @@ class StatesTest(Base):
         window.close_dialog()
         self.open_all(window)
         tags = [b for b in window.screen_widget.findChildren(QLabel) if b.property("badge") == "muted" and b.text() == text.T["usage_sample"]]
-        self.assertEqual(len(tags), 4)                                                                    # 예시의 사용량 줄마다 꼬리표 — 허브 둘(숫자 줄·작은 글)·검색광고(다시 열리는 때)·이미지
+        self.assertEqual(len(tags), 5)                                                                    # 의도적 갱신(UI-C1b): 옛 값 4 — 예시의 사용량 줄마다 꼬리표 — 허브 셋(오늘 막대·이번 달 막대·작은 글)·검색광고(다시 열리는 때)·이미지(막대)
         real = self.make(Static(services.ConnectionsData(purposes=services.sample_connections("normal"), sample=False)))
         self.open_all(real)
         self.assertFalse(any(b.accessibleName() == "예시 데이터" for b in real.findChildren(QAbstractButton)))
@@ -608,7 +827,8 @@ class ReadOnlyAndSecretsTest(Base):
         shown = self.everything(window)
         self.assertNotIn("연결됨", shown)                                                                  # 호출 코드가 없는 동안 '연결됨' 은 어디에도 없다
         self.assertIn("준비 중", shown)
-        self.assertIn("오늘 0 / 100회 · 이번 달 0 / 27,000회", self.labels(window))                                   # 실제 값(아직 한 번도 부르지 않았다) — '오늘 00 / 00회'
+        bars = [(bar.view.text, bar.percent_label.text(), bar.track is not None, bar.tag_label) for bar in window.screen_widget.findChildren(gauges.UsageBar)]
+        self.assertEqual(bars, [("오늘 0 / 100회", "0%", True, None), ("이번 달 0 / 27,000회", "0%", True, None), ("최근 60분 0 / 50회", "0%", True, None)])      # 의도적 갱신(UI-C1b): 옛 시험은 한 줄 글 `오늘 0 / 100회 · 이번 달 0 / 27,000회` 를 찾았다 — 이제 기간마다 막대(허브 둘 + 이미지 공급자 하나, 실제 값 0 — 아직 한 번도 부르지 않았다, 예시 꼬리표 없음)
         self.assertIn("서비스 콘솔 월 한도 30,000회 · 실패한 호출도 세어요", self.labels(window))
         self.assertIn(text.T["limit_naver_apihub"], self.labels(window))                                    # 한도에 닿으면 어떻게 계속하는지(그림에도 나온다)
         self.assertIn(text.T["limit_desc_naver_apihub"], self.labels(window))
