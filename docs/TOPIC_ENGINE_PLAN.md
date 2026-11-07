@@ -34,7 +34,7 @@
 | 후보 | `content/candidates.py`·`candidate_csv.py`·`service/candidates.py`·`content/store.py` | 후보 한 건(저장 24칸·상태 5개·지표 9개), CSV 가져오기, 번호로 고르기, SQLite 보관함 `chanceblog.db`(판 2) | 고치지 않고 나란히 |
 | 자동 제안 | `content/suggest.py`·`suggest_data.py`·`suggest_score.py`·`suggest_text.py`·`service/suggestions.py` | 프로필 낱말 × 글 틀 × 월별 시기 표, 5요인 점수(D-29), 중복 숨김. AI·네트워크 없음, 같은 입력은 같은 결과 | 고치지 않고 나란히(계절 결함만 P0b 에서 고침) |
 | 채널·프로필 | `content/status.py`(5채널 키)·`model.py`·`profiles.py`·`service/context.py` | 채널별 상태 흐름. 프로필은 네이버 A·B 만, 설정 파일은 모르는 칸을 거절 | 새 채널 프로필은 별도 데이터로 |
-| 초안 | `content/draft_plan.py`·`draft_options.py`·`post_types.py`·`check/claims.py`·`check/similarity.py`·`render/naver.py` | 후보에서 작성 기반 계획(순수 계산·저장 안 함), 경험 지어내기 차단, 네이버 복사 꾸러미 | 재사용(엔진 후보는 넘길 때만 `Candidate` 로 바꿈) |
+| 초안 | `content/draft_plan.py`·`draft_options.py`·`post_types.py`·`check/claims.py`·`check/similarity.py`·`render/naver.py` | 후보에서 작성 기반 계획(순수 계산·저장 안 함), 경험 지어내기 차단, 네이버 복사 꾸러미, 규칙 기반 초안 본문(`content/draft_body.py`·`service/draft_body.py` — AI 없이 후보 하나로 복사 가능한 초안, 저장 안 함, D-260~D-269) | 재사용(엔진 후보는 넘길 때만 `Candidate` 로 바꿈) |
 | 연결·한도·키 | `service/connections.py`·`quota.py`·`security/keystore.py` | 용도별 한도 안전장치, Windows 자격 증명 관리자 | 'NAVER API HUB 안전 틀'(진행 중인 다른 묶음)이 고치는 중 — P3·P5 는 그 병합 뒤 다시 확인 |
 | 화면 | `ui/core/*`(순수 뷰모델)·`ui/adapters.py`(읽기 전용)·`ui/qt/*`(PySide6) | 홈만 구현, 나머지 메뉴는 '만들고 있어요' 자리 | `주제 후보` 자리에 넣는다 |
 

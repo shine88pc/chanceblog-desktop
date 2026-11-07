@@ -357,7 +357,7 @@ class TableTest(unittest.TestCase):
                          "draft plan", "show", "edit", "approve", "revoke", "delete", "publish-pages", "check-deploy", "naver-package", "naver-done", "review", "preview", "restore",
                          "keys remove", "keys state", "keys order", "keys test"):
             self.assertIn(expected, names)
-        self.assertEqual(len([1 for _path, _parser, slots in NUMBER_COMMANDS for _slot in slots]), 29, "번호 자리의 수 — 새 번호 자리가 생기면 이 숫자를 고친다(표는 저절로 따라온다 — P3 가 `topics show`·`topics restore` 둘을 더해 27 → 29)")
+        self.assertEqual(len([1 for _path, _parser, slots in NUMBER_COMMANDS for _slot in slots]), 30, "번호 자리의 수 — 새 번호 자리가 생기면 이 숫자를 고친다(표는 저절로 따라온다 — P3 가 `topics show`·`topics restore` 둘을 더해 27 → 29, DB 가 `draft body` 를 더해 29 → 30)")
         self.assertGreaterEqual(len({item["kind"] for item in CANARIES}), 28)
 
     def test_two_number_slots_of_one_command_are_both_swept(self):
@@ -673,7 +673,7 @@ class NormalPathTest(unittest.TestCase):
                     if "--json" not in extra:
                         self.assertIn("코드: ", text, where)
                         self.assertIn("하실 일: ", text, where)
-        self.assertEqual(seen, 92, "후보·글 번호 자리 23곳(P3 가 `topics show` 를 더했다) × 번호 2가지 × 변형 2가지")
+        self.assertEqual(seen, 96, "후보·글 번호 자리 24곳(P3 가 `topics show` 를, DB 가 `draft body` 를 더했다) × 번호 2가지 × 변형 2가지")
 
     def test_a_key_gets_the_same_error_code_exit_code_and_advice_as_a_missing_number_only_the_typed_words_differ(self):
         canary = next(item for item in CANARIES if item["kind"] == "random40")["value"]
@@ -688,7 +688,7 @@ class NormalPathTest(unittest.TestCase):
                 self.assertEqual(same(typed, PLACEHOLDER), same(known, "a1b2c3d4"), where)
                 self.assertIn(PLACEHOLDER, typed[1] + typed[2], where)
                 compared += 1
-        self.assertEqual(compared, 69, "후보·글 번호 자리 23곳(P3 가 `topics show` 를 더했다) × 변형 3가지")
+        self.assertEqual(compared, 72, "후보·글 번호 자리 24곳(P3 가 `topics show` 를, DB 가 `draft body` 를 더했다) × 변형 3가지")
 
     def test_an_ordinal_past_the_end_is_said_with_its_number_and_a_real_short_number_is_found(self):
         code, out, err = ss.run_cli(self.world.ctx, "candidates", "show", "999")

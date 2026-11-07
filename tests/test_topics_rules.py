@@ -251,8 +251,10 @@ class HygieneTest(unittest.TestCase):
         # 의도적 갱신(Seed 관리, D-231): 서비스 `service/seed_manage.py`(씨앗 읽기·쓰기 — `Seed` 생성자가 저장 직전의 진짜 심판이다)와 화면의 순수 규칙 `ui/core/seed_form.py`·`seed_rules.py`·`seeds.py`·`seeds_view.py` 가 이 패키지를 쓴다 —
         # 폼 칸의 길이·개수 상한과 허용 값(상태·소속·중요도·대상 유형·채널·협찬 분야 이름)을 화면이 따로 베끼지 않고 `topics.seeds`·`topics.channels`·`topics.wording` 에서 가져오고, 가짜 공급자가 서비스와 같은 `Seed` 생성자·`change_state` 를 심판으로 쓴다(시험이 둘의 판정을 견준다). Qt 쪽 코드는 여전히 이 패키지를 모른다.
         pattern = re.compile(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topics\b|import\s+(?:[\w.]*\.)?topics\b|from\s+\.+\s+import\s+[^#\n]*\btopics\b)")
+        # 의도적 갱신(규칙 기반 초안 본문 독립 검증 H2, D-260 ⑥): 서비스 `service/draft_body.py` 가 후보의 제목·키워드로 주제 엔진의 안전 판정(`topics.safety.check_text`)을 **불러 쓴다** — 자동 초안 중지(`stop`) 후보는 본문 전체에 같은 말이 되풀이되므로 만들지 않고 거절하려는 것이다.
+        # 읽기만 하고 `topics/` 는 바꾸지 않으며(콘텐츠 층 `content/draft_body.py` 는 이 패키지를 가져오지 않고 결과의 속성만 읽는다) 저장·계산은 하지 않는다.
         users = sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8")))
-        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
+        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
                          "이 패키지를 쓰는 곳을 늘리는 것은 의식적인 변경이다 — 이 목록과 결정 기록을 함께 고친다")
 
     def test_the_pattern_that_looks_for_users_of_the_package_works(self):

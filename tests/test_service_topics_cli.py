@@ -58,7 +58,8 @@ HELP = {
     "connect": "6afd1202688b63ee1938100cb07601de4ecfa79154131b3d8bbf2f434cae64b2",
     "delete": "1ba24dd59c52fbad72bba624289901745211a92d95560598ae3ab8aabeeddf11",
     "doctor": "d3de6c56f5a62bc2285b9c6a25664b2d1074555bae6d6a329f697d4f3b0a3078",
-    "draft": "c9da16541e9e053e438fb9405a234ac5815bbe06415d2bb377b282af9b97284f",
+    # 의도적 갱신(DB — 규칙 기반 초안 본문): `draft` 그룹 도움말에 하위 명령 `body` 가 더해져(설명·예시 문구 포함) 글이 바뀌었다 — 이전 값은 c9da1654…(P3 전 기준 커밋). `draft plan` 은 그대로다(아래 값).
+    "draft": "1f526c22d37f71f647153522010f49de715ae1bd9bfb40066b3bff11a3340d5f",
     "draft plan": "dd51871e68e3f8eab80a50fc60d07887ff919ba580d612128796d587da5ac796",
     "edit": "9d96ffdd7603debafee49b72d40b6d198ae7d97ca5f11680748aabe8ff84fb20",
     "import-html": "0fa510092c0ac4a8954a02717263ebfe8537fa2905321a439458282ea7765f68",
@@ -120,7 +121,8 @@ class ExistingOutputUnchangedTest(unittest.TestCase):
         for name, expected in HELP.items():
             with self.subTest(command=name):
                 self.assertEqual(found.get(name), expected, "기존 명령의 도움말이 바뀌었다 — P3 는 기존 명령을 바꾸지 않는다")
-        self.assertEqual({name for name in found if not name.startswith("topics") and name != "(top)"}, set(HELP), "기존 명령이 더해지거나 빠졌다")
+        # 의도적 갱신(DB): `draft body`(규칙 기반 초안 본문)는 P3 뒤에 더해진 새 하위 명령이라 '기존 명령' 목록에서 뺀다(그 도움말은 tests/test_service_draft_body.py 가 시험한다).
+        self.assertEqual({name for name in found if not name.startswith("topics") and name not in ("(top)", "draft body")}, set(HELP), "기존 명령이 더해지거나 빠졌다")
 
     def test_the_help_does_not_depend_on_how_the_tests_were_started(self):
         """수정 4차: Linux CI 가 실패한 원인으로 '도움말의 `usage:` 줄이 `sys.argv[0]`(윈도 `python.exe -m unittest`·리눅스 `python -m unittest`)에서 온다' 는 가설이 있었다 — 파서의 `prog` 가 상수(`PROG`)라서 그렇지 않다는 것을 못박는다."""
