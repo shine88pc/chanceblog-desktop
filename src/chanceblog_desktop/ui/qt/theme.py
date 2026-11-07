@@ -191,6 +191,11 @@ QFrame[slot="true"] {{ background: {c['surface']}; border: 1px solid {c['border'
 QFrame[slot="true"]:hover {{ background: {c['surface_hover']}; }}
 QFrame[slot="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; border-left: 4px solid {c['primary']}; background: {c['surface']}; }}
 {_presets(c)}
+QFrame[seedrow="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
+QFrame[seedrow="true"]:hover {{ background: {c['surface_hover']}; }}
+QFrame[seedrow="true"][checked="true"] {{ background: {c['surface_selected']}; border: 1px solid {c['primary']}; }}
+QFrame[seedrow="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
+QFrame[seedrow="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 QFrame[slot="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; border-left: 4px solid {c['border_focus']}; }}
 QFrame[notice="ok"] {{ background: {c['success_100']}; border-radius: {r['badge']}px; }}
 QFrame[notice="ok"] QLabel {{ color: {c['success_text']}; font-weight: 600; }}

@@ -523,6 +523,38 @@ class Toggle(QCheckBox):
         painter.drawText(QRectF(track.right() + K.ICON["gap"], 0, self.width() - track.right() - K.ICON["gap"], self.height()), int(Qt.AlignLeft | Qt.AlignVCenter), self.text())
 
 
+class CheckBox(QCheckBox):
+    """고르는 칸(체크 상자) — 글자 없이 상자만 그린다(옆 줄이 무엇을 고르는지 말한다). 접근 이름이 필수이고 Space 로 켜고 끈다. 누르는 칸은 36×36, 보이는 상자는 20px 이다(토큰). 색은 토큰에서만 온다."""
+
+    def __init__(self, accessible):
+        super().__init__()
+        self.setAccessibleName(accessible)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumSize(K.SIZE["hit"], K.SIZE["hit"])
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    def sizeHint(self):
+        return QSize(K.SIZE["hit"], K.SIZE["hit"])
+
+    def paintEvent(self, _event):
+        c = theme.colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        side = K.SIZE["check_box"]
+        box = QRectF((self.width() - side) / 2, (self.height() - side) / 2, side, side)
+        on, usable = self.isChecked(), self.isEnabled()
+        painter.setBrush(QColor(c["disabled_bg"] if not usable else c["primary"] if on else c["surface"]))
+        painter.setPen(QPen(QColor(c["disabled_fill"] if not usable else c["primary"] if on else c["border_strong"]), 1.5))
+        painter.drawRoundedRect(box.adjusted(1, 1, -1, -1), K.RADIUS["usage"], K.RADIUS["usage"])
+        if on:
+            inner = box.adjusted(4, 4, -4, -4)
+            theme.renderer("check", c["on_primary"] if usable else c["text_disabled"]).render(painter, inner)
+        if self.hasFocus():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(c["border_focus"]), K.FOCUS_RING_PX))
+            painter.drawRoundedRect(box.adjusted(-2, -2, 2, 2), K.RADIUS["usage"] + 2, K.RADIUS["usage"] + 2)
+
+
 # ---- 상태 부품(스켈레톤·빈/오류 상태·배너·진단 영역) ---------------------------------------------------------------------------------
 def Skeleton(rows=5, accessible=None):
     """LoadingState — 전체 화면 스피너 대신 행 모양 자리 표시(움직이지 않는다). 접근 이름은 화면마다 다르다(없으면 홈의 `후보를 불러오는 중`)."""
@@ -786,12 +818,23 @@ class Drawer(QFrame):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setFrameShape(QFrame.NoFrame)
         outer.addWidget(self.scroll)
+        self._outer, self._footer = outer, None
 
-    def set_content(self, widget):
+    def set_content(self, widget, footer=None):
+        """안쪽 내용을 바꾼다. `footer` 를 주면 스크롤 밖 아래에 붙는다(아래 고정 행동 줄 — 내용이 길어도 늘 보인다)."""
         old = self.scroll.takeWidget()
         if old is not None:
             old.deleteLater()
         self.scroll.setWidget(widget)
+        if self._footer is not None:
+            self._outer.removeWidget(self._footer)
+            self._footer.hide()
+            self._footer.setParent(None)                                           # 지워지는 다음 차례까지 서랍의 자식으로 남아 보이거나 Tab 이 가지 않게
+            self._footer.deleteLater()
+            self._footer = None
+        if footer is not None:
+            self._outer.addWidget(footer)
+            self._footer = footer
 
     def width_px(self):
         return drawer_width(self.parentWidget().width())                      # 정해진 폭(420)이되 창의 92% 이하 — 규칙은 `part_rules.drawer_width`
@@ -850,9 +893,19 @@ class Dialog(QFrame):
 
     def clear(self):
         while self.layout_.count():
-            item = self.layout_.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            self._discard(self.layout_.takeAt(0))
+
+    def _discard(self, item):
+        """레이아웃 항목 하나를 치운다 — 위젯이면 숨기고 떼어 지우고, 안에 다른 레이아웃(단추 줄)이 있으면 그 안의 위젯까지 같은 방식으로 치운다. 그래야 옛 확인창의 단추가 새 확인창 안에 남아 눌리지 않는다(Seed 관리 독립 검증 F-H1 — 확인창을 건너뛴 쓰기)."""
+        widget, layout = item.widget(), item.layout()
+        if widget is not None:
+            widget.hide()
+            widget.setParent(None)
+            widget.deleteLater()
+        elif layout is not None:
+            while layout.count():
+                self._discard(layout.takeAt(0))
+            layout.deleteLater()
 
     def place(self):
         parent = self.parentWidget()

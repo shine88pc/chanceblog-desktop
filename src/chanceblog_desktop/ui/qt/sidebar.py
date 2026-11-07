@@ -7,13 +7,19 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QSizePolicy, QSpacerItem, QVBoxLayout
 
 from ..core import tokens as K
 from ..core.app_state import NEXT_STEPS, nav_groups
 from ..core.text import T
 from . import components as UI
 from . import theme
+
+
+def gap(layout):
+    """묶음 사이 빈 칸 — 보통은 8 이고, 세로가 모자라면 0 까지 줄어든다(의도적 변경, Seed 관리 D-230: 메뉴가 하나 더 늘어 사이드바가 최소 창 900×560 의 높이(500)보다 8 커졌다 —
+    줄 높이·글자·아이콘은 건드리지 않고 이 빈 칸만 줄어들게 했다). 남는 높이는 늘 아래 늘림 칸(`addStretch`)이 가져가므로 보통 크기의 모양은 그대로다."""
+    layout.addItem(QSpacerItem(0, K.SPACE["2"], QSizePolicy.Minimum, QSizePolicy.Maximum))
 
 
 class SoonItem(QFrame):
@@ -54,7 +60,7 @@ class Sidebar(QFrame):
         self.group_titles = {}                                                             # 묶음 이름 — 실제 메뉴가 있는 묶음만 있다
         for index, (group_key, label_key, items) in enumerate(nav_groups()):
             if index:
-                layout.addSpacing(K.SPACE["2"])                                                 # 묶음 사이 8(옛 12)
+                gap(layout)                                                                    # 묶음 사이 8(옛 12) — 모자라면 줄어든다
             title = UI.label(T[label_key], "micro")
             title.setContentsMargins(K.SPACE["3"], 0, 0, K.SPACE["1"])
             self.group_titles[group_key] = title
@@ -67,7 +73,7 @@ class Sidebar(QFrame):
                 self.nav_buttons[key] = button
         self.soon_list = self._soon_list()
         if self.soon_list is not None:
-            layout.addSpacing(K.SPACE["2"])                                                 # '다음 단계' 앞 8(옛 20)
+            gap(layout)                                                                    # '다음 단계' 앞 8(옛 20) — 모자라면 줄어든다
             layout.addWidget(self.soon_list)
         layout.addStretch(1)
         layout.addWidget(self._brand(version_info))

@@ -148,7 +148,7 @@ FOCUS_RING_PX = 2                                   # 포커스 테두리 두께
 # ---- 크기 — 단추 높이: 큰 주 단추 44 · 표준 40 · 작은 34(그려지는 높이) · 아이콘 단독 36 · 누르는 칸은 모두 36 이상(`hit`)
 SIZE = {
     "hit": 36, "control": 40, "control_primary": 44, "control_sm": 34, "icon_button": 36, "chip_h": 34, "menu_h": 44, "badge_h": 24,
-    "thumb": 64, "thumb_radius": 12, "input_h": 40, "toggle_w": 44, "toggle_h": 26, "skeleton_line": 14, "acc_h": 52,       # acc_h: 접이식 머리 한 줄의 최소 높이(누르는 칸 36 이상)
+    "check_box": 20, "thumb": 64, "thumb_radius": 12, "input_h": 40, "toggle_w": 44, "toggle_h": 26, "skeleton_line": 14, "acc_h": 52,       # acc_h: 접이식 머리 한 줄의 최소 높이(누르는 칸 36 이상)
     # C-Type 새 값(UI-C0): 누르는 칸 문서 기준(최소 32·권장 40 — 이 앱은 36 을 기본으로 지킨다)·검색 칸 40·탭 46(44~48)·표 머리 40(36~40)·표 행 48(44~52). 검색 칸·표는 아직 안 쓴다
     "hit_min": 32, "hit_comfort": 40, "search_h": 40, "tab_h": 46, "table_head_h": 40, "table_row_h": 48,
     # 점수 링 카드용 44(40~44)·상세용 72(68~80)·구성 막대 높이 12(10~12)·사용량 막대 높이 8

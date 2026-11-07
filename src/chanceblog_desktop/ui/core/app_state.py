@@ -14,6 +14,8 @@ from . import board_view as bv
 from . import settings_view as sv
 from .blogs import FakeBlogsProvider
 from .blogs_view import BlogsController
+from .seeds import FakeSeedsProvider
+from .seeds_view import SeedsController
 from .jobs import JobFailure, JobRunner
 from .notify import ToastPolicy
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
@@ -21,11 +23,11 @@ from .text import NO_DATA, T, fmt_demand, fmt_docs
 
 # 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
 # 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
-NAV = (("home", "nav_home", "home"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
+NAV = (("home", "nav_home", "home"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
 # 묶음(핵심 작업 / 데이터·관리 / 시스템) — (묶음 열쇠, 이름 문구 열쇠, 그 묶음의 실제 메뉴 열쇠들). **묶음 이름은 그 묶음에 실제 메뉴가 있을 때만 보인다**(`nav_groups`).
-NAV_GROUPS = (("core", "nav_group_core", ("home",)), ("data", "nav_group_data", ("blogs",)), ("system", "nav_group_system", ("settings",)))
+NAV_GROUPS = (("core", "nav_group_core", ("home",)), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
 # '다음 단계' 목록 — 아직 만들지 않은 화면의 **이름만**(열 수 없다: 메뉴·화면 이동·단추가 없다). 화면이 완성되면 여기서 빼고 NAV 에 더한다. (열쇠, 이름 문구 열쇠, 아이콘)
-NEXT_STEPS = (("topics", "nav_topics", "search"), ("draft", "nav_draft", "draft"), ("history", "nav_history", "calendar_check"), ("seed", "nav_seed", "sprout"))
+NEXT_STEPS = (("topics", "nav_topics", "search"), ("draft", "nav_draft", "draft"), ("history", "nav_history", "calendar_check"))
 LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
 
 
@@ -117,7 +119,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -143,6 +145,10 @@ class AppState:
         paired_blogs = getattr(self.provider, "blogs_provider", None)
         self.blogs_provider = blogs if blogs is not None else (paired_blogs() if paired_blogs else FakeBlogsProvider())
         self.blogs = BlogsController(self.blogs_provider, self.runner)
+        # Seed 관리 화면 — 두 번째로 파일에 쓰는 화면이라 같은 틀(`SeedsController`)을 쓴다. 쓰는 일은 승인·바꾸기·저장·등록·불러오기를 눌렀을 때만이다
+        paired_seeds = getattr(self.provider, "seeds_provider", None)
+        self.seeds_provider = seeds if seeds is not None else (paired_seeds() if paired_seeds else FakeSeedsProvider())
+        self.seeds = SeedsController(self.seeds_provider, self.runner)
 
     # ---- 메뉴 ----
     def nav(self, key):
@@ -150,6 +156,7 @@ class AppState:
             return False
         self.page = key
         self.drawer_id = None
+        self.seeds.close_drawer()                                    # Seed 서랍은 다른 화면으로 가면 닫는다(고친 값·새로 쓰던 값은 지우지 않는다)
         return True
 
     # ---- 불러오기(작업 스레드) ----
@@ -255,7 +262,8 @@ class AppState:
 
     def close_drawer(self):
         opened, self.drawer_id = self.drawer_id, None
-        return opened
+        seed_drawer = self.seeds.close_drawer()
+        return opened or (("seed:" + (seed_drawer[1] or "new")) if seed_drawer is not None else None)
 
     # ---- 설정 화면(연결 관리) — 읽기만 한다 ----
     @property
@@ -316,6 +324,14 @@ class AppState:
         """설정 화면 뷰모델 — 만드는 일은 `settings_view.py`(순수)가 한다. 오류 상태의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         diag = diagnostic_text(self.conn_failure, self.conn_failed_at) if self.conn_failure else ""
         return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open, version=self.version)
+
+    def seeds_view(self):
+        """Seed 관리 화면 뷰모델 — 만드는 일은 `SeedsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        failure = self.seeds.failure
+        return self.seeds.view(diagnostic_text(failure, self.seeds.failed_at) if failure else "")
+
+    def seeds_drawer_view(self):
+        return self.seeds.drawer_view() if self.page == "seed" else None
 
     def blogs_view(self):
         """블로그 관리 화면 뷰모델 — 만드는 일은 `BlogsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
