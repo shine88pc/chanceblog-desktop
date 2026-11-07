@@ -9,6 +9,7 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 사용자 화면·메뉴에는 없는 도구이고 `gui` 명령의 동작·이 도구의 기본 인자는 바뀌지 않는다.
 **시계는 고정한다**(UI-C1a): 상단 앱 바의 날짜·시간은 컴퓨터 시계라 다시 찍을 때마다 달라지므로, 사진은 가짜 시계 `FixedClock`(2026-11-06 20:10)로 찍는다 — 같은 코드·같은 환경이면 같은 사진이다(진단 시각 줄도 같은 시계).
 **블로그 관리 화면**(P4b)은 환경마다 11장면(기본·고치는 중·저장 시도 뒤 칸 오류·저장 결과·삭제 확인창·빈 슬롯·읽는 중·읽기 오류·좁은 창·실제 어댑터 처음·저장 뒤)을 찍고 점검한다 — 이름은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다. 점검의 '잘림' 에는 눌려 반쯤 잘린 부품(`ui_offscreen.find_squeezed`)이 들어 있고, `fits_window` 는 아래 고정 행동 줄이 창 안에 보이는지다.
+**Seed 관리 화면**(D-230)은 환경마다 17장면(기본·거르기·상세 서랍·180일 제안 표시·고치기 오류·승인 결과·새 Seed 폼 둘·일괄 변경 확인창·제안 파일 확인창·빈 목록·읽는 중·읽기 오류·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — Seed 는 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다.
 """
 from __future__ import annotations
 
@@ -177,6 +178,7 @@ def child(args):
     window.close()
     settings_shots(app, ui_offscreen, args, report, logical, tag, out)
     blogs_shots(app, ui_offscreen, args, report, logical, tag, out)
+    seeds_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
@@ -403,6 +405,165 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
         wait_write(window)
         shoot(window, "blogs_real")
         audit(window, "blogs_real")
+        window.close()
+
+
+def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """Seed 관리 화면(D-230) 사진·점검 — 기본 목록·거르기·상세 서랍·180일 제안 표시·고치기 오류·승인 결과·새 Seed 폼(빈 것·오류)·일괄 변경 확인창·제안 파일 확인창·빈 목록·읽는 중·읽기 오류·좁은 창(900×560)·좁은 창의 서랍·실제 어댑터(임시 폴더).
+    **Seed 는 모두 가짜**(`예시 낱말 가` … — 실제 Seed 목록·블로그 이름은 어디에도 없다)이고 실제 어댑터도 이 도구가 만든 임시 폴더만 읽고 쓴다(사용자 데이터 폴더는 건드리지 않는다). 점검은 글자 잘림(눌려 반쯤 잘린 부품 포함)·가로 스크롤과
+    '서랍의 아래 고정 행동 줄이 창 안에 보이는가'(`fits_window`)·대화상자가 창 안에 들어오는가다."""
+    import json as json_module
+    import tempfile
+    from PySide6.QtWidgets import QApplication
+    from chanceblog_desktop.ui.core import seeds
+    from chanceblog_desktop.ui.core.clock import FixedClock
+    from chanceblog_desktop.ui.core.services import FakeHomeProvider
+    from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    def make(provider, wait=True, size=None, picked=""):
+        window = AppShell(FakeHomeProvider(), seeds=provider, autoload=False, clock=FixedClock(CAPTURE_TIME), file_picker=lambda *_: picked)
+        window.resize(*(size or logical))
+        window.show()
+        window.go("seed")
+        if wait:
+            ui_offscreen.wait_until(app, lambda: window.state.seeds.state != "loading" and not window.state.seeds.loading, 10)
+        ui_offscreen.settle(app)
+        return window
+
+    def wait_write(window):
+        ui_offscreen.wait_until(app, lambda: not window.state.seeds.busy and window.state.seeds.pending is None, 10)
+        ui_offscreen.settle(app)
+
+    def open_detail(window, seed_id):
+        window.seed_open(seed_id)
+        ui_offscreen.wait_until(app, lambda: window.drawer.x() <= window.width() - window.drawer.width() + 2, 3)
+        ui_offscreen.settle(app)
+
+    def audit(window, name):
+        found = {"clipped": ui_offscreen.find_clipping(window) + ui_offscreen.find_squeezed(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0}
+        ui = getattr(window, "seeds_drawer_ui", None) if window.drawer.is_open else None
+        if ui is not None and ui.bar is not None:                                      # 서랍의 아래 고정 행동 줄이 창 안에 보인다
+            found["fits_window"] = ui.bar.mapTo(window, ui.bar.rect().bottomLeft()).y() <= window.height() and window.drawer.width() <= window.width()
+        report["checks"][name] = found
+
+    def audit_dialog(window, name):
+        report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window.dialog), "fits_window": window.dialog.height() <= window.height() and window.dialog.width() <= window.width()}
+
+    def shoot(window, name):
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+        ui_offscreen.settle(app, 3)
+        pixmap = window.grab()
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    window = make(seeds.FakeSeedsProvider())                                           # 기본 — 승인 전 안내 줄·개수 칩·채널별 쓸 수 있는 Seed 와 후보 생성 켜짐·거르기·일괄 변경 줄·Seed 줄 목록
+    shoot(window, "seed")
+    audit(window, "seed")
+    window.seed_toggle_filters()                                                       # 거르기 — 상태·소속·중요도 칩과 결과 개수·조건 지우기
+    window.seed_status("proposed")
+    window.seed_scope("naver_a")
+    ui_offscreen.settle(app)
+    shoot(window, "seed_filters")
+    audit(window, "seed_filters")
+    window.seed_reset_filters()
+    window.seed_toggle_filters()
+    open_detail(window, "EX001")                                                       # 상세 서랍 — 승인 전 Seed: 승인하기(주요)·쉬게 두기·저장·되돌리기
+    shoot(window, "seed_detail")
+    audit(window, "seed_detail")
+    window.close_drawer()
+    open_detail(window, "EX009")                                                       # 180일 쓰이지 않은 사용 중 Seed — '쉬게 할까요?' 는 제안일 뿐 상태는 그대로다
+    shoot(window, "seed_idle")
+    audit(window, "seed_idle")
+    window.close_drawer()
+    open_detail(window, "EX002")                                                       # 고치기 오류 — 서비스를 부르지 않고 문제 칸 옆에 쉬운 문장, 알림 줄
+    window.seed_edit("reason", "가" * 250)
+    window.seed_edit("priority_keywords", "겹침")
+    window.seed_edit("excluded_keywords", "겹침")
+    window.seed_save()
+    ui_offscreen.settle(app)
+    shoot(window, "seed_invalid")
+    audit(window, "seed_invalid")
+    window.seed_revert()
+    window.seed_state("approve")                                                       # 승인 — 확인창 없이 저장(가짜 공급자 — 메모리에만), 서랍은 새 상태에 맞는 행동으로 바뀐다
+    wait_write(window)
+    shoot(window, "seed_saved")
+    audit(window, "seed_saved")
+    window.close_drawer()
+    window.seed_open_new()                                                             # 새 Seed 등록 — 빈 폼(승인 전으로 등록)과 저장 시도 뒤 칸 오류
+    ui_offscreen.wait_until(app, lambda: window.drawer.x() <= window.width() - window.drawer.width() + 2, 3)
+    ui_offscreen.settle(app)
+    shoot(window, "seed_new")
+    audit(window, "seed_new")
+    window.seed_create()
+    ui_offscreen.settle(app)
+    shoot(window, "seed_new_invalid")
+    audit(window, "seed_new_invalid")
+    window.close()
+    window = make(seeds.FakeSeedsProvider())                                           # 일괄 변경 확인창 — 처음 포커스는 취소, 개수·처음 몇 개 이름·바뀐 뒤 채널별 수
+    for seed_id in ("EX001", "EX002", "EX003", "EX004", "EX005", "EX006"):
+        window.seed_check(seed_id)
+    ui_offscreen.settle(app)
+    window.seed_bulk("activate")
+    ui_offscreen.settle(app)
+    shoot(window, "seed_bulk")
+    audit_dialog(window, "seed_bulk")
+    window.close_dialog()
+    window.close()
+    window = make(seeds.FakeSeedsProvider(), picked="C:/예시 폴더/예시 제안.json")        # 제안 파일 확인창 — 읽어 본 개수·모두 승인 전으로 등록(파일은 읽지 않고 가짜 공급자가 예시를 돌려준다)
+    window.seed_import()
+    ui_offscreen.wait_until(app, lambda: window.dialog.is_open, 10)
+    ui_offscreen.settle(app)
+    shoot(window, "seed_import")
+    audit_dialog(window, "seed_import")
+    window.close_dialog()
+    window.close()
+    window = make(seeds.FakeSeedsProvider("empty"))                                    # 아직 Seed 가 없다 — 빈 목록 안내
+    shoot(window, "seed_empty")
+    audit(window, "seed_empty")
+    window.close()
+    window = make(seeds.FakeSeedsProvider(delay=30), wait=False)                       # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
+    shoot(window, "seed_loading")
+    audit(window, "seed_loading")
+    window.close()
+    window = make(seeds.FakeSeedsProvider("error"))                                    # 읽기 오류 — 쓰는 길 없이 다시 읽기·진단 정보(펼침)
+    window.screen_widget.findChild(UI.Disclosure).flip()
+    ui_offscreen.settle(app)
+    shoot(window, "seed_error")
+    audit(window, "seed_error")
+    window.close()
+    window = make(seeds.FakeSeedsProvider(), size=(900, 560))                          # 최소 창 — 개수·거르기·일괄 변경 줄이 다음 줄로 넘어가고 가로 스크롤은 없다
+    shoot(window, "seed_narrow")
+    audit(window, "seed_narrow")
+    open_detail(window, "EX001")                                                       # 최소 창의 서랍 — 아래 고정 행동 줄이 창 안에 보인다
+    shoot(window, "seed_narrow_detail")
+    audit(window, "seed_narrow_detail")
+    window.close()
+    with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 파일이 아직 없다는 안내·예시 표시 없음·가짜 Seed 를 넣고 승인한 결과(임시 폴더에만 쓴다)
+        from chanceblog_desktop.security.keystore import MemoryStore
+        from chanceblog_desktop.service import topic_files
+        from chanceblog_desktop.service.context import Context, Settings, Workspace
+        from chanceblog_desktop.topics import seeds as seed_rules
+        from chanceblog_desktop.ui.seeds_adapter import ServiceSeedsProvider
+        workspace = Workspace(Path(tmp) / "data")
+        ctx = Context(workspace, Settings(workspace.settings_path), backend=None, keystore=MemoryStore())
+        provider = ServiceSeedsProvider(context_factory=lambda data_dir=None: ctx)
+        window = make(provider)
+        shoot(window, "seed_real_first")
+        audit(window, "seed_real_first")
+        window.close()
+        paths = topic_files.topic_paths(ctx.workspace)
+        paths.folder.mkdir(parents=True, exist_ok=True)
+        paths.seeds.write_bytes((json_module.dumps(seed_rules.seeds_to_dict(seeds.FakeSeedsProvider().seeds), ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+        window = make(provider)
+        open_detail(window, "EX001")
+        window.seed_state("approve")
+        wait_write(window)
+        shoot(window, "seed_real")
+        audit(window, "seed_real")
         window.close()
 
 

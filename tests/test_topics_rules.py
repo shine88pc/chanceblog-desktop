@@ -248,9 +248,11 @@ class HygieneTest(unittest.TestCase):
         # P3 의도적 갱신: 예전에는 쓰는 곳이 0 이었다(P1~P2b). P3 가 저장 계층(`topicdb/`)과 서비스·명령줄에 처음 이었다 — 그 밖의 곳(화면·글·발행·검사·보안…)은 여전히 이 패키지를 모른다.
         # 의도적 갱신(P4b, D-218): 블로그 관리 화면이 **상수만** 가져온다 — 서비스 `service/blog_profiles.py`(채널 프로필 읽기·쓰기)와 화면의 순수 규칙 `ui/core/blog_form.py`·`ui/core/blogs.py` 가 폼 칸의 길이·개수 상한과 허용 값(언어·색 프리셋)을
         # `topics.channels` 에서 가져온다(화면이 따로 베낀 숫자가 서비스 생성자의 판정과 어긋나 '화면은 통과시키는데 서비스는 거절' 하는 사고를 막으려고 — 시험이 수백 가지 입력으로 둘의 판정을 견준다). 저장·계산은 쓰지 않는다. 나머지 화면 코드(Qt 쪽 포함)는 여전히 이 패키지를 모른다.
+        # 의도적 갱신(Seed 관리, D-231): 서비스 `service/seed_manage.py`(씨앗 읽기·쓰기 — `Seed` 생성자가 저장 직전의 진짜 심판이다)와 화면의 순수 규칙 `ui/core/seed_form.py`·`seed_rules.py`·`seeds.py`·`seeds_view.py` 가 이 패키지를 쓴다 —
+        # 폼 칸의 길이·개수 상한과 허용 값(상태·소속·중요도·대상 유형·채널·협찬 분야 이름)을 화면이 따로 베끼지 않고 `topics.seeds`·`topics.channels`·`topics.wording` 에서 가져오고, 가짜 공급자가 서비스와 같은 `Seed` 생성자·`change_state` 를 심판으로 쓴다(시험이 둘의 판정을 견준다). Qt 쪽 코드는 여전히 이 패키지를 모른다.
         pattern = re.compile(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topics\b|import\s+(?:[\w.]*\.)?topics\b|from\s+\.+\s+import\s+[^#\n]*\btopics\b)")
         users = sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8")))
-        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/core/blog_form.py", "ui/core/blogs.py"],
+        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
                          "이 패키지를 쓰는 곳을 늘리는 것은 의식적인 변경이다 — 이 목록과 결정 기록을 함께 고친다")
 
     def test_the_pattern_that_looks_for_users_of_the_package_works(self):

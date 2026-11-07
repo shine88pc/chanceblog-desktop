@@ -135,6 +135,10 @@ from .blog_text import BLOG_T  # noqa: E402
 
 T.update(BLOG_T)                                                     # 블로그 관리 화면(P4b)의 문구는 새 파일(`blog_text.py`)에 따로 두고 합친다
 
+from .seed_text import SEED_T  # noqa: E402
+
+T.update(SEED_T)                                                     # Seed 관리 화면의 문구도 새 파일(`seed_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 

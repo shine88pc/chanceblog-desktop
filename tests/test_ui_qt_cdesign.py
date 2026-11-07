@@ -697,7 +697,7 @@ class ExistingPartsFollowTheNewTokensTest(PartsBase):
         self.assertEqual(hexed(image, tokens.FRAME["sidebar"] + 6, 600), COLORS["bg_app"].upper())       # 본문 바탕 #F4F7FB — 사이드바 폭은 새 틀 상수(UI-C1a: 옛 LAYOUT 값은 지웠다)
         self.assertEqual(hexed(image, 4, 400), COLORS["bg_sidebar"].upper())                              # 사이드바 바탕 #F7F9FC
         self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()][:1], ["홈 메뉴로 이동"])
-        self.assertEqual(len(window.nav_buttons), 3)                                                      # 의도적 갱신(UI-C1a, D-172): 실제 메뉴는 완성된 화면뿐 — 옛 값은 6, P4b(D-210)에서 블로그 관리가 더해져 홈·블로그 관리·설정 셋
+        self.assertEqual(len(window.nav_buttons), 4)                                                      # 의도적 갱신(UI-C1a, D-172): 실제 메뉴는 완성된 화면뿐 — 옛 값은 6, P4b(D-210)에서 블로그 관리가 더해져 셋, Seed 관리(D-230)가 더해져 홈·Seed 관리·블로그 관리·설정 넷
 
 
 class GalleryTest(PartsBase):

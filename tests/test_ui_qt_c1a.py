@@ -252,7 +252,7 @@ class TopBarNarrowTest(QtBase):
 
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-REAL = {"home", "blogs", "settings"}                                                 # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음)
+REAL = {"home", "seed", "blogs", "settings"}                                         # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다
 
 
 def hexed(image, x, y):
@@ -297,8 +297,8 @@ class SidebarTest(QtBase):
 
     def test_the_real_menu_is_home_and_settings_and_the_current_one_gets_the_new_colors(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "blogs", "settings"])                 # 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다
-        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
+        self.assertEqual(list(window.nav_buttons), ["home", "seed", "blogs", "settings"])         # 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다
+        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
         for button in window.nav_buttons.values():
             self.assertTrue(42 <= button.height() <= 46, button.height())                          # 문서의 메뉴 높이 42~46
             self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)
@@ -321,7 +321,7 @@ class SidebarTest(QtBase):
         self.assertEqual(box.accessibleName(), "준비 중 — 아직 열 수 없는 화면")
         self.assertEqual(box.title.plain_text(), "다음 단계")
         items = box.items
-        self.assertEqual([item.name.text() for item in items], ["주제 후보", "초안 작성", "발행 기록", "Seed 관리"])        # 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다
+        self.assertEqual([item.name.text() for item in items], ["주제 후보", "초안 작성", "발행 기록"])        # 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올라가 아직 열 수 없는 화면은 셋이다
         for item in items:
             self.assertIsInstance(item, SoonItem)
             self.assertEqual(item.badge.text(), "준비 중")                                          # 색만이 아니라 글자

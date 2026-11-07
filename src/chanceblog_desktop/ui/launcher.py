@@ -1,6 +1,6 @@
 """`python -m chanceblog_desktop gui` — 화면을 연다. PySide6 가 없으면 **쉬운 한국어로 안내하고** 끝낸다(명령줄 기능은 PySide6 없이 그대로 동작한다).
 
-`--data-dir 폴더` 는 명령줄과 같은 사용자 데이터 폴더를 가리키고(없으면 기본 위치), `--sample` 은 내 데이터 대신 **예시 데이터**로 화면을 보여 준다. 홈·설정 화면은 읽기만 한다(보관함을 만들거나 바꾸지 않는다). **블로그 관리 화면만** 저장·복제·삭제를 눌렀을 때 사용자 데이터 폴더의 블로그 프로필 파일(`topic_engine/channel_profiles.json`)에 쓴다(`--sample` 은 아무 파일에도 쓰지 않는다).
+`--data-dir 폴더` 는 명령줄과 같은 사용자 데이터 폴더를 가리키고(없으면 기본 위치), `--sample` 은 내 데이터 대신 **예시 데이터**로 화면을 보여 준다. 홈·설정 화면은 읽기만 한다(보관함을 만들거나 바꾸지 않는다). **블로그 관리·Seed 관리 화면만** 저장·복제·삭제(블로그 관리), 승인·바꾸기·저장·등록·불러오기(Seed 관리)를 눌렀을 때 사용자 데이터 폴더의 블로그 프로필 파일(`topic_engine/channel_profiles.json`)·Seed 파일(`topic_engine/seeds.json`)에 쓴다(`--sample` 은 아무 파일에도 쓰지 않는다).
 
 **사용법 오류는 입력한 값을 되풀이하지 않는다** — 파이썬 `argparse` 의 기본 오류 문구(`ignored explicit argument '…'`·`unrecognized arguments: …`)는 사용자가 친 값을 그대로 보여 주므로,
 값(키가 들어 있을 수도 있다)이 화면·기록에 남지 않게 `GuiParser.error` 가 값 없는 고정 문장만 낸다. 종료 코드는 명령줄의 사용법 오류와 같은 2 이다.
@@ -52,7 +52,7 @@ class GuiParser(argparse.ArgumentParser):
 
 
 def build_parser():
-    parser = GuiParser(prog=PROG, description="ChanceBlog Desktop 화면을 엽니다(홈·설정은 읽기만 합니다 — 블로그 관리 화면은 저장·복제·삭제를 눌렀을 때만 블로그 프로필 파일에 씁니다).")
+    parser = GuiParser(prog=PROG, description="ChanceBlog Desktop 화면을 엽니다(홈·설정은 읽기만 합니다 — 블로그 관리 화면은 저장·복제·삭제를, Seed 관리 화면은 승인·바꾸기·저장·등록·불러오기를 눌렀을 때만 해당 파일에 씁니다).")
     parser.add_argument("--data-dir", default=None, metavar="폴더", help="사용자 데이터 폴더(없으면 기본 위치 — 명령줄과 같은 폴더를 씁니다)")
     parser.add_argument("--sample", action="store_true", help="내 데이터 대신 예시 데이터로 화면을 보여 줍니다")
     return parser

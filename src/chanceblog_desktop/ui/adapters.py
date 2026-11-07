@@ -143,6 +143,11 @@ class ServiceHomeProvider(HomeProvider):
         """설정 화면의 짝 공급자 — 같은 데이터 폴더를 읽는다(홈과 같은 `--data-dir`)."""
         return ServiceConnectionsProvider(self._data_dir, context_factory=self._factory)
 
+    def seeds_provider(self):
+        """Seed 관리 화면의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(승인·바꾸기·저장·등록·불러오기)는 사용자가 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
+        from .seeds_adapter import ServiceSeedsProvider
+        return ServiceSeedsProvider(self._data_dir, context_factory=self._factory)
+
     def blogs_provider(self):
         """블로그 관리 화면(P4b)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(저장·복제·삭제)는 사용자가 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
         from .blogs_adapter import ServiceBlogsProvider

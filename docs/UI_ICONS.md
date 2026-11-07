@@ -28,7 +28,7 @@
 
 | 뜻 | 아이콘 | 색 계열 |
 |---|---|---|
-| 홈·주제 후보·초안 작성·발행 기록·Seed 관리·블로그 관리·설정 | `home`·`search`·`draft`·`calendar_check`·`sprout`·`book`·`settings`(기어) | 파랑·파랑·파랑·보라·초록·회색·회색 |
+| 홈·주제 후보·초안 작성·발행 기록·Seed 관리·블로그 관리·설정 | `home`·`search`·`draft`·`calendar_check`·`sprout`·`book`·`settings`(기어) | 파랑·파랑·파랑·보라·초록·회색·회색 — Seed 관리(`sprout`)는 실제 메뉴로 올랐다(Seed 관리 화면은 새 아이콘 없이 기존 `upload`·`plus`·`refresh`·`chevron_up`·`chevron_down`·`x` 만 쓴다) |
 | 추천 주제·작성 완료·발행 완료·저장된 아이디어 | `draft`·`check_circle`·`calendar_check`·`bulb` | 파랑·초록·보라·주황 |
 | 추세 상승·보통·하락 | `trend_up`·`trend_flat`·`trend_down` | 초록·주황·빨강 |
 | 복사·바깥 열기·보류·오류·안내 | `copy`·`external`·`pause_circle`·`alert`·`info_circle` | 파랑·회색·주황·빨강·파랑 |
