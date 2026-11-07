@@ -5,7 +5,7 @@
   · 상단 앱 바: 높이 60·잎+ChanceBlog+소개+날짜·시간뿐(단추 0 — 설정 아이콘·검색·알림·사용자·날씨·창 조절 없음)·가짜 시계의 글·분 경계에서만 글자 갱신(한 번 기다리는 타이머)·좁은 폭에서 소개 먼저 숨김→날짜 줄임·겹침 없음.
   · 사이드바: 폭 208·묶음 이름은 실제 메뉴가 있는 묶음에만·실제 Navigation 은 홈·설정뿐·현재 메뉴 색·'다음 단계' 목록(클릭 불가·Tab 제외·55% 섞은 토큰 색·'준비 중' 배지·가리켜도 변화 없음·기본 커서)·
     미완성 화면으로 가는 길 0(소스·실행 모두)·하단은 브랜드와 버전뿐('개발 버전' 표시)·최소 창(900×560)에서 안 넘침.
-  · 굳은 배치: 다시 그린 직후·창 크기를 바꾼 뒤 추천 행이 '누르는 칸 최소 높이' 로 눌려 제목이 잘리지 않는다(논리 1280×720 의 서랍 닫기·폭 1040~1100 끌기).
+  · 굳은 배치: 다시 그린 직후·창 크기를 바꾼 뒤 추천 줄·글 줄이 '누르는 칸 최소 높이' 로 눌려 제목이 잘리지 않는다(논리 1280×720 의 서랍 닫기·폭 900~1920 끌기 — UI-C1d 에서 새 홈의 줄로 바꿨다).
   · 접근성 색 상태: 위험 단추·의미 배지 세 종(추천·가격변화·주의)의 Default·Hover·Pressed·Disabled 색과 대비, Windows 125% 흉내(`QT_SCALE_FACTOR=1.25` 자식 프로세스)에서 글자 잘림 0·누르는 칸 36px 이상.
 """
 import ast
@@ -29,6 +29,7 @@ if HAVE:
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QWidget
     from chanceblog_desktop.ui.qt import app as qapp
+    from chanceblog_desktop.ui.qt import board as board_module
     from chanceblog_desktop.ui.qt import components as UI
     from chanceblog_desktop.ui.qt import shell as shell_module
     from chanceblog_desktop.ui.qt import theme
@@ -668,17 +669,19 @@ class RelayoutTest(QtBase):
 
     @staticmethod
     def squeezed(window):
-        """행 높이가 그 행이 필요로 하는 높이보다 낮은 행들의 높이, 제목 라벨이 필요한 높이보다 낮은 개수."""
-        rows = window.screen_widget.findChildren(UI.TopicRow)
+        """줄 높이가 그 줄이 필요로 하는 높이보다 낮은 줄들의 높이, 제목 라벨이 필요한 높이보다 낮은 개수.
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 추천 행(`TopicRow`)을 봤다 — 새 홈의 추천 줄(`BoardRow`)과 글 줄(`ListRow`)을 같은 기준으로 본다(제목 라벨은 추천 줄 `h3`·글 줄 `body_lg`)."""
+        rows = window.screen_widget.findChildren(board_module.BoardRow) + window.screen_widget.findChildren(board_module.ListRow)
         short = [row.height() for row in rows if row.height() < row.layout().totalHeightForWidth(row.width())]
-        titles = [label for row in rows for label in row.findChildren(UI.Label) if label.property("role") == "h3" and label.heightForWidth(label.width()) > label.height() + 1]
+        titles = [label for row in rows for label in row.findChildren(UI.Label) if label.property("role") in ("h3", "body_lg") and label.heightForWidth(label.width()) > label.height() + 1]
         return short, len(titles)
 
     def test_rows_stay_whole_after_the_drawer_closes_and_the_screen_is_drawn_again_at_1280x720(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 추천 행(`TopicRow`)을 새 추천 줄(`BoardRow` 9개)로 세고 서랍은 첫 추천 구역의 둘째 줄로 연다 — 닫은 뒤 줄이 눌리지 않고 온전해야 한다는 단언은 그대로다."""
         window = self.make(size=(1280, 720))
         self.assertEqual(self.squeezed(window), ([], 0))
-        self.assertGreaterEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
-        window.open_drawer(window.state.home_rows()[1].id)
+        self.assertEqual(len(window.screen_widget.findChildren(board_module.BoardRow)), 9)
+        window.open_drawer(window.state.home_view()["board"]["recommend"][0]["rows"][1]["id"])
         ui_offscreen.wait_until(self.app, lambda: window.drawer.x() <= window.width() - window.drawer.width() + 2, 3)
         self.settle()
         window.close_drawer()                                                              # 다시 그린다
@@ -706,14 +709,21 @@ class RelayoutTest(QtBase):
         self.assertEqual(ui_offscreen.find_clipping(window), [])
 
     def test_every_state_change_that_draws_the_screen_again_keeps_the_rows_whole_at_1280x720(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 칩 다섯 번·행 선택으로 다시 그렸다(칩·선택이 없어졌다). 새 홈은 다시 그리는 일을 — 다른 상태(일부만·오프라인·빈·정상)로 다시 불러오기·서랍 열고 닫기·예시 설명·다른 화면에 갔다 오기 —
+        하나하나 하고 그때마다 줄이 눌리지 않는지 본다."""
         window = self.make(size=(1280, 720))
-        for filter_key in ("b", "hot", "new", "all", "a"):
-            window.chip_home(filter_key)
+        for scenario in ("partial", "offline", "empty", "normal"):
+            window.state.provider = services.FakeHomeProvider(scenario)
+            self.assertTrue(window.reload(), scenario)
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.list_state != "loading", 10), scenario)
             self.settle(10)
-            self.assertEqual(self.squeezed(window), ([], 0), filter_key)
-        window.select_topic(window.state.home_rows()[-1].id)
-        self.settle(10)
-        self.assertEqual(self.squeezed(window), ([], 0))
+            self.assertEqual(self.squeezed(window), ([], 0), scenario)
+        for index in (0, 4, 8):
+            window.open_drawer([row["id"] for item in window.state.home_view()["board"]["recommend"] for row in item["rows"]][index])
+            ui_offscreen.wait_until(self.app, lambda: window.drawer.x() <= window.width() - window.drawer.width() + 2, 3)
+            window.close_drawer()
+            self.settle(10)
+            self.assertEqual(self.squeezed(window), ([], 0), index)
         window.nav_buttons["settings"].click()
         self.settle(10)
         window.nav_buttons["home"].click()

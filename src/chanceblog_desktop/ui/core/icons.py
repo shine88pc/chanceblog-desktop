@@ -1,7 +1,7 @@
 """직접 그린 선형 아이콘 한 벌 — 24×24 눈금, 선 굵기 1.75(허용 1.75~2), 둥근 끝·둥근 모서리로 통일(채운 아이콘을 섞지 않는다).
 
 경로 문자열을 이 파일에서만 관리하고 Qt 는 QtSvg 로 그려 어느 화면 배율에서도 선명하다(그림 파일·외부 아이콘 라이브러리 없음). 같은 의미는 어디서나 같은 아이콘이다(`MEANING`).
-크기 규칙은 `tokens.ICON`(사이드바 18 · 요약 카드 22(바탕 40×40) · 단추 안 18(작은 단추 16) · 빈 화면 34), 의미 표와 설명은 docs/UI_ICONS.md.
+크기 규칙은 `tokens.ICON`(사이드바 18 · KPI 카드 22(바탕 40×40) · 단추 안 18(작은 단추 16) · 빈 화면 34), 의미 표와 설명은 docs/UI_ICONS.md.
 """
 from __future__ import annotations
 
@@ -88,5 +88,5 @@ MEANING = {
     "copy": ("copy", "blue"), "external": ("external", "slate"), "hold": ("pause_circle", "orange"), "error": ("alert", "red"), "info": ("info_circle", "blue"),
     "image": ("image", "blue"), "key": ("key", "slate"), "delete": ("trash", "red"), "upload": ("upload", "slate"), "secure": ("lock", "green"),
     "empty": ("inbox", "blue"), "offline": ("cloud_off", "orange"), "partial": ("alert", "orange"), "refresh": ("refresh", "blue"), "close": ("x", "slate"), "detail": ("chevron_right", "slate"),
-    "more_menu": ("more_vertical", "slate"), "quick_new": ("plus", "blue"), "tip": ("bulb", "green"),
+    "more_menu": ("more_vertical", "slate"),
 }

@@ -389,23 +389,38 @@ class NoNavigationTest(unittest.TestCase):
         state.nav = lambda key: (calls.append(key), real(key))[1]
         return state, calls
 
-    def test_quick_actions_and_draft_requests_never_ask_for_a_screen(self):
+    def test_draft_requests_never_ask_for_a_screen(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 빠른 작업(`quick`)의 모든 열쇠도 눌러 봤다 — 빠른 작업은 홈에서 없어졌다(운영자 2026-11-06 확인 요청 004 의 답 5). 상세 서랍의 초안 단추(옛 후보 번호·추천 줄 번호 둘 다)는 그대로 화면을 부르지 않는다."""
         state, calls = self.spy()
-        for key in ("new", "saved", "history", "blogs", "nope"):
-            state.quick(key)
-        state.draft_requested("s1", "A")
+        self.assertFalse(hasattr(state, "quick"))
+        for key in ("s1", "rA1", "zzz"):
+            state.draft_requested(key, "A")
         self.assertEqual(calls, [])
         self.assertEqual(state.page, "home")
 
-    def test_the_drawer_and_the_filters_never_ask_for_a_screen_either(self):
+    def test_the_drawer_and_the_home_view_model_never_ask_for_a_screen_either(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 칩 거르기·행 선택·요약 카드의 `go`·빠른 작업 열쇠를 봤다(모두 홈에서 없어졌다). 새 규칙: 서랍을 여닫는 일(옛 후보 번호·추천 줄 번호)은 화면을 부르지 않고,
+        홈 뷰모델 어디에도 화면으로 가는 길을 뜻하는 칸(`go`·`route`·`target`·`nav`·`link`·`url`)이 없다."""
         state, calls = self.spy()
-        state.open_drawer("s1")
-        state.set_home_filter("b")
-        state.select_topic("s1")
+        for opened in ("s1", "rA1", "rB2"):
+            self.assertTrue(state.open_drawer(opened), opened)
+            self.assertIsNotNone(state.drawer_view())
+            state.close_drawer()
+        state.open_drawer("rA1")
         state.close_drawer()
         self.assertEqual(calls, [])
-        self.assertEqual({card["go"] for card in state.home_view()["cards"]}, {None})              # 요약 카드는 가는 곳이 없다
-        self.assertEqual(state.home_view()["rail"]["quick"][0]["key"], "new")
+
+        def keys_of(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield key
+                    yield from keys_of(item)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    yield from keys_of(item)
+
+        self.assertEqual({key for key in keys_of(state.home_view()) if key in ("go", "route", "target", "nav", "link", "url")}, set())      # 요약 카드(KPI)·구역·연결 요약 어디에도 가는 곳이 없다
+        self.assertEqual(state.page, "home")
 
 
 class SourceRulesTest(unittest.TestCase):

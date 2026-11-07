@@ -2,7 +2,8 @@
 **PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다 — CI 의존성은 바꾸지 않았다). 사용자의 클립보드는 건드리지 않는다(가짜 클립보드).
 
 지키는 것:
-  · 메뉴 6개·홈의 카드 4·행 5·칩 5, 가로 스크롤 없음(1366·1536·1280·1920·최소 창), 눌리는 칸 36px 이상·중요 단추 40~44px, 모든 눌리는 부품의 접근 이름.
+  · 메뉴 둘(홈·설정)·홈의 KPI 4·추천 줄 9(Naver A 5·B 4)·글 줄 6, 가로 스크롤 없음(1366·1536·1280·1920·1180·최소 창), 눌리는 칸 36px 이상·중요 단추 40~44px, 모든 눌리는 부품의 접근 이름.
+    (UI-C1d, D-201: 옛 홈의 요약 카드·추천 행·칩·오른쪽 패널·빠른 작업·활용 팁은 없어졌다 — 아래 시험은 새 홈 기준이고 의도적으로 고친 시험은 이유 주석이 있다.)
   · Tab 한 바퀴(중간에 갇히지 않음)·Enter/Space·Esc(대화상자 먼저, 서랍은 포커스를 가두고 닫으면 돌려줌)·키보드 포커스에도 보이는 툴팁·칩을 눌러도 포커스 유지.
   · 같은 안내(토스트)는 쌓이지 않음(3.5초), 중복 불러오기 막기·취소·실패 뒤 다시 시도, 작업 중에도 화면이 응답.
   · 글꼴은 시스템 글꼴 Family + 토큰 크기, 고정폭은 진단·개발 정보만, 스타일시트는 토큰에서만(순수 검정·직접 색 없음), 화면은 부품만 쓴다(기본 위젯 직접 노출 금지·인라인 스타일 금지).
@@ -23,7 +24,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
-from chanceblog_desktop.ui.core import attribution, services, text, tokens  # noqa: E402  (PySide6 를 모르는 부분 — PySide6 가 없어도 불러온다)
+from chanceblog_desktop.ui.core import attribution, part_rules, services, text, tokens  # noqa: E402  (PySide6 를 모르는 부분 — PySide6 가 없어도 불러온다)
 from chanceblog_desktop.ui.core.jobs import JobFailure  # noqa: E402
 
 HAVE = importlib.util.find_spec("PySide6") is not None
@@ -36,7 +37,9 @@ if HAVE:
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QLineEdit, QPushButton, QStyleFactory, QToolTip, QVBoxLayout, QWidget
     from chanceblog_desktop.ui.qt import app as qapp
+    from chanceblog_desktop.ui.qt import board as board_module
     from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt import gauges as gauge_module
     from chanceblog_desktop.ui.qt import screens as S
     from chanceblog_desktop.ui.qt import shell as shell_module
     from chanceblog_desktop.ui.qt import theme
@@ -65,6 +68,11 @@ class Custom(services.HomeProvider):
 
     def load_home(self, progress, cancelled):
         return self.data
+
+
+def first_row_id(window, index=0):
+    """홈의 `index` 번째 추천 줄(위에서 아래로)의 번호 — 서랍을 여는 데 쓴다(UI-C1d: 옛 `home_rows()` 가 없다)."""
+    return [row["id"] for item in window.state.home_view()["board"]["recommend"] for row in item["rows"]][index]
 
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
@@ -116,20 +124,24 @@ class QtBase(unittest.TestCase):
 
 
 class ShellTest(QtBase):
-    def test_shell_has_the_two_completed_menus_and_the_home_shows_cards_chips_and_five_rows(self):
-        """의도적 갱신(UI-C1a, D-172): 옛 시험은 메뉴 6개를 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 메뉴다."""
+    def test_shell_has_the_two_completed_menus_and_the_home_shows_the_kpis_the_recommendations_the_lists_and_the_connection_line(self):
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 메뉴 6개를 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 메뉴다.
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 홈의 요약 카드 4·추천 행 5·칩 5 를 봤다. 새 홈은 KPI 넷·Naver A 추천(5)·Naver B 추천(4)·작성 중 초안(3)·최근 발행(3)·연결 상태 한 줄이고 칩은 없다."""
         window = self.make()
         self.assertEqual(list(window.nav_buttons), ["home", "settings"])
         self.assertTrue(window.nav_buttons["home"].isChecked())
-        self.assertEqual(len(window.screen_widget.findChildren(UI.SummaryCard)), 4)
-        self.assertEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
-        chips = [b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("chip")]
-        self.assertEqual(len(chips), 5)
-        self.assertEqual([row.property("selected") for row in window.screen_widget.findChildren(UI.TopicRow)], [True, False, False, False, False])
+        page = window.screen_widget
+        self.assertEqual(len(page.findChildren(board_module.KpiCard)), 4)
+        self.assertEqual(len(page.findChildren(board_module.BoardRow)), 9)
+        self.assertEqual(len(page.findChildren(board_module.ListRow)), 6)
+        self.assertEqual([label.text() for label in page.findChildren(UI.ElidedLabel) if label.property("role") == "h2"], ["블로그 A 추천", "블로그 B 추천", "작성 중인 초안", "최근 발행"])
+        self.assertEqual([row.row["channel"] for row in page.findChildren(board_module.BoardRow)], ["A"] * 5 + ["B"] * 4)         # 위에서 아래로 Naver A 추천 다음 Naver B 추천
+        self.assertEqual([b for b in page.findChildren(QAbstractButton) if b.property("chip")], [])                              # 칩은 없다
         self.assertTrue(any(b.accessibleName() == "예시 데이터" for b in window.findChildren(QAbstractButton)))
 
     def test_unfinished_screens_cannot_be_opened_at_all_and_the_page_stays_where_it_was(self):
-        """의도적 갱신(UI-C1a, D-172): 옛 시험은 다른 메뉴가 '아직 만들고 있어요' 자리표시 화면을 열고 '홈으로' 로 돌아오는 것을 보았다. 이제 그 화면은 없다 — 화면 이름을 직접 불러도 열리지 않고 지금 화면이 그대로다."""
+        """의도적 갱신(UI-C1a, D-172): 옛 시험은 다른 메뉴가 '아직 만들고 있어요' 자리표시 화면을 열고 '홈으로' 로 돌아오는 것을 보았다. 이제 그 화면은 없다 — 화면 이름을 직접 불러도 열리지 않고 지금 화면이 그대로다.
+        (UI-C1d: 추천 줄의 수로 확인한다.)"""
         window = self.make()
         before = window.screen_widget
         for key in ("topics", "draft", "history", "seed", "blogs", "nope"):
@@ -138,14 +150,15 @@ class ShellTest(QtBase):
             self.assertEqual(window.state.page, "home", key)
             self.assertIs(window.screen_widget, before, key)                                  # 다시 그리지도 않았다
             self.assertTrue(window.nav_buttons["home"].isChecked(), key)
-        self.assertEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
+        self.assertEqual(len(window.screen_widget.findChildren(board_module.BoardRow)), 9)
 
     def test_a_redraw_never_deletes_the_old_page_inside_the_click_that_caused_it(self):
-        """눌린 단추가 자기 눌림 처리 안에서 지워지면 위험하다 — 옛 화면은 처리가 끝난 다음 차례에 지워진다."""
+        """눌린 단추가 자기 눌림 처리 안에서 지워지면 위험하다 — 옛 화면은 처리가 끝난 다음 차례에 지워진다.
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 칩을 눌러 다시 그렸다 — 칩이 없어졌다. 추천 줄을 눌러 서랍을 여는 것(다시 그린다)으로 같은 것을 본다."""
         import shiboken6
         window = self.make()
         old = window.screen_widget
-        window.chip_home("b")
+        window.open_drawer(first_row_id(window))
         self.assertIsNot(window.screen_widget, old)
         self.assertTrue(shiboken6.isValid(old))                                           # 아직 안 지워졌다
         self.settle(3)
@@ -168,24 +181,19 @@ class ShellTest(QtBase):
         self.assertEqual(window.drawer.scroll.horizontalScrollBarPolicy(), Qt.ScrollBarAlwaysOff)
 
     def test_layout_changes_with_the_width_not_with_fixed_sizes(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 오른쪽 패널이 옆에서 아래로(`ResponsiveBody`)·요약 카드 4→2→1열·추천 행의 지표 칸 접기를 봤다 — 모두 없어졌다.
+        새 홈의 배치 바뀜: KPI 4→2→1열·추천 구역 두 칸 나란히 → 위아래·글 구역 두 칸 → 위아래(논리 폭 기준, 규칙은 `part_rules`)."""
         window = self.make(size=(1440, 900))
-        body = window.screen_widget.findChild(S.ResponsiveBody)
-        self.assertTrue(body.beside)                                                    # 넓으면 오른쪽 패널을 옆에
-        window.resize(1200, 800)
-        self.settle()
-        self.assertFalse(body.beside)                                                   # 좁으면 아래로
-        self.assertGreater(body.rail.width(), 400)
-        grid = next(g for g in window.screen_widget.findChildren(S.FlowGrid) if g._widgets and isinstance(g._widgets[0], UI.SummaryCard))
-        self.assertEqual(grid.columns_for(1000), 4)
-        self.assertEqual(grid.columns_for(500), 2)
-        self.assertEqual(grid.columns_for(300), 1)
-        rows = window.screen_widget.findChildren(UI.TopicRow)
-        window.resize(1100, 800)
-        self.settle()
-        self.assertTrue(all(not row.optional[0].isVisible() for row in rows))           # 행이 좁으면 지표 칸을 접는다
-        window.resize(1920, 1080)
-        self.settle()
-        self.assertTrue(all(row.optional[0].isVisible() for row in rows))
+        kpi, recommend, posts = window.screen_widget.findChildren(S.FlowGrid)
+        self.assertEqual((kpi._cols, recommend._cols, posts._cols), (4, 2, 2))
+        for width, expected in ((1180, (4, 1, 2)), (900, (2, 1, 1)), (1920, (4, 2, 2)), (1280, (4, 2, 2))):
+            window.resize(width, 800)
+            self.settle()
+            ui_offscreen.wait_until(self.app, lambda: window.scroll.horizontalScrollBar().maximum() == 0, 2)
+            self.assertEqual((kpi._cols, recommend._cols, posts._cols), expected, width)
+            self.assertEqual((kpi._cols, recommend._cols, posts._cols), (part_rules.home_kpi_columns(kpi.width()), part_rules.home_section_columns(recommend.width()), part_rules.home_posts_columns(posts.width())), width)
+        for width in (200, 395, 396, 807, 808, 1500):                                    # 격자가 쓰는 규칙은 순수 함수와 같다
+            self.assertEqual(kpi.columns_for(width), part_rules.grid_columns(width, (4, 2, 1), tokens.LAYOUT["kpi_min_col"], 16), width)
 
     def test_the_default_window_size_is_near_1440_by_900_and_never_larger_than_a_small_screen_allows(self):
         width, height = shell_module.AppShell.default_size()
@@ -194,16 +202,20 @@ class ShellTest(QtBase):
         self.assertLessEqual(width, 1440)
         self.assertLessEqual(height, 900)
 
-    def test_a_long_blog_name_in_the_side_panel_is_elided_with_the_full_name_in_the_tooltip_and_never_leaves_its_card(self):
-        """오른쪽 패널이 옆에 있는 넓은 창에서 블로그 이름이 한글 14자쯤부터 카드 밖으로 잘렸다(검증 M-4) — 이제 한 줄 …(줄임표)로 줄고 부품이 받은 글이 툴팁에 있다(받은 글은 어댑터가 이미 30자로 줄인 글이라 전체 이름이 아니다 — N-5)."""
+    def test_a_long_channel_name_in_a_section_header_is_elided_with_the_text_in_the_tooltip_and_never_leaves_its_card(self):
+        """오른쪽 패널이 옆에 있는 넓은 창에서 블로그 이름이 한글 14자쯤부터 카드 밖으로 잘렸다(검증 M-4) — 이제 한 줄 …(줄임표)로 줄고 부품이 받은 글이 툴팁에 있다(받은 글은 뷰모델이 이미 40자로 줄인 글이라 전체 이름이 아니다 — N-5).
+        의도적 갱신(UI-C1d, D-201): 오른쪽 패널(내 블로그 현황)이 없어졌다 — 이름이 보이는 새 자리는 추천 구역 머리(`블로그 이름 추천`)다."""
         long_name = "가나다라마바사아자차카타파하" * 2 + "가나"
-        provider = Custom([services.Topic(id="b1", title="주제", blogs=("A",), date="2026-11-01")], blogs=(services.BlogInfo("A", long_name, "생활", 10, 2, 3), services.BlogInfo("B", "블로그 비", "IT", 5, 1, 1)))
+        rows = (services.RecommendRow("x1", "주제", 80, None, None),)
+        board = services.BoardData((services.ChannelRead("A", long_name, True, "ok", "", rows), services.ChannelRead("B", "블로그 비", True, "ok", "", rows)), services.ListRead(), services.ListRead())
+        provider = Custom([], board=board)
         for size in ((1920, 1080), (1440, 900), (1366, 768), (1100, 700)):
             window = self.make(provider, size=size)
-            labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text() == long_name]
+            labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text().startswith("가나다라")]
             self.assertEqual(len(labels), 1, size)
             label = labels[0]
-            self.assertEqual(label.toolTip(), long_name)                                     # 툴팁은 부품이 받은 글(여기서는 30자 이름이라 뷰모델이 줄이지 않았다)
+            self.assertEqual(label.text(), f"{long_name} 추천")                              # 부품이 받은 글(뷰모델이 가린 뒤 40자까지 두는 이름 — 30자라 그대로 + 추천)
+            self.assertEqual(label.toolTip(), label.text())                                  # 툴팁은 부품이 받은 글
             card = label.parentWidget()
             while card is not None and card.property("card") != "true":
                 card = card.parentWidget()
@@ -211,38 +223,55 @@ class ShellTest(QtBase):
             self.assertLessEqual(label.mapTo(card, label.rect().bottomRight()).x(), card.width(), size)       # 카드 밖으로 나가지 않는다
             self.assertEqual(ui_offscreen.find_clipping(window), [], size)
             self.assertEqual(window.scroll.horizontalScrollBar().maximum(), 0, size)
-            if label.width() < label.fontMetrics().horizontalAdvance(long_name):             # 폭이 모자라면 줄임표로 끝난다
-                self.assertTrue(label.fontMetrics().elidedText(long_name, Qt.ElideRight, label.width()).endswith("…"))
-            short = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text() == "블로그 비"]
+            if label.width() < label.fontMetrics().horizontalAdvance(label.text()):          # 폭이 모자라면 줄임표로 끝난다
+                self.assertTrue(label.fontMetrics().elidedText(label.text(), Qt.ElideRight, label.width()).endswith("…"))
+            short = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text() == "블로그 비 추천"]
             self.assertEqual(len(short), 1)
-            self.assertGreaterEqual(short[0].width(), short[0].fontMetrics().horizontalAdvance("블로그 비"), size)       # 짧은 이름은 줄지 않는다
+            self.assertGreaterEqual(short[0].width(), short[0].fontMetrics().horizontalAdvance("블로그 비 추천"), size)       # 짧은 이름은 줄지 않는다
 
 
 class AccessibilityTest(QtBase):
     def test_every_interactive_part_has_an_accessible_name_and_a_big_enough_target(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 서랍을 연 상태에서 24개 이상을 봤다(실제 메뉴 4·상단 설정 아이콘·전체 보기·빠른 작업 3·눌리는 요약 카드 2·칩·행마다 상세·초안 단추 …). 새 홈의 누르는 부품은 적다:
+        메뉴 2·예시 데이터·다시 불러오기·추천 줄 9(홈) — 서랍이 열려 있으면 서랍 안(닫기·초안·보류·더보기 4)이 더해지고 홈 쪽은 포커스를 받지 못한다(가둠). 두 상태를 모두 보고 이름·크기는 하나도 빠뜨리지 않고 점검한다."""
         window = self.make()
-        window.open_drawer(window.state.home_rows()[0].id)
+        shown = {"홈": self.interactive(window)}
+        self.assertEqual(len(shown["홈"]), 2 + 2 + 9)                                     # 메뉴 2 + (예시 데이터·다시 불러오기) + 추천 줄 9
+        window.open_drawer(first_row_id(window))
         self.settle()
-        found = self.interactive(window)
-        self.assertGreaterEqual(len(found), 24)                                           # 의도적 갱신(UI-C1a, D-172): '시험이 비어 있지 않다' 는 하한을 25 → 24 로 — 실제 메뉴 4·상단 설정 아이콘·전체 보기·빠른 작업 3·눌리는 요약 카드 2가 없어져 새 값은 24 다(독립 검증이 20 으로 느슨해진 하한을 24 로 조이라고 권했다 — 이름·크기 점검은 그대로 모두 본다)
-        for widget in found:
-            self.assertTrue(widget.accessibleName().strip(), f"접근 이름이 없다: {type(widget).__name__} {getattr(widget, 'text', lambda: '')()!r}")
-            if isinstance(widget, QAbstractButton):
-                self.assertGreaterEqual(widget.height(), tokens.SIZE["hit"], widget.accessibleName())
-                self.assertGreaterEqual(widget.width(), tokens.SIZE["hit"], widget.accessibleName())
-                if not widget.text().strip():                                            # 아이콘만 있는 단추는 툴팁도 같은 말
-                    self.assertEqual(widget.toolTip(), widget.accessibleName())
+        shown["서랍"] = self.interactive(window)
+        self.assertGreaterEqual(len(shown["서랍"]), 2 + 2 + 4)                            # 메뉴·머리 단추(눌리지만 가둠으로 포커스는 못 받음) + 서랍 안 4
+        for where, found in shown.items():
+            for widget in found:
+                self.assertTrue(widget.accessibleName().strip(), f"접근 이름이 없다({where}): {type(widget).__name__} {getattr(widget, 'text', lambda: '')()!r}")
+                if isinstance(widget, QAbstractButton):
+                    self.assertGreaterEqual(widget.height(), tokens.SIZE["hit"], widget.accessibleName())
+                    self.assertGreaterEqual(widget.width(), tokens.SIZE["hit"], widget.accessibleName())
+                    if not widget.text().strip():                                            # 아이콘만 있는 단추는 툴팁도 같은 말
+                        self.assertEqual(widget.toolTip(), widget.accessibleName())
+                else:
+                    self.assertGreaterEqual(widget.height(), tokens.SIZE["hit"], widget.accessibleName())        # 추천 줄도 누르는 칸이 36 이상(실제 64+)
 
     def test_important_buttons_are_between_40_and_44_pixels_tall(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 홈의 주 단추(이 주제로 초안 만들기·주제 분석 시작)를 봤다 — 홈에서 쓰기·이동 단추를 없애 **홈에는 주 단추가 없다**(화면당 주 행동 1개 이하). 주 단추가 남은 곳(상세 서랍의
+        초안 단추·오류 카드의 다시 시도)에서 같은 높이 규칙을 본다."""
         window = self.make()
-        primary = [b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("kind") == "primary"]
-        self.assertTrue(primary)
+        self.assertEqual([b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("kind") == "primary"], [])
+        window.open_drawer(first_row_id(window))
+        self.settle()
+        primary = [b for b in window.drawer.findChildren(QAbstractButton) if b.property("kind") == "primary"]
+        self.assertEqual(len(primary), 1)                                                  # 서랍에는 주 단추가 하나
+        failing = self.make(Flaky(failures=9))
+        primary += [b for b in failing.screen_widget.findChildren(QAbstractButton) if b.property("kind") == "primary"]
+        self.assertEqual(len(primary), 2)                                                  # 오류 카드의 다시 시도 하나
         for button in primary:
             self.assertTrue(40 <= button.height() <= 48, button.accessibleName())
         for button in (b for b in window.findChildren(QAbstractButton) if b.property("nav")):
             self.assertGreaterEqual(button.height(), 40)
 
     def test_tab_goes_all_the_way_around_and_never_lands_on_something_unnamed(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 25곳 이상·메뉴·칩·행·단추 네 종류를 봤다(칩·행마다 단추가 없어졌다). 새 홈의 Tab 한 바퀴는 정확히 13곳 — 메뉴 둘·예시 데이터·다시 불러오기·추천 줄 아홉(위에서 아래로,
+        Naver A 추천 다섯 다음 Naver B 추천 넷) — 이고 같은 곳을 두 번 지나지 않고 이름 없는 곳에 닿지 않는다."""
         window = self.make()
         start = window.nav_buttons["home"]
         self.focus(start)
@@ -260,12 +289,15 @@ class AccessibilityTest(QtBase):
         names = [w.accessibleName() for w in seen]
         self.assertTrue(all(name.strip() for name in names), names)
         self.assertTrue(all(isinstance(w, (QAbstractButton, QLineEdit, UI.Pressable)) for w in seen), [type(w).__name__ for w in seen])      # 눌리거나 쓰는 곳만 정거장(스크롤 영역 같은 틀은 아니다)
-        self.assertGreaterEqual(len(seen), 25)
+        self.assertEqual(len(seen), 13)
         self.assertEqual(len(seen), len(set(map(id, seen))))                              # 같은 곳을 두 번 지나지 않는다(갇히지 않는다)
-        kinds = {("nav" if w.property("nav") else "chip" if w.property("chip") else "row" if isinstance(w, UI.TopicRow) else "button") for w in seen}
-        self.assertEqual(kinds, {"nav", "chip", "row", "button"})
+        kinds = ["nav" if w.property("nav") else "row" if isinstance(w, board_module.BoardRow) else "button" for w in seen]
+        self.assertEqual(kinds, ["nav", "nav", "button", "button"] + ["row"] * 9)
+        self.assertEqual([w.row["channel"] for w in seen if isinstance(w, board_module.BoardRow)], ["A"] * 5 + ["B"] * 4)                    # 옆 칸을 건너뛰지 않고 Naver A 추천 → Naver B 추천
 
     def test_enter_and_space_press_buttons_rows_and_cards(self):
+        """의도적 갱신(UI-C1a, D-172): 요약 카드는 눌러서 가는 곳이 없다(미완성 '주제 후보' 로 가던 길을 끊었다).
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 행을 Enter·Space 로 '고르는 것'(선택)을 봤다 — 선택이 없어졌다. 새 추천 줄은 Enter·Space 로 **기존 상세 서랍을 연다**. KPI 카드는 그대로 누르는 곳이 아니다(포커스도 안 받는다)."""
         window = self.make()
         pressed = []
         button = UI.Button("secondary", "누름")
@@ -276,30 +308,42 @@ class AccessibilityTest(QtBase):
         QTest.keyClick(button, Qt.Key_Return)
         QTest.keyClick(button, Qt.Key_Space)
         self.assertEqual(pressed, ["button", "button"])
-        rows = window.screen_widget.findChildren(UI.TopicRow)
+        rows = window.screen_widget.findChildren(board_module.BoardRow)
+        self.focus(rows[2])
         QTest.keyClick(rows[2], Qt.Key_Return)
         self.settle()
-        self.assertEqual(window.state.selected, window.state.home_rows()[2].id)
-        QTest.keyClick(window.screen_widget.findChildren(UI.TopicRow)[3], Qt.Key_Space)
+        self.assertEqual(window.state.drawer_id, rows[2].row["id"])
+        self.assertTrue(window.drawer.is_open)
+        window.close_drawer()
         self.settle()
-        self.assertEqual(window.state.selected, window.state.home_rows()[3].id)
-        card = window.screen_widget.findChildren(UI.SummaryCard)[0]
+        rows = window.screen_widget.findChildren(board_module.BoardRow)
+        self.focus(rows[3])
+        QTest.keyClick(rows[3], Qt.Key_Space)
+        self.settle()
+        self.assertEqual(window.state.drawer_id, rows[3].row["id"])
+        window.close_drawer()
+        self.settle()
+        card = window.screen_widget.findChildren(board_module.KpiCard)[0]
+        self.assertEqual(card.focusPolicy(), Qt.NoFocus)
         QTest.keyClick(card, Qt.Key_Return)
         self.settle()
-        self.assertEqual(window.state.page, "home")                                       # 의도적 갱신(UI-C1a, D-172): 요약 카드는 눌러서 가는 곳이 없다(미완성 '주제 후보' 로 가던 길을 끊었다)
-        self.assertEqual(card.focusPolicy(), Qt.NoFocus)
+        self.assertEqual((window.state.page, window.state.drawer_id), ("home", None))                      # KPI 카드는 눌러도 아무 일이 없다
 
-    def test_clicking_a_chip_with_the_keyboard_keeps_the_focus_on_it(self):
+    def test_a_redraw_keeps_the_keyboard_focus_on_the_same_row(self):
+        """의도적 교체(UI-C1d, D-201): 옛 `test_clicking_a_chip_with_the_keyboard_keeps_the_focus_on_it` 는 칩을 키보드로 눌러 홈이 다시 그려져도 포커스가 그 칩에 남는 것을 봤다(칩이 없어졌다).
+        같은 성질 — 다시 그려도 키보드 포커스가 같은 곳(`focus_key`)에 남는다 — 을 추천 줄로 본다."""
         window = self.make()
-        chip = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("focus_key") == "chip:b")
-        self.focus(chip)
-        QTest.keyClick(chip, Qt.Key_Space)
+        row = window.screen_widget.findChildren(board_module.BoardRow)[1]
+        key = row.property("focus_key")
+        self.focus(row)
+        old = window.screen_widget
+        window.render()
         self.settle()
-        focus = window.focusWidget()                                                      # 창이 안 쓰는 환경에서도 '창 안의 포커스' 는 같다
+        self.assertIsNot(window.screen_widget, old)                                         # 정말 다시 그렸다
+        focus = window.focusWidget()
         self.assertIsNotNone(focus)
-        self.assertEqual(focus.property("focus_key"), "chip:b")
-        self.assertTrue(focus.isChecked())
-        self.assertTrue(all("B" in topic.blogs for topic in window.state.home_rows()))
+        self.assertEqual(focus.property("focus_key"), key)
+        self.assertIsInstance(focus, board_module.BoardRow)
 
     def test_a_tooltip_shows_when_the_keyboard_focus_arrives(self):
         window = self.make()
@@ -308,13 +352,14 @@ class AccessibilityTest(QtBase):
         self.focus(refresh)
         self.assertTrue(QToolTip.isVisible())
         self.assertEqual(QToolTip.text(), text.T["refresh"])
-        other = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("chip"))
+        other = window.screen_widget.findChildren(board_module.BoardRow)[0]                  # 의도적 갱신(UI-C1d): 옛 시험은 칩으로 옮겼다 — 말풍선이 없는 곳(추천 줄)으로 옮기면 사라진다
         self.focus(other)
         self.assertFalse(QToolTip.isVisible())
 
     def test_the_window_has_no_theme_chooser_anywhere(self):
+        """의도적 갱신(UI-C1d, D-201): 서랍을 여는 후보를 옛 홈 행(`home_rows()[0]`)에서 새 홈의 첫 추천 줄(`first_row_id`)로 바꿨다 — 단언은 그대로다."""
         window = self.make()
-        window.open_drawer(window.state.home_rows()[0].id)
+        window.open_drawer(first_row_id(window))
         window.show_sample_info()
         self.settle()
         shown = [w.text() for w in window.findChildren(QLabel)] + [w.text() + w.accessibleName() for w in window.findChildren(QAbstractButton)]
@@ -324,9 +369,10 @@ class AccessibilityTest(QtBase):
 
 class OverlayTest(QtBase):
     def test_the_drawer_opens_traps_the_tab_key_and_gives_the_focus_back_on_esc(self):
+        """의도적 갱신(UI-C1d, D-201): 서랍을 여는 곳이 행 끝의 상세 단추에서 추천 줄 자신(Enter)이 되었다 — 닫으면 포커스가 그 줄로 돌아오는 규칙(`focus_key`)은 그대로다."""
         window = self.make()
-        topic_id = window.state.home_rows()[1].id
-        opener = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("focus_key") == "detail:" + topic_id)
+        topic_id = first_row_id(window, 1)
+        opener = next(w for w in window.screen_widget.findChildren(board_module.BoardRow) if w.property("focus_key") == "detail:" + topic_id)
         self.focus(opener)
         QTest.keyClick(opener, Qt.Key_Return)
         self.settle()
@@ -345,20 +391,23 @@ class OverlayTest(QtBase):
         self.settle()
         self.assertFalse(window.drawer.is_open)
         self.assertEqual(window.focusWidget().property("focus_key"), "detail:" + topic_id)
+        self.assertIsInstance(window.focusWidget(), board_module.BoardRow)
 
     def test_clicking_outside_the_drawer_closes_it_and_the_page_buttons_work_again(self):
         window = self.make()
-        window.open_drawer(window.state.home_rows()[0].id)
+        window.open_drawer(first_row_id(window))
         self.settle()
         window.drawer.scrim.mousePressEvent(None)
         self.settle()
         self.assertFalse(window.drawer.is_open)
-        chip = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("chip"))
-        self.assertNotEqual(chip.focusPolicy(), Qt.NoFocus)
+        row = window.screen_widget.findChildren(board_module.BoardRow)[0]                  # 의도적 갱신(UI-C1d): 옛 시험은 칩을 봤다 — 페이지의 누르는 부품(추천 줄·다시 불러오기)이 다시 포커스를 받는다
+        self.assertNotEqual(row.focusPolicy(), Qt.NoFocus)
+        self.assertNotEqual(window.refresh_button.focusPolicy(), Qt.NoFocus)
 
     def test_the_dialog_comes_first_on_esc_and_traps_focus_too(self):
+        """의도적 갱신(UI-C1d, D-201): 서랍을 여는 후보를 옛 홈 행(`home_rows()[0]`)에서 새 홈의 첫 추천 줄(`first_row_id`)로 바꿨다 — 단언은 그대로다."""
         window = self.make()
-        window.open_drawer(window.state.home_rows()[0].id)
+        window.open_drawer(first_row_id(window))
         window.show_dialog("확인해 주세요", "정말 그렇게 할까요?", ok="그렇게 해요", cancel="아니요")
         self.settle()
         self.assertTrue(window.dialog.is_open and window.drawer.is_open)
@@ -405,8 +454,9 @@ class OverlayTest(QtBase):
         self.assertLessEqual(window.dialog.width(), window.width())
 
     def test_modals_fit_inside_a_small_window(self):
+        """의도적 갱신(UI-C1d, D-201): 서랍을 여는 후보를 옛 홈 행(`home_rows()[0]`)에서 새 홈의 첫 추천 줄(`first_row_id`)로 바꿨다 — 단언은 그대로다."""
         window = self.make(size=(900, 560))
-        window.open_drawer(window.state.home_rows()[0].id)
+        window.open_drawer(first_row_id(window))
         self.settle()
         self.assertLessEqual(window.drawer.width(), window.width())
         window.show_sample_info()
@@ -484,33 +534,64 @@ class ToastAndActionTest(QtBase):
         self.assertLessEqual(window.toast.x() + window.toast.width(), window.width())
 
     def test_unbuilt_features_only_show_a_notice(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 추천 행의 '초안 만들기' 단추와 빠른 작업을 눌러 안내만 뜨는 것을 봤다 — 둘 다 홈에서 없어졌다(동작하지 않는 단추를 없앴다). 아직 만들지 않은 기능의 안내는
+        기존 상세 서랍의 초안 단추가 그대로 한다 — 눌러도 안내만 뜨고 화면은 그대로다."""
         window = self.make()
-        before = (window.state.page, window.state.selected, window.state.list_state)
-        button = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("focus_key") == "draft:" + window.state.home_rows()[0].id)
+        window.open_drawer(first_row_id(window))
+        self.settle()
+        before = (window.state.page, window.state.drawer_id, window.state.list_state)
+        button = next(b for b in window.drawer.findChildren(QAbstractButton) if str(b.property("focus_key")).startswith("drawer-draft:"))
         QTest.mouseClick(button, Qt.LeftButton)
         self.assertIn("다음 단계", window.toast.text())
-        window.quick("new")
-        self.assertIn("다음 단계", window.toast.text())
-        self.assertEqual(before, (window.state.page, window.state.selected, window.state.list_state))
+        self.assertEqual(before, (window.state.page, window.state.drawer_id, window.state.list_state))
 
-    def test_closing_the_tip_removes_only_the_tip(self):
-        window = self.make()
-        body = window.screen_widget.findChild(S.ResponsiveBody)
-        self.assertEqual(len(body.rail._widgets), 3)
-        close = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.accessibleName() == text.T["tip_close"])
-        QTest.mouseClick(close, Qt.LeftButton)
-        self.settle()
-        self.assertEqual(len(window.screen_widget.findChild(S.ResponsiveBody).rail._widgets), 2)
+    def test_the_removed_home_parts_are_not_on_the_screen_in_any_state(self):
+        """의도적 교체(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5): 옛 `test_closing_the_tip_removes_only_the_tip`(활용 팁 닫기)과 `test_the_quick_action_that_is_left_only_says_not_yet_and_never_navigates`(빠른 작업)의 자리.
+        전체 보기·빠른 작업·활용 팁·동작하지 않는 초안 만들기·빈 상태의 주제 분석 시작·월 검색량·문서 수는 어느 상태의 홈에도 없고, 홈의 단추는 `예시 데이터`·`다시 불러오기`(와 그 상태 자신의 다시 시도·진단 정보·취소)뿐이다."""
+        banned = ("전체 보기", "빠른 작업", "활용 팁", "초안 만들기", "주제 분석 시작", "새 초안 만들기", "월 검색량", "문서 수", "검색량")
+        allowed = {"예시 데이터", text.T["refresh"], text.T["retry"], text.T["diag_show"], text.T["load_cancel"]}
+        cases = (("정상", services.FakeHomeProvider(), {"예시 데이터", text.T["refresh"]}), ("빈", services.FakeHomeProvider("empty"), {"예시 데이터", text.T["refresh"]}),
+                 ("일부만", services.FakeHomeProvider("partial"), {"예시 데이터", text.T["refresh"]}), ("오프라인", services.FakeHomeProvider("offline"), {"예시 데이터", text.T["refresh"]}),
+                 ("연결 전", services.FakeHomeProvider(board=None), {"예시 데이터", text.T["refresh"]}), ("오류", Flaky(failures=9), {text.T["refresh"], text.T["retry"], text.T["diag_show"]}),
+                 ("읽는 중", services.FakeHomeProvider(delay=2), {text.T["refresh"], text.T["load_cancel"]}))
+        for name, provider, expected_buttons in cases:
+            window = self.make(provider, wait=None if name == "읽는 중" else True)
+            if name == "읽는 중":
+                window.reload()
+                self.settle()
+            shown = []
+            for widget in window.screen_widget.findChildren(QWidget):
+                if isinstance(widget, (QLabel, QAbstractButton)):
+                    shown.append(widget.text() if not isinstance(widget, UI.Label) else widget.plain_text())
+                shown += [widget.accessibleName(), widget.toolTip()]
+            flat = " | ".join(item for item in shown if item)
+            for word in banned:
+                self.assertNotIn(word, flat, f"{name}: {word}")
+            names = {b.accessibleName() for b in window.screen_widget.findChildren(QAbstractButton)}
+            self.assertEqual(names, expected_buttons, name)
+            self.assertLessEqual(names, allowed, name)
+            if name == "읽는 중":
+                window.cancel_load()
+                ui_offscreen.wait_until(self.app, lambda current=window: not current.state.loading, 5)
+        for gone in ("SummaryCard", "TopicRow", "QuickAction"):                                    # 옛 부품은 코드에도 없다
+            self.assertFalse(hasattr(UI, gone), gone)
+        for gone in ("ResponsiveBody", "chip_flow", "_rail"):
+            self.assertFalse(hasattr(S, gone), gone)
 
-    def test_the_quick_action_that_is_left_only_says_not_yet_and_never_navigates(self):
-        """의도적 갱신(UI-C1a, D-172): 옛 시험은 빠른 작업 4개 중 둘째가 '주제 후보' 로 가는 것을 보았다. 화면으로 가던 셋은 뺐고 남은 '새 초안 만들기' 는 안내만 한다."""
+    def test_pressing_a_row_opens_the_drawer_and_never_navigates_anywhere(self):
+        """의도적 교체(UI-C1d, D-201): 옛 시험은 빠른 작업 하나가 안내만 하고 화면을 안 바꾸는 것을 봤다(빠른 작업이 없어졌다). 새 홈의 누르는 곳(추천 줄)은 **기존 상세 서랍을 열 뿐** 어떤 화면으로도 가지 않는다 —
+        점수가 없는 줄도 같다."""
         window = self.make()
-        actions = window.screen_widget.findChildren(UI.QuickAction)
-        self.assertEqual(len(actions), 1)
-        QTest.keyClick(actions[0], Qt.Key_Return)
-        self.settle()
-        self.assertEqual(window.state.page, "home")
-        self.assertIn("다음 단계", window.toast.text())
+        rows = window.screen_widget.findChildren(board_module.BoardRow)
+        for index in (0, 4, 8):
+            row = window.screen_widget.findChildren(board_module.BoardRow)[index]
+            QTest.mouseClick(row, Qt.LeftButton)
+            self.settle()
+            self.assertEqual((window.state.page, window.state.drawer_id), ("home", rows[index].row["id"]), index)
+            self.assertTrue(window.drawer.is_open)
+            self.assertTrue(window.nav_buttons["home"].isChecked())
+            window.close_drawer()
+            self.settle()
 
     def test_source_credit_copies_two_lines_and_says_copied(self):
         window = self.make()
@@ -548,12 +629,14 @@ class ToastAndActionTest(QtBase):
 
 class StatesTest(QtBase):
     def test_loading_shows_a_skeleton_a_cancel_button_and_disables_refresh(self):
+        """의도적 갱신(UI-C1d, D-201): 추천 행이 없어 `BoardRow` 가 하나도 없음을 본다. 읽는 중에도 KPI 는 그대로 있고(`집계 전` — 0 이 아니다) 구역 대신 자리 표시 하나와 취소 단추가 있다."""
         window = self.make(services.FakeHomeProvider(delay=2), wait=None)
         window.reload()
         self.settle()
         self.assertEqual(window.state.list_state, "loading")
         self.assertIsNotNone(window.screen_widget.findChild(QWidget, "skel"))
-        self.assertEqual(window.screen_widget.findChild(UI.TopicRow), None)
+        self.assertEqual(window.screen_widget.findChild(board_module.BoardRow), None)
+        self.assertEqual([card.kpi["text"] for card in window.screen_widget.findChildren(board_module.KpiCard)], ["집계 전"] * 4)
         self.assertIsNotNone(window.cancel_button)
         self.assertFalse(window.refresh_button.isEnabled())
         window.cancel_load()
@@ -600,13 +683,21 @@ class StatesTest(QtBase):
         window.cancel_load()
         ui_offscreen.wait_until(self.app, lambda: not window.state.loading, 5)
 
-    def test_the_empty_state_has_a_next_step_button_that_does_not_pretend(self):
+    def test_the_empty_state_is_a_normal_state_without_any_button_that_writes(self):
+        """의도적 교체(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5): 옛 `test_the_empty_state_has_a_next_step_button_that_does_not_pretend` 는 빈 상태의 `주제 분석 시작` 단추가 안내만 하는 것을 봤다.
+        그 단추(쓰기)를 없앴다 — 빈 상태는 정상 상태이고 구역마다 자기 말을 하며 단추는 `예시 데이터`·`다시 불러오기` 뿐이다."""
         window = self.make(services.FakeHomeProvider("empty"))
         self.assertEqual(window.state.list_state, "empty")
-        button = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.text() == text.T["empty_btn"])
-        QTest.mouseClick(button, Qt.LeftButton)
-        self.assertIn("다음 단계", window.toast.text())
-        self.assertEqual(window.state.list_state, "empty")
+        names = {b.accessibleName() for b in window.screen_widget.findChildren(QAbstractButton)}
+        self.assertEqual(names, {"예시 데이터", text.T["refresh"]})
+        shown = " | ".join(label.plain_text() for label in window.screen_widget.findChildren(UI.Label))
+        self.assertEqual(shown.count("아직 추천할 후보가 없어요."), 2)                      # Naver A·B 추천이 각자
+        self.assertIn("작성 중인 초안이 없어요.", shown)
+        self.assertIn("아직 발행한 글이 없어요.", shown)
+        self.assertEqual(len(window.screen_widget.findChildren(board_module.BoardRow)), 0)
+        self.assertEqual(len(window.screen_widget.findChildren(board_module.KpiCard)), 4)
+        self.assertEqual([b for b in window.screen_widget.findChildren(QAbstractButton) if b.property("kind") == "primary"], [])
+        self.assertIsNone(window.screen_widget.findChild(QWidget, "banner"))
 
     def test_the_error_state_shows_a_friendly_message_hides_the_code_and_retry_recovers(self):
         provider = Flaky(failures=1, code="NETWORK_DOWN")
@@ -627,7 +718,7 @@ class StatesTest(QtBase):
         retry = next(b for b in window.screen_widget.findChildren(QAbstractButton) if b.text() == text.T["retry"])
         QTest.mouseClick(retry, Qt.LeftButton)
         self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.list_state == "normal", 5))
-        self.assertEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
+        self.assertEqual(len(window.screen_widget.findChildren(board_module.BoardRow)), 9)                   # (UI-C1d: 옛 추천 행 5 → 새 추천 줄 9)
         self.assertEqual(provider.calls, 2)
 
     def test_a_failure_after_data_keeps_the_old_data_in_the_state(self):
@@ -645,7 +736,10 @@ class StatesTest(QtBase):
         banners = [w for w in partial.screen_widget.findChildren(QWidget, "banner")]
         self.assertEqual(len(banners), 1)
         self.assertIn(text.T["partial"], banners[0].accessibleName())
-        self.assertTrue(all(row.vm["trend"]["key"] == "none" for row in partial.screen_widget.findChildren(UI.TopicRow)))
+        rows = partial.screen_widget.findChildren(board_module.BoardRow)
+        self.assertEqual(len(rows), 9)
+        self.assertTrue(all(row.row["interest"]["key"] == "none" for row in rows))                          # (UI-C1d: 옛 추세 칸 → 추천 줄의 관심도) 못 가져온 지표는 `관심도 데이터 부족`
+        self.assertTrue(all(row.interest.text_label.text() == "관심도 데이터 부족" for row in rows))
         offline = self.make(services.FakeHomeProvider("offline"))
         self.assertIn(text.T["offline"], offline.screen_widget.findChild(QWidget, "banner").accessibleName())
 
@@ -722,7 +816,7 @@ class StatesTest(QtBase):
         self.assertEqual(seen, [(False, 1.0)])                                           # 기다릴 때는 이미 숨은 뒤, 기다림은 최대 1초
 
     def test_data_that_breaks_the_screen_ends_in_an_error_state_not_a_forever_loading_page(self):
-        """화면 스레드의 슬롯 안에서 예외가 나면(이상한 데이터) 예전에는 오류 화면 없이 '불러오는 중' 에 멈췄다(검증 M-6)."""
+        """의도적 갱신(UI-C1d, D-201): 옛 추천 행(`TopicRow` 5개)을 새 추천 줄(`BoardRow` 9개)로 센다 — 이상한 데이터가 슬롯에서 예외를 내도 오류 상태가 되고 다시 불러오면 회복한다는 단언은 그대로다. 화면 스레드의 슬롯 안에서 예외가 나면(이상한 데이터) 예전에는 오류 화면 없이 '불러오는 중' 에 멈췄다(검증 M-6)."""
         class Broken(services.HomeProvider):
             def load_home(self, progress, cancelled):
                 return services.HomeData(topics=("주제가 아닌 값",), blogs=(), sample=False)
@@ -745,7 +839,7 @@ class StatesTest(QtBase):
         window.state.provider = services.FakeHomeProvider()                              # 고쳐진 뒤 다시 불러오면 회복한다
         self.assertTrue(window.reload())
         self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.list_state == "normal", 5))
-        self.assertEqual(len(window.screen_widget.findChildren(UI.TopicRow)), 5)
+        self.assertEqual(len(window.screen_widget.findChildren(board_module.BoardRow)), 9)                   # (UI-C1d: 옛 추천 행 5 → 새 추천 줄 9)
 
     def test_a_crash_in_each_result_slot_is_caught_and_the_screen_is_never_left_loading(self):
         window = self.make()
@@ -928,14 +1022,22 @@ class StatesTest(QtBase):
 
 class SafetyTest(QtBase):
     def test_titles_and_text_with_html_are_shown_as_plain_text(self):
-        evil = services.Topic(id="x1", title="<b>굵게</b><script>alert(1)</script>", blogs=("A",), desc="<img src=x onerror=alert(1)>", keywords=("<i>키</i>",), priority="높음", date="2026-11-01",
-                              reason="<a href='javascript:alert(1)'>눌러</a>")
-        window = self.make(Custom([evil]))
-        row = window.screen_widget.findChild(UI.TopicRow)
-        title = next(label for label in row.findChildren(UI.Label) if "굵게" in label.plain_text())
-        self.assertEqual(title.plain_text(), "<b>굵게</b><script>alert(1)</script>")
-        self.assertNotIn("<script", title.text())                                         # 화면에는 이스케이프된 글자로 들어간다
-        self.assertIn("&lt;script&gt;", title.text())
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 추천 행의 제목을 봤다 — 새 홈에서 후보의 글이 나가는 곳(추천 줄 제목·글 줄 제목·구역 머리의 채널 이름)과 기존 서랍(옛 후보의 이유)을 모두 본다."""
+        evil_title = "<b>굵게</b><script>alert(1)</script>"
+        old = services.Topic(id="x1", title="<b>옛</b>", blogs=("A",), desc="<img src=x onerror=alert(1)>", keywords=("<i>키</i>",), priority="높음", date="2026-11-01", reason="<a href='javascript:alert(1)'>눌러</a>")
+        board = services.BoardData((services.ChannelRead("A", "<i>이름</i>", True, "ok", "", (services.RecommendRow("e1", evil_title, 85, None, "rising"),)), services.ChannelRead("B", "비", True, "ok", "", ())),
+                                   services.ListRead("ok", (services.DraftRow("d1", "<u>초안</u>", "review", ""),)), services.ListRead("ok", (services.RecentRow("p1", "<h1>발행</h1>", None),)))
+        window = self.make(Custom([old], board=board))
+        row = window.screen_widget.findChild(board_module.BoardRow)
+        self.assertEqual(row.title_label.plain_text(), evil_title)
+        self.assertNotIn("<script", row.title_label.text())                               # 화면에는 이스케이프된 글자로 들어간다
+        self.assertIn("&lt;script&gt;", row.title_label.text())
+        for list_row, raw in zip(window.screen_widget.findChildren(board_module.ListRow), ("<u>초안</u>", "<h1>발행</h1>"), strict=True):
+            self.assertEqual(list_row.title_label.plain_text(), raw)
+            self.assertNotIn("<u>", list_row.title_label.text())
+            self.assertNotIn("<h1>", list_row.title_label.text())
+        header = next(w for w in window.screen_widget.findChildren(UI.ElidedLabel) if "이름" in w.text())
+        self.assertEqual(header.text(), "<i>이름</i> 추천")                                  # 머리의 이름은 한 줄 평문으로 그려진다(서식 해석 없음)
         window.open_drawer("x1")
         self.settle()
         reason = next(label for label in window.drawer.findChildren(UI.Label) if "눌러" in label.plain_text())
@@ -951,11 +1053,16 @@ class SafetyTest(QtBase):
         self.assertNotIn(FAKE_KEY, window.state.failure.user_message + window.state.failure.code)
 
     def test_a_key_in_a_blog_name_and_in_candidate_text_never_reaches_a_widget_through_the_real_adapter(self):
-        """어댑터를 거치는 시험(검증 M-1) — 블로그 이름이 마스킹 전에 잘려 키 앞 24~26자가 우측 패널에 보였다. 화면의 모든 글자(글자·단추·툴팁·접근 이름)에 키 조각이 없다."""
+        """어댑터를 거치는 시험(검증 M-1) — 블로그 이름이 마스킹 전에 잘려 키 앞 24~26자가 화면에 보였다. 화면의 모든 글자(글자·단추·툴팁·접근 이름)에 키 조각이 없다.
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 오른쪽 패널(내 블로그 현황)의 블로그 이름과 옛 후보 행을 봤다. 새 홈에서는 블로그 이름이 추천 구역 머리에, 후보의 글이 주제 엔진 후보 줄(과 서랍)에 나간다 — 같은 가짜 키를 거기에 넣고
+        같은 모든 글자를 훑는다(옛 후보 저장소의 후보에도 넣어 홈 뷰모델에 새지 않는지 함께 본다)."""
         sys.path.insert(0, str(ROOT / "tests"))
         import service_support as support
+        import topics_support as ts
         from chanceblog_desktop.content.profiles import NaverProfile
         from chanceblog_desktop.service import candidates as candidate_service
+        from chanceblog_desktop.service import topic_files as tf
+        from chanceblog_desktop.topicdb.store import open_for_write
         from chanceblog_desktop.ui import adapters
         key = "AI" + "za" + "SyD4e7Kq9ZmW2xV8bN5tR1cY6uH3jL0pGfA1B"[:35]
         github = "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
@@ -967,65 +1074,81 @@ class SafetyTest(QtBase):
             ctx = support.make_ctx(tmp)
             ctx.settings.save_naver_profile(NaverProfile("naver_a", "블로그 " + key, "https://blog.naver.com/exampleaaa", default_tags=("생활",), min_chars=10, max_chars=20000))
             ctx.settings.save_naver_profile(NaverProfile("naver_b", "블로그 비 " + github, "https://blog.naver.com/examplebbb", default_tags=("정보",), min_chars=10, max_chars=20000))
-            candidate_service.add_candidate(ctx, topic="제목 " + key, keyword="키워드 " + github, blogs=("naver_a", "naver_b"), sub_keywords=("보조 " + key,), reason="이유 " + key + " " + github)
+            candidate_service.add_candidate(ctx, topic="옛 제목 " + key, keyword="키워드 " + github, blogs=("naver_a", "naver_b"), sub_keywords=("보조 " + key,), reason="이유 " + key + " " + github)
+            with open_for_write(tf.topic_paths(ctx.workspace).database) as store:
+                store.add_candidates(lambda existing: [ts.rated(90, channel="naver_a", candidate_id="tc-naver_a-seed-aaaa000000000001", topic="제목 " + key),
+                                                       ts.rated(80, channel="naver_b", candidate_id="tc-naver_b-seed-bbbb000000000002", topic="제목 비 " + github)], now="2026-11-10T01:00:00Z")
             for size in ((1920, 1080), (1366, 768)):
                 window = self.make(adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx), size=size)
-                self.assertEqual(window.state.list_state, "normal")
-                topic_id = window.state.home_rows()[0].id
-                window.open_drawer(topic_id)
+                rows = window.screen_widget.findChildren(board_module.BoardRow)
+                self.assertEqual(len(rows), 2, size)
+                self.assertNotIn("sample", repr(window.state.home_view()["board"]["state"]))
+                window.open_drawer(rows[0].row["id"])
                 self.settle()
                 everything = " ".join(w.text() for w in window.findChildren(QLabel)) + " ".join(w.accessibleName() + w.toolTip() for w in window.findChildren(QWidget)) + " ".join(w.text() for w in window.findChildren(QAbstractButton))
                 everything += repr(window.state.home_view()) + repr(window.state.drawer_view())
                 self.assertEqual(leaked(everything), [], size)
                 self.assertIn("가림", everything)
-                self.assertIn("블로그 [가림", " ".join(w.text() for w in window.findChildren(QLabel)))        # 우측 패널의 블로그 이름: 앞부분은 보이고 키는 가려졌다
+                self.assertIn("블로그 [가림", " ".join(w.text() for w in window.findChildren(QLabel)))        # 구역 머리의 블로그 이름: 앞부분은 보이고 키는 가려졌다
+                self.assertNotIn("옛 제목", everything)                                                      # 옛 후보 저장소의 글은 홈에도 서랍에도 나오지 않는다
                 window.close()
 
     def test_a_forty_character_blog_name_shows_and_tooltips_the_thirty_character_text_the_adapter_made(self):
-        """툴팁은 '전체' 가 아니라 받은 글이다 — 어댑터가 가린 뒤 30자로 줄인 글(독립 검증 N-5). 40자 이름은 라벨도 툴팁도 29자 + …"""
+        """툴팁은 '전체' 가 아니라 받은 글이다 — 어댑터가 가린 뒤 30자로 줄인 글(독립 검증 N-5). 40자 이름은 라벨도 툴팁도 29자 + …
+        의도적 갱신(UI-C1d, D-201): 이름이 보이는 자리가 오른쪽 패널에서 추천 구역 머리(`이름 추천`)로 옮겨 글에 ` 추천` 이 붙는다."""
         sys.path.insert(0, str(ROOT / "tests"))
         import service_support as support
         from chanceblog_desktop.content.profiles import NaverProfile
-        from chanceblog_desktop.service import candidates as candidate_service
         from chanceblog_desktop.ui import adapters
         name = "가나다라마바사아자차" * 4
         with tempfile.TemporaryDirectory() as tmp:
             ctx = support.make_ctx(tmp)
             ctx.settings.save_naver_profile(NaverProfile("naver_a", name, "https://blog.naver.com/exampleaaa", default_tags=("생활",), min_chars=10, max_chars=20000))
-            candidate_service.add_candidate(ctx, topic="주제", keyword="키워드", blogs=("naver_a",))
             window = self.make(adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx))
             labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text().startswith("가나다라")]
             self.assertEqual(len(labels), 1)
             expected = name[:adapters.NAME_LIMIT - 1] + "…"
-            self.assertEqual((labels[0].text(), labels[0].toolTip()), (expected, expected))
-            self.assertEqual(len(labels[0].toolTip()), adapters.NAME_LIMIT)
+            self.assertEqual((labels[0].text(), labels[0].toolTip()), (expected + " 추천", expected + " 추천"))
+            self.assertEqual(len(labels[0].toolTip()), adapters.NAME_LIMIT + len(" 추천"))
             self.assertNotIn(name[:adapters.NAME_LIMIT + 1], labels[0].toolTip())
             window.close()
 
     def test_visible_texts_never_contain_english_codes_internal_ids_or_promises(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 후보 번호(`s1`)에 더해 추천 줄 번호(예시 `rA1`)도 어떤 글에도 나가지 않는다 — 서랍을 연 상태에서 홈과 서랍의 모든 글을 훑는다."""
         window = self.make()
-        window.open_drawer(window.state.home_rows()[0].id)
+        window.open_drawer(first_row_id(window))
         self.settle()
         for label in window.findChildren(QLabel):
             shown = label.text() if not isinstance(label, UI.Label) else label.plain_text()
             self.assertNotRegex(shown, r"\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b", shown)
-            self.assertNotRegex(shown, r"\bs\d+\b")
+            self.assertNotRegex(shown, r"\b(?:s\d+|r[AB]\d)\b")
             for word in text.FORBIDDEN:
                 self.assertNotIn(word, shown)
+        for widget in window.findChildren(QWidget):                                      # 접근 이름·툴팁에도 번호가 없다
+            for shown in (widget.accessibleName(), widget.toolTip()):
+                self.assertNotRegex(shown, r"\b(?:s\d+|r[AB]\d)\b", shown)
 
-    def test_blog_numbers_that_could_not_be_read_are_not_shown_at_all(self):
-        window = self.make(Custom([services.Topic(id="b1", title="주제", blogs=("A",), date="2026-11-01")], blogs=(services.BlogInfo("A", "블로그 에이", candidates=3),)))
-        shown = [label.plain_text() for label in window.screen_widget.findChildren(UI.Label)]
-        self.assertIn("후보  3", shown)
-        self.assertFalse(any(item.startswith(text.T["rail_total"]) or item.startswith(text.T["rail_month"]) for item in shown))        # 총 글·이번 달은 못 읽어서 아예 안 보인다
+    def test_the_numbers_and_names_of_the_old_side_panel_are_not_shown_any_more(self):
+        """의도적 교체(UI-C1d, D-201): 옛 `test_blog_numbers_that_could_not_be_read_are_not_shown_at_all` 은 오른쪽 패널의 총 글·이번 달(못 읽은 값은 아예 안 보임)을 봤다. 그 패널(내 블로그 현황)이 없어졌다 —
+        블로그 정보(`BlogInfo`)의 이름·수는 어느 값이든 홈에 나오지 않는다."""
+        window = self.make(Custom([services.Topic(id="b1", title="주제", blogs=("A",), date="2026-11-01")], blogs=(services.BlogInfo("A", "블로그 에이", "생활", 64, 6, 3),)))
+        shown = " | ".join(label.plain_text() for label in window.screen_widget.findChildren(UI.Label)) + " | " + " | ".join(w.text() for w in window.screen_widget.findChildren(UI.ElidedLabel))
+        for piece in ("내 블로그 현황", "총 글", "이번 달", "후보  3", "블로그 에이", "생활", "64", "관리 중인 블로그"):
+            self.assertNotIn(piece, shown, piece)
 
-    def test_a_real_looking_candidate_without_numbers_shows_no_invented_values(self):
-        bare = services.Topic(id="b1", title="숫자가 없는 주제", blogs=("B",), priority="", date="2026-11-01")
-        window = self.make(Custom([bare]))
-        row = window.screen_widget.findChild(UI.TopicRow)
+    def test_a_real_looking_row_without_numbers_shows_no_invented_values(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 숫자가 없는 옛 후보 행이 `데이터 없음` 세 칸(검색량·문서 수·추세)을 보이는 것을 봤다. 새 추천 줄에서 같은 질문 — 점수·관심도·이전 점수가 없는 줄은 링 없이 `점수 계산 전`,
+        `관심도 데이터 부족` 이고 0 이나 지어낸 값이 없다(예시가 아니니 `예시` 표시도 없다)."""
+        bare = services.RecommendRow("b1", "숫자가 없는 주제", None, None, None, False)
+        board = services.BoardData((services.ChannelRead("A", "에이", True, "ok", "", (bare,)), services.ChannelRead("B", "비", True, "ok", "", ())), services.ListRead(), services.ListRead())
+        window = self.make(Custom([], board=board))
+        row = window.screen_widget.findChild(board_module.BoardRow)
         shown = [label.plain_text() for label in row.findChildren(UI.Label)]
-        self.assertEqual(shown.count(text.NO_DATA), 3)                                    # 검색량·문서 수·추세
-        self.assertNotIn("0회", shown)
+        self.assertIn("점수 계산 전", shown)
+        self.assertIn("관심도 데이터 부족", shown)
+        self.assertEqual(row.findChildren(gauge_module.ScoreRing), [])                     # 0점 링을 그리지 않는다
+        self.assertFalse(any(character.isdigit() for item in shown for character in item.replace("숫자가 없는 주제", "")), shown)      # 지어낸 숫자가 없다
+        self.assertIsNone(row.sample_badge)
         self.assertFalse(window.screen_widget.findChild(QWidget, "banner"))
         self.assertFalse(any(b.accessibleName() == "예시 데이터" for b in window.findChildren(QAbstractButton)))     # 가짜 데이터가 아니면 예시 표시도 없다
 
@@ -1310,10 +1433,17 @@ class NativeFocusRectTest(QtBase):
         self.app.setStyleSheet(theme.build_qss(theme.colors()))
 
     def test_no_kind_of_button_the_tab_key_reaches_has_a_native_focus_rectangle(self):
+        """의도적 갱신(UI-C1d, D-201): 새 홈에는 칩·행마다 초안 만들기·상세 단추가 없어 홈에서 Tab 이 닿는 단추가 적다(메뉴·예시 데이터·다시 불러오기). 그래서 서랍을 연 상태(닫기·초안·보류·더보기)와
+        오류 카드(다시 시도·진단 정보)에서도 같은 점검을 해 단추 종류를 빠뜨리지 않는다."""
         self.use_style("windows11")
         window = self.make(size=(1366, 768))
         found = self.focused_dots(window)
-        self.assertGreater(len(found), 10, found)                                          # 메뉴·위 막대·칩·새로 고침·초안 만들기·상세 …
+        window.open_drawer(first_row_id(window))
+        self.settle()
+        found.update(self.focused_dots(window))
+        failing = self.make(Flaky(failures=9), size=(1366, 768))
+        found.update(self.focused_dots(failing))
+        self.assertGreater(len(found), 9, found)                                           # 메뉴·예시 데이터·다시 불러오기·서랍 안 넷·다시 시도·진단 정보
         self.assertEqual({name: dots for name, dots in found.items() if dots}, {})
 
     def test_the_base_button_rule_carries_the_outline_none(self):
@@ -1330,12 +1460,13 @@ class SourceRulesTest(unittest.TestCase):
 
     def test_screens_and_the_shell_never_build_raw_widgets(self):
         raw = re.compile(r"\b(?:QPushButton|QLabel|QLineEdit|QCheckBox|QToolButton|QRadioButton|QComboBox|QTextEdit|QPlainTextEdit|QSpinBox)\(")
-        for name in ("screens.py", "shell.py", "topbar.py", "sidebar.py"):                 # 새 틀 파일(UI-C1a)도 같은 규칙
+        for name in ("screens.py", "shell.py", "topbar.py", "sidebar.py", "board.py"):     # 새 틀 파일(UI-C1a)·새 홈 부품 파일(UI-C1d)도 같은 규칙
             self.assertEqual(raw.findall(self.read(name)), [], name)
         self.assertNotIn("UI.QLabel", self.read("shell.py"))
 
     def test_no_inline_styles_or_literal_colors_or_fonts_outside_the_theme(self):
-        for name in ("components.py", "screens.py", "shell.py", "workers.py", "imagecheck.py", "app.py", "topbar.py", "sidebar.py"):
+        """의도적 갱신(UI-C1d, D-201): 새 파일 `board.py` 를 훑는 파일 목록에 더했다 — 직접 쓴 색·글자 크기·반경 금지가 새 홈 부품에도 걸린다(단언은 그대로)."""
+        for name in ("components.py", "screens.py", "shell.py", "workers.py", "imagecheck.py", "app.py", "topbar.py", "sidebar.py", "board.py"):
             source = self.read(name)
             self.assertNotIn("setStyleSheet(", source, name)
             self.assertNotRegex(source, r"#[0-9A-Fa-f]{6}\b", name)
@@ -1343,7 +1474,8 @@ class SourceRulesTest(unittest.TestCase):
         self.assertEqual(self.read("theme.py").count("setStyleSheet("), 1)                 # 앱 전체 스타일시트 한 곳
 
     def test_the_app_code_never_calls_the_font_source_override(self):
-        for name in ("components.py", "screens.py", "shell.py", "app.py", "workers.py", "topbar.py", "sidebar.py"):
+        """의도적 갱신(UI-C1d, D-201): 새 파일 `board.py` 를 훑는 파일 목록에 더했다 — 단언은 그대로다."""
+        for name in ("components.py", "screens.py", "shell.py", "app.py", "workers.py", "topbar.py", "sidebar.py", "board.py"):
             self.assertNotIn("use_font_source", self.read(name), name)
 
 

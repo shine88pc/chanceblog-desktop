@@ -45,8 +45,9 @@ def leaks(shown, key=KEY, size=6):
 
 
 def texts_of(value):
+    """뷰모델 속 모든 글(딕셔너리 키는 빼고 값만). `id` 칸은 글이 아니다(UI-C1d, D-201 — 추천 줄을 눌렀을 때 서랍에 넘기는 열쇠)."""
     if isinstance(value, dict):
-        return " ".join(texts_of(item) for item in value.values())
+        return " ".join(texts_of(item) for key, item in value.items() if key != "id")
     if isinstance(value, (list, tuple)):
         return " ".join(texts_of(item) for item in value)
     return "" if value is None else str(value)

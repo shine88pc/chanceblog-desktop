@@ -34,9 +34,9 @@ def leaks(shown, key=KEY, size=6):
 
 
 def texts_of(value):
-    """뷰모델 속 모든 글(딕셔너리 키는 빼고 값만) — 접근 이름·꼬리표까지 한 줄로 이어 붙인다."""
+    """뷰모델 속 모든 글(딕셔너리 키는 빼고 값만) — 접근 이름·꼬리표까지 한 줄로 이어 붙인다. **`id` 칸은 글이 아니다**(UI-C1d, D-201: 추천 줄을 눌렀을 때 상세 서랍에 넘기는 열쇠 — 어떤 글에도 나가지 않는다는 것은 이 함수가 `id` 만 빼고 모든 값을 훑어 지킨다)."""
     if isinstance(value, dict):
-        return " ".join(texts_of(item) for item in value.values())
+        return " ".join(texts_of(item) for key, item in value.items() if key != "id")
     if isinstance(value, (list, tuple)):
         return " ".join(texts_of(item) for item in value)
     return "" if value is None else str(value)
@@ -144,13 +144,17 @@ class RowViewTest(unittest.TestCase):
         self.assertEqual(board_view.row_vm(rec(score=92.0), 1)["score"], 92)                                # 정수인 실수는 그 정수다
 
     def test_the_interest_label_says_data_missing_when_unknown_or_when_the_trend_was_not_fetched(self):
+        """의도적 갱신(UI-C1d, D-201): 관심도 값에 그림을 고르는 두 칸(`trend` 추세 이름·`icon` 아이콘)이 더해졌다 — 글(`label`)은 그대로이고 옛 시험의 모든 단언은 그대로 둔 채 새 칸의 손으로 적은 값을 더했다."""
         for value, label in (("rising", "관심도 상승"), ("flat", "관심도 보통"), ("falling", "관심도 하락"), (None, "관심도 데이터 부족"), ("insufficient", "관심도 데이터 부족"),
                              ("상승", "관심도 데이터 부족"), ("", "관심도 데이터 부족"), (5, "관심도 데이터 부족")):
             row = board_view.row_vm(rec(interest=value), 1)
             self.assertEqual(row["interest"]["label"], label, repr(value))
             self.assertIn(label, row["a11y"])
+        for value, trend, icon in (("rising", "up", "trend_up"), ("flat", "flat", "trend_flat"), ("falling", "down", "trend_down"), (None, "none", None), ("insufficient", "none", None)):
+            shown = board_view.row_vm(rec(interest=value), 1)["interest"]
+            self.assertEqual((shown["trend"], shown["icon"]), (trend, icon), repr(value))                  # 색·아이콘은 방향에 따르고 모르면 둘 다 없다(글이 늘 함께 있다)
         shown = board_view.row_vm(rec(interest="rising"), 1, trend_hidden=True)
-        self.assertEqual(shown["interest"], {"key": "none", "label": "관심도 데이터 부족"})              # 못 가져온 지표로 표시했으면 값이 남아 있어도 보이지 않는다
+        self.assertEqual(shown["interest"], {"key": "none", "label": "관심도 데이터 부족", "trend": "none", "icon": None})              # 못 가져온 지표로 표시했으면 값이 남아 있어도 보이지 않는다
 
     def test_the_change_is_hidden_without_a_previous_score_and_shows_up_down_or_flat_with_text_not_only_colour(self):
         for score, previous in ((80, None), (None, 80), (None, None), (80, 79.5), (80, True), (80, "79"), (80, 101), (80, -1), (80, float("nan"))):
@@ -164,10 +168,14 @@ class RowViewTest(unittest.TestCase):
         self.assertIn("변화 없음", flat["a11y"])
 
     def test_a_row_has_exactly_these_keys_no_volume_no_document_count_no_internal_number(self):
-        row = board_view.row_vm(rec(id_="tc-naver_a-seed-aaaa000000000001"), 3)
-        self.assertEqual(set(row), {"rank", "channel", "title", "score", "score_text", "ring", "band", "band_label", "delta", "interest", "sample", "sample_tag", "a11y"})
-        self.assertEqual((row["rank"], row["channel"]), (3, ""))                                            # 채널은 `channel_vm` 이 열쇠(A·B)를 넘긴다 — 직접 부르면 비어 있다
-        self.assertNotIn("tc-naver_a", repr(row))                                                           # 내부 번호는 뷰모델에 없다
+        """의도적 갱신(UI-C1d, D-201): 줄에 `id` 칸이 **하나** 늘었다 — 줄을 눌러 상세 서랍을 열려면 줄을 가리킬 열쇠가 필요하다(옛 시험은 '내부 번호가 뷰모델에 없다' 였다). 그 번호는 글이 아니라 열쇠이고
+        어떤 글(제목·접근 이름·꼬리표 …)에도 나가지 않으며(아래·`texts_of` 시험이 지킨다) 그 칸 하나뿐이다. 월 검색량·문서 수 칸은 그대로 없다."""
+        number = "tc-naver_a-seed-aaaa000000000001"
+        row = board_view.row_vm(rec(id_=number), 3)
+        self.assertEqual(set(row), {"id", "rank", "channel", "title", "score", "score_text", "ring", "band", "band_label", "delta", "interest", "sample", "sample_tag", "a11y"})
+        self.assertEqual((row["id"], row["rank"], row["channel"]), (number, 3, ""))                         # 채널은 `channel_vm` 이 열쇠(A·B)를 넘긴다 — 직접 부르면 비어 있다
+        self.assertEqual(repr(row).count(number), 1)                                                        # 번호는 `id` 칸 하나뿐이다
+        self.assertNotIn("tc-naver_a", texts_of(row))                                                       # 글에는 없다
 
     def test_example_values_carry_the_example_tag_and_real_values_do_not(self):
         shown, real = board_view.row_vm(rec(sample=True), 1), board_view.row_vm(rec(sample=False), 1)
@@ -463,6 +471,7 @@ class BoardViewTest(unittest.TestCase):
         self.assertEqual([row["interest"]["label"] for row in normal["recommend"][0]["rows"]], ["관심도 상승", "관심도 하락"])
 
     def test_nothing_in_the_board_is_a_write_action_and_nothing_names_a_search_volume_or_a_document_count(self):
+        """의도적 갱신(UI-C1d, D-201): 칸 이름 `id` 를 금지 목록에서 뺐다 — 추천 줄에 `id` 칸이 하나 생겼다(서랍에 넘기는 열쇠). 대신 그 칸이 **추천 줄에만** 있다는 것을 못박는다(글 구역·KPI·연결 요약에는 없다)."""
         shown = view_of(data_with(services.sample_board()))
         flat = texts_of(shown)
         for word in ("월 검색량", "검색량", "문서 수", "블로그 문서", "주제 분석 시작", "초안 만들기", "발행하기", "저장하기", "전체 보기", "빠른 작업", "활용 팁"):
@@ -474,8 +483,10 @@ class BoardViewTest(unittest.TestCase):
             if isinstance(value, (list, tuple)):
                 return {inner for item in value for inner in keys(item)}
             return set()
-        for word in ("demand", "docs", "button", "action", "go", "id", "ids"):
+        for word in ("demand", "docs", "button", "action", "go", "ids"):
             self.assertNotIn(word, keys(shown), word)
+        self.assertNotIn("id", keys({**shown, "recommend": []}))                                             # 번호 칸은 추천 줄에만 있다
+        self.assertTrue(all("id" in row for item in shown["recommend"] for row in item["rows"]))
 
     def test_no_internal_number_or_english_state_name_reaches_any_text(self):
         hidden_ids = board([channel("A", [rec(id_="tc-naver_a-seed-aaaa000000000001")]), channel("B")], ListRead("ok", (DraftRow("proj-123456", "초안", "review", ""),)),
@@ -507,12 +518,15 @@ class HomeViewIntegrationTest(unittest.TestCase):
         state.apply_home(provider.load_home(lambda *a: None, lambda: False))
         return state
 
-    def test_home_view_carries_the_board_under_one_new_key_and_the_old_keys_stay(self):
+    def test_home_view_carries_the_board_under_one_key_and_nothing_of_the_old_list(self):
+        """의도적 교체(UI-C1d, D-201): 옛 `test_home_view_carries_the_board_under_one_new_key_and_the_old_keys_stay` 는 UI-C1c 가 새 키 `board` 하나만 더했고 옛 키(`cards`·`chips`·`rows`·`rail` …)는 그대로임을 못박았다.
+        UI-C1d 가 `board` 를 그리고 옛 요약 카드·추천 목록·칩·오른쪽 패널을 없앴다(운영자 2026-11-06 확인 요청 004 의 답 5) — 이제 홈 뷰모델은 아래 열한 칸뿐이다."""
         view = self.loaded(services.FakeHomeProvider()).home_view()
-        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "cards", "chips", "section", "rows", "selected", "banner", "loading", "empty", "error", "rail", "board"})
+        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "refresh", "banner", "loading", "error", "board"})
         self.assertEqual(view["board"]["state"], "ready")
-        self.assertEqual([card["key"] for card in view["cards"]], ["topics", "done", "pub", "ideas"])         # 옛 요약 카드는 그대로 있다(화면은 UI-C1d 까지 그대로)
-        self.assertEqual(len(view["rows"]), 5)
+        self.assertEqual([card["key"] for card in view["board"]["kpi"]], ["topics", "done", "pub", "ideas"])
+        for gone in ("cards", "chips", "section", "rows", "selected", "empty", "rail"):
+            self.assertNotIn(gone, view, gone)
 
     def test_the_board_follows_the_load_state_of_the_home(self):
         state = app_state.AppState(services.FakeHomeProvider(delay=5))
@@ -545,8 +559,8 @@ class HomeViewIntegrationTest(unittest.TestCase):
         fresh.apply_conn_failure(JobFailure("x", code="Y"))
         self.assertEqual(fresh.home_view()["board"]["connection"]["state"], "error")
 
-    def test_the_old_view_model_keys_are_untouched_by_the_board(self):
-        """옛 키(`board` 를 뺀 나머지)는 보드가 있든 없든 똑같다 — 새 구역은 새 키 하나로만 들어간다."""
+    def test_the_other_keys_are_untouched_by_the_board(self):
+        """보드(`board`)가 있든 없든 나머지 키(제목·설명·상태·안내 띠·불러오기·오류 …)는 똑같다 — 새 구역의 값은 새 키 하나로만 들어간다(UI-C1d 에서 이름만 '옛 키' 에서 '나머지 키' 로 고쳤다 — 단언은 그대로)."""
         with_board = self.loaded(services.FakeHomeProvider()).home_view()
         without = self.loaded(services.FakeHomeProvider(board=None)).home_view()
         self.assertEqual({key: value for key, value in with_board.items() if key != "board"}, {key: value for key, value in without.items() if key != "board"})
@@ -672,11 +686,15 @@ class DocsTest(unittest.TestCase):
             self.assertIn(word, recent, word)
         self.assertIn("`today`", self.row("D-193"))
 
-    def test_the_ui_docs_say_the_new_sections_are_not_drawn_yet_and_the_changelog_has_the_entry(self):
+    def test_the_ui_docs_say_the_new_sections_are_drawn_and_the_changelog_has_the_entry(self):
+        """의도적 갱신(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5): 옛 이름은 `…say_the_new_sections_are_not_drawn_yet…` 였다 — UI-C1d 가 새 구역을 그린다.
+        UI_STATES 7절의 제목은 `읽어서 그린다(데이터 UI-C1c · 모양 UI-C1d)` 가 되었고 `그리지 않는다` 대신 `그린다` 를 못박는다. 나머지 낱말(정상 빈 상태·쓰기 단추 없음·발행일 확인 불가·연결 전·집계 전)과
+        UI_DESIGN_SPEC·UI_COMPONENTS·CHANGELOG·UI_VISUAL_QA 10절의 확인은 그대로 지킨다(새 홈의 문서 확인은 `test_ui_c1d_core.DocsTest`)."""
         states, spec = self.doc("UI_STATES.md"), self.doc("UI_DESIGN_SPEC.md")
-        self.assertIn("## 7. 홈의 새 구역(UI-C1c)", states)
-        for word in ("그리지 않는다", "정상 빈 상태", "쓰기 단추 없음", "발행일 확인 불가", "연결 전", "집계 전"):
+        self.assertIn("## 7. 홈의 새 구역의 상태 — 읽어서 그린다", states)
+        for word in ("그린다", "정상 빈 상태", "쓰기 단추 없음", "발행일 확인 불가", "연결 전", "집계 전"):
             self.assertIn(word, states, word)
+        self.assertNotIn("지금 화면이 **그리지 않는다**", states)
         self.assertIn("홈 데이터(UI-C1c", spec)
         self.assertIn("board_view.py", self.doc("UI_COMPONENTS.md"))
         self.assertIn("UI-C1c", (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))

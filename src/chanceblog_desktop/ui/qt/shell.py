@@ -1,4 +1,4 @@
-"""앱 틀(AppShell) — 상단 앱 바(`topbar.py`) + 왼쪽 사이드바(`sidebar.py` — 홈·설정 메뉴와 '다음 단계' 목록) + 본문(스크롤) + 오른쪽 패널(홈 안에서 좁으면 아래로) + 겹쳐 뜨는 서랍·대화상자·토스트.
+"""앱 틀(AppShell) — 상단 앱 바(`topbar.py`) + 왼쪽 사이드바(`sidebar.py` — 홈·설정 메뉴와 '다음 단계' 목록) + 본문(스크롤) + 겹쳐 뜨는 서랍·대화상자·토스트.
 
 화면 이동·동작은 `AppState`(`ui/core/app_state.py`)가 하고 여기서는 그 결과를 다시 그리기만 한다. 후보 불러오기 같은 긴 일은 작업 스레드(`ui/core/jobs.py`)에서 돌고,
 진행·완료·실패·취소는 시그널로 화면 스레드에 넘어온다 — 일하는 중에도 창이 반응한다.
@@ -84,6 +84,7 @@ class AppShell(QMainWindow):
         self.render()
         if autoload:
             QTimer.singleShot(0, self.reload)
+            QTimer.singleShot(0, self.read_connections)                                       # 앱이 열릴 때 홈의 `연결 상태` 한 줄이 값을 갖도록 설정 화면과 같은 읽기를 한 번 한다(UI-C1d, D-203)
 
     @staticmethod
     def default_size():
@@ -280,23 +281,6 @@ class AppShell(QMainWindow):
         self.drawer.dismiss()
         self._trap_focus(False)
 
-    def chip_home(self, key):
-        self.state.set_home_filter(key)
-        self.render()
-
-    def select_topic(self, topic_id):
-        self.state.select_topic(topic_id)
-        self.render()
-
-    def tip_close(self):
-        self.state.dismiss_tip()
-        self.render()
-
-    def quick(self, key):
-        message = self.state.quick(key)
-        self.render()
-        self.notify(message)
-
     def draft(self, topic_id, blog):
         self.notify(self.state.draft_requested(topic_id, blog))
 
@@ -359,6 +343,12 @@ class AppShell(QMainWindow):
         self.notify(T["load_cancelled"])
 
     # ---- 설정 화면(연결 관리) 읽기 — 홈 불러오기와 같은 틀(작업 스레드·시그널·슬롯 보호), 이름만 따로다 ----
+    def read_connections(self):
+        """앱이 열릴 때(`autoload`) **한 번** — 설정 화면이 쓰는 것과 같은 읽기(`ConnectionsProvider.load_connections`, 읽기 전용: 모든 보관함 상태에서 전후 파일이 같다 — `test_ui_c1d_core`)를 작업 스레드에서 해
+        홈의 `연결 상태` 한 줄이 값을 갖게 한다. 이미 읽는 중이면 아무것도 하지 않고 안내도 하지 않는다. 읽지 못하면 그 한 줄만 `연결 상태를 읽지 못했어요.` 가 되고 홈의 나머지는 그대로다.
+        홈의 다시 불러오기는 연결 정보를 다시 읽지 않는다(설정 화면을 열 때마다 새로 읽는다 — 한계는 D-203)."""
+        return self.state.start_conn_load(**self.conn_bridge.callbacks()) is not None
+
     def reload_connections(self, *_):
         """설정 화면의 연결 정보를 다시 읽는다(작업 스레드 — 보관소 읽기도 거기서). 이미 읽는 중이면(중복 클릭) 안내만 한다."""
         job = self.state.start_conn_load(**self.conn_bridge.callbacks())
@@ -381,28 +371,29 @@ class AppShell(QMainWindow):
     def _on_conn_cancelled(self):
         self._guarded(self._show_conn_cancelled, recover=self._recover_conn)
 
-    def _render_settings(self):
-        if self.state.page == "settings":                                             # 다른 화면을 보는 중이면 값만 받아 두고 다시 그리지 않는다
+    def _render_connections(self):
+        """연결 정보를 받은 뒤 다시 그린다 — 그 값을 쓰는 화면(설정, 그리고 홈의 `연결 상태` 한 줄 — UI-C1d)을 보는 중일 때만. 설정 화면에서 홈으로 빨리 돌아와도 읽는 중이던 홈의 한 줄이 '읽고 있어요' 에 멈추지 않는다."""
+        if self.state.page in ("settings", "home"):
             self.render()
 
     def _show_conn_loaded(self, data):
         self.state.apply_connections(data, self.clock.now())
-        self._render_settings()
+        self._render_connections()
 
     def _show_conn_failed(self, failure):
         self.state.apply_conn_failure(failure, self.clock.now())
-        self._render_settings()
+        self._render_connections()
 
     def _show_conn_cancelled(self):
         self.state.apply_conn_cancelled()
-        self._render_settings()
+        self._render_connections()
 
     def _recover_conn(self, error):
         """설정 화면의 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
         report_unexpected(type(error), error)
         self.state.apply_conn_unexpected(error, self.clock.now())
         try:
-            self._render_settings()
+            self._render_connections()
         except Exception:
             self.notify(T["job_failed"])
 
