@@ -136,13 +136,18 @@ class BlogsController:
             self.drafts.pop(key, None)
         return True
 
-    def toggle_tag(self, tag):
-        """협찬 가능 분야 하나를 켜고 끈다(이름표가 있는 여섯 가지만)."""
-        if tag not in bf.TAG_ORDER:
+    def toggle_choice(self, name, value):
+        """여럿 고르는 칩 묶음(협찬 가능 분야·선호 글 유형)의 값 하나를 켜고 끈다 — 그 칸이 아는 값만이다(목록에 없는 값은 새로 만들 수 없다)."""
+        spec = bf.SPEC.get(name)
+        if spec is None or spec.kind != "multi" or value not in spec.options or self.data is None:
             return False
-        current = set(self.values(self.selected).get("monetization_focus", ()))
-        current.symmetric_difference_update({tag})
-        return self.edit("monetization_focus", tuple(current))
+        current = set(self.values(self.selected).get(name, ()))
+        current.symmetric_difference_update({value})
+        return self.edit(name, tuple(current))
+
+    def toggle_tag(self, tag):
+        """협찬 가능 분야 하나를 켜고 끈다(이름표가 있는 여섯 가지만) — `toggle_choice` 의 협찬 분야 칸."""
+        return self.toggle_choice("monetization_focus", tag)
 
     def revert(self):
         key = self.selected
@@ -277,8 +282,8 @@ class BlogsController:
         elif spec.name == "color_preset":
             view["options"] = [{"value": preset, "label": bf.preset_name(preset), "preset": preset} for preset in bf.PRESET_ORDER]
         elif spec.kind == "multi":
-            view["options"] = [{"value": tag, "label": T["bf_tag_" + tag]} for tag in bf.TAG_ORDER]
-            extra = self.extra_tags(key)
+            view["options"] = bf.options_of(spec)                                              # 칸마다 다른 선택지(협찬 분야·선호 글 유형)
+            extra = self.extra_tags(key) if spec.keep_extra else ()                            # 목록 밖 값 보존은 협찬 분야만(글 유형은 서비스가 목록 밖 값을 거절한다)
             view["extra"] = T["bf_extra_tags"].format(n=len(extra)) if extra else ""
         if spec.name == "blog_ref" and not problem:
             same = bf.normalize(spec, raw).casefold()

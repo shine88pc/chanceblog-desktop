@@ -108,29 +108,37 @@ class SlotRulesTest(unittest.TestCase):
         names = {field.name for field in dataclasses.fields(channels.ChannelProfile)}
         for key in bp.SLOTS:
             self.assertLessEqual(set(bp.form_fields(key)), names, key)
+        # 의도적 갱신(P4c, D-240): 우선 키워드·제외 키워드·선호 글 유형은 이제 폼 칸이다(주제 설정) — 화면이 모르는 판 2 칸은 지역 둘뿐이다(그 둘은 여전히 폼 칸이 아니라는 것을 이 목록이 못박는다)
         engine = {"weights", "top_n", "cluster_cap", "subheading_min", "trend_use", "dup_cutoffs", "topic_clusters", "expansion_directions", "evergreen_pct", "realtime_pct", "history_enabled", "key",
-                  "priority_keywords", "exclude_keywords", "preferred_post_types", "home_regions", "day_trip_regions"}
+                  "home_regions", "day_trip_regions"}
         self.assertEqual(set(bp.COMMON_FIELDS) & engine, set())
         self.assertLessEqual(set(bp.TEXT_FIELDS), set(bp.COMMON_FIELDS))
         self.assertLessEqual(set(bp.TEXT_FIELDS), set(channels.PROFILE_FIELD_KO))
 
     def test_the_key_shape_checked_text_fields_are_pinned_to_the_eleven_user_written_fields(self):
-        """M1(독립 검증) — 키 모양 검사 대상 칸은 시험이 자기 상수를 돌려 쓰지 않도록 글 칸 열한 개를 직접 못박는다(목록에서 한 칸이 빠지면 그 칸에는 비밀 모양이 그대로 저장된다)."""
-        self.assertEqual(bp.TEXT_FIELDS, ("display_name", "blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "profile_image", "cover_image"))
-        self.assertEqual(len(set(bp.TEXT_FIELDS)), 11)
+        """M1(독립 검증) — 키 모양 검사 대상 칸은 시험이 자기 상수를 돌려 쓰지 않도록 글 칸을 직접 못박는다(목록에서 한 칸이 빠지면 그 칸에는 비밀 모양이 그대로 저장된다).
+
+        의도적 갱신(P4c, D-241): 주제 설정 칸 중 **글 칸인 우선 키워드·제외 키워드**가 목록에 들어와 열한 개가 **열세 개**가 되었다(선호 글 유형은 고정 목록이라 글 칸이 아니다 — 목록에 없다).
+        시험 이름의 '열한 개' 는 P4b 때 이름이다 — 이름을 바꾸면 시험이 사라진 것처럼 보이므로 이름은 그대로 두고 아래 값과 개수만 고쳤다(새 모듈 `test_service_blog_profiles_topic` 에도 같은 못박기가 있다)."""
+        self.assertEqual(bp.TEXT_FIELDS, ("display_name", "blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "profile_image", "cover_image", "priority_keywords", "exclude_keywords"))
+        self.assertEqual(len(set(bp.TEXT_FIELDS)), 13)
+        self.assertNotIn("preferred_post_types", bp.TEXT_FIELDS)
 
     def test_a_fresh_default_slot_is_empty_and_unregistered_and_one_changed_field_makes_it_not_empty(self):
         for profile in channels.default_profiles():
             self.assertTrue(bp.is_empty(profile), profile.key)
             self.assertFalse(bp.is_registered(profile), profile.key)
         base = bp.default_profile("naver_a")
-        for change in ({"display_name": "다른 이름"}, {"blog_ref": "example-blog-a"}, {"alias": "예시"}, {"generation_enabled": False}, {"color_preset": "cool_technology"}, {"monetization_focus": ()}):
+        # 의도적 갱신(P4c, D-240): 주제 설정 칸 셋이 '비어 있음' 을 정하는 폼 칸이 되었다 — 우선 키워드 하나만 있어도 비어 있지 않다(덮어쓰지 않는다). 위 목록에 셋을 더했다(약화 아님)
+        for change in ({"display_name": "다른 이름"}, {"blog_ref": "example-blog-a"}, {"alias": "예시"}, {"generation_enabled": False}, {"color_preset": "cool_technology"}, {"monetization_focus": ()},
+                       {"priority_keywords": ("예시 우선",)}, {"exclude_keywords": ("예시 제외",)}, {"preferred_post_types": ("정보형",)}):
             with self.subTest(change=change):
                 other = dataclasses.replace(base, **change)
                 self.assertFalse(bp.is_empty(other))
         self.assertTrue(bp.is_registered(dataclasses.replace(base, blog_ref="example-blog-a")))
-        for engine in ({"top_n": 7}, {"history_enabled": False}, {"priority_keywords": ("예시 우선",)}):
-            self.assertTrue(bp.is_empty(dataclasses.replace(base, **engine)), "엔진 칸·씨앗 칸은 '비어 있음' 에 영향이 없다")
+        # 엔진 칸·화면이 모르는 칸(지역)은 '비어 있음' 에 영향이 없다 — 옛 시험이 '씨앗 칸' 이라 부른 우선 키워드는 이제 폼 칸이라 위로 옮기고 같은 자리에 지역 칸을 둔다
+        for engine in ({"top_n": 7}, {"history_enabled": False}, {"home_regions": ("예시 지역",)}, {"day_trip_regions": ("예시 지역",)}):
+            self.assertTrue(bp.is_empty(dataclasses.replace(base, **engine)), "엔진 칸·화면이 모르는 칸은 '비어 있음' 에 영향이 없다")
 
     def test_the_clone_target_is_the_other_empty_slot_of_the_same_kind_and_nothing_otherwise(self):
         profiles = channels.default_profiles()
@@ -264,7 +272,7 @@ class SaveTest(Base):
         self.save()
         before = self.tree()
         for name in bp.TEXT_FIELDS:
-            value = (KEY_SHAPED,) if name in ("main_topics", "categories") else KEY_SHAPED
+            value = (KEY_SHAPED,) if name in ("main_topics", "categories", "priority_keywords", "exclude_keywords") else KEY_SHAPED      # 의도적 갱신(P4c, D-241): 새 글 칸 둘(우선·제외 키워드)도 낱말 목록 칸이라 목록으로 넘긴다
             with self.subTest(field=name):
                 with self.assertRaises(bp.ProfileProblems) as caught:
                     bp.save_slot(self.ctx, "naver_a", {name: value}, expected_version=self.snap().version)
@@ -420,7 +428,8 @@ class CloneAndClearTest(Base):
             bp.clear_slot(self.ctx, "naver_a", expected_version="x")
 
     def test_clear_empties_the_slot_but_the_slot_stays_and_engine_values_stay(self):
-        self.put_profiles(lambda profiles: tuple(dataclasses.replace(p, top_n=9, priority_keywords=("예시 우선",)) if p.key == "naver_a" else p for p in profiles))
+        # 의도적 갱신(P4c, D-240): 우선 키워드는 이제 폼 칸이라 지우기가 기본값(빈 목록)으로 되돌린다 — 옛 시험이 '그대로' 라고 확인하던 자리의 '화면이 모르는 칸' 은 지역 칸(`home_regions`)으로 옮겼다
+        self.put_profiles(lambda profiles: tuple(dataclasses.replace(p, top_n=9, home_regions=("예시 지역",), priority_keywords=("예시 우선",)) if p.key == "naver_a" else p for p in profiles))
         self.save()
         self.save("naver_b", form(display_name="예시 블로그 나", blog_ref="example-blog-b"))
         cleared = bp.clear_slot(self.ctx, "naver_a", confirmed=True, expected_version=self.snap().version)
@@ -428,7 +437,8 @@ class CloneAndClearTest(Base):
         self.assertEqual(tuple(by_key), bp.SLOTS, "다섯 슬롯은 늘 그대로")
         self.assertTrue(bp.is_empty(by_key["naver_a"]))
         self.assertFalse(bp.is_registered(by_key["naver_a"]))
-        self.assertEqual((by_key["naver_a"].top_n, by_key["naver_a"].priority_keywords), (9, ("예시 우선",)), "엔진 칸·씨앗 칸은 그대로")
+        self.assertEqual((by_key["naver_a"].top_n, by_key["naver_a"].home_regions), (9, ("예시 지역",)), "엔진 칸·화면이 모르는 칸은 그대로")
+        self.assertEqual(by_key["naver_a"].priority_keywords, (), "주제 설정 칸은 폼 칸이라 기본값으로 돌아간다")
         self.assertEqual(by_key["naver_b"].blog_ref, "example-blog-b", "다른 슬롯은 그대로")
         self.assertEqual(by_key["naver_a"].display_name, bp.default_profile("naver_a").display_name, "이름은 기본 이름으로")
         again = bp.clear_slot(self.ctx, "naver_a", confirmed=True, expected_version=cleared.snapshot.version)

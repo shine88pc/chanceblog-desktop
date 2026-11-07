@@ -277,7 +277,7 @@ def seed_drawer(shell, vm):
     for field in vm["fields"]:
         view = SeedFieldView(field)
         view.edited.connect(shell.seed_edit)
-        view.toggled_tag.connect(shell.seed_toggle_channel)
+        view.toggled_choice.connect(lambda _name, value, shell=shell: shell.seed_toggle_channel(value))           # 칩 묶음의 신호는 (칸 이름, 값) 이다(P4c 가 일반화) — Seed 서랍의 칩 칸은 허용 채널 하나뿐이라 값만 넘긴다
         ui.fields[field["name"]] = view
         layout.addWidget(view)
     if vm["saving"]:

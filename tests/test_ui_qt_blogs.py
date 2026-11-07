@@ -156,7 +156,7 @@ class MenuAndLayoutTest(Base):
         self.settle()
         self.assertEqual((window.state.page, window.nav_buttons["blogs"].isChecked(), window.nav_buttons["home"].isChecked()), ("blogs", True, False))
         self.assertEqual(len(self.ui(window).cards), 5)
-        self.assertEqual(len(self.ui(window).fields), 15)
+        self.assertEqual(len(self.ui(window).fields), 18, "의도적 갱신(P4c, D-240): 주제 설정 칸 셋(우선 키워드·제외 키워드·선호 글 유형)이 더해져 폼 칸이 열다섯에서 열여덟이 되었다")
         self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "seed", "blogs", "settings"])                 # 의도적 갱신(Seed 관리, D-230): 화면 표에 Seed 관리 줄이 더해졌다
         self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["주제 후보", "초안 작성", "발행 기록"])        # 의도적 갱신(Seed 관리, D-230): Seed 관리는 완성돼 '다음 단계' 목록에서 빠졌다
 
@@ -191,7 +191,7 @@ class MenuAndLayoutTest(Base):
     def test_the_form_has_three_sections_and_the_action_bar_is_the_fixed_row_at_the_bottom(self):
         window = self.make()
         labels = {label.plain_text() for label in window.screen_widget.findChildren(UI.Label)}
-        for title in ("기본 정보", "자세한 정보(선택)", "모양(선택)", "네이버 A 정보", "내 블로그"):
+        for title in ("기본 정보", "자세한 정보(선택)", "주제 설정(선택)", "모양(선택)", "네이버 A 정보", "내 블로그"):      # 의도적 갱신(P4c, D-240): 구역이 넷이 되었다(이름 '세 구역' 은 P4b 때의 것 — 이름은 그대로 둔다)
             self.assertIn(title, labels)
         bar = self.ui(window).bar
         self.assertEqual([spec["key"] for spec in bar.specs], ["save", "revert", "clone", "delete"])
@@ -398,7 +398,7 @@ class EditingTest(Base):
         for name in ("display_name", "blog_ref", "language", "generation_enabled"):
             badges = [label.text() for label in fields[name].findChildren(QLabel) if label.text() == "필수"]
             self.assertEqual(badges, ["필수"], name)
-        for name in ("alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "monetization_focus", "color_preset", "profile_image", "cover_image"):
+        for name in ("alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "monetization_focus", "priority_keywords", "exclude_keywords", "preferred_post_types", "color_preset", "profile_image", "cover_image"):      # 의도적 갱신(P4c, D-240): 선택 칸 목록에 주제 설정 세 칸이 더해졌다
             self.assertEqual([label.text() for label in fields[name].findChildren(QLabel) if label.text() == "필수"], [], f"{name}: 선택 칸에는 필수 표시가 없다")
         for name, view in fields.items():
             self.assertTrue(view.controls, name)

@@ -41,8 +41,9 @@ SLOTS = channels.CHANNELS                                    # 다섯 슬롯(코
 GENERATION_SLOTS = ("naver_a", "naver_b")                    # 후보 생성(사용 여부)을 이 화면에서 켜고 끌 수 있는 슬롯 — 나머지 셋의 후보 생성은 이 화면이 바꾸지 않는다(운영자 확정 답변 9)
 SLOT_KINDS = (("naver_a", "naver_b"), ("blogger_ko", "blogger_en"), ("github_pages",))      # 복제는 같은 종류 슬롯끼리만
 COMMON_FIELDS = ("display_name", "blog_ref", "language", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "color_preset", "profile_image", "cover_image",
-                 "monetization_focus")                        # 폼이 가진 칸 — 모든 슬롯이 같다(후보 생성 칸은 네이버 슬롯만 더 가진다)
-TEXT_FIELDS = ("display_name", "blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "profile_image", "cover_image")      # 사용자가 쓰는 글 칸 — 키 모양 검사 대상
+                 "monetization_focus", "priority_keywords", "exclude_keywords", "preferred_post_types")      # 폼이 가진 칸 — 모든 슬롯이 같다(후보 생성 칸은 네이버 슬롯만 더 가진다). 뒤의 셋은 주제 설정(P4c)
+TEXT_FIELDS = ("display_name", "blog_ref", "alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "profile_image", "cover_image", "priority_keywords", "exclude_keywords")      # 사용자가 쓰는 글 칸 — 키 모양 검사 대상(선호 글 유형은 고정 목록이라 글 칸이 아니다)
+KEYWORD_FIELDS = ("priority_keywords", "exclude_keywords")    # 두 칸은 서로 같은 낱말이 없어야 한다(대소문자 구분 없이 — 생성자가 칸 사이 규칙으로 거른다). 칸 하나씩 검사할 때는 이 규칙을 빼고 보고 마지막에 두 칸의 최종 값으로 따로 본다
 
 
 class Snapshot(NamedTuple):
@@ -59,7 +60,7 @@ class Saved(NamedTuple):
 
 
 class ProfileProblems(AppError):
-    """칸의 값이 틀려서 저장하지 않았다(`CONTENT_INVALID`) — `problems` 는 `{칸 이름: 이유 낱말}`(`invalid`: 서비스 검사에 걸림 · `key_shape`: 키처럼 보이는 글). 아무것도 쓰지 않았다."""
+    """칸의 값이 틀려서 저장하지 않았다(`CONTENT_INVALID`) — `problems` 는 `{칸 이름: 이유 낱말}`(`invalid`: 서비스 검사에 걸림 · `key_shape`: 키처럼 보이는 글 · `overlap`: 우선 키워드와 제외 키워드에 같은 낱말 — 두 칸 모두에 붙는다). 아무것도 쓰지 않았다."""
 
     def __init__(self, problems, *, detail=""):
         super().__init__("CONTENT_INVALID", {"항목": "블로그 프로필 — " + ", ".join(channels.PROFILE_FIELD_KO.get(name, name) for name in problems)}, detail=detail or "칸의 값이 올바르지 않다")
@@ -147,22 +148,39 @@ def _with_slot(profiles, updated):
     return tuple(updated if profile.key == updated.key else profile for profile in profiles)
 
 
+def _keyword_set(profile, fields, name):
+    """`name` 칸의 최종 낱말들(이번에 넣는 값이 있으면 그것, 없으면 저장된 값) — 대소문자를 가리지 않는 비교용(생성자와 같은 `casefold`)."""
+    value = fields.get(name, getattr(profile, name))
+    return {item.casefold() for item in value if isinstance(item, str)} if isinstance(value, (list, tuple)) else set()
+
+
+def keywords_overlap(profile, fields):
+    """이번에 넣는 값(`fields`)과 저장된 값을 합친 **최종** 우선 키워드와 제외 키워드에 같은 낱말이 있나(대소문자 구분 없이 — `ChannelProfile` 생성자의 칸 사이 규칙과 같다)."""
+    return bool(_keyword_set(profile, fields, KEYWORD_FIELDS[0]) & _keyword_set(profile, fields, KEYWORD_FIELDS[1]))
+
+
 def apply_fields(profile, fields):
-    """폼 칸의 값을 넣은 새 프로필 — 칸마다 따로 검사해 틀린 칸을 모두 `ProfileProblems` 로 알린다(생성자가 곧 심판이다). 모르는 칸 이름은 코드 실수라 `ValueError`."""
+    """폼 칸의 값을 넣은 새 프로필 — 칸마다 따로 검사해 틀린 칸을 모두 `ProfileProblems` 로 알린다(생성자가 곧 심판이다). 모르는 칸 이름은 코드 실수라 `ValueError`.
+
+    칸 사이의 규칙(우선·제외 키워드에 같은 낱말 금지)은 칸 하나씩 볼 때는 뺀다 — 두 칸을 함께 바꾸는 옳은 요청(예: 우선에서 `가` 를 빼고 제외에 `가` 를 넣기)이 **저장된 다른 칸과 부딪혀 거짓으로 거절되는** 것을
+    막으려고 두 칸을 비운 모양에서 한 칸씩 본다. 그 규칙은 칸이 모두 통과한 뒤 **최종 값**으로 따로 보고, 걸리면 두 칸 모두에 `overlap` 을 붙인다(어느 쪽을 고쳐도 풀린다)."""
     allowed = form_fields(profile.key)
     unknown = sorted(set(fields) - set(allowed))
     if unknown:
         raise ValueError("이 슬롯의 폼 칸이 아니다: " + ", ".join(unknown))
+    alone = dataclasses.replace(profile, **{name: () for name in KEYWORD_FIELDS})        # 칸 하나씩 볼 바탕 — 두 키워드 칸을 비운 모양(저장된 다른 칸의 낱말에 걸리지 않게)
     bad = {}
     for name, value in fields.items():
         try:
-            dataclasses.replace(profile, **{name: value})
+            dataclasses.replace(alone, **{name: value})
         except AppError as error:
             if error.requested_code != "CONTENT_INVALID":
                 raise
             bad[name] = "invalid"
     if bad:
         raise ProfileProblems(bad)
+    if keywords_overlap(profile, fields):
+        raise ProfileProblems({name: "overlap" for name in KEYWORD_FIELDS}, detail="우선 키워드와 제외 키워드에 같은 낱말이 있다")
     try:
         return dataclasses.replace(profile, **fields)
     except AppError as error:

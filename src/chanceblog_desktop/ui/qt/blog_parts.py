@@ -1,4 +1,4 @@
-"""블로그 관리 화면의 부품(P4b) — 폼 칸(`FieldView`: 글·고르기·스위치·분야 칩·이미지 위치)·슬롯 카드(`SlotCard`)·알림 줄(`NoticeBar`)·폼 안쪽 스크롤(`FormScroll`)·색 프리셋 견본 아이콘.
+"""블로그 관리 화면의 부품(P4b) — 폼 칸(`FieldView`: 글·고르기·스위치·여럿 고르는 칩(협찬 분야·선호 글 유형)·이미지 위치)·슬롯 카드(`SlotCard`)·알림 줄(`NoticeBar`)·폼 안쪽 스크롤(`FormScroll`)·색 프리셋 견본 아이콘.
 화면(`blog_screen.py`)은 뷰모델(`ui/core/blogs_view.py` 가 만든 딕셔너리)을 이 부품으로 조립하기만 하고, 부품은 공통 부품(`components.py`)만 쓴다. 색·글꼴·크기는 토큰(스타일시트)에서만 오고 여기서 인라인 스타일·직접 색·글꼴 이름·고정 크기를 쓰지 않는다
 (속성 `slot`·`preset`·`selected`·`invalid`·`notice`·`chbadge` 만 붙이면 스타일시트가 입힌다). 모든 눌리는 부품은 키보드(Tab·Enter·Space)로 쓸 수 있고 접근 이름을 가지며 누르는 칸은 36px 이상이다.
 
@@ -148,10 +148,11 @@ class FormScroll(QScrollArea):
 
 # ---- 폼 칸 ---------------------------------------------------------------------------------------------------------------------------
 class FieldView(QWidget):
-    """폼 칸 하나 — 이름(+ 필수 표시)·입력 부품·안내·경고·오류. 종류(`line`·`ref`·`words`·`path`·`choice`·`multi`·`flag`)마다 입력 부품이 다르다. 고칠 때마다 `edited(칸 이름, 값)`·`picked(칸 이름)`·`toggled_tag(분야)` 신호가 나간다."""
+    """폼 칸 하나 — 이름(+ 필수 표시)·입력 부품·안내·경고·오류. 종류(`line`·`ref`·`words`·`path`·`choice`·`multi`·`flag`)마다 입력 부품이 다르다. 고칠 때마다 `edited(칸 이름, 값)`·`picked(칸 이름)`·`toggled_choice(칸 이름, 값)` 신호가 나간다.
+    여럿 고르는 칩 묶음(`multi` — 협찬 가능 분야·선호 글 유형)은 칩마다 따로 켜고 끄고, 어느 칸의 어느 값인지를 `toggled_choice` 가 함께 알린다(P4c 에서 협찬 분야 전용 신호를 일반화했다)."""
     edited = Signal(str, object)
     picked = Signal(str)
-    toggled_tag = Signal(str)
+    toggled_choice = Signal(str, str)
 
     def __init__(self, vm):
         super().__init__()
@@ -274,7 +275,7 @@ class FieldView(QWidget):
             for option in vm["options"]:
                 chip = UI.FilterChip(option["label"], None, option["value"] in vm["value"], focus_key=self._focus_key(":" + option["value"]))
                 chip.setAccessibleName(f"{label}: {option['label']}")
-                chip.clicked.connect(lambda _=False, tag=option["value"]: self.toggled_tag.emit(tag))
+                chip.clicked.connect(lambda _=False, value=option["value"]: self.toggled_choice.emit(self.name, value))
                 self.chips[option["value"]] = chip
             column.addWidget(UI.chip_row(list(self.chips.values())))
             self.controls = list(self.chips.values())
