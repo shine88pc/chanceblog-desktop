@@ -226,23 +226,24 @@ class AddTest(CliCase):
         self.assertEqual((code, err), (0, ""), out)
 
     def test_the_terms_check_comes_before_the_key_is_read_and_every_later_key_needs_it(self):
-        self.add("image_provider", "기본", {"access_key": "A1b2C3d4E5f6G7h8I9j0K1l2"})              # 키를 여럿 둘 수 있는 용도(NAVER API HUB 는 키를 하나만 둔다)
-        other = {"access_key": "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2"}
-        code, out, err, source = self.run_keys("add", "image_provider", "--name", "예비", "--stdin", stdin=json.dumps(other))
+        self.add("ai_assist", "기본", {"key": "A1b2C3d4E5f6G7h8I9j0K1l2"})                           # 키를 여럿 둘 수 있는 제공자(AI 제공자는 3개 — 의도적 갱신(P4f, D-250): NAVER API HUB·Unsplash 는 이제 키를 하나만 두고 키를 읽기 전에 거절한다)
+        other = {"key": "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2"}
+        code, out, err, source = self.run_keys("add", "ai_assist", "--name", "예비", "--stdin", stdin=json.dumps(other))
         self.assertEqual((code, out, source.reads), (1, "", 0))
         self.assertIn("코드: KEY_FAILOVER_TERMS_REQUIRED", err)
         self.assertIn("키를 끝없이 돌려 쓰는 기능은 이 프로그램에 없습니다(용도마다 3개까지이고, 다른 앱의 키로 넘어가는 것은 한도·일시 오류일 때뿐입니다)", err)
-        code, out, err = self.add("image_provider", "예비", other, "--i-understand-terms", "--state", "예비")
+        code, out, err = self.add("ai_assist", "예비", other, "--i-understand-terms", "--state", "예비")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("서비스 약관에서 금지될 수 있습니다", out)
-        listed = next(group for group in json.loads(self.json_out("list"))["data"]["purposes"] if group["purpose"] == "image_provider")["entries"]
+        listed = next(group for group in json.loads(self.json_out("list"))["data"]["purposes"] if group["purpose"] == "ai_assist")["entries"]
         self.assertEqual([item["terms_ack_at"] != "" for item in listed], [False, True])
         self.assertEqual([item["state"] for item in listed], ["active", "standby"], "--state 예비 는 예비로 저장된다")
 
     def test_at_most_three_entries_per_purpose(self):
+        """AI 제공자는 3개까지. 의도적 갱신(P4f, D-250): 이미지 공급자(Unsplash)는 운영자 정책 표로 1개가 되어 3개를 두는 AI 보조로 같은 일을 본다."""
         for number, name in enumerate(("가", "나", "다")):
-            self.assertEqual(self.add("image_provider", name, {"access_key": f"key{number}" + "Z" * 20}, "--i-understand-terms")[0], 0)
-        code, out, err = self.add("image_provider", "라", {"access_key": "key9" + "Z" * 20}, "--i-understand-terms")
+            self.assertEqual(self.add("ai_assist", name, {"key": f"key{number}" + "Z" * 20}, "--i-understand-terms")[0], 0)
+        code, out, err = self.add("ai_assist", "라", {"key": "key9" + "Z" * 20}, "--i-understand-terms")
         self.assertEqual((code, out), (1, ""))
         self.assertIn("코드: KEY_ENTRY_LIMIT", err)
         self.assertEqual(len(self.store.list_refs()), 3)
@@ -564,7 +565,7 @@ class ProcessTest(unittest.TestCase):
         self.assertNotIn(value, out)
         code, out, err = self.run_module("add", "image_provider", "--name", "둘", "--stdin", stdin=json.dumps({"access_key": "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2"}))
         self.assertEqual(code, 1)
-        self.assertIn("KEY_FAILOVER_TERMS_REQUIRED", err)
+        self.assertIn("KEY_ENTRY_LIMIT", err)                                  # 의도적 갱신(P4f, D-250): Unsplash 는 키를 하나만 두어 둘째 키는 약관을 묻기 전에 한도로 거절된다
         self.assertEqual(self.run_module("remove", "1", "--yes")[0], 1)
         number = json.loads(self.run_module("--json", "list")[1])["data"]["purposes"][2]["entries"][0]["entry_id"][:8]
         self.assertEqual(self.run_module("remove", number, "--yes")[0], 0)

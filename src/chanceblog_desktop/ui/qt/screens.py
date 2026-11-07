@@ -13,7 +13,9 @@ from ..core import tokens as K
 from ..core.text import T
 from . import board
 from . import components as UI
+from .blog_parts import NoticeBar
 from .gauges import UsageBar
+from .key_parts import key_section
 
 
 def refit_scroll_area(widget):
@@ -223,8 +225,9 @@ def badge_line(caption, badge):
     return row
 
 
-def purpose_card(card):
-    """용도 카드 — 이름·한 줄 설명·배지 두 줄·안내·한도에 닿았을 때 계속하는 방법·키 항목·사용량(기간마다 막대 한 줄 + 작은 글). 준비 중인 용도는 회색 톤이다. 읽기만 하는 화면이라 누르는 것이 하나도 없다."""
+def purpose_card(card, shell=None):
+    """용도 카드 — 이름·한 줄 설명·배지 두 줄·안내·한도에 닿았을 때 계속하는 방법·키 항목·사용량(기간마다 막대 한 줄 + 작은 글). 준비 중인 용도는 회색 톤이다.
+    **쓰는 공급자일 때만**(`card["keys"]` 가 있을 때 — P4f) 키 구역이 단추(등록·삭제·시험·사용/예비·별칭·우선순위)를 가진다. 읽기만 하는 공급자에서는 누르는 것이 하나도 없다(이전과 같다)."""
     frame, inner = UI.Card((18, 16, 18, 16), kind="quiet" if card["gray"] else "true")
     inner.setSpacing(6)
     inner.addWidget(UI.label(card["name"], "h3", wrap=True))                 # 용도 카드 이름 = 카드 제목 역할(h3)
@@ -242,7 +245,10 @@ def purpose_card(card):
             inner.addWidget(UI.label(card["limit"]["desc"], "caption", wrap=True))
     if card["choices"]:
         inner.addWidget(UI.label(f"{card['choices']['label']}: {' · '.join(card['choices']['items'])}", "caption", wrap=True))
-    if card["entries"]:
+    if card.get("keys") is not None and shell is not None:
+        inner.addSpacing(4)
+        inner.addWidget(key_section(card["keys"], shell, card["key"]))
+    elif card["entries"]:
         inner.addSpacing(4)
         inner.addWidget(UI.label(card["entries_title"], "small"))
         for entry in card["entries"]:
@@ -297,13 +303,17 @@ def settings_screen(shell, vm):
     outer.addLayout(page_head(vm["title"], vm["sub"], rights))
     section, inner = UI.Card((24, 20, 24, 20))
     refresh = UI.IconButton("refresh", vm["refresh"], focus_key="refresh-conn")
-    refresh.setEnabled(vm["state"] != "loading")
+    refresh.setEnabled(vm["state"] != "loading" and not vm.get("busy"))              # 키를 쓰는 중에는 다시 읽지 않는다(쓰는 도중의 파일을 읽어 낡은 값이 남지 않게)
     refresh.clicked.connect(shell.reload_connections)
     inner.addLayout(section_title(vm["section"]["title"], vm["section"]["desc"], (refresh,)))
     if vm["fetched"]:
         inner.addWidget(UI.label(vm["fetched"], "caption"))
     for icon, message in vm["banners"]:
         inner.addWidget(UI.Banner(icon, message))
+    if vm.get("notice"):                                                                    # 키 행동의 마지막 결과(저장했어요·실패 이유 …) — 아이콘과 글이 늘 함께 있다
+        inner.addWidget(NoticeBar(vm["notice"]["level"], vm["notice"]["text"]))
+    elif vm.get("busy"):
+        inner.addWidget(NoticeBar("info", T["keys_busy_status"]))
     state = vm["state"]
     if state == "loading":
         inner.addWidget(UI.Skeleton(CONN_SKELETON_ROWS, vm["loading"]["a11y"]))
@@ -322,7 +332,7 @@ def settings_screen(shell, vm):
         inner.addWidget(UI.StateCard("alert", "red", vm["error"]["title"], vm["error"]["user"] or vm["error"]["desc"], vm["error"]["button"], shell.reload_connections, holder))
     else:
         for group in vm["groups"]:
-            grid = FlowGrid([purpose_card(card) for card in group["cards"]], (2, 1), 440)
+            grid = FlowGrid([purpose_card(card, shell) for card in group["cards"]], (2, 1), 440)
             accordion = UI.Accordion(group["key"], group["title"], group["chips"], grid, group["open"], T["conn_group_open"], T["conn_group_closed"], group["summary"])
             accordion.toggled.connect(shell.set_group_open)                         # 펴고 접은 것은 기억만 한다(다시 그리지 않는다)
             inner.addWidget(accordion)

@@ -490,6 +490,23 @@ def TextInput(accessible, placeholder=""):
     return box
 
 
+def SecretInput(accessible):
+    """키 입력 칸(P4f) — **마스킹**(`Password`: 점으로만 보이고 복사·잘라내기가 글을 클립보드에 넣지 않는다)이고 Qt 가 마스킹 모드에서 예측 입력·자동 대문자·민감 정보 표시(`ImhHiddenText`·`ImhNoPredictiveText`·`ImhSensitiveData`)를 켠다.
+    플레이스홀더·툴팁은 두지 않는다(글이 없을 때 '입력 예' 같은 글도 키처럼 보일 수 있다). 비울 때는 `wipe_input` — `clear()` 가 아니라 `setText("")`(되돌리기 기록까지 지운다)."""
+    box = QLineEdit()
+    box.setEchoMode(QLineEdit.Password)
+    box.setMinimumHeight(K.SIZE["input_h"])
+    box.setAccessibleName(accessible)
+    box.setProperty("secret", True)
+    return box
+
+
+def wipe_input(box):
+    """입력 칸을 비운다 — `setText("")` 는 선택·되돌리기(undo)·다시 하기(redo) 기록을 모두 지운다(`clear()` 는 지운 글을 되돌리기 기록에 남긴다). 비운 뒤 되돌리기가 가능하면 안 된다."""
+    box.setText("")
+    return not (box.isUndoAvailable() or box.isRedoAvailable())
+
+
 class Toggle(QCheckBox):
     """스위치 — Space 로 켜고 끈다. 글자와 함께 보이고 접근 이름을 가진다."""
 
@@ -885,6 +902,7 @@ class Dialog(QFrame):
         self.scrim.hide()
         self.hide()
         self.is_open = False
+        self.cleanups = []                                        # 닫힐 때 부르는 정리 함수들(키 입력 칸 비우기 …)
         self._width = K.LAYOUT["dialog"]
         self.setAccessibleName(T["sample_dialog_title"])
         self.layout_ = QVBoxLayout(self)
@@ -892,6 +910,8 @@ class Dialog(QFrame):
         self.layout_.setSpacing(12)
 
     def clear(self):
+        """안의 모든 부품을 치운다 — **단추 줄 같은 안쪽 배치의 부품까지**(`_discard` — Seed 관리 독립 검증 F-H1 과 같은 결함의 고침이 먼저 병합돼 그 도우미를 같이 쓴다)(옛 확인창의 단추가 안 치워져 새 확인창 위에 남아 확인창을 건너뛰는 쓰기가 가능했던 결함 F-H1 의 고침: 안쪽 배치는 `item.widget()` 이 None 이라 건너뛰었다). 정리 훅(`cleanups`)도 먼저 부른다."""
+        self.run_cleanups()
         while self.layout_.count():
             self._discard(self.layout_.takeAt(0))
 
@@ -906,6 +926,12 @@ class Dialog(QFrame):
             while layout.count():
                 self._discard(layout.takeAt(0))
             layout.deleteLater()
+
+    def run_cleanups(self):
+        """대화상자가 닫히거나 다른 것으로 바뀔 때 부르는 정리 함수들(키 입력 칸 비우기·클립보드 정리 …) — 한 번 부르면 목록이 비워진다."""
+        cleanups, self.cleanups = self.cleanups, []
+        for cleanup in cleanups:
+            cleanup()
 
     def place(self):
         parent = self.parentWidget()
@@ -925,6 +951,7 @@ class Dialog(QFrame):
         self.place()
 
     def dismiss(self):
+        self.run_cleanups()
         self.scrim.hide()
         self.hide()
         self.is_open = False

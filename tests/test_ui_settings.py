@@ -384,7 +384,9 @@ class SingleKeyRuleTest(unittest.TestCase):
     def test_the_card_has_no_field_for_an_action_so_nothing_can_look_pressable_yet(self):
         """읽기만 하는 화면 — 용도 카드·묶음·화면 뷰모델의 칸이 이 목록뿐이다(키 더하기·지우기·시험 같은 동작 칸은 다음 묶음(P4f)이 더하면서 이 시험을 고친다)."""
         view = view_of(info("naver_apihub"))
-        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "banners", "refresh", "section", "groups", "keys_note", "info", "loading", "empty", "error"})         # 의도적 갱신(UI-C1b): 옛 칸 `advanced`(고급 > 진단 정보) 가 '정보' 묶음 `info`(버전 + 진단 정보)로 옮겨 갔다
+        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "banners", "refresh", "section", "groups", "keys_note", "info", "loading", "empty", "error",
+                                     "writable", "notice", "busy"})         # 의도적 갱신(UI-C1b): 옛 칸 `advanced`(고급 > 진단 정보) 가 '정보' 묶음 `info`(버전 + 진단 정보)로 옮겨 갔다 · 의도적 갱신(P4f, D-251): 키 행동 칸 셋(`writable`·`notice`·`busy`)이 더해졌다 — 읽기 전용 공급자에서는 거짓·None·거짓이다
+        self.assertEqual((view["writable"], view["notice"], view["busy"]), (False, None, False))
         self.assertEqual(set(view["info"]), {"key", "title", "open", "chips", "summary", "a11y", "version", "diag"})
         self.assertEqual((set(view["info"]["version"]), set(view["info"]["diag"])), ({"label", "text"}, {"show", "hide", "note", "text"}))
         usage = cards_of(view_of(info("naver_apihub", usage=services.UsageInfo((("오늘", 1, 100),), True, 30000))))["naver_apihub"]["usage"]
@@ -392,7 +394,8 @@ class SingleKeyRuleTest(unittest.TestCase):
         self.assertEqual(set(usage["rows"][0]["bar"]), {"title", "used", "limit", "unit"})
         self.assertEqual(set(view["groups"][0]), {"key", "title", "open", "chips", "summary", "cards", "a11y"})
         self.assertEqual(set(view["groups"][0]["cards"][0]), {"key", "name", "desc", "gray", "ready", "conn", "ready_caption", "conn_caption", "note", "policy", "limit", "choices", "entries_title",
-                                                               "entries", "usage", "a11y"})
+                                                               "entries", "usage", "a11y", "keys"})                         # 의도적 갱신(P4f, D-251): `keys`(키 행동 구역)가 더해졌고 읽기 전용 공급자에서는 None 이다 — 카드는 이전과 같다
+        self.assertIsNone(view["groups"][0]["cards"][0]["keys"])
         self.assertEqual(text.T["conn_keys_note"], "화면에서 키를 넣는 기능은 아직 없어요.")                                   # 명령줄·개발 순서('다음 묶음') 낱말 없이 — 접이식 '묶음' 과 낱말이 겹치지도 않는다
         self.assertEqual(view["keys_note"], text.T["conn_keys_note"])
         for word in ("명령줄", "묶음", "P4"):
@@ -859,8 +862,13 @@ class AdapterTest(Base):
         self.add("ai_assist", "보조 키", AI, state=cn.STANDBY)
         data = self.read()
         by_key = {item.key: item for item in data.purposes}
-        self.assertEqual(by_key["naver_apihub"].entries, (services.EntryInfo("내 키", "active", True),))
-        self.assertEqual(by_key["ai_assist"].entries, (services.EntryInfo("보조 키", "standby", True),))
+        self.assertEqual([(item.name, item.state, item.key_found) for item in by_key["naver_apihub"].entries], [("내 키", "active", True)])          # 의도적 갱신(P4f, D-251): `EntryInfo` 에 행동의 대상·표시용 다섯 칸(번호·제공자·마지막 성공·확인 결과·순서)이 더해졌다 — 이름·상태·키 있음 여부는 그대로고 키 값·끝 글자는 여전히 없다
+        self.assertEqual([(item.name, item.state, item.key_found) for item in by_key["ai_assist"].entries], [("보조 키", "standby", True)])
+        for item in by_key["naver_apihub"].entries + by_key["ai_assist"].entries:
+            self.assertRegex(item.ref, "^[0-9a-f]{32}$")                                          # 항목 번호(난수) — 키 값이 아니다
+            self.assertEqual((item.last_ok, item.check, item.order), ("", "", 1))
+            for secret in (*HUB.values(), *AI.values()):
+                self.assertNotIn(secret, repr(item))
         self.assertEqual((by_key["naver_apihub"].status, by_key["ai_assist"].status), ("needs_check", "not_connected"))        # 사용 항목이 없으면 연결 안 됨
 
     def test_a_missing_data_dir_and_a_broken_connection_file_are_easy_messages_with_the_code_only_for_the_diagnostics(self):

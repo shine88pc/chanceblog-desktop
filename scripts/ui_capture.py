@@ -10,6 +10,8 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 **시계는 고정한다**(UI-C1a): 상단 앱 바의 날짜·시간은 컴퓨터 시계라 다시 찍을 때마다 달라지므로, 사진은 가짜 시계 `FixedClock`(2026-11-06 20:10)로 찍는다 — 같은 코드·같은 환경이면 같은 사진이다(진단 시각 줄도 같은 시계).
 **블로그 관리 화면**(P4b)은 환경마다 11장면(기본·고치는 중·저장 시도 뒤 칸 오류·저장 결과·삭제 확인창·빈 슬롯·읽는 중·읽기 오류·좁은 창·실제 어댑터 처음·저장 뒤)을 찍고 점검한다 — 이름은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다. 점검의 '잘림' 에는 눌려 반쯤 잘린 부품(`ui_offscreen.find_squeezed`)이 들어 있고, `fits_window` 는 아래 고정 행동 줄이 창 안에 보이는지다.
 **Seed 관리 화면**(D-230)은 환경마다 17장면(기본·거르기·상세 서랍·180일 제안 표시·고치기 오류·승인 결과·새 Seed 폼 둘·일괄 변경 확인창·제안 파일 확인창·빈 목록·읽는 중·읽기 오류·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — Seed 는 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다.
+**키 연결 화면**(P4f)은 환경마다 12장면(카드의 키 구역·등록 대화상자 입력/확인/칸 문제/칸 셋/둘째 키 약관·삭제 확인창·별칭 바꾸기·쓰는 중·저장소 없음·실패 안내·실제 어댑터)을 찍고 점검한다 — `--only keys` 를 주면 이 장면만 찍는다(다른 사진을 다시 만들지 않는다).
+**키는 사진에 나오지 않는다**: 입력 칸은 점으로만 보이고(가짜 글 열두 자), 이름은 모두 가짜이며, 실제 어댑터 장면도 이 도구가 만든 임시 폴더와 프로그램 안의 가짜 보관소만 쓴다(자격 증명 관리자는 건드리지 않는다).
 """
 from __future__ import annotations
 
@@ -116,6 +118,10 @@ def child(args):
     def audit(window, name):
         report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0}
 
+    if getattr(args, "only", "") == "keys":                                              # 키 연결 장면만(다른 사진은 건드리지 않는다)
+        keys_shots(app, ui_offscreen, args, report, logical, tag, out)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
     window = make("normal")
     shoot(window, "home")
     audit(window, "home")
@@ -179,6 +185,7 @@ def child(args):
     settings_shots(app, ui_offscreen, args, report, logical, tag, out)
     blogs_shots(app, ui_offscreen, args, report, logical, tag, out)
     seeds_shots(app, ui_offscreen, args, report, logical, tag, out)
+    keys_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
@@ -586,12 +593,175 @@ def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
         window.close()
 
 
+def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """키 연결 화면(P4f) 사진·점검 — 설정 카드의 키 구역(예시 — 페이지 전체)·등록 대화상자(입력·칸 문제·확인 단계·칸이 셋인 것·둘째 키 약관 확인)·삭제 확인창·별칭 바꾸기·쓰는 중·키 저장소를 못 쓰는 환경·실패 안내·실제 어댑터(저장 뒤).
+    **키는 사진에 나오지 않는다** — 입력 칸은 점으로만 보이고(가짜 글 열두 자 — 키가 아니다) 이름은 모두 가짜(`예시 키 1` …)이며 실제 어댑터도 이 도구가 만든 임시 폴더와 프로그램 안의 가짜 보관소만 쓴다(자격 증명 관리자는 건드리지 않는다).
+    점검은 글자 잘림·눌려 잘린 부품·가로 스크롤과 '대화상자가 창 안에 들어오는가'(`fits_window`)다."""
+    import tempfile
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
+    from chanceblog_desktop.ui.core import keys as key_core
+    from chanceblog_desktop.ui.core.clock import FixedClock
+    from chanceblog_desktop.ui.core.services import FakeHomeProvider
+    from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt import key_parts
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    def make(provider):
+        window = AppShell(FakeHomeProvider(), connections=provider, autoload=False, clock=FixedClock(CAPTURE_TIME))
+        window.resize(*logical)
+        window.show()
+        window.go("settings")
+        ui_offscreen.wait_until(app, lambda: window.state.conn_state != "loading", 10)
+        ui_offscreen.settle(app)
+        for accordion in window.screen_widget.findChildren(UI.Accordion):
+            if not accordion.is_open:
+                accordion.flip()
+        ui_offscreen.settle(app)
+        return window
+
+    def settled(window):
+        """쓰기가 끝나고 새 값을 읽어 다시 그릴 때까지 기다린다."""
+        ui_offscreen.wait_until(app, lambda: not window.state.keys.busy and window.state.keys.pending is None, 10)
+        ui_offscreen.wait_until(app, lambda: window.state.conn_state != "loading" and not window.state.conn_loading, 10)
+        ui_offscreen.settle(app, 6)
+
+    def audit(window, name):
+        dialog = window.dialog
+        inside = (not dialog.is_open) or window.rect().contains(dialog.geometry())
+        report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window) + ui_offscreen.find_squeezed(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0, "fits_window": bool(inside)}
+
+    def shoot(window, name, whole=False):
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+        if whole:                                                                      # 페이지 전체 — 창을 아주 길게 늘려 찍고 마지막 위젯 아래까지만 남긴다
+            window.resize(logical[0], 6000)
+            ui_offscreen.settle(app, 8)
+            bottom = max(w.mapTo(window, w.rect().bottomLeft()).y() for w in window.screen_widget.findChildren(QWidget) if w.isVisible()) + 40
+            pixmap = window.grab()
+            pixmap = pixmap.copy(QRect(0, 0, pixmap.width(), min(pixmap.height(), round(bottom * pixmap.devicePixelRatio()))))
+            window.resize(*logical)
+            ui_offscreen.settle(app)
+        else:
+            ui_offscreen.settle(app, 3)
+            pixmap = window.grab()
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    def click(button):
+        QTest.mouseClick(button, Qt.LeftButton)
+        ui_offscreen.settle(app, 4)
+
+    def register_button(window, purpose):
+        return next(widget for widget in window.screen_widget.findChildren(QAbstractButton) if widget.property("focus_key") == f"key-register:{purpose}")
+
+    def row_of(window, purpose):
+        return next(row for row in window.screen_widget.findChildren(key_parts.KeyRow) if row.purpose == purpose)
+
+    dots = "x" * 12                                                                    # 가짜 글 열두 자 — 칸에는 점으로만 보인다(키가 아니다)
+    window = make(key_core.FakeKeysProvider("normal"))                                 # 예시 카드 — 행·배지·단추·꺼진 이유·'키 등록'
+    shoot(window, "keys_cards", whole=True)
+    audit(window, "keys_cards")
+    window.close()
+    window = make(key_core.FakeKeysProvider("not_connected"))                          # 키가 하나도 없는 처음 모습에서 등록 대화상자
+    click(register_button(window, "image_provider"))
+    form = window.key_form
+    shoot(window, "keys_register")                                                     # 입력 단계 — 처음 포커스는 첫 키 칸
+    audit(window, "keys_register")
+    form.secret_edits["access_key"].setText(dots)
+    click(form.next_button)
+    shoot(window, "keys_register_confirm")                                             # 확인 단계 — 서비스·제공자·별칭만, 처음 포커스는 취소
+    audit(window, "keys_register_confirm")
+    click(form.back_button)
+    form.secret_edits["access_key"].setText("")
+    click(form.next_button)
+    shoot(window, "keys_register_invalid")                                             # 빈 칸 — 문제는 칸 옆 문장
+    audit(window, "keys_register_invalid")
+    window.key_cancel()
+    click(register_button(window, "blogger"))                                          # 칸이 셋인 가장 큰 대화상자
+    for edit in window.key_form.secret_edits.values():
+        edit.setText(dots)
+    shoot(window, "keys_register_three")
+    audit(window, "keys_register_three")
+    window.key_cancel()
+    window.close()
+    window = make(key_core.FakeKeysProvider("not_connected"))                          # 둘째 키 — AI 보조에 첫 키를 넣어 두면 둘째 키 등록이 약관 확인을 묻는다
+    click(register_button(window, "ai_assist"))
+    form = window.key_form
+    form.secret_edits["key"].setText("x" * 24)                                         # 첫 키는 실제로 저장된다(가짜 공급자 — 메모리) — 서비스의 최소 글자 수를 넘는 가짜 글
+    click(form.next_button)
+    click(form.save_button)
+    settled(window)
+    click(register_button(window, "ai_assist"))
+    form = window.key_form
+    form.secret_edits["key"].setText(dots)
+    form.alias_edit.setText("둘째 키")
+    click(form.next_button)
+    shoot(window, "keys_register_terms")                                               # 약관 안내와 확인 칸(확인하기 전에는 저장이 꺼져 있다)
+    audit(window, "keys_register_terms")
+    window.key_cancel()
+    window.close()
+    window = make(key_core.FakeKeysProvider("normal"))
+    click(row_of(window, "image_provider").buttons["delete"])
+    shoot(window, "keys_delete")                                                       # 삭제 확인창 — 처음 포커스는 취소
+    audit(window, "keys_delete")
+    window.close_dialog()
+    click(row_of(window, "image_provider").buttons["rename"])
+    shoot(window, "keys_rename")
+    audit(window, "keys_rename")
+    window.close_dialog()
+    window.close()
+    provider = key_core.FakeKeysProvider("normal")                                     # 쓰는 중 — 단추가 모두 꺼지고 안내 띠가 보인다(창을 닫으면 일도 취소된다)
+    window = make(provider)
+    provider.delay = 30
+    click(row_of(window, "image_provider").buttons["state:off"])
+    shoot(window, "keys_busy")
+    audit(window, "keys_busy")
+    window.close()
+    window = make(key_core.FakeKeysProvider("normal", store_ready=False))              # 키 저장소를 못 쓰는 환경 — 오류가 아니라 상태
+    shoot(window, "keys_nostore", whole=True)
+    audit(window, "keys_nostore")
+    window.close()
+    provider = key_core.FakeKeysProvider("normal")                                     # 실패 안내 — 쉬운 문장
+    window = make(provider)
+
+    def failing(*_args):
+        raise key_core.make_failure("io", "SAMPLE_FILE_WRITE_FAILED")
+    provider.set_key_state = failing
+    click(row_of(window, "image_provider").buttons["state:off"])
+    settled(window)
+    shoot(window, "keys_failed")
+    audit(window, "keys_failed")
+    window.close()
+    with tempfile.TemporaryDirectory() as tmp:                                         # 실제 어댑터 — 임시 폴더·가짜 보관소에 가짜 이름·값으로 저장한 뒤의 모습(예시 표시 없음)
+        from chanceblog_desktop.security.keystore import MemoryStore
+        from chanceblog_desktop.service.context import Context, Settings, Workspace
+        from chanceblog_desktop.ui.keys_adapter import ServiceKeysProvider
+        workspace = Workspace(Path(tmp) / "data")
+        ctx = Context(workspace, Settings(workspace.settings_path), backend=None, keystore=MemoryStore())
+        window = make(ServiceKeysProvider(context_factory=lambda data_dir=None: ctx))
+        click(register_button(window, "ai_assist"))
+        form = window.key_form
+        form.alias_edit.setText("예시 키 하나")
+        form.secret_edits["key"].setText("example-ai-key-" + "0" * 12)
+        click(form.next_button)
+        click(form.save_button)
+        settled(window)
+        shoot(window, "keys_real", whole=True)
+        audit(window, "keys_real")
+        window.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("out", nargs="?", default="ui_shots")
     parser.add_argument("--env", action="append", default=None, help="가로x세로@배율% (여러 번 줄 수 있다)")
     parser.add_argument("--check", action="store_true", help="사진을 저장하지 않고 점검만")
     parser.add_argument("--gallery", action="store_true", help="앱 화면 대신 공통 부품 모음(개발용)을 찍고 점검한다")
+    parser.add_argument("--only", choices=("keys",), default="", help="키 연결 화면(P4f) 장면만 찍고 점검한다")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.child:
@@ -604,7 +774,7 @@ def main(argv=None):
         environment.pop("QT_SCALE_FACTOR", None)
         if percent != 100:
             environment["QT_SCALE_FACTOR"] = str(percent / 100)
-        command = [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), args.out, "--env", env, "--child"] + (["--check"] if args.check else []) + (["--gallery"] if args.gallery else [])
+        command = [sys.executable, "-X", "utf8", str(Path(__file__).resolve()), args.out, "--env", env, "--child"] + (["--check"] if args.check else []) + (["--gallery"] if args.gallery else []) + (["--only", args.only] if args.only else [])
         done = subprocess.run(command, env=environment, capture_output=True, text=True, encoding="utf-8", creationflags=0x08000000 if os.name == "nt" else 0)
         if done.returncode != 0:
             print(f"[{env}] 실패(종료 코드 {done.returncode}) — 오류 마지막 줄: {(done.stderr.strip().splitlines() or [''])[-1][:200]}", file=sys.stderr)

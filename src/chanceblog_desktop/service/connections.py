@@ -6,7 +6,9 @@
 
 규칙(모두 시험이 지킨다):
   · 입력 오류 문구·세부·로그에 **입력한 값을 넣지 않는다**(모양 검사는 이유만 돌려준다 — `security.shape`).
-  · 용도마다 항목은 최대 `MAX_ENTRIES_PER_PURPOSE`(3)개다 — 무제한 키 돌려쓰기를 구조로 막는다. 같은 용도에 둘째 키를 더할 때는 약관 확인(`terms_ack`)이 있어야 하고 그 사실과 시각을 항목에 적는다.
+  · 항목 수 상한은 둘이다. ① **읽을 때의 천장** — 용도마다 최대 `MAX_ENTRIES_PER_PURPOSE`(3)개(키를 하나만 두는 NAVER API HUB 는 1개)이고 넘는 파일은 깨진 파일이다(무제한 키 돌려쓰기를 구조로 막는다).
+    ② **더할 때의 상한(운영자 정책 표)** — 제공자마다 `Provider.max_entries`(Unsplash·기타 1개, AI 제공자 3개, Blogger 는 채널마다 1개라 2개)이고 넘기면 `KEY_ENTRY_LIMIT` 로 거절한다 — 읽기는 그대로라 상한을 낮춰도 옛 파일·옛 항목은 지우거나 막지 않는다.
+    같은 서비스에 둘째 키를 더할 때는 약관 확인(`terms_ack`)이 있어야 하고(Blogger 처럼 둘째가 다른 채널의 연결이면 아니다) 그 사실과 시각을 항목에 적는다.
   · 같은 값(보관소에 있는 값과 직접 비교한다 — 값에서 만든 지문을 파일에 두지 않는다)·같은 이름은 같은 용도에 두 번 넣지 못한다.
   · 쓰기는 연결 설정 잠금 안에서 '읽고 → 바꾸고 → 쓴다'. 지울 때는 보관소의 값을 **먼저** 지우고(남은 항목은 '확인 필요' 로 보여 다시 지울 수 있다) 그다음 메타데이터를 지운다.
   · 읽기 명령(`list_entries`·`purpose_overview`)은 데이터 폴더·보관소를 만들거나 바꾸지 않는다.
@@ -54,6 +56,8 @@ ON_SAVE, ON_FAILOVER = "save", "failover"
 ON_LIMIT = (ON_SAVE, ON_FAILOVER)
 ON_LIMIT_TEXT = {ON_SAVE: "절약 모드만(다른 키로 넘어가지 않음)", ON_FAILOVER: "허용된 다음 키로 전환(한도·일시 오류일 때만)"}
 ENTRY_LIMIT_DETAIL = "이 용도는 키를 하나만 둡니다 — 한도를 늘리려고 여러 키·계정을 돌려 쓰지 않습니다(키를 바꾸려면 기존 항목을 `keys remove 번호 --yes` 로 지운 뒤 새로 넣습니다)"
+ROLLBACK_FAILED_DETAIL = "항목을 저장하지 못했고 보관소에 넣은 값도 지우지 못했다"                  # `_rollback` 이 보관소 값을 못 지웠을 때 오류 세부의 앞부분 — 화면 어댑터가 이 앞부분으로 '키가 보관소에 남았을 수 있다' 를 알아본다(시험이 못박는다)
+PROVIDER_LIMIT_DETAIL = "이 서비스는 키를 하나만 둡니다 — 한도를 늘리려고 여러 키·계정을 돌려 쓰지 않습니다(키를 바꾸려면 기존 항목을 `keys remove 번호 --yes` 로 지운 뒤 새로 넣습니다)"
 ROTATION_NEVER, ROTATION_LIMITED = "never", "limited"     # never: 어떤 오류에도 다른 항목으로 자동 전환하지 않는다(Unsplash) · limited: 한도·일시 오류 네 가지에만 허용된 다음 항목으로
 
 CONNECTED, NEEDS_CHECK, RATE_LIMITED, AUTH_ERROR, NOT_CONNECTED = "connected", "needs_check", "rate_limited", "auth_error", "not_connected"
@@ -107,6 +111,8 @@ class Provider:
     console_limit: int = 0     # 서비스 콘솔의 월 한도(참고 값 — 단계 비율의 기준). 프로그램 안 한도는 `tiers` 의 창이다
     stages: tuple = ()         # (Stage, …) — 비어 있으면 기존 규칙(`quota.FLOOR_PERCENT`·`RESERVE_PERCENT`)을 쓴다
     stop_text: str = ""        # 신규 호출을 멈췄을 때 사용자에게 보이는 고정 문구(기술 오류 코드는 보이지 않는다)
+    max_entries: int = 0       # 이 제공자의 키 항목을 **더할 때** 상한(운영자 정책 표) — 0 은 '용도의 상한을 따른다'(표에 없는 시험용 제공자의 옛 동작). 실제 표의 제공자는 모두 양수를 직접 적는다(시험이 못박는다)
+    second_key_needs_terms: bool = True     # 거짓이면 같은 제공자의 둘째 항목이 '같은 서비스의 한도를 나누는 키' 가 아니라 다른 채널의 연결이라 약관 확인을 묻지 않는다(Blogger)
 
     def windows(self, tier=""):
         wanted = tier or self.default_tier
@@ -148,6 +154,11 @@ class Purpose:
     def provider_keys(self):
         return tuple(item.key for item in self.providers)
 
+    def entry_cap(self, provider=""):
+        """이 용도의 그 제공자에 키 항목을 더할 때 상한 — 제공자 표의 값, 0 이면 용도의 상한. 모르는 제공자는 용도의 상한이다(부르는 쪽이 제공자 이름을 먼저 검사한다)."""
+        chosen = self.provider(provider)
+        return (chosen.max_entries if chosen is not None else 0) or self.max_entries
+
     def primary_secret(self):
         return next((item.name for item in self.fields if item.secret), "")
 
@@ -166,12 +177,12 @@ APIHUB_STAGES = (
 def _purposes():
     day_naver = (("default", (Window("day", "day", 25000),)),)
     unsplash = Provider("unsplash", "Unsplash", ROTATION_NEVER, (("demo", (Window("hour", "sliding", 50, 60, True),)), ("production", (Window("hour", "sliding", 1000, 60, True),))), "demo",
-                        "데모 앱은 시간당 50회, 승인된 앱은 시간당 1,000회입니다. `api.unsplash.com` 요청만 세고 사진 파일(`images.unsplash.com`) 요청은 세지 않습니다. 자동으로 다른 키로 넘어가지 않습니다")
+                        "데모 앱은 시간당 50회, 승인된 앱은 시간당 1,000회입니다. `api.unsplash.com` 요청만 세고 사진 파일(`images.unsplash.com`) 요청은 세지 않습니다. 자동으로 다른 키로 넘어가지 않습니다", max_entries=1)
     apihub = Provider("", "NAVER API HUB", ROTATION_NEVER, (("default", (Window("day", "day", APIHUB_INTERNAL_DAY), Window("month", "month", APIHUB_INTERNAL_MONTH))),), "default",
                       "프로그램 안 기준은 하루 100회·이번 달 27,000회이고 서비스 콘솔의 월 한도(30,000회 — 계정 설정에 따라 최대 50,000회, 100% 에서 호출이 차단됩니다)는 마지막 안전장치입니다. "
                       "실패한 호출도 시도로 세고 월 경계는 한국 시간 달력 월로 잡습니다(실패한 호출이 공식 사용량에 들어가는지·월 초기화 시각은 공개 문서에 없어 안전한 쪽으로 가정했습니다). "
                       "키는 하나만 쓰고 429 가 나도 다른 키로 넘어가지 않습니다",
-                      ledger=True, fail_closed=True, console_limit=APIHUB_CONSOLE_MONTH, stages=APIHUB_STAGES, stop_text=APIHUB_STOP_TEXT)
+                      ledger=True, fail_closed=True, console_limit=APIHUB_CONSOLE_MONTH, stages=APIHUB_STAGES, stop_text=APIHUB_STOP_TEXT, max_entries=1)
     return (
         Purpose("naver_apihub", "NAVER API HUB 검색어 트렌드", "네이버 데이터랩 '검색어 트렌드' 로 키워드의 관심도 변화를 조회해 후보의 지표를 보정하는 데 씁니다(준비 중 — 안전 장치만 있고 호출 코드는 아직 없습니다). "
                 "키는 하나만 두고 한도를 늘리려고 돌려 쓰지 않습니다.",
@@ -180,19 +191,19 @@ def _purposes():
                 (apihub,), identity_field="client_id", max_entries=1),
         Purpose("naver_searchad", "네이버 검색광고 API", "키워드 도구의 월간 검색 수 같은 지표를 조회하는 데 씁니다(준비 중).",
                 (Field("customer_id", "고객 ID", False, 3, 20, "숫자 7자리 안팎"), Field("access_license", "액세스 라이선스", True, 16, 128, "영문·숫자 40~64자"), Field("secret_key", "비밀 키", True, 16, 128, "영문·숫자·기호 40자 안팎")),
-                (Provider("", "네이버 검색광고", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다 — 한도 오류 응답으로만 감지합니다"),), identity_field="customer_id"),
+                (Provider("", "네이버 검색광고", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다 — 한도 오류 응답으로만 감지합니다", max_entries=1),), identity_field="customer_id"),
         Purpose("image_provider", "이미지 공급자", "글 대표 이미지를 찾는 데 씁니다(첫 공급자는 Unsplash — 사진 파일은 원본 주소로만 보여 줍니다). 데스크톱용으로 따로 등록한 앱의 키를 쓰고 "
                 "클라우드 자동 발행(GitHub Actions)의 키와 같은 값을 쓰지 않습니다(같은 값이면 한도를 함께 쓰게 됩니다).",
                 (Field("access_key", "Access Key", True, 16, 128, "영문·숫자·기호 40자 안팎"),),
-                (unsplash, Provider("pexels", "Pexels", ROTATION_LIMITED, (("default", ()),), "default", "자리만 있고 아직 코드가 없습니다"),
-                 Provider("pixabay", "Pixabay", ROTATION_LIMITED, (("default", ()),), "default", "자리만 있고 아직 코드가 없습니다"))),
+                (unsplash, Provider("pexels", "Pexels", ROTATION_LIMITED, (("default", ()),), "default", "자리만 있고 아직 코드가 없습니다", max_entries=1),
+                 Provider("pixabay", "Pixabay", ROTATION_LIMITED, (("default", ()),), "default", "자리만 있고 아직 코드가 없습니다", max_entries=1))),
         Purpose("ai_assist", "AI 보조(선택)", "요약·설명 같은 보조 기능에 씁니다. 기본은 꺼짐이고 키가 없어도 모든 핵심 기능이 그대로 됩니다.",
                 (Field("key", "API 키", True, 16, 256, "영문·숫자·기호 40자 안팎"),),
-                (Provider("gemini", "Gemini", ROTATION_LIMITED, (("default", ()),), "default", "한도는 모델·계정마다 달라 확인하지 못했습니다 — 한도 오류 응답으로만 감지합니다"),)),
+                (Provider("gemini", "Gemini", ROTATION_LIMITED, (("default", ()),), "default", "한도는 모델·계정마다 달라 확인하지 못했습니다 — 한도 오류 응답으로만 감지합니다", max_entries=3),)),
         Purpose("blogger", "Blogger", "Blogger 초안 저장에 씁니다(준비 중 — 로그인 방식이 정해지면 이 칸들을 맞춥니다).",
                 (Field("client_id", "클라이언트 ID", False, 20, 128, "영문·숫자·점·하이픈 70자 안팎"), Field("client_secret", "클라이언트 시크릿", True, 8, 128, "영문·숫자·하이픈 35자 안팎"),
                  Field("refresh_token", "갱신용 인증 값", True, 20, 512, "영문·숫자·기호 100자 안팎")),
-                (Provider("", "Google", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다"),), identity_field="client_id"),
+                (Provider("", "Google", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다", max_entries=2, second_key_needs_terms=False),), identity_field="client_id"),
         Purpose("github_repo", "GitHub 저장소", "글을 올릴 때 쓰는 저장소 권한입니다.", (), (Provider("", "GitHub", ROTATION_NEVER, (("default", ()),), "default"),), takes_keys=False,
                 note="이 앱은 키를 받지 않습니다 — 컴퓨터의 Git 로그인(Git 자격 증명 관리자)을 씁니다. 터미널에서 `git push` 를 한 번 해 로그인을 마칩니다."),
         Purpose("naver_openapi", "옛 항목 — 네이버 오픈 API(검색·데이터랩)", "예전 버전이 만든 용도입니다. 이 용도의 항목은 읽기만 하고(새 항목은 더하지 못합니다) 키는 지우지 않았습니다. "
@@ -586,6 +597,20 @@ def refuse_legacy(spec, registry=PURPOSES):
         raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": f"옛 용도라 새 항목을 더하지 못합니다 — 새 키는 '{target.label if target else spec.legacy_to}'({spec.legacy_to})에 넣습니다. 옛 항목의 키는 지우지 않았습니다"})
 
 
+def check_room(spec, chosen, mine):
+    """이 제공자에 키 항목을 하나 더할 자리가 있는지 — 없으면 `KEY_ENTRY_LIMIT`(화면·명령줄·`add_entry` 가 같은 규칙을 쓴다). `mine` 은 이 용도의 항목들이다.
+    ① 같은 제공자의 항목 수가 제공자 상한(`Purpose.entry_cap`, 운영자 정책 표)에 닿았거나 ② 용도의 항목 수가 읽을 때의 천장(`Purpose.max_entries`)에 닿았으면 거절한다 — 더하기만 막고 이미 있는 항목은 건드리지 않는다."""
+    cap = spec.entry_cap(chosen.key)
+    if len([item for item in mine if item.provider == chosen.key]) >= cap:
+        shown = cap
+    elif len(mine) >= spec.max_entries:
+        shown = spec.max_entries
+    else:
+        return
+    detail = (ENTRY_LIMIT_DETAIL if spec.max_entries == 1 else PROVIDER_LIMIT_DETAIL) if shown == 1 else ""
+    raise AppError("KEY_ENTRY_LIMIT", {"용도": spec.label, "개수": str(shown)}, detail=detail)
+
+
 def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTIVE, terms_ack=False, keystore=None, registry=PURPOSES, new_id=None):
     """항목 하나를 더한다 — 값은 보관소에, 메타데이터는 `connections.json` 에. 모든 검사를 마친 뒤에야 보관소에 쓴다. 오류 문구에 입력한 값은 없다."""
     spec = registry.get(purpose) if isinstance(purpose, str) else None
@@ -611,9 +636,10 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
     with locked(ctx):
         data = load(ctx, registry)
         mine = data.of_purpose(purpose)
-        if len(mine) >= spec.max_entries:
-            raise AppError("KEY_ENTRY_LIMIT", {"용도": spec.label, "개수": str(spec.max_entries)}, detail=ENTRY_LIMIT_DETAIL if spec.max_entries < MAX_ENTRIES_PER_PURPOSE else "")
-        if mine and not terms_ack:
+        check_room(spec, chosen, mine)
+        same = [item for item in mine if item.provider == provider]                 # 둘째 키 약관 확인은 같은 서비스(제공자)의 둘째 키에만이다
+        asks_terms = bool(same) and chosen.second_key_needs_terms
+        if asks_terms and not terms_ack:
             raise AppError("KEY_FAILOVER_TERMS_REQUIRED", {"용도": spec.label})
         if any(item.name == name for item in mine):
             raise AppError("KEY_DUPLICATE", {"항목": "같은 이름", "이유": "같은 용도에 같은 이름의 항목이 이미 있습니다"})
@@ -623,7 +649,7 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
         entry_id = new_id() if new_id else secrets.token_hex(16)
         stamp = ctx.stamp()
         bucket = _bucket_of(spec, fields, project)
-        entry = Entry(entry_id, purpose, provider, name, project, max((item.order for item in mine), default=0) + 1, state, stamp, "", "", CHECK_NONE, bucket, stamp if mine else "")
+        entry = Entry(entry_id, purpose, provider, name, project, max((item.order for item in mine), default=0) + 1, state, stamp, "", "", CHECK_NONE, bucket, stamp if asks_terms else "")
         notes = []
         if any(item.bucket == bucket and item.provider == provider for item in mine):
             notes.append("같은 앱(소속 프로젝트)의 키라서 한도가 늘지 않습니다 — 한도에 걸렸을 때 이 키로는 넘어가지 않습니다.")
@@ -633,7 +659,7 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
         except AppError:
             _rollback(keystore, entry)
             raise
-    if mine:
+    if asks_terms:
         notes.append(TERMS_NOTICE)
     return AddResult(entry, tuple(notes))
 
@@ -647,7 +673,7 @@ def _rollback(keystore, entry):
     try:
         keystore.delete(entry.ref)
     except AppError as error:
-        raise AppError("KEY_STORE_UNAVAILABLE", detail=f"항목을 저장하지 못했고 보관소에 넣은 값도 지우지 못했다({error.code}) — `keys list` 에서 '연결 확인 필요' 로 보이면 지운다") from None
+        raise AppError("KEY_STORE_UNAVAILABLE", detail=f"{ROLLBACK_FAILED_DETAIL}({error.code}) — `keys list` 에서 '연결 확인 필요' 로 보이면 지운다") from None
 
 
 def _same_value(keystore, entry, fields):
@@ -663,6 +689,33 @@ def _same_value(keystore, entry, fields):
 def _update_entry(data, entry_id, **changes):
     items = tuple(Entry(**{**item.to_dict(), **changes}) if item.entry_id == entry_id else item for item in data.entries)
     return Data(items, data.policies)
+
+
+def _name_holds_value(fields, name):
+    """보관된 값 중 6글자 이상인 것이 이름에 그대로 들어 있나(칸을 잘못 붙여 넣음) — 참·거짓만 돌려주고 값은 이 함수 밖으로 나가지 않는다."""
+    return any(len(value) >= 6 and value in name for value in fields.to_dict().values())
+
+
+def rename_entry(ctx, text, name, *, keystore=None, registry=PURPOSES):
+    """항목의 이름(별칭)만 바꾼다 — 값·상태·순서는 그대로다. 이름 모양은 더할 때와 같은 검사(키처럼 보이는 글 거절)이고, 같은 용도의 **다른** 항목과 이름이 같으면 `KEY_DUPLICATE`,
+    보관된 값이 이름에 그대로 들어 있으면 `KEY_INVALID_SHAPE`(값은 문구에 없다)로 거절한다 — 키를 이름 칸에 잘못 붙여 넣어 이 파일에 남는 일을 막는다. 보관소를 열 수 없으면(`KEY_STORE_UNAVAILABLE`) 그 확인을 못 하므로 바꾸지 않는다.
+    같은 이름이면 바뀐 것이 없다. → (항목, 이전 이름)"""
+    _check_label("이름", name, max_len=MAX_NAME_CHARS, required=True)
+    keystore = ctx.get_keystore() if keystore is None else keystore
+    with locked(ctx):
+        data = load(ctx, registry)
+        entry = resolve(numbered(data.entries, registry), text).entry
+        before = entry.name
+        if before == name:
+            return entry, before
+        if any(item.name == name and item.entry_id != entry.entry_id for item in data.of_purpose(entry.purpose)):
+            raise AppError("KEY_DUPLICATE", {"항목": "같은 이름", "이유": "같은 용도에 같은 이름의 항목이 이미 있습니다"})
+        stored = keystore.get(entry.ref)
+        if stored is not None and _name_holds_value(stored, name):
+            raise AppError("KEY_INVALID_SHAPE", {"항목": "이름", "이유": "키 값이 이름이나 소속 프로젝트에 들어 있습니다"})
+        data = _update_entry(data, entry.entry_id, name=name)
+        save(ctx, data, registry)
+        return next(item for item in data.entries if item.entry_id == entry.entry_id), before
 
 
 def set_state(ctx, text, state, *, registry=PURPOSES):

@@ -81,6 +81,17 @@ def generic_registry():
     return {**cn.PURPOSES, "naver_openapi": old}
 
 
+def old_key_limits(cap=3):
+    """의도적 갱신(P4f, D-250): 실제 표의 제공자는 이제 키 항목을 **더할 때** 운영자 정책 표의 상한을 따른다(Unsplash·기타 1개, AI 제공자 3개, Blogger 2개 — `Provider.max_entries`). 그런데 여러 항목이 있어야 하는 '일반 동작'
+    (약관 확인·순서·상태·지우기·전환 없음·옛 파일 읽기 …)의 시험은 실제 용도를 그릇으로 써 왔다 — 시험이 만드는 상태가 '옛 파일처럼 항목이 여럿' 인 것과 같도록 **시험 동안만** 모든 제공자의 상한을 `cap`(3)으로, 둘째 키 약관 확인을 켠 채로
+    되돌린다(`mock.patch.dict` — 용도 천장(`Purpose.max_entries`)은 그대로고 실제 표는 시험 뒤 돌아온다). 실제 표의 값은 `tests/test_service_key_limits.py` 가 직접 적은 숫자로 못박는다.
+    쓰는 법: `patcher = ss.old_key_limits(); patcher.start(); self.addCleanup(patcher.stop)`."""
+    import dataclasses
+    from unittest import mock
+    from chanceblog_desktop.service import connections as cn
+    return mock.patch.dict(cn.PURPOSES, {key: dataclasses.replace(spec, providers=tuple(dataclasses.replace(item, max_entries=cap, second_key_needs_terms=True) for item in spec.providers)) for key, spec in cn.PURPOSES.items()})
+
+
 class Clock:
     """가짜 시계 — 고정된 시각을 돌려주고 advance 로만 흐른다."""
 

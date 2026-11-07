@@ -72,14 +72,16 @@ def entry_state(info, entry):
     return "off" if state == "standby" and single_choice(info) else state
 
 
-def policy_text(info):
+def policy_text(info, cap=None):
+    """카드의 키 전환 안내. `cap` 은 키를 새로 더할 수 있는 최대 개수(제공자별 운영자 정책 — 쓰는 공급자의 카드만 준다). 안 주면 읽을 때 천장(`max_entries`)을 따른다(읽기 전용 카드는 이전과 같다)."""
     if not info.takes_keys or info.legacy:
         return ""
-    if info.max_entries == 1:
+    limit = info.max_entries if cap is None else cap
+    if limit == 1:
         return T["policy_single"]
     if info.rotation == "never":
         return T["policy_never"]
-    return T["policy_failover"].format(n=info.max_entries)
+    return T["policy_failover"].format(n=limit)
 
 
 def entry_vm(info, entry):
@@ -123,7 +125,7 @@ def usage_vm(info, sample):
     return {"title": T["usage_title"], "rows": rows} if rows else None
 
 
-def card_vm(info, sample):
+def card_vm(info, sample, keys=None):
     status, kind = effective_status(info), ready_kind(info)
     ready = {"text": T["ready_" + kind], "tone": READY_TONE[kind]}
     conn = {"text": T["status_" + status], "tone": STATUS_TONE[status]} if status else None
@@ -135,8 +137,9 @@ def card_vm(info, sample):
     title = T.get("limit_" + info.key, "")                                       # 한도에 닿으면 어떻게 계속하는지(용도마다 문구표에 있을 때만)
     limit = {"title": title, "desc": T.get("limit_desc_" + info.key, "")} if title and info.takes_keys and not info.legacy else None
     return {"key": info.key, "name": name, "desc": T.get("purpose_" + info.key, ""), "gray": kind in ("prep", "legacy"), "ready": ready, "conn": conn,
-            "ready_caption": T["ready_caption"], "conn_caption": T["conn_caption"], "note": note, "policy": policy_text(info), "limit": limit, "choices": choices,
-            "entries_title": T["entries_title"], "entries": entries, "usage": usage_vm(info, sample), "a11y": ", ".join(heard)}
+            "ready_caption": T["ready_caption"], "conn_caption": T["conn_caption"], "note": note, "policy": policy_text(info, keys.effective_cap(info) if keys is not None and keys.writable else None), "limit": limit, "choices": choices,
+            "entries_title": T["entries_title"], "entries": entries, "usage": usage_vm(info, sample), "a11y": ", ".join(heard),
+            "keys": keys.card_keys(info, sample) if keys is not None else None}      # 키 행동(P4f) — 쓰는 공급자일 때만 값이 있다(없으면 카드는 읽기 전용 그대로)
 
 
 def chips_of(infos):
@@ -180,12 +183,12 @@ def default_open(purposes):
     return GROUP_ORDER[0]
 
 
-def group_vm(key, infos, opened, sample):
+def group_vm(key, infos, opened, sample, keys=None):
     chips = chips_of(infos)
     title = T["conn_group_" + key]
     summary = " · ".join(chip["text"] for chip in chips)
     state = T["conn_group_open"] if opened else T["conn_group_closed"]
-    return {"key": key, "title": title, "open": opened, "chips": chips, "summary": summary, "cards": [card_vm(info, sample) for info in infos],
+    return {"key": key, "title": title, "open": opened, "chips": chips, "summary": summary, "cards": [card_vm(info, sample, keys) for info in infos],
             "a11y": ", ".join(part for part in (title, summary, state) if part)}
 
 
@@ -209,12 +212,13 @@ def diag_text(data, when=None):
                       f"{T['diag_keystore']}: {answer('keystore')}", f"{T['diag_usage']}: {answer('usage')}"))
 
 
-def build_settings_view(data, state, *, failure=None, error_diag="", loaded_at=None, open_groups=None, version=None):
+def build_settings_view(data, state, *, failure=None, error_diag="", loaded_at=None, open_groups=None, version=None, keys=None):
     """설정 화면 하나의 뷰모델. `state` 는 홈과 같은 여섯 상태(loading · normal · empty · error · partial · offline)이고 `open_groups` 는 펼친 묶음 이름들(용도 묶음 넷 + `info`)이다.
     묶음은 다섯 — 용도 묶음 넷(`groups`: 데이터 Provider·이미지·AI 보조·발행·연결)과 마지막 `info`('정보' — 버전 + 진단 정보)."""
     sample = bool(data and data.sample)
     opened = set(open_groups or ())
-    groups = [group_vm(key, infos, key in opened, sample) for key, infos in grouped(data.purposes)] if data and state in ("normal", "partial", "offline") else []
+    writable = bool(keys is not None and keys.writable)
+    groups = [group_vm(key, infos, key in opened, sample, keys if writable else None) for key, infos in grouped(data.purposes)] if data and state in ("normal", "partial", "offline") else []
     banners = []
     if state == "partial" and data:
         banners = [("alert", T[PARTIAL_TEXT[name]]) for name in data.partial if name in PARTIAL_TEXT]
@@ -223,7 +227,8 @@ def build_settings_view(data, state, *, failure=None, error_diag="", loaded_at=N
     return {
         "title": T["settings_title"], "sub": T["settings_sub"], "sample": sample, "sample_tag": T["sample_tag"], "state": state,
         "fetched": T["last_fetch"].format(when=data.fetched) if data and data.fetched else "", "banners": banners, "refresh": T["conn_refresh"],
-        "section": {"title": T["conn_title"], "desc": T["conn_desc"]}, "groups": groups, "keys_note": T["conn_keys_note"],
+        "section": {"title": T["conn_title"], "desc": T["conn_desc_write" if writable else "conn_desc"]}, "groups": groups, "keys_note": T["conn_keys_note_write" if writable else "conn_keys_note"],
+        "writable": writable, "notice": {"level": keys.notice[0], "text": keys.notice[1]} if writable and keys.notice else None, "busy": bool(writable and keys.busy),
         "info": info_vm(data, INFO_GROUP in opened, loaded_at, version),
         "loading": {"text": T["conn_loading"], "a11y": T["conn_loading_a11y"]},
         "empty": {"title": T["conn_empty_title"], "desc": T["conn_empty_desc"], "button": T["conn_empty_btn"]},

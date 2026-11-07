@@ -733,9 +733,11 @@ def cmd_keys_add(ctx, args):
     spec = connections.PURPOSES[args.purpose]
     connections.refuse_legacy(spec)                                                                    # 옛 용도는 키를 묻기 전에 먼저 거절한다
     existing = connections.load(ctx).of_purpose(args.purpose)
-    if existing and spec.takes_keys and spec.max_entries < connections.MAX_ENTRIES_PER_PURPOSE and len(existing) >= spec.max_entries:
-        raise AppError("KEY_ENTRY_LIMIT", {"용도": spec.label, "개수": str(spec.max_entries)}, detail=connections.ENTRY_LIMIT_DETAIL)       # 키를 하나만 두는 용도는 약관 확인을 묻기 전에 먼저 거절한다
-    if existing and not args.i_understand_terms and spec.takes_keys:
+    chosen = spec.provider(args.provider or "")                                                        # 모르는 제공자면 아래 `add_entry` 가 같은 오류로 거절한다
+    same = [item for item in existing if chosen is not None and item.provider == chosen.key]           # 둘째 키·약관 확인은 같은 서비스(제공자)의 항목만 센다(운영자 정책 표 — P4f)
+    if same and spec.takes_keys and spec.entry_cap(chosen.key) == 1:
+        connections.check_room(spec, chosen, existing)                                                 # 키를 하나만 두는 제공자(NAVER API HUB·Unsplash …)는 약관 확인을 묻기 전에 먼저 거절한다
+    if same and not args.i_understand_terms and spec.takes_keys and chosen.second_key_needs_terms:
         raise AppError("KEY_FAILOVER_TERMS_REQUIRED", {"용도": spec.label})                     # 키를 치기 전에 먼저 멈춘다
     fields = _secret_input(spec, args) if spec.takes_keys else {}
     store = ctx.get_keystore()
