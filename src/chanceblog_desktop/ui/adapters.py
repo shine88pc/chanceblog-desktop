@@ -28,8 +28,8 @@ from ..service import quota as quota_service
 from ..service.context import make_context
 from .core.app_state import shown
 from .core.jobs import JobCancelled
-from .core.services import (HOME_CHANNELS, HOME_LIMIT, INTERESTS, ON_DEMAND, BlogInfo, BoardData, ChannelRead, ConnectionsData, ConnectionsProvider, DraftRow, EntryInfo, HomeData, HomeProvider,
-                            ListRead, PurposeInfo, RecentRow, RecommendRow, ServiceFailure, Topic, UsageInfo)
+from .core.services import (HOME_CHANNELS, HOME_LIMIT, INTERESTS, ON_DEMAND, TERMS_PENDING, BlogInfo, BoardData, ChannelRead, ConnectionsData, ConnectionsProvider, DraftRow, EntryInfo, FieldInfo,
+                            HomeData, HomeProvider, ListRead, ProviderInfo, PurposeInfo, RecentRow, RecommendRow, ServiceFailure, Topic, UsageInfo)
 from .core.text import T
 from .core.timed import call_within
 
@@ -140,8 +140,9 @@ class ServiceHomeProvider(HomeProvider):
         self._item_timeout, self._budget, self._monotonic = recent_timeout, recent_budget, monotonic or time.monotonic
 
     def connections_provider(self):
-        """설정 화면의 짝 공급자 — 같은 데이터 폴더를 읽는다(홈과 같은 `--data-dir`)."""
-        return ServiceConnectionsProvider(self._data_dir, context_factory=self._factory)
+        """설정 화면의 짝 공급자(P4f) — 같은 데이터 폴더를 쓴다(홈과 같은 `--data-dir`). 읽기는 그대로 읽기뿐이고, 키 등록·삭제·상태·별칭·순서·시험은 사용자가 단추를 눌렀을 때만 불린다(`ui/keys_adapter.py` — 이 파일은 쓰는 호출이 없다)."""
+        from .keys_adapter import ServiceKeysProvider
+        return ServiceKeysProvider(self._data_dir, context_factory=self._factory)
 
     def seeds_provider(self):
         """Seed 관리 화면의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(승인·바꾸기·저장·등록·불러오기)는 사용자가 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
@@ -343,6 +344,10 @@ class ServiceConnectionsProvider(ConnectionsProvider):
         self._registry = registry                                                     # 시험이 호출 코드가 있는 용도가 든 가짜 레지스트리를 끼운다(`None` 이면 실제 서비스 표)
         self._keystore = keystore                                                     # 시험이 가짜 보관소를 끼운다(`None` 이면 컨텍스트의 보관소)
 
+    def _can_test(self, spec):
+        """연결 시험을 할 수 있는 용도인가 — 읽기 전용 공급자는 늘 거짓이다(쓰는 공급자가 이 자리를 채운다: `ui/keys_adapter.py`)."""
+        return False
+
     def _open_keystore(self, ctx, partial):
         if self._keystore is not None:
             return self._keystore
@@ -378,14 +383,16 @@ class ServiceConnectionsProvider(ConnectionsProvider):
                     found = connection_service.secret_present(ctx, entry, store)        # True·False, 못 물었으면 None — 값은 꺼내지 않는다
                     if found is None and store is not None and "keystore" not in partial:
                         partial.append("keystore")
-                    entries.append(EntryInfo(entry.name, entry.state, found))
+                    entries.append(EntryInfo(entry.name, entry.state, found, entry.entry_id, entry.provider, entry.last_ok_at, entry.check_result, entry.order))        # 행동의 대상·표시용 값뿐(비밀 칸에서 만든 값 없음)
                 status = guard.purpose_status(key, keystore=store) if spec.takes_keys and not spec.legacy_to else ""
+                providers = tuple(ProviderInfo(item.key, item.label, spec.entry_cap(item.key), item.second_key_needs_terms) for item in spec.providers) if spec.takes_keys else ()
+                fields = tuple(FieldInfo(item.name, item.label, item.min_len) for item in spec.fields)
                 infos.append(PurposeInfo(key, spec.label, spec.implemented, spec.takes_keys, spec.max_entries, spec.providers[0].rotation, bool(spec.legacy_to), status, tuple(entries),
-                                         usage_of(spec, usages.get(key)), key in ON_DEMAND))
+                                         usage_of(spec, usages.get(key)), key in ON_DEMAND, providers, fields, self._can_test(spec), "terms" if key in TERMS_PENDING else ""))
         except AppError as error:
             raise settings_failure(error) from None
         if cancelled():
             raise JobCancelled()
         if "usage" not in partial and any(info.usage is not None and not info.usage.readable for info in infos):      # 사용량 기록을 못 읽은 용도가 있다 — 그 줄은 숫자 대신 '확인할 수 없어요' 이고 화면 위에 안내가 붙는다
             partial.append("usage")
-        return ConnectionsData(purposes=tuple(infos), sample=False, partial=tuple(partial))
+        return ConnectionsData(purposes=tuple(infos), sample=False, partial=tuple(partial), store_ready=store is not None)

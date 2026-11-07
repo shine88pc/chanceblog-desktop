@@ -339,11 +339,11 @@ class OneKeyTest(Base):
             self.assertIn(phrase, error.detail)
 
     def test_another_purpose_keeps_three_entries_and_the_old_limit_message_without_the_extra_detail(self):
-        """다른 용도는 지금처럼 3개까지이고 4번째 거절 문구에 '1개' 설명(세부)이 붙지 않는다."""
+        """3개까지 두는 제공자는 4번째 거절 문구에 '1개' 설명(세부)이 붙지 않는다. 의도적 갱신(P4f, D-250): 이미지 공급자(Unsplash)는 운영자 정책 표로 1개가 되어, 3개를 두는 AI 보조(Gemini)로 같은 일을 본다."""
         for number in range(3):
-            c.add_entry(self.ctx, "image_provider", name=f"키{number}", fields={"access_key": f"imgkey{number}" + "Q" * 20}, terms_ack=True)
-        error = ss.code_of(c.add_entry, self.ctx, "image_provider", name="넷째", fields={"access_key": "imgkey9" + "Q" * 20}, terms_ack=True)
-        self.assertEqual((error.code, error.slots, error.detail), ("KEY_ENTRY_LIMIT", {"용도": c.PURPOSES["image_provider"].label, "개수": "3"}, ""))
+            c.add_entry(self.ctx, "ai_assist", name=f"키{number}", fields={"key": f"aikey{number}" + "Q" * 20}, terms_ack=True)
+        error = ss.code_of(c.add_entry, self.ctx, "ai_assist", name="넷째", fields={"key": "aikey9" + "Q" * 20}, terms_ack=True)
+        self.assertEqual((error.code, error.slots, error.detail), ("KEY_ENTRY_LIMIT", {"용도": c.PURPOSES["ai_assist"].label, "개수": "3"}, ""))
         self.assertIn("「3」개까지만", error.rendered().message)
 
     def test_after_removing_the_first_one_a_new_key_can_be_added(self):
@@ -380,16 +380,16 @@ class OneKeyTest(Base):
 
     def test_other_purposes_still_ask_for_the_terms_before_the_key_is_read_and_before_the_limit(self):
         """다른 용도의 검사 순서는 그대로다: 둘째 키는 약관 확인이 먼저(키를 읽기 전에), 이미 3개여도 확인 표시가 없으면 약관 안내가 먼저이고 표시가 있으면 한도 거절이다."""
-        c.add_entry(self.ctx, "image_provider", name="가", fields={"access_key": "imgkeyA0" + "Q" * 20})
-        code, out, err, source = self.run_keys("add", "image_provider", "--name", "나", "--stdin", stdin=json.dumps({"access_key": "imgkeyB0" + "Q" * 20}))
+        c.add_entry(self.ctx, "ai_assist", name="가", fields={"key": "aikeyA0" + "Q" * 20})                    # 의도적 갱신(P4f, D-250): 3개를 두는 AI 보조(Gemini)로 — 이미지 공급자(Unsplash)는 이제 1개라 둘째 키를 키 읽기 전에 거절한다
+        code, out, err, source = self.run_keys("add", "ai_assist", "--name", "나", "--stdin", stdin=json.dumps({"key": "aikeyB0" + "Q" * 20}))
         self.assertEqual((code, out, source.reads), (1, "", 0))
         self.assertIn("코드: KEY_FAILOVER_TERMS_REQUIRED", err)
         for number in (1, 2):
-            c.add_entry(self.ctx, "image_provider", name=f"추가{number}", fields={"access_key": f"imgkeyC{number}" + "Q" * 20}, terms_ack=True)
-        code, out, err, source = self.run_keys("add", "image_provider", "--name", "넷째", "--stdin", stdin=json.dumps({"access_key": "imgkeyD0" + "Q" * 20}))
+            c.add_entry(self.ctx, "ai_assist", name=f"추가{number}", fields={"key": f"aikeyC{number}" + "Q" * 20}, terms_ack=True)
+        code, out, err, source = self.run_keys("add", "ai_assist", "--name", "넷째", "--stdin", stdin=json.dumps({"key": "aikeyD0" + "Q" * 20}))
         self.assertEqual((code, source.reads), (1, 0))
         self.assertIn("코드: KEY_FAILOVER_TERMS_REQUIRED", err)
-        code, out, err, source = self.run_keys("add", "image_provider", "--name", "넷째", "--stdin", "--i-understand-terms", stdin=json.dumps({"access_key": "imgkeyD0" + "Q" * 20}))
+        code, out, err, source = self.run_keys("add", "ai_assist", "--name", "넷째", "--stdin", "--i-understand-terms", stdin=json.dumps({"key": "aikeyD0" + "Q" * 20}))
         self.assertEqual(code, 1)
         self.assertIn("코드: KEY_ENTRY_LIMIT", err)
         self.assertEqual(len(self.store.list_refs()), 3)

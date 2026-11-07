@@ -117,7 +117,13 @@ def implemented_registry():
 
 
 class Base(unittest.TestCase):
+    OLD_KEY_LIMITS = False         # 의도적 갱신(P4f, D-250): 참이면 이 시험 동안만 모든 제공자의 상한을 P4f 이전처럼 3 으로 되돌린다 — 실제 표의 값(Unsplash 1 …)은 `test_service_key_limits` 가 못박는다
+
     def setUp(self):
+        if self.OLD_KEY_LIMITS:
+            patcher = ss.old_key_limits()
+            patcher.start()
+            self.addCleanup(patcher.stop)
         tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
@@ -270,6 +276,8 @@ class RegistryTest(Base):
 
 
 class AddEntryTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def test_the_first_key_puts_the_value_in_the_keystore_and_only_metadata_in_the_file(self):
         fields = values("image_provider")
         result = c.add_entry(self.ctx, "image_provider", name="기본", fields=fields, project="내 앱", new_id=key_ids(ID1))
@@ -323,7 +331,8 @@ class AddEntryTest(Base):
         same = c.add_entry(self.ctx, "image_provider", name="예비", fields=values("image_provider", "b"), project="내 앱", terms_ack=True)
         self.assertEqual(same.notes, (SAME_BUCKET_NOTE, c.TERMS_NOTICE))
         other_provider = c.add_entry(self.ctx, "image_provider", name="핵시", fields=values("image_provider", "c"), project="내 앱", provider="pexels", terms_ack=True)
-        self.assertEqual(other_provider.notes, (c.TERMS_NOTICE,))
+        self.assertEqual(other_provider.notes, ())                  # 의도적 갱신(P4f, D-250): 둘째 키 약관 안내는 '같은 서비스(제공자)의 둘째 키' 에만 — 다른 제공자(Pexels)의 첫 키에는 없다(운영자 정책 표)
+        self.assertEqual(other_provider.entry.terms_ack_at, "")
         self.assertEqual((other_provider.entry.provider, other_provider.entry.bucket), ("pexels", "p-내 앱"))
 
     def test_the_bucket_of_an_image_key_is_the_project_name_folded_and_unspecified_ones_share_one_bucket(self):
@@ -667,6 +676,8 @@ class NoEchoGenericTest(NoEchoTest):
 
 
 class FailureHandlingTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def test_a_keystore_that_cannot_write_leaves_no_metadata_behind(self):
         store = FlakyStore()
         store.fail_write = True
@@ -720,6 +731,8 @@ def write_raw(ctx, payload):
 
 
 class FileFormatTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def setUp(self):
         super().setUp()
         self.add(name="기본", project="프로젝트마커", new_id=key_ids(ID1))
@@ -857,6 +870,8 @@ class FileFormatTest(Base):
 
 
 class ListAndStatusTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def test_listing_reads_only_and_never_creates_the_data_folder_or_a_lock(self):
         ctx = self.new_ctx()
         self.assertEqual(c.list_entries(ctx, keystore=ctx.keystore), [])
@@ -985,6 +1000,8 @@ class ListAndStatusTest(Base):
 
 
 class ResolveAndRemoveTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     N1, N2 = "1a2b3c4d" + "0" * 24, "1a2b9999" + "0" * 24
     I1, I2, I3 = "bbbb0001" + "0" * 24, "bbbb0002" + "0" * 24, "cccc0003" + "0" * 24
     FIRST = "naver_searchad"            # 순번이 이미지 공급자보다 앞서고(레지스트리 둘째) 항목을 3개까지 두는 용도 — 첫 용도 NAVER API HUB 는 키를 하나만 두고 옛 `naver_openapi` 는 맨 뒤라 새 항목을 받지 않는다
@@ -1109,6 +1126,8 @@ class ResolveAndRemoveTest(Base):
 
 
 class ChangeTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def setUp(self):
         super().setUp()
         self.add(name="기본", new_id=key_ids(ID1))
@@ -1347,6 +1366,8 @@ class TestEntryTest(Base):
 
 
 class LockTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def lock_path(self):
         return self.ctx.workspace.locks_dir / "connections.lock"
 
@@ -1427,6 +1448,8 @@ class LockTest(Base):
 
 
 class DiagnosticsTest(Base):
+    OLD_KEY_LIMITS = True          # 의도적 갱신(P4f, D-250): 항목이 여럿인 상태를 만든다
+
     def test_the_summary_has_only_counts_and_no_name_id_project_tail_or_value(self):
         fields = values("image_provider")
         a = c.add_entry(self.ctx, "image_provider", name="비밀이름", fields=fields, project="비밀프로젝트", new_id=key_ids(ID1)).entry

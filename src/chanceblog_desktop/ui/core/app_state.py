@@ -17,6 +17,7 @@ from .blogs_view import BlogsController
 from .seeds import FakeSeedsProvider
 from .seeds_view import SeedsController
 from .jobs import JobFailure, JobRunner
+from .keys_view import KeysController
 from .notify import ToastPolicy
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
 from .text import NO_DATA, T, fmt_demand, fmt_docs
@@ -149,6 +150,8 @@ class AppState:
         paired_seeds = getattr(self.provider, "seeds_provider", None)
         self.seeds_provider = seeds if seeds is not None else (paired_seeds() if paired_seeds else FakeSeedsProvider())
         self.seeds = SeedsController(self.seeds_provider, self.runner)
+        # 키 연결(P4f) — 설정 화면의 연결 카드에 키 행동을 더한다. 쓰는 공급자(`KeysWriter`)일 때만 켜지고 아니면 카드는 읽기 전용 그대로다. 비밀이 아닌 상태만 들고 있다(키 글은 입력 칸에서 `SecretBox` 로만 간다)
+        self.keys = KeysController(self.conn_provider, self.runner, lambda: self.conn_data)
 
     # ---- 메뉴 ----
     def nav(self, key):
@@ -290,6 +293,7 @@ class AppState:
     def apply_connections(self, data, when=None):
         """읽은 연결 정보를 받아 상태를 정한다(화면 스레드에서 부른다). 처음 받을 때 처음 펼칠 묶음(문제가 있는 첫 묶음, 없으면 '데이터')을 정하고, 그 뒤에는 사용자가 펴고 접은 대로 둔다."""
         self.conn_data, self.conn_failure, self.conn_loaded_at = data, None, when
+        self.keys.reloading = False                                  # 쓴 뒤의 새 값을 받았다 — 키 단추가 다시 켜진다
         self.conn_state = self._conn_state_for(data)
         if self.conn_open is None:
             self.conn_open = {sv.default_open(data.purposes)}
@@ -297,15 +301,18 @@ class AppState:
     def apply_conn_failure(self, failure, when=None):
         """읽기가 실패했다 — 이전에 보이던 정보는 지우지 않는다. 상태에는 **비밀 모양을 가린 글**만 남긴다."""
         self.conn_failure, self.conn_failed_at = clean_failure(failure), when
+        self.keys.reloading = False
         self.conn_state = "error"
 
     def apply_conn_unexpected(self, error, when=None):
         """화면 스레드의 슬롯 안에서 예상하지 못한 예외가 났다 — 받아 둔 값을 버리고 오류 상태로(쉬운 문장 + 예외 이름만 진단 정보에)."""
         self.conn_data = None
         self.conn_failure, self.conn_failed_at = clean_failure(JobFailure(T["job_failed"], code=type(error).__name__)), when
+        self.keys.reloading = False
         self.conn_state = "error"
 
     def apply_conn_cancelled(self):
+        self.keys.reloading = False
         self.conn_state = self._conn_state_for(self.conn_data)
 
     def set_group_open(self, key, opened):
@@ -323,7 +330,7 @@ class AppState:
     def settings_view(self):
         """설정 화면 뷰모델 — 만드는 일은 `settings_view.py`(순수)가 한다. 오류 상태의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         diag = diagnostic_text(self.conn_failure, self.conn_failed_at) if self.conn_failure else ""
-        return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open, version=self.version)
+        return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open, version=self.version, keys=self.keys)
 
     def seeds_view(self):
         """Seed 관리 화면 뷰모델 — 만드는 일은 `SeedsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""

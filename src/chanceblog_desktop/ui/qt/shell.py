@@ -15,11 +15,13 @@ from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
 from ..core.blogs_view import WRITE_KEY as BLOGS_WRITE_KEY
 from ..core.seeds_view import WRITE_KEY as SEEDS_WRITE_KEY
+from ..core.keys_view import WRITE_KEY as KEYS_WRITE_KEY
 from ..core.clock import SystemClock
 from ..core.text import T
 from ..core.version import read_version
 from . import components as UI
 from . import screens as S
+from .key_parts import KeyDialog, RenameForm
 from .sidebar import Sidebar
 from .topbar import TopBar
 from .workers import JobBridge
@@ -36,6 +38,16 @@ def qt_clipboard_set(text):
     return True
 
 
+def qt_clipboard_wipe(texts):
+    """클립보드의 글이 `texts` 중 하나와 (줄바꿈·앞뒤 공백을 뺀 뒤) 같으면 클립보드를 비운다 → 비웠으면 True. **붙여 넣은 키가 클립보드에 그대로 남지 않게** 하려는 것이다 — 다른 글(사용자가 따로 복사한 것)은 건드리지 않고 앱이 클립보드에 글을 넣는 일은 없다."""
+    clipboard = QGuiApplication.clipboard()
+    current = "".join(clipboard.text().splitlines()).strip()
+    if current and any(current == "".join(text.splitlines()).strip() for text in texts):
+        clipboard.clear()
+        return True
+    return False
+
+
 def qt_file_picker(parent, title, filter_text):
     """이미지 파일 하나를 고르는 윈도 대화상자 — 고른 파일의 **위치**(고르지 않으면 빈 글). 파일을 읽거나 복사하지 않는다(시험은 이 대화상자 대신 가짜 선택기를 넣는다)."""
     path, _selected = QFileDialog.getOpenFileName(parent, title, "", filter_text)
@@ -43,7 +55,7 @@ def qt_file_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
@@ -53,6 +65,7 @@ class AppShell(QMainWindow):
         self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
         self._file_picker = file_picker or qt_file_picker                                 # 이미지 위치를 고르는 대화상자(시험·사진은 가짜 선택기를 주입한다)
+        self._clipboard_wipe = clipboard_wipe or qt_clipboard_wipe                        # 붙여 넣은 키가 클립보드에 남지 않게 비우는 함수(시험은 가짜를 주입한다)
         self.setWindowTitle(T["window_title"])
         root = QWidget()
         root.setObjectName("root")
@@ -80,6 +93,8 @@ class AppShell(QMainWindow):
         self.refresh_button = self.cancel_button = self.drawer_close = None
         self._dialog_return = self._drawer_return = None
         self._dialog_on_cancel = None                                                   # 대화상자를 확인 없이 닫을 때(취소·Esc) 부를 함수 — 일괄 변경·제안 파일의 '확인창을 보였다' 표시를 거둔다
+        self._key_click = (None, "")                                                     # 마지막으로 누른 키 행 단추(항목 번호, 행동) — 쓰기가 끝나 다시 그린 뒤 포커스를 돌려줄 곳
+        self._key_focus_wanted = None                                                    # 쓰기가 끝났고 새 값을 받으면 포커스를 돌려줘야 한다: (일 종류, 용도, 누른 단추)
         self._outside_focus = {}
         self._cancel_released = False                                                   # 취소를 눌러 화면을 먼저 풀고 안내했다 — 돌고 있던 일이 나중에 끝나며 보낼 신호 하나를 무시하려고(그 일의 끝 신호가 오면 꺼진다)
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.escape)
@@ -107,6 +122,10 @@ class AppShell(QMainWindow):
         self.seeds_write_bridge.loaded.connect(self._on_seeds_written)
         self.seeds_write_bridge.failed.connect(self._on_seeds_write_failed)
         self.seeds_write_bridge.cancelled.connect(self._on_seeds_write_cancelled)
+        self.keys_bridge = JobBridge(self)                                              # 키 등록·삭제·상태·별칭·순서·시험(P4f)의 다리 — 사용자가 단추를 눌렀을 때만 시작한다
+        self.keys_bridge.loaded.connect(self._on_keys_written)
+        self.keys_bridge.failed.connect(self._on_keys_failed)
+        self.keys_bridge.cancelled.connect(self._on_keys_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -405,7 +424,10 @@ class AppShell(QMainWindow):
         return self.state.start_conn_load(**self.conn_bridge.callbacks()) is not None
 
     def reload_connections(self, *_):
-        """설정 화면의 연결 정보를 다시 읽는다(작업 스레드 — 보관소 읽기도 거기서). 이미 읽는 중이면(중복 클릭) 안내만 한다."""
+        """설정 화면의 연결 정보를 다시 읽는다(작업 스레드 — 보관소 읽기도 거기서). 이미 읽는 중이면(중복 클릭) 안내만 한다. 키를 쓰는 중에는 읽지 않는다(쓰는 도중의 파일을 읽어 낡은 값이 남지 않게)."""
+        if self.state.keys.busy:
+            self.notify(T["keys_busy"])
+            return False
         job = self.state.start_conn_load(**self.conn_bridge.callbacks())
         if job is None:
             self.notify(T["load_busy"])
@@ -433,15 +455,21 @@ class AppShell(QMainWindow):
 
     def _show_conn_loaded(self, data):
         self.state.apply_connections(data, self.clock.now())
+        self._reload_after_keys()                                                     # 쓰기가 끝났을 때 이미 돌고 있던 읽기였다면 그 읽기는 쓰기 전 값일 수 있어 한 번 더 읽는다
         self._render_connections()
+        self._give_key_focus()
 
     def _show_conn_failed(self, failure):
         self.state.apply_conn_failure(failure, self.clock.now())
+        self._reload_after_keys()
         self._render_connections()
+        self._give_key_focus()
 
     def _show_conn_cancelled(self):
         self.state.apply_conn_cancelled()
+        self._reload_after_keys()
         self._render_connections()
+        self._give_key_focus()
 
     def _recover_conn(self, error):
         """설정 화면의 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
@@ -868,8 +896,225 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    # ---- 키 연결(P4f) — 설정 화면의 연결 카드. 읽기는 위의 연결 읽기 그대로, 쓰기는 사용자가 단추를 눌렀을 때만 시작하는 작업(작업 스레드)이다 ----
+    def wipe_clipboard(self, texts):
+        """붙여 넣은 키와 같은 글이 클립보드에 있으면 비운다(없으면 아무것도 안 한다). 클립보드를 못 다뤄도 앱은 계속된다."""
+        try:
+            return bool(self._clipboard_wipe(texts))
+        except Exception:                                                         # 클립보드를 못 쓰는 환경 — 입력한 글은 오류에 담지 않는다
+            return False
+
+    def _keys(self):
+        return self.state.keys
+
+    def _after_key_start(self, status, detail=None):
+        """쓰기를 시작한 결과 — 시작했으면 쓰는 동안 단추가 꺼진 모습으로 다시 그린다. 이미 쓰는 중이면 안내만(두 번째 클릭은 아무 일도 하지 않는다). 바뀐 것이 없으면 그 안내(위 띠)를 보인다."""
+        if status == "started":
+            self.render()
+        elif status == "busy":
+            self.notify(T["keys_busy"])
+        elif status == "nothing":
+            self.render()
+        else:
+            self.notify(T["keys_fail_other"])
+        return status
+
+    def key_register(self, purpose):
+        """'키 등록' — 대화상자를 연다(쓰는 중이거나 저장소를 못 쓰거나 자리가 없으면 까닭을 알리고 열지 않는다)."""
+        keys = self._keys()
+        draft = keys.open_register(purpose)
+        if draft is None:
+            info = keys.info(purpose)
+            register = keys.register_vm(info) if info is not None else None
+            self.notify(register["reason"] if register and register["reason"] else T["keys_fail_other"])
+            return None
+        self.show_key_dialog(draft)
+        return draft
+
+    def show_key_dialog(self, draft):
+        """키 등록 대화상자를 보인다 — 닫히거나 다른 대화상자로 바뀔 때 어느 길로든 입력 칸을 비우도록 정리 훅을 건다."""
+        form = KeyDialog(draft, self)
+        self.dialog.clear()
+        draft.submitted = False
+        self.dialog.cleanups.append(form.wipe)
+        self.dialog.cleanups.append(lambda: self._drop_draft(draft))                    # 저장 말고 어느 길로든 닫히면(Esc·X·취소·다른 대화상자) 초안도 버린다 — 확인 단계에서 닫았다가 빈 칸으로 다시 열리지 않게
+        self.dialog.setAccessibleName(draft.vm()["a11y"])
+        self.dialog.layout_.addWidget(form)
+        form.show()                                                                      # 이미 열려 있는 대화상자의 안쪽을 바꿔 끼울 때 새 부품은 다음 차례에야 보여서 높이 계산에서 빠진다 — 바로 보인다고 알려 둔다
+        self._dialog_return = QApplication.focusWidget()
+        self.dialog.present()
+        self._trap_focus(True, self.dialog)
+        form.focus_start()
+        self.key_form = form
+        return form
+
+    def _drop_draft(self, draft):
+        keys = self._keys()
+        if keys.draft is draft and not draft.submitted:
+            keys.close_register()
+
+    def key_add(self, draft, box):
+        """저장 — 키는 통(`SecretBox`)에 담겨 컨트롤러로 간다. 시작하지 못하면(문제·쓰는 중) 통은 비워지고 문제가 있으면 대화상자를 다시 열어 칸 옆에 보인다(별칭은 남고 키는 다시 입력)."""
+        status, detail = self._keys().start_add(draft.purpose, draft.provider, draft.alias, box, draft.terms, **self.keys_bridge.callbacks())
+        if status == "invalid":
+            draft.step = "input"
+            self.show_key_dialog(draft)
+            return status
+        if status != "started":
+            self._keys().close_register()                                             # 시작하지 못했다(쓰는 중·쓸 수 없음) — 대화상자는 닫혔으니 초안도 버린다
+        return self._after_key_start(status, detail)
+
+    def key_cancel(self):
+        """등록 취소·Esc·닫기 — 입력 칸을 비우고(정리 훅) 초안을 버린다."""
+        self.close_dialog()
+        self._keys().close_register()
+
+    def key_action(self, purpose, ref, action):
+        """행 단추 — 삭제·별칭은 먼저 대화상자, 나머지는 바로 쓰기 작업을 시작한다."""
+        keys = self._keys()
+        callbacks = self.keys_bridge.callbacks()
+        self._key_click = (ref, action)                                           # 쓰기가 끝나 다시 그린 뒤 포커스를 돌려줄 곳
+        if action == "delete":
+            return self.key_delete(purpose, ref)
+        if action == "rename":
+            return self.key_rename_dialog(purpose, ref)
+        if action == "test":
+            return self._after_key_start(*keys.start_test(purpose, ref, **callbacks))
+        if action in ("up", "down"):
+            return self._after_key_start(*keys.start_move(purpose, ref, -1 if action == "up" else 1, **callbacks))
+        if action.startswith("state:"):
+            return self._after_key_start(*keys.start_state(purpose, ref, action.split(":", 1)[1], **callbacks))
+        return None
+
+    def key_delete(self, purpose, ref):
+        """삭제 — 확인창이 먼저다(무엇이 지워지는지·되돌릴 수 없다는 것, 처음 포커스는 취소). '지우기' 를 눌러야 쓰기가 시작된다."""
+        keys = self._keys()
+        info, entry = keys.info(purpose), keys.entry(purpose, ref)
+        if info is None or entry is None or keys.busy:
+            self.notify(T["keys_busy"] if keys.busy else T["keys_fail_notfound"])
+            return None
+        dialog = keys.delete_dialog(info, entry)
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=lambda: self.key_delete_confirmed(purpose, ref), danger=True, safe_focus=True)
+        return dialog
+
+    def key_delete_confirmed(self, purpose, ref):
+        return self._after_key_start(*self._keys().start_remove(purpose, ref, **self.keys_bridge.callbacks()))
+
+    def key_rename_dialog(self, purpose, ref):
+        keys = self._keys()
+        info, entry = keys.info(purpose), keys.entry(purpose, ref)
+        if info is None or entry is None or keys.busy:
+            self.notify(T["keys_busy"] if keys.busy else T["keys_fail_notfound"])
+            return None
+        form = RenameForm(keys.rename_dialog(info, entry), purpose, ref, self)
+        self.dialog.clear()
+        self.dialog.setAccessibleName(T["keys_ren_title"])
+        self.dialog.layout_.addWidget(form)
+        form.show()
+        self._dialog_return = QApplication.focusWidget()
+        self.dialog.present()
+        self._trap_focus(True, self.dialog)
+        form.edit.setFocus(Qt.OtherFocusReason)
+        self.key_rename_form = form
+        return form
+
+    def key_rename(self, purpose, ref, name):
+        """별칭 바꾸기 '바꾸기' — 문제가 있으면 대화상자에 남아 칸 옆에 문장이 보이고(입력은 남는다), 아니면 대화상자를 닫고 쓰기를 시작한다."""
+        status, detail = self._keys().start_rename(purpose, ref, name, **self.keys_bridge.callbacks())
+        if status == "invalid":
+            return status, detail
+        self.close_dialog()
+        self._after_key_start(status, detail)
+        return status, detail
+
+    def _on_keys_written(self, outcome):
+        self._guarded(self._show_keys_written, outcome, recover=self._recover_keys)
+
+    def _on_keys_failed(self, failure):
+        self._guarded(self._show_keys_failed, failure, recover=self._recover_keys)
+
+    def _on_keys_cancelled(self):
+        self._guarded(self._show_keys_failed, None, recover=self._recover_keys)
+
+    def _reload_after_keys(self):
+        """키 쓰기가 끝나 파일이 바뀌었다 — 연결 정보를 다시 읽는다(읽기 작업, 작업 스레드). 이미 읽는 중이면 그 읽기가 끝난 뒤의 값이 새 값이라 안내 없이 둔다."""
+        keys = self._keys()
+        if not keys.reload_wanted:
+            return
+        if self.state.conn_loading:                                                   # 이미 읽는 중이다 — 쓰기 전에 시작했을 수 있다: 그 읽기가 끝난 뒤(`_show_conn_*`) 한 번 더 읽는다
+            keys.reloading = True
+            return
+        keys.reload_wanted = False
+        job = self.state.start_conn_load(**self.conn_bridge.callbacks())          # 시작하지 못하면 단추를 꺼 두지 않는다(켜 둘 새 값이 영영 안 온다)
+        keys.reloading = job is not None                                             # 새 값을 받을 때까지 단추는 꺼져 있다(`apply_connections` 가 켠다)
+
+    def _want_key_focus(self):
+        work = self._keys().pending or {}
+        self._key_focus_wanted = (work.get("kind", ""), work.get("purpose", ""), self._key_click)
+
+    def _show_keys_written(self, outcome):
+        keys = self._keys()
+        self._want_key_focus()
+        keys.apply_write_ok(outcome)
+        self._reload_after_keys()
+        if self.state.page in ("settings", "home"):
+            self.render()
+        self._give_key_focus()                                                        # 새 값을 읽는 중이면 아직 안 된다 — 받은 뒤(`_show_conn_loaded`)에 돌려준다
+        keys.focus_after = None
+
+    def _give_key_focus(self):
+        """쓰기가 끝나고 새 값으로 다시 그린 뒤 포커스를 돌려준다 — 행 단추는 방금 누른 단추(없어졌거나 꺼졌으면 반대쪽·다른 단추), 등록·삭제는 그 카드의 '키 등록'(못 누르면 아무 데도 두지 않는다).
+        아직 쓰는 중이거나 새 값을 읽는 중이면 나중에, 다른 대화상자가 열려 있거나 설정 화면이 아니면 하지 않는다(대화상자·다른 화면의 포커스를 뺏지 않는다)."""
+        wanted = self._key_focus_wanted
+        if wanted is None or self._keys().busy:
+            return
+        self._key_focus_wanted = None
+        if self.state.page != "settings" or self.dialog.is_open:
+            return
+        kind, purpose, (ref, action) = wanted
+        if kind in ("add", "remove") or not ref:
+            self._restore_focus(f"key-register:{purpose}")
+            return
+        candidates = {"up": ("up", "down"), "down": ("down", "up")}.get(action, (action, "test", "rename"))
+        for name in candidates:
+            for widget in self.centralWidget().findChildren(QWidget):
+                if widget.property("focus_key") == f"key:{ref}:{name}" and widget.isEnabled() and widget.isVisibleTo(self):
+                    widget.setFocus(Qt.OtherFocusReason)
+                    return
+
+    def _show_keys_failed(self, failure):
+        keys = self._keys()
+        work = (keys.pending or {}).get("kind", "")
+        self._want_key_focus()
+        kind = keys.apply_write_failed(failure)
+        draft = keys.draft if work == "add" else None                                  # 등록이 아닌 쓰기의 실패는 등록 대화상자와 상관없다
+        self._reload_after_keys()
+        if self.state.page in ("settings", "home"):
+            self.render()
+        if draft is not None and kind in ("invalid", "duplicate", "terms") and self.state.page == "settings":
+            self._key_focus_wanted = None
+            self.show_key_dialog(draft)                                               # 고칠 수 있는 입력 문제 — 별칭은 남고 키는 다시 입력, 문제는 칸 옆에
+        else:
+            self._give_key_focus()
+
+    def _recover_keys(self, error):
+        """키 쓰기 슬롯에서 예외가 났다 — 쉬운 문장만 알리고(예외 이름·내용은 화면에 없다) 화면은 그대로 둔다. 표준 오류에도 **예외 이름만** 남긴다(내용은 싣지 않는다 — 키 입력과 닿는 곳이라 어떤 글도 새지 않게)."""
+        report_unexpected(type(error), "")
+        self._key_focus_wanted = None
+        self._keys().apply_unexpected(error)
+        try:
+            if self.state.page in ("settings", "home"):
+                self.render()
+        except Exception:
+            self.notify(T["job_failed"])
+
     def closeEvent(self, event):
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
+        self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)
+        if self.state.keys.busy:                                                  # 키 쓰기도 중간에 끊을 수 없다 — 끝나기를 기다린다(보관소·파일 쓰기를 마치게)
+            job = self.state.runner.job(KEYS_WRITE_KEY)
+            if job is not None:
+                job.join(WRITE_CLOSE_WAIT)
         if self.state.blogs.busy:                                                 # 저장·복제·삭제는 중간에 끊을 수 없다 — 끝나기를 기다린다(파일은 이름 바꾸기 한 번이라 온전하지만 사본·잠금 정리까지 마치게)
             job = self.state.runner.job(BLOGS_WRITE_KEY)
             if job is not None:

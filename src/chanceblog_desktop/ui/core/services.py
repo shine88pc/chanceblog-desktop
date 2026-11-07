@@ -144,8 +144,9 @@ class HomeProvider:
 
     def connections_provider(self):
         """이 공급자와 짝인 설정 화면 공급자 — 홈 공급자를 고르면(`--sample`·`--data-dir`) 설정 화면도 같은 쪽을 읽는다(화면 진입점 `run(provider)` 의 모양을 그대로 두려는 연결).
-        따로 정하지 않은 공급자는 예시 데이터를 돌려준다(화면에 '예시 데이터' 표시가 붙어서 실제 값으로 오해하지 않는다)."""
-        return FakeConnectionsProvider()
+        따로 정하지 않은 공급자는 **메모리에서만 일하는 예시**(`FakeKeysProvider` — 키를 등록·지워도 이 PC 에 아무것도 남지 않는다)를 돌려준다(화면에 '예시 데이터' 표시가 붙어서 실제 값으로 오해하지 않는다)."""
+        from .keys import FakeKeysProvider
+        return FakeKeysProvider()
 
     def seeds_provider(self):
         """이 공급자와 짝인 Seed 관리 화면 공급자 — 홈 공급자를 고르면(`--sample`·`--data-dir`) Seed 관리도 같은 쪽을 쓴다. 따로 정하지 않은 공급자는 **메모리에서만 일하는 예시**를 돌려준다(바꿔도 이 PC 에 아무것도 남지 않는다)."""
@@ -266,10 +267,15 @@ CONN_SCENARIOS = ("normal", "empty", "error", "partial", "offline") + CONN_STATU
 
 @dataclass(frozen=True)
 class EntryInfo:
-    """저장된 키 항목 하나 — **키 값은 없다**(끝 글자도 없다). 이름은 사용자가 붙인 글이라 화면이 가린 뒤 줄인다."""
+    """저장된 키 항목 하나 — **키 값은 없다**(끝 글자도 길이도 없다). 이름은 사용자가 붙인 글이라 화면이 가린 뒤 줄인다. 아래 다섯 칸(P4f)은 행동의 대상·표시용 값이고 모두 비밀이 아니다."""
     name: str
     state: str = "active"             # active · standby · off — 키 사용 설정(내부 이름: 화면은 문구표로만 말한다)
     key_found: object = None          # 보관소에 이 항목의 키가 있나(True·False) — 확인하지 못했으면 None
+    ref: str = ""                     # 항목 번호(난수) — 지우기·상태·순서 같은 행동이 가리키는 값일 뿐 화면 글에 나가지 않는다
+    provider: str = ""                # 제공자 이름(서비스 표의 `Provider.key` — 단일 제공자 용도는 '')
+    last_ok: str = ""                 # 마지막 성공 시각(UTC `YYYY-MM-DDTHH:MM:SSZ`) — 없으면 ''
+    check: str = ""                   # 마지막 확인 결과: '' · ok · auth_failed · error (오류 '코드'가 아니라 문구표로만 말한다)
+    order: int = 0                    # 사용 우선순위(용도 안에서 1부터) — 0 이면 모른다
 
 
 @dataclass(frozen=True)
@@ -287,6 +293,23 @@ class UsageInfo:
 
 
 @dataclass(frozen=True)
+class ProviderInfo:
+    """용도의 제공자 하나(P4f) — 키를 더할 때 고르는 서비스. `cap` 은 그 제공자에 키를 더할 때의 상한(운영자 정책 표)이다."""
+    key: str                          # 서비스 표의 제공자 이름(단일 제공자 용도는 '')
+    label: str                        # 화면에 보이는 이름
+    cap: int = 1
+    needs_terms: bool = True          # 같은 제공자의 둘째 키부터 약관 확인이 필요한가
+
+
+@dataclass(frozen=True)
+class FieldInfo:
+    """키 입력 칸 하나(P4f) — 이름과 화면 이름뿐이다(값은 이 모양에 없다)."""
+    name: str
+    label: str
+    min_len: int = 0
+
+
+@dataclass(frozen=True)
 class PurposeInfo:
     """용도(키를 쓰는 서비스) 하나. `key` 는 묶음·설명 문장을 고르는 데만 쓰고 화면에는 나가지 않는다."""
     key: str
@@ -300,6 +323,10 @@ class PurposeInfo:
     entries: tuple = ()
     usage: object = None              # UsageInfo 또는 None(한도를 아직 모르는 용도)
     on_demand: bool = False           # 필요할 때만 보이는 용도(`ON_DEMAND`) — 키 항목이 있거나 실제로 연결돼 있을 때만 카드로 보인다
+    providers: tuple = ()             # ProviderInfo — 키를 더할 때 고르는 제공자들(P4f, 비어 있으면 키를 더하는 단추가 없다)
+    fields: tuple = ()                # FieldInfo — 키 입력 칸들(P4f)
+    can_test: bool = False            # 연결 시험을 할 수 있나 — 호출 코드가 있고 이용 약관 확인 전 용도가 아닐 때만(P4f)
+    test_blocked: str = ""            # 시험을 못 하는 까닭: '' · 'terms'(약관 확인 전이라 호출하지 않음) — 호출 코드가 없으면 '준비 중' 이 까닭이다
 
 
 @dataclass(frozen=True)
@@ -309,6 +336,7 @@ class ConnectionsData:
     fetched: str = ""                 # 마지막으로 읽은 때(사람이 읽는 글)
     offline: bool = False
     partial: tuple = field(default_factory=tuple)        # 못 읽은 것들: ("keystore",) · ("usage",)
+    store_ready: object = None        # 키 저장소(Windows 자격 증명 관리자)를 이 컴퓨터에서 쓸 수 있나(True·False, 모르면 None) — 거짓이면 키 등록·삭제·시험 단추가 꺼진다(P4f)
 
 
 class ConnectionsProvider:
@@ -329,6 +357,21 @@ _CONN_TABLE = (           # (열쇠, 이름, 호출 코드, 키를 받나, 항�
     ("github_repo", "GitHub 저장소", False, False, 3, "never", False),
     ("naver_openapi", "옛 항목 — 네이버 오픈 API(검색·데이터랩)", False, True, 3, "limited", True),
 )
+TERMS_PENDING = ("naver_apihub",)                                                                    # 이용 약관을 확인하기 전에는 **실제 호출을 하지 않는** 용도 — 연결 시험 단추도 실제 호출을 하지 않는다(서비스 표와 같다 — 시험이 견준다)
+_PROVIDER_TABLE = {       # 용도 → ((제공자 열쇠, 이름, 키를 더할 때 상한, 둘째 키 약관 확인), …) — 서비스 표(`connections.PURPOSES`)와 같은 값이다(시험이 둘을 견준다)
+    "naver_apihub": (("", "NAVER API HUB", 1, True),),
+    "naver_searchad": (("", "네이버 검색광고", 1, True),),
+    "image_provider": (("unsplash", "Unsplash", 1, True), ("pexels", "Pexels", 1, True), ("pixabay", "Pixabay", 1, True)),
+    "ai_assist": (("gemini", "Gemini", 3, True),),
+    "blogger": (("", "Google", 2, False),),
+}
+_FIELD_TABLE = {          # 용도 → ((칸 이름, 화면 이름, 최소 글자 수), …) — 서비스 표의 입력 칸과 같다(시험이 견준다)
+    "naver_apihub": (("client_id", "클라이언트 ID", 8), ("client_secret", "클라이언트 시크릿", 8)),
+    "naver_searchad": (("customer_id", "고객 ID", 3), ("access_license", "액세스 라이선스", 16), ("secret_key", "비밀 키", 16)),
+    "image_provider": (("access_key", "Access Key", 16),),
+    "ai_assist": (("key", "API 키", 16),),
+    "blogger": (("client_id", "클라이언트 ID", 20), ("client_secret", "클라이언트 시크릿", 8), ("refresh_token", "갱신용 인증 값", 20)),
+}
 _CONN_BASE = {            # 열쇠 → (연결 상태, 항목들, 한도 줄) — 'normal' 시나리오(다섯 가지 상태가 한 화면에 섞여 보인다)
     "naver_apihub": ("needs_check", (EntryInfo("예시 키 1", "active", True),), UsageInfo((("오늘", 12, 100), ("이번 달", 340, 27000)), True, 30000, fail_closed=True)),
     "naver_searchad": ("rate_limited", (EntryInfo("예시 키 A", "active", True), EntryInfo("예시 키 B", "standby", True)), UsageInfo(resume_text="오늘 18:00 이후 자동 재개")),
@@ -359,7 +402,12 @@ def sample_connections(scenario="normal"):
             status = "needs_check" if status == "connected" else status
             entries = tuple(replace(item, key_found=None) for item in entries)
             usage = UsageInfo(readable=False, fail_closed=True) if key == "naver_apihub" else usage
-        purposes.append(PurposeInfo(key, label, implemented, takes_keys, max_entries, rotation, False, status if takes_keys else "", entries, usage, key in ON_DEMAND))
+        providers = tuple(ProviderInfo(*row) for row in _PROVIDER_TABLE.get(key, ())) if takes_keys else ()
+        fields = tuple(FieldInfo(*row) for row in _FIELD_TABLE.get(key, ())) if takes_keys else ()
+        blocked = "terms" if key in TERMS_PENDING else ""
+        numbered = tuple(replace(item, ref=f"sample-{key}-{number}", provider=providers[0].key if providers else "", order=number) for number, item in enumerate(entries, start=1))      # 예시 항목도 행동의 대상이 되도록 번호·제공자·순서를 단다(키 값은 없다)
+        purposes.append(PurposeInfo(key, label, implemented, takes_keys, max_entries, rotation, False, status if takes_keys else "", numbered, usage, key in ON_DEMAND, providers, fields,
+                                    bool(implemented and takes_keys and not blocked), blocked))
     return tuple(purposes)
 
 
@@ -380,4 +428,4 @@ class FakeConnectionsProvider(ConnectionsProvider):
             raise ServiceFailure("연결 설정 파일을 열 수 없었어요. 파일은 고치거나 지우지 않았어요.", code="SAMPLE_CONNECTIONS_UNREADABLE")
         purposes = () if self.scenario == "empty" else sample_connections(self.scenario)
         return ConnectionsData(purposes=purposes, sample=True, fetched="오늘 09:12", offline=self.scenario == "offline",
-                               partial=("keystore", "usage") if self.scenario == "partial" else ())
+                               partial=("keystore", "usage") if self.scenario == "partial" else (), store_ready=self.scenario != "partial")

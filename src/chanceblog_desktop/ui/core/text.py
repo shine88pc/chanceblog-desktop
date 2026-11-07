@@ -132,8 +132,10 @@ T = {
 }
 
 from .blog_text import BLOG_T  # noqa: E402
+from .key_text import KEY_T  # noqa: E402
 
 T.update(BLOG_T)                                                     # 블로그 관리 화면(P4b)의 문구는 새 파일(`blog_text.py`)에 따로 두고 합친다
+T.update(KEY_T)                                                      # 키 연결(P4f)의 문구도 새 파일(`key_text.py`)에 따로 두고 합친다
 
 from .seed_text import SEED_T  # noqa: E402
 

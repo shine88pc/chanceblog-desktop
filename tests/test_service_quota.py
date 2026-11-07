@@ -207,6 +207,12 @@ class ClassifyTest(unittest.TestCase):
 
 
 class SwitchRulesTest(GuardCase):
+    def setUp(self):
+        patcher = ss.old_key_limits()                          # 의도적 갱신(P4f, D-250): 이 시험은 옛 파일처럼 이미지 공급자(Unsplash) 항목이 여럿인 상태에서 '어떤 오류에도 전환하지 않음' 을 본다 — 실제 표는 더할 때 하나만 받는다
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
+
     def arrange(self, layout):
         """layout: 'two' 서로 다른 앱 둘 · 'three' 셋 · 'same' 같은 앱 둘 · 'unsplash' 이미지 공급자 둘(서로 다른 앱)."""
         if layout == "two":

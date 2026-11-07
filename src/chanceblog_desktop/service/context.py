@@ -10,6 +10,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,9 @@ from ..core import vendor_dir
 from ..errors import AppError
 from ..publish import gitrepo
 
+SHARING_VIOLATIONS = (5, 32)                      # 윈도 `winerror` 5(접근 거부)·32(공유 위반) — 같은 파일을 다른 읽기가 잡고 있어 이름을 못 바꿀 때(`PermissionError`)
+REPLACE_RETRY_WAITS = (0.03, 0.06, 0.09, 0.12, 0.15)     # 이름 바꾸기가 위 오류로 막히면 첫 시도 뒤 다섯 번까지만 다시 한다(30ms 씩 늘려 합쳐 0.45초 — 시도는 모두 여섯 번). 다른 오류는 다시 하지 않는다
+_sleep = time.sleep                               # 시험이 기다림 없이 돌도록 바꿔 끼우는 자리
 APP_DIR_NAME = "ChanceblogDesktop"
 ENV_DATA_DIR = "CHANCEBLOG_DESKTOP_DATA"
 ENV_REPO = "CHANCEBLOG_LOCAL_REPO"
@@ -71,13 +75,21 @@ def _write_durably(temp, payload):
 
 
 def write_json(path, data):
-    """JSON 파일을 임시 파일에 쓰고 디스크에 내려보낸 뒤(`fsync`) 이름을 바꿔 넣는다 — 쓰다 멈추거나 전원이 나가도 옛 파일이 그대로 남고, 새 파일은 내용이 다 쓰인 것만 자리를 차지한다."""
+    """JSON 파일을 임시 파일에 쓰고 디스크에 내려보낸 뒤(`fsync`) 이름을 바꿔 넣는다 — 쓰다 멈추거나 전원이 나가도 옛 파일이 그대로 남고, 새 파일은 내용이 다 쓰인 것만 자리를 차지한다.
+    이름 바꾸기가 윈도 공유 위반(`PermissionError` 의 `winerror` 5·32)으로 막히면 짧게(합쳐 0.45초 안, 여섯 번 시도) 다시 하고, 그래도 안 되면 기존 오류를 그대로 낸다(다른 오류는 다시 하지 않는다)."""
     path = Path(path)
     temp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         _write_durably(temp, (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
-        os.replace(temp, path)
+        for wait in (*REPLACE_RETRY_WAITS, None):             # 키 저장 직후 화면이 연결 정보를 다시 읽는 사이 같은 프로세스의 읽기가 파일을 잡고 있으면 윈도에서 이름 바꾸기가 가끔 막힌다(P4b 검증 L4)
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError as error:
+                if wait is None or getattr(error, "winerror", None) not in SHARING_VIOLATIONS:
+                    raise                                       # 마지막 시도이거나 다른 이유면 아래 기존 오류 처리 그대로(임시 파일 정리·FILE_WRITE_FAILED)
+                _sleep(wait)
     except OSError as error:
         problem = _write_error(error, path)
         try:
