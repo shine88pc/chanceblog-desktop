@@ -48,13 +48,13 @@ class Sidebar(QFrame):
         self.setAccessibleName(T["nav_menu"])
         pad = K.FRAME["sidebar_pad"]
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(pad, K.SPACE["4"], pad, K.SPACE["4"])
+        layout.setContentsMargins(pad, K.SPACE["2"], pad, K.SPACE["2"])                  # 위아래 8 — 메뉴가 하나 늘어(블로그 관리, P4b D-210) 최소 창(900×560)에서도 사이드바가 들어가게 세로 여백을 줄였다(옛 16)
         layout.setSpacing(K.SPACE["1"])
         self.nav_buttons = {}                                                              # 실제로 열 수 있는 화면(홈·설정)만
         self.group_titles = {}                                                             # 묶음 이름 — 실제 메뉴가 있는 묶음만 있다
         for index, (group_key, label_key, items) in enumerate(nav_groups()):
             if index:
-                layout.addSpacing(K.SPACE["3"])
+                layout.addSpacing(K.SPACE["2"])                                                 # 묶음 사이 8(옛 12)
             title = UI.label(T[label_key], "micro")
             title.setContentsMargins(K.SPACE["3"], 0, 0, K.SPACE["1"])
             self.group_titles[group_key] = title
@@ -67,7 +67,7 @@ class Sidebar(QFrame):
                 self.nav_buttons[key] = button
         self.soon_list = self._soon_list()
         if self.soon_list is not None:
-            layout.addSpacing(K.SPACE["5"])
+            layout.addSpacing(K.SPACE["2"])                                                 # '다음 단계' 앞 8(옛 20)
             layout.addWidget(self.soon_list)
         layout.addStretch(1)
         layout.addWidget(self._brand(version_info))
@@ -100,7 +100,7 @@ class Sidebar(QFrame):
         card = QFrame()
         card.setObjectName("brandcard")
         inner = QVBoxLayout(card)
-        inner.setContentsMargins(K.SPACE["4"], K.SPACE["3"], K.SPACE["4"], K.SPACE["3"])
+        inner.setContentsMargins(K.SPACE["4"], K.SPACE["2"], K.SPACE["4"], K.SPACE["2"])
         inner.setSpacing(K.SPACE["1"])
         inner.addWidget(theme.IconWidget("sprout", theme.colors()["success"], 24), 0, Qt.AlignHCenter)
         name = UI.label(T["brand_version"], "caption", wrap=True)

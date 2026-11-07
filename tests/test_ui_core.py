@@ -603,15 +603,18 @@ class ServicesAndStateTest(unittest.TestCase):
 
     def test_the_menu_has_only_the_completed_screens_and_no_size_cap_any_more(self):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 '메뉴 6개 이하(`MAX_NAV`)·운영자 순서' 와 자리표시 화면(`page_view`)을 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — **완성된 화면만 실제 Navigation**(홈·설정)이고
-        메뉴는 화면이 완성될 때마다 늘어난다(D-155 ⑤ 개수 제한 없음). 그래서 개수 상한과 자리표시 화면은 없앴고, 새 규칙은 '메뉴의 열쇠 = 만들어진 화면의 열쇠'(아래 시험)다."""
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "설정"])
+        메뉴는 화면이 완성될 때마다 늘어난다(D-155 ⑤ 개수 제한 없음). 그래서 개수 상한과 자리표시 화면은 없앴고, 새 규칙은 '메뉴의 열쇠 = 만들어진 화면의 열쇠'(아래 시험)다.
+        의도적 갱신(P4b, D-210): **블로그 관리 화면이 완성돼 메뉴에 올랐다**(데이터·관리 묶음) — 메뉴는 홈·블로그 관리·설정 셋이고 '다음 단계' 목록에서는 빠졌다. 이 시험은 '완성된 화면만 연다' 는 규칙 그대로다."""
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "블로그 관리", "설정"])
         self.assertFalse(hasattr(app_state, "MAX_NAV"))
         state = load()
         self.assertFalse(state.nav("home"))                                           # 지금 화면은 다시 안 간다
-        for unfinished in ("topics", "draft", "history", "seed", "blogs", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다
+        for unfinished in ("topics", "draft", "history", "seed", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다(P4b: 'blogs' 는 이제 완성된 화면이라 열린다 — 아래)
             self.assertFalse(state.nav(unfinished), unfinished)
             self.assertEqual(state.page, "home", unfinished)
         self.assertFalse(hasattr(state, "page_view"))                                  # '아직 만들고 있어요' 자리표시 화면이 없다
+        self.assertTrue(state.nav("blogs"))
+        self.assertEqual(state.page, "blogs")
         self.assertTrue(state.nav("settings"))
         self.assertEqual(state.page, "settings")
 

@@ -1,7 +1,7 @@
 """Qt 화면(View) — 뷰모델(`ui/core/app_state.py` 가 만든 딕셔너리)을 공통 부품(`components.py`)으로 조립하기만 한다.
 목록을 거르거나 문구를 만들거나 어떤 상태인지 정하는 일은 하지 않고, Qt 기본 위젯(QPushButton·QLabel·QLineEdit …)을 직접 만들지도 않는다(시험이 지킨다). 눌림은 `shell`(AppShell)의 메서드로 넘긴다.
 폭이 바뀌면 배치를 다시 고른다 — 홈의 KPI 카드 4열→2열→1열·구역 두 칸 나란히→위아래(`part_rules.home_kpi_columns`·`home_section_columns`), 설정 화면의 용도 카드 2열→1열 — 가로 스크롤은 없다.
-화면은 홈(`home_screen` — KPI 넷·Naver A·B 추천·작성 중 초안·최근 발행·연결 상태 한 줄, 읽기만: UI-C1d)·설정(`settings_screen` — 접이식 다섯 묶음(용도 묶음 넷 + '정보')과 용도 카드, 읽기만) 둘이고(UI-C1a 에서 '아직 만들고 있어요' 자리표시 화면을 없앴다 — 완성된 화면만 연다), 어느 메뉴가 어느 화면인지는 맨 아래 `SCREEN_BUILDERS` 표(메뉴 → 화면 만드는 함수) 한 곳이 정한다.
+화면은 홈(`home_screen` — KPI 넷·Naver A·B 추천·작성 중 초안·최근 발행·연결 상태 한 줄, 읽기만: UI-C1d)·블로그 관리(`blog_screen.blogs_screen` — 슬롯 카드·폼, **이 앱에서 처음으로 저장·복제·삭제를 눌렀을 때만 파일에 쓴다**)·설정(`settings_screen` — 접이식 다섯 묶음(용도 묶음 넷 + '정보')과 용도 카드, 읽기만) 셋이고(UI-C1a 에서 '아직 만들고 있어요' 자리표시 화면을 없앴다 — 완성된 화면만 연다), 어느 메뉴가 어느 화면인지는 맨 아래 `SCREEN_BUILDERS` 표(메뉴 → 화면 만드는 함수) 한 곳이 정한다.
 """
 from __future__ import annotations
 
@@ -349,8 +349,13 @@ def _settings_builder(shell):
     return settings_screen(shell, shell.state.settings_view())
 
 
+def _blogs_builder(shell):
+    from .blog_screen import blogs_screen                                       # 늦게 가져온다 — 블로그 관리 화면 파일이 이 파일의 격자·머리 도우미를 쓴다(서로 가져오지 않게)
+    return blogs_screen(shell, shell.state.blogs_view())
+
+
 # 실제 메뉴마다 한 줄(`app_state.NAV` 와 같은 열쇠 — 시험이 지킨다). **완성된 화면만** 둔다 — 아직 만들지 않은 화면은 이 표에도 메뉴에도 없고(자리표시 화면을 없앴다), 화면이 완성되면 메뉴 한 줄과 이 표 한 줄을 같이 더한다.
-SCREEN_BUILDERS = {"home": _home_builder, "settings": _settings_builder}
+SCREEN_BUILDERS = {"home": _home_builder, "blogs": _blogs_builder, "settings": _settings_builder}
 
 
 # ---- 상세 서랍 ---------------------------------------------------------------------------------------------------------------------

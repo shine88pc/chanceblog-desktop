@@ -164,6 +164,11 @@ LAYOUT = {
     "kpi_min_col": 190,            # 홈 KPI 카드 한 칸의 최소 폭 — 본문 폭에 따라 4열 → 2열 → 1열(`part_rules.home_kpi_columns`)
     "section_min_col": 480,        # 홈 구역(추천 둘·작성 중 초안·최근 발행) 한 칸의 최소 폭 — 두 칸이 들어가면 나란히, 아니면 위아래로(`part_rules.home_section_columns`). 추천 줄이 점수 칸(링·구간 이름)과 채널 열쇠를 빼고도 제목 한두 줄을 담으려면 한 칸이 이만큼은 있어야 한다
     "posts_min_col": 400,          # 작성 중 초안·최근 발행(글 줄) 한 칸의 최소 폭 — 글 줄은 제목과 상태·시각뿐이라 추천 줄보다 좁아도 되어 한 단계 좁은 창까지 나란히 둔다(`part_rules.home_posts_columns`)
+    "blogs_beside_min": 780,       # 블로그 관리(P4b): 본문 폭이 이 이상일 때만 슬롯 목록을 폼 옆(왼쪽)에 둔다(아니면 폼 위) — 1366×768 노트북의 125%(논리 1093 → 본문 약 820)에서도 옆에 두어 아래 고정 행동 줄이 보이게 780
+    "blogs_list": 320,             # 블로그 관리: 옆에 둘 때 슬롯 목록의 폭
+    "form_scroll_min_h": 160,      # 블로그 관리: 폼 안쪽 스크롤 영역의 최소 높이(알림 줄이 붙은 1366×768 노트북의 125% — 논리 높이 614 — 에서도 아래 고정 행동 줄이 창 안에 들어가게 240→160. 남는 높이는 이 영역이 가져간다) — 아래 고정 행동 줄은 늘 보이고 칸들만 이 안에서 스크롤된다
+    "list_scroll_min_h": 200,      # 블로그 관리: 슬롯 목록 스크롤 영역의 최소 높이(슬롯 카드 다섯이 한 화면보다 길면 이 안에서 스크롤 — 페이지가 늘어나 저장 단추가 밀려나지 않게)
+    "list_stacked_h": 300,         # 블로그 관리: 폭이 좁아 목록이 폼 위로 올라왔을 때 목록 스크롤 영역의 최대 높이
 }
 # C-Type 새 틀 크기(§2·§14·§16) — 상단 앱 바·사이드바·서랍은 UI-C1a 부터 이 값을 쓴다(옛 `LAYOUT` 은 본문·대화상자·창 크기가 그대로 쓴다). 범위는 (최소, 최대).
 # **상세 창은 운영자 결정(2026-11-06 확인 요청 004, D-174)이 문서 값을 이긴다**: Qt **논리 폭** ≥ 1600 이면 고정 420~500(문서는 420~520)·카드 3열 / 1366~1599 이면 고정 400(문서는 400~440)·카드 2열 / 1366 미만이면 서랍·카드 2열.
@@ -192,6 +197,20 @@ TONES = {
     "purple": ("purple", "purple_100", "purple_text"), "orange": ("warning", "warning_100", "warning_text"),
     "red": ("danger", "danger_100", "danger_text"), "slate": ("text_secondary", "surface_2", "text_secondary"),
 }
+
+
+# 채널 색 프리셋(P4b — 운영자 확정 답변 2026-11-06 §5: 값은 운영자 문서 그대로이고 임의 색 입력은 없다). 채널 배지·프로필 카드 테두리·선택 상태에만 쓰고 앱 테마(밝은 파랑)는 그대로다.
+# **글자색으로 쓰지 않는다**: 프리셋 Primary 는 연한 바탕 위에서 대비가 4.70(따뜻한 생활 톤)·4.15(차분한 기술 톤)이고 Secondary·Accent 는 3.74 이하라 작은 글자 기준(4.5)을 못 넘는다 —
+# 그래서 배지 글자는 `text_strong`(대비 16 이상)이고 프리셋 색은 테두리·점·견본에만 쓴다(색만으로 구분하지 않는다 — 이름 글자가 늘 함께 있다). Primary 는 흰 바탕 대비 4.99·4.55 라 테두리(3 이상)로 충분하다.
+CHANNEL_PRESETS = {
+    "warm_lifestyle": {"primary": "#A85A44", "secondary": "#4F8B78", "accent": "#F2B38D", "surface": "#FFF7EE"},
+    "cool_technology": {"primary": "#2F6FED", "secondary": "#19B8C9", "accent": "#55DDE0", "surface": "#EEF5FF"},
+}
+
+
+def preset_colors(preset):
+    """색 프리셋 이름 → `{primary, secondary, accent, surface}`(없는 이름·None·빈 글은 None)."""
+    return CHANNEL_PRESETS.get(preset) if isinstance(preset, str) else None
 
 
 def palette(theme=DEFAULT_THEME, overrides=None):

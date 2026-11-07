@@ -154,6 +154,14 @@ class ActionBar(QFrame):
                 with_tooltip(button, reason)
                 button.setAccessibleDescription(reason)
 
+    def set_enabled(self, key, enabled, reason=""):
+        """행동 하나를 켜거나 끈다(화면을 다시 그리지 않고 — 폼을 고치는 동안 저장 단추를 켜고 끌 때). 끌 때는 이유를, 켤 때는 `reason`(있으면 — 예: 복제해 넣을 슬롯 안내)을 툴팁(키보드 포커스에도 보임)과 접근 설명으로 알린다."""
+        for spec, button in zip(self.specs, self.buttons, strict=True):
+            if spec["key"] == key:
+                button.setEnabled(bool(enabled))
+                with_tooltip(button, reason or "")
+                button.setAccessibleDescription(reason or "")
+
     def _relayout(self):
         available = self.width() - 2 * self._margin if self.width() > 0 else 10 ** 6
         widths = [button.sizeHint().width() for button in self.buttons]

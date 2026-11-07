@@ -105,3 +105,20 @@ def wait_until(app, condition, seconds=10):
             return True
         time.sleep(0.01)
     return condition()
+
+
+def find_squeezed(root):
+    """바깥 칸이 안에 든 부품의 필요 높이·폭을 무시하고 더 작게 잡혀 부품이 반쯤 잘리는 곳을 찾는다(P4b — 배지·단추·글이 부모 칸 밖으로 삐져나온 채 잘린다).
+    `find_clipping` 은 글 한 줄의 폭·줄바꿈 글의 높이·단추 글자 폭만 재서 이런 것은 못 본다. 보이는 글·단추·배지의 위치가 부모의 안쪽 영역을 1px 넘게 벗어났으면 그 설명을 돌려준다(없으면 빈 목록).
+    스크롤 안쪽의 내용 칸 자체는 부모(보이는 창)보다 클 수 있으므로 글·단추만 본다."""
+    from PySide6.QtWidgets import QAbstractButton, QLabel
+    found = []
+    for widget in root.findChildren(QLabel) + root.findChildren(QAbstractButton):
+        parent = widget.parentWidget()
+        if parent is None or not widget.isVisible() or not parent.isVisible():
+            continue
+        geometry, inner = widget.geometry(), parent.rect()
+        if geometry.bottom() > inner.bottom() + 1 or geometry.right() > inner.right() + 1 or geometry.top() < inner.top() - 1 or geometry.left() < inner.left() - 1:
+            name = widget.accessibleName() or (widget.text() if hasattr(widget, "text") else "") or type(widget).__name__
+            found.append(f"부모 칸 밖으로 삐져나옴({geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()} > {inner.width()}x{inner.height()}): {name[:30]!r}")
+    return found

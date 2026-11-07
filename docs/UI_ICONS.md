@@ -34,6 +34,7 @@
 | 복사·바깥 열기·보류·오류·안내 | `copy`·`external`·`pause_circle`·`alert`·`info_circle` | 파랑·회색·주황·빨강·파랑 |
 | 빈 화면·오프라인·일부만·다시 불러오기·닫기·상세 | `inbox`·`cloud_off`·`alert`·`refresh`·`x`·`chevron_right` | 파랑·주황·주황·파랑·회색·회색 |
 | 이미지·키·삭제·올리기·보안 | `image`·`key`·`trash`·`upload`·`lock` | 파랑·회색·빨강·회색·초록 |
+| 파일 고르기(블로그 관리의 이미지 위치 칸 옆 — 위치만 정하고 파일은 읽지 않는다) | `folder` | 회색 |
 | 더보기 메뉴(아래 고정 행동 줄의 `⋮`) | `more_vertical` | 회색 |
 
 주제 이미지 자리 표시용 아이콘(`t_droplet`·`t_bolt`·`t_laptop`·`t_calc`·`t_box`·`t_headphones`·`t_coffee`·`t_spark`)은 장식이다 — 예시 데이터에서는 후보의 분야와 짝이 맞지만(`services.SAMPLE_CATEGORY`), 분야를 모르는 실제 후보에는 돌려 가며 쓰므로 **분야를 뜻하지 않는다**(접근 이름·툴팁도 분야를 말하지 않고 `이미지 자리 표시` 라고만 한다).

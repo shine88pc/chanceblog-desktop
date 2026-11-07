@@ -164,10 +164,10 @@ class ShellTest(Base):
     def test_the_screen_table_has_one_builder_per_real_menu_and_the_old_placeholder_screens_cannot_be_opened(self):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 '나머지 넷이 같은 자리표시를 그린다' 를 보았다. 이제 표는 완성된 화면(홈·설정)뿐이고 옛 자리표시 화면 이름을 불러도 열리지 않는다."""
         self.assertEqual(list(S.SCREEN_BUILDERS), [key for key, _label, _icon in app_state.NAV])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "settings"])
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "blogs", "settings"])                       # 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다
         self.assertIsNot(S.SCREEN_BUILDERS["settings"], S.SCREEN_BUILDERS["home"])
         window = self.make(settings=False)
-        for key in ("topics", "draft", "history", "blogs"):
+        for key in ("topics", "draft", "history"):                                                    # 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열린다
             window.go(key)
             self.settle()
             self.assertEqual(window.state.page, "home", key)
@@ -381,7 +381,7 @@ class AccessibilityTest(Base):
         self.assertIn(text.T["conn_refresh"], names)
         self.assertIn(text.T["diag_show"], names)
         self.assertIn("예시 데이터", names)
-        self.assertEqual(sum(1 for w in seen if w.property("nav")), 2)                                    # 의도적 갱신(UI-C1a, D-172): 실제 메뉴는 홈·설정 둘뿐(옛 값 6) — '다음 단계' 항목은 정거장이 아니다
+        self.assertEqual(sum(1 for w in seen if w.property("nav")), 3)                                    # 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2)
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
         """의도적 갱신(UI-C1b): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 단추 하나만 는다(옛 '고급' 영역의 단추가 옮겨 온 것)."""
@@ -890,6 +890,7 @@ class ThemeTest(Base):
         for old in ('QLabel[badge="ok"]', 'QLabel[badge="info"]', 'QLabel[badge="muted"]', 'QLabel[badge="a"]', 'QLabel[badge="b"]', 'QPushButton[badge="warning"]', 'QFrame[card="plain"]'):
             self.assertIn(old, qss)
         values = {value.upper() for value in colors.values()}
+        values |= {value.upper() for preset in tokens.CHANNEL_PRESETS.values() for value in preset.values()}      # 의도적 갱신(P4b, D-210): 채널 색 프리셋(운영자가 정한 값 둘, 토큰 파일에만 있다)도 QSS 에 쓰일 수 있다 — 그 밖의 색은 여전히 하나도 허용하지 않는다
         for found in set(re.findall(r"#[0-9A-Fa-f]{6}\b", qss)):
             self.assertIn(found.upper(), values, found)
 

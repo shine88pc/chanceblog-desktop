@@ -88,5 +88,5 @@ MEANING = {
     "copy": ("copy", "blue"), "external": ("external", "slate"), "hold": ("pause_circle", "orange"), "error": ("alert", "red"), "info": ("info_circle", "blue"),
     "image": ("image", "blue"), "key": ("key", "slate"), "delete": ("trash", "red"), "upload": ("upload", "slate"), "secure": ("lock", "green"),
     "empty": ("inbox", "blue"), "offline": ("cloud_off", "orange"), "partial": ("alert", "orange"), "refresh": ("refresh", "blue"), "close": ("x", "slate"), "detail": ("chevron_right", "slate"),
-    "more_menu": ("more_vertical", "slate"),
+    "more_menu": ("more_vertical", "slate"), "pick_file": ("folder", "slate"),
 }
