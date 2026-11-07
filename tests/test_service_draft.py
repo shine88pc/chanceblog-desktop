@@ -534,7 +534,8 @@ class UsageTest(Base):
         return cli.build_parser()._subparsers._group_actions[0].choices["draft"]
 
     def test_the_draft_command_has_exactly_the_plan_subcommand(self):
-        self.assertEqual(set(self.group()._subparsers._group_actions[0].choices), {"plan"})
+        # 의도적 갱신(DB — 규칙 기반 초안 본문 묶음): `draft` 에 하위 명령 `body` 가 더해졌다. `plan` 은 그대로이고 이름 목록만 둘이다(`draft body` 는 tests/test_service_draft_body.py 가 시험한다).
+        self.assertEqual(set(self.group()._subparsers._group_actions[0].choices), {"plan", "body"})
         self.assertIn("draft", cli.build_parser()._subparsers._group_actions[0].choices)
 
     def test_every_help_screen_is_korean(self):

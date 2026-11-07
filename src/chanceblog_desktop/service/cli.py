@@ -27,7 +27,7 @@ from ..echo import shown_backup
 from ..errors import AppError
 from ..security.mask import MAX_MASK_INPUT, mask
 from ..topics.score import BAND_KO, BANDS
-from . import candidates, connections, draft, naver_flow, pages_flow, projects, quota, review, suggestions, topics
+from . import candidates, connections, draft, draft_body, naver_flow, pages_flow, projects, quota, review, suggestions, topics
 from . import format as fmt
 from . import topic_format as tfmt
 from .context import make_context
@@ -561,11 +561,31 @@ def cmd_draft_plan(ctx, args):
     return Output(fmt.draft_plan_lines(result, verbose=_verbose(args)), result.to_dict())
 
 
+def cmd_draft_body(ctx, args):
+    result = draft_body.make_body(ctx, args.ref, blog=args.blog, post_type=args.post_type, options=draft_options(args))
+    return Output(draft_body.body_lines(result, verbose=_verbose(args)), result.to_dict())
+
+
+def _add_draft_inputs(found):
+    """`draft body` 의 선택 입력 옵션들 — `draft plan` 과 같은 11칸이다(시험이 두 명령의 옵션 이름이 같은지 본다)."""
+    found.add_argument("--message", metavar="글", help="선택 입력: 직접 전달하고 싶은 내용")
+    found.add_argument("--experience", metavar="글", help="선택 입력: 실제 사용(방문·체험) 경험 — 있으면 경험 단락이 들어가고, 없으면 경험담을 만들지 않습니다")
+    found.add_argument("--opinion", metavar="글", help="선택 입력: 개인 의견")
+    found.add_argument("--must-include", dest="must_include", action="append", metavar="문장", help="선택 입력: 반드시 포함할 문장(여러 번 쓸 수 있음)")
+    found.add_argument("--exclude", action="append", metavar="a,b", help="선택 입력: 제외할 내용(쉼표로 나누거나 여러 번 — 목차·소제목·문장에서 빠집니다)")
+    found.add_argument("--audience", metavar="글", help="선택 입력: 특정 독자층(프로필의 대상 독자보다 먼저 적용)")
+    found.add_argument("--length", metavar="1500-2000|2500+", help="선택 입력: 원하는 글 길이 — 범위나 이상, 200~100000자(본문은 길이를 채우려고 없는 내용을 지어내지 않으니 다르면 확인 권장으로 알립니다)")
+    found.add_argument("--title-direction", dest="title_direction", metavar="글", help="선택 입력: 원하는 제목 방향(예: 질문형으로·짧게)")
+    found.add_argument("--url", action="append", metavar="주소", help="선택 입력: 참고 URL(https 공개 주소, 여러 번 — 열어 보지도 가져오지도 않고 글 끝에 그대로 적습니다)")
+    found.add_argument("--price-date", dest="price_date", action="append", metavar="글", help="선택 입력: 직접 확인한 실제 가격이나 날짜(여러 번)")
+    found.add_argument("--conclusion", metavar="글", help="선택 입력: 최종 결론(마무리에 그대로 넣습니다)")
+
+
 def _add_draft_parser(add, common):
     """`draft` 와 그 하위 명령 — 후보로 글의 작성 기반을 만들어 보여 준다(읽기만 한다)."""
-    group = add("draft", None, "후보로 글의 작성 기반(제목 후보·목차·소제목·핵심 내용·태그·확인 권장)을 만들어 보여 줍니다(읽기만 합니다 — 초안 문장은 만들지 않습니다)")
-    group.epilog = ("처음이라면: candidates list 로 순번을 보고 → draft plan 순번 --blog 블로그. 추가 입력은 하나도 필요 없습니다(모두 선택).\n"
-                    "입력하지 않아도 블로그 프로필과 기본값으로 계획이 만들어지고, 입력한 내용이 있으면 그것이 프로필·기본값보다 먼저 적용됩니다.")
+    group = add("draft", None, "후보로 글의 작성 기반(plan — 제목 후보·목차·소제목·핵심 내용·태그·확인 권장)이나 규칙 기반 초안 본문(body)을 만들어 보여 줍니다(둘 다 읽기만 합니다 — plan 은 초안 문장을 만들지 않습니다)")
+    group.epilog = ("처음이라면: candidates list 로 순번을 보고 → draft plan 순번 --blog 블로그(작성 기반) → draft body 순번 --blog 블로그(AI 없이 복사해 고쳐 쓸 초안). 추가 입력은 하나도 필요 없습니다(모두 선택).\n"
+                    "입력하지 않아도 블로그 프로필과 기본값으로 계획·초안이 만들어지고, 입력한 내용이 있으면 그것이 프로필·기본값보다 먼저 적용됩니다.")
     inner = group.add_subparsers(dest="draft_command", metavar="하위명령", parser_class=KoreanParser)
     inner.required = True
     found = inner.add_parser("plan", parents=[common], help="작성 기반을 만들어 보여 줍니다", description="후보 하나의 작성 기반(제목 후보 3개·권장 목차와 소제목·포함할 핵심 내용·주의사항·태그·확인 권장)을 만들어 보여 줍니다. 읽기만 하고 아무것도 저장하지 않습니다.")
@@ -585,6 +605,13 @@ def _add_draft_parser(add, common):
     found.add_argument("--price-date", dest="price_date", action="append", metavar="글", help="선택 입력: 직접 확인한 실제 가격이나 날짜(여러 번)")
     found.add_argument("--conclusion", metavar="글", help="선택 입력: 최종 결론(마무리와 제목 방향에 반영)")
     found.epilog = "모든 입력은 선택입니다. 값이 틀리면(주소가 https 가 아니거나 길이 모양이 틀림 …) 아무것도 만들지 않고 어느 칸이 왜 안 되는지 알립니다. `--verbose` 나 `--json` 에는 값이 어느 층에서 왔는지도 나옵니다."
+    body = inner.add_parser("body", parents=[common], help="규칙 기반 초안 본문을 만들어 보여 줍니다", description="후보 하나의 규칙 기반 초안(제목 후보 3개·선택 제목·도입부·소제목 4~6개와 문단·주의사항·마무리·키워드·태그·카테고리·한 줄 요약·확인 권장)을 AI 없이 만들어 보여 줍니다. 읽기만 하고 아무것도 저장하지 않습니다.")
+    body.set_defaults(handler=cmd_draft_body, command_path="draft body")
+    body.add_argument("ref", metavar="번호", help=f"후보의 순번(candidates list 에 보이는 1, 2, 3 … 999)이나 번호(앞 {candidates.MIN_PREFIX}자 이상)")
+    body.add_argument("--blog", type=blog_one, metavar="블로그", help="어느 블로그용인지(naver_a·naver_b — 첫 제품은 네이버 A·B 입니다). 비우면 그 후보를 고른(없으면 추천한) 블로그 가운데 첫 번째 네이버 블로그")
+    body.add_argument("--type", dest="post_type", metavar="유형", help="글 유형을 직접 정합니다(" + ", ".join(POST_TYPES) + "). 비우면 후보의 추천 유형 → 프로필의 기본 글 유형 → 정보형")
+    _add_draft_inputs(body)
+    body.epilog = ("복사용 글(제목 + 본문)은 `--json` 의 body.plain_text(항목별은 title_text·body_text·tags_text)에도 있습니다. 모든 입력은 선택이고 입력한 내용은 그대로 본문에 먼저 들어갑니다 — 입력하지 않은 경험·후기·가격·협찬은 지어내지 않고 확인 권장으로 남깁니다.")
 
 
 def _add_candidates_parser(add, common):
