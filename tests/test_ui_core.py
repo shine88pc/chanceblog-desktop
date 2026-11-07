@@ -31,7 +31,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from chanceblog_desktop.ui.core import app_state, attribution, icons, imagerules, jobs, notify, services, text, tokens  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, attribution, board_view, icons, imagerules, jobs, notify, services, text, tokens  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
 SOURCES = sorted(UI_DIR.rglob("*.py"))
@@ -82,8 +82,8 @@ class TokensTest(unittest.TestCase):
         self.assertEqual({name: found for name, found in hits.items() if found}, {})
 
     def test_no_font_family_name_is_written_in_the_app_code(self):
-        """글꼴 Family 는 시스템 글꼴을 따른다 — 특정 이름(Segoe·맑은 고딕·Pretendard·Arial …)을 코드에 강제하지 않는다."""
-        pattern = re.compile(r"Segoe|Malgun|맑은\s*고딕|Pretendard|Arial|Consolas|Courier|Noto|Roboto|Helvetica|Gulim|Dotum|Batang|font-family", re.I)
+        """의도적 갱신(UI-C1d): 옛 글에는 정규식 낱말 경계 기호가 진짜 백스페이스 글자(U+0008)로 들어 있어 `Noto` 항목이 아무것도 못 잡았다(UI-C1a 검증 L7) — 진짜 낱말 경계로 고쳐 글꼴 이름 Noto 는 잡고 `monotonic` 같은 낱말은 걸리지 않게 했다(약화가 아니라 죽어 있던 검사를 살린 것). 글꼴 Family 는 시스템 글꼴을 따른다 — 특정 이름(Segoe·맑은 고딕·Pretendard·Arial …)을 코드에 강제하지 않는다."""
+        pattern = re.compile(r"Segoe|Malgun|맑은\s*고딕|Pretendard|Arial|Consolas|Courier|\bNoto\b|Roboto|Helvetica|Gulim|Dotum|Batang|font-family", re.I)
         hits = {path.name: pattern.findall(source_of(path)) for path in SOURCES if pattern.search(source_of(path))}
         self.assertEqual(hits, {})
 
@@ -159,9 +159,13 @@ class TokensTest(unittest.TestCase):
     def test_the_frame_sizes_stay_inside_the_ranges_the_operator_gave(self):
         """앱 틀의 크기는 명세가 정한 범위 안이다(손으로 적은 범위 — 값이 슬며시 바뀌지 않게): 사이드바 184~208·오른쪽 패널 280~320·위 막대 56~64·모서리 10~14·말풍선 모서리 8.
         의도적 갱신(UI-C0, D-150~): 새 기준(C-Type)에서 **입력 칸 모서리가 8**(문서 §11.1)이라 '입력' 은 10~14 묶음에서 빼 8 로 따로 못박았고, 카드·행은 14 → 12 로 바뀌어도 이 범위 안이다.
-        의도적 갱신(UI-C1a, D-171·D-172): 사이드바 폭은 200~220 → **184~208**, 위 막대 높이는 64~72 → **56~64**(새 기준 C-Type §2 — 운영자 2026-11-06 확인 요청 004 가 새 틀로 진행하라고 함). 값은 새 틀 상수 `FRAME`(208·60)에서 읽는다."""
+        의도적 갱신(UI-C1a, D-171·D-172): 사이드바 폭은 200~220 → **184~208**, 위 막대 높이는 64~72 → **56~64**(새 기준 C-Type §2 — 운영자 2026-11-06 확인 요청 004 가 새 틀로 진행하라고 함). 값은 새 틀 상수 `FRAME`(208·60)에서 읽는다.
+        의도적 갱신(UI-C1d, D-201): **오른쪽 패널(내 블로그 현황·빠른 작업·활용 팁)이 홈에서 없어져** 그 폭 토큰(`LAYOUT["rail"]` 280~320)도 지웠다 — 운영자 2026-11-06 확인 요청 004 의 답 5. 이 줄이 지키던 범위는 없어진 부품의 것이라 뺐고(아래 시험이 토큰이 없음을 못박는다), 나머지 범위는 그대로다."""
         self.assertTrue(184 <= tokens.FRAME["sidebar"] <= 208, tokens.FRAME["sidebar"])
-        self.assertTrue(280 <= tokens.LAYOUT["rail"] <= 320, tokens.LAYOUT["rail"])
+        for gone in ("rail", "rail_beside_min", "row_compact_below"):
+            self.assertNotIn(gone, tokens.LAYOUT, gone)                                            # 없어진 오른쪽 패널·옛 추천 행(지표 칸 접기)의 토큰이 되살아나지 않는다
+        for gone in ("sum_min_h", "row_min_h"):
+            self.assertNotIn(gone, tokens.SIZE, gone)                                              # 옛 요약 카드·추천 행의 최소 높이
         self.assertTrue(56 <= tokens.FRAME["app_bar"] <= 64, tokens.FRAME["app_bar"])
         for name in ("button", "card", "badge", "thumb", "row"):
             self.assertTrue(10 <= tokens.RADIUS[name] <= 14, (name, tokens.RADIUS[name]))
@@ -611,64 +615,65 @@ class ServicesAndStateTest(unittest.TestCase):
         self.assertTrue(state.nav("settings"))
         self.assertEqual(state.page, "settings")
 
-    def test_home_view_has_four_cards_five_rows_and_five_chips(self):
+    def test_home_view_has_four_kpis_two_recommend_sections_two_lists_and_a_connection_line(self):
+        """의도적 갱신(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5·홈 구성): 옛 시험은 홈의 요약 카드 4·추천 행 5·칩 5 를 못박았다. 새 홈은 KPI 넷·Naver A 추천·Naver B 추천·작성 중 초안·최근 발행·연결 요약이고
+        옛 요약 카드(`cards`)·칩(`chips`)·추천 행(`rows`)·오른쪽 패널(`rail`)·선택(`selected`)·옛 빈 상태(`empty`)·구역 머리(`section`)는 뷰모델에 없다."""
         view = load().home_view()
-        self.assertEqual([card["label"] for card in view["cards"]], ["추천 주제", "작성 완료", "발행 완료", "저장된 아이디어"])
-        self.assertEqual(len(view["rows"]), 5)
-        self.assertEqual([chip["label"] for chip in view["chips"]], ["전체", "블로그 A", "블로그 B", "트렌드 급상승", "신규 키워드"])
+        self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "refresh", "banner", "loading", "error", "board"})
+        board = view["board"]
+        self.assertEqual([item["label"] for item in board["kpi"]], ["추천 주제", "작성 완료", "발행 완료", "저장된 아이디어"])
+        self.assertEqual([item["key"] for item in board["recommend"]], ["A", "B"])
+        self.assertEqual([len(item["rows"]) for item in board["recommend"]], [5, 4])                    # 예시 보드: Naver A 다섯·Naver B 넷
+        self.assertEqual((board["drafts"]["title"], board["recent"]["title"], board["connection"]["title"]), ("작성 중인 초안", "최근 발행", "연결 상태"))
         self.assertTrue(view["sample"])
-        self.assertEqual([row["selected"] for row in view["rows"]], [True, False, False, False, False])
-        self.assertNotIn("date", view)                                                  # 의도적 갱신(UI-C1a, D-171): 홈 제목 줄의 날짜는 상단 앱 바(컴퓨터 시계)로 옮겼다
+        self.assertNotIn("date", view)                                                  # (UI-C1a, D-171) 홈 제목 줄의 날짜는 상단 앱 바(컴퓨터 시계)로 옮겼다
+        for gone in ("cards", "chips", "rows", "rail", "selected", "empty", "section"):
+            self.assertNotIn(gone, view, gone)
 
-    def test_chips_filter_rows_and_keep_a_valid_selection(self):
+    def test_the_old_home_state_for_chips_selection_tips_and_quick_actions_is_gone(self):
+        """의도적 교체(UI-C1d, D-201): 옛 `test_chips_filter_rows_and_keep_a_valid_selection` 은 칩 거르기·행 선택을 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 5 — 추천 목록(칩·선택)과 빠른 작업·활용 팁은 홈에서 없어졌고
+        그 상태·동작·값을 만들던 코드도 지웠다. 아래는 그것들이 되살아나지 않게 못박는다(이름이 하나라도 있으면 실패)."""
         state = load()
-        self.assertTrue(state.set_home_filter("b"))
-        self.assertTrue(all("B" in topic.blogs for topic in state.home_rows()))
-        self.assertIn(state.selected, [topic.id for topic in state.home_rows()])
-        state.set_home_filter("hot")
-        self.assertTrue(all(topic.trend == "up" for topic in state.home_rows()))
-        self.assertFalse(state.set_home_filter("nope"))
-        self.assertEqual(state.home_filter, "hot")
-        state.set_home_filter("all")
-        self.assertTrue(state.select_topic("s3"))
-        self.assertFalse(state.select_topic("zzz"))
+        for name in ("home_filter", "set_home_filter", "home_rows", "select_topic", "selected", "tip_visible", "dismiss_tip", "quick", "_live", "_match", "_card"):
+            self.assertFalse(hasattr(state, name), name)
+        for name in ("HOME_CHIPS", "HOME_ROWS", "STATUS_LABEL", "topic_vm"):
+            self.assertFalse(hasattr(app_state, name), name)
+        self.assertFalse(hasattr(services, "PRIORITY_RANK"))                           # 옛 추천 행의 정렬(작성 우선도)표
 
-    def test_held_topics_are_not_recommended_but_counted_as_saved_ideas(self):
-        state = load()
-        view = state.home_view()
-        self.assertEqual(view["cards"][3]["value"], "2개")
-        self.assertEqual(view["cards"][0]["value"], "6개")                                # 추천 주제는 보류를 뺀 수(전체 8개 중 6개)
-        self.assertEqual(view["chips"][0]["count"], 6)
-        self.assertTrue(all(topic.status != "hold" for topic in state.home_rows()))      # 다섯 줄만 그리지만 걸러내는 일은 전체에 한다
-        self.assertTrue(all(not row["hold"] for row in view["rows"]))
+    def test_held_topics_are_counted_as_saved_ideas_and_the_recommended_count_comes_from_the_engine_rows(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 '추천 주제 6개(보류를 뺀 옛 후보 수)·칩 전체 6·행에 보류 없음' 을 못박았다(옛 행·칩이 없어졌다). 새 KPI '추천 주제' 는 홈에 보이는 Naver A·B 추천 줄의 합(예시 보드 5+4=9)이고
+        '저장된 아이디어' 는 보류한 옛 후보 수(예시 8개 중 2개)다 — 보류한 것은 저장된 아이디어로만 센다."""
+        kpi = {item["key"]: item for item in load().home_view()["board"]["kpi"]}
+        self.assertEqual((kpi["ideas"]["text"], kpi["topics"]["text"]), ("2개", "9개"))
+        self.assertEqual((kpi["done"]["text"], kpi["pub"]["text"]), ("3개", "2개"))
 
-    def test_missing_values_are_shown_as_no_data_never_invented(self):
+    def test_missing_values_are_shown_as_not_counted_yet_never_invented(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 행의 월 검색량·문서 수·추세 '데이터 없음' 과 요약 카드의 '–' 를 못박았다(홈에서 옛 행과 월 검색량·문서 수를 없앴다). 새 규칙: 집계하지 못한 값은 0 이 아니라 `집계 전` 이다(접근 이름에도 그 글)."""
         state = load()
-        state.set_home_filter("b")
-        rows = {row["title"]: row for row in state.home_view()["rows"]}
-        earphones = rows["무선 이어폰 비교 포인트"]
-        self.assertEqual((earphones["demand"], earphones["docs"], earphones["trend"]["label"]), (text.NO_DATA, text.NO_DATA, text.NO_DATA))
-        self.assertTrue(earphones["demand_missing"] and earphones["docs_missing"])
-        data = services.HomeData(topics=state.data.topics)                              # 집계하지 못한 값
-        state.apply_home(data)
-        cards = state.home_view()["cards"]
-        self.assertEqual((cards[1]["value"], cards[1]["sub"], cards[1]["missing"]), ("–", text.T["sum_unavailable"], True))
-        self.assertIn(text.NO_DATA, cards[2]["a11y"])
+        state.apply_home(services.HomeData(topics=state.data.topics, board=state.data.board))                    # 작성·발행 수를 집계하지 못한 데이터
+        kpi = {item["key"]: item for item in state.home_view()["board"]["kpi"]}
+        self.assertEqual((kpi["done"]["text"], kpi["done"]["sub"], kpi["done"]["state"]), ("집계 전", text.T["sum_unavailable"], "before_count"))
+        self.assertIn("집계 전", kpi["pub"]["a11y"])
+        self.assertNotIn("0개", kpi["done"]["text"] + kpi["pub"]["text"])
+        self.assertEqual(kpi["ideas"]["text"], "2개")                                                           # 센 값은 그대로
 
     def test_partial_hides_the_trend_and_offline_says_so(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 행의 추세 칸을 봤다. 새 홈에서는 추천 줄의 관심도가 그 자리다 — 못 가져온 지표로 표시했으면 값이 남아 있어도 `관심도 데이터 부족`. 안내 띠는 옛 후보가 하나도 없어도(`empty`) 데이터가 말하는 대로 보인다."""
         partial = load(services.FakeHomeProvider("partial")).home_view()
         self.assertEqual(partial["banner"][1], text.T["partial"])
-        self.assertTrue(all(row["trend"]["key"] == "none" for row in partial["rows"]))
+        self.assertTrue(all(row["interest"]["key"] == "none" for item in partial["board"]["recommend"] for row in item["rows"]))
         state = app_state.AppState(services.FakeHomeProvider())                          # 값이 남아 있어도 '못 가져온 지표' 로 표시했으면 화면은 그 값을 보이지 않는다(뷰모델의 규칙)
-        state.apply_home(services.HomeData(topics=services.sample_topics(), partial=("trend",), sample=True))
-        self.assertEqual(state.list_state, "partial")
-        self.assertTrue(any(topic.trend for topic in state.data.topics))
-        self.assertTrue(all(row["trend"]["key"] == "none" for row in state.home_view()["rows"]))
+        state.apply_home(services.HomeData(topics=(), partial=("trend",), sample=True, board=services.sample_board()))
+        self.assertEqual(state.list_state, "empty")
+        self.assertEqual(state.home_view()["banner"], ("alert", text.T["partial"]))
+        self.assertTrue(any(row.interest for item in state.data.board.channels for row in item.rows))
+        self.assertTrue(all(row["interest"]["key"] == "none" for item in state.home_view()["board"]["recommend"] for row in item["rows"]))
         offline = load(services.FakeHomeProvider("offline")).home_view()
         self.assertEqual(offline["banner"], ("cloud_off", text.T["offline"]))
         self.assertIsNone(load().home_view()["banner"])
 
     def test_the_error_state_keeps_old_data_and_shows_codes_only_in_the_diagnostic_text(self):
+        """의도적 갱신(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5): 옛 요약 카드(`cards`)가 없어져 보이는 글에 새 KPI(`board.kpi`)의 보조 글을 넣고 '오류에는 안내 띠가 없다' 는 단언을 더했다 — 나머지 단언은 그대로다."""
         state = load()
         failure = jobs.JobFailure("연결이 끊겼어요.", code="NETWORK_DOWN")
         state.apply_failure(failure, __import__("datetime").datetime(2026, 11, 3, 10, 0, 0))
@@ -678,7 +683,8 @@ class ServicesAndStateTest(unittest.TestCase):
         self.assertEqual(view["error"]["user"], "연결이 끊겼어요.")
         self.assertIn("NETWORK_DOWN", view["error"]["diag"])
         self.assertIn("2026-11-03 10:00:00", view["error"]["diag"])
-        visible = [view["title"], view["sub"], view["error"]["title"], view["error"]["desc"], view["error"]["user"], view["error"]["button"]] + [card["sub"] for card in view["cards"]]
+        self.assertIsNone(view["banner"])                                               # 오류에는 안내 띠가 없다(오류 안내가 자기 말을 한다)
+        visible = [view["title"], view["sub"], view["error"]["title"], view["error"]["desc"], view["error"]["user"], view["error"]["button"]] + [item["sub"] for item in view["board"]["kpi"]]
         for shown in visible:
             self.assertNotIn("NETWORK_DOWN", shown)
 
@@ -736,23 +742,19 @@ class ServicesAndStateTest(unittest.TestCase):
         for shown in [view["topic"], view["reason"]] + [f"{f['label']} {f['value']}" for f in view["fields"]]:
             self.assertNotRegex(shown, r"\bs\d+\b")
 
-    def test_the_home_list_is_ordered_by_priority_then_newest_with_hand_written_expectations(self):
-        def topic(name, priority, date):
-            return services.Topic(id=name, title=name, blogs=("A",), priority=priority, date=date)
-
-        data = services.HomeData(topics=(topic("낮음 최신", "낮음", "2026-11-04"), topic("보통 옛날", "보통", "2026-10-01"), topic("높음 옛날", "높음", "2026-10-02"), topic("높음 최신", "높음", "2026-11-03"),
-                                         topic("우선도 모름", "", "2026-11-04"), topic("보통 최신", "보통", "2026-11-02")))
+    def test_recommend_rows_keep_the_engine_order_and_ranks_and_stop_at_five(self):
+        """의도적 교체(UI-C1d, D-201): 옛 `test_the_home_list_is_ordered_by_priority_then_newest_with_hand_written_expectations` 는 옛 추천 행의 정렬(작성 우선도 → 최신 날짜)을 못박았다(옛 행을 홈에서 없앴다).
+        새 추천 줄은 **엔진이 정한 순서 그대로**이고(홈이 점수로 다시 정렬하지 않는다) 순번은 1부터, 채널마다 많아야 다섯이다 — 손으로 적은 기대값."""
+        rows = tuple(services.RecommendRow(f"r{n}", f"주제 {n}", score, None, None) for n, score in enumerate((55, 91, 70, 66, 80, 99, 10), start=1))
+        board = services.BoardData((services.ChannelRead("A", "이름", True, "ok", "", rows), services.ChannelRead("B", "이름", True, "ok", "", ())), services.ListRead(), services.ListRead())
         state = app_state.AppState(services.FakeHomeProvider())
-        state.apply_home(data)
-        view = state.home_view()
-        self.assertEqual([row["title"] for row in view["rows"]], ["높음 최신", "높음 옛날", "보통 최신", "보통 옛날", "낮음 최신"])      # 우선도를 모르는 후보는 맨 뒤(여섯 번째라 홈에는 안 나온다)
-        self.assertEqual(view["selected"], "높음 최신")
-        self.assertEqual(view["cards"][0]["value"], "6개")
-        small = app_state.AppState(services.FakeHomeProvider())
-        small.apply_home(services.HomeData(topics=(topic("가", "낮음", "2026-11-01"), topic("나", "높음", "2026-11-01"), topic("다", "보통", "2026-11-01"))))
-        self.assertEqual((small.selected, small.home_view()["selected"], [row["title"] for row in small.home_view()["rows"]]), ("나", "나", ["나", "다", "가"]))       # 처음 선택은 맨 위(가장 먼저 보이는) 행
-        sample = [row["title"] for row in load().home_view()["rows"]]
-        self.assertEqual(sample, ["자취방 곰팡이 없애는 순서", "전기요금 절약 방법", "노트북 배터리 오래 쓰는 법", "프리랜서 종합소득세 신고 순서", "에어프라이어 고르는 기준"])     # 예시 데이터: 높음 넷(날짜 순) → 보통 하나
+        state.apply_home(services.HomeData(board=board))
+        section = state.home_view()["board"]["recommend"][0]
+        self.assertEqual([(row["rank"], row["title"], row["score"]) for row in section["rows"]],
+                         [(1, "주제 1", 55), (2, "주제 2", 91), (3, "주제 3", 70), (4, "주제 4", 66), (5, "주제 5", 80)])          # 점수 순으로 다시 정렬하지 않는다 · 여섯째·일곱째는 홈에 없다
+        sample = [row["title"] for item in load().home_view()["board"]["recommend"] for row in item["rows"]]
+        self.assertEqual(sample, ["자취방 곰팡이 없애는 순서", "전기요금 절약 방법", "노트북 배터리 오래 쓰는 법", "겨울철 실내 습도 관리", "에어프라이어 세척 순서",
+                                  "프리랜서 종합소득세 신고 순서", "에어프라이어 고르는 기준", "무선 이어폰 비교 포인트", "주말 근교 조용한 카페 모음"])
 
     def test_only_fake_data_is_marked_as_an_example(self):
         """`예시 데이터` 표시는 가짜(예시) 데이터에만 — 실제 데이터를 예시라고 하거나(거짓 경고) 예시를 실제처럼 보이면 안 된다."""
@@ -779,13 +781,13 @@ class ServicesAndStateTest(unittest.TestCase):
             self.assertEqual(shown["PC·모바일 검색 비중"], expected, mobile)
 
     def test_unbuilt_features_only_say_so(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 빠른 작업(`quick`)의 안내도 확인했다 — 빠른 작업은 홈에서 없어졌다. 상세 서랍의 초안 단추가 하는 안내는 그대로다(옛 후보 번호와 추천 줄 번호 둘 다)."""
         state = load()
         self.assertIn("다음 단계", state.draft_requested("s1", "A"))
+        self.assertIn("다음 단계", state.draft_requested("rA1", "A"))                        # 추천 줄의 서랍도 같은 안내
         self.assertEqual(state.draft_requested("zzz", "A"), "")
-        self.assertIn("다음 단계", state.quick("new"))
-        for key in ("new", "saved", "history", "blogs", "nope"):                        # 의도적 갱신(UI-C1a, D-172): 빠른 작업에는 화면으로 가는 길이 없다 — 어느 열쇠든 안내만 하고 화면은 그대로
-            stay = load()
-            self.assertEqual((stay.quick(key), stay.page), (stay.soon(text.T["q_new"]), "home"), key)
+        self.assertEqual(state.page, "home")                                               # 안내만 하고 화면은 그대로
+        self.assertFalse(hasattr(state, "quick"))
 
     def test_a_key_shaped_text_in_a_candidate_is_masked_everywhere_it_is_shown(self):
         fake = "AI" + "za" + "D" * 35                                                    # 구글 키 모양의 가짜 값(조각을 이어 만들어 저장소에는 키 문자열이 없다)
@@ -795,15 +797,20 @@ class ServicesAndStateTest(unittest.TestCase):
         state.open_drawer("k1")
         shown = repr(state.home_view()) + repr(state.drawer_view())
         self.assertNotIn(fake, shown)
-        self.assertIn("가림", state.home_view()["rows"][0]["title"])
+        self.assertIn("가림", state.drawer_view()["topic"])                              # 의도적 갱신(UI-C1d, D-201): 옛 시험은 홈 추천 행의 제목을 봤다 — 옛 후보의 글은 이제 상세 서랍에만 나간다
         self.assertIn("평범한 키워드", shown)
 
     def test_the_view_model_never_contains_internal_ids_or_english_status_codes(self):
-        view = load().home_view()
-        for row in view["rows"]:
-            self.assertIn(row["status"], app_state.STATUS_LABEL.values())
-            self.assertNotIn(row["status"], ("new", "selected", "hold"))
-            self.assertNotRegex(row["a11y"], r"\bs\d+\b")
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 행의 상태 이름표(`새 후보`·`선택됨`·`보류`)를 봤다(행이 없어졌다). 새 홈 뷰모델의 모든 사람이 읽는 글(접근 이름)에는 내부 번호(예시 줄 번호 `rA1`·옛 후보 번호 `s1`)와 영문 상태 이름이 없다 —
+        `id`·`key`·`state` 같은 값은 글이 아니라 열쇠다."""
+        board = load().home_view()["board"]
+        lines = ([row["a11y"] for item in board["recommend"] for row in item["rows"]] + [row["a11y"] for row in board["drafts"]["rows"] + board["recent"]["rows"]]
+                 + [item["a11y"] for item in board["kpi"]] + [board["connection"]["a11y"]])
+        self.assertGreater(len(lines), 15)
+        for line in lines:
+            self.assertNotRegex(line, r"\b(?:r[AB]\d|s\d+|d\d|p\d)\b", line)
+            for word in ("rising", "falling", "generated", "review", "before_count", "before_connect", "unavailable", "ready"):
+                self.assertNotIn(word, line)
 
     def test_an_unexpected_exception_becomes_an_error_state_with_only_the_exception_name(self):
         """화면 스레드 슬롯에서 난 예외가 '불러오는 중' 에 멈추지 않고 오류 상태가 된다(검증 M-6). 예외의 내용(값·경로·키)은 상태·화면에 남지 않는다."""
@@ -824,26 +831,16 @@ class ServicesAndStateTest(unittest.TestCase):
         state.apply_home(services.FakeHomeProvider().load_home(lambda *a: None, lambda: False))        # 다시 불러오면 회복한다
         self.assertEqual((state.list_state, state.failure), ("normal", None))
 
-    def test_the_image_placeholder_names_a_field_only_when_the_field_is_known(self):
-        """실제 후보의 분야는 모른다 — 장식 아이콘을 돌려 쓰면서 '생활·에너지 주제' 라고 설명하면 지어낸 값이다."""
-        known = app_state.topic_vm(services.sample_topics(1)[0])["thumb"]
-        self.assertEqual((known["category"], known["label"]), ("생활·집", "생활·집 주제의 이미지 자리 표시"))
-        self.assertTrue(all(topic.category for topic in services.sample_topics()))        # 예시 후보는 모두 분야를 안다
-        for icon in ("t_bolt", "t_laptop", "t_spark", "t_droplet"):
-            unknown = app_state.topic_vm(services.Topic(id="x", title="분야를 모르는 후보", icon=icon, date="2026-11-01"))["thumb"]
-            self.assertEqual((unknown["category"], unknown["label"]), ("", text.T["thumb_label_plain"]), icon)
-            for word in ("생활", "에너지", "IT", "재테크", "쇼핑", "장소", "기타", "주제"):
-                self.assertNotIn(word, unknown["label"])
-
     def test_every_example_candidate_names_its_field_exactly_like_this(self):
-        """예시 후보의 분야 문구는 화면에 그대로 보인다(변이 N54 — 하나를 바꿔도 시험이 통과했다). 손으로 적은 기대값으로 모두 못박는다."""
+        """예시 후보의 분야 값은 손으로 적은 기대값으로 모두 못박는다(변이 N54 — 하나를 바꿔도 시험이 통과했다).
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 이미지 자리 표시의 설명 글(`thumb.label` — `topic_vm`)까지 봤다. 추천 행의 썸네일이 홈에서 없어져 그 글이 없다 — 옛 `test_the_image_placeholder_names_a_field_only_when_the_field_is_known`
+        (분야를 아는 후보만 설명에 분야를 말한다)도 같은 이유로 없앴다. 분야 값 자체(`Topic.category`)와 예시 표는 그대로 못박는다(실제 후보는 분야를 모른다 — `test_ui_adapters` 가 지킨다)."""
         expected = (("자취방 곰팡이 없애는 순서", "생활·집"), ("전기요금 절약 방법", "생활·에너지"), ("노트북 배터리 오래 쓰는 법", "IT·기기"), ("프리랜서 종합소득세 신고 순서", "재테크·세금"),
                     ("에어프라이어 고르는 기준", "쇼핑·가전"), ("무선 이어폰 비교 포인트", "쇼핑·가전"), ("겨울철 실내 습도 관리", "생활·집"), ("주말 근교 조용한 카페 모음", "장소·맛집"))
         topics = services.sample_topics()
         self.assertEqual(len(topics), len(expected))
         for topic, (title, field) in zip(topics, expected):
-            thumb = app_state.topic_vm(topic)["thumb"]
-            self.assertEqual((topic.title, thumb["category"], thumb["label"]), (title, field, f"{field} 주제의 이미지 자리 표시"))
+            self.assertEqual((topic.title, topic.category), (title, field))
         self.assertEqual(services.SAMPLE_CATEGORY, {"t_droplet": "생활·집", "t_bolt": "생활·에너지", "t_laptop": "IT·기기", "t_calc": "재테크·세금", "t_box": "쇼핑·가전", "t_headphones": "쇼핑·가전",
                                                     "t_coffee": "장소·맛집", "t_spark": "기타"})
 
@@ -1013,12 +1010,17 @@ class MaskThenCutTest(unittest.TestCase):
             self.assert_clean(key, app_state.diagnostic_text(jobs.JobFailure("문장", code=value)), ("diagnostic", value[-45:]))
 
     def test_every_candidate_text_is_masked_before_its_own_cut(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 추천 행(`topic_vm`)의 제목·설명·키워드·이유·글 종류·분야를 한도마다 훑었다. 그 행이 없어진 지금 옛 후보의 글이 나가는 곳은 홈 뷰모델과 상세 서랍뿐이라,
+        같은 자리(모든 필드·모든 한도)에서 **두 곳 모두**에 키 조각이 없는지 본다 — 홈 뷰모델에는 옛 후보의 글이 아예 없고(없는 것이 가장 엄한 가림) 서랍은 가린 뒤에 자른다."""
         for field, limit in {"title": 200, "desc": 300, "keywords": 80, "reason": 300, "post_type": 40, "category": 40}.items():
             for key, value in self.straddling(limit):
                 values = {"id": "k", "title": "제목", "date": "2026-11-01", field: (value, "평범한 키워드") if field == "keywords" else value}
-                view = app_state.topic_vm(services.Topic(**values))
-                self.assert_clean(key, repr(view), (field, value[-45:]))
-                self.assertNotIn(key, repr(view), field)
+                state = app_state.AppState(services.FakeHomeProvider())
+                state.apply_home(services.HomeData(topics=(services.Topic(**values),)))
+                state.open_drawer("k")
+                shown = repr(state.home_view()) + repr(state.drawer_view())
+                self.assert_clean(key, shown, (field, value[-45:]))
+                self.assertNotIn(key, shown, field)
 
     def test_the_drawer_masks_before_cutting_too(self):
         for field, limit in {"title": 200, "reason": 300, "season": 80, "date": 40, "keywords": 300}.items():
@@ -1029,13 +1031,16 @@ class MaskThenCutTest(unittest.TestCase):
                 state.open_drawer("d")
                 self.assert_clean(key, repr(state.drawer_view()), (field, value[-45:]))
 
-    def test_blog_names_and_categories_in_the_side_panel_are_masked_before_the_forty_character_cut(self):
-        topics = (services.Topic(id="b", title="제목", blogs=("A",), date="2026-11-01"),)
+    def test_channel_names_in_the_recommend_headers_are_masked_before_the_forty_character_cut(self):
+        """의도적 교체(UI-C1d, D-201): 옛 `test_blog_names_and_categories_in_the_side_panel_are_masked_before_the_forty_character_cut` 는 오른쪽 패널(내 블로그 현황)의 블로그 이름·분야를 40자 한도마다 훑었다.
+        그 패널이 없어졌고 블로그 이름·분야(`BlogInfo`)는 홈 뷰모델에 나가지 않는다. 이름이 보이는 새 자리는 추천 구역 머리(`board_view.channel_vm` — 가린 뒤 40자로 줄인다)라 같은 한도 자리에서 거기를 본다."""
         for key, value in self.straddling(40):
-            for blog in (services.BlogInfo("A", value), services.BlogInfo("A", "블로그", value)):
-                state = app_state.AppState(services.FakeHomeProvider())
-                state.apply_home(services.HomeData(topics=topics, blogs=(blog,)))
-                self.assert_clean(key, repr(state.home_view()["rail"]), (blog.name[-20:], blog.category[-20:]))
+            view = board_view.channel_vm(services.ChannelRead("A", value, True, "ok", "", ()))
+            self.assert_clean(key, repr(view), value[-20:])
+            self.assertLessEqual(len(view["name"]), 40)
+            state = app_state.AppState(services.FakeHomeProvider())                                   # 옛 블로그 이름·분야는 뷰모델에 나가지 않는다
+            state.apply_home(services.HomeData(topics=(), blogs=(services.BlogInfo("A", value, value),)))
+            self.assert_clean(key, repr(state.home_view()), value[-20:])
 
 
 class DocsStayHonestTest(unittest.TestCase):

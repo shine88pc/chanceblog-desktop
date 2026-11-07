@@ -447,7 +447,7 @@ class ImagePlaceholder(QWidget):
 
 # ---- 눌리는 틀(카드·행) ---------------------------------------------------------------------------------------------------------
 class Pressable(QFrame):
-    """마우스로 누르거나 키보드(Enter·Space)로 열 수 있는 틀 — 목록 행·요약 카드·빠른 작업이 쓴다. 포커스 링은 스타일시트(:focus)가 그린다."""
+    """마우스로 누르거나 키보드(Enter·Space)로 열 수 있는 틀 — 홈의 추천 줄(`board.BoardRow`)이 쓴다(옛 요약 카드·추천 행·빠른 작업은 UI-C1d 에서 없어졌다). 포커스 링은 스타일시트(:focus)가 그린다."""
     activated = Signal()
 
     def __init__(self, accessible):
@@ -479,129 +479,6 @@ class Pressable(QFrame):
             self.activated.emit()
         else:
             super().keyPressEvent(event)
-
-
-class SummaryCard(Pressable):
-    """요약 카드 — 아이콘 바탕·숫자에만 색(카드 전체를 칠하지 않는다). `go` 가 있으면 눌러서 그 화면으로 간다."""
-    clicked = Signal(str)
-
-    def __init__(self, card):
-        super().__init__(card["a11y"])
-        self.setProperty("card", "true")
-        self._go = card["go"]
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
-        self.setMinimumHeight(K.SIZE["sum_min_h"])
-        layout.addWidget(ToneSwatch(card["icon"], card["tone"]), 0, Qt.AlignVCenter)
-        body = QVBoxLayout()
-        body.setSpacing(0)
-        body.addWidget(label(card["label"], "small"))
-        value = label(card["value"], "muted" if card["missing"] else "metric")
-        if not card["missing"]:
-            value.set_tone(card["tone"])
-        body.addWidget(value)
-        sub = label(card["sub"], "caption", wrap=True)
-        sub.setVisible(bool(card["sub"]))
-        body.addWidget(sub)
-        layout.addLayout(body, 1)
-        if self._go:
-            layout.addWidget(theme.IconWidget("arrow_right", theme.colors()["text_muted"], K.ICON["button_sm"]), 0, Qt.AlignVCenter)
-        else:
-            self.setCursor(Qt.ArrowCursor)
-            self.setFocusPolicy(Qt.NoFocus)
-        self.activated.connect(lambda: self._go and self.clicked.emit(self._go))
-
-
-class TopicRow(Pressable):
-    """추천 주제 한 줄 — 썸네일 자리 표시·제목·한 줄 설명·키워드 칩·지표·추세·블로그 배지·`초안 만들기`. 행이 좁아지면 지표 칸을 접는다(행 자신의 폭을 본다)."""
-    selected = Signal(str)
-    draft = Signal(str, str)
-    detail = Signal(str)
-
-    def __init__(self, vm, big=False):
-        super().__init__(vm["a11y"])
-        self.setObjectName("row")
-        self.vm = vm
-        self.setProperty("selected", bool(vm["selected"]))
-        self.setProperty("focus_key", "row:" + vm["id"])
-        grid = QHBoxLayout(self)
-        grid.setContentsMargins(16, 12, 16, 12)
-        grid.setSpacing(16)
-        self.setMinimumHeight(K.SIZE["row_min_h"])
-        grid.addWidget(ImagePlaceholder(vm["thumb"]), 0, Qt.AlignVCenter)
-        text = QVBoxLayout()
-        text.setSpacing(2)
-        text.addWidget(label(vm["title"], "h3", wrap=True))                  # 행 제목 = 카드 제목 역할(C-Type h3 17/600) — 본문 큰 글씨(15/400)로 두면 굵기 위계가 사라진다
-        text.addWidget(ElidedLabel(vm["desc"], "small"))
-        text.addSpacing(2)
-        text.addWidget(chip_row([KeywordChip(k) for k in vm["keywords"]]))
-        grid.addLayout(text, 1)
-        self.optional = []                                                    # 행이 좁으면 접는 칸(월 검색량·문서 수·추세)
-        for key, tip in (("demand", T["tip_demand"]), ("docs", T["tip_docs"])):
-            box = QWidget()
-            column = QVBoxLayout(box)
-            column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(2)
-            caption = label(T[key], "caption")
-            caption.setToolTip(tip)
-            column.addWidget(caption)
-            column.addWidget(label(vm[key], "muted" if vm[key + "_missing"] else "body_lg"))
-            grid.addWidget(box, 0, Qt.AlignVCenter)
-            self.optional.append(box)
-        trend = Trend(vm["trend"])
-        grid.addWidget(trend, 0, Qt.AlignVCenter)
-        self.optional.append(trend)
-        side = QVBoxLayout()
-        side.setSpacing(6)
-        badges = QHBoxLayout()
-        badges.setSpacing(6)
-        badges.addStretch(1)
-        for blog in vm["blogs"]:
-            badges.addWidget(BlogBadge(blog["key"], blog["label"]), 0, Qt.AlignVCenter)
-        more = IconButton("chevron_right", T["detail_a11y"].format(title=vm["title"]), focus_key="detail:" + vm["id"])
-        more.clicked.connect(lambda _=False: self.detail.emit(vm["id"]))
-        badges.addWidget(more)
-        side.addLayout(badges)
-        if big:
-            button = Button("primary", T["make_primary"], "arrow_right", size="lg", accessible=T["make_a11y"].format(title=vm["title"]), focus_key="draft:" + vm["id"])
-            button.setLayoutDirection(Qt.RightToLeft)                         # 아이콘을 글자 오른쪽에
-        else:
-            button = Button("secondary", T["make_small"], size="sm", accessible=T["make_a11y"].format(title=vm["title"]), focus_key="draft:" + vm["id"])
-        first = vm["blog"]
-        button.clicked.connect(lambda _=False: self.draft.emit(vm["id"], first))
-        side.addWidget(button, 0, Qt.AlignRight)
-        grid.addLayout(side)
-        grid.setAlignment(side, Qt.AlignVCenter)
-        self.activated.connect(lambda: self.selected.emit(vm["id"]))
-
-    def set_compact(self, compact):
-        for widget in self.optional:
-            widget.setVisible(not compact)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.set_compact(self.width() < K.LAYOUT["row_compact_below"])
-
-
-class QuickAction(Pressable):
-    """빠른 작업 한 줄 — 아이콘·제목·한 줄 설명."""
-
-    def __init__(self, item):
-        super().__init__(item["title"])
-        self.setProperty("quick", "primary" if item["primary"] else "true")
-        self.setProperty("focus_key", "quick:" + item["key"])
-        self.setMinimumHeight(K.SIZE["control_primary"] + 8)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(14, 8, 14, 8)
-        row.setSpacing(12)
-        c = theme.colors()
-        row.addWidget(theme.IconWidget(item["icon"], c["on_primary"] if item["primary"] else c["text_primary"], K.ICON["card"]), 0, Qt.AlignVCenter)
-        column = QVBoxLayout()
-        column.setSpacing(0)
-        column.addWidget(label(item["title"], "body_lg"))
-        column.addWidget(label(item["desc"], "caption", wrap=True))
-        row.addLayout(column, 1)
 
 
 # ---- 입력·토글 ----------------------------------------------------------------------------------------------------------------

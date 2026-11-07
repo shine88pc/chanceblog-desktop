@@ -26,20 +26,13 @@ T = {
     # 홈
     "home_title": "오늘은 어떤 주제로 써 볼까요?", "home_sub": "블로그에 어울리는 주제를 고르면 바로 초안까지 만들어 드려요.",
     "sum_topics": "추천 주제", "sum_done": "작성 완료", "sum_pub": "발행 완료", "sum_ideas": "저장된 아이디어",
-    "sum_topics_sub": "새 후보 {n}개 포함", "sum_week_sub": "이번 주 +{n}", "sum_ideas_sub": "보류한 주제 기준", "sum_unavailable": "아직 집계하지 않아요", "sum_none": "–",
-    "rec_title": "맞춤 주제 추천", "rec_desc": "내 블로그에 어울릴 만한 주제를 모아 두었어요.",
-    "chip_all": "전체", "chip_a": "블로그 A", "chip_b": "블로그 B", "chip_hot": "트렌드 급상승", "chip_new": "신규 키워드",
-    "make_primary": "이 주제로 초안 만들기", "make_small": "초안 만들기", "make_a11y": "{title} 초안 만들기", "detail_a11y": "{title} 자세히 보기",
-    "demand": "월 검색량", "docs": "블로그 문서 수", "unit_demand": "회", "unit_docs": "건",
-    "tip_demand": "한 달 동안 이 키워드가 검색된 횟수를 어림잡은 값이에요.", "tip_docs": "이 키워드와 관련된 블로그 문서가 얼마나 쌓여 있는지 보여 줘요.",
+    "sum_unavailable": "아직 집계하지 않아요",
+    "blog_a": "블로그 A", "blog_b": "블로그 B",
+    "make_small": "초안 만들기", "unit_demand": "회", "unit_docs": "건",                  # `make_small` 은 상세 서랍의 초안 단추가 '다음 단계' 안내에 쓰는 이름, `unit_*` 는 서랍의 월간 검색량·검색 결과 수 단위다(홈에는 둘 다 없다)
     "trend_up": "상승", "trend_flat": "보통", "trend_down": "하락",
-    "row_a11y": "{title}, {blog}, 작성 우선도 {priority}", "priority": "작성 우선도",
-    "rail_blogs": "내 블로그 현황", "rail_blogs_sub": "관리 중인 블로그 {n}개", "rail_total": "총 글", "rail_month": "이번 달", "rail_candidates": "후보", "rail_unit": "개",
-    "rail_quick": "빠른 작업",
-    "q_new": "새 초안 만들기", "q_new_d": "고른 주제로 바로 시작",
-    "tip_title": "활용 팁", "tip_text": "마음에 드는 주제는 '보류'로 두었다가 나중에 다시 꺼내 볼 수 있어요.", "tip_close": "활용 팁 닫기",
-    "list_count": "{n}개 후보", "refresh": "다시 불러오기", "last_fetch": "마지막 조회 {when}",
-    # 홈 데이터(UI-C1c) — 뷰모델(`board_view.py`)이 쓰는 글. 아직 어느 화면에도 그리지 않는다(새 홈 모양 UI-C1d 가 그린다). 월 검색량·문서 수 글은 없다(가져오지도 보이지도 않는다).
+    "priority": "작성 우선도",
+    "refresh": "다시 불러오기", "last_fetch": "마지막 조회 {when}",
+    # 홈(UI-C1c·UI-C1d) — 뷰모델(`board_view.py`)이 쓰고 새 홈 화면(UI-C1d)이 그리는 글. 월 검색량·문서 수 글은 없다(가져오지도 보이지도 않는다).
     "board_sample_tag": "예시", "board_score_none": "점수 계산 전", "board_on": "켜짐", "board_off": "꺼짐",
     "board_interest_rising": "관심도 상승", "board_interest_flat": "관심도 보통", "board_interest_falling": "관심도 하락", "board_interest_none": "관심도 데이터 부족",
     "board_rec_title": "{name} 추천", "board_count": "후보 {n}개", "board_rec_empty_title": "아직 추천할 후보가 없어요.", "board_rec_empty_desc": "후보가 만들어지면 점수가 높은 순서로 여기에 보여요.",
@@ -52,6 +45,9 @@ T = {
     "board_before_connect": "연결 전", "board_before_count": "집계 전", "board_kpi_connect_sub": "아직 연결하지 않았어요",
     "board_conn_title": "연결 상태", "board_conn_before": "연결 상태를 아직 읽지 않았어요. 설정에서 확인할 수 있어요.", "board_conn_loading": "연결 상태를 읽고 있어요…",
     "board_conn_error": "연결 상태를 읽지 못했어요.", "board_conn_nothing": "연결된 서비스가 아직 없어요.",
+    "board_unavailable_title": "아직 불러오지 않았어요.", "board_unavailable_desc": "다시 불러오면 이 자리에 보여요.",
+    "board_connect_title": "아직 연결하지 않았어요.", "board_connect_desc": "읽을 수 있게 연결되면 이 자리에 보여요.",
+    "board_row_hint": "누르면 상세 정보가 열려요.", "board_section_a11y": "{title}, {count}",
     # 주제 엔진을 읽다 난 오류의 화면용 문장 — 카탈로그 안내문에는 명령줄 글이 섞여 있어 이 문장으로 바꾼다(오류 코드는 진단 정보에 그대로)
     "board_err_store": "후보 보관함을 읽지 못했어요. 파일은 고치거나 지우지 않았어요. 계속되면 진단 정보를 함께 알려 주세요.",
     "board_err_newer": "더 새로운 버전의 프로그램이 만든 후보 보관함이라 열지 않았어요. 프로그램을 최신 버전으로 업데이트해 주세요.",
@@ -65,7 +61,6 @@ T = {
     "draft_a": "블로그 A 초안", "draft_b": "블로그 B 초안", "hold": "보류", "more": "더보기",
     # 상태 화면
     "loading": "후보를 불러오고 있어요…", "loading_a11y": "후보를 불러오는 중",
-    "empty_title": "아직 추천 주제가 없어요.", "empty_desc": "블로그 정보를 확인하고 주제 분석을 시작해 보세요.", "empty_btn": "주제 분석 시작",
     "error_title": "주제 후보를 불러오지 못했어요.", "error_desc": "잠시 뒤에 다시 시도해 주세요. 계속되면 아래 진단 정보를 함께 알려 주세요.", "retry": "다시 시도",
     "partial": "검색 추세는 불러오지 못했지만 나머지 정보는 그대로 쓸 수 있어요.", "offline": "오프라인 상태예요. 저장해 둔 초안은 계속 고칠 수 있어요.",
     "diag_show": "진단 정보 보기", "diag_hide": "진단 정보 숨기기", "diag_title": "진단 정보", "diag_note": "도움을 받을 때 함께 알려 주세요. 키와 입력한 글은 담기지 않아요.",
@@ -78,7 +73,6 @@ T = {
     "unexpected_line": "화면에서 처리하지 못한 오류가 있었어요",                           # 표준 오류에 한 줄로만 남는다(예외 이름 + 비밀·경로를 가린 짧은 글)
     "cancel_job": "작업 취소", "load_cancel": "불러오기 취소",
     # 이미지 자리 표시·출처(Unsplash)·내 사진
-    "thumb_label": "{category} 주제의 이미지 자리 표시", "thumb_label_plain": "이미지 자리 표시", "img_state_none": "대표 이미지가 아직 없어요. 주제 아이콘으로 보여 드려요.",
     "credit_line": "Photo by {name} on Unsplash", "credit_copy": "출처 복사", "credit_copied": "출처 복사됨", "credit_failed": "복사하지 못했어요. 다시 시도해 주세요.", "credit_a11y": "사진 출처",
     "credit_copy_a11y": "사진 출처 두 줄 복사",
     "img_local_unsupported": "지원하지 않는 파일이에요. JPG·PNG·WebP 사진만 쓸 수 있어요.", "img_local_not_image": "사진 파일이 아니에요. 이름만 사진처럼 보이는 파일일 수 있어요.",

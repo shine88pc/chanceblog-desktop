@@ -577,6 +577,56 @@ class CardStateTest(PartsBase):
         tint = {state: pixel.blue() - pixel.red() for state, pixel in near.items()}
         self.assertGreater(tint["selected"], tint["default"] + 8)                                       # 선택됨은 파란 기운
 
+    def focusable(self, state):
+        """키보드로 포커스를 받을 수 있는 카드 틀(`Pressable` 이 하는 일) — 상태를 입히고 창을 띄워 포커스가 없는 모습으로 둔다."""
+        frame, layout = UI.Card((16, 16, 16, 16))
+        frame.setMinimumSize(160, 80)
+        frame.setFocusPolicy(Qt.StrongFocus)
+        layout.addWidget(UI.label("카드", "h3"))
+        UI.set_card_state(frame, state, layout)
+        shell = QWidget()
+        inner = QVBoxLayout(shell)
+        inner.setContentsMargins(16, 12, 16, 28)
+        inner.addWidget(frame)
+        shell.setObjectName("root")
+        shell.show()
+        self.addCleanup(shell.close)
+        self.settle(8)
+        self.unfocus()
+        return frame
+
+    def test_a_focused_card_shows_the_two_pixel_focus_border_in_every_state(self):
+        """의도적 추가(UI-C1d, D-200 — 독립 검증 UI-C0 의 M2): 카드 상태 × 포커스 조합 전수. 고치기 전에는 가리킴(hover) 상태의 카드가 포커스를 받아도 1px 가리킴 테두리 그대로였다(상태 규칙이 포커스 규칙을 덮어썼다).
+        이제 어느 상태든 포커스를 받으면 윗변 두 줄이 포커스 색(2px)이고, 받기 전에는 그 상태의 테두리다. 선택됨은 선택 색과 포커스 색이 같아 둘 다 2px 파랑이다."""
+        expected = {"default": (COLORS["border"], 1), "hover": (COLORS["border_hover"], 1), "selected": (COLORS["primary"], 2)}          # 포커스 전 테두리 색과 두께
+        for state, (border, thickness) in expected.items():
+            frame = self.focusable(state)
+            middle = frame.width() // 2
+            before = frame.grab().toImage()
+            self.assertEqual(hexed(before, middle, 0), border.upper(), state)
+            if thickness == 1:
+                self.assertNotEqual(hexed(before, middle, 1), COLORS["border_focus"].upper(), state)
+            self.focus(frame)
+            after = frame.grab().toImage()
+            self.assertEqual((hexed(after, middle, 0), hexed(after, middle, 1)), (COLORS["border_focus"].upper(),) * 2, state)          # 윗변 두 줄 = 포커스 2px
+            self.assertNotEqual(hexed(after, middle, 2), COLORS["border_focus"].upper(), state)                                          # 세 번째 줄부터는 카드 안쪽
+            quarter = frame.width() // 4
+            self.assertEqual((hexed(after, quarter, 0), hexed(after, quarter, 1)), (COLORS["border_focus"].upper(),) * 2, state)        # 윗변 어디서나 같다
+            side = frame.height() // 2
+            self.assertEqual((hexed(after, 0, side), hexed(after, 1, side)), (COLORS["border_focus"].upper(),) * 2, state)              # 왼쪽 변도 2px
+
+    def test_the_focus_rule_of_every_card_state_comes_after_the_state_rule_and_is_more_specific(self):
+        """의도적 추가(UI-C1d, D-200 — 독립 검증 UI-C0 의 M2): 스타일시트 글: 상태마다 `[card][cardstate]:focus` 규칙이 같은 상태 규칙 **뒤에** 있다(같은 구체성이면 뒤의 것이 이기고, 이 규칙은 구체성도 더 높다) — 고치기 전에는 이 규칙이 아예 없었다."""
+        qss = theme.build_qss(COLORS)
+        for state in ("hover", "selected"):
+            rule = f'QFrame[card="true"][cardstate="{state}"] {{'
+            focus = f'QFrame[card="true"][cardstate="{state}"]:focus {{ border: {tokens.FOCUS_RING_PX}px solid {COLORS["border_focus"]}; }}'
+            self.assertIn(focus, qss, state)
+            self.assertEqual(qss.count(focus), 1, state)
+            self.assertGreater(qss.index(focus), qss.index(rule), state)
+        self.assertIn(f'QFrame[card="true"]:focus {{ border: {tokens.FOCUS_RING_PX}px solid {COLORS["border_focus"]}; }}', qss)                  # 기본 카드의 포커스 규칙은 그대로
+        self.assertNotIn('[cardstate="default"]', qss)                                                                                       # 기본 상태에는 따로 규칙이 없다(기본 규칙 자체가 기본 모습)
+
 
 class ExistingPartsFollowTheNewTokensTest(PartsBase):
     def test_the_buttons_use_the_document_values(self):

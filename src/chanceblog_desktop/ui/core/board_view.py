@@ -1,5 +1,5 @@
 """홈의 새 구역(UI-C1c)의 뷰모델 — 순수 파이썬(화면 도구·서비스 층을 모른다). 공급자가 준 `BoardData`(`HomeData.board`)를 화면이 그리기만 하면 되는 딕셔너리로 바꾼다.
-**지금 화면(UI-C1c)은 이 값을 그리지 않는다** — 새 홈 모양(UI-C1d)이 그린다. 그래서 `AppState.home_view()` 의 옛 키(`cards`·`rows`·`chips`·`rail` …)는 한 글자도 바뀌지 않고 이 값은 새 키 `board` 하나로만 들어간다.
+UI-C1c 는 이 값을 만들기만 했고(화면은 그대로) **UI-C1d 가 그린다**: 홈은 이 값(`AppState.home_view()["board"]`)의 KPI 넷·추천 둘·작성 중 초안·최근 발행·연결 요약을 그린다(옛 요약 카드·추천 목록·칩·오른쪽 패널의 값은 홈 뷰모델에서 없앴다 — D-201).
 
 규칙(운영자 2026-11-06 확인 요청 004 의 답 — 홈 구성 5·최근 발행 6·추천 후보 2, 모두 시험이 지킨다):
   · Naver A·B 추천은 채널마다 **최대 5개**(`HOME_LIMIT`)다. 줄은 제목·점수(정수만)·점수 구간(80/65/50 — 점수 링과 같은 `gauges.score_band`)·관심도 라벨뿐이고 **월 검색량·문서 수는 칸도 글도 없다**.
@@ -18,14 +18,16 @@ from itertools import islice
 
 from . import gauges
 from . import settings_view as sv
-from .services import HOME_CHANNELS, HOME_LIMIT, INTERESTS, STAGES
+from .services import HOME_CHANNELS, HOME_LIMIT, INTERESTS, STAGES, Topic
 from .text import T
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 _STAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z")
 NAME_LIMIT = 40                                   # 채널 이름이 화면에 보이는 최대 글자 수(가린 뒤에 줄인다)
 TITLE_LIMIT = 200
-KPIS = (("topics", "sum_topics"), ("done", "sum_done"), ("pub", "sum_pub"), ("ideas", "sum_ideas"))      # 홈 KPI 넷의 열쇠와 이름 문구 열쇠(옛 요약 카드와 같은 이름)
+KPIS = (("topics", "sum_topics", "draft", "blue"), ("done", "sum_done", "check_circle", "green"), ("pub", "sum_pub", "calendar_check", "purple"), ("ideas", "sum_ideas", "bulb", "orange"))      # 홈 KPI 넷의 열쇠·이름 문구 열쇠·아이콘·계열(옛 요약 카드와 같은 이름·아이콘·계열)
+INTEREST_LOOK = {"rising": ("up", "trend_up"), "flat": ("flat", "trend_flat"), "falling": ("down", "trend_down")}      # 관심도 → (글자·아이콘 색을 고르는 추세 이름, 아이콘) — 영문 값은 글이 아니라 그림을 고르는 값이다
+CONNECTION_ICONS = {"ok": "check_circle", "warning": "alert", "danger": "alert", "muted": "info_circle"}
 KPI_STATES = ("value", "before_connect", "before_count")
 
 
@@ -69,7 +71,8 @@ def date_text(stamp):
 def interest_vm(value, hidden=False):
     """관심도 라벨 — 모르면(또는 못 가져온 지표로 표시했으면) `관심도 데이터 부족`. 영문 값은 글에 나가지 않는다."""
     key = value if (value in INTERESTS and not hidden) else "none"
-    return {"key": key, "label": T["board_interest_" + key]}
+    trend, icon = INTEREST_LOOK.get(key, ("none", None))
+    return {"key": key, "label": T["board_interest_" + key], "trend": trend, "icon": icon}
 
 
 def delta_vm(score, previous):
@@ -82,7 +85,8 @@ def delta_vm(score, previous):
 
 
 def row_vm(row, rank, trend_hidden=False, channel=""):
-    """추천 후보 한 줄 — 채널(A·B)·제목·점수(정수만)·구간·변화량·관심도·예시 꼬리표. 점수가 없으면 링 없이 `점수 계산 전`. 월 검색량·문서 수·내부 번호는 없다."""
+    """추천 후보 한 줄 — 채널(A·B)·제목·점수(정수만)·구간·변화량·관심도·예시 꼬리표. 점수가 없으면 링 없이 `점수 계산 전`. 월 검색량·문서 수는 없다.
+    `id` 는 줄을 눌렀을 때 상세 서랍에 넘기는 열쇠일 뿐 어떤 글에도 나가지 않는다(UI-C1d, D-201 — 줄을 눌러 서랍을 열려면 줄을 가리킬 열쇠가 필요하다)."""
     score = gauges.clean_score(row.score)
     band = gauges.score_band(score)
     delta = delta_vm(score, row.prev_score)
@@ -90,7 +94,7 @@ def row_vm(row, rank, trend_hidden=False, channel=""):
     title = _shown(row.title, TITLE_LIMIT)
     sample = bool(row.sample)
     heard = T["board_score_none"] if score is None else gauges.score_spoken(score, None if delta is None else delta["value"])
-    return {"rank": rank, "channel": channel, "title": title, "score": score, "score_text": T["board_score_none"] if score is None else str(score), "ring": score is not None,
+    return {"id": row.id, "rank": rank, "channel": channel, "title": title, "score": score, "score_text": T["board_score_none"] if score is None else str(score), "ring": score is not None,
             "band": band.key if band else None, "band_label": band.name if band else "", "delta": delta, "interest": interest,
             "sample": sample, "sample_tag": T["board_sample_tag"] if sample else "",
             "a11y": ", ".join(part for part in (title, heard, interest["label"], T["board_sample_tag"] if sample else "") if part)}
@@ -106,7 +110,7 @@ def _failure_vm(failure, title_key):
 def channel_vm(channel, trend_hidden=False):
     """채널 하나(A·B)의 추천 구역. 상태: `normal`(줄이 있다) · `empty`(정상 빈 상태 — 보관함이 아직 없거나 옛 구조인 때도 오류가 아니다) · `off`(후보 생성이 꺼져 있다) · `error`(그 구역만 못 읽었다)."""
     key = channel.key
-    name = _shown(channel.name, NAME_LIMIT) or T["chip_" + key.lower()]
+    name = _shown(channel.name, NAME_LIMIT) or T["blog_" + key.lower()]
     rows = [row_vm(row, rank, trend_hidden, key) for rank, row in enumerate(islice(channel.rows, HOME_LIMIT), start=1)]      # 많아야 5개 — 많이 들어와도 앞의 다섯만 본다
     if channel.state == "failed":
         state = "error"
@@ -145,6 +149,13 @@ def recent_vm(row, rank):
             "a11y": ", ".join(part for part in (title, text, T["board_sample_tag"] if sample else "") if part)}
 
 
+def idle_text(state):
+    """홈 데이터를 아직 못 읽었거나 읽지 않는 공급자일 때 구역 자리에 보이는 문장 — 정상 빈 상태('후보가 없어요')와 다른 말이다(없는 것이 아니라 못 읽었을 뿐이다). 읽는 중에는 화면이 문장 대신 자리 표시를 그린다."""
+    if state == "before_connect":
+        return {"title": T["board_connect_title"], "desc": T["board_connect_desc"]}
+    return {"title": T["board_unavailable_title"], "desc": T["board_unavailable_desc"]}
+
+
 def list_vm(read, build, titles, state=None):
     """글 구역 하나 — `state` 를 주면(읽기 전 상태) 줄 없이 그 상태만, 아니면 읽은 결과에서 `normal`·`empty`·`error` 를 정한다. 줄은 많아야 5개다."""
     title_key, empty_key, desc_key, error_key = titles
@@ -156,7 +167,8 @@ def list_vm(read, build, titles, state=None):
         error = _failure_vm(read.failure, error_key) if failed else None
     else:
         rows, skipped, error = [], 0, None
-    return {"title": T[title_key], "state": state, "rows": rows, "empty": {"title": T[empty_key], "desc": T[desc_key]}, "error": error,
+    empty = {"title": T[empty_key], "desc": T[desc_key]} if state in ("normal", "empty", "error") else idle_text(state)            # 읽기 전 상태(읽는 중·못 읽음·연결 전)는 '없어요' 가 아니라 그 상태의 문장이다
+    return {"title": T[title_key], "state": state, "rows": rows, "empty": empty, "error": error,
             "note": T["board_posts_skipped"].format(n=skipped) if skipped else ""}
 
 
@@ -165,8 +177,8 @@ RECENT_TEXTS = ("board_recent_title", "board_recent_empty_title", "board_recent_
 
 
 # ---- KPI ----------------------------------------------------------------------------------------------------------------------------
-def kpi_vm(key, label_key, value, state):
-    """KPI 하나. 숫자 칸(`value`)이 있으면 `N개`, 없으면 0 이 아니라 `연결 전`(그 값을 읽는 곳이 아직 연결되지 않음)·`집계 전`(연결은 됐으나 아직 못 셌음) 글이다."""
+def kpi_vm(key, label_key, value, state, icon="", tone=""):
+    """KPI 하나. 숫자 칸(`value`)이 있으면 `N개`, 없으면 0 이 아니라 `연결 전`(그 값을 읽는 곳이 아직 연결되지 않음)·`집계 전`(연결은 됐으나 아직 못 셌음) 글이다. `icon`·`tone` 은 카드의 아이콘 바탕을 고르는 값이다."""
     if state == "value" and _count(value):
         text, sub = f"{value}개", ""
     elif state == "before_connect":
@@ -174,7 +186,7 @@ def kpi_vm(key, label_key, value, state):
     else:
         state, value, text, sub = "before_count", None, T["board_before_count"], T["sum_unavailable"]
     label = T[label_key]
-    return {"key": key, "label": label, "value": value, "text": text, "state": state, "sub": sub, "a11y": f"{label} {text}"}
+    return {"key": key, "label": label, "value": value, "text": text, "state": state, "sub": sub, "icon": icon, "tone": tone, "a11y": f"{label} {text}"}
 
 
 def _topics_kpi(board):
@@ -191,11 +203,11 @@ def _topics_kpi(board):
 def kpi_vms(data, board):
     """KPI 넷(추천 주제·작성 완료·발행 완료·저장된 아이디어). 값마다 따로 상태를 가진다 — 홈 데이터가 아직 없으면 모두 `집계 전`, 새 구역을 읽지 않는 공급자(`board` 가 None)면 추천 주제만 `연결 전`."""
     if data is None:
-        return [kpi_vm(key, label, None, "before_count") for key, label in KPIS]
+        return [kpi_vm(key, label, None, "before_count", icon, tone) for key, label, icon, tone in KPIS]
     topics = _topics_kpi(board) if board is not None else (None, "before_connect")
     held = sum(1 for topic in data.topics if topic.status == "hold")
     values = {"topics": topics, "done": (data.done, "value"), "pub": (data.pub, "value"), "ideas": (held, "value")}
-    return [kpi_vm(key, label, *values[key]) for key, label in KPIS]
+    return [kpi_vm(key, label, *values[key], icon, tone) for key, label, icon, tone in KPIS]
 
 
 # ---- 연결 요약 ----------------------------------------------------------------------------------------------------------------------
@@ -204,13 +216,13 @@ def connection_vm(conn_data, conn_state="", loading=False):
     title = T["board_conn_title"]
     if conn_data is None:
         state, text, tone = ("loading", T["board_conn_loading"], "muted") if loading else ("error", T["board_conn_error"], "warning") if conn_state == "error" else ("before", T["board_conn_before"], "muted")
-        return {"title": title, "state": state, "text": text, "tone": tone, "problem": False, "sample": False, "sample_tag": "", "a11y": f"{title}, {text}"}
+        return {"title": title, "state": state, "text": text, "tone": tone, "icon": CONNECTION_ICONS[tone], "problem": False, "sample": False, "sample_tag": "", "a11y": f"{title}, {text}"}
     infos = [info for _group, items in sv.grouped(conn_data.purposes) for info in items]
     text = " · ".join(chip["text"] for chip in sv.chips_of(infos)) or T["board_conn_nothing"]
     found = {sv.effective_status(info) for info in infos}
     tone = "danger" if "auth_error" in found else "warning" if found & {"rate_limited", "needs_check"} else "ok" if "connected" in found else "muted"
     sample = bool(conn_data.sample)
-    return {"title": title, "state": "ready", "text": text, "tone": tone, "problem": sv.has_problem(infos), "sample": sample, "sample_tag": T["board_sample_tag"] if sample else "",
+    return {"title": title, "state": "ready", "text": text, "tone": tone, "icon": CONNECTION_ICONS[tone], "problem": sv.has_problem(infos), "sample": sample, "sample_tag": T["board_sample_tag"] if sample else "",
             "a11y": ", ".join(part for part in (title, text, T["board_sample_tag"] if sample else "") if part)}
 
 
@@ -236,7 +248,26 @@ def build_board_view(data, list_state, *, conn_data=None, conn_state="", conn_lo
         recommend = [channel_vm(by_key.get(key) or _ABSENT[key], trend_hidden) for key in HOME_CHANNELS]
         drafts, recent = list_vm(board.drafts, draft_vm, DRAFT_TEXTS), list_vm(board.recent, recent_vm, RECENT_TEXTS)
     else:
-        recommend = [{**channel_vm(_ABSENT[key]), "state": state} for key in HOME_CHANNELS]
+        recommend = [{**channel_vm(_ABSENT[key]), "state": state, "empty": idle_text(state)} for key in HOME_CHANNELS]
         drafts, recent = list_vm(None, draft_vm, DRAFT_TEXTS, state), list_vm(None, recent_vm, RECENT_TEXTS, state)
     return {"state": state, "sample": bool(board is not None and board.sample), "sample_tag": T["board_sample_tag"], "kpi": kpi_vms(data, board), "recommend": recommend,
             "drafts": drafts, "recent": recent, "connection": connection_vm(conn_data, conn_state, conn_loading)}
+
+
+# ---- 추천 줄 → 상세 서랍 -------------------------------------------------------------------------------------------------------------
+DRAWER_TREND = {"rising": "up", "flat": "flat", "falling": "down"}      # 서랍의 '최근 트렌드' 칸이 쓰는 이름(옛 추세 칸과 같은 칸 — 새 칸을 만들지 않는다)
+
+
+def drawer_topic(data, topic_id):
+    """추천 줄 하나를 **기존 상세 서랍**이 그릴 수 있는 `Topic` 으로(UI-C1d, D-201) — 없으면 None. 서랍의 칸과 동작은 그대로이고(새 칸을 더하지 않는다) 이 줄이 아는 값만 채운다:
+    제목·채널(블로그 배지와 초안 단추)·관심도(서랍에 이미 있는 '최근 트렌드' 칸 — 관심도를 못 가져왔다고 표시한 데이터는 비운다). 나머지(작성 우선도·추천 이유·월간 검색량 …)는 이 줄이 모르는 값이라 `Topic` 의 빈 값이고
+    서랍이 '데이터 없음' 으로 보인다(지어내지 않는다 — 작성 우선도는 옛 후보 저장소의 값이라 엔진 점수로 대신하지 않는다). 홈에 보이는 줄(채널마다 앞의 다섯)만 찾는다."""
+    board = None if data is None else data.board
+    if board is None:
+        return None
+    hidden = "trend" in data.partial
+    for channel in board.channels:
+        for row in islice(channel.rows, HOME_LIMIT):
+            if row.id == topic_id:
+                return Topic(id=row.id, title=row.title, blogs=(channel.key,), priority="", trend=None if hidden else DRAWER_TREND.get(row.interest))
+    return None

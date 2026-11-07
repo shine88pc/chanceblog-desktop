@@ -147,24 +147,27 @@ FOCUS_RING_PX = 2                                   # 포커스 테두리 두께
 
 # ---- 크기 — 단추 높이: 큰 주 단추 44 · 표준 40 · 작은 34(그려지는 높이) · 아이콘 단독 36 · 누르는 칸은 모두 36 이상(`hit`)
 SIZE = {
-    "hit": 36, "control": 40, "control_primary": 44, "control_sm": 34, "icon_button": 36, "chip_h": 34, "menu_h": 44, "badge_h": 24, "sum_min_h": 108, "row_min_h": 96,
+    "hit": 36, "control": 40, "control_primary": 44, "control_sm": 34, "icon_button": 36, "chip_h": 34, "menu_h": 44, "badge_h": 24,
     "thumb": 64, "thumb_radius": 12, "input_h": 40, "toggle_w": 44, "toggle_h": 26, "skeleton_line": 14, "acc_h": 52,       # acc_h: 접이식 머리 한 줄의 최소 높이(누르는 칸 36 이상)
     # C-Type 새 값(UI-C0): 누르는 칸 문서 기준(최소 32·권장 40 — 이 앱은 36 을 기본으로 지킨다)·검색 칸 40·탭 46(44~48)·표 머리 40(36~40)·표 행 48(44~52). 검색 칸·표는 아직 안 쓴다
     "hit_min": 32, "hit_comfort": 40, "search_h": 40, "tab_h": 46, "table_head_h": 40, "table_row_h": 48,
     # 점수 링 카드용 44(40~44)·상세용 72(68~80)·구성 막대 높이 12(10~12)·사용량 막대 높이 8
     "ring_card": 44, "ring_detail": 72, "gauge_h": 12, "usage_h": 8,
+    # 새 홈(UI-C1d, D-201): KPI 카드 최소 높이 96 · 추천 줄(점수 링 44 + 위아래 여백 10) 최소 높이 64 · 글 줄(작성 중 초안·최근 발행) 최소 높이 56 · 추천 줄 왼쪽 점수 칸의 최소 폭(링 44 + 간격 + 구간 이름·변화량 글)
+    "kpi_min_h": 96, "board_row_h": 64, "list_row_h": 56, "board_score_w": 124,
 }
 RING_STROKE_RATIO = 0.11                            # 링 선 두께 = 지름의 11%(문서 10~12%)
 ICON = {"nav": 18, "card": 22, "button": 18, "button_sm": 16, "empty": 44, "box": 40, "box_radius": 12, "gap": 10, "badge": 14, "trend": 16}
 LAYOUT = {
-    "rail": 280, "dialog": 480, "content_max": 1280, "page_margin": 24, "gap": 20,
+    "dialog": 480, "content_max": 1280, "page_margin": 24, "gap": 20,
     "window": (1440, 900), "window_min": (900, 560),
-    "rail_beside_min": 1100,       # 본문 폭이 이 이상일 때만 오른쪽 패널을 옆에 둔다(아니면 아래)
-    "row_compact_below": 800,      # 추천 행의 폭이 이보다 좁으면 지표 칸(검색량·문서 수·추세)을 접는다
+    "kpi_min_col": 190,            # 홈 KPI 카드 한 칸의 최소 폭 — 본문 폭에 따라 4열 → 2열 → 1열(`part_rules.home_kpi_columns`)
+    "section_min_col": 480,        # 홈 구역(추천 둘·작성 중 초안·최근 발행) 한 칸의 최소 폭 — 두 칸이 들어가면 나란히, 아니면 위아래로(`part_rules.home_section_columns`). 추천 줄이 점수 칸(링·구간 이름)과 채널 열쇠를 빼고도 제목 한두 줄을 담으려면 한 칸이 이만큼은 있어야 한다
+    "posts_min_col": 400,          # 작성 중 초안·최근 발행(글 줄) 한 칸의 최소 폭 — 글 줄은 제목과 상태·시각뿐이라 추천 줄보다 좁아도 되어 한 단계 좁은 창까지 나란히 둔다(`part_rules.home_posts_columns`)
 }
 # C-Type 새 틀 크기(§2·§14·§16) — 상단 앱 바·사이드바·서랍은 UI-C1a 부터 이 값을 쓴다(옛 `LAYOUT` 은 본문·대화상자·창 크기가 그대로 쓴다). 범위는 (최소, 최대).
 # **상세 창은 운영자 결정(2026-11-06 확인 요청 004, D-174)이 문서 값을 이긴다**: Qt **논리 폭** ≥ 1600 이면 고정 420~500(문서는 420~520)·카드 3열 / 1366~1599 이면 고정 400(문서는 400~440)·카드 2열 / 1366 미만이면 서랍·카드 2열.
-# 사이드바 폭 208 은 범위(184~208)의 끝이다 — 1366×768/100% 에서 본문 폭이 오른쪽 패널을 옆에 두는 기준(`LAYOUT["rail_beside_min"]` 1100)보다 좁게 남아 홈의 모양(패널이 본문 아래·추천 행의 지표 칸이 보임)이 그대로이게 한다(D-172).
+# 사이드바 폭 208 은 범위(184~208)의 끝이다(D-172).
 # 고정 상세 창 **위젯**은 주제 후보 화면과 함께 만든다 — 지금은 규칙(`ui/core/part_rules.py` 의 `detail_layout`)과 이 상수뿐이다(홈의 상세는 서랍).
 FRAME = {
     "app_bar": 60, "app_bar_range": (56, 64), "sidebar": 208, "sidebar_range": (184, 208), "detail": 460, "detail_range": (420, 500), "detail_narrow": 400,

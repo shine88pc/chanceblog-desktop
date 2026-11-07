@@ -1,4 +1,4 @@
-"""화면(홈·상태 화면·서랍·대화상자·툴팁·토스트와 설정 화면의 접이식·여섯 상태·실제 어댑터 모습·사용량 막대 상태)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
+"""화면(홈·상태 화면·연결 전·구역별 상태·서랍·대화상자·툴팁·토스트와 설정 화면의 접이식·여섯 상태·실제 어댑터 모습·사용량 막대 상태)을 **창을 띄우지 않고**(offscreen) 사진으로 찍고, 같은 환경에서 글자 잘림·누르는 칸·가로 스크롤을 점검한다 — 정식 시각 검수 도구(docs/UI_VISUAL_QA.md).
 
 실행(저장소 맨 위 폴더에서, PySide6 가 있는 파이썬으로):
     python scripts/ui_capture.py <저장 폴더> --env 1366x768@100 [--env 1920x1080@125 …] [--check] [--gallery]
@@ -65,9 +65,9 @@ def child(args):
     sys.path.insert(0, str(HERE))
     import ui_offscreen
     ui_offscreen.prepare_environment()
-    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtCore import QPoint, QRect, Qt
     from PySide6.QtGui import QPainter
-    from PySide6.QtWidgets import QApplication, QPushButton, QToolTip
+    from PySide6.QtWidgets import QApplication, QPushButton, QToolTip, QWidget
     from chanceblog_desktop.ui.core.clock import FixedClock
     from chanceblog_desktop.ui.core.services import FakeHomeProvider
     from chanceblog_desktop.ui.qt import app as qapp
@@ -83,8 +83,8 @@ def child(args):
     tag = args.env.replace("@", "_")
     report = {"env": args.env, "logical": logical, "scale_factor_env": os.environ.get("QT_SCALE_FACTOR", "1"), "fonts": [general, fixed], "shots": {}, "checks": {}}
 
-    def make(scenario):
-        window = AppShell(FakeHomeProvider(scenario), autoload=False, clock=FixedClock(CAPTURE_TIME))
+    def make(scenario, **options):
+        window = AppShell(FakeHomeProvider(scenario, **options), autoload=False, clock=FixedClock(CAPTURE_TIME))
         window.resize(*logical)
         window.show()
         window.reload()
@@ -92,12 +92,21 @@ def child(args):
         ui_offscreen.settle(app)
         return window
 
-    def shoot(window, name):
+    def shoot(window, name, whole=False):
         focus = QApplication.focusWidget()
         if focus is not None and name != "tooltip":
             focus.clearFocus()                                   # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
-        ui_offscreen.settle(app, 3)
-        pixmap = window.grab()
+        if whole:                                                # 페이지 전체 — 창을 아주 길게 늘려 찍고 마지막 위젯 아래까지만 남긴다(구역별 상태가 한 장에 다 보이게)
+            window.resize(logical[0], 6000)
+            ui_offscreen.settle(app, 8)
+            bottom = max(w.mapTo(window, w.rect().bottomLeft()).y() for w in window.screen_widget.findChildren(QWidget) if w.isVisible()) + 40
+            pixmap = window.grab()
+            pixmap = pixmap.copy(QRect(0, 0, pixmap.width(), min(pixmap.height(), round(bottom * pixmap.devicePixelRatio()))))
+            window.resize(*logical)
+            ui_offscreen.settle(app)
+        else:
+            ui_offscreen.settle(app, 3)
+            pixmap = window.grab()
         if not args.check:
             pixmap.save(str(out / f"{tag}_{name}.png"))
         report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
@@ -123,8 +132,13 @@ def child(args):
         shoot(window, scenario)
         audit(window, scenario)
         window.close()
+    for name, options in (("home_before_connect", {"board": None}), ("home_sections", {"board": mixed_board()})):             # 새 구역을 안 읽는 공급자(연결 전·집계 전) · 구역마다 다른 상태(한 구역의 문제가 다른 구역을 막지 않는다)
+        window = make("normal", **options)
+        shoot(window, name, whole=True)
+        audit(window, name)
+        window.close()
     window = make("normal")
-    window.open_drawer(window.state.home_rows()[1].id)
+    window.open_drawer(window.state.home_view()["board"]["recommend"][0]["rows"][1]["id"])                          # 추천 줄을 눌러 여는 기존 상세 서랍
     ui_offscreen.wait_until(app, lambda: window.drawer.x() <= window.width() - window.drawer.width() + 2, 3)
     ui_offscreen.settle(app)
     shoot(window, "drawer")
@@ -163,6 +177,16 @@ def child(args):
     settings_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
+
+
+def mixed_board():
+    """구역마다 다른 상태의 **가짜** 홈 구역들 — Naver A 추천은 못 읽음·Naver B 추천은 후보 생성 꺼짐·작성 중 초안은 못 읽음·최근 발행은 읽은 글(발행일을 모르는 글 하나·건너뛴 글 하나). 실제 이름·값이 없다."""
+    from chanceblog_desktop.ui.core.services import BoardData, ChannelRead, ListRead, RecentRow, ServiceFailure
+    from chanceblog_desktop.ui.core.text import T
+    broken = ServiceFailure(T["board_err_store"], code="SAMPLE_STORE_UNREADABLE")
+    channels = (ChannelRead("A", "블로그 A", True, "failed", "", (), 0, broken), ChannelRead("B", "블로그 B", False, "ok", "", ()))
+    recent = ListRead("ok", (RecentRow("p1", "자취방 곰팡이 없애는 순서", "2026-11-03T01:00:00Z", True), RecentRow("p2", "겨울철 실내 습도 관리", None, True)), 1)
+    return BoardData(channels, ListRead("failed", (), 0, ServiceFailure(T["board_err_store"], code="SAMPLE_PROJECTS_UNREADABLE")), recent, True)
 
 
 def real_settings_provider(tmp):

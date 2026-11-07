@@ -420,6 +420,7 @@ class PartRulesTest(unittest.TestCase):
 class SourceRulesTest(unittest.TestCase):
     NEW_CORE = ("gauges.py", "part_rules.py", "gallery_data.py")
     NEW_QT = ("gauges.py", "bars.py")
+    STYLE_ONLY_QT = ("board.py",)                                                       # 독립 검증 UI-C1d L3(변이 Q06·Q34): 새 홈 부품 `board.py` 도 인라인 스타일·글자 크기를 못 쓴다 — 여백 산수(`토큰 - 2`)는 이 검사 밖
 
     def test_the_new_pure_modules_never_import_the_screen_toolkit(self):
         for name in self.NEW_CORE:
@@ -431,7 +432,7 @@ class SourceRulesTest(unittest.TestCase):
         scanned = {path.relative_to(UI_DIR).as_posix() for path in SOURCES}
         for name in self.NEW_CORE:
             self.assertIn(f"core/{name}", scanned)
-        for name in self.NEW_QT:
+        for name in self.NEW_QT + self.STYLE_ONLY_QT:
             self.assertIn(f"qt/{name}", scanned)
         for path in SOURCES:
             if path.name == "tokens.py":
@@ -439,7 +440,7 @@ class SourceRulesTest(unittest.TestCase):
             source = read(path)
             self.assertEqual(re.findall(r"#[0-9A-Fa-f]{6}\b", source), [], path.name)
             self.assertNotRegex(source, r"QFont\(\s*[\"']", path.name)
-        for name in self.NEW_QT:                                                          # 새 부품은 인라인 스타일을 쓰지 않는다(속성만 붙이면 스타일시트가 입힌다)
+        for name in self.NEW_QT + self.STYLE_ONLY_QT:                                     # 새 부품은 인라인 스타일을 쓰지 않는다(속성만 붙이면 스타일시트가 입힌다)
             self.assertNotIn("setStyleSheet(", read(UI_DIR / "qt" / name), name)
 
     def test_widgets_never_write_literal_sizes_for_the_new_parts(self):
@@ -449,6 +450,8 @@ class SourceRulesTest(unittest.TestCase):
             self.assertNotRegex(source, r"font-size|setPointSize|QFont\(", name)
             bare = re.sub(r'K\.[A-Z_]+\["[^"]+"\]', "TOKEN", source)                      # 토큰 조회(`K.SPACE["3"]`)는 빼고 남은 숫자만 본다
             self.assertNotRegex(bare, r"setSpacing\(\s*[1-9]|setContentsMargins\([^)]*\b[1-9]\d?\b[^)]*\)", name)
+        for name in self.STYLE_ONLY_QT:
+            self.assertNotRegex(read(UI_DIR / "qt" / name), r"font-size|setPointSize|QFont\(", name)
         self.assertEqual(read(UI_DIR / "qt" / "gauges.py").count("setPixelSize"), 1)
         self.assertEqual(read(UI_DIR / "qt" / "bars.py").count("setPixelSize"), 0)
 

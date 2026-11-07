@@ -70,19 +70,26 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(rich.keywords[0], "보일러 점검 순서 키워드")
 
     def test_topic_ids_are_the_candidate_numbers_but_the_view_model_never_shows_them(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 추천 행(`view["rows"][0]`)의 글에 번호가 없음을 봤다. 옛 후보의 글은 이제 상세 서랍에만 나가므로 서랍의 모든 글과 홈 뷰모델 전체를 본다(번호는 눌렀을 때 누구인지 알려 주는 내부 값)."""
         self.add("번호 시험")
         topic = self.load().topics[0]
         row = svc.list_candidates(self.ctx).rows[0].candidate
         self.assertEqual(topic.id, row.candidate_id)
         state = app_state.AppState(self.provider)
         state.apply_home(self.load())
-        view = state.home_view()
-        shown = view["rows"][0]
-        for key in ("title", "desc", "a11y", "status", "blog_label", "demand", "docs", "priority"):                # 화면에 나가는 글에는 번호가 없다(번호는 눌렀을 때 누구인지 알려 주는 내부 값)
-            self.assertNotIn(row.candidate_id[:8], str(shown[key]), key)
-        self.assertIn("작성 우선도 데이터 없음", shown["a11y"])
+        self.assertTrue(state.open_drawer(topic.id))
+        drawer = state.drawer_view()
+        self.assertEqual(drawer["id"], row.candidate_id)                                 # 서랍이 쓰는 열쇠
+        for key in ("topic", "reason", "blog_label", "priority"):                        # 화면에 나가는 글에는 번호가 없다(번호는 눌렀을 때 누구인지 알려 주는 내부 값)
+            self.assertNotIn(row.candidate_id[:8], str(drawer[key]), key)
+        for field in drawer["fields"]:
+            self.assertNotIn(row.candidate_id[:8], f"{field['label']} {field['value']}")
+        self.assertNotIn(row.candidate_id[:8], repr(state.home_view()))                  # 홈 뷰모델에는 옛 후보의 번호가 아예 없다
+        self.assertEqual(drawer["priority"], text.NO_DATA)
 
     def test_rejected_candidates_are_left_out_and_held_ones_count_as_saved_ideas(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 요약 카드(추천 1·작성 0·발행 0·보류 1)와 추천 행 제목을 봤다(옛 카드·행이 홈에서 없어졌다). 새 KPI 는 같은 수를 센다 — 보류 1은 저장된 아이디어,
+        추천 주제는 주제 엔진의 후보라 엔진 보관함이 아직 없는 이 시험에서는 0 이 아니라 `연결 전` 이다. 제외한 후보가 홈에 안 나오는 것은 어댑터가 읽은 후보 목록으로 못박는다."""
         for name in ("살릴 것", "미룰 것", "버릴 것"):
             self.add(name)
         svc.move_candidate(self.ctx, "2", "HOLD")
@@ -91,9 +98,9 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(sorted(topic.title for topic in data.topics), ["미룰 것", "살릴 것"])
         state = app_state.AppState(self.provider)
         state.apply_home(data)
-        view = state.home_view()
-        self.assertEqual([card["value"] for card in view["cards"]], ["1개", "0개", "0개", "1개"])         # 추천 1 · 작성 완료 0 · 발행 완료 0 · 보류 1
-        self.assertEqual([row["title"] for row in view["rows"]], ["살릴 것"])
+        kpi = {item["key"]: item["text"] for item in state.home_view()["board"]["kpi"]}
+        self.assertEqual((kpi["done"], kpi["pub"], kpi["ideas"]), ("0개", "0개", "1개"))                    # 작성 완료 0 · 발행 완료 0 · 보류 1
+        self.assertEqual(kpi["topics"], "연결 전")                                                          # 주제 엔진 보관함이 없다
 
     def test_the_blog_names_come_from_the_naver_profiles_and_counts_from_the_candidates(self):
         support.naver_profiles(self.ctx)
@@ -105,7 +112,10 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual([(blog.key, blog.name, blog.candidates, blog.total, blog.month) for blog in data.blogs], [("A", "블로그 에이", 2, None, None), ("B", "블로그 비", 2, None, None)])
         other = next(topic for topic in data.topics if topic.title == "다른 블로그")
         self.assertEqual(other.blogs, ())                                                # A·B 가 아닌 대상은 A·B 배지가 없다
-        self.assertEqual(app_state.topic_vm(other)["blog_label"], "")
+        state = app_state.AppState(self.provider)                                        # 의도적 갱신(UI-C1d, D-201): 옛 `topic_vm` 이 없다 — 같은 값(블로그 라벨이 비어 있다)을 상세 서랍에서 본다
+        state.apply_home(data)
+        self.assertTrue(state.open_drawer(other.id))
+        self.assertEqual(state.drawer_view()["blog_label"], "")
 
     def save_name(self, name, key="naver_a"):
         """네이버 프로필에 블로그 표시명을 저장한다(명령줄 `naver-profile set` 과 같은 길 — 표시명은 60자까지)."""
@@ -184,22 +194,20 @@ class AdapterTest(unittest.TestCase):
         pieces = [repr(state.home_view()), repr(state.drawer_view())]
         for topic in data.topics:
             state.open_drawer(topic.id)
-            pieces += [repr(state.drawer_view()), repr(app_state.topic_vm(topic))]
+            pieces += [repr(state.drawer_view())]                                          # 의도적 갱신(UI-C1d, D-201): 옛 추천 행의 뷰모델(`topic_vm`)이 없어져 그 항목을 뺐다 — 옛 후보의 글은 이제 서랍에만 나간다
         everything = " ".join(pieces)
         self.assertEqual([leaks(everything, key, 5) for key in KEYS], [[], []])
         self.assertIn("가림", everything)
 
     def test_real_candidates_never_claim_a_field_for_their_image_placeholder(self):
-        """분야를 모르는 실제 후보에 장식 아이콘을 돌려 붙이면서 '생활·에너지 주제' 라고 설명하던 값(지어낸 값) — 이제 분야 없이 '이미지 자리 표시' 뿐이다."""
+        """분야를 모르는 실제 후보에 장식 아이콘을 돌려 붙이면서 '생활·에너지 주제' 라고 설명하던 값(지어낸 값) — 이제 분야 없이 '이미지 자리 표시' 뿐이다.
+        의도적 갱신(UI-C1d, D-201): 옛 시험은 추천 행 썸네일의 설명 글(`topic_vm` 의 `thumb`)까지 봤다 — 그 썸네일이 홈에서 없어졌다. 실제 후보가 분야를 지어 갖지 않는다는 값 자체는 그대로 못박는다."""
         for index in range(8):
             self.add(f"후보 {index}")
         data = self.load()
         self.assertEqual(len(data.topics), 8)
         self.assertEqual({topic.category for topic in data.topics}, {""})
         self.assertGreater(len({topic.icon for topic in data.topics}), 1)                    # 아이콘은 돌려 쓰는 장식이다
-        for topic in data.topics:
-            thumb = app_state.topic_vm(topic)["thumb"]
-            self.assertEqual((thumb["label"], thumb["category"]), ("이미지 자리 표시", ""))
 
     def test_an_explicit_data_folder_that_is_missing_or_a_file_is_an_easy_message_not_an_empty_screen(self):
         root = Path(self.tmp.name)
@@ -347,7 +355,7 @@ class AdapterTest(unittest.TestCase):
         self.assertTrue(done.wait(10))
         job.join(2)
         state.apply_home(results[0])
-        self.assertEqual((state.list_state, len(state.home_rows())), ("normal", 1))
+        self.assertEqual((state.list_state, len(state.data.topics)), ("normal", 1))                # 의도적 갱신(UI-C1d, D-201): 옛 `home_rows()` 가 없다 — 읽은 후보 수로 본다
         self.assertFalse(results[0].sample)
 
     def test_priority_labels(self):

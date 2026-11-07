@@ -13,7 +13,6 @@ from .jobs import JobCancelled, JobFailure
 ServiceFailure = JobFailure                        # 서비스가 실패를 알리는 예외(쉬운 문장 + 진단 코드)
 
 SCENARIOS = ("normal", "empty", "error", "partial", "offline")
-PRIORITY_RANK = {"높음": 0, "보통": 1, "낮음": 2}
 
 
 @dataclass(frozen=True)

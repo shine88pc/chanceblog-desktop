@@ -1,4 +1,4 @@
-"""공통 부품의 순수 규칙 — 아래 고정 행동 줄이 좁을 때 무엇을 `더보기 ⋮` 로 접을지, 탭의 키보드 이동, 한 줄 배지의 글자 줄임, **상세 창을 고정으로 둘지 서랍으로 할지**(논리 폭 기준). PySide6 없이 시험한다(C-Type §5.4·§8.2·§8.3·§10.5·§16.2).
+"""공통 부품의 순수 규칙 — 아래 고정 행동 줄이 좁을 때 무엇을 `더보기 ⋮` 로 접을지, 탭의 키보드 이동, 한 줄 배지의 글자 줄임, **상세 창을 고정으로 둘지 서랍으로 할지**(논리 폭 기준), 격자의 열 수(홈의 KPI·구역 — UI-C1d). PySide6 없이 시험한다(C-Type §5.4·§8.2·§8.3·§10.5·§16.2).
 
 행동 줄의 규칙: 주요 행동 **1개**(늘 보인다) · 보조 최대 3개 · 3차(글자만) 여러 개 · 위험 3차 최대 1개 · `더보기 ⋮`(접힌 것이 있거나 처음부터 더보기 항목이 있을 때만).
 자리가 모자라면 **위험·3차 → 보조** 순서로(각각 뒤에 있는 것부터) 더보기 메뉴로 접고, 그래도 모자라면 주요 행동 하나만 남는다.
@@ -96,6 +96,42 @@ def detail_layout(logical_width):
     if logical_width >= frame["narrow_detail_min"]:
         return DetailLayout("fixed", frame["detail_narrow"], frame["detail_columns_narrow"])
     return DetailLayout("drawer", 0, frame["detail_columns_narrow"])
+
+
+def grid_columns(width, options, min_col, gap):
+    """폭 `width` 안에 한 칸 최소 폭 `min_col`·칸 사이 `gap` 으로 들어가는 가장 큰 열 수 — `options` 는 큰 열 수부터이고 하나도 안 들어가면 마지막(가장 작은) 열 수다. 화면의 격자(`screens.FlowGrid`)가 이 규칙으로 열을 고른다.
+    숫자가 아닌 폭(불리언·글자·NaN·무한대)·열 수 후보가 없거나 1 보다 작은 값·0 이하의 최소 폭은 ValueError(코드 실수를 드러낸다). 폭이 음수여도 마지막 열 수다(아직 놓이기 전의 폭 0 처럼)."""
+    if isinstance(width, bool) or not isinstance(width, (int, float)) or not math.isfinite(width):
+        raise ValueError(f"폭이 올바른 숫자가 아니에요: {width!r}")
+    options = tuple(options)
+    if not options or any(isinstance(cols, bool) or not isinstance(cols, int) or cols < 1 for cols in options):
+        raise ValueError(f"열 수 후보가 올바르지 않아요: {options!r}")
+    if isinstance(min_col, bool) or not isinstance(min_col, (int, float)) or min_col <= 0 or isinstance(gap, bool) or not isinstance(gap, (int, float)) or gap < 0:
+        raise ValueError("한 칸의 최소 폭은 0 보다 크고 칸 사이 간격은 0 이상이어야 해요")
+    for cols in options:
+        if cols * min_col + (cols - 1) * gap <= width:
+            return cols
+    return options[-1]
+
+
+HOME_KPI_OPTIONS = (4, 2, 1)                         # 홈 KPI 카드: 4열 → 2열 → 1열
+HOME_KPI_GAP = K.SPACE["4"]                          # KPI 카드 사이 간격 16
+HOME_SECTION_OPTIONS = (2, 1)                        # 홈 구역(Naver A·B 추천, 작성 중 초안·최근 발행): 두 칸이 들어가면 나란히, 아니면 위아래로
+
+
+def home_kpi_columns(width):
+    """홈 본문 폭(논리 px) → KPI 카드 열 수(4·2·1)."""
+    return grid_columns(width, HOME_KPI_OPTIONS, K.LAYOUT["kpi_min_col"], HOME_KPI_GAP)
+
+
+def home_section_columns(width):
+    """홈 본문 폭(논리 px) → 구역 열 수(2 = 나란히·1 = 위아래). 서랍(상세 창)은 폭과 상관없이 홈에서 오른쪽에서 밀려 나오는 서랍이다(`drawer_width`)."""
+    return grid_columns(width, HOME_SECTION_OPTIONS, K.LAYOUT["section_min_col"], K.LAYOUT["gap"])
+
+
+def home_posts_columns(width):
+    """홈 본문 폭(논리 px) → 글 구역(작성 중 초안·최근 발행) 열 수(2 = 나란히·1 = 위아래) — 글 줄은 제목과 상태·시각뿐이라 추천 구역보다 좁은 한 칸(`posts_min_col`)까지 나란히 둔다."""
+    return grid_columns(width, HOME_SECTION_OPTIONS, K.LAYOUT["posts_min_col"], K.LAYOUT["gap"])
 
 
 def drawer_width(window_width):

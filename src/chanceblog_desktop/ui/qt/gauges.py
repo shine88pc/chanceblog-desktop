@@ -70,21 +70,21 @@ class ScoreRing(QWidget):
 class ScoreWithLabel(QWidget):
     """점수 링 + 구간 이름 라벨 + 변화량 라벨을 합친 부품. `layout="card"`: 링 오른쪽에 구간 이름(`우선 추천`), 그 아래 줄에 변화량(`▲ +12`) — 카드 아래 줄용(링 44).
     `layout="detail"`: 링(72) 아래에 구간 이름, 그 아래에 변화량을 가운데 맞춰 — 상세 창 머리용. 구간 이름은 구간색의 진한 글자색(대비 4.5 이상)이고 변화량은 상승 초록·하락 빨강·변화 없음 회색 + 글자(▲▼―)다.
-    **데이터 부족**이면 링도 변화량도 없이 `데이터 부족` 글만 보인다. 접근 이름은 `점수 92, 우선 추천, 12 상승`."""
+    **데이터 부족**이면 링도 변화량도 없이 `데이터 부족` 글만 보인다(`missing_text` 를 주면 그 글 — 홈의 추천 줄은 `점수 계산 전`). 접근 이름은 `점수 92, 우선 추천, 12 상승`."""
 
-    def __init__(self, score, delta=None, layout="card"):
+    def __init__(self, score, delta=None, layout="card", missing_text=None):
         super().__init__()
         if layout not in ("card", "detail"):
             raise ValueError(f"배치 이름이 아니에요: {layout!r}")
         self.view, self.delta, self.mode = G.ring_view(score), G.delta_view(delta), layout
         card = layout == "card"
         self.ring = self.band_label = self.delta_label = self.missing_label = None
-        self.setAccessibleName(G.score_spoken(score, delta))
+        self.setAccessibleName(G.score_spoken(score, delta) if (self.view.visible or not missing_text) else missing_text)
         outer = QHBoxLayout(self) if card else QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(K.SPACE["3"] if card else K.SPACE["2"])
         if not self.view.visible:
-            self.missing_label = label(T["cd_score_missing"], "sub")
+            self.missing_label = label(missing_text or T["cd_score_missing"], "sub")
             self.missing_label.setMinimumHeight(G.ring_pixels(layout))             # 링이 있을 때와 같은 높이를 지켜 줄이 흔들리지 않게
             self.missing_label.setAlignment(Qt.AlignCenter if not card else Qt.AlignLeft | Qt.AlignVCenter)
             outer.addWidget(self.missing_label)

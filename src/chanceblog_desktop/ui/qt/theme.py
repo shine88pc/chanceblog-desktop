@@ -145,8 +145,13 @@ def _scores(c):
 
 
 def _card_states(c):
-    """카드 3상태(기본·가리킴·선택) — 기본은 `QFrame[card="true"]` 자체이고, 상태는 `cardstate` 속성으로 테두리 두께·색만 바꾼다(`K.CARD_STATES`). 그림자는 `shadow_effect` 가 입힌다."""
-    return "\n".join(f'QFrame[card="true"][cardstate="{state}"] {{ border: {width}px solid {c[color_key]}; }}' for state, (width, color_key, _shadow) in K.CARD_STATES.items() if state != "default")
+    """카드 3상태(기본·가리킴·선택) — 기본은 `QFrame[card="true"]` 자체이고, 상태는 `cardstate` 속성으로 테두리 두께·색만 바꾼다(`K.CARD_STATES`). 그림자는 `shadow_effect` 가 입힌다.
+    **포커스는 상태보다 위다**(UI-C1d, D-200 — 독립 검증 UI-C0 의 M2): 상태 규칙(`[card][cardstate]`)은 기본 포커스 규칙(`[card]:focus`)과 구체성이 같고 뒤에 나와 이겨서, 가리킬 때 포커스를 받은 카드가 가리킴 테두리(1px)로 남아
+    키보드 사용자가 포커스를 못 봤다. 그래서 상태마다 `[card][cardstate]:focus` 규칙(구체성이 더 높다)을 상태 규칙 뒤에 더해 어느 상태든 포커스를 받으면 2px 포커스 테두리가 보인다(선택됨은 선택 색과 포커스 색이 같아 테두리가 그대로 2px 파랑이다)."""
+    states = [(state, width, color_key) for state, (width, color_key, _shadow) in K.CARD_STATES.items() if state != "default"]
+    rules = [f'QFrame[card="true"][cardstate="{state}"] {{ border: {width}px solid {c[color_key]}; }}' for state, width, color_key in states]
+    rules += [f'QFrame[card="true"][cardstate="{state}"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c["border_focus"]}; }}' for state, _width, _color_key in states]
+    return "\n".join(rules)
 
 
 def build_qss(c):

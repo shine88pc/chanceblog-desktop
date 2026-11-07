@@ -36,6 +36,9 @@ class ScaleTest(unittest.TestCase):
                     size = report["shots"][name]
                     self.assertEqual((size[0], size[1]), (width, height), name)                       # 물리 픽셀 = 화면 크기(논리 크기 × 배율)
                     self.assertEqual(size[2], scale, name)
+                for name in ("home_before_connect", "home_sections"):                                       # UI-C1d: 새 구역 상태 사진(페이지 전체 — 폭은 화면 폭, 높이는 내용을 따른다)
+                    self.assertIn(name, report["checks"], name)
+                    self.assertEqual((report["shots"][name][0], report["shots"][name][2]), (width, scale), name)
                 for name, found in report["checks"].items():
                     self.assertEqual(found.get("clipped"), [], f"{environment} {name}")
                     self.assertFalse(found.get("horizontal_scroll", False), f"{environment} {name} 가로 스크롤")

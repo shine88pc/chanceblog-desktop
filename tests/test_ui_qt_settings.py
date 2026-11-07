@@ -35,6 +35,7 @@ if HAVE:
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QFrame, QLabel, QLineEdit, QWidget
     from chanceblog_desktop.ui.qt import app as qapp
+    from chanceblog_desktop.ui.qt import board as board_module
     from chanceblog_desktop.ui.qt import components as UI
     from chanceblog_desktop.ui.qt import gauges
     from chanceblog_desktop.ui.qt import screens as S
@@ -174,11 +175,12 @@ class ShellTest(Base):
             self.assertTrue(window.nav_buttons["home"].isChecked(), key)
 
     def test_the_home_screen_still_builds_the_same_parts(self):
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 홈의 요약 카드 4·추천 행 5 를 봤다. 새 홈의 KPI 카드 4·추천 줄 9(Naver A 5·B 4)로 바꿨다 — 설정 때문에 홈의 부품이 달라지지 않는다는 뜻은 그대로다."""
         window = self.make(settings=False)
         window.reload()
         ui_offscreen.wait_until(self.app, lambda: window.state.list_state != "loading", 10)
         self.settle()
-        self.assertEqual((len(window.screen_widget.findChildren(UI.SummaryCard)), len(window.screen_widget.findChildren(UI.TopicRow))), (4, 5))
+        self.assertEqual((len(window.screen_widget.findChildren(board_module.KpiCard)), len(window.screen_widget.findChildren(board_module.BoardRow))), (4, 9))
         sample = next(b for b in window.findChildren(QAbstractButton) if b.accessibleName() == "예시 데이터")
         self.assertEqual(sample.toolTip(), text.T["sample_tip"])                                         # 홈의 예시 설명 그대로(설정만 자기 설명을 쓴다)
 

@@ -17,7 +17,7 @@
 | 쓰는 곳 | px | 토큰 |
 |---|---|---|
 | 사이드바 메뉴 | 18 | `ICON["nav"]` |
-| 요약 카드 | 22(바탕 40×40·모서리 12) | `ICON["card"]`·`ICON["box"]` |
+| KPI 카드 | 22(바탕 40×40·모서리 12) | `ICON["card"]`·`ICON["box"]` |
 | 단추 안 | 18(작은 단추 16) | `ICON["button"]`·`ICON["button_sm"]` |
 | 빈·오류 화면 | 44(바탕 72) | `ICON["empty"]` |
 | 추세 | 16 | `ICON["trend"]` |
@@ -33,7 +33,6 @@
 | 추세 상승·보통·하락 | `trend_up`·`trend_flat`·`trend_down` | 초록·주황·빨강 |
 | 복사·바깥 열기·보류·오류·안내 | `copy`·`external`·`pause_circle`·`alert`·`info_circle` | 파랑·회색·주황·빨강·파랑 |
 | 빈 화면·오프라인·일부만·다시 불러오기·닫기·상세 | `inbox`·`cloud_off`·`alert`·`refresh`·`x`·`chevron_right` | 파랑·주황·주황·파랑·회색·회색 |
-| 빠른 작업 새 초안·팁 | `plus`·`bulb` | 파랑·초록 |
 | 이미지·키·삭제·올리기·보안 | `image`·`key`·`trash`·`upload`·`lock` | 파랑·회색·빨강·회색·초록 |
 | 더보기 메뉴(아래 고정 행동 줄의 `⋮`) | `more_vertical` | 회색 |
 
