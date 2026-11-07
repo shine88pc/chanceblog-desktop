@@ -2,7 +2,7 @@
 **PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다 — CI 의존성은 바꾸지 않았다). 사용자의 클립보드는 건드리지 않는다(가짜 클립보드).
 
 지키는 것:
-  · 메뉴 둘(홈·설정)·홈의 KPI 4·추천 줄 9(Naver A 5·B 4)·글 줄 6, 가로 스크롤 없음(1366·1536·1280·1920·1180·최소 창), 눌리는 칸 36px 이상·중요 단추 40~44px, 모든 눌리는 부품의 접근 이름.
+  · 메뉴 셋(홈·블로그 관리·설정 — P4b 가 블로그 관리를 더했다)·홈의 KPI 4·추천 줄 9(Naver A 5·B 4)·글 줄 6, 가로 스크롤 없음(1366·1536·1280·1920·1180·최소 창), 눌리는 칸 36px 이상·중요 단추 40~44px, 모든 눌리는 부품의 접근 이름.
     (UI-C1d, D-201: 옛 홈의 요약 카드·추천 행·칩·오른쪽 패널·빠른 작업·활용 팁은 없어졌다 — 아래 시험은 새 홈 기준이고 의도적으로 고친 시험은 이유 주석이 있다.)
   · Tab 한 바퀴(중간에 갇히지 않음)·Enter/Space·Esc(대화상자 먼저, 서랍은 포커스를 가두고 닫으면 돌려줌)·키보드 포커스에도 보이는 툴팁·칩을 눌러도 포커스 유지.
   · 같은 안내(토스트)는 쌓이지 않음(3.5초), 중복 불러오기 막기·취소·실패 뒤 다시 시도, 작업 중에도 화면이 응답.
@@ -128,7 +128,7 @@ class ShellTest(QtBase):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 메뉴 6개를 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 메뉴다.
         의도적 갱신(UI-C1d, D-201): 옛 시험은 홈의 요약 카드 4·추천 행 5·칩 5 를 봤다. 새 홈은 KPI 넷·Naver A 추천(5)·Naver B 추천(4)·작성 중 초안(3)·최근 발행(3)·연결 상태 한 줄이고 칩은 없다."""
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "blogs", "settings"])                      # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴로 올랐다(옛 값 홈·설정 둘) — 시험 이름의 '둘' 은 그대로 둔다
         self.assertTrue(window.nav_buttons["home"].isChecked())
         page = window.screen_widget
         self.assertEqual(len(page.findChildren(board_module.KpiCard)), 4)
@@ -144,7 +144,7 @@ class ShellTest(QtBase):
         (UI-C1d: 추천 줄의 수로 확인한다.)"""
         window = self.make()
         before = window.screen_widget
-        for key in ("topics", "draft", "history", "seed", "blogs", "nope"):
+        for key in ("topics", "draft", "history", "seed", "nope"):                               # 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열린다(아래 화면 표 시험이 확인)
             window.go(key)
             self.settle()
             self.assertEqual(window.state.page, "home", key)
@@ -233,10 +233,10 @@ class ShellTest(QtBase):
 class AccessibilityTest(QtBase):
     def test_every_interactive_part_has_an_accessible_name_and_a_big_enough_target(self):
         """의도적 갱신(UI-C1d, D-201): 옛 시험은 서랍을 연 상태에서 24개 이상을 봤다(실제 메뉴 4·상단 설정 아이콘·전체 보기·빠른 작업 3·눌리는 요약 카드 2·칩·행마다 상세·초안 단추 …). 새 홈의 누르는 부품은 적다:
-        메뉴 2·예시 데이터·다시 불러오기·추천 줄 9(홈) — 서랍이 열려 있으면 서랍 안(닫기·초안·보류·더보기 4)이 더해지고 홈 쪽은 포커스를 받지 못한다(가둠). 두 상태를 모두 보고 이름·크기는 하나도 빠뜨리지 않고 점검한다."""
+        메뉴 3(홈·블로그 관리·설정 — UI-C1d 때는 2, P4b 가 하나를 더했다)·예시 데이터·다시 불러오기·추천 줄 9(홈) — 서랍이 열려 있으면 서랍 안(닫기·초안·보류·더보기 4)이 더해지고 홈 쪽은 포커스를 받지 못한다(가둠). 두 상태를 모두 보고 이름·크기는 하나도 빠뜨리지 않고 점검한다."""
         window = self.make()
         shown = {"홈": self.interactive(window)}
-        self.assertEqual(len(shown["홈"]), 2 + 2 + 9)                                     # 메뉴 2 + (예시 데이터·다시 불러오기) + 추천 줄 9
+        self.assertEqual(len(shown["홈"]), 3 + 2 + 9)                                     # 메뉴 3(홈·블로그 관리·설정 — P4b 병합으로 하나 늘었다) + (예시 데이터·다시 불러오기) + 추천 줄 9
         window.open_drawer(first_row_id(window))
         self.settle()
         shown["서랍"] = self.interactive(window)
@@ -270,7 +270,7 @@ class AccessibilityTest(QtBase):
             self.assertGreaterEqual(button.height(), 40)
 
     def test_tab_goes_all_the_way_around_and_never_lands_on_something_unnamed(self):
-        """의도적 갱신(UI-C1d, D-201): 옛 시험은 25곳 이상·메뉴·칩·행·단추 네 종류를 봤다(칩·행마다 단추가 없어졌다). 새 홈의 Tab 한 바퀴는 정확히 13곳 — 메뉴 둘·예시 데이터·다시 불러오기·추천 줄 아홉(위에서 아래로,
+        """의도적 갱신(UI-C1d, D-201): 옛 시험은 25곳 이상·메뉴·칩·행·단추 네 종류를 봤다(칩·행마다 단추가 없어졌다). 새 홈의 Tab 한 바퀴는 정확히 14곳 — 메뉴 셋(홈·블로그 관리·설정 — UI-C1d 때는 13곳·메뉴 둘이었고 P4b 가 블로그 관리 메뉴를 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉(위에서 아래로,
         Naver A 추천 다섯 다음 Naver B 추천 넷) — 이고 같은 곳을 두 번 지나지 않고 이름 없는 곳에 닿지 않는다."""
         window = self.make()
         start = window.nav_buttons["home"]
@@ -289,10 +289,10 @@ class AccessibilityTest(QtBase):
         names = [w.accessibleName() for w in seen]
         self.assertTrue(all(name.strip() for name in names), names)
         self.assertTrue(all(isinstance(w, (QAbstractButton, QLineEdit, UI.Pressable)) for w in seen), [type(w).__name__ for w in seen])      # 눌리거나 쓰는 곳만 정거장(스크롤 영역 같은 틀은 아니다)
-        self.assertEqual(len(seen), 13)
+        self.assertEqual(len(seen), 14)                                                   # 메뉴 셋(홈·블로그 관리·설정)·예시 데이터·다시 불러오기·추천 줄 아홉
         self.assertEqual(len(seen), len(set(map(id, seen))))                              # 같은 곳을 두 번 지나지 않는다(갇히지 않는다)
         kinds = ["nav" if w.property("nav") else "row" if isinstance(w, board_module.BoardRow) else "button" for w in seen]
-        self.assertEqual(kinds, ["nav", "nav", "button", "button"] + ["row"] * 9)
+        self.assertEqual(kinds, ["nav", "nav", "nav", "button", "button"] + ["row"] * 9)
         self.assertEqual([w.row["channel"] for w in seen if isinstance(w, board_module.BoardRow)], ["A"] * 5 + ["B"] * 4)                    # 옆 칸을 건너뛰지 않고 Naver A 추천 → Naver B 추천
 
     def test_enter_and_space_press_buttons_rows_and_cards(self):
@@ -1326,6 +1326,7 @@ class ThemeAndFontTest(QtBase):
         self.assertNotIn("#000000", qss.upper())
         self.assertNotRegex(qss, r"font-family")                                           # 글꼴 이름을 스타일시트에 쓰지 않는다
         values = {value.upper() for value in colors.values()}
+        values |= {value.upper() for preset in tokens.CHANNEL_PRESETS.values() for value in preset.values()}      # 의도적 갱신(P4b, D-210): 채널 색 프리셋(운영자가 정한 값 둘)도 토큰 파일(`tokens.CHANNEL_PRESETS`)에서 온다 — 그 밖의 색은 여전히 허용하지 않는다
         for found in set(re.findall(r"#[0-9A-Fa-f]{6}\b", qss)):
             self.assertIn(found.upper(), values, found)
         self.assertNotIn("#123456", qss)

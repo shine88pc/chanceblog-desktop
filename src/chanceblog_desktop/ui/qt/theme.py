@@ -154,6 +154,18 @@ def _card_states(c):
     return "\n".join(rules)
 
 
+def _presets(c):
+    """채널 색 프리셋별 슬롯 카드 테두리(왼쪽 4px)·선택 상태 테두리·채널 배지 — 색은 토큰의 프리셋 표(`K.CHANNEL_PRESETS`)에서만 온다. 배지 글자는 `text_strong`(프리셋 색은 글자로 쓰지 않는다)."""
+    r, ty = K.RADIUS, K.TYPE
+    lines = []
+    for name, colors in K.CHANNEL_PRESETS.items():
+        lines.append(f'QFrame[slot="true"][preset="{name}"] {{ border-left: 4px solid {colors["primary"]}; }}')
+        lines.append(f'QFrame[slot="true"][preset="{name}"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {colors["primary"]}; border-left: 4px solid {colors["primary"]}; }}')
+        lines.append(f'QLabel[chbadge="{name}"] {{ background: {colors["surface"]}; border: 1px solid {colors["primary"]}; color: {c["text_strong"]}; border-radius: {r["badge"]}px; padding: 0 10px; '
+                     f'font-size: {ty["caption"].size}px; font-weight: 700; }}')
+    return "\n".join(lines)
+
+
 def build_qss(c):
     """토큰의 색 사전 `c` 로 앱 전체 스타일시트를 만든다. 색은 모두 `c` 에서만 온다(여기에 `#rrggbb` 를 쓰지 않는다 — 시험이 지킨다)."""
     r, S, ty = K.RADIUS, K.SIZE, K.TYPE
@@ -175,6 +187,19 @@ QFrame#brandcard {{ background: {c['surface']}; border: 1px solid {c['border']};
 QFrame[card="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 {_card_states(c)}
+QFrame[slot="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-left: 4px solid {c['border_strong']}; border-radius: {r['card']}px; }}
+QFrame[slot="true"]:hover {{ background: {c['surface_hover']}; }}
+QFrame[slot="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; border-left: 4px solid {c['primary']}; background: {c['surface']}; }}
+{_presets(c)}
+QFrame[slot="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; border-left: 4px solid {c['border_focus']}; }}
+QFrame[notice="ok"] {{ background: {c['success_100']}; border-radius: {r['badge']}px; }}
+QFrame[notice="ok"] QLabel {{ color: {c['success_text']}; font-weight: 600; }}
+QFrame[notice="info"] {{ background: {c['info_100']}; border-radius: {r['badge']}px; }}
+QFrame[notice="info"] QLabel {{ color: {c['info_text']}; font-weight: 600; }}
+QFrame[notice="error"] {{ background: {c['danger_100']}; border-radius: {r['badge']}px; }}
+QFrame[notice="error"] QLabel {{ color: {c['danger_text']}; font-weight: 600; }}
+QFrame[notice="warning"] {{ background: {c['warning_100']}; border-radius: {r['badge']}px; }}
+QFrame[notice="warning"] QLabel {{ color: {c['warning_text']}; font-weight: 600; }}
 QFrame[card="warm"] {{ background: {c['success_100']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="plain"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QFrame[card="quiet"] {{ background: {c['disabled_bg']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
@@ -254,6 +279,8 @@ QFrame#dialog {{ background: {c['surface']}; border: 1px solid {c['border']}; bo
 QLineEdit {{ background: {c['surface']}; border: 1px solid {c['border_strong']}; border-radius: {r['input']}px; padding: 0 12px; selection-background-color: {c['primary']}; selection-color: {c['on_primary']}; }}
 QLineEdit:focus {{ border: 2px solid {c['border_focus']}; }}
 QLineEdit:disabled {{ background: {c['disabled_bg']}; color: {c['text_disabled']}; }}
+QLineEdit[invalid="true"] {{ border: 2px solid {c['danger']}; }}
+QLineEdit[invalid="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QLabel#toast {{ background: {c['inverse_bg']}; color: {c['inverse_text']}; padding: 12px 18px; border-radius: {r['button']}px; font-weight: 600; font-size: {px('body')}px; }}
 QPlainTextEdit[mono="true"], QLabel[mono="true"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; padding: 10px 12px; color: {c['text_primary']}; }}
 QLabel[semantic] {{ border-radius: {r['badge']}px; padding: 0 {sp('3')}px; font-size: {px('caption')}px; font-weight: 600; }}

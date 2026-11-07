@@ -145,6 +145,8 @@ class ImportRulesTest(unittest.TestCase):
                     self.assertNotIn("topicdb", names)
 
     def test_only_the_service_layer_uses_the_storage_package(self):
+        # 의도적 갱신(P4b, D-218 ⑤): 서비스 층의 새 모듈 `service/blog_profiles.py` 가 저장 계층의 점검 도구(`topicdb.backup` 의 JSON·키 모양 검사)를 읽을 때와 쓰기 전에 그대로 쓴다 — 읽을 때의 판정과 쓰기 전 판정이 한 벌이게.
+        # 규칙의 뜻(저장 계층은 서비스 층만 쓴다)은 그대로이고, 파일에 쓰는 일은 여전히 `context.write_json` 하나다(저장 계층의 '쓰는 (파일, 함수)' 표는 안 건드렸다).
         users = []
         for path in SRC.rglob("*.py"):
             relative = path.relative_to(SRC)
@@ -153,7 +155,7 @@ class ImportRulesTest(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             if re.search(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topicdb\b|import\s+(?:[\w.]*\.)?topicdb\b|from\s+\.+\s+import\s+[^#\n]*\btopicdb\b)", text):
                 users.append(relative.as_posix())
-        self.assertEqual(sorted(users), ["service/topic_files.py", "service/topics.py"], "주제 엔진 저장 계층을 쓰는 곳은 서비스의 두 모듈뿐이다")
+        self.assertEqual(sorted(users), ["service/blog_profiles.py", "service/topic_files.py", "service/topics.py"], "주제 엔진 저장 계층을 쓰는 곳은 서비스의 세 모듈뿐이다")
 
 
 class WriteRulesTest(unittest.TestCase):

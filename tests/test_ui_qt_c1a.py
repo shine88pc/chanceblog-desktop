@@ -252,7 +252,7 @@ class TopBarNarrowTest(QtBase):
 
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-REAL = {"home", "settings"}
+REAL = {"home", "blogs", "settings"}                                                 # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음)
 
 
 def hexed(image, x, y):
@@ -284,17 +284,21 @@ class SidebarTest(QtBase):
         self.assertEqual(hexed(image, side.width() + 6, top + 300), COLORS["bg_app"].upper())
 
     def test_group_names_show_only_for_groups_that_have_a_real_menu(self):
+        """의도적 갱신(P4b, D-210): 데이터·관리 묶음에 블로그 관리가 올라 이제 세 묶음 이름이 모두 보인다. '실제 메뉴가 없는 묶음은 이름도 보이지 않는다' 는 규칙은 그대로이고, 아래에서 데이터 묶음을 일부러 비워 다시 확인한다."""
         side = self.make().sidebar
-        self.assertEqual(list(side.group_titles), ["core", "system"])
-        self.assertEqual([label.plain_text() for label in side.group_titles.values()], ["핵심 작업", "시스템"])
-        every_text = {label.plain_text() for label in side.findChildren(UI.Label)}
-        self.assertNotIn("데이터·관리", every_text, "실제 메뉴가 없는 묶음은 이름도 보이지 않는다")
+        self.assertEqual(list(side.group_titles), ["core", "data", "system"])
+        self.assertEqual([label.plain_text() for label in side.group_titles.values()], ["핵심 작업", "데이터·관리", "시스템"])
         self.assertEqual({label.property("role") for label in side.group_titles.values()}, {"micro"})
+        emptied = tuple((key, label, () if key == "data" else menus) for key, label, menus in app_state.NAV_GROUPS)
+        with mock.patch.object(app_state, "NAV_GROUPS", emptied):
+            side = self.make().sidebar
+        self.assertEqual(list(side.group_titles), ["core", "system"])
+        self.assertNotIn("데이터·관리", {label.plain_text() for label in side.findChildren(UI.Label)}, "실제 메뉴가 없는 묶음은 이름도 보이지 않는다")
 
     def test_the_real_menu_is_home_and_settings_and_the_current_one_gets_the_new_colors(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "settings"])
-        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "설정 메뉴로 이동"])
+        self.assertEqual(list(window.nav_buttons), ["home", "blogs", "settings"])                 # 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다
+        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
         for button in window.nav_buttons.values():
             self.assertTrue(42 <= button.height() <= 46, button.height())                          # 문서의 메뉴 높이 42~46
             self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)
@@ -317,7 +321,7 @@ class SidebarTest(QtBase):
         self.assertEqual(box.accessibleName(), "준비 중 — 아직 열 수 없는 화면")
         self.assertEqual(box.title.plain_text(), "다음 단계")
         items = box.items
-        self.assertEqual([item.name.text() for item in items], ["주제 후보", "초안 작성", "발행 기록", "Seed 관리", "블로그 관리"])
+        self.assertEqual([item.name.text() for item in items], ["주제 후보", "초안 작성", "발행 기록", "Seed 관리"])        # 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다
         for item in items:
             self.assertIsInstance(item, SoonItem)
             self.assertEqual(item.badge.text(), "준비 중")                                          # 색만이 아니라 글자

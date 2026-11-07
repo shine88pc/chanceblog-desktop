@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
 from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
+from ..core.blogs_view import WRITE_KEY as BLOGS_WRITE_KEY
 from ..core.clock import SystemClock
 from ..core.text import T
 from ..core.version import read_version
@@ -24,6 +25,8 @@ from .workers import JobBridge
 
 
 RELAYOUT_AFTER_RESIZE_MS = 30                                                     # 창 크기가 바뀐 뒤 배치를 다시 계산하기까지 기다리는 시간 — 끌어 바꾸는 동안 계속 미루어진다
+WRITE_CLOSE_WAIT = 10.0                                                           # 창을 닫을 때 저장·복제·삭제가 돌고 있으면 끝나기를 기다리는 최대 시간(초) — 쓰기는 중간에 끊을 수 없다
+IMAGE_FILTER = "(*.png *.jpg *.jpeg *.webp)"                                       # 이미지 고르기 대화상자의 파일 종류(JPG·JPEG·PNG·WebP)
 
 
 def qt_clipboard_set(text):
@@ -32,16 +35,23 @@ def qt_clipboard_set(text):
     return True
 
 
+def qt_file_picker(parent, title, filter_text):
+    """이미지 파일 하나를 고르는 윈도 대화상자 — 고른 파일의 **위치**(고르지 않으면 빈 글). 파일을 읽거나 복사하지 않는다(시험은 이 대화상자 대신 가짜 선택기를 넣는다)."""
+    path, _selected = QFileDialog.getOpenFileName(parent, title, "", filter_text)
+    return path
+
+
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
+        self._file_picker = file_picker or qt_file_picker                                 # 이미지 위치를 고르는 대화상자(시험·사진은 가짜 선택기를 주입한다)
         self.setWindowTitle(T["window_title"])
         root = QWidget()
         root.setObjectName("root")
@@ -79,6 +89,14 @@ class AppShell(QMainWindow):
         self.conn_bridge.loaded.connect(self._on_conn_loaded)
         self.conn_bridge.failed.connect(self._on_conn_failed)
         self.conn_bridge.cancelled.connect(self._on_conn_cancelled)
+        self.blogs_bridge = JobBridge(self)                                             # 블로그 관리 화면을 읽는 작업의 다리(P4b) — 홈·설정 읽기와 따로 돈다
+        self.blogs_bridge.loaded.connect(self._on_blogs_loaded)
+        self.blogs_bridge.failed.connect(self._on_blogs_failed)
+        self.blogs_bridge.cancelled.connect(self._on_blogs_cancelled)
+        self.blogs_write_bridge = JobBridge(self)                                       # 저장·복제·삭제(파일에 쓰는 일)의 다리 — 사용자가 단추를 눌렀을 때만 시작한다
+        self.blogs_write_bridge.loaded.connect(self._on_blogs_written)
+        self.blogs_write_bridge.failed.connect(self._on_blogs_write_failed)
+        self.blogs_write_bridge.cancelled.connect(self._on_blogs_write_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -206,27 +224,29 @@ class AppShell(QMainWindow):
             self._drawer_return = QApplication.focusWidget()
             self.render()
 
-    def show_dialog(self, title, body, ok=None, cancel=None, on_ok=None):
-        """가운데 대화상자 — 제목·본문·단추. 처음 포커스는 기본 단추에 있고 Esc·취소로 닫는다."""
+    def show_dialog(self, title, body, ok=None, cancel=None, on_ok=None, danger=False, safe_focus=False):
+        """가운데 대화상자 — 제목·본문·단추. 처음 포커스는 기본 단추에 있고 Esc·취소로 닫는다. `danger` 면 확인 단추가 위험 단추(최종 삭제 확인 — 빨간 배경)이고, `safe_focus` 면 처음 포커스가 취소에 있다(Enter 를 잘못 눌러도 지워지지 않는다)."""
         self.dialog.clear()
         self.dialog.setAccessibleName(title)
         self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
         self.dialog.layout_.addWidget(UI.label(body, "body", wrap=True))
         row = QHBoxLayout()
         row.addStretch(1)
+        no = None
         if cancel:
             no = UI.Button("secondary", cancel, focus_key="dialog-cancel")
             no.clicked.connect(self.close_dialog)
             row.addWidget(no)
-        yes = UI.Button("primary", ok or T["ok"], focus_key="dialog-ok")
+        yes = UI.Button("danger" if danger else "primary", ok or T["ok"], focus_key="dialog-ok")
         yes.clicked.connect(lambda: (self.close_dialog(), on_ok() if on_ok else None))
         row.addWidget(yes)
         self.dialog.layout_.addLayout(row)
         self._dialog_return = QApplication.focusWidget()
         self.dialog.present()
         self._trap_focus(True, self.dialog)
-        yes.setFocus(Qt.OtherFocusReason)
-        self.dialog_default = yes
+        first = no if (safe_focus and no is not None) else yes
+        first.setFocus(Qt.OtherFocusReason)
+        self.dialog_default = first
 
     def close_dialog(self):
         if not self.dialog.is_open:
@@ -244,7 +264,7 @@ class AppShell(QMainWindow):
 
     def show_sample_info(self, screen="home"):
         """'예시 데이터' 설명 — 화면마다 보이는 것이 달라 설명도 그 화면 것이다(홈은 주제·숫자, 설정은 키 이름·사용량 숫자)."""
-        self.show_dialog(T["sample_dialog_title"], T["conn_sample_dialog_body"] if screen == "settings" else T["sample_dialog_body"])
+        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
 
     def escape(self):
         if self.dialog.is_open:
@@ -274,6 +294,8 @@ class AppShell(QMainWindow):
             self.close_drawer_silently()
             if key == "settings":                                                     # 설정 화면은 열 때마다 읽는다(이미 읽는 중이면 그대로 둔다) — 읽기는 작업 스레드에서
                 self.state.start_conn_load(**self.conn_bridge.callbacks())
+            elif key == "blogs":                                                      # 블로그 관리 화면도 열 때마다 읽는다(읽기만 — 파일도 폴더도 만들지 않는다). 쓰는 중이면 읽지 않는다
+                self.state.blogs.start_load(**self.blogs_bridge.callbacks())
             self.render()
 
     def close_drawer_silently(self):
@@ -397,6 +419,163 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    # ---- 블로그 관리 화면(P4b) — 읽기는 작업 스레드, 쓰기(저장·복제·삭제)는 사용자가 눌렀을 때만 따로 시작하는 작업. 고르기·고치기는 파일에 닿지 않는다 ----
+    def reload_blogs(self, *_):
+        """프로필을 다시 읽는다(읽기만). 이미 읽는 중이거나 쓰는 중이면 안내만 한다."""
+        job = self.state.blogs.start_load(**self.blogs_bridge.callbacks())
+        if job is None:
+            self.notify(T["load_busy"])
+            return False
+        self.render()
+        return True
+
+    def _render_blogs(self):
+        if self.state.page == "blogs":                                               # 다른 화면을 보는 중이면 값만 받아 두고 다시 그리지 않는다
+            self.render()
+
+    def _live_blogs(self):
+        """칸을 고친 뒤 — 화면을 다시 그리지 않고 오류 글·단추·카드 표시만 바꾼다(입력 중이던 커서·한글 조합이 사라지지 않게)."""
+        if self.state.page == "blogs" and self.screen_widget is not None:
+            from .blog_screen import update_blogs_live
+            update_blogs_live(self.screen_widget, self.state.blogs_view())
+
+    def blog_select(self, key):
+        if self.state.blogs.select(key):
+            self.render()
+            self._restore_focus("slot:" + key)
+
+    def blog_edit(self, name, value):
+        if self.state.blogs.edit(name, value):
+            self._live_blogs()
+
+    def blog_toggle_tag(self, tag):
+        if self.state.blogs.toggle_tag(tag):
+            self._live_blogs()
+
+    def blog_pick_image(self, name):
+        """이미지 위치 고르기 — 선택기가 준 **위치**만 칸에 넣는다(파일을 읽거나 복사하거나 올리지 않는다)."""
+        path = self._file_picker(self, T["bf_pick_title"].format(label=T["bf_label_" + name]), f"{T['bf_pick_filter']} {IMAGE_FILTER}")
+        if path:
+            self.blog_edit(name, str(path))
+
+    def blog_action(self, key):
+        {"save": self.blog_save, "revert": self.blog_revert, "clone": self.blog_clone, "delete": self.blog_delete}.get(key, lambda: None)()
+
+    def _focus_first_blog_error(self):
+        ui = getattr(self.screen_widget, "blogs_ui", None)
+        view = ui.fields.get(ui.first_error) if ui is not None and ui.first_error else None
+        if view is not None and view.controls:
+            view.controls[0].setFocus(Qt.OtherFocusReason)
+            if ui.form_scroll is not None:                                           # 칸 이름·입력·안내·오류 문장이 한 덩어리로 보이게(배치가 끝난 다음 차례에) — 작은 창에서 오류 문장이 행동 줄 뒤로 반쯤 숨지 않게
+                QTimer.singleShot(0, lambda scroll=ui.form_scroll, target=view: self._reveal_blog_field(scroll, target))
+
+    @staticmethod
+    def _reveal_blog_field(scroll, view):
+        try:
+            scroll.ensureWidgetVisible(view, 0, 12)
+        except RuntimeError:                                                         # 그 사이 화면이 다시 그려져 부품이 사라졌다
+            pass
+
+    def blog_save(self):
+        """저장 — 칸에 문제가 있으면 서비스를 부르지 않고 문제 칸을 보인다. 아니면 쓰기 작업을 시작한다(쓰는 동안 칸·단추는 꺼진다)."""
+        status, _detail = self.state.blogs.start_save(**self.blogs_write_bridge.callbacks())
+        if status == "started":
+            self.render()
+        elif status == "invalid":
+            self.render()
+            self._focus_first_blog_error()
+        elif status == "nothing":
+            self.notify(T["blogs_save_nothing"])
+        else:
+            self.notify(T["load_busy"])
+
+    def blog_revert(self):
+        if self.state.blogs.revert():
+            self.render()
+
+    def blog_clone(self):
+        status, _detail = self.state.blogs.start_clone(**self.blogs_write_bridge.callbacks())
+        if status == "started":
+            self.render()
+        elif status == "unavailable":
+            self.notify(self.state.blogs.clone_info()[1] or T["blogs_clone_no_target"])
+        else:
+            self.notify(T["load_busy"])
+
+    def blog_delete(self):
+        """삭제 — 확인창이 먼저다(무엇이 지워지는지·되돌릴 수 없다는 것·후보·초안·발행 기록은 지워지지 않는다는 것). '지우기' 를 눌러야 쓰기가 시작된다(처음 포커스는 취소)."""
+        blogs = self.state.blogs
+        if blogs.busy or not blogs.can_clear():
+            self.notify(T["load_busy"] if blogs.busy else T["blogs_delete_empty"])
+            return
+        dialog = blogs.delete_dialog()
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self.blog_delete_confirmed, danger=True, safe_focus=True)
+
+    def blog_delete_confirmed(self):
+        status, _detail = self.state.blogs.start_clear(**self.blogs_write_bridge.callbacks())
+        if status == "started":
+            self.render()
+
+    def _on_blogs_loaded(self, data):
+        self._guarded(self._show_blogs_loaded, data, recover=self._recover_blogs)
+
+    def _on_blogs_failed(self, failure):
+        self._guarded(self._show_blogs_failed, failure, recover=self._recover_blogs)
+
+    def _on_blogs_cancelled(self):
+        self._guarded(self._show_blogs_cancelled, recover=self._recover_blogs)
+
+    def _show_blogs_loaded(self, data):
+        self.state.blogs.apply_loaded(data)
+        self._render_blogs()
+
+    def _show_blogs_failed(self, failure):
+        self.state.blogs.apply_load_failed(failure, self.clock.now())
+        self._render_blogs()
+
+    def _show_blogs_cancelled(self):
+        self.state.blogs.apply_cancelled()
+        self._render_blogs()
+
+    def _on_blogs_written(self, outcome):
+        self._guarded(self._show_blogs_written, outcome, recover=self._recover_blogs_write)
+
+    def _on_blogs_write_failed(self, failure):
+        self._guarded(self._show_blogs_write_failed, failure, recover=self._recover_blogs_write)
+
+    def _on_blogs_write_cancelled(self):
+        self._guarded(self._show_blogs_write_failed, None, recover=self._recover_blogs_write)
+
+    def _show_blogs_written(self, outcome):
+        self.state.blogs.apply_write_ok(outcome)
+        self._render_blogs()
+        self._restore_focus("slot:" + self.state.blogs.selected)
+
+    def _show_blogs_write_failed(self, failure):
+        reload = self.state.blogs.apply_write_failed(failure)
+        self._render_blogs()
+        if reload:                                                                   # 다른 곳이 먼저 바꿨다 — 최신 내용을 다시 읽는다(읽기만, 입력은 그대로)
+            self.reload_blogs()
+        else:
+            self._focus_first_blog_error()
+
+    def _recover_blogs(self, error):
+        """블로그 관리 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
+        report_unexpected(type(error), error)
+        self.state.blogs.apply_unexpected(error, self.clock.now())
+        try:
+            self._render_blogs()
+        except Exception:
+            self.notify(T["job_failed"])
+
+    def _recover_blogs_write(self, error):
+        report_unexpected(type(error), error)
+        self.state.blogs.apply_write_unexpected(error)
+        try:
+            self._render_blogs()
+        except Exception:
+            self.notify(T["job_failed"])
+
     def _guarded(self, work, *args, recover=None):
         try:
             work(*args)
@@ -414,6 +593,10 @@ class AppShell(QMainWindow):
 
     def closeEvent(self, event):
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
+        if self.state.blogs.busy:                                                 # 저장·복제·삭제는 중간에 끊을 수 없다 — 끝나기를 기다린다(파일은 이름 바꾸기 한 번이라 온전하지만 사본·잠금 정리까지 마치게)
+            job = self.state.runner.job(BLOGS_WRITE_KEY)
+            if job is not None:
+                job.join(WRITE_CLOSE_WAIT)
         self.state.runner.cancel_all()
         self.state.runner.join_all(1.0)
         super().closeEvent(event)

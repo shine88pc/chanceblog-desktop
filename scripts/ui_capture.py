@@ -8,6 +8,7 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 `--gallery`(개발용, UI-C0) 는 앱 화면 대신 **공통 부품 모음**(`scripts/ui_gallery.py` — 배지·점수 링·구성 막대·사용량 막대·탭·행동 줄·카드 그림자)을 한 장에 담아 찍고 같은 환경에서 글자 잘림·가로 넘침을 점검한다.
 사용자 화면·메뉴에는 없는 도구이고 `gui` 명령의 동작·이 도구의 기본 인자는 바뀌지 않는다.
 **시계는 고정한다**(UI-C1a): 상단 앱 바의 날짜·시간은 컴퓨터 시계라 다시 찍을 때마다 달라지므로, 사진은 가짜 시계 `FixedClock`(2026-11-06 20:10)로 찍는다 — 같은 코드·같은 환경이면 같은 사진이다(진단 시각 줄도 같은 시계).
+**블로그 관리 화면**(P4b)은 환경마다 11장면(기본·고치는 중·저장 시도 뒤 칸 오류·저장 결과·삭제 확인창·빈 슬롯·읽는 중·읽기 오류·좁은 창·실제 어댑터 처음·저장 뒤)을 찍고 점검한다 — 이름은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다. 점검의 '잘림' 에는 눌려 반쯤 잘린 부품(`ui_offscreen.find_squeezed`)이 들어 있고, `fits_window` 는 아래 고정 행동 줄이 창 안에 보이는지다.
 """
 from __future__ import annotations
 
@@ -175,6 +176,7 @@ def child(args):
     report["checks"]["toast"] = {"clipped": ui_offscreen.find_clipping(window)}
     window.close()
     settings_shots(app, ui_offscreen, args, report, logical, tag, out)
+    blogs_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
@@ -301,6 +303,107 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "settings_usage", whole=True)
     audit(window, "settings_usage")
     window.close()
+
+
+def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """블로그 관리 화면(P4b) 사진·점검 — 기본·저장 시도 뒤 칸 오류·저장 결과·빈 슬롯(등록 카드)·읽는 중·읽기 오류·삭제 확인창·좁은 창(900×560)·실제 어댑터(임시 폴더 — 저장 결과까지).
+    **이름은 모두 가짜**(`예시 블로그 가` …)이고 실제 어댑터도 이 도구가 만든 임시 폴더만 읽고 쓴다(사용자 데이터 폴더·보관소는 건드리지 않는다). 점검은 글자 잘림·가로 스크롤과 '아래 고정 행동 줄이 창 안에 보이는가'(`fits_window`)다."""
+    import tempfile
+    from PySide6.QtWidgets import QApplication
+    from chanceblog_desktop.ui.core import blogs
+    from chanceblog_desktop.ui.core.clock import FixedClock
+    from chanceblog_desktop.ui.core.services import FakeHomeProvider
+    from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    def make(provider, wait=True, size=None):
+        window = AppShell(FakeHomeProvider(), blogs=provider, autoload=False, clock=FixedClock(CAPTURE_TIME), file_picker=lambda *_: "")
+        window.resize(*(size or logical))
+        window.show()
+        window.go("blogs")
+        if wait:
+            ui_offscreen.wait_until(app, lambda: window.state.blogs.state != "loading" and not window.state.blogs.loading, 10)
+        ui_offscreen.settle(app)
+        return window
+
+    def wait_write(window):
+        ui_offscreen.wait_until(app, lambda: not window.state.blogs.busy and window.state.blogs.pending is None, 10)
+        ui_offscreen.settle(app)
+
+    def audit(window, name, narrow=False):
+        found = {"clipped": ui_offscreen.find_clipping(window) + ui_offscreen.find_squeezed(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0}      # 눌려 잘린 부품(`find_squeezed`)도 잘림으로 센다
+        ui = getattr(window.screen_widget, "blogs_ui", None)
+        if ui is not None and ui.bar is not None and not narrow:                      # 아래 고정 행동 줄(저장 단추)이 창 안에 보인다 — 좁은 창은 목록이 위로 올라 페이지가 스크롤된다
+            found["fits_window"] = ui.bar.mapTo(window, ui.bar.rect().bottomLeft()).y() <= window.height()
+        report["checks"][name] = found
+
+    def shoot(window, name):
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+        ui_offscreen.settle(app, 3)
+        pixmap = window.grab()
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    window = make(blogs.FakeBlogsProvider())                                           # 기본 — 네이버 A 선택(채널 색 배지·카드 왼쪽 줄)·저장·되돌리기·복제는 꺼져 있고 삭제만 켜져 있다
+    shoot(window, "blogs")
+    audit(window, "blogs")
+    window.blog_edit("alias", "새 별명")                                               # 고치는 중 — 저장 전 변경 배지(카드·폼 머리)·저장·되돌리기가 켜진다
+    window.blog_edit("display_name", "")
+    ui_offscreen.settle(app)
+    shoot(window, "blogs_editing")
+    audit(window, "blogs_editing")
+    window.blog_save()                                                                 # 저장 시도 — 서비스를 부르지 않고 문제 칸 옆에 쉬운 문장, 알림 줄
+    ui_offscreen.settle(app)
+    shoot(window, "blogs_invalid")
+    audit(window, "blogs_invalid")
+    window.blog_edit("display_name", "예시 블로그 가")
+    window.blog_save()                                                                 # 저장 — 가짜 공급자(메모리)에만 쓴다
+    wait_write(window)
+    shoot(window, "blogs_saved")
+    audit(window, "blogs_saved")
+    window.blog_delete()                                                               # 삭제 확인창 — 처음 포커스는 취소, 지우기는 위험 단추
+    ui_offscreen.settle(app)
+    shoot(window, "blogs_delete")
+    report["checks"]["blogs_delete"] = {"clipped": ui_offscreen.find_clipping(window.dialog), "fits_window": window.dialog.height() <= window.height() and window.dialog.width() <= window.width()}
+    window.close_dialog()
+    window.close()
+    window = make(blogs.FakeBlogsProvider("empty"))                                    # 모든 슬롯이 비었다 — 등록 카드 다섯과 '등록' 폼
+    shoot(window, "blogs_empty")
+    audit(window, "blogs_empty")
+    window.close()
+    window = make(blogs.FakeBlogsProvider(delay=30), wait=False)                       # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
+    shoot(window, "blogs_loading")
+    audit(window, "blogs_loading")
+    window.close()
+    window = make(blogs.FakeBlogsProvider("error"))                                    # 읽기 오류 — 폼 없이 다시 읽기·진단 정보(펼침)
+    window.screen_widget.findChild(UI.Disclosure).flip()
+    ui_offscreen.settle(app)
+    shoot(window, "blogs_error")
+    audit(window, "blogs_error")
+    window.close()
+    window = make(blogs.FakeBlogsProvider(), size=(900, 560))                          # 최소 창 — 슬롯 목록이 폼 위로 올라가고 페이지가 세로로 스크롤된다(가로 스크롤은 없다)
+    shoot(window, "blogs_narrow")
+    audit(window, "blogs_narrow", narrow=True)
+    window.close()
+    with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 파일이 아직 없다는 안내·예시 표시 없음·가짜 이름을 넣고 저장한 결과(임시 폴더에만 쓴다)
+        from chanceblog_desktop.security.keystore import MemoryStore
+        from chanceblog_desktop.service.context import Context, Settings, Workspace
+        from chanceblog_desktop.ui.blogs_adapter import ServiceBlogsProvider
+        workspace = Workspace(Path(tmp) / "data")
+        ctx = Context(workspace, Settings(workspace.settings_path), backend=None, keystore=MemoryStore())
+        window = make(ServiceBlogsProvider(context_factory=lambda data_dir=None: ctx))
+        shoot(window, "blogs_real_first")
+        audit(window, "blogs_real_first")
+        for name, value in (("display_name", "예시 블로그 가"), ("blog_ref", "example-blog-a"), ("main_topics", "예시 주제 하나, 예시 주제 둘"), ("color_preset", "warm_lifestyle")):
+            window.blog_edit(name, value)
+        window.blog_save()
+        wait_write(window)
+        shoot(window, "blogs_real")
+        audit(window, "blogs_real")
+        window.close()
 
 
 def main(argv=None):

@@ -147,6 +147,11 @@ class HomeProvider:
         따로 정하지 않은 공급자는 예시 데이터를 돌려준다(화면에 '예시 데이터' 표시가 붙어서 실제 값으로 오해하지 않는다)."""
         return FakeConnectionsProvider()
 
+    def blogs_provider(self):
+        """이 공급자와 짝인 블로그 관리 화면 공급자(P4b) — 홈 공급자를 고르면(`--sample`·`--data-dir`) 블로그 관리도 같은 쪽을 쓴다. 따로 정하지 않은 공급자는 **메모리에서만 일하는 예시**를 돌려준다(저장해도 이 PC 에 아무것도 남지 않는다)."""
+        from .blogs import FakeBlogsProvider
+        return FakeBlogsProvider()
+
 
 def _wait(seconds, progress, cancelled):
     end = time.monotonic() + seconds
