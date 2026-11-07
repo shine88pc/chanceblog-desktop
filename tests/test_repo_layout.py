@@ -252,7 +252,9 @@ class CiWorkflowTest(unittest.TestCase):
         ci = read(".github/workflows/ci.yml")
         self.assertIn("permissions:\n  contents: read", ci.replace("\r\n", "\n"))
         self.assertNotIn("secrets.", ci)                               # CI 는 시크릿을 쓰지 않는다
-        for needle in ("'3.10'", "'3.12'", "ubuntu-latest", "windows-latest", "python -m unittest discover -s tests"):
+        # 의도적 갱신(D-220, 2026-11-07): 전체를 한 번에 돌리던 `unittest discover` 대신 같은 시험을 조각으로 나눠 돌리는 `scripts/ci_shard.py` 를 부른다 —
+        # 모든 시험 파일이 조각 하나에만 들어가는지·조각 수가 맞는지는 `tests/test_ci_shard.py` 가 더 엄하게 지킨다(약화 아님).
+        for needle in ("'3.10'", "'3.12'", "ubuntu-latest", "windows-latest", "python scripts/ci_shard.py"):
             self.assertIn(needle, ci, needle)
 
     def test_ci_runs_on_every_push_and_never_again_for_a_pull_request(self):

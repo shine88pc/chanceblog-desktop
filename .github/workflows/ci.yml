@@ -8,6 +8,7 @@ name: "CI — 시험"
 # 어느 브랜치 push 든 검사되도록 `push` 에는 브랜치·경로·태그 필터를 달지 않는다(시험이 지킨다).
 # 릴리스(설치 파일 빌드)는 이 워크플로가 아니라 따로 만든다(docs/RELEASE.md) — 서명·릴리스 변경은 T3.
 # 액션은 전체 커밋 SHA 로 고정한다(docs/SECURITY.md §4, 시험이 지킨다). 갱신은 같은 메이저 안의 최신 태그를 확인해 SHA 와 끝의 버전 주석을 함께 바꾼다.
+# 시험은 세 조각으로 나눠 조각마다 다른 러너에서 동시에 돈다(D-220 — `scripts/ci_shard.py`, 환경 4개 × 조각 3개 = 작업 12개). '네 칸' 은 환경 네 개를 뜻하고 각 환경의 세 조각이 모두 초록이어야 한다.
 
 on:
   push:
@@ -23,16 +24,18 @@ concurrency:
 
 jobs:
   test:
-    name: 시험 (${{ matrix.os }}, Python ${{ matrix.python }})
+    name: 시험 (${{ matrix.os }}, Python ${{ matrix.python }}, 조각 ${{ matrix.shard }}/3)
     runs-on: ${{ matrix.os }}
     # Windows 칸이 14~15분까지 늘었다(2026-11-03). 20분 한도에 닿아 빨간 칸이 나오면 병합 부탁이 막히므로 여유를 둔다(D-28, 시험이 지킨다).
     # 그 뒤 시험이 늘어 Windows 칸이 21~29분이 됐다(2026-11-07 — 같은 코드도 러너에 따라 ±20%): 30분 한도에 1분 반만 남아 40분으로 올린다(D-176, 시험이 지킨다).
+    # 시험을 세 조각으로 나눠(D-220) 작업 하나가 칸 하나의 약 1/3 시간이라 한도 40분은 크게 넉넉해졌다 — 한도는 그대로 둔다(시험이 지킨다).
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         python: ['3.10', '3.12']
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
@@ -42,7 +45,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: 시험 실행
+      - name: 시험 실행(조각 ${{ matrix.shard }}/3)
         env:
           PYTHONUTF8: '1'
-        run: python -m unittest discover -s tests -v
+          CI_SHARD: ${{ matrix.shard }}
+          CI_SHARD_TOTAL: '3'
+        run: python scripts/ci_shard.py
