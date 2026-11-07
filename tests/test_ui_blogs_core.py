@@ -556,7 +556,10 @@ class ViewModelTest(unittest.TestCase):
         names = [[field["name"] for field in section["fields"]] for section in form["sections"]]
         self.assertEqual(names[0], ["display_name", "blog_ref", "language", "generation_enabled"])
         self.assertEqual(names[1], ["alias", "channel_role", "main_topics", "audience", "tone", "categories", "intro", "monetization_focus"])
-        self.assertEqual(names[2], ["color_preset", "profile_image", "cover_image"])
+        # 의도적 갱신(P4c, D-240): 구역이 셋에서 넷이 되었다 — 새 '주제 설정' 구역이 자세한 정보와 모양 사이에 들어갔다(모양이 맨 끝이라는 것은 그대로다)
+        self.assertEqual([section["key"] for section in form["sections"]], ["basic", "more", "topic", "look"])
+        self.assertEqual(names[2], ["priority_keywords", "exclude_keywords", "preferred_post_types"])
+        self.assertEqual(names[3], ["color_preset", "profile_image", "cover_image"])
         required = [field["name"] for section in form["sections"] for field in section["fields"] if field["required"]]
         self.assertEqual(required, ["display_name", "blog_ref", "language", "generation_enabled"], "필수 넷 — 네이버 슬롯에서는 사용 여부까지")
         controller = new_controller()

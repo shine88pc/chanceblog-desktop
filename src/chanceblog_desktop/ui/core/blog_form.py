@@ -1,7 +1,9 @@
 """블로그 프로필 폼의 순수 규칙(P4b) — 칸 표·값을 다듬는 방법·칸마다 쉬운 오류 문장·변경 감지·복제 가능 여부·확인창 글. PySide6 도 파일도 모른다.
 
 **서비스가 이미 가진 칸·검증 규칙을 그대로 쓴다**: 칸의 한도는 `topics/channels.py` 의 상수(`MAX_ALIAS` …)를 그대로 가져오고, 글을 한 줄로 다듬는 `clean_line`·위험한 표기를 찾는 `find_markup`·블로그 ID/주소 검사(`_blog_ref`)도 서비스의 것을 부른다.
-이 모듈은 어떤 규칙에 걸렸는지(`required`·`too_long`·`too_many`·`item_too_long`·`duplicate`·`markup`·`bad_ref`·`bad_choice`·`bad_path`)를 가려 칸 옆에 보일 **쉬운 문장**을 만들 뿐이다 — 판정은 서비스 생성자와 같다(시험이 수백 가지 입력으로 둘의 판정을 견준다).
+이 모듈은 어떤 규칙에 걸렸는지(`required`·`too_long`·`too_many`·`item_too_long`·`duplicate`·`markup`·`bad_ref`·`bad_choice`·`bad_path`·`overlap`)를 가려 칸 옆에 보일 **쉬운 문장**을 만들 뿐이다 — 판정은 서비스 생성자와 같다(시험이 수백 가지 입력으로 둘의 판정을 견준다).
+**주제 설정 칸(P4c)**: 우선 키워드·제외 키워드(낱말 목록 — 주요 주제와 같은 `words` 종류)와 선호 글 유형(`multi` 칩 — 협찬 분야와 같은 종류)이다. 우선·제외에 **같은 낱말(대소문자 구분 없이)이 있으면 두 칸 모두** `overlap` 이다(`overlap_names` — 칸 하나만 보면 알 수 없고 두 칸의 최종 값을 견준다).
+`multi` 는 칸마다 고를 수 있는 값(`options`)·최대 개수(`count`)·목록에 없는 저장된 값 보존 여부(`keep_extra` — 협찬 분야만)를 가진다. 글 유형의 이름은 서비스의 `POST_TYPES` 값 자체가 한글 이름이라 그대로 쓴다(이름표를 따로 베끼지 않는다).
 저장 직전의 진짜 심판은 서비스(`ChannelProfile` 생성자)이고, 키·토큰 모양 글(`key_shape`)은 서비스가 저장 전에 거른다.
 
 값의 모양: 폼이 들고 있는 **입력값**(raw)은 칸마다 글(`line`·`ref`·`words`·`path`·`choice`)·켜짐 여부(`flag`)·고른 분야들(`multi`)이고, 서비스로 보낼 **값**(typed)은 다듬은 글·낱말 목록(tuple)·`None`(색 없음)이다.
@@ -11,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ...content.profiles import POST_TYPES
 from ...content.profiles import clean_line as _service_clean_line
 from ...content.profiles import find_markup
 from ...errors import AppError
@@ -22,7 +25,8 @@ SLOTS = ("github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b")      
 GENERATION_SLOTS = ("naver_a", "naver_b")                                                   # 후보 만들기를 켜고 끌 수 있는 슬롯
 SLOT_KINDS = (("naver_a", "naver_b"), ("blogger_ko", "blogger_en"), ("github_pages",))      # 복제는 같은 종류끼리만
 KIND_KEY = {"naver_a": "naver", "naver_b": "naver", "blogger_ko": "blogger", "blogger_en": "blogger", "github_pages": "github"}
-SECTIONS = ("basic", "more", "look")
+SECTIONS = ("basic", "more", "topic", "look")                                               # 기본 정보 → 자세한 정보 → 주제 설정(P4c) → 모양
+KEYWORD_FIELDS = ("priority_keywords", "exclude_keywords")                                  # 서로 같은 낱말이 없어야 하는 두 칸(서비스의 `KEYWORD_FIELDS` 와 같다 — 시험이 견준다)
 TAG_ORDER = tuple(wording.TAG_KO)                                                           # 협찬 가능 분야 여섯(서비스의 이름표가 있는 것) — 고르는 순서
 PRESET_ORDER = ("", *ch.COLOR_PRESETS)                                                      # 색 프리셋 — 빈 글은 '정하지 않음'
 WORD_SEPARATORS = (",", "，", "、", ";", "\n")                                              # 낱말 칸에서 낱말을 나누는 글자(가운뎃점은 낱말 안에 쓰이므로 나누지 않는다)
@@ -33,10 +37,13 @@ DATA_PREFIXES = ("data:", "javascript:", "vbscript:")
 class FieldSpec:
     name: str                       # 서비스 칸 이름
     kind: str                       # line · ref · words · path · choice · multi · flag
-    section: str                    # basic · more · look
+    section: str                    # basic · more · topic · look
     limit: int = 0                  # line·ref·path 의 글자 수 상한 / words 의 낱말 하나 상한
-    count: int = 0                  # words 의 낱말 수 상한
+    count: int = 0                  # words 의 낱말 수 상한 / multi 의 고를 수 있는 최대 개수
     required: bool = False
+    options: tuple = ()             # multi 의 고를 수 있는 값들(보여 줄 순서) — 칸마다 다르다
+    keep_extra: bool = False        # multi: 목록에 없는 저장된 값(손으로 고친 파일의 것)을 그대로 보존한다 — 협찬 분야만(글 유형은 서비스가 목록 밖 값을 거절한다)
+    texts: str = ""                 # multi: 칩 이름을 `T` 에서 찾는 열쇠의 앞머리(예: `bf_tag_`) — 없으면 값이 곧 한글 이름이다(글 유형)
 
     @property
     def label(self):
@@ -59,7 +66,10 @@ FIELDS = (
     FieldSpec("tone", "line", "more", ch.MAX_TONE),
     FieldSpec("categories", "words", "more", ch.MAX_CATEGORY_WORD, ch.MAX_CATEGORIES),
     FieldSpec("intro", "line", "more", ch.MAX_INTRO),
-    FieldSpec("monetization_focus", "multi", "more"),
+    FieldSpec("monetization_focus", "multi", "more", count=ch.MAX_FOCUS, options=TAG_ORDER, keep_extra=True, texts="bf_tag_"),
+    FieldSpec("priority_keywords", "words", "topic", ch.MAX_KEYWORD_WORD, ch.MAX_KEYWORDS),
+    FieldSpec("exclude_keywords", "words", "topic", ch.MAX_KEYWORD_WORD, ch.MAX_KEYWORDS),
+    FieldSpec("preferred_post_types", "multi", "topic", count=len(POST_TYPES), options=POST_TYPES),
     FieldSpec("color_preset", "choice", "look"),
     FieldSpec("profile_image", "path", "look", ch.MAX_IMAGE_PATH),
     FieldSpec("cover_image", "path", "look", ch.MAX_IMAGE_PATH),
@@ -99,8 +109,8 @@ def normalize(spec, raw):
     if spec.kind == "words":
         return split_words(raw)
     if spec.kind == "multi":
-        picked = set(raw or ())
-        return tuple(tag for tag in TAG_ORDER if tag in picked) + tuple(tag for tag in (raw or ()) if tag not in TAG_ORDER)
+        picked = (raw,) if isinstance(raw, str) else tuple(raw or ())
+        return tuple(value for value in spec.options if value in picked) + tuple(value for value in picked if value not in spec.options)      # 아는 값은 정해진 순서로, 모르는 값은 뒤에 그대로(문제인지는 `problem_of` 가 본다)
     if spec.kind == "flag":
         return bool(raw)
     if spec.name == "color_preset":
@@ -168,13 +178,22 @@ def problem_of(spec, typed, extra_tags=()):
     if spec.name == "color_preset":
         return "" if typed is None or typed in ch.COLOR_PRESETS else "bad_choice"
     if spec.kind == "multi":
-        allowed = set(TAG_ORDER) | set(extra_tags)
-        return "" if len(typed) <= ch.MAX_FOCUS and all(tag in allowed for tag in typed) else "bad_choice"
+        allowed = set(spec.options) | (set(extra_tags) if spec.keep_extra else set())
+        return "" if len(typed) <= spec.count and len(set(typed)) == len(typed) and all(value in allowed for value in typed) else "bad_choice"
     return ""
 
 
-def check_typed(key, typed, extra_tags=()):
-    """서비스로 보낼 값(칸 이름 → 값)의 문제들 `{칸 이름: 문제 이름}` — 없으면 빈 사전. 모르는 칸은 건너뛴다."""
+def overlap_names(typed):
+    """우선·제외 키워드에 같은 낱말(대소문자 구분 없이 — 서비스 생성자와 같은 규칙)이 있으면 두 칸의 이름, 없으면 빈 튜플. 두 칸의 값이 모두 있어야 견준다(칸 하나만으로는 알 수 없다)."""
+    first, second = (typed.get(name) for name in KEYWORD_FIELDS)
+    if not isinstance(first, (tuple, list)) or not isinstance(second, (tuple, list)):
+        return ()
+    same = {word.casefold() for word in first if isinstance(word, str)} & {word.casefold() for word in second if isinstance(word, str)}
+    return KEYWORD_FIELDS if same else ()
+
+
+def check_fields(key, typed, extra_tags=()):
+    """칸마다 따로(서비스가 칸을 하나씩 보는 것과 같다) — 서비스로 보낼 값(칸 이름 → 값)의 문제들 `{칸 이름: 문제 이름}`. 없으면 빈 사전, 모르는 칸은 건너뛴다. 칸 사이 규칙은 보지 않는다(`check_typed`)."""
     found = {}
     for spec in fields_for(key):
         if spec.name in typed:
@@ -184,9 +203,20 @@ def check_typed(key, typed, extra_tags=()):
     return found
 
 
+def check_typed(key, typed, extra_tags=()):
+    """서비스로 보낼 값(칸 이름 → 값)의 문제들 `{칸 이름: 문제 이름}` — 칸마다의 문제 + 칸 사이 규칙(우선·제외 키워드에 같은 낱말 → 두 칸 모두 `overlap`, 그 칸에 다른 문제가 이미 있으면 그 문제가 먼저다). 없으면 빈 사전."""
+    found = check_fields(key, typed, extra_tags)
+    for name in overlap_names(typed):
+        found.setdefault(name, "overlap")
+    return found
+
+
 def check_all(key, raw_values, extra_tags=()):
     """폼 입력값 전체의 문제들 `{칸 이름: 문제 이름}`."""
     return check_typed(key, typed_values(key, raw_values), extra_tags)
+
+
+OVERLAP_TEXT = {"priority_keywords": "bf_err_overlap_priority_keywords", "exclude_keywords": "bf_err_overlap_exclude_keywords"}
 
 
 def problem_text(spec, problem, raw=None):
@@ -200,6 +230,8 @@ def problem_text(spec, problem, raw=None):
         return T["bf_err_too_many"].format(limit=spec.count, now=len(typed) if isinstance(typed, tuple) else 0)
     if problem == "item_too_long":
         return T["bf_err_item_too_long"].format(limit=spec.limit)
+    if problem == "overlap":
+        return T[OVERLAP_TEXT.get(spec.name, "bf_err_invalid")]                                          # 어느 칸이 문제인지 — 그 칸 기준으로 '다른 칸에도 있는 낱말이 있어요'(입력한 낱말은 되풀이하지 않는다)
     key = {"required": "bf_err_required", "duplicate": "bf_err_duplicate", "markup": "bf_err_markup", "bad_ref": "bf_err_ref", "bad_choice": "bf_err_choice", "bad_path": "bf_err_path",
            "key_shape": "bf_err_key_shape", "invalid": "bf_err_invalid"}.get(problem, "bf_err_invalid")
     return T[key]
@@ -241,6 +273,16 @@ def clone_state(slots, key):
         if other != key and other in slots and is_empty_values(other, slots[other]):
             return True, "", other
     return False, T["blogs_clone_no_target"], None
+
+
+def option_label(spec, value):
+    """칩 하나의 이름 — 협찬 분야는 쉬운 이름표(`texts` 앞머리의 문구), 글 유형은 서비스가 정한 값이 곧 한글 이름이다."""
+    return T[spec.texts + value] if spec.texts and (spec.texts + value) in T else value
+
+
+def options_of(spec):
+    """`multi` 칸의 칩 선택지 `[{"value", "label"}]`(보여 줄 순서)."""
+    return [{"value": value, "label": option_label(spec, value)} for value in spec.options]
 
 
 def shown(value, limit):

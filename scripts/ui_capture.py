@@ -308,7 +308,7 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
 
 
 def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
-    """블로그 관리 화면(P4b) 사진·점검 — 기본·저장 시도 뒤 칸 오류·저장 결과·빈 슬롯(등록 카드)·읽는 중·읽기 오류·삭제 확인창·좁은 창(900×560)·실제 어댑터(임시 폴더 — 저장 결과까지).
+    """블로그 관리 화면(P4b) 사진·점검 — 기본·저장 시도 뒤 칸 오류·저장 결과·빈 슬롯(등록 카드)·읽는 중·읽기 오류·삭제 확인창·좁은 창(900×560)·실제 어댑터(임시 폴더 — 저장 결과까지)·주제 설정 구역(P4c — 폼 안쪽 스크롤을 구역으로 옮긴 장면과 우선·제외에 같은 낱말을 넣은 겹침 오류 장면).
     **이름은 모두 가짜**(`예시 블로그 가` …)이고 실제 어댑터도 이 도구가 만든 임시 폴더만 읽고 쓴다(사용자 데이터 폴더·보관소는 건드리지 않는다). 점검은 글자 잘림·가로 스크롤과 '아래 고정 행동 줄이 창 안에 보이는가'(`fits_window`)다."""
     import tempfile
     from PySide6.QtWidgets import QApplication
@@ -338,6 +338,15 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
         if ui is not None and ui.bar is not None and not narrow:                      # 아래 고정 행동 줄(저장 단추)이 창 안에 보인다 — 좁은 창은 목록이 위로 올라 페이지가 스크롤된다
             found["fits_window"] = ui.bar.mapTo(window, ui.bar.rect().bottomLeft()).y() <= window.height()
         report["checks"][name] = found
+
+    def scroll_to_topic(window):
+        """폼 안쪽 스크롤을 '주제 설정' 구역(제목·설명이 함께 보이게)으로 옮긴다 — 폼은 안쪽 스크롤이라 새 구역은 첫 화면 아래에 있다."""
+        from chanceblog_desktop.ui.core.text import T
+        ui = window.screen_widget.blogs_ui
+        content = ui.form_scroll.widget()
+        heading = next(label for label in content.findChildren(UI.Label) if label.plain_text() == T["blogs_sec_topic"])
+        ui.form_scroll.verticalScrollBar().setValue(max(0, heading.mapTo(content, heading.rect().topLeft()).y() - 12))
+        ui_offscreen.settle(app, 3)
 
     def shoot(window, name):
         focus = QApplication.focusWidget()
@@ -389,6 +398,16 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
     window = make(blogs.FakeBlogsProvider(), size=(900, 560))                          # 최소 창 — 슬롯 목록이 폼 위로 올라가고 페이지가 세로로 스크롤된다(가로 스크롤은 없다)
     shoot(window, "blogs_narrow")
     audit(window, "blogs_narrow", narrow=True)
+    window.close()
+    window = make(blogs.FakeBlogsProvider())                                           # 주제 설정(P4c) — 폼 안쪽 스크롤을 새 구역으로 옮겨 우선·제외 키워드 칸과 선호 글 유형 칩을 보인다(가짜 낱말만)
+    scroll_to_topic(window)
+    shoot(window, "blogs_topic")
+    audit(window, "blogs_topic")
+    window.blog_edit("exclude_keywords", "예시 제외어, 예시 키워드 둘")                  # 우선과 제외에 같은 낱말 — 저장을 시도하면 두 칸 옆에 쉬운 문장이 보이고 서비스는 부르지 않는다
+    window.blog_save()
+    ui_offscreen.settle(app)                                                           # 저장 시도가 첫 오류 칸을 문장까지 보이게 스크롤한다(그 위치 그대로 찍는다 — 작은 창에서도 오류 문장이 보여야 하는 장면)
+    shoot(window, "blogs_topic_invalid")
+    audit(window, "blogs_topic_invalid")
     window.close()
     with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 파일이 아직 없다는 안내·예시 표시 없음·가짜 이름을 넣고 저장한 결과(임시 폴더에만 쓴다)
         from chanceblog_desktop.security.keystore import MemoryStore

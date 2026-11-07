@@ -481,8 +481,9 @@ class AppShell(QMainWindow):
         if self.state.blogs.edit(name, value):
             self._live_blogs()
 
-    def blog_toggle_tag(self, tag):
-        if self.state.blogs.toggle_tag(tag):
+    def blog_toggle_choice(self, name, value):
+        """여럿 고르는 칩(협찬 가능 분야·선호 글 유형) 하나를 켜고 끈다 — 고치는 것뿐이라 파일에 닿지 않는다."""
+        if self.state.blogs.toggle_choice(name, value):
             self._live_blogs()
 
     def blog_pick_image(self, name):

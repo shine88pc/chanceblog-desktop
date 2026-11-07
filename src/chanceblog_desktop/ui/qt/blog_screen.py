@@ -127,7 +127,7 @@ def _form(shell, vm, ui):
             view = FieldView(field)
             view.edited.connect(shell.blog_edit)
             view.picked.connect(shell.blog_pick_image)
-            view.toggled_tag.connect(shell.blog_toggle_tag)
+            view.toggled_choice.connect(shell.blog_toggle_choice)
             ui.fields[field["name"]] = view
             part.addWidget(view)
         body.addLayout(part)

@@ -48,6 +48,9 @@ class SlotRead:
     profile_image: str = ""
     cover_image: str = ""
     monetization_focus: tuple = ()
+    priority_keywords: tuple = ()                            # 주제 설정(P4c) — 우선 키워드·제외 키워드(낱말 목록)·선호 글 유형(서비스의 글 유형 다섯 중에서)
+    exclude_keywords: tuple = ()
+    preferred_post_types: tuple = ()
     sample: bool = False                                     # 가짜(예시) 값인가
 
     @property
@@ -113,9 +116,11 @@ def _sample_slots(scenario):
     if scenario == "empty":
         return base
     base["naver_a"] = replace(base["naver_a"], display_name="예시 블로그 가", blog_ref="example-blog-a", alias="예시 별명", channel_role="예시 역할 — 생활 정보", main_topics=("예시 주제 하나", "예시 주제 둘", "예시 주제 셋"),
-                              audience="예시 독자", tone="친절한 설명체", categories=("예시 분류 1", "예시 분류 2"), intro="예시 소개글 한 줄이에요.", color_preset="warm_lifestyle")
+                              audience="예시 독자", tone="친절한 설명체", categories=("예시 분류 1", "예시 분류 2"), intro="예시 소개글 한 줄이에요.", color_preset="warm_lifestyle",
+                              priority_keywords=("예시 키워드 하나", "예시 키워드 둘"), exclude_keywords=("예시 제외어",), preferred_post_types=("정보형", "비교형"))
     base["naver_b"] = replace(base["naver_b"], display_name="예시 블로그 나", blog_ref="example-blog-b", alias="", channel_role="예시 역할 — 기술 기록", main_topics=("예시 주제 넷",), audience="예시 독자 둘",
-                              tone="", categories=("예시 분류 3",), intro="", color_preset="cool_technology")
+                              tone="", categories=("예시 분류 3",), intro="", color_preset="cool_technology",
+                              priority_keywords=("예시 키워드 셋",), preferred_post_types=("문제 해결형",))
     base["blogger_ko"] = replace(base["blogger_ko"], display_name="예시 블로그 다", blog_ref="example-blog-c")
     return base
 
@@ -158,7 +163,9 @@ class FakeBlogsProvider(BlogsProvider):
         self._enter("save", version, cancelled)
         before = dict(self.slots)
         extra = tuple(tag for tag in before[key].monetization_focus if tag not in bf.TAG_ORDER)
-        problems = bf.check_typed(key, fields, extra)
+        problems = bf.check_fields(key, fields, extra)                       # 칸마다 — 서비스가 칸을 하나씩 보는 것과 같다
+        if not problems:                                                      # 칸이 모두 괜찮으면 칸 사이 규칙(우선·제외 키워드에 같은 낱말)을 **최종 값**(저장된 값 + 이번 값)으로 본다 — 서비스와 같다
+            problems = {name: "overlap" for name in bf.overlap_names({name: fields.get(name, getattr(before[key], name)) for name in bf.KEYWORD_FIELDS})}
         if problems:
             raise BlogFailure(T["blogs_fail_invalid"], code="CONTENT_INVALID", kind="invalid", problems=problems)
         self.slots[key] = replace(before[key], **{name: value for name, value in fields.items() if name in {spec.name for spec in bf.fields_for(key)}})
