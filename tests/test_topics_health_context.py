@@ -283,9 +283,9 @@ class TablesTest(unittest.TestCase):                                            
                 self.assertEqual(len(words), len(set(words)), "중복 없음")
                 self.assertTrue(all(cn.compact(cn.fold(word)) == word for word in words), "정규화해도 그대로인 낱말(띄어쓰기·기호 없음)")
         result, action = cn.HEALTH_RESULT_SCOPE_KO, cn.HEALTH_ACTION_SCOPE_KO
-        self.assertEqual((len(result), len(action), len(cn.HEALTH_ASK_STEMS_KO), len(cn.HEALTH_ASK_TAILS_KO), len(cn.SCOPE_SKIP_WORDS_KO)), (338, 234, 11, 19, 23))          # 의도적 갱신(D-136): 결과 322 → 338·행동 218 → 234·복용 질문 어간 6 → 11·꼬리 8 → 19
+        self.assertEqual((len(result), len(action), len(cn.HEALTH_ASK_STEMS_KO), len(cn.HEALTH_ASK_TAILS_KO), len(cn.SCOPE_SKIP_WORDS_KO)), (368, 234, 11, 19, 23))          # 의도적 갱신(D-299, WP-B5 수정 라운드): 결과 338 → 368(명사 `탈출` × 어미 13 + 효과 동사 17) · 의도적 갱신(D-136): 결과 322 → 338·행동 218 → 234·복용 질문 어간 6 → 11·꼬리 8 → 19
         self.assertEqual([word for word in cn.SCOPE_SKIP_WORDS_KO if cn.Tables.result_start.match(word) or cn.Tables.action_start.match(word)], [], "건너뛰는 부사는 서술어 조각이 아니다")
-        self.assertEqual(len(cn._RESULT_NOUNS_KO) * len(cn._RESULT_ENDINGS_KO), 208)
+        self.assertEqual(len(cn._RESULT_NOUNS_KO) * len(cn._RESULT_ENDINGS_KO), 221)
         self.assertEqual([(x, y) for x in result for y in action if x.startswith(y) or y.startswith(x)], [], "결과와 행동 조각이 서로의 앞부분이 되지 않는다")
         for noun in ("높이", "교정기", "예방접종", "치료 시기", "강화도", "올리브", "도움말"):
             for text in (noun, noun.replace(" ", "")):
@@ -301,11 +301,11 @@ class TablesTest(unittest.TestCase):                                            
             self.assertEqual(cn.scope_of(joined, starts, 2), "dose" if stem in cn.HEALTH_DOSE_SCOPE_KO else "action", stem)          # 의도적 갱신(D-137): 복용·중단 어간은 범위 dose
 
     def test_the_effect_and_medical_tables_are_read_as_result_stems_with_an_ending_and_the_bare_nouns_are_the_listed_ones(self):
-        # 효과·의료 낱말 표 40개 가운데 **낱말만(어미 없이)** 서술어로 읽히지 않는 것은 아래 21개뿐이다 — 명사·어간으로도 쓰여(`높이`·`교정기`·`예방접종`) 서술어 꼴(어미 포함)만 결과 조각 표에 두었기 때문이다
-        bare_unread = ("회복", "개선", "완화", "예방", "교정", "감량", "증진", "향상", "해소", "강화", "극복", "도움", "높이", "올리", "키우", "치료", "완치", "처방", "시술", "수술", "투약")
+        # 효과·의료 낱말 표 40개 가운데 **낱말만(어미 없이)** 서술어로 읽히지 않는 것은 아래 8개뿐이다 — 명사·어간으로도 쓰여(`높이`·`도움`·`수술`) 서술어 꼴(어미 포함)만 결과 조각 표에 두었기 때문이다. 결과 명사 13개(회복·개선·완화·예방·교정·감량·증진·향상·해소·강화·극복·치료·완치)는 의도적 갱신(D-299, WP-B5 수정 라운드)으로 **글이 거기서 끝날 때**(`통증 즉시 완화`) 낱말만으로도 읽는다
+        bare_unread = ("도움", "높이", "올리", "키우", "처방", "시술", "수술", "투약")
         not_read = [entry for entry in cn.HEALTH_EFFECT_KO + cn.HEALTH_MEDICAL_KO if scope(f"즉시 {entry}", "즉시") != "effect"]
         self.assertEqual(sorted(not_read), sorted(bare_unread))
-        self.assertEqual(len(cn.HEALTH_EFFECT_KO + cn.HEALTH_MEDICAL_KO) - len(not_read), 19, "나머지 19개는 낱말만으로도 서술어로 읽는다")
+        self.assertEqual(len(cn.HEALTH_EFFECT_KO + cn.HEALTH_MEDICAL_KO) - len(not_read), 32, "나머지 32개는 낱말만으로도 서술어로 읽는다 — 그 가운데 13개는 결과 명사가 글 끝에 올 때(D-299)")
         for noun in ("회복", "개선", "완화", "예방", "교정", "감량", "증진", "향상", "해소", "강화", "극복", "치료", "완치"):
             for ending in ("하는", "되는", "합니다", "됩니다", "해요"):
                 self.assertEqual(scope(f"즉시 {noun}{ending}", "즉시"), "effect", f"{noun}{ending}")
@@ -440,7 +440,7 @@ class DiseaseContextTest(unittest.TestCase):                                    
         self.assertIn("보험 보장", cn.HEALTH_MASKS_KO)
         for entry in ("보장 한도", "보장 금액", "보장 기간", "보장 항목", "보장 혜택"):
             self.assertNotIn(entry, cn.HEALTH_MASKS_KO, "의도적 변경(D-138): 보험 낱말 없이 쓰인 `보장 …` 마스크는 옛 중지를 풀어 지웠다 — 질환 + 보장 은 C")
-        self.assertEqual(len(cn.HEALTH_MASKS_KO), 48)          # 의도적 갱신(D-140): 33 + 보험 보장 1(D-138) + 기기 암 6(D-136) + ARM·게임·장비 문맥 암 8(D-140)
+        self.assertEqual(len(cn.HEALTH_MASKS_KO), 64)          # 의도적 갱신(D-307, WP-B5 3차 수정): 66 → 64(한 낱말 마스크 `한눈에`·`첫눈에` 를 지움 — 마스크가 글을 갈라 기준이 중지로 읽던 글을 낮췄다) · 의도적 갱신(D-298, WP-B5 수정 라운드): 56 → 66(낱말 처음에서만 읽는 증상 낱말 덕에 필요 없어진 마스크 다섯을 지우고 띄어 쓴 일상 구절 열다섯을 더함) · 의도적 갱신(D-140): 33 + 보험 보장 1(D-138) + 기기 암 6(D-136) + ARM·게임·장비 문맥 암 8(D-140) · 의도적 갱신(D-291, WP-B5): + 새 증상 낱말이 일상어에서 걸리지 않게 8(머리 감기·착 감기·빨리감기·되감기·경기침체·이명박·건설사·한눈에)
         for text in ("체중 감량 보장 기간 3개월", "다이어트 효과 보장 기간 안내", "피로 회복 효과 보장 기간", "통증 완화 보장 기간 안내", "치료비 보장 한도 비교", "영양제 효과 보장 혜택 받는 법", "당뇨 보장 혜택 정리"):
             with self.subTest(text=text):
                 self.assertEqual(stage(text), STOP, "옛 중지는 보험 마스크가 풀지 않는다(둘째 검증 높음 1) — `건강기능식품 보장 기간 확인하기` 같은 중립 문장이 C 로 남는 것은 알려진 한계(DEFERRED)")
@@ -601,7 +601,10 @@ class EnglishContextTest(unittest.TestCase):                                    
 class ShapeContextTest(unittest.TestCase):                                                                      # X4·X12
     def test_the_signal_record_only_gained_two_fields_at_the_end_and_the_old_ones_are_untouched(self):
         self.assertEqual(cn.HealthSignals._fields[:10], ("symptom", "disease", "effect", "medical", "product", "assert_strong", "assert_effect", "assert_soft", "warned", "inside"))
-        self.assertEqual(cn.HealthSignals._fields[10:], ("scoped", "cure", "ask", "legacy_inside"))          # 의도적 갱신(D-136·D-140): 질환 곁 완치 신호 `cure` 를 scoped 와 ask 사이에 두고, 옛 제품 표 기준 이름 속 조각 `legacy_inside` 를 끝에 더한다
+        self.assertEqual(cn.HealthSignals._fields[10:], ("scoped", "cure", "ask", "legacy_inside", "quit", "stopping", "resolve"))          # 의도적 갱신(D-136·D-140): 질환 곁 완치 신호 `cure` 를 scoped 와 ask 사이에 두고, 옛 제품 표 기준 이름 속 조각 `legacy_inside` 를 끝에 더한다 · 의도적 갱신(D-294, WP-B5): 처방약 복용 중단 단정 `quit` 을 맨 끝에 더한다(기본값 `()` — 앞의 열 넷은 그대로) · 의도적 갱신(D-308, WP-B5 3차 수정): 처방약 낱말이 든 글의 복용 중단 표현 `stopping` 을 `resolve` 앞에 더한다(기본값 `()`)
+        self.assertEqual(cn.HealthSignals._field_defaults["quit"], ())
+        self.assertEqual(cn.HealthSignals._field_defaults["stopping"], ())
+        self.assertEqual(cn.HealthSignals._field_defaults["resolve"], ())          # 의도적 갱신(D-298, WP-B5 수정 라운드): 늘 단정 낱말 곁 결과 서술어 `resolve` 를 끝에 더한다 — 이름 없이 만들던 호출은 그대로 돈다
         self.assertEqual(cn.HealthSignals._field_defaults["scoped"], ())
         signals = cn.health_signals(["피로를 즉시 줄이는 방법"])
         self.assertEqual(signals.assert_soft, ("즉시",), "원시 신호는 낱말이 있으면 그대로 나온다")
@@ -903,12 +906,12 @@ class SecondFixRoundTest(unittest.TestCase):                                    
         sizes = (f"결과 서술어 조각 {len(cn.HEALTH_RESULT_SCOPE_KO)}·행동 서술어 조각 {len(cn.HEALTH_ACTION_SCOPE_KO)}·복용 질문 어간 {len(cn.HEALTH_ASK_STEMS_KO)}·꼬리 {len(cn.HEALTH_ASK_TAILS_KO)}·"
                  f"단정 종결 Phrase {len(cn.HEALTH_ASSERT_FORMS_KO)}·제품 {len(cn.HEALTH_PRODUCT_KO)}(처방약 {len(cn.HEALTH_MEDICINE_KO)})·건강 마스크 {len(cn.HEALTH_MASKS_KO)}")
         self.assertIn(sizes, text, "문서의 '표 크기' 줄 숫자 여덟 개가 코드 표 크기와 같다")
-        for number, needles in (("D-136", (f"결과 조각 322 → {len(cn.HEALTH_RESULT_SCOPE_KO)}", f"행동 서술어 218 → {len(cn.HEALTH_ACTION_SCOPE_KO)}", f"`HEALTH_ASSERT_FORMS_KO` {len(cn.HEALTH_ASSERT_FORMS_KO)}개",
+        for number, needles in (("D-136", ("결과 조각 322 → 338", f"행동 서술어 218 → {len(cn.HEALTH_ACTION_SCOPE_KO)}", f"`HEALTH_ASSERT_FORMS_KO` {len(cn.HEALTH_ASSERT_FORMS_KO)}개",
                                           f"복용 질문 어간 6 → {len(cn.HEALTH_ASK_STEMS_KO)}·꼬리 8 → {len(cn.HEALTH_ASK_TAILS_KO)}")),
                                 ("D-137", (f"제품 표 38 → {len(cn.HEALTH_PRODUCT_KO)}, 처방약 9 → {len(cn.HEALTH_MEDICINE_KO)}",)),
                                 ("D-138", (f"옛 중지 유지 {len(he.OLD_STOPS_KEPT)}", f"푼 {len(he.OLD_STOPS_RELEASED)}")),
                                 ("D-139", (f"{len(he.SAME_AS_OLD) + len(he.CHANGED_BY_DECISION)}문장", f"옛과 같음 {len(he.SAME_AS_OLD)}·결정으로 달라짐 {len(he.CHANGED_BY_DECISION)}")),
-                                ("D-140", (f"옛 제품 표 {len(cn.HEALTH_PRODUCT_KO) - len(cn.NEW_PRODUCT_KO)}개", f"새 제품 낱말 {len(cn.NEW_PRODUCT_KO)}개", f"건강 마스크 {len(cn.HEALTH_MASKS_KO)}"))):
+                                ("D-140", (f"옛 제품 표 {len(cn.HEALTH_PRODUCT_KO) - len(cn.NEW_PRODUCT_KO)}개", f"새 제품 낱말 {len(cn.NEW_PRODUCT_KO)}개", "건강 마스크 48"))):          # 의도적 갱신(D-299, WP-B5 수정 라운드): D-136 행은 그때의 결과 조각 수 338 을 말한다 — 지금(368)은 맨 아래 '표 크기' 줄과 D-299 행이 말한다 · 의도적 갱신(D-291, WP-B5): D-140 행은 그때의 마스크 크기 48 을 말한다 — 그 뒤에 늘어난 크기는 아래 '표 크기' 줄(`sizes`)이 코드와 맞춘다
             for needle in needles:
                 with self.subTest(decision=number, needle=needle):
                     self.assertIn(needle, rows[number])
