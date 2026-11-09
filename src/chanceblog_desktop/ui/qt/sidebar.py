@@ -16,6 +16,9 @@ from . import components as UI
 from . import theme
 
 
+TITLE_GAP = 2                                                                                  # 묶음 이름 아래 여백 — 옛 4(`K.SPACE["1"]`). 의도적 갱신(P4e, D-282): 사이드바 최소 높이를 한도 500 안에 두려고 줄였다(토큰에 2 가 없어 상수로 둔다)
+
+
 def gap(layout):
     """묶음 사이 빈 칸 — 보통은 8 이고, 세로가 모자라면 0 까지 줄어든다(의도적 변경, Seed 관리 D-230: 메뉴가 하나 더 늘어 사이드바가 최소 창 900×560 의 높이(500)보다 8 커졌다 —
     줄 높이·글자·아이콘은 건드리지 않고 이 빈 칸만 줄어들게 했다). 남는 높이는 늘 아래 늘림 칸(`addStretch`)이 가져가므로 보통 크기의 모양은 그대로다."""
@@ -30,7 +33,7 @@ class SoonItem(QFrame):
         self.setObjectName("soonitem")
         self.setFocusPolicy(Qt.NoFocus)
         self.setCursor(Qt.ArrowCursor)
-        self.setMinimumHeight(K.SIZE["hit_min"])                                            # 줄 높이만(32) — 누르는 칸이 아니다. 최소 창(900×560)의 높이 안에 사이드바 전체가 들어가게 한다
+        self.setMinimumHeight(K.SIZE["badge_h"])                                            # 줄 높이만(24) — 누르는 칸이 아니다(옛 32). 최소 창(900×560)의 높이 안에 사이드바 전체가 들어가게 한다 — 의도적 갱신(P4e, D-282): 초안 작성이 실제 메뉴가 되어 메뉴 하나(48)가 늘고 이 줄 하나(32)가 줄어 516 이 되므로 이 줄·위아래 여백·묶음 이름 아래 여백을 24px 줄여 492 로 한다
         self.setAccessibleName(T["nav_soon_item_a11y"].format(name=name))
         row = QHBoxLayout(self)
         row.setContentsMargins(K.SPACE["2"], 0, K.SPACE["1"], 0)
@@ -54,7 +57,7 @@ class Sidebar(QFrame):
         self.setAccessibleName(T["nav_menu"])
         pad = K.FRAME["sidebar_pad"]
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(pad, K.SPACE["2"], pad, K.SPACE["2"])                  # 위아래 8 — 메뉴가 하나 늘어(블로그 관리, P4b D-210) 최소 창(900×560)에서도 사이드바가 들어가게 세로 여백을 줄였다(옛 16)
+        layout.setContentsMargins(pad, K.SPACE["1"], pad, K.SPACE["1"])                  # 위아래 4 — 메뉴가 하나 늘어(블로그 관리, P4b D-210: 16→8) 또 하나 늘어(초안 작성, P4e D-282: 8→4) 최소 창(900×560)에서도 사이드바가 들어가게 세로 여백을 줄였다
         layout.setSpacing(K.SPACE["1"])
         self.nav_buttons = {}                                                              # 실제로 열 수 있는 화면(홈·설정)만
         self.group_titles = {}                                                             # 묶음 이름 — 실제 메뉴가 있는 묶음만 있다
@@ -62,7 +65,7 @@ class Sidebar(QFrame):
             if index:
                 gap(layout)                                                                    # 묶음 사이 8(옛 12) — 모자라면 줄어든다
             title = UI.label(T[label_key], "micro")
-            title.setContentsMargins(K.SPACE["3"], 0, 0, K.SPACE["1"])
+            title.setContentsMargins(K.SPACE["3"], 0, 0, TITLE_GAP)
             self.group_titles[group_key] = title
             layout.addWidget(title)
             for key, name_key, icon_name in items:
@@ -90,7 +93,7 @@ class Sidebar(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         title = UI.label(T["nav_soon_title"], "micro")
-        title.setContentsMargins(K.SPACE["3"], 0, 0, K.SPACE["1"])
+        title.setContentsMargins(K.SPACE["3"], 0, 0, TITLE_GAP)
         layout.addWidget(title)
         box.items = []
         for _key, name_key, icon_name in NEXT_STEPS:

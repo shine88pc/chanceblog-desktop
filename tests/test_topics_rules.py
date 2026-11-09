@@ -255,8 +255,14 @@ class HygieneTest(unittest.TestCase):
         pattern = re.compile(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topics\b|import\s+(?:[\w.]*\.)?topics\b|from\s+\.+\s+import\s+[^#\n]*\btopics\b)")
         # 의도적 갱신(규칙 기반 초안 본문 독립 검증 H2, D-260 ⑥): 서비스 `service/draft_body.py` 가 후보의 제목·키워드로 주제 엔진의 안전 판정(`topics.safety.check_text`)을 **불러 쓴다** — 자동 초안 중지(`stop`) 후보는 본문 전체에 같은 말이 되풀이되므로 만들지 않고 거절하려는 것이다.
         # 읽기만 하고 `topics/` 는 바꾸지 않으며(콘텐츠 층 `content/draft_body.py` 는 이 패키지를 가져오지 않고 결과의 속성만 읽는다) 저장·계산은 하지 않는다.
+        # 의도적 갱신(P4e, D-280): 서비스 `service/draft_engine.py`(엔진 후보로 초안을 만드는 읽기 전용 함수)가 엔진 후보 `TopicCandidate` 를 옛 후보 모양으로 옮긴다 — 글 종류→글 유형 표 `topics.model.to_post_type` 을 그대로 쓰고(화면이 따로 베끼지 않는다)
+        # 엔진 보관함은 `service/topics.py` 의 읽기 함수로만 읽는다. 읽기만 하고 `topics/` 는 바꾸지 않으며 저장하지 않는다(초안 화면 묶음은 `service/` 에 이 파일 하나만 더했다).
+        # 의도적 갱신(P4e, D-280): 초안 작성 화면의 가짜 공급자 `ui/core/drafts.py` 가 **쓰는 함수 안에서** 서비스와 같은 순수 함수(`topics.safety` 의 안전 판정·`topics.model.to_post_type` 의 글 종류→글 유형 표)를 불러 같은 모양의 초안을 만든다 —
+        # 파일·저장소는 모르고 읽기·계산뿐이다. 실제 공급자 `ui/drafts_adapter.py` 는 이 패키지를 가져오지 않고 서비스 함수 하나만 부른다.
+        # 의도적 갱신(P4e 수정 라운드, D-297 ②): 같은 파일 `ui/core/drafts.py` 가 건강 효과 단정의 두 번째 방어선 `review_health` 로 판정기 `topics.safety.check_text` 를 복사할 글의 문장마다 한 번 더 부른다 —
+        # 이 파일은 이미 아래 허용 목록에 있어 목록은 늘지 않았다(읽기·계산뿐이고 `topics/` 는 바꾸지 않았다).
         users = sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8")))
-        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/candidates_adapter.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/candidate_rules.py", "ui/core/candidates.py", "ui/core/candidates_view.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
+        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/draft_engine.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/candidates_adapter.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/candidate_rules.py", "ui/core/candidates.py", "ui/core/candidates_view.py", "ui/core/drafts.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
                          "이 패키지를 쓰는 곳을 늘리는 것은 의식적인 변경이다 — 이 목록과 결정 기록을 함께 고친다")
 
     def test_the_pattern_that_looks_for_users_of_the_package_works(self):

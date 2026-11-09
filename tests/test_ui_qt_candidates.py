@@ -96,7 +96,14 @@ class SourceRulesTest(unittest.TestCase):
 
     def test_only_the_confirmed_dialog_path_starts_the_write(self):
         methods = methods_of(QT_DIR / "shell.py", "AppShell")
-        self.assertEqual([name for name, function in methods.items() if "start_make" in called_names(function)], ["cand_make_confirmed"], "쓰기를 시작하는 함수는 하나뿐")
+        def receivers(function, name):
+            return [ast.unparse(node.func.value) for node in ast.walk(function) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == name]
+
+        # 의도적 갱신(P4e, D-282): 옛 줄은 이름 `start_make` 를 부르는 셸 함수가 `cand_make_confirmed` 하나뿐이라고 봤다. 초안 화면이 같은 이름의 다른 컨트롤러 함수(`state.drafts.start_make` — 초안 본문을 **읽기 전용**으로 만든다,
+        # 후보 보관함에 쓰지 않는다)를 `_start_draft` 에서 부르게 되어, 부르는 대상(`state.candidates`)까지 가려서 같은 규칙(후보 보관함에 쓰는 시작은 확인창 콜백 하나)을 지키고 초안 쪽은 따로 못박는다.
+        self.assertEqual([name for name, function in methods.items() if any(who.endswith(".candidates") for who in receivers(function, "start_make"))], ["cand_make_confirmed"], "쓰기를 시작하는 함수는 하나뿐")
+        self.assertEqual([name for name, function in methods.items() if any(who.endswith(".drafts") for who in receivers(function, "start_make"))], ["_start_draft"], "초안 본문을 만드는 시작(읽기 전용)도 한 곳뿐")
+        self.assertEqual(sorted({who for function in methods.values() for who in receivers(function, "start_make")}), ["self.state.candidates", "self.state.drafts"], "`start_make` 를 부르는 대상은 이 둘뿐")
         self.assertIn("start_preview", called_names(methods["cand_make"]))
         self.assertNotIn("start_make", called_names(methods["cand_make"]), "머리의 `후보 만들기` 단추는 미리 보기만 시작한다")
         references = [name for name, function in methods.items() for node in ast.walk(function) if isinstance(node, ast.Attribute) and node.attr == "cand_make_confirmed"]
@@ -324,30 +331,30 @@ class Base(unittest.TestCase):
 class MenuTest(Base):
     def test_the_topic_menu_is_in_the_core_group_after_home_and_opens_the_new_screen(self):
         window = self.make(page=None)
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "seed", "blogs", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다
         self.assertEqual(window.nav_buttons["topics"].accessibleName(), "주제 후보 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "seed", "blogs", "settings"])
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다
         window.nav_buttons["topics"].click()
         self.assertTrue(self.loaded(window))
         self.settle()
         self.assertEqual((window.state.page, window.nav_buttons["topics"].isChecked(), window.nav_buttons["home"].isChecked()), ("topics", True, False))
         self.assertEqual(len(self.ui(window).grid.cards), 14)
-        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["초안 작성", "발행 기록"])
+        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["발행 기록"])      # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 '다음 단계' 목록에서 빠졌다
 
     def test_the_screen_has_no_draft_button_and_no_route_to_an_unfinished_screen(self):
         window = self.make()
         requested = []
         real_nav = window.state.nav
-        window.state.nav = lambda key: (requested.append(key), real_nav(key))[1]
-        self.assertEqual([button.text() for button in window.findChildren(QAbstractButton) if "초안" in button.text() or "발행" in button.text()], [], "초안·발행으로 가는 단추는 이번에 만들지 않는다")
+        window.state.nav = lambda key, force=False: (requested.append(key), real_nav(key, force))[1]       # 의도적 갱신(P4e, D-282): 이동 함수에 `force` 인자가 생겨(고친 내용이 있으면 확인창 뒤에만 옮긴다) 같은 모양으로 감싼다
+        self.assertEqual([button.text() for button in window.findChildren(QAbstractButton) if ("초안" in button.text() or "발행" in button.text()) and not button.property("nav")], [], "초안·발행으로 가는 단추는 이번에 만들지 않는다")      # 의도적 갱신(P4e, D-282): 사이드바의 메뉴 단추(`초안 작성` — 완성된 화면이 돼 실제 메뉴로 올랐다)는 뺀다
         first = self.ids(window)[0]
         self.open_card(window, first)
         def present():
             return [button for button in [*window.screen_widget.findChildren(QAbstractButton), *window.detail_pane.findChildren(QAbstractButton)] if button.isVisible() and button.isEnabled() and button.property("focus_key")]
 
         pressed = 0
-        for key in sorted({str(button.property("focus_key")) for button in present()} - {"cand-make", "refresh-candidates"}, reverse=True):      # 누를 때마다 화면을 다시 그리므로 열쇠로 다시 찾는다
+        for key in sorted({str(button.property("focus_key")) for button in present()} - {"cand-make", "refresh-candidates", "act:make"}, reverse=True):      # 누를 때마다 화면을 다시 그리므로 열쇠로 다시 찾는다 / 의도적 갱신(P4e, D-282): 상세 아래 고정 줄의 `이 주제로 만들기`(act:make)는 **완성된 초안 화면으로** 가는 단추라 이 시험(미완성 화면으로 가는 길이 없음)에서 뺀다 — 눌렀을 때의 동작은 `test_ui_qt_drafts` 가 본다
             found = [button for button in present() if button.property("focus_key") == key]
             if found:
                 found[0].click()
@@ -632,8 +639,8 @@ class DetailTest(Base):
             for title in self.SECTIONS:
                 self.assertIn(title, labels, (size, title))
             self.assertIn("예시 후보 가 — 순서대로 따라 하는 안내", labels)
-            self.assertEqual(self.primary_buttons(pane), [], "상세에는 주요 단추가 없다(후보 상태·초안 행동은 이번에 만들지 않는다)")
-            self.assertEqual(sorted(button.property("focus_key") for button in pane.findChildren(QAbstractButton)), ["detail-close", "detail-copy"])
+            self.assertEqual([button.text() for button in self.primary_buttons(pane)], [T["drf_make"]], "상세의 주요 단추는 아래 고정 줄의 `이 주제로 만들기` 하나(후보 상태 바꾸기는 없다)")       # 의도적 갱신(P4e, D-282): 옛 값은 '주요 단추 없음' — 상세 아래 고정 행동 줄이 더해졌다
+            self.assertEqual(sorted(button.property("focus_key") for button in pane.findChildren(QAbstractButton)), ["act:make", "act:more", "detail-close", "detail-copy"])        # 의도적 갱신(P4e, D-282): 고정 줄의 만들기 단추(act:make)와 줄 안에 숨겨 둔 더보기(act:more — 보이지 않는다)
             for word in ("월 검색량", "상위노출", "상위 노출", "노출 확률"):
                 self.assertFalse([value for value in self.everything(window) if word in value], word)
             self.assertIn("최근 관심도(상대값)", labels)
@@ -960,7 +967,7 @@ class MakeFlowTest(Base):
         window = self.make(provider)
         requested = []
         real_nav = window.state.nav
-        window.state.nav = lambda key: (requested.append(key), real_nav(key))[1]
+        window.state.nav = lambda key, force=False: (requested.append(key), real_nav(key, force))[1]       # 의도적 갱신(P4e, D-282): 이동 함수에 `force` 인자가 생겨 같은 모양으로 감싼다
         self.press_make(window)
         self.assertFalse(window.dialog.is_open, "만들 것이 없으면 확인창을 띄우지 않는다")
         card = window.screen_widget.prep_card
@@ -1289,7 +1296,7 @@ class KeyboardTest(Base):
         for key in ("cand-make", "refresh-candidates", "cand-query", "cand-filter-more", "cand:channel:all", "cand:status:all"):
             self.assertIn(key, keys)
         self.assertEqual([widget.candidate_id for widget in seen if isinstance(widget, candidate_parts.CandidateCard)], self.ids(window), "카드는 읽는 순서(위에서 아래로, 왼쪽에서 오른쪽)로 한 번씩")
-        self.assertEqual(sum(1 for widget in seen if widget.property("nav")), 5)
+        self.assertEqual(sum(1 for widget in seen if widget.property("nav")), 6)                  # 의도적 갱신(P4e, D-282): 메뉴가 다섯에서 여섯(초안 작성이 더해졌다)
         order = [widget.property("focus_key") for widget in seen]
         self.assertLess(order.index("cand-query"), order.index("cand:" + self.ids(window)[0]), "검색 칸은 카드보다 앞")
         self.assertLess(order.index("cand-make"), order.index("cand-query"), "머리의 단추가 거르기보다 앞")
@@ -1318,7 +1325,7 @@ class KeyboardTest(Base):
         self.assertGreater(min(pane), max(cards), "상세 창은 카드 다음 정거장이다")
         self.assertEqual(pane, sorted(pane))
         self.assertEqual(seen[pane[0]].accessibleName(), "후보 상세 정보", "스크롤 영역도 이름이 있는 정거장 — 키보드로 긴 내용을 내려 본다")
-        self.assertEqual([widget.property("focus_key") for widget in window.detail_pane.stops() if widget.property("focus_key")], ["detail-close", "detail-copy"])
+        self.assertEqual([widget.property("focus_key") for widget in window.detail_pane.stops() if widget.property("focus_key")], ["detail-close", "detail-copy", "act:make"])      # 의도적 갱신(P4e, D-282): 아래 고정 줄의 `이 주제로 만들기` 가 마지막 정거장
         for widget in self.interactive(window):
             self.assertTrue(widget.accessibleName().strip(), f"접근 이름이 없다: {type(widget).__name__}")
             if isinstance(widget, QAbstractButton):

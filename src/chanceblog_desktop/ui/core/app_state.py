@@ -16,6 +16,8 @@ from .blogs import FakeBlogsProvider
 from .blogs_view import BlogsController
 from .candidates import FakeCandidatesProvider
 from .candidates_view import CandidatesController
+from .drafts import FakeDraftsProvider
+from .drafts_view import DraftsController
 from .seeds import FakeSeedsProvider
 from .seeds_view import SeedsController
 from .jobs import JobFailure, JobRunner
@@ -26,11 +28,12 @@ from .text import NO_DATA, T, fmt_demand, fmt_docs
 
 # 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
 # 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
-NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
+NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("drafts", "nav_draft", "draft"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
 # 묶음(핵심 작업 / 데이터·관리 / 시스템) — (묶음 열쇠, 이름 문구 열쇠, 그 묶음의 실제 메뉴 열쇠들). **묶음 이름은 그 묶음에 실제 메뉴가 있을 때만 보인다**(`nav_groups`).
-NAV_GROUPS = (("core", "nav_group_core", ("home", "topics")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
+NAV_GROUPS = (("core", "nav_group_core", ("home", "topics", "drafts")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
 # '다음 단계' 목록 — 아직 만들지 않은 화면의 **이름만**(열 수 없다: 메뉴·화면 이동·단추가 없다). 화면이 완성되면 여기서 빼고 NAV 에 더한다. (열쇠, 이름 문구 열쇠, 아이콘)
-NEXT_STEPS = (("draft", "nav_draft", "draft"), ("history", "nav_history", "calendar_check"))
+# 의도적 갱신(P4e, D-282): 초안 작성이 실제 메뉴가 되어 발행 기록만 남는다.
+NEXT_STEPS = (("history", "nav_history", "calendar_check"),)
 LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
 
 
@@ -122,7 +125,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -158,11 +161,30 @@ class AppState:
         paired_candidates = getattr(self.provider, "candidates_provider", None)
         self.candidates_provider = candidates if candidates is not None else (paired_candidates() if paired_candidates else FakeCandidatesProvider())
         self.candidates = CandidatesController(self.candidates_provider, self.runner)
+        # 초안 작성 화면(P4e) — 읽기뿐이다(아무것도 저장하지 않는다). 초안은 메모리에만 있고 화면을 떠나면 사라진다. 가짜 공급자는 가짜 후보 공급자가 가진 후보에서 번호 전체가 같은 것으로 초안을 만든다
+        paired_drafts = getattr(self.provider, "drafts_provider", None)
+        self.drafts_provider = drafts if drafts is not None else (paired_drafts() if paired_drafts else FakeDraftsProvider(lambda: tuple(getattr(self.candidates_provider, "candidates", ()))))
+        self.drafts = DraftsController(self.drafts_provider, self.runner)
 
     # ---- 메뉴 ----
-    def nav(self, key):
+    def leave_guard(self, key):
+        """초안 작성 화면에서 다른 메뉴로 가려 할 때 고친 내용이 사라지면 확인창의 글(없으면 None) — 화면 틀이 `nav` 보다 먼저 부른다."""
+        if self.page == "drafts" and key != "drafts" and key in {item[0] for item in NAV}:
+            return self.drafts.leave_dialog("leave")
+        return None
+
+    def close_guard(self):
+        """앱을 닫을 때 초안의 고친 내용이 사라지면 확인창의 글(없으면 None)."""
+        return self.drafts.leave_dialog("close")
+
+    def nav(self, key, force=False):
+        """화면을 옮긴다. 초안 작성 화면을 떠날 때 고친 내용이 있으면 `force`(확인창에서 `그래도 이동` 을 눌렀다)가 아니면 옮기지 않는다 — 그리고 떠나면 초안은 메모리에서 지운다(저장하지 않는다)."""
         if key not in {item[0] for item in NAV} or key == self.page:
             return False
+        if self.page == "drafts":
+            if self.drafts.has_unsaved() and not force:
+                return False
+            self.drafts.leave()
         self.page = key
         self.drawer_id = None
         self.seeds.close_drawer()                                    # Seed 서랍은 다른 화면으로 가면 닫는다(고친 값·새로 쓰던 값은 지우지 않는다)
@@ -357,6 +379,11 @@ class AppState:
     def candidates_drawer_view(self):
         """서랍 방식일 때 열려 있어야 하는 후보 상세 — 그 화면이 아니거나 서랍이 필요 없으면 None."""
         return self.candidates.detail_view() if self.page == "topics" and self.candidates.drawer_wanted() else None
+
+    def drafts_view(self):
+        """초안 작성 화면 뷰모델 — 만드는 일은 `DraftsController.view`(순수)가 한다. 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        failure = self.drafts.failure
+        return self.drafts.view(diagnostic_text(failure, self.drafts.failed_at) if failure else "")
 
     def blogs_view(self):
         """블로그 관리 화면 뷰모델 — 만드는 일은 `BlogsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""

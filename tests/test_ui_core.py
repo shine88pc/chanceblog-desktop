@@ -146,13 +146,13 @@ class TokensTest(unittest.TestCase):
         의도적 갱신(UI-C0, D-150~): 간격 `SPACE` 와 그림자 `SHADOW`(와 카드 상태 `CARD_STATES`)는 새 부품·`theme.py` 가 쓰기 시작해 '안 쓰는 값' 에서 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·
         새 틀 크기(`FRAME`)·카드 규격(`CARD`)이다.
         의도적 갱신(UI-C1a, D-171·D-172·D-174): 새 틀 크기 `FRAME`(상단 앱 바·사이드바·서랍·상세 창 규칙)이 쓰기 시작해 '쓰는 값' 으로 옮겼다('다음 단계' 흐림은 토큰 색 `soon_text` 하나로 쓰고 `SOON_OPACITY` 는 그 값을 정한 비율이다) — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·카드 규격(`CARD`)이다.
-        의도적 갱신(P4d, D-270): 주제 후보 화면의 카드(`ui/qt/candidate_parts.py`·`candidate_screen.py`)가 카드 규격 `CARD`(안쪽 여백·간격·최소 폭·이미지 높이)를 쓰기 시작해 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임이다."""
+        의도적 갱신(P4d, D-270): 주제 후보 화면의 카드(`ui/qt/candidate_parts.py`·`candidate_screen.py`)가 카드 규격 `CARD`(안쪽 여백·간격·최소 폭·이미지 높이)를 쓰기 시작해 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임이다.
+        의도적 갱신(P4e, D-282): 초안 작성 화면의 복사 단추(`ui/qt/shell.py`)가 복사 표시 시간 `COPY_FEEDBACK_MS`(1.5~2초 — 복사 직후 단추가 `✓ 본문 복사됨` 으로 보이는 시간)를 쓰기 시작해 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 hover/page 움직임뿐이다."""
         others = "\n".join(source_of(path) for path in SOURCES if path.name != "tokens.py")
-        for name in ("COPY_FEEDBACK_MS",):                                                                                  # 의도적 갱신(P4d, D-270): 'CARD' 는 이제 쓰는 값이라 아래 목록으로 옮겼다
-            self.assertNotRegex(others, rf"\b(?:K|tokens)\.{name}\b", name)
-        self.assertNotRegex(others, r"MOTION_MS\[[\"'](?:hover|page)[\"']\]")
-        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO", "FRAME"):
+        self.assertNotRegex(others, r"MOTION_MS\[[\"'](?:hover|page)[\"']\]")                                               # 의도적 갱신(P4e, D-282): 복사 표시 시간(COPY_FEEDBACK_MS)은 아래 '쓰는 값' 목록으로 옮겼다 — 이 줄은 hover/page 만 지킨다
+        for name in ("MOTION_MS", "TOAST_MS", "COPY_FEEDBACK_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO", "FRAME"):
             self.assertRegex(others, rf"\b{name}\b", name)
+        self.assertRegex(others, r"\b(?:K|tokens)\.COPY_FEEDBACK_MS\b")                                                     # 의도적 갱신(P4e, D-282): 쓰는 곳은 `K.COPY_FEEDBACK_MS` 한 이름으로 읽는다(숫자를 화면 코드에 직접 적지 않는다)
         documented = (ROOT / "docs" / "UI_DESIGN_SPEC.md").read_text(encoding="utf-8")
         for word in ("SPACE", "SHADOW", "COPY_FEEDBACK_MS", "FRAME", "CARD", "안 쓰는 값"):
             self.assertIn(word, documented, word)
@@ -175,7 +175,7 @@ class TokensTest(unittest.TestCase):
         self.assertEqual((tokens.SIZE["menu_h"], tokens.SIZE["badge_h"], tokens.SIZE["icon_button"], tokens.SIZE["chip_h"]), (44, 24, 36, 34))
         self.assertTrue(0.3 <= tokens.SCRIM_ALPHA <= 0.5, tokens.SCRIM_ALPHA)                 # 뒤를 덮는 막 — 뒤가 비쳐 보이는 어둠
         self.assertEqual((tokens.TOAST_MS, tokens.MOTION_MS["panel"]), (3500, 200))
-        self.assertTrue(1500 <= tokens.COPY_FEEDBACK_MS <= 2000, tokens.COPY_FEEDBACK_MS)      # 복사 표시 1.5~2초(아직 안 쓰는 값이어도 정한 값은 지킨다)
+        self.assertTrue(1500 <= tokens.COPY_FEEDBACK_MS <= 2000, tokens.COPY_FEEDBACK_MS)      # 복사 표시 1.5~2초(초안 작성 화면의 복사 단추가 쓴다 — 의도적 갱신(P4e, D-282): 이전엔 '아직 안 쓰는 값' 이었다)
 
     def test_every_text_role_keeps_its_agreed_size_weight_and_text_token(self):
         """글자 역할 하나하나의 크기·굵기·글자 색(Text Token)을 손으로 적은 표로 고정한다 — 한 글자 역할의 값이 바뀌면 화면 전체의 위계가 달라진다.
@@ -608,16 +608,19 @@ class ServicesAndStateTest(unittest.TestCase):
         의도적 갱신(P4b, D-210): **블로그 관리 화면이 완성돼 메뉴에 올랐다**(데이터·관리 묶음) — 메뉴는 홈·블로그 관리·설정 셋이고 '다음 단계' 목록에서는 빠졌다. 이 시험은 '완성된 화면만 연다' 는 규칙 그대로다.
         의도적 갱신(Seed 관리, D-230): **Seed 관리 화면이 완성돼 메뉴에 올랐다**(데이터·관리 묶음, 블로그 관리 앞 — C-Type §14.2 의 순서) — 메뉴는 홈·Seed 관리·블로그 관리·설정 넷이고 '다음 단계' 목록에서는 빠졌다."""
         # 의도적 갱신(P4d, D-270): **주제 후보 화면이 완성돼 메뉴에 올랐다**(핵심 작업 묶음, 홈 다음 — C-Type §14.2 의 순서) — 메뉴는 홈·주제 후보·Seed 관리·블로그 관리·설정 다섯이고 '다음 단계' 목록에서는 빠졌다. '완성된 화면만 연다' 는 규칙은 그대로다.
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "Seed 관리", "블로그 관리", "설정"])
+        # 의도적 갱신(P4e, D-282): **초안 작성 화면이 완성돼 메뉴에 올랐다**(핵심 작업 묶음, 주제 후보 다음 — C-Type §14.2 의 순서) — 메뉴는 홈·주제 후보·초안 작성·Seed 관리·블로그 관리·설정 여섯이고 '다음 단계' 목록에는 발행 기록만 남았다. '완성된 화면만 연다' 는 규칙은 그대로다.
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "Seed 관리", "블로그 관리", "설정"])
         self.assertFalse(hasattr(app_state, "MAX_NAV"))
         state = load()
         self.assertFalse(state.nav("home"))                                           # 지금 화면은 다시 안 간다
-        for unfinished in ("draft", "history", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다(P4b: 'blogs' 는 이제 완성된 화면이라 열린다 — 아래. Seed 관리: 'seed' 도 마찬가지 — 아래. P4d: 'topics' 도 마찬가지 — 아래)
+        for unfinished in ("draft", "history", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다(P4b: 'blogs' 는 이제 완성된 화면이라 열린다 — 아래. Seed 관리: 'seed' 도 마찬가지 — 아래. P4d: 'topics' 도 마찬가지 — 아래. P4e: 초안 작성의 메뉴 열쇠는 'drafts' 라 옛 낱말 'draft' 는 여전히 열리지 않는다)
             self.assertFalse(state.nav(unfinished), unfinished)
             self.assertEqual(state.page, "home", unfinished)
         self.assertFalse(hasattr(state, "page_view"))                                  # '아직 만들고 있어요' 자리표시 화면이 없다
         self.assertTrue(state.nav("topics"))
         self.assertEqual(state.page, "topics")
+        self.assertTrue(state.nav("drafts"))
+        self.assertEqual(state.page, "drafts")
         self.assertTrue(state.nav("seed"))
         self.assertEqual(state.page, "seed")
         self.assertTrue(state.nav("blogs"))

@@ -252,7 +252,7 @@ class TopBarNarrowTest(QtBase):
 
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-REAL = {"home", "topics", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다
+REAL = {"home", "topics", "drafts", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다 / 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐다
 
 
 def hexed(image, x, y):
@@ -297,8 +297,8 @@ class SidebarTest(QtBase):
 
     def test_the_real_menu_is_home_and_settings_and_the_current_one_gets_the_new_colors(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "seed", "blogs", "settings"])   # 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
-        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])   # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
+        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "초안 작성 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
         for button in window.nav_buttons.values():
             self.assertTrue(42 <= button.height() <= 46, button.height())                          # 문서의 메뉴 높이 42~46
             self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)
@@ -321,15 +321,16 @@ class SidebarTest(QtBase):
         self.assertEqual(box.accessibleName(), "준비 중 — 아직 열 수 없는 화면")
         self.assertEqual(box.title.plain_text(), "다음 단계")
         items = box.items
-        self.assertEqual([item.name.text() for item in items], ["초안 작성", "발행 기록"])        # 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올라가 아직 열 수 없는 화면은 셋이다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 올라가 아직 열 수 없는 화면은 둘이다(초안 작성·발행 기록)
+        self.assertEqual([item.name.text() for item in items], ["발행 기록"])        # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 실제 메뉴로 올라가 아직 열 수 없는 화면은 하나(발행 기록)다 / 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올라가 아직 열 수 없는 화면은 셋이다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 올라가 아직 열 수 없는 화면은 둘이다(초안 작성·발행 기록)
         for item in items:
             self.assertIsInstance(item, SoonItem)
             self.assertEqual(item.badge.text(), "준비 중")                                          # 색만이 아니라 글자
             self.assertEqual(item.badge.property("badge"), "muted")                               # 의미 배지 중 중립 종류
             self.assertEqual(item.accessibleName(), f"{item.name.text()}, 준비 중")
             self.assertTrue(item.badge.isVisible() and item.name.isVisible() and item.icon.isVisible())
-            self.assertEqual(item.minimumHeight(), tokens.SIZE["hit_min"])                          # 줄 높이는 32 아래로 줄지 않는다(누르는 칸이 아니라 읽기 편한 줄 높이 — 최소 창 안에 사이드바가 들어가는 값)
-            self.assertGreaterEqual(item.height(), tokens.SIZE["hit_min"], item.name.text())
+            # 의도적 갱신(P4e, D-282): 메뉴 하나(48)가 늘고 이 줄 하나(32)가 줄어 사이드바가 516 이 되어 최소 창의 한도 500 을 넘으므로, 누르는 칸이 아닌 이 줄의 높이를 배지 높이(24)로 줄였다(위아래 여백·묶음 이름 아래 여백과 함께 492)
+            self.assertEqual(item.minimumHeight(), tokens.SIZE["badge_h"])                          # 줄 높이는 24 아래로 줄지 않는다(누르는 칸이 아니라 읽기 편한 줄 높이 — 최소 창 안에 사이드바가 들어가는 값)
+            self.assertGreaterEqual(item.height(), tokens.SIZE["badge_h"], item.name.text())
         self.assertGreater(box.geometry().top(), window.nav_buttons["settings"].geometry().bottom() - 1)  # 실제 메뉴 아래에 따로
 
     def test_the_next_steps_list_cannot_be_clicked_focused_or_tabbed_to_and_nothing_happens(self):
@@ -340,7 +341,7 @@ class SidebarTest(QtBase):
             self.assertNotIsInstance(widget, QAbstractButton)                                     # 단추가 하나도 없다
         calls = []
         real_nav = window.state.nav
-        window.state.nav = lambda key: (calls.append(key), real_nav(key))[1]
+        window.state.nav = lambda key, force=False: (calls.append(key), real_nav(key, force))[1]       # 의도적 갱신(P4e, D-282): 이동 함수에 `force` 인자가 생겨 같은 모양으로 감싼다
         before_screen = window.screen_widget
         for item in box.items:
             for target in (item, item.name, item.badge, item.icon):
@@ -440,11 +441,15 @@ class NoRouteToUnfinishedScreensTest(QtBase):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
                     if name in ("go", "nav", "navigate"):
                         found.setdefault(path.name, []).append(ast.unparse(node))
+        # 의도적 갱신(P4e, D-282): 화면 이동을 요청하는 곳은 여전히 사이드바와 셸뿐이다 — 초안 작성 화면(`draft_screen.py`)의 `← 주제 후보`·`주제 후보로 가기` 단추는 화면 부품이라 `go` 를 직접 부르지 않고
+        # 셸의 `drf_to_topics`(이미 있는 주제 후보 화면으로 가는 함수 하나)를 부른다(아래에서 자리를 확인한다).
         self.assertEqual(sorted(found), ["shell.py", "sidebar.py"], found)
         self.assertEqual(found["sidebar.py"], ["navigate(k)"], "사이드바는 실제 메뉴의 열쇠로만 화면을 요청한다")
         # 의도적 갱신(P4d, D-270): 주제 후보 화면의 '준비 안내' 카드(Seed 관리·블로그 관리 단추)가 **이미 있는 화면으로** 가는 길이 하나 생겼다 — 셸의 `cand_prep_action` 이 `self.go(key)` 를 부르는 한 곳뿐이고,
         # 그 호출은 `key in ("seed", "blogs")`(완성된 두 화면) 가지 안에만 있다(소스로 확인). 사이드바와 셸의 `go`→`nav` 는 그대로, 화면·부품(`candidate_screen.py` 포함)에는 여전히 하나도 없다.
-        self.assertEqual(sorted(found["shell.py"]), sorted(["self.state.nav(key)", "self.go(key)"]), "셸의 `go` 가 상태의 `nav` 를 부르는 곳과, 주제 후보 준비 안내가 완성된 화면으로 가는 `go` 한 곳뿐")
+        # 의도적 갱신(P4e, D-282): 셸에는 `go` 의 `nav` 호출(고친 내용이 있으면 `force` 로만 옮긴다 — 인자가 하나 늘었다)·확인창의 `그래도 이동` 이 부르는 `go(key, force=True)`·후보 상세의 `이 주제로 만들기` 가 초안 화면을 여는
+        # `go('drafts')`·초안 화면의 되돌아가기 단추가 부르는 `go('topics')` 가 더해졌다 — 아래에서 자리를 확인한다.
+        self.assertEqual(sorted(found["shell.py"]), sorted(["self.state.nav(key, force=force)", "self.go(key)", "self.go(key, force=True)", "self.go('drafts')", "self.go('topics')"]), "셸의 `go` 가 상태의 `nav` 를 부르는 곳과, 완성된 화면으로 가는 `go` 몇 곳뿐")
         shell_tree = ast.parse((QT_DIR / "shell.py").read_text(encoding="utf-8"))
         prep = [node for node in ast.walk(shell_tree) if isinstance(node, ast.FunctionDef) and node.name == "cand_prep_action"]
         self.assertEqual(len(prep), 1)
@@ -453,12 +458,17 @@ class NoRouteToUnfinishedScreensTest(QtBase):
         self.assertEqual((len(gos), len(guards)), (1, 1), "`go` 는 준비 안내 단추 처리 안에 한 번, 완성된 두 화면 가지 안에서만")
         self.assertTrue(any(inner is gos[0] for statement in guards[0].body for inner in ast.walk(statement)), "`go` 호출이 `key in ('seed', 'blogs')` 가지 밖에 있다")    # 독립 검증(P4d 수정 F4): `else` 쪽(`orelse`)은 가지 안이 아니다 — `go` 를 `else` 로 옮기는 변이도 잡는다
         self.assertEqual({"seed", "blogs"} - REAL, set(), "준비 안내가 가는 두 화면은 완성된 실제 메뉴다")
+        wanted = ("self.go('drafts')", "self.go('topics')", "self.go(key, force=True)")
+        owners = {ast.unparse(call): node.name for node in ast.walk(shell_tree) if isinstance(node, ast.FunctionDef) for call in ast.walk(node) if isinstance(call, ast.Call) and ast.unparse(call) in wanted}
+        self.assertEqual(owners, {"self.go('drafts')": "cand_make_draft", "self.go('topics')": "drf_to_topics", "self.go(key, force=True)": "go"},
+                         "초안 화면을 여는 `go` 는 후보 상세의 `이 주제로 만들기` 처리 안에 하나, 되돌아가기는 `drf_to_topics` 안에 하나, `force` 이동은 `go` 안의 확인창 콜백 하나뿐이다")
+        self.assertEqual({"drafts", "topics"} - REAL, set(), "초안 화면과 주제 후보 화면은 완성된 실제 메뉴다")
 
     def test_every_button_and_card_on_both_real_screens_never_asks_for_an_unfinished_screen(self):
         window = self.make()
         requested = []
         real_nav = window.state.nav
-        window.state.nav = lambda key: (requested.append(key), real_nav(key))[1]
+        window.state.nav = lambda key, force=False: (requested.append(key), real_nav(key, force))[1]       # 의도적 갱신(P4e, D-282): 이동 함수에 `force` 인자가 생겨 같은 모양으로 감싼다
 
         def pressables():
             return [w for w in window.findChildren(QWidget) if w.isVisible() and (isinstance(w, QAbstractButton) or isinstance(w, UI.Pressable)) and not window.sidebar.isAncestorOf(w)]
