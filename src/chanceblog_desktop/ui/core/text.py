@@ -141,6 +141,10 @@ from .seed_text import SEED_T  # noqa: E402
 
 T.update(SEED_T)                                                     # Seed 관리 화면의 문구도 새 파일(`seed_text.py`)에 따로 두고 합친다
 
+from .candidate_text import CAND_T  # noqa: E402
+
+T.update(CAND_T)                                                     # 주제 후보 화면의 문구도 새 파일(`candidate_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 

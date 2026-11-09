@@ -154,6 +154,11 @@ class ServiceHomeProvider(HomeProvider):
         from .blogs_adapter import ServiceBlogsProvider
         return ServiceBlogsProvider(self._data_dir, context_factory=self._factory)
 
+    def candidates_provider(self):
+        """주제 후보 화면(P4d)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(후보 만들기)는 사용자가 확인창에서 `만들기` 를 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
+        from .candidates_adapter import ServiceCandidatesProvider
+        return ServiceCandidatesProvider(self._data_dir, context_factory=self._factory)
+
     def _projects(self, ctx):
         """(작성 완료 수, 발행 완료 수) — 집계할 수 없으면 (None, None). 글 저장소가 없으면 0 이다. 읽은 글 목록(`rows`)과 오류(`error`)도 들고 있다(`Counts`)."""
         try:

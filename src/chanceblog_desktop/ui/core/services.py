@@ -158,6 +158,11 @@ class HomeProvider:
         from .blogs import FakeBlogsProvider
         return FakeBlogsProvider()
 
+    def candidates_provider(self):
+        """이 공급자와 짝인 주제 후보 화면 공급자(P4d) — 홈 공급자를 고르면(`--sample`·`--data-dir`) 주제 후보도 같은 쪽을 쓴다. 따로 정하지 않은 공급자는 **메모리에서만 일하는 예시**를 돌려준다(후보를 만들어도 이 PC 에 아무것도 남지 않는다)."""
+        from .candidates import FakeCandidatesProvider
+        return FakeCandidatesProvider()
+
 
 def _wait(seconds, progress, cancelled):
     end = time.monotonic() + seconds

@@ -197,6 +197,12 @@ QFrame[seedrow="true"][checked="true"] {{ background: {c['surface_selected']}; b
 QFrame[seedrow="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
 QFrame[seedrow="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 QFrame[slot="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; border-left: 4px solid {c['border_focus']}; }}
+QFrame[candcard="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
+QFrame[candcard="true"]:hover {{ border: 1px solid {c['border_hover']}; }}
+QFrame[candcard="true"][selected="true"], QFrame[candcard="true"][selected="true"]:hover {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
+QFrame[candcard="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
+QFrame[candcard="true"][selected="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
+QFrame#detailpane {{ background: {c['surface']}; border-left: 1px solid {c['border']}; }}
 QFrame[notice="ok"] {{ background: {c['success_100']}; border-radius: {r['badge']}px; }}
 QFrame[notice="ok"] QLabel {{ color: {c['success_text']}; font-weight: 600; }}
 QFrame[notice="info"] {{ background: {c['info_100']}; border-radius: {r['badge']}px; }}

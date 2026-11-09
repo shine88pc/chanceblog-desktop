@@ -14,6 +14,8 @@ from . import board_view as bv
 from . import settings_view as sv
 from .blogs import FakeBlogsProvider
 from .blogs_view import BlogsController
+from .candidates import FakeCandidatesProvider
+from .candidates_view import CandidatesController
 from .seeds import FakeSeedsProvider
 from .seeds_view import SeedsController
 from .jobs import JobFailure, JobRunner
@@ -24,11 +26,11 @@ from .text import NO_DATA, T, fmt_demand, fmt_docs
 
 # 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
 # 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
-NAV = (("home", "nav_home", "home"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
+NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
 # 묶음(핵심 작업 / 데이터·관리 / 시스템) — (묶음 열쇠, 이름 문구 열쇠, 그 묶음의 실제 메뉴 열쇠들). **묶음 이름은 그 묶음에 실제 메뉴가 있을 때만 보인다**(`nav_groups`).
-NAV_GROUPS = (("core", "nav_group_core", ("home",)), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
+NAV_GROUPS = (("core", "nav_group_core", ("home", "topics")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
 # '다음 단계' 목록 — 아직 만들지 않은 화면의 **이름만**(열 수 없다: 메뉴·화면 이동·단추가 없다). 화면이 완성되면 여기서 빼고 NAV 에 더한다. (열쇠, 이름 문구 열쇠, 아이콘)
-NEXT_STEPS = (("topics", "nav_topics", "search"), ("draft", "nav_draft", "draft"), ("history", "nav_history", "calendar_check"))
+NEXT_STEPS = (("draft", "nav_draft", "draft"), ("history", "nav_history", "calendar_check"))
 LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
 
 
@@ -120,7 +122,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -152,6 +154,10 @@ class AppState:
         self.seeds = SeedsController(self.seeds_provider, self.runner)
         # 키 연결(P4f) — 설정 화면의 연결 카드에 키 행동을 더한다. 쓰는 공급자(`KeysWriter`)일 때만 켜지고 아니면 카드는 읽기 전용 그대로다. 비밀이 아닌 상태만 들고 있다(키 글은 입력 칸에서 `SecretBox` 로만 간다)
         self.keys = KeysController(self.conn_provider, self.runner, lambda: self.conn_data)
+        # 주제 후보 화면(P4d) — 읽기와 쓰기를 가르는 상태는 `CandidatesController`(순수)가 들고 있다. 쓰는 일은 `후보 만들기` 확인창에서 `만들기` 를 눌렀을 때 하나뿐이다
+        paired_candidates = getattr(self.provider, "candidates_provider", None)
+        self.candidates_provider = candidates if candidates is not None else (paired_candidates() if paired_candidates else FakeCandidatesProvider())
+        self.candidates = CandidatesController(self.candidates_provider, self.runner)
 
     # ---- 메뉴 ----
     def nav(self, key):
@@ -160,6 +166,7 @@ class AppState:
         self.page = key
         self.drawer_id = None
         self.seeds.close_drawer()                                    # Seed 서랍은 다른 화면으로 가면 닫는다(고친 값·새로 쓰던 값은 지우지 않는다)
+        self.candidates.hide_detail()                                # 주제 후보의 서랍도 닫는다(고른 후보는 그대로 — 돌아오면 같은 카드가 골라져 있다)
         return True
 
     # ---- 불러오기(작업 스레드) ----
@@ -263,10 +270,12 @@ class AppState:
         self.drawer_id = topic_id
         return True
 
-    def close_drawer(self):
+    def close_drawer(self, silent=False):
+        """서랍(홈 상세·Seed·주제 후보 상세)을 닫는다 — 닫은 것의 열쇠(포커스를 돌려줄 곳)를 돌려준다. `silent`(화면을 옮길 때)면 주제 후보의 고른 후보는 풀지 않는다(닫기·Esc 일 때만 푼다)."""
         opened, self.drawer_id = self.drawer_id, None
         seed_drawer = self.seeds.close_drawer()
-        return opened or (("seed:" + (seed_drawer[1] or "new")) if seed_drawer is not None else None)
+        picked = self.candidates.close_detail() if (self.page == "topics" and not silent) else None
+        return opened or (("seed:" + (seed_drawer[1] or "new")) if seed_drawer is not None else None) or (("cand:" + picked) if picked else None)
 
     # ---- 설정 화면(연결 관리) — 읽기만 한다 ----
     @property
@@ -339,6 +348,15 @@ class AppState:
 
     def seeds_drawer_view(self):
         return self.seeds.drawer_view() if self.page == "seed" else None
+
+    def candidates_view(self):
+        """주제 후보 화면 뷰모델 — 만드는 일은 `CandidatesController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        failure = self.candidates.failure
+        return self.candidates.view(diagnostic_text(failure, self.candidates.failed_at) if failure else "")
+
+    def candidates_drawer_view(self):
+        """서랍 방식일 때 열려 있어야 하는 후보 상세 — 그 화면이 아니거나 서랍이 필요 없으면 None."""
+        return self.candidates.detail_view() if self.page == "topics" and self.candidates.drawer_wanted() else None
 
     def blogs_view(self):
         """블로그 관리 화면 뷰모델 — 만드는 일은 `BlogsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""

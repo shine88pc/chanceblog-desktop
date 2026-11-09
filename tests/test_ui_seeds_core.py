@@ -1355,9 +1355,10 @@ class SourceRulesTest(unittest.TestCase):
                 self.assertNotIn(value, text_of, path.name)
 
     def test_the_app_state_and_the_menu_know_the_new_screen_and_the_next_steps_no_longer_list_it(self):
-        self.assertEqual([item[0] for item in app_state.NAV], ["home", "seed", "blogs", "settings"])
+        # 의도적 갱신(P4d, D-270): 주제 후보 화면이 완성돼 메뉴(핵심 작업 묶음, 홈 다음)에 올랐고 '다음 단계' 목록에서 빠졌다 — Seed 관리가 데이터·관리 묶음에 있고 '다음 단계' 에 없다는 뜻은 그대로다.
+        self.assertEqual([item[0] for item in app_state.NAV], ["home", "topics", "seed", "blogs", "settings"])
         self.assertEqual([item[0] for item in app_state.nav_groups()[1][2]], ["seed", "blogs"])
-        self.assertEqual([item[0] for item in app_state.NEXT_STEPS], ["topics", "draft", "history"])
+        self.assertEqual([item[0] for item in app_state.NEXT_STEPS], ["draft", "history"])
         state = app_state.AppState()
         self.assertIsInstance(state.seeds_provider, seeds.FakeSeedsProvider)
         self.assertEqual(state.seeds.state, "loading")

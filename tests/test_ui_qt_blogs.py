@@ -148,7 +148,7 @@ class Base(unittest.TestCase):
 class MenuAndLayoutTest(Base):
     def test_the_blog_menu_is_in_the_data_group_and_opens_the_new_screen(self):
         window = self.make(page=None)
-        self.assertEqual(list(window.nav_buttons), ["home", "seed", "blogs", "settings"])                # 의도적 갱신(Seed 관리, D-230): Seed 관리가 같은 묶음의 블로그 관리 앞에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "seed", "blogs", "settings"])      # 의도적 갱신(Seed 관리, D-230): Seed 관리가 같은 묶음의 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
         self.assertEqual(window.nav_buttons["blogs"].accessibleName(), "블로그 관리 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
         window.nav_buttons["blogs"].click()
@@ -157,8 +157,8 @@ class MenuAndLayoutTest(Base):
         self.assertEqual((window.state.page, window.nav_buttons["blogs"].isChecked(), window.nav_buttons["home"].isChecked()), ("blogs", True, False))
         self.assertEqual(len(self.ui(window).cards), 5)
         self.assertEqual(len(self.ui(window).fields), 18, "의도적 갱신(P4c, D-240): 주제 설정 칸 셋(우선 키워드·제외 키워드·선호 글 유형)이 더해져 폼 칸이 열다섯에서 열여덟이 되었다")
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "seed", "blogs", "settings"])                 # 의도적 갱신(Seed 관리, D-230): 화면 표에 Seed 관리 줄이 더해졌다
-        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["주제 후보", "초안 작성", "발행 기록"])        # 의도적 갱신(Seed 관리, D-230): Seed 관리는 완성돼 '다음 단계' 목록에서 빠졌다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "seed", "blogs", "settings"])       # 의도적 갱신(Seed 관리, D-230): 화면 표에 Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
+        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["초안 작성", "발행 기록"])        # 의도적 갱신(Seed 관리, D-230): Seed 관리는 완성돼 '다음 단계' 목록에서 빠졌다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 빠졌다
 
     def test_the_five_slot_cards_show_registered_and_empty_slots_as_cards(self):
         window = self.make()

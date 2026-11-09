@@ -389,14 +389,15 @@ class ChannelTwoAssumptionTest(unittest.TestCase):
 class CompletedScreensOnlyTest(unittest.TestCase):
     """의식적으로 다시 씀(UI-C1a, D-172): 옛 `TopicsPlaceholderTest` 는 '메뉴 6개·주제 후보가 둘째·홈 카드와 전체 보기와 빠른 작업이 주제 후보·발행 기록·블로그 관리로 간다·자리표시 네 화면' 을 **그때 모습 그대로** 못박았다.
     운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 Navigation 이고 미완성 화면으로 가는 이동 경로는 0개다. 아래는 같은 자리에 새 규칙을 못박는다(서랍은 홈에서만 열린다는 규칙은 그대로)."""
-    PLACEHOLDERS = ("topics", "draft", "history", "blogs")                                                     # 옛 자리표시 화면 넷 — 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열리고, 나머지 셋은 지금도 열 수 없다(다음 단계 목록에 이름만 있다)
+    PLACEHOLDERS = ("topics", "draft", "history", "blogs")                                                     # 옛 자리표시 화면 넷 — 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열리고, 나머지 셋은 지금도 열 수 없다(다음 단계 목록에 이름만 있다). 의도적 갱신(P4d, D-270): 'topics' 도 완성돼 열리고 이제 열 수 없는 것은 둘(초안 작성·발행 기록)이다 — 이 낱말 모음은 쓰이지 않아 옛 모습 그대로 둔다
 
     def test_the_menu_keys_and_icons_are_home_and_settings_only_and_the_label_still_says_topic_candidates(self):
         # 의도적 갱신(P4b, D-210): 블로그 관리 화면이 완성돼 메뉴에 올랐다 — 홈·블로그 관리(책 아이콘)·설정
         # 의도적 갱신(Seed 관리, D-230): Seed 관리 화면이 완성돼 메뉴에 올랐다 — 홈·Seed 관리(씨앗 아이콘)·블로그 관리·설정
-        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "seed", "blogs", "settings"])
-        self.assertEqual([icon for _key, _label, icon in app_state.NAV], ["home", "sprout", "book", "settings"])
-        self.assertEqual(text.T["nav_topics"], "주제 후보")                                                       # 이름은 '다음 단계' 목록이 쓴다
+        # 의도적 갱신(P4d, D-270): 주제 후보 화면이 완성돼 메뉴에 올랐다 — 홈·주제 후보(돋보기 아이콘)·Seed 관리·블로그 관리·설정
+        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "topics", "seed", "blogs", "settings"])
+        self.assertEqual([icon for _key, _label, icon in app_state.NAV], ["home", "search", "sprout", "book", "settings"])
+        self.assertEqual(text.T["nav_topics"], "주제 후보")                                                       # 이름은 실제 메뉴 항목이 쓴다(P4d 부터 '다음 단계' 목록이 아니다)
         self.assertFalse(hasattr(app_state, "MAX_NAV"))
 
     def test_the_home_cards_and_the_section_have_no_route_any_more(self):
@@ -426,9 +427,10 @@ class CompletedScreensOnlyTest(unittest.TestCase):
     def test_the_next_steps_list_names_the_five_unfinished_screens_and_none_of_them_can_be_opened(self):
         # 의도적 갱신(P4b, D-210): '블로그 관리' 는 완성돼 실제 메뉴로 올라갔다 — 아직 열 수 없는 화면은 넷이다(이름과 규칙 — 열 수 없다 — 은 그대로)
         # 의도적 갱신(Seed 관리, D-230): 'Seed 관리' 도 완성돼 실제 메뉴로 올라갔다 — 아직 열 수 없는 화면은 셋이다(주제 후보·초안 작성·발행 기록)
-        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], ["topics", "draft", "history"])
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NEXT_STEPS], ["주제 후보", "초안 작성", "발행 기록"])
-        self.assertEqual([icon for _key, _label, icon in app_state.NEXT_STEPS], ["search", "draft", "calendar_check"])
+        # 의도적 갱신(P4d, D-270): '주제 후보' 도 완성돼 실제 메뉴로 올라갔다 — 아직 열 수 없는 화면은 둘이다(초안 작성·발행 기록). 이름과 규칙 — 열 수 없다 — 은 그대로다.
+        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], ["draft", "history"])
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NEXT_STEPS], ["초안 작성", "발행 기록"])
+        self.assertEqual([icon for _key, _label, icon in app_state.NEXT_STEPS], ["draft", "calendar_check"])
         self.assertFalse({key for key, _label, _icon in app_state.NEXT_STEPS} & {key for key, _label, _icon in app_state.NAV}, "다음 단계 항목은 실제 메뉴에 없다")
         for key, _label, _icon in app_state.NEXT_STEPS:
             state = state_with(topic("하나"))
@@ -437,8 +439,8 @@ class CompletedScreensOnlyTest(unittest.TestCase):
 
     def test_groups_show_a_name_only_when_they_have_a_real_menu(self):
         self.assertEqual([(key, label, [item[0] for item in items]) for key, label, items in app_state.nav_groups()],
-                         [("core", "nav_group_core", ["home"]), ("data", "nav_group_data", ["seed", "blogs"]), ("system", "nav_group_system", ["settings"])],
-                         "의도적 갱신(P4b, D-210): 데이터·관리 묶음에 블로그 관리가 올라 이름이 보인다 — 묶음 이름은 실제 메뉴가 있을 때만 보인다는 규칙은 그대로. 의도적 갱신(Seed 관리, D-230): 같은 묶음에 Seed 관리가 블로그 관리 앞에 올랐다")
+                         [("core", "nav_group_core", ["home", "topics"]), ("data", "nav_group_data", ["seed", "blogs"]), ("system", "nav_group_system", ["settings"])],
+                         "의도적 갱신(P4b, D-210): 데이터·관리 묶음에 블로그 관리가 올라 이름이 보인다 — 묶음 이름은 실제 메뉴가 있을 때만 보인다는 규칙은 그대로. 의도적 갱신(Seed 관리, D-230): 같은 묶음에 Seed 관리가 블로그 관리 앞에 올랐다. 의도적 갱신(P4d, D-270): 핵심 작업 묶음에 주제 후보가 홈 다음에 올랐다")
         self.assertEqual([text.T[label] for _key, label, _menus in app_state.NAV_GROUPS], ["핵심 작업", "데이터·관리", "시스템"])
         in_groups = [menu for _key, _label, menus in app_state.NAV_GROUPS for menu in menus]
         self.assertEqual(sorted(in_groups), sorted(key for key, _label, _icon in app_state.NAV), "모든 실제 메뉴가 묶음 하나에 한 번씩 있다")
@@ -461,12 +463,12 @@ class CompletedScreensOnlyTest(unittest.TestCase):
         screens = ast.parse((QT_DIR / "screens.py").read_text(encoding="utf-8"))
         table = builder_table(screens)
         self.assertEqual(list(table), [key for key, _label, _icon in app_state.NAV], "표의 줄은 실제 메뉴(완성된 화면)와 같은 열쇠·같은 순서다 — 빠진 메뉴가 없고 표에만 있는 화면도 없다(자리표시 화면은 없앴다)")
-        self.assertEqual(table, {"home": "_home_builder", "seed": "_seed_builder", "blogs": "_blogs_builder", "settings": "_settings_builder"}, "의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다. 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다")
-        for builder, screen in (("_home_builder", "home_screen"), ("_seed_builder", "seeds_screen"), ("_blogs_builder", "blogs_screen"), ("_settings_builder", "settings_screen")):
+        self.assertEqual(table, {"home": "_home_builder", "topics": "_topics_builder", "seed": "_seed_builder", "blogs": "_blogs_builder", "settings": "_settings_builder"}, "의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다. 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다. 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다")
+        for builder, screen in (("_home_builder", "home_screen"), ("_topics_builder", "candidates_screen"), ("_seed_builder", "seeds_screen"), ("_blogs_builder", "blogs_screen"), ("_settings_builder", "settings_screen")):
             self.assertEqual([name for name in calls_in(function_named(screens, builder)) if name.endswith("_screen")], [screen], f"{builder} 는 자기 화면 함수 하나만 부른다")
         # 점검 M3 — CI 에는 Qt 가 없어 이 시험이 유일한 방어선이다: 빌더마다 자기 뷰모델을 연결하고(설정 화면에 홈 뷰모델을 넘기면 안 된다) 표는 현재 화면 열쇠(`state.page`)로 찾는다.
-        self.assertEqual({builder: viewmodel_of(function_named(screens, builder), screen) for builder, screen in (("_home_builder", "home_screen"), ("_seed_builder", "seeds_screen"), ("_blogs_builder", "blogs_screen"), ("_settings_builder", "settings_screen"))},
-                         {"_home_builder": "home_view", "_seed_builder": "seeds_view", "_blogs_builder": "blogs_view", "_settings_builder": "settings_view"}, "빌더가 다른 화면의 뷰모델을 넘긴다")
+        self.assertEqual({builder: viewmodel_of(function_named(screens, builder), screen) for builder, screen in (("_home_builder", "home_screen"), ("_topics_builder", "candidates_screen"), ("_seed_builder", "seeds_screen"), ("_blogs_builder", "blogs_screen"), ("_settings_builder", "settings_screen"))},
+                         {"_home_builder": "home_view", "_topics_builder": "candidates_view", "_seed_builder": "seeds_view", "_blogs_builder": "blogs_view", "_settings_builder": "settings_view"}, "빌더가 다른 화면의 뷰모델을 넘긴다")
         render, overlays = function_named(shell, "render"), function_named(shell, "_sync_overlays")
         self.assertEqual([name for name in calls_in(render) if name.endswith("_screen")], [], "render 는 화면 함수를 직접 부르지 않고 표만 거친다(표를 건너뛰는 길이 없다)")
         lookups = [node for node in ast.walk(render) if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "SCREEN_BUILDERS"]
@@ -536,7 +538,8 @@ class LegacyDemandLabelTest(unittest.TestCase):
     def test_the_screen_text_has_no_relative_interest_label_yet_so_p4_adds_it_as_a_new_key(self):
         # P4 가 새 Trend 문구 `최근 관심도(상대값)` 를 **새 키**로 더하면 이 시험의 빈 목록을 의식적으로 고친다 — 더해도 위 시험이 지키는 네 개 키에는 들어가면 안 된다.
         # 보는 것은 '상대값' 낱말뿐이라, 기존 추세 항목 이름(`d_trend` 의 '최근 트렌드')이 나중에 '최근 관심도 변화' 처럼 바뀌어도 이 시험은 깨지지 않는다.
-        self.assertEqual([key for key, value in text.T.items() if "상대값" in value], [])
+        # 의도적 갱신(P4d, D-270): 주제 후보 화면이 새 Trend 문구를 **새 키**로 더했다 — 상세 창의 머리 `최근 관심도(상대값)`(`cand_sec_trend`)와 값 글 `{n} (0~100 사이의 상대값)`(`cand_trend_value`). 위 두 시험이 지키는 옛 절대 횟수 칸의 네 키에는 여전히 들어가지 않는다.
+        self.assertEqual([key for key, value in text.T.items() if "상대값" in value], ["cand_sec_trend", "cand_trend_value"])
 
     def test_the_drawer_shows_the_legacy_count_with_the_times_unit_and_the_monthly_label_and_the_home_shows_none(self):
         """의도적 갱신(UI-C1d, D-201): 옛 시험은 추천 행(`topic_vm` 의 `demand`·`docs`)과 서랍 둘 다에서 옛 절대 횟수를 봤다. 행에서는 없앴다 — 서랍은 그대로(첫 항목 `월간 검색량` `8,600회`)이고, 홈 뷰모델에는 그 수가 아예 없다."""

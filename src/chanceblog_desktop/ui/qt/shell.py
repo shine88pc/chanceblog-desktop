@@ -11,9 +11,12 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
+from ..core import part_rules
 from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
 from ..core.blogs_view import WRITE_KEY as BLOGS_WRITE_KEY
+from ..core.candidates import MakePreview
+from ..core.candidates_view import WRITE_KEY as CANDIDATES_WRITE_KEY
 from ..core.seeds_view import WRITE_KEY as SEEDS_WRITE_KEY
 from ..core.keys_view import WRITE_KEY as KEYS_WRITE_KEY
 from ..core.clock import SystemClock
@@ -22,6 +25,7 @@ from ..core.version import read_version
 from . import components as UI
 from . import screens as S
 from .key_parts import KeyDialog, RenameForm
+from .candidate_parts import DetailPane
 from .sidebar import Sidebar
 from .topbar import TopBar
 from .workers import JobBridge
@@ -55,14 +59,14 @@ def qt_file_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
         self._file_picker = file_picker or qt_file_picker                                 # 이미지 위치를 고르는 대화상자(시험·사진은 가짜 선택기를 주입한다)
         self._clipboard_wipe = clipboard_wipe or qt_clipboard_wipe                        # 붙여 넣은 키가 클립보드에 남지 않게 비우는 함수(시험은 가짜를 주입한다)
@@ -84,6 +88,8 @@ class AppShell(QMainWindow):
         self.scroll.setFocusPolicy(Qt.NoFocus)                                      # Tab 정거장이 아니다 — 포커스가 간 단추가 보이도록 스크롤은 Qt 가 해 준다
         self.scroll.setAccessibleName(T["body_area"])
         middle.addWidget(self.scroll, 1)
+        self.detail_pane = DetailPane()                                                  # 주제 후보 화면의 고정 상세 창 — 본문 오른쪽에 붙고 논리 폭 1366 이상일 때만 보인다(그보다 좁으면 서랍)
+        middle.addWidget(self.detail_pane)
         outer.addLayout(middle, 1)
         self.toast = UI.Toast(root)
         self.drawer = UI.Drawer(root)
@@ -96,6 +102,8 @@ class AppShell(QMainWindow):
         self._key_click = (None, "")                                                     # 마지막으로 누른 키 행 단추(항목 번호, 행동) — 쓰기가 끝나 다시 그린 뒤 포커스를 돌려줄 곳
         self._key_focus_wanted = None                                                    # 쓰기가 끝났고 새 값을 받으면 포커스를 돌려줘야 한다: (일 종류, 용도, 누른 단추)
         self._outside_focus = {}
+        self._detail_layout = None                                                      # 주제 후보 화면을 그릴 때의 상세 창 방식·열 수(창 폭이 문턱을 넘으면 다시 그린다)
+        self.detail_close = None
         self._cancel_released = False                                                   # 취소를 눌러 화면을 먼저 풀고 안내했다 — 돌고 있던 일이 나중에 끝나며 보낼 신호 하나를 무시하려고(그 일의 끝 신호가 오면 꺼진다)
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.escape)
         self.bridge = JobBridge(self)
@@ -126,6 +134,14 @@ class AppShell(QMainWindow):
         self.keys_bridge.loaded.connect(self._on_keys_written)
         self.keys_bridge.failed.connect(self._on_keys_failed)
         self.keys_bridge.cancelled.connect(self._on_keys_cancelled)
+        self.cand_bridge = JobBridge(self)                                              # 주제 후보를 읽는 작업의 다리 — 홈·설정·블로그·Seed 읽기와 따로 돈다
+        self.cand_bridge.loaded.connect(self._on_cand_loaded)
+        self.cand_bridge.failed.connect(self._on_cand_failed)
+        self.cand_bridge.cancelled.connect(self._on_cand_cancelled)
+        self.cand_write_bridge = JobBridge(self)                                        # 만들 후보 미리 보기(읽기뿐)와 후보 만들기(파일에 쓰는 일 하나)의 다리 — 사용자가 단추를 눌렀을 때만 시작한다
+        self.cand_write_bridge.loaded.connect(self._on_cand_written)
+        self.cand_write_bridge.failed.connect(self._on_cand_write_failed)
+        self.cand_write_bridge.cancelled.connect(self._on_cand_write_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -175,6 +191,9 @@ class AppShell(QMainWindow):
         state = self.state
         key, previous = self._focus_key(), self.scroll.verticalScrollBar().value()
         same_page = getattr(self, "_rendered_page", None) == state.page
+        self._detail_layout = self.detail_layout() if state.page == "topics" else None   # 주제 후보 화면은 창의 논리 폭이 상세 창 방식(고정·서랍)과 카드 열 수를 정한다 — 고른 후보는 방식이 바뀌어도 컨트롤러에 그대로 있다
+        if self._detail_layout is not None:
+            state.candidates.set_layout(self._detail_layout.mode)
         self.refresh_button = self.cancel_button = None
         widget = S.SCREEN_BUILDERS[state.page](self)                          # 메뉴 → 화면 만드는 함수 표(`screens.SCREEN_BUILDERS`)
         self.screen_widget = widget
@@ -193,6 +212,7 @@ class AppShell(QMainWindow):
         self._rendered_page = state.page
         for nav_key, button in self.nav_buttons.items():
             button.setChecked(nav_key == state.page)
+        self._sync_detail()
         self._sync_overlays(key)
         if key and self._modal() is None:
             self._restore_focus(key)
@@ -200,6 +220,33 @@ class AppShell(QMainWindow):
 
     def _relayout(self):
         S.relayout_screen(self.scroll.widget())
+
+    def detail_layout(self):
+        """창의 **논리 폭**(Qt 가 윈도 배율을 이미 나눈 값 — 물리 해상도가 아니다)이 정하는 상세 창 방식(고정·서랍)과 카드 열 수 — 규칙은 `part_rules.detail_layout`(운영자 결정 2026-11-06 확인 요청 004)."""
+        return part_rules.detail_layout(max(1, self.width()))
+
+    def _sync_detail(self):
+        """주제 후보 화면의 고정 상세 창 — 고정 방식일 때만 보이고(고른 후보의 상세 또는 비었을 때의 안내), 서랍 방식이거나 다른 화면이면 숨는다."""
+        layout = self._detail_layout
+        if self.state.page != "topics" or layout is None or layout.mode != "fixed" or not self.state.candidates.pane_visible():
+            self.detail_pane.dismiss()
+            self.detail_close = None
+            return
+        from .candidate_screen import detail_content, pane_placeholder
+        view = self.state.candidates.detail_view()
+        if view is None:
+            self.detail_pane.set_content(pane_placeholder(self.state.candidates.pane_empty()), focusable=False)
+            self.detail_close = None
+        else:
+            content, self.detail_close = detail_content(self, view)
+            self.detail_pane.set_content(content)
+        self.detail_pane.present(layout.detail_width)
+        ui = getattr(self.screen_widget, "cand_ui", None)                          # Tab 순서: 본문(거르기 → 카드) 다음에 상세 창(스크롤 → 닫기 → 번호 복사)
+        body = ui.grid.stops() if ui is not None and ui.grid is not None else []
+        last = body[-1] if body else (ui.reset if ui is not None else None)
+        chain = [widget for widget in (last, *self.detail_pane.stops()) if widget is not None]
+        for first, second in zip(chain, chain[1:]):
+            QWidget.setTabOrder(first, second)
 
     # ---- 겹쳐 뜨는 것(서랍·대화상자) ----
     def _modal(self):
@@ -224,6 +271,7 @@ class AppShell(QMainWindow):
         state = self.state
         view = state.drawer_view() if state.page == "home" else None
         seed_view = state.seeds_drawer_view()                                     # Seed 관리 화면의 서랍(상세·새 Seed) — 그 화면에서만 있다
+        cand_view = state.candidates_drawer_view()                                # 주제 후보의 서랍 방식 상세(창 논리 폭 1366 미만) — 그 화면에서만 있다
         if seed_view is not None and view is None and not self.dialog.is_open:
             from .seed_screen import seed_drawer
             content, self.drawer_close, footer, self.seeds_drawer_ui = seed_drawer(self, seed_view)
@@ -238,6 +286,18 @@ class AppShell(QMainWindow):
                 self._restore_focus(key)                                           # 다시 그리기 전에 포커스가 있던 칸·단추(열쇠가 같으면)로 돌아간다
             if not self.drawer.isAncestorOf(QApplication.focusWidget()):
                 self.drawer_close.setFocus(Qt.OtherFocusReason)
+        elif cand_view is not None and view is None and seed_view is None and not self.dialog.is_open:
+            from .candidate_screen import detail_content
+            content, self.drawer_close = detail_content(self, cand_view)
+            self.drawer.set_content(content)
+            self.drawer.setAccessibleName(cand_view["a11y"])                       # 서랍 틀의 읽기용 이름도 이 내용의 것이다
+            self.drawer.scroll.setAccessibleName(cand_view["a11y"])
+            if not self.drawer.is_open:
+                self._drawer_return = self._drawer_return or QApplication.focusWidget()
+                self.drawer.open()
+            self._trap_focus(True, self.drawer)
+            if not self.drawer.scroll.isAncestorOf(QApplication.focusWidget()):
+                self.drawer_close.setFocus(Qt.OtherFocusReason)
         elif view is not None and not self.dialog.is_open:
             content, self.drawer_close = S.drawer_content(self, view)
             self.drawer.set_content(content)
@@ -249,7 +309,7 @@ class AppShell(QMainWindow):
             self._trap_focus(True, self.drawer)
             if not self.drawer.scroll.isAncestorOf(QApplication.focusWidget()):
                 self.drawer_close.setFocus(Qt.OtherFocusReason)
-        elif view is None and seed_view is None and self.drawer.is_open:
+        elif view is None and seed_view is None and cand_view is None and self.drawer.is_open:
             self.drawer.dismiss()
             if not self.dialog.is_open:
                 self._trap_focus(False)
@@ -261,7 +321,7 @@ class AppShell(QMainWindow):
         self.render()
         target = self._drawer_return
         self._drawer_return = None
-        self._restore_focus(opened if opened.startswith("seed:") else "detail:" + opened)
+        self._restore_focus(opened if opened.startswith(("seed:", "cand:")) else "detail:" + opened)
         if QApplication.focusWidget() is None and target is not None:
             target.setFocus(Qt.OtherFocusReason)
 
@@ -271,7 +331,11 @@ class AppShell(QMainWindow):
             self.render()
 
     def show_dialog(self, title, body, ok=None, cancel=None, on_ok=None, danger=False, safe_focus=False, on_cancel=None):
-        """가운데 대화상자 — 제목·본문·단추. 처음 포커스는 기본 단추에 있고 Esc·취소로 닫는다. `danger` 면 확인 단추가 위험 단추(최종 삭제 확인 — 빨간 배경)이고, `safe_focus` 면 처음 포커스가 취소에 있다(Enter 를 잘못 눌러도 지워지지 않는다)."""
+        """가운데 대화상자 — 제목·본문·단추. 처음 포커스는 기본 단추에 있고 Esc·취소로 닫는다. `danger` 면 확인 단추가 위험 단추(최종 삭제 확인 — 빨간 배경)이고, `safe_focus` 면 처음 포커스가 취소에 있다(Enter 를 잘못 눌러도 지워지지 않는다).
+        열린 확인창을 다른 대화상자로 **바꿀 때**는 옛 확인창이 확인 없이 닫힌 셈이라 옛 `on_cancel` 을 먼저 부른다('확인창을 보였다' 표시를 거둔다 — 안 그러면 표시가 남아 확인 없이 쓰기가 시작될 수 있다). 새 대화상자가 같은 `on_cancel`(같은 표시)을 이어받으면 부르지 않는다 — 방금 켠 표시를 거두지 않으려고."""
+        previous, self._dialog_on_cancel = self._dialog_on_cancel, None
+        if previous is not None and previous != on_cancel:
+            previous()
         self.dialog.clear()
         self.dialog.setAccessibleName(title)
         self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
@@ -314,7 +378,7 @@ class AppShell(QMainWindow):
 
     def show_sample_info(self, screen="home"):
         """'예시 데이터' 설명 — 화면마다 보이는 것이 달라 설명도 그 화면 것이다(홈은 주제·숫자, 설정은 키 이름·사용량 숫자)."""
-        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
+        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
 
     def escape(self):
         if self.dialog.is_open:
@@ -325,6 +389,8 @@ class AppShell(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._relayout_timer.start(RELAYOUT_AFTER_RESIZE_MS)                  # 끌어 바꾸는 동안은 미루고 멈춘 뒤 한 번만
+        if self.state.page == "topics" and self._detail_layout is not None and self.detail_layout() != self._detail_layout:
+            self.render()                                                      # 상세 창 방식·카드 열 수가 바뀌는 문턱(논리 폭 1600·1366)을 넘었다 — 고른 후보는 컨트롤러가 들고 있어 그대로다
         self.drawer.place()
         if self.dialog.is_open:
             self.dialog.place()
@@ -348,10 +414,12 @@ class AppShell(QMainWindow):
                 self.state.blogs.start_load(**self.blogs_bridge.callbacks())
             elif key == "seed":                                                       # Seed 관리 화면도 열 때마다 읽는다(읽기만). 쓰는 중이면 읽지 않는다
                 self.state.seeds.start_load(**self.seeds_bridge.callbacks())
+            elif key == "topics":                                                     # 주제 후보 화면도 열 때마다 읽는다(읽기만 — 열기만으로는 아무것도 만들지 않는다). 만드는 중이면 읽지 않는다
+                self.state.candidates.start_load(**self.cand_bridge.callbacks())
             self.render()
 
     def close_drawer_silently(self):
-        self.state.close_drawer()
+        self.state.close_drawer(silent=True)
         self.drawer.dismiss()
         self._trap_focus(False)
 
@@ -881,6 +949,156 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    # ---- 주제 후보 화면 — 읽기는 작업 스레드, 쓰기(후보 만들기)는 확인창에서 `만들기` 를 눌렀을 때만 따로 시작하는 작업 하나. 거르기·찾기·고르기·상세·창 크기 바꾸기는 파일에 닿지 않는다 ----
+    def reload_candidates(self, *_):
+        """후보를 다시 읽는다(읽기만). 이미 읽는 중이거나 만드는 중이면 안내만 한다."""
+        job = self.state.candidates.start_load(**self.cand_bridge.callbacks())
+        if job is None:
+            self.notify(T["load_busy"])
+            return False
+        self.render()
+        return True
+
+    def _render_candidates(self):
+        if self.state.page == "topics":                                          # 다른 화면을 보는 중이면 값만 받아 두고 다시 그리지 않는다
+            self.render()
+
+    def cand_channel(self, key):
+        if self.state.candidates.set_channel(key):
+            self.render()
+
+    def cand_status(self, key):
+        if self.state.candidates.set_status(key):
+            self.render()
+
+    def cand_band(self, key):
+        if self.state.candidates.set_band(key):
+            self.render()
+
+    def cand_cluster(self, key):
+        if self.state.candidates.set_cluster(key):
+            self.render()
+
+    def cand_query(self, text):
+        """글 검색 — 카드 격자만 새로 놓는다(검색 칸은 그대로라 커서·한글 조합이 안 튄다). 친 글은 메모리에만 있다."""
+        if self.state.candidates.set_query(text) and self.state.page == "topics" and self.screen_widget is not None:
+            from .candidate_screen import refilter_candidates_live
+            refilter_candidates_live(self.screen_widget, self.state.candidates_view())
+
+    def cand_toggle_filters(self):
+        self.state.candidates.toggle_more_filters()
+        self.render()
+
+    def cand_reset_filters(self):
+        self.state.candidates.reset_filters()
+        self.render()
+
+    def cand_more(self):
+        self.state.candidates.show_more()
+        self.render()
+
+    def cand_open(self, candidate_id):
+        """카드를 눌러 상세를 연다(읽기뿐) — 고정 방식이면 오른쪽 창에, 서랍 방식이면 서랍에. 서랍을 닫으면 이 카드로 포커스가 돌아온다."""
+        returning = QApplication.focusWidget()
+        if self.state.candidates.select(candidate_id):
+            self._drawer_return = returning
+            self.render()
+
+    def cand_copy(self, number):
+        """후보 번호(짧은 번호만)를 클립보드에 복사하고 안내한다 — 클립보드에는 번호만 간다."""
+        self.notify(number["copied"] if self.copy(number["ref"]) else number["failed"])
+
+    def cand_make(self):
+        """`후보 만들기` — 먼저 만들 후보를 미리 본다(읽기뿐). 미리 보기가 끝나면 새 후보가 있을 때만 확인창이 뜬다(`_show_cand_written`). 이 단계에서는 아무것도 쓰지 않는다."""
+        status, _detail = self.state.candidates.start_preview(**self.cand_write_bridge.callbacks())
+        if status == "started":
+            self.render()
+        elif status == "busy":
+            self.notify(T["load_busy"])
+        else:
+            self.notify(self.state.candidates.make_info()[1])
+
+    def _show_make_dialog(self):
+        """미리 본 결과의 확인창 — 처음 포커스는 취소(Enter 를 잘못 눌러도 만들지 않는다). `만들기` 를 눌러야 쓰기가 시작되고, 취소·Esc 로 닫으면 '확인창을 보였다' 표시도 거둔다."""
+        candidates = self.state.candidates
+        dialog = candidates.make_dialog()
+        if dialog is None:
+            return
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self.cand_make_confirmed, safe_focus=True, on_cancel=candidates.discard_make)
+
+    def cand_make_confirmed(self):
+        status, _detail = self.state.candidates.start_make(**self.cand_write_bridge.callbacks())
+        if status == "started":
+            self.render()
+
+    def cand_prep_action(self, key):
+        """준비 안내 카드의 단추 — 이미 있는 화면(Seed 관리·블로그 관리)으로 가거나 카드를 닫는다. 새 화면·쓰기는 없다."""
+        if key == "close":
+            self.state.candidates.close_preview()
+            self.render()
+        elif key in ("seed", "blogs"):
+            self.state.candidates.close_preview()
+            self.go(key)
+
+    def _on_cand_loaded(self, data):
+        self._guarded(self._show_cand_loaded, data, recover=self._recover_cand)
+
+    def _on_cand_failed(self, failure):
+        self._guarded(self._show_cand_failed, failure, recover=self._recover_cand)
+
+    def _on_cand_cancelled(self):
+        self._guarded(self._show_cand_cancelled, recover=self._recover_cand)
+
+    def _show_cand_loaded(self, data):
+        self.state.candidates.apply_loaded(data)
+        self._render_candidates()
+
+    def _show_cand_failed(self, failure):
+        self.state.candidates.apply_load_failed(failure, self.clock.now())
+        self._render_candidates()
+
+    def _show_cand_cancelled(self):
+        self.state.candidates.apply_cancelled()
+        self._render_candidates()
+
+    def _on_cand_written(self, result):
+        self._guarded(self._show_cand_written, result, recover=self._recover_cand_write)
+
+    def _on_cand_write_failed(self, failure):
+        self._guarded(self._show_cand_write_failed, failure, recover=self._recover_cand_write)
+
+    def _on_cand_write_cancelled(self):
+        self._guarded(self._show_cand_write_failed, None, recover=self._recover_cand_write)
+
+    def _show_cand_written(self, result):
+        self.state.candidates.apply_write_ok(result)
+        self._render_candidates()
+        if isinstance(result, MakePreview):
+            self._show_make_dialog()                                              # 미리 보기가 끝났다 — 새 후보가 있으면 확인창(없으면 준비 안내 카드가 이미 그려졌다)
+        else:
+            self.reload_candidates()                                              # 만들었다 — 목록을 다시 읽는다(읽기만)
+
+    def _show_cand_write_failed(self, failure):
+        self.state.candidates.apply_write_failed(failure)
+        self._render_candidates()
+
+    def _recover_cand(self, error):
+        """주제 후보 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
+        report_unexpected(type(error), error)
+        self.state.candidates.apply_unexpected(error, self.clock.now())
+        try:
+            self._render_candidates()
+        except Exception:
+            self.notify(T["job_failed"])
+
+    def _recover_cand_write(self, error):
+        report_unexpected(type(error), error)
+        self.state.candidates.apply_write_unexpected(error)
+        try:
+            self._render_candidates()
+        except Exception:
+            self.notify(T["job_failed"])
+
     def _guarded(self, work, *args, recover=None):
         try:
             work(*args)
@@ -1121,6 +1339,10 @@ class AppShell(QMainWindow):
                 job.join(WRITE_CLOSE_WAIT)
         if self.state.seeds.busy:                                                 # 승인·바꾸기·저장·등록도 중간에 끊을 수 없다 — 끝나기를 기다린다
             job = self.state.runner.job(SEEDS_WRITE_KEY)
+            if job is not None:
+                job.join(WRITE_CLOSE_WAIT)
+        if self.state.candidates.busy:                                            # 후보 만들기도 중간에 끊을 수 없다(한 트랜잭션) — 끝나기를 기다린다
+            job = self.state.runner.job(CANDIDATES_WRITE_KEY)
             if job is not None:
                 job.join(WRITE_CLOSE_WAIT)
         self.state.runner.cancel_all()
