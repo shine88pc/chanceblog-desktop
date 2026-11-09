@@ -565,7 +565,7 @@ class AccessibilityTest(QtBase):
             for group in (rows[:5], rows[5:]):
                 tops = [row.mapTo(window.scroll.widget(), row.rect().topLeft()).y() for row in group]
                 self.assertEqual(tops, sorted(tops), size)                                                  # 구역 안에서는 아래로 간다
-            self.assertEqual(len(stops), 15, size)                                                          # 메뉴 넷(홈·Seed 관리·블로그 관리·설정 — UI-C1d 때는 둘, P4b 와 Seed 관리가 하나씩 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉 — 다른 정거장이 끼지 않는다
+            self.assertEqual(len(stops), 16, size)                                                          # 메뉴 다섯(홈·주제 후보·Seed 관리·블로그 관리·설정 — UI-C1d 때는 둘, P4b 와 Seed 관리가 하나씩 더했고 의도적 갱신(P4d, D-270)으로 주제 후보가 하나 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉 — 다른 정거장이 끼지 않는다
             window.close()
 
     def test_shift_tab_walks_the_same_ring_backwards_and_every_stop_has_a_name(self):

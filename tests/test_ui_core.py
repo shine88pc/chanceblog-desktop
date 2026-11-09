@@ -145,12 +145,13 @@ class TokensTest(unittest.TestCase):
         """문서(UI_DESIGN_SPEC §2)가 '안 쓰는 값' 이라고 적은 토큰을 화면 코드가 정말 쓰지 않는지 — 쓰기 시작하면 이 시험이 문서를 고치라고 알린다. 쓰는 토큰은 반대로 쓰이고 있어야 한다(죽은 토큰이 아니다).
         의도적 갱신(UI-C0, D-150~): 간격 `SPACE` 와 그림자 `SHADOW`(와 카드 상태 `CARD_STATES`)는 새 부품·`theme.py` 가 쓰기 시작해 '안 쓰는 값' 에서 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·
         새 틀 크기(`FRAME`)·카드 규격(`CARD`)이다.
-        의도적 갱신(UI-C1a, D-171·D-172·D-174): 새 틀 크기 `FRAME`(상단 앱 바·사이드바·서랍·상세 창 규칙)이 쓰기 시작해 '쓰는 값' 으로 옮겼다('다음 단계' 흐림은 토큰 색 `soon_text` 하나로 쓰고 `SOON_OPACITY` 는 그 값을 정한 비율이다) — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·카드 규격(`CARD`)이다."""
+        의도적 갱신(UI-C1a, D-171·D-172·D-174): 새 틀 크기 `FRAME`(상단 앱 바·사이드바·서랍·상세 창 규칙)이 쓰기 시작해 '쓰는 값' 으로 옮겼다('다음 단계' 흐림은 토큰 색 `soon_text` 하나로 쓰고 `SOON_OPACITY` 는 그 값을 정한 비율이다) — 안 쓰는 값은 복사 표시 시간·hover/page 움직임·카드 규격(`CARD`)이다.
+        의도적 갱신(P4d, D-270): 주제 후보 화면의 카드(`ui/qt/candidate_parts.py`·`candidate_screen.py`)가 카드 규격 `CARD`(안쪽 여백·간격·최소 폭·이미지 높이)를 쓰기 시작해 '쓰는 값' 으로 옮겼다 — 안 쓰는 값은 복사 표시 시간·hover/page 움직임이다."""
         others = "\n".join(source_of(path) for path in SOURCES if path.name != "tokens.py")
-        for name in ("COPY_FEEDBACK_MS", "CARD"):
+        for name in ("COPY_FEEDBACK_MS",):                                                                                  # 의도적 갱신(P4d, D-270): 'CARD' 는 이제 쓰는 값이라 아래 목록으로 옮겼다
             self.assertNotRegex(others, rf"\b(?:K|tokens)\.{name}\b", name)
         self.assertNotRegex(others, r"MOTION_MS\[[\"'](?:hover|page)[\"']\]")
-        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO", "FRAME"):
+        for name in ("MOTION_MS", "TOAST_MS", "SCRIM_ALPHA", "RADIUS", "SIZE", "ICON", "LAYOUT", "TYPE", "TONES", "SPACE", "SHADOW", "CARD", "CARD_STATES", "FOCUS_RING_PX", "RING_STROKE_RATIO", "FRAME"):
             self.assertRegex(others, rf"\b{name}\b", name)
         documented = (ROOT / "docs" / "UI_DESIGN_SPEC.md").read_text(encoding="utf-8")
         for word in ("SPACE", "SHADOW", "COPY_FEEDBACK_MS", "FRAME", "CARD", "안 쓰는 값"):
@@ -606,14 +607,17 @@ class ServicesAndStateTest(unittest.TestCase):
         메뉴는 화면이 완성될 때마다 늘어난다(D-155 ⑤ 개수 제한 없음). 그래서 개수 상한과 자리표시 화면은 없앴고, 새 규칙은 '메뉴의 열쇠 = 만들어진 화면의 열쇠'(아래 시험)다.
         의도적 갱신(P4b, D-210): **블로그 관리 화면이 완성돼 메뉴에 올랐다**(데이터·관리 묶음) — 메뉴는 홈·블로그 관리·설정 셋이고 '다음 단계' 목록에서는 빠졌다. 이 시험은 '완성된 화면만 연다' 는 규칙 그대로다.
         의도적 갱신(Seed 관리, D-230): **Seed 관리 화면이 완성돼 메뉴에 올랐다**(데이터·관리 묶음, 블로그 관리 앞 — C-Type §14.2 의 순서) — 메뉴는 홈·Seed 관리·블로그 관리·설정 넷이고 '다음 단계' 목록에서는 빠졌다."""
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "Seed 관리", "블로그 관리", "설정"])
+        # 의도적 갱신(P4d, D-270): **주제 후보 화면이 완성돼 메뉴에 올랐다**(핵심 작업 묶음, 홈 다음 — C-Type §14.2 의 순서) — 메뉴는 홈·주제 후보·Seed 관리·블로그 관리·설정 다섯이고 '다음 단계' 목록에서는 빠졌다. '완성된 화면만 연다' 는 규칙은 그대로다.
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "Seed 관리", "블로그 관리", "설정"])
         self.assertFalse(hasattr(app_state, "MAX_NAV"))
         state = load()
         self.assertFalse(state.nav("home"))                                           # 지금 화면은 다시 안 간다
-        for unfinished in ("topics", "draft", "history", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다(P4b: 'blogs' 는 이제 완성된 화면이라 열린다 — 아래. Seed 관리: 'seed' 도 마찬가지 — 아래)
+        for unfinished in ("draft", "history", "nope", ""):  # 아직 안 만든 화면과 모르는 화면은 열리지 않는다(P4b: 'blogs' 는 이제 완성된 화면이라 열린다 — 아래. Seed 관리: 'seed' 도 마찬가지 — 아래. P4d: 'topics' 도 마찬가지 — 아래)
             self.assertFalse(state.nav(unfinished), unfinished)
             self.assertEqual(state.page, "home", unfinished)
         self.assertFalse(hasattr(state, "page_view"))                                  # '아직 만들고 있어요' 자리표시 화면이 없다
+        self.assertTrue(state.nav("topics"))
+        self.assertEqual(state.page, "topics")
         self.assertTrue(state.nav("seed"))
         self.assertEqual(state.page, "seed")
         self.assertTrue(state.nav("blogs"))

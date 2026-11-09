@@ -12,6 +12,7 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 **Seed 관리 화면**(D-230)은 환경마다 17장면(기본·거르기·상세 서랍·180일 제안 표시·고치기 오류·승인 결과·새 Seed 폼 둘·일괄 변경 확인창·제안 파일 확인창·빈 목록·읽는 중·읽기 오류·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — Seed 는 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다.
 **키 연결 화면**(P4f)은 환경마다 12장면(카드의 키 구역·등록 대화상자 입력/확인/칸 문제/칸 셋/둘째 키 약관·삭제 확인창·별칭 바꾸기·쓰는 중·저장소 없음·실패 안내·실제 어댑터)을 찍고 점검한다 — `--only keys` 를 주면 이 장면만 찍는다(다른 사진을 다시 만들지 않는다).
 **키는 사진에 나오지 않는다**: 입력 칸은 점으로만 보이고(가짜 글 열두 자), 이름은 모두 가짜이며, 실제 어댑터 장면도 이 도구가 만든 임시 폴더와 프로그램 안의 가짜 보관소만 쓴다(자격 증명 관리자는 건드리지 않는다).
+**주제 후보 화면**(D-270)은 환경마다 20장면(기본·거르기·글 검색·상세·상세의 아래쪽·자동 초안 중지 후보·점수 계산 전 후보·빈 목록 셋(보관함 없음·후보 없음·거른 결과 없음)·옛 구조·읽는 중·읽기 오류·만들 수 없을 때의 준비 안내·후보 만들기 확인창·만든 뒤·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — 후보·채널 이름은 모두 가짜이고(`예시 후보 가` …) 실제 어댑터 장면은 임시 폴더에만 쓴다.
 """
 from __future__ import annotations
 
@@ -186,6 +187,7 @@ def child(args):
     blogs_shots(app, ui_offscreen, args, report, logical, tag, out)
     seeds_shots(app, ui_offscreen, args, report, logical, tag, out)
     keys_shots(app, ui_offscreen, args, report, logical, tag, out)
+    candidates_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
@@ -752,6 +754,197 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
         settled(window)
         shoot(window, "keys_real", whole=True)
         audit(window, "keys_real")
+        window.close()
+
+
+def candidates_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """주제 후보 화면(D-270) 사진·점검 — 기본·거르기·글 검색·상세(고정 창 또는 서랍)·상세의 아래쪽·자동 초안 중지 후보·점수 계산 전 후보·빈 목록 셋·옛 구조·읽는 중·읽기 오류·준비 안내·후보 만들기 확인창·만든 뒤·좁은 창(900×560)과 그 서랍·실제 어댑터 둘(임시 폴더).
+    **후보·채널 이름은 모두 가짜**(`예시 후보 가` … — 실제 블로그 이름·후보 제목은 어디에도 없다)이고 실제 어댑터도 이 도구가 만든 임시 폴더만 읽고 쓴다(사용자 데이터 폴더는 건드리지 않는다). 점검은 글자 잘림(눌려 반쯤 잘린 부품 포함)·가로 스크롤과
+    '고정 상세 창·서랍이 창 안에 들어오는가'(`fits_window`)·대화상자가 창 안에 들어오는가·카드 열 수가 규칙대로인가(`columns`)다."""
+    import tempfile
+    from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
+    from chanceblog_desktop.ui.core import candidates as cd
+    from chanceblog_desktop.ui.core import part_rules
+    from chanceblog_desktop.ui.core.clock import FixedClock
+    from chanceblog_desktop.ui.core.services import FakeHomeProvider
+    from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    def make(provider, wait=True, size=None):
+        window = AppShell(FakeHomeProvider(), candidates=provider, autoload=False, clock=FixedClock(CAPTURE_TIME), clipboard=lambda value: True)
+        window.resize(*(size or logical))
+        window.show()
+        window.go("topics")
+        if wait:
+            ui_offscreen.wait_until(app, lambda: window.state.candidates.state != "loading" and not window.state.candidates.loading, 10)
+        ui_offscreen.settle(app, 8)
+        return window
+
+    def ids(window):
+        return {card["title"]: card["id"] for card in window.state.candidates_view()["grid"]["cards"]}
+
+    def find_id(window, part):
+        return next(value for key, value in ids(window).items() if part in key)
+
+    def search_box(window):
+        return next(widget for widget in window.screen_widget.findChildren(QLineEdit) if widget.property("focus_key") == "cand-query")
+
+    def open_card(window, candidate_id):
+        window.cand_open(candidate_id)
+        ui_offscreen.wait_until(app, lambda: window.detail_pane.isVisible() or (window.drawer.is_open and window.drawer.x() <= window.width() - window.drawer.width() + 2), 3)
+        ui_offscreen.settle(app, 8)
+
+    def scroll_detail_down(window, section=None):
+        """상세를 아래로 내린다 — `section`(구역 제목)이 있으면 그 구역이 위에 오게, 없으면 맨 아래."""
+        scroll = window.detail_pane.scroll if window.detail_pane.isVisible() else window.drawer.scroll
+        target = scroll.verticalScrollBar().maximum()
+        if section:
+            for label in scroll.widget().findChildren(QLabel):
+                if getattr(label, "plain_text", lambda: label.text())() == section:
+                    target = min(target, max(0, label.mapTo(scroll.widget(), label.rect().topLeft()).y() - 24))
+                    break
+        scroll.verticalScrollBar().setValue(target)
+        ui_offscreen.settle(app, 6)
+
+    def audit(window, name):
+        found = {"clipped": ui_offscreen.find_clipping(window) + ui_offscreen.find_squeezed(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0}
+        layout = part_rules.detail_layout(window.width())
+        ui = getattr(window.screen_widget, "cand_ui", None)
+        if ui is not None and ui.grid is not None:
+            found["columns"] = ui.columns == layout.columns
+        if window.detail_pane.isVisible():                                             # 고정 상세 창이 창 안에 있고 안쪽에 가로 스크롤이 없다
+            found["fits_window"] = window.detail_pane.geometry().right() <= window.width() and window.detail_pane.height() <= window.height() and window.detail_pane.width() == layout.detail_width
+            found["pane_horizontal_scroll"] = window.detail_pane.scroll.horizontalScrollBar().maximum() > 0
+        elif window.drawer.is_open:
+            found["fits_window"] = window.drawer.width() <= window.width() and window.drawer.height() <= window.height()
+            found["pane_horizontal_scroll"] = window.drawer.scroll.horizontalScrollBar().maximum() > 0
+        report["checks"][name] = found
+
+    def audit_dialog(window, name):
+        report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window.dialog), "fits_window": window.dialog.height() <= window.height() and window.dialog.width() <= window.width()}
+
+    def shoot(window, name):
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+        ui_offscreen.settle(app, 3)
+        pixmap = window.grab()
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    def press_make_and_wait(window, want_dialog):
+        window.cand_make()
+        ui_offscreen.wait_until(app, lambda: (window.dialog.is_open if want_dialog else window.state.candidates.preview is not None), 10)
+        ui_offscreen.settle(app, 8)
+
+    def press_dialog_ok(window):
+        next(widget for widget in window.dialog.findChildren(QPushButton) if widget.property("focus_key") == "dialog-ok").click()
+
+    window = make(cd.FakeCandidatesProvider())                                         # 기본 — 거르기 카드·카드 격자(열 수는 창 폭 규칙)·고정 상세 창의 안내(서랍 방식이면 없다)
+    shoot(window, "cand")
+    audit(window, "cand")
+    window.cand_channel("naver_a")                                                     # 거르기 — 채널·점수 구간 칩·`더 거르기`(주제 묶음 칩)·결과 개수·거르기 풀기
+    window.cand_band("high")
+    window.cand_toggle_filters()
+    ui_offscreen.settle(app, 8)
+    shoot(window, "cand_filters")
+    audit(window, "cand_filters")
+    window.cand_reset_filters()
+    window.cand_toggle_filters()                                                       # `더 거르기` 를 닫는다(아래 장면은 기본 모양)
+    search_box(window).setText("영양제")                                                # 글 검색 — 제목·키워드(칠 때는 카드 격자만 다시 놓는다)
+    window.cand_query("영양제")
+    ui_offscreen.settle(app, 8)
+    shoot(window, "cand_search")
+    audit(window, "cand_search")
+    window.cand_reset_filters()
+    open_card(window, find_id(window, "예시 후보 가 —"))                               # 상세 — 점수 링·점수 구성·추천 이유·최근 관심도(상대값)·Seed 출처·안전 표시·기본 정보
+    shoot(window, "cand_detail")
+    audit(window, "cand_detail")
+    scroll_detail_down(window)
+    shoot(window, "cand_detail_more")
+    audit(window, "cand_detail_more")
+    open_card(window, find_id(window, "먹으면 바로 낫는"))                              # 자동 초안 중지 후보 — `주의`·`자동 초안 중지` 배지와 안전 표시
+    scroll_detail_down(window, "안전 표시")
+    shoot(window, "cand_stop")
+    audit(window, "cand_stop")
+    open_card(window, find_id(window, "점수 계산 전인 예"))                             # 점수 계산 전 — 링 없이 `점수 계산 전`(0점 링이 아니다)
+    shoot(window, "cand_none")
+    audit(window, "cand_none")
+    window.close()
+    for scenario, name in (("no_store", "cand_empty_nostore"), ("empty", "cand_empty_none"), ("old_structure", "cand_old")):    # 서로 다른 빈 안내 — 보관함 없음·후보 없음·옛 구조
+        window = make(cd.FakeCandidatesProvider(scenario))
+        shoot(window, name)
+        audit(window, name)
+        window.close()
+    window = make(cd.FakeCandidatesProvider())                                         # 거른 결과 없음 — 거르기 풀기 단추가 있는 안내
+    search_box(window).setText("없는낱말")
+    window.cand_query("없는낱말")
+    ui_offscreen.settle(app, 8)
+    shoot(window, "cand_empty_filtered")
+    audit(window, "cand_empty_filtered")
+    window.close()
+    window = make(cd.FakeCandidatesProvider(delay=30), wait=False)                     # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
+    shoot(window, "cand_loading")
+    audit(window, "cand_loading")
+    window.close()
+    window = make(cd.FakeCandidatesProvider("error"))                                  # 읽기 오류 — 쓰는 길 없이 다시 읽기·진단 정보(펼침)
+    window.screen_widget.findChild(UI.Disclosure).flip()
+    ui_offscreen.settle(app)
+    shoot(window, "cand_error")
+    audit(window, "cand_error")
+    window.close()
+    window = make(cd.FakeCandidatesProvider("lacking"))                                # 만들 수 없을 때의 준비 안내 — 무엇이 모자란지와 이미 있는 화면으로 가는 단추(쓰기 단추 없음)
+    press_make_and_wait(window, want_dialog=False)
+    shoot(window, "cand_prep")
+    audit(window, "cand_prep")
+    window.close()
+    window = make(cd.FakeCandidatesProvider())                                         # 후보 만들기 확인창 — 처음 포커스는 취소, 개수·Seed·지워지지 않는다·키·네트워크를 쓰지 않는다
+    press_make_and_wait(window, want_dialog=True)
+    shoot(window, "cand_dialog")
+    audit_dialog(window, "cand_dialog")
+    press_dialog_ok(window)                                                            # 만들기 — 가짜 공급자라 메모리에서만 더해진다
+    ui_offscreen.wait_until(app, lambda: len(window.state.candidates.rows()) == 18 and not window.state.candidates.busy and not window.state.candidates.loading, 10)
+    ui_offscreen.settle(app, 8)
+    shoot(window, "cand_made")
+    audit(window, "cand_made")
+    window.close()
+    window = make(cd.FakeCandidatesProvider(), size=(900, 560))                        # 최소 창 — 서랍 방식·2열·가로 스크롤 없음
+    shoot(window, "cand_narrow")
+    audit(window, "cand_narrow")
+    open_card(window, find_id(window, "예시 후보 가 —"))                               # 최소 창의 서랍 — 같은 내용
+    shoot(window, "cand_narrow_detail")
+    audit(window, "cand_narrow_detail")
+    window.close()
+    with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 보관함이 아직 없다는 안내·예시 표시 없음·가짜 Seed 를 승인해 두고 후보 만들기를 한 결과(임시 폴더에만 쓴다)
+        import json as json_module
+        from chanceblog_desktop.security.keystore import MemoryStore
+        from chanceblog_desktop.service import topic_files
+        from chanceblog_desktop.service.context import Context, Settings, Workspace
+        from chanceblog_desktop.topics import seeds as seed_rules
+        from chanceblog_desktop.ui.candidates_adapter import ServiceCandidatesProvider
+        from chanceblog_desktop.ui.core import seeds
+        workspace = Workspace(Path(tmp) / "data")
+        ctx = Context(workspace, Settings(workspace.settings_path), backend=None, keystore=MemoryStore())
+        provider = ServiceCandidatesProvider(context_factory=lambda data_dir=None: ctx)
+        window = make(provider)
+        shoot(window, "cand_real_first")
+        audit(window, "cand_real_first")
+        window.close()
+        paths = topic_files.topic_paths(ctx.workspace)
+        paths.folder.mkdir(parents=True, exist_ok=True)
+        paths.seeds.write_bytes(json_module.dumps(seed_rules.seeds_to_dict(seeds.FakeSeedsProvider().seeds), ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + bytes([10]))
+        window = make(provider)
+        press_make_and_wait(window, want_dialog=True)
+        press_dialog_ok(window)
+        ui_offscreen.wait_until(app, lambda: len(window.state.candidates.rows()) > 0 and not window.state.candidates.busy and not window.state.candidates.loading, 60)
+        ui_offscreen.settle(app, 8)
+        first = next(iter(ids(window).values()), None)
+        if first is not None:
+            open_card(window, first)
+        shoot(window, "cand_real")
+        audit(window, "cand_real")
+        report["checks"]["cand_real"]["made"] = len(window.state.candidates.rows())
         window.close()
 
 

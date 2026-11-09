@@ -10,6 +10,7 @@
   · 예외(`error_hits`) — `str`·`repr`·`args`·`slots`·`detail` 과 호출 흔적(`__traceback__`)의 프레임 지역 변수·`__context__`·`__cause__`.
 """
 import dataclasses
+import re
 import types
 from pathlib import Path
 
@@ -127,7 +128,7 @@ def own_texts(widget):
             value = widget.property(key)
         except RuntimeError:                                                              # 그 밖에 읽을 수 없는 속성 — 읽지 못한 사실만 남긴다(조용히 건너뛰지 않는다)
             value = "<읽을 수 없는 속성>"
-        found.append((f"{name}.property:{key}", value if isinstance(value, str) else repr(value)))
+        found.append((f"{name}.property:{key}", value if isinstance(value, str) else re.sub(r" at 0x[0-9A-Fa-f]+", "", repr(value))))     # `repr` 끝의 메모리 주소(`… at 0x…37C0`)는 글이 아니고 실행마다 달라 길이 검사(`37`)에 우연히 걸린다 — 빼고 모은다
     return found
 
 

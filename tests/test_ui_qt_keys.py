@@ -1051,6 +1051,37 @@ class NoLeakTest(Base):
         self.assertEqual(shown(), [], "저장 뒤")
         self.assertEqual(leak.widget_hits(window, leak.needles(key)), [], "저장 뒤 키 조각")
 
+    def test_own_texts_leaves_the_memory_address_of_a_property_object_out_so_a_37_in_it_never_trips_the_length_scan(self):
+        """독립 검증 H2 의 원인 수정 — 위젯 동적 속성(`_q_styleSheetWidgetFont` 의 QFont)을 `repr` 로 모을 때 끝의 `at 0x…` 메모리 주소가 우연히 `37` 을 품으면(예 `…37C0`) 길이 검사에 걸려
+        `test_no_screen_text_shows_the_length_of_the_key_at_any_step` 이 간헐적으로 실패했다(주소는 실행마다 다르다). 주소를 뺀 글로 모은다 — 흉내 위젯으로 결정적으로 확인한다."""
+        number = re.compile(r"(?<![0-9])37(?![0-9])")
+
+        class Pointer:
+            def __repr__(self):
+                return "<PySide6.QtGui.QFont(맑은 고딕,-1,14,5,400,0,0,0,0,0,0,0,0,0,0,1,,0,0) at 0x000001EB70DA37C0>"
+
+        class Pretend:                                                                       # `own_texts` 가 읽는 칸만 가진 흉내 위젯
+            def toolTip(self):
+                return ""
+
+            accessibleName = accessibleDescription = statusTip = whatsThis = windowTitle = objectName = toolTip
+
+            def dynamicPropertyNames(self):
+                return [b"_q_styleSheetWidgetFont"]
+
+            def property(self, key):
+                return Pointer()
+
+        found = [(label, value) for label, value in leak.own_texts(Pretend()) if ".property:" in label]
+        self.assertEqual(len(found), 1)
+        label, value = found[0]
+        self.assertTrue(label.endswith("property:_q_styleSheetWidgetFont"))
+        self.assertIn("QFont(맑은 고딕", value, "글 부분은 그대로 모은다")
+        self.assertNotIn(" at 0x", value)
+        self.assertNotIn("37C0", value)
+        self.assertIsNone(number.search(value), "주소 속의 37 이 길이 검사에 걸리지 않는다")
+        self.assertIsNotNone(number.search(repr(Pointer())), "대조: 주소를 빼지 않은 글은 같은 식에 걸린다(이 시험이 잡으려는 모양)")
+
     def test_the_length_scan_does_see_the_clock_text_which_is_why_the_windows_here_get_a_fixed_clock(self):
         """독립 검증 M3 의 대조군 — 시계가 18:37 이면 같은 검사(모든 위젯의 글·접근 이름)가 시계에서 온 글에서 37 을 **찾아낸다**: 상단 앱 바 시계 글과 진단 정보의 `time: … 18:37:00`(초 단위라 초가 37 일 때도 걸린다).
         검사가 시계 글까지 훑는다는 증거이고, 고정 시계(`FIXED_NOW`)의 창에서는 0건이다."""

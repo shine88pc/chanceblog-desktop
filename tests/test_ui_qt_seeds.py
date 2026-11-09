@@ -182,7 +182,7 @@ class Base(unittest.TestCase):
 class MenuAndPageTest(Base):
     def test_the_seed_menu_is_in_the_data_group_before_the_blog_menu_and_opens_the_screen(self):
         window = self.make(page=None)
-        self.assertEqual(list(window.nav_buttons), ["home", "seed", "blogs", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "seed", "blogs", "settings"])    # 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
         self.assertEqual(window.nav_buttons["seed"].accessibleName(), "Seed 관리 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
         window.nav_buttons["seed"].click()
@@ -190,8 +190,8 @@ class MenuAndPageTest(Base):
         self.settle()
         self.assertEqual((window.state.page, window.nav_buttons["seed"].isChecked(), window.nav_buttons["home"].isChecked()), ("seed", True, False))
         self.assertEqual(len(self.ui(window).list.rows), 16)
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "seed", "blogs", "settings"])
-        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["주제 후보", "초안 작성", "발행 기록"])
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "seed", "blogs", "settings"])     # 의도적 갱신(P4d, D-270): 화면 표에 주제 후보 줄이 더해졌다
+        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["초안 작성", "발행 기록"])     # 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 '다음 단계' 목록에서 빠졌다
         data_buttons = [window.nav_buttons[key].text().strip() for key in ("seed", "blogs")]
         self.assertEqual(data_buttons, ["Seed 관리", "블로그 관리"])
 

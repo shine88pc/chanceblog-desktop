@@ -252,7 +252,7 @@ class TopBarNarrowTest(QtBase):
 
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-REAL = {"home", "seed", "blogs", "settings"}                                         # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다
+REAL = {"home", "topics", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다
 
 
 def hexed(image, x, y):
@@ -297,8 +297,8 @@ class SidebarTest(QtBase):
 
     def test_the_real_menu_is_home_and_settings_and_the_current_one_gets_the_new_colors(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "seed", "blogs", "settings"])         # 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다
-        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "seed", "blogs", "settings"])   # 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
+        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
         for button in window.nav_buttons.values():
             self.assertTrue(42 <= button.height() <= 46, button.height())                          # 문서의 메뉴 높이 42~46
             self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)
@@ -321,7 +321,7 @@ class SidebarTest(QtBase):
         self.assertEqual(box.accessibleName(), "준비 중 — 아직 열 수 없는 화면")
         self.assertEqual(box.title.plain_text(), "다음 단계")
         items = box.items
-        self.assertEqual([item.name.text() for item in items], ["주제 후보", "초안 작성", "발행 기록"])        # 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올라가 아직 열 수 없는 화면은 셋이다
+        self.assertEqual([item.name.text() for item in items], ["초안 작성", "발행 기록"])        # 의도적 갱신(P4b, D-210): 블로그 관리는 완성돼 실제 메뉴로 올라갔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올라가 아직 열 수 없는 화면은 셋이다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 올라가 아직 열 수 없는 화면은 둘이다(초안 작성·발행 기록)
         for item in items:
             self.assertIsInstance(item, SoonItem)
             self.assertEqual(item.badge.text(), "준비 중")                                          # 색만이 아니라 글자
@@ -442,7 +442,17 @@ class NoRouteToUnfinishedScreensTest(QtBase):
                         found.setdefault(path.name, []).append(ast.unparse(node))
         self.assertEqual(sorted(found), ["shell.py", "sidebar.py"], found)
         self.assertEqual(found["sidebar.py"], ["navigate(k)"], "사이드바는 실제 메뉴의 열쇠로만 화면을 요청한다")
-        self.assertEqual(found["shell.py"], ["self.state.nav(key)"], "셸의 `go` 가 상태의 `nav` 를 부르는 한 곳뿐")
+        # 의도적 갱신(P4d, D-270): 주제 후보 화면의 '준비 안내' 카드(Seed 관리·블로그 관리 단추)가 **이미 있는 화면으로** 가는 길이 하나 생겼다 — 셸의 `cand_prep_action` 이 `self.go(key)` 를 부르는 한 곳뿐이고,
+        # 그 호출은 `key in ("seed", "blogs")`(완성된 두 화면) 가지 안에만 있다(소스로 확인). 사이드바와 셸의 `go`→`nav` 는 그대로, 화면·부품(`candidate_screen.py` 포함)에는 여전히 하나도 없다.
+        self.assertEqual(sorted(found["shell.py"]), sorted(["self.state.nav(key)", "self.go(key)"]), "셸의 `go` 가 상태의 `nav` 를 부르는 곳과, 주제 후보 준비 안내가 완성된 화면으로 가는 `go` 한 곳뿐")
+        shell_tree = ast.parse((QT_DIR / "shell.py").read_text(encoding="utf-8"))
+        prep = [node for node in ast.walk(shell_tree) if isinstance(node, ast.FunctionDef) and node.name == "cand_prep_action"]
+        self.assertEqual(len(prep), 1)
+        gos = [node for node in ast.walk(prep[0]) if isinstance(node, ast.Call) and ast.unparse(node) == "self.go(key)"]
+        guards = [node for node in ast.walk(prep[0]) if isinstance(node, ast.If) and ast.unparse(node.test) == "key in ('seed', 'blogs')"]
+        self.assertEqual((len(gos), len(guards)), (1, 1), "`go` 는 준비 안내 단추 처리 안에 한 번, 완성된 두 화면 가지 안에서만")
+        self.assertTrue(any(inner is gos[0] for statement in guards[0].body for inner in ast.walk(statement)), "`go` 호출이 `key in ('seed', 'blogs')` 가지 밖에 있다")    # 독립 검증(P4d 수정 F4): `else` 쪽(`orelse`)은 가지 안이 아니다 — `go` 를 `else` 로 옮기는 변이도 잡는다
+        self.assertEqual({"seed", "blogs"} - REAL, set(), "준비 안내가 가는 두 화면은 완성된 실제 메뉴다")
 
     def test_every_button_and_card_on_both_real_screens_never_asks_for_an_unfinished_screen(self):
         window = self.make()
