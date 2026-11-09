@@ -159,6 +159,11 @@ class ServiceHomeProvider(HomeProvider):
         from .candidates_adapter import ServiceCandidatesProvider
         return ServiceCandidatesProvider(self._data_dir, context_factory=self._factory)
 
+    def drafts_provider(self):
+        """초안 작성 화면(P4e)의 짝 공급자 — 같은 데이터 폴더를 쓴다. **읽기뿐이다**(초안을 만들어도 아무것도 저장하지 않는다 — 복사는 화면 틀이 클립보드에 넣는다)."""
+        from .drafts_adapter import ServiceDraftsProvider
+        return ServiceDraftsProvider(self._data_dir, context_factory=self._factory)
+
     def _projects(self, ctx):
         """(작성 완료 수, 발행 완료 수) — 집계할 수 없으면 (None, None). 글 저장소가 없으면 0 이다. 읽은 글 목록(`rows`)과 오류(`error`)도 들고 있다(`Counts`)."""
         try:

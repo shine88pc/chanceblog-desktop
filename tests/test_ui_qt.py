@@ -128,7 +128,7 @@ class ShellTest(QtBase):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 메뉴 6개를 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 메뉴다.
         의도적 갱신(UI-C1d, D-201): 옛 시험은 홈의 요약 카드 4·추천 행 5·칩 5 를 봤다. 새 홈은 KPI 넷·Naver A 추천(5)·Naver B 추천(4)·작성 중 초안(3)·최근 발행(3)·연결 상태 한 줄이고 칩은 없다."""
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "seed", "blogs", "settings"])    # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴로 올랐다(옛 값 홈·설정 둘) — 시험 이름의 '둘' 은 그대로 둔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 홈 다음에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])    # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴로 올랐다(옛 값 홈·설정 둘) — 시험 이름의 '둘' 은 그대로 둔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 홈 다음에 올랐다
         self.assertTrue(window.nav_buttons["home"].isChecked())
         page = window.screen_widget
         self.assertEqual(len(page.findChildren(board_module.KpiCard)), 4)
@@ -236,7 +236,7 @@ class AccessibilityTest(QtBase):
         메뉴 4(홈·Seed 관리·블로그 관리·설정 — UI-C1d 때는 2, P4b 와 Seed 관리가 하나씩 더했다)·예시 데이터·다시 불러오기·추천 줄 9(홈) — 서랍이 열려 있으면 서랍 안(닫기·초안·보류·더보기 4)이 더해지고 홈 쪽은 포커스를 받지 못한다(가둠). 두 상태를 모두 보고 이름·크기는 하나도 빠뜨리지 않고 점검한다."""
         window = self.make()
         shown = {"홈": self.interactive(window)}
-        self.assertEqual(len(shown["홈"]), 5 + 2 + 9)                                     # 메뉴 5(홈·주제 후보·Seed 관리·블로그 관리·설정 — P4b·Seed 관리 병합으로 둘 늘었고 의도적 갱신(P4d, D-270)으로 주제 후보가 하나 더했다) + (예시 데이터·다시 불러오기) + 추천 줄 9
+        self.assertEqual(len(shown["홈"]), 6 + 2 + 9)                                     # 메뉴 6(홈·주제 후보·초안 작성·Seed 관리·블로그 관리·설정 — P4b·Seed 관리 병합으로 둘 늘었고 의도적 갱신(P4d, D-270)으로 주제 후보가, 의도적 갱신(P4e, D-282)으로 초안 작성이 하나씩 더했다) + (예시 데이터·다시 불러오기) + 추천 줄 9
         window.open_drawer(first_row_id(window))
         self.settle()
         shown["서랍"] = self.interactive(window)
@@ -289,10 +289,10 @@ class AccessibilityTest(QtBase):
         names = [w.accessibleName() for w in seen]
         self.assertTrue(all(name.strip() for name in names), names)
         self.assertTrue(all(isinstance(w, (QAbstractButton, QLineEdit, UI.Pressable)) for w in seen), [type(w).__name__ for w in seen])      # 눌리거나 쓰는 곳만 정거장(스크롤 영역 같은 틀은 아니다)
-        self.assertEqual(len(seen), 16)                                                   # 메뉴 다섯(홈·주제 후보·Seed 관리·블로그 관리·설정 — 의도적 갱신(P4d, D-270): 주제 후보가 하나 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉
+        self.assertEqual(len(seen), 17)                                                   # 메뉴 여섯(홈·주제 후보·초안 작성·Seed 관리·블로그 관리·설정 — 의도적 갱신(P4d, D-270): 주제 후보가 하나 더했고 의도적 갱신(P4e, D-282): 초안 작성이 하나 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉
         self.assertEqual(len(seen), len(set(map(id, seen))))                              # 같은 곳을 두 번 지나지 않는다(갇히지 않는다)
         kinds = ["nav" if w.property("nav") else "row" if isinstance(w, board_module.BoardRow) else "button" for w in seen]
-        self.assertEqual(kinds, ["nav"] * 5 + ["button", "button"] + ["row"] * 9)         # 의도적 갱신(P4d, D-270): 메뉴가 넷에서 다섯
+        self.assertEqual(kinds, ["nav"] * 6 + ["button", "button"] + ["row"] * 9)         # 의도적 갱신(P4d, D-270): 메뉴가 넷에서 다섯 / 의도적 갱신(P4e, D-282): 다섯에서 여섯
         self.assertEqual([w.row["channel"] for w in seen if isinstance(w, board_module.BoardRow)], ["A"] * 5 + ["B"] * 4)                    # 옆 칸을 건너뛰지 않고 Naver A 추천 → Naver B 추천
 
     def test_enter_and_space_press_buttons_rows_and_cards(self):

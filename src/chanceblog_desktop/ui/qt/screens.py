@@ -364,8 +364,13 @@ def _topics_builder(shell):
     return candidates_screen(shell, shell.state.candidates_view())
 
 
+def _drafts_builder(shell):
+    from .draft_screen import drafts_screen                                     # 늦게 가져온다 — 초안 작성 화면 파일이 이 파일의 머리 도우미(`page_head`)를 쓴다(서로 가져오지 않게)
+    return drafts_screen(shell, shell.state.drafts_view())
+
+
 def _seed_builder(shell):
-    from .seed_screen import seeds_screen                                       # 늦게 가져온다 — Seed 관리 화면 파일이 이 파일의 격자·머리 도우미를 쓴다(서로 가져오지 않게)
+    from .seed_screen import seeds_screen                                      # 늦게 가져온다 — Seed 관리 화면 파일이 이 파일의 격자·머리 도우미를 쓴다(서로 가져오지 않게)
     return seeds_screen(shell, shell.state.seeds_view())
 
 
@@ -375,7 +380,7 @@ def _blogs_builder(shell):
 
 
 # 실제 메뉴마다 한 줄(`app_state.NAV` 와 같은 열쇠 — 시험이 지킨다). **완성된 화면만** 둔다 — 아직 만들지 않은 화면은 이 표에도 메뉴에도 없고(자리표시 화면을 없앴다), 화면이 완성되면 메뉴 한 줄과 이 표 한 줄을 같이 더한다.
-SCREEN_BUILDERS = {"home": _home_builder, "topics": _topics_builder, "seed": _seed_builder, "blogs": _blogs_builder, "settings": _settings_builder}
+SCREEN_BUILDERS = {"home": _home_builder, "topics": _topics_builder, "drafts": _drafts_builder, "seed": _seed_builder, "blogs": _blogs_builder, "settings": _settings_builder}
 
 
 # ---- 상세 서랍 ---------------------------------------------------------------------------------------------------------------------

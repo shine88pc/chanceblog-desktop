@@ -203,6 +203,11 @@ QFrame[candcard="true"][selected="true"], QFrame[candcard="true"][selected="true
 QFrame[candcard="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 QFrame[candcard="true"][selected="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
 QFrame#detailpane {{ background: {c['surface']}; border-left: 1px solid {c['border']}; }}
+QFrame[draftpick="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['input']}px; }}
+QFrame[draftpick="true"]:hover {{ border: 1px solid {c['border_hover']}; }}
+QFrame[draftpick="true"][selected="true"], QFrame[draftpick="true"][selected="true"]:hover {{ background: {c['surface_selected']}; border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
+QFrame[draftpick="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
+QFrame[draftpick="true"] QLabel {{ background: transparent; border: 0; }}
 QFrame[notice="ok"] {{ background: {c['success_100']}; border-radius: {r['badge']}px; }}
 QFrame[notice="ok"] QLabel {{ color: {c['success_text']}; font-weight: 600; }}
 QFrame[notice="info"] {{ background: {c['info_100']}; border-radius: {r['badge']}px; }}
@@ -292,6 +297,8 @@ QLineEdit:focus {{ border: 2px solid {c['border_focus']}; }}
 QLineEdit:disabled {{ background: {c['disabled_bg']}; color: {c['text_disabled']}; }}
 QLineEdit[invalid="true"] {{ border: 2px solid {c['danger']}; }}
 QLineEdit[invalid="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
+QPlainTextEdit[editor="true"] {{ background: {c['surface']}; border: 1px solid {c['border_strong']}; border-radius: {r['input']}px; padding: 10px 12px; selection-background-color: {c['primary']}; selection-color: {c['on_primary']}; }}
+QPlainTextEdit[editor="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QLabel#toast {{ background: {c['inverse_bg']}; color: {c['inverse_text']}; padding: 12px 18px; border-radius: {r['button']}px; font-weight: 600; font-size: {px('body')}px; }}
 QPlainTextEdit[mono="true"], QLabel[mono="true"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; padding: 10px 12px; color: {c['text_primary']}; }}
 QLabel[semantic] {{ border-radius: {r['badge']}px; padding: 0 {sp('3')}px; font-size: {px('caption')}px; font-weight: 600; }}

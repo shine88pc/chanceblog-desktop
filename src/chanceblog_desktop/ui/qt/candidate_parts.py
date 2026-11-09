@@ -366,19 +366,36 @@ class DetailPane(QFrame):
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setAccessibleName(T["cand_detail_a11y"])
         outer.addWidget(self.scroll)
+        self._outer, self._footer = outer, None
 
-    def set_content(self, widget, focusable=True):
-        """안쪽 내용을 바꾼다. `focusable` 이면 스크롤 영역이 Tab 정거장이라 키보드로 긴 내용을 내려 볼 수 있다(서랍과 같다). 안내만 있을 때는 정거장이 아니다(내릴 것이 없다)."""
+    def set_content(self, widget, focusable=True, footer=None):
+        """안쪽 내용을 바꾼다. `focusable` 이면 스크롤 영역이 Tab 정거장이라 키보드로 긴 내용을 내려 볼 수 있다(서랍과 같다). 안내만 있을 때는 정거장이 아니다(내릴 것이 없다).
+        `footer` 를 주면 스크롤 밖 아래에 붙는다(아래 고정 행동 줄 — 내용이 길어도 늘 보인다, P4e)."""
         old = self.scroll.takeWidget()
         if old is not None:
             old.hide()
             old.deleteLater()
         self.scroll.setFocusPolicy(Qt.StrongFocus if focusable else Qt.NoFocus)
         self.scroll.setWidget(widget)
+        self._set_footer(footer)
+
+    def _set_footer(self, footer):
+        if self._footer is not None:
+            self._outer.removeWidget(self._footer)
+            self._footer.hide()
+            self._footer.setParent(None)                                           # 지워지는 다음 차례까지 이 창의 자식으로 남아 보이거나 Tab 이 가지 않게
+            self._footer.deleteLater()
+            self._footer = None
+        if footer is not None:
+            self._outer.addWidget(footer)
+            self._footer = footer
 
     def stops(self):
-        """이 창 안의 Tab 정거장(스크롤 영역 → 안쪽 단추) — 읽는 순서."""
-        return [widget for widget in [self.scroll, *self.scroll.findChildren(QWidget)] if widget.focusPolicy() != Qt.NoFocus]
+        """이 창 안의 Tab 정거장(스크롤 영역 → 안쪽 단추 → 아래 고정 행동 줄의 단추) — 읽는 순서."""
+        found = [widget for widget in [self.scroll, *self.scroll.findChildren(QWidget)] if widget.focusPolicy() != Qt.NoFocus]
+        if self._footer is not None:
+            found += [widget for widget in self._footer.findChildren(QWidget) if widget.focusPolicy() != Qt.NoFocus and not widget.isHidden()]      # 줄 안에서 숨겨 둔 `더보기` 단추는 정거장이 아니다
+        return found
 
     def present(self, width):
         self.setFixedWidth(width)
@@ -390,6 +407,7 @@ class DetailPane(QFrame):
         if old is not None:
             old.hide()
             old.deleteLater()
+        self._set_footer(None)
 
 
 # ---- 상세 안쪽의 작은 부품 -------------------------------------------------------------------------------------------------------------

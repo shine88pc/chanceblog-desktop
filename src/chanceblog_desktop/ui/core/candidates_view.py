@@ -17,6 +17,8 @@ import re
 from . import candidate_rules as rules
 from . import gauges as G
 from .candidates import CandidateFailure
+from .draft_rules import BLOG_NAMES
+from .drafts import DraftTarget
 from .jobs import JobFailure
 from .text import T
 
@@ -469,7 +471,28 @@ class CandidatesController:
                 "trend": {"title": T["cand_sec_trend"], "rows": [{"label": label, "value": value, "missing": missing} for label, value, missing in trend_rows], "note": trend_note},
                 "seed": {"title": T["cand_sec_seed"], "rows": [{"label": label, "value": value, "missing": missing} for label, value, missing in rules.seed_rows(item, seed)]},
                 "safety": {"title": T["cand_sec_safety"], "cards": cards, "stop": stop_text, "none": "" if cards or stop_text else T["cand_safety_none"]},
-                "hold": rules.hold_row(item), "info": {"title": T["cand_sec_info"], "rows": rules.info_rows(item, channel["name"])}, "sample": sample, "sample_tag": T["sample_tag"]}
+                "hold": rules.hold_row(item), "info": {"title": T["cand_sec_info"], "rows": rules.info_rows(item, channel["name"])}, "sample": sample, "sample_tag": T["sample_tag"],
+                "draft": self.draft_vm(row)}
+
+    def draft_vm(self, row):
+        """상세 아래 고정 행동 줄의 `이 주제로 만들기`(P4e) — 켤 수 있나와 못 켜는 까닭. **안전 판정이 '자동 초안 중지' 인 후보·네이버가 아닌 채널의 후보는 꺼 두고 까닭을 보인다**(동작하지 않는 단추는 만들지 않는다 — 보류·제외·Seed 등록은 없다)."""
+        if self.busy:
+            why = T["drf_make_why_wait"]
+        elif row.stop:
+            why = T["drf_make_why_stop"]
+        elif row.candidate.channel not in BLOG_NAMES:
+            why = T["drf_make_why_channel"]
+        else:
+            why = ""
+        return {"text": T["drf_make"], "enabled": not why, "reason": why, "tip": why or T["drf_make_tip"], "a11y": T["drf_make_a11y"], "bar_a11y": T["drf_detail_actions_a11y"]}
+
+    def draft_target(self):
+        """고른 후보로 초안을 만들 때 넘길 값 — 후보 번호(엔진 번호 전체)와 보이는 값뿐이다(초안 내용은 서비스가 번호로 다시 읽어 만든다). 고른 후보가 없거나 읽은 내용이 없으면 None. 이 함수는 아무것도 바꾸지 않는다."""
+        row = self.selected_row()
+        if row is None or self.data is None or self.state != "normal":
+            return None
+        item = row.candidate
+        return DraftTarget(item.candidate_id, rules.shown(item.topic, rules.TITLE_LIMIT), item.channel, self._channel_vm(item.channel)["name"], bool(row.stop), bool(self.data.sample))
 
     def pane_empty(self):
         """고정 상세 창에서 아무것도 안 골랐을 때의 안내."""

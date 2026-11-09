@@ -14,6 +14,7 @@ from ..core.text import T
 from . import components as UI
 from .blog_parts import NoticeBar
 from .candidate_parts import CandidateGrid, CardChip, CardImage, ChannelAvatar, FactorRow
+from .bars import ActionBar
 from .gauges import ScoreWithLabel
 from .screens import page_head
 
@@ -219,7 +220,7 @@ def _safety_card(card_vm):
 
 
 def detail_content(shell, vm):
-    """상세 안쪽 — (내용 위젯, 닫기 단추). 고정 상세 창과 서랍이 같은 내용을 쓴다. 아래 고정 행동 줄은 없다(행동이 `번호 복사` 하나라 머리 줄의 작은 단추로 두었다 — 행동이 없으면 줄을 만들지 않는다).
+    """상세 안쪽 — (내용 위젯, 닫기 단추). 고정 상세 창과 서랍이 같은 내용을 쓴다. 아래 고정 행동 줄은 이 안이 아니라 `detail_footer`(P4e — `이 주제로 만들기`)가 스크롤 밖에 따로 만든다(`번호 복사` 는 머리 줄의 작은 단추 그대로다).
     순서: 머리(닫기) → 이미지 자리 → 제목·배지 → 점수 링과 채널·번호 → 키워드·협업 유형 → 점수 구성 → 추천 이유 → 최근 관심도(상대값) → Seed 출처 → 안전 표시 → 다시 볼 기한 → 기본 정보."""
     body = QWidget()
     body.setAccessibleName(vm["a11y"])
@@ -314,6 +315,26 @@ def detail_content(shell, vm):
     layout.addWidget(card)
     layout.addStretch(1)
     return body, close
+
+
+def detail_footer(shell, vm):
+    """상세 아래 고정 행동 줄(C-Type §8.3, P4e) — 주요 단추 `이 주제로 만들기` 하나. 안전 판정이 '자동 초안 중지' 인 후보·네이버가 아닌 채널의 후보는 꺼 두고 까닭을 단추 아래에 글로 보인다(꺼진 단추는 Tab 이 가지 않아 툴팁만으로는 못 읽는다).
+    보류·제외·Seed 로 등록은 동작하지 않아 만들지 않는다. 고정 상세 창과 서랍이 같은 줄을 쓴다."""
+    draft = vm["draft"]
+    footer = QWidget()
+    box = QVBoxLayout(footer)
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(0)
+    if draft["reason"]:
+        reason = UI.label(draft["reason"], "caption", wrap=True)
+        reason.setContentsMargins(K.SPACE["4"], K.SPACE["2"], K.SPACE["4"], K.SPACE["2"])
+        box.addWidget(reason)
+    bar = ActionBar([{"key": "make", "text": draft["text"], "kind": "primary"}], accessible=draft["bar_a11y"])
+    bar.set_enabled("make", draft["enabled"], draft["tip"])
+    bar.triggered.connect(lambda _key: shell.cand_make_draft())
+    box.addWidget(bar)
+    footer.bar = bar
+    return footer
 
 
 def pane_placeholder(vm):

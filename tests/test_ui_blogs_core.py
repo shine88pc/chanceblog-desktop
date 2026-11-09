@@ -814,11 +814,12 @@ class MenuTest(unittest.TestCase):
     def test_the_blog_screen_is_a_real_menu_in_the_data_group_and_not_in_the_coming_soon_list(self):
         # 의도적 갱신(Seed 관리, D-230): Seed 관리 화면이 완성돼 데이터·관리 묶음의 블로그 관리 앞에 올랐고 '다음 단계' 목록에서 빠졌다. 블로그 관리가 실제 메뉴이고 '다음 단계' 에 없다는 이 시험의 뜻은 그대로다.
         # 의도적 갱신(P4d, D-270): 주제 후보 화면이 완성돼 핵심 작업 묶음의 홈 다음에 올랐고 '다음 단계' 목록에서 빠졌다 — 블로그 관리가 실제 메뉴이고 '다음 단계' 에 없다는 이 시험의 뜻은 그대로다.
-        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "topics", "seed", "blogs", "settings"])
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "Seed 관리", "블로그 관리", "설정"])
+        # 의도적 갱신(P4e, D-282): 초안 작성 화면이 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐고 '다음 단계' 목록에는 발행 기록만 남았다 — 블로그 관리가 실제 메뉴이고 '다음 단계' 에 없다는 이 시험의 뜻은 그대로다.
+        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "topics", "drafts", "seed", "blogs", "settings"])
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "Seed 관리", "블로그 관리", "설정"])
         self.assertEqual([(key, label, [item[0] for item in items]) for key, label, items in app_state.nav_groups()],
-                         [("core", "nav_group_core", ["home", "topics"]), ("data", "nav_group_data", ["seed", "blogs"]), ("system", "nav_group_system", ["settings"])])
-        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], ["draft", "history"])
+                         [("core", "nav_group_core", ["home", "topics", "drafts"]), ("data", "nav_group_data", ["seed", "blogs"]), ("system", "nav_group_system", ["settings"])])
+        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], ["history"])
         state = app_state.AppState(services.FakeHomeProvider())
         self.assertTrue(state.nav("blogs"))
         self.assertEqual(state.page, "blogs")

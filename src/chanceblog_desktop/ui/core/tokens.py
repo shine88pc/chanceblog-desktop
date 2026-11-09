@@ -116,7 +116,7 @@ ROLE_STYLE = {"sub": "body", "muted": "body"}      # 크기·굵기를 다른 �
 
 # ---- 간격(4px 격자)·모서리·그림자
 # `SPACE`(문서의 space-1~10)와 `SHADOW`(카드 그림자 3종)는 UI-C0 의 새 부품이 쓰기 시작했다 — 옛 화면(홈·설정)의 여백은 아직 숫자를 직접 적은 채로 있다(UI-C1 에서 정리한다).
-# **아직 안 쓰는 값**: `COPY_FEEDBACK_MS` 와 `MOTION_MS` 의 hover·page — 정해만 두었고 화면 코드는 쓰지 않는다(시험 `test_the_tokens_nobody_uses_yet_are_the_documented_ones` 가 지킨다).
+# **아직 안 쓰는 값**: `MOTION_MS` 의 hover·page — 정해만 두었고 화면 코드는 쓰지 않는다(시험 `test_the_tokens_nobody_uses_yet_are_the_documented_ones` 가 지킨다). `COPY_FEEDBACK_MS` 는 초안 작성 화면(P4e)이 쓰기 시작했다.
 SPACE = {"1": 4, "2": 8, "3": 12, "4": 16, "5": 20, "6": 24, "8": 32, "10": 40, "12": 48}
 # 모서리: 카드 12·단추 10(8~10)·입력 8·칩 17(15~17)·배지 12(24px 높이의 알약)·구성 막대 6·사용량 막대 4·썸네일 12·말풍선 8·행 12·사이드바 메뉴 8(C-Type §14.1, UI-C1a)
 RADIUS = {"button": 10, "input": 8, "card": 12, "chip": 17, "badge": 12, "gauge": 6, "usage": 4, "thumb": 12, "tooltip": 8, "row": 12, "nav": 8}
@@ -189,7 +189,7 @@ SOON_OPACITY = 0.55
 CARD = {"pad": 16, "gap": 16, "gap_narrow": 12, "min_w": 230, "w_range": (260, 300), "h_range": (280, 330), "image_h": 120}
 MOTION_MS = {"hover": 120, "page": 180, "panel": 200}        # 화면 전환 150~220 · 호버 100~150 · 서랍·접이식 180~240 — **서랍(panel)만 쓴다**, hover·page 는 값만 있다(효과를 입히지 않는다)
 TOAST_MS = 3500                                               # 안내(토스트)가 보이는 시간 3~4초
-COPY_FEEDBACK_MS = 1800                                       # 안 쓰는 값 — 복사한 단추가 '복사됨' 으로 보이는 시간(이미지 화면 묶음에서 쓴다). 지금은 토스트(TOAST_MS)만 쓴다
+COPY_FEEDBACK_MS = 1800                                       # 복사한 단추가 `✓ 복사됨` 으로 보이는 시간 1.5~2초(C-Type §10.6) — 초안 작성 화면(P4e)의 복사 단추가 쓴다
 
 # 계열 이름 → (아이콘 색 키, 아이콘 바탕 색 키, 글자 색 키) — 요약 카드·주제 아이콘(진한 면을 쓰지 않고 아이콘 바탕과 숫자에만)
 TONES = {

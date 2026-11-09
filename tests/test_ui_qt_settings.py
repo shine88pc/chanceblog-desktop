@@ -164,7 +164,7 @@ class ShellTest(Base):
     def test_the_screen_table_has_one_builder_per_real_menu_and_the_old_placeholder_screens_cannot_be_opened(self):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 '나머지 넷이 같은 자리표시를 그린다' 를 보았다. 이제 표는 완성된 화면(홈·설정)뿐이고 옛 자리표시 화면 이름을 불러도 열리지 않는다."""
         self.assertEqual(list(S.SCREEN_BUILDERS), [key for key, _label, _icon in app_state.NAV])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "seed", "blogs", "settings"])     # 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성 줄이 더해졌다 / 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
         self.assertIsNot(S.SCREEN_BUILDERS["settings"], S.SCREEN_BUILDERS["home"])
         window = self.make(settings=False)
         for key in ("draft", "history"):                                                              # 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열린다 / 의도적 갱신(P4d, D-270): 'topics' 도 이제 완성된 화면이라 열린다(`test_ui_qt_candidates` 가 확인)
@@ -381,7 +381,7 @@ class AccessibilityTest(Base):
         self.assertIn(text.T["conn_refresh"], names)
         self.assertIn(text.T["diag_show"], names)
         self.assertIn("예시 데이터", names)
-        self.assertEqual(sum(1 for w in seen if w.property("nav")), 5)                                    # 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯
+        self.assertEqual(sum(1 for w in seen if w.property("nav")), 6)                                    # 의도적 갱신(P4e, D-282): 초안 작성이 더해져 여섯 / 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
         """의도적 갱신(UI-C1b): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 단추 하나만 는다(옛 '고급' 영역의 단추가 옮겨 온 것)."""

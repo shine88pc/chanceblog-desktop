@@ -7,11 +7,11 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
-from ..core import part_rules
+from ..core import draft_rules, part_rules
 from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
 from ..core.blogs_view import WRITE_KEY as BLOGS_WRITE_KEY
@@ -36,10 +36,17 @@ WRITE_CLOSE_WAIT = 10.0                                                         
 IMAGE_FILTER = "(*.png *.jpg *.jpeg *.webp)"                                       # 이미지 고르기 대화상자의 파일 종류(JPG·JPEG·PNG·WebP)
 
 
+def _same_clipboard_text(read, wanted):
+    """클립보드에서 읽은 글이 넣으려던 글과 같은가 — 줄바꿈·공백 차이(윈도 줄바꿈 방식 등)는 같은 글로 본다."""
+    return isinstance(read, str) and "".join(read.split()) == "".join(wanted.split())
+
+
 def qt_clipboard_set(text):
-    """복사 — Qt 가 시스템 클립보드를 다룬다(줄바꿈은 알아서 윈도 방식으로)."""
-    QGuiApplication.clipboard().setText(text)
-    return True
+    """복사 — Qt 가 시스템 클립보드를 다룬다(줄바꿈은 알아서 윈도 방식으로). **쓴 뒤 다시 읽어 같은지 본다**: 다른 프로그램이 클립보드를 잡고 있어 쓰지 못했으면 False 라서
+    화면이 '복사됨' 이 아니라 '복사하지 못했어요' 를 보인다(독립 검증 V7 — 예전에는 쓰지 못해도 늘 True 였다). 실제 윈도 클립보드의 실패 모습은 운영자 PC 에서 확인한다."""
+    clipboard = QGuiApplication.clipboard()
+    clipboard.setText(text)
+    return _same_clipboard_text(clipboard.text(), text)
 
 
 def qt_clipboard_wipe(texts):
@@ -52,6 +59,11 @@ def qt_clipboard_wipe(texts):
     return False
 
 
+def qt_open_url(url):
+    """주소를 기본 브라우저로 연다(`네이버 글쓰기 열기`) — **주소만 연다**(로그인·입력·발행은 하지 않는다). 열었으면 True. 시험·사진은 이 함수 대신 가짜 열기 함수를 넣는다."""
+    return bool(QDesktopServices.openUrl(QUrl(url)))
+
+
 def qt_file_picker(parent, title, filter_text):
     """이미지 파일 하나를 고르는 윈도 대화상자 — 고른 파일의 **위치**(고르지 않으면 빈 글). 파일을 읽거나 복사하지 않는다(시험은 이 대화상자 대신 가짜 선택기를 넣는다)."""
     path, _selected = QFileDialog.getOpenFileName(parent, title, "", filter_text)
@@ -59,15 +71,19 @@ def qt_file_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
+        self._url_opener = url_opener or qt_open_url                                     # 네이버 글쓰기 주소를 여는 함수(시험·사진은 가짜 열기 함수를 주입한다 — 주소만 연다)
+        self._copy_timers = {}                                                           # 복사 단추의 `✓ … 복사됨` 모양을 되돌리는 시간 재개(복사한 항목마다 하나)
+        self._close_confirmed = False                                                    # 앱을 닫을 때 고친 내용이 사라진다는 확인창에서 `그래도 닫기` 를 눌렀다
+        self._drafts_side = None                                                         # 초안 화면을 그릴 때의 두 칸 배치 여부(창 논리 폭이 문턱을 넘으면 다시 그린다)
         self._file_picker = file_picker or qt_file_picker                                 # 이미지 위치를 고르는 대화상자(시험·사진은 가짜 선택기를 주입한다)
         self._clipboard_wipe = clipboard_wipe or qt_clipboard_wipe                        # 붙여 넣은 키가 클립보드에 남지 않게 비우는 함수(시험은 가짜를 주입한다)
         self.setWindowTitle(T["window_title"])
@@ -142,6 +158,10 @@ class AppShell(QMainWindow):
         self.cand_write_bridge.loaded.connect(self._on_cand_written)
         self.cand_write_bridge.failed.connect(self._on_cand_write_failed)
         self.cand_write_bridge.cancelled.connect(self._on_cand_write_cancelled)
+        self.drafts_bridge = JobBridge(self)                                            # 초안 만들기(읽기뿐 — 아무것도 저장하지 않는다)의 다리 — 후보 화면의 `이 주제로 만들기` 와 `다시 만들기` 를 눌렀을 때만 시작한다
+        self.drafts_bridge.loaded.connect(self._on_drafts_made)
+        self.drafts_bridge.failed.connect(self._on_drafts_failed)
+        self.drafts_bridge.cancelled.connect(self._on_drafts_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -194,6 +214,7 @@ class AppShell(QMainWindow):
         self._detail_layout = self.detail_layout() if state.page == "topics" else None   # 주제 후보 화면은 창의 논리 폭이 상세 창 방식(고정·서랍)과 카드 열 수를 정한다 — 고른 후보는 방식이 바뀌어도 컨트롤러에 그대로 있다
         if self._detail_layout is not None:
             state.candidates.set_layout(self._detail_layout.mode)
+        self._drafts_side = draft_rules.side_by_side(self.width()) if state.page == "drafts" else None        # 초안 화면은 창의 논리 폭이 오른쪽 칸을 옆에 둘지 아래로 내릴지 정한다
         self.refresh_button = self.cancel_button = None
         widget = S.SCREEN_BUILDERS[state.page](self)                          # 메뉴 → 화면 만드는 함수 표(`screens.SCREEN_BUILDERS`)
         self.screen_widget = widget
@@ -232,14 +253,14 @@ class AppShell(QMainWindow):
             self.detail_pane.dismiss()
             self.detail_close = None
             return
-        from .candidate_screen import detail_content, pane_placeholder
+        from .candidate_screen import detail_content, detail_footer, pane_placeholder
         view = self.state.candidates.detail_view()
         if view is None:
             self.detail_pane.set_content(pane_placeholder(self.state.candidates.pane_empty()), focusable=False)
             self.detail_close = None
         else:
             content, self.detail_close = detail_content(self, view)
-            self.detail_pane.set_content(content)
+            self.detail_pane.set_content(content, footer=detail_footer(self, view))                    # 아래 고정 행동 줄(P4e) — `이 주제로 만들기`
         self.detail_pane.present(layout.detail_width)
         ui = getattr(self.screen_widget, "cand_ui", None)                          # Tab 순서: 본문(거르기 → 카드) 다음에 상세 창(스크롤 → 닫기 → 번호 복사)
         body = ui.grid.stops() if ui is not None and ui.grid is not None else []
@@ -287,9 +308,9 @@ class AppShell(QMainWindow):
             if not self.drawer.isAncestorOf(QApplication.focusWidget()):
                 self.drawer_close.setFocus(Qt.OtherFocusReason)
         elif cand_view is not None and view is None and seed_view is None and not self.dialog.is_open:
-            from .candidate_screen import detail_content
+            from .candidate_screen import detail_content, detail_footer
             content, self.drawer_close = detail_content(self, cand_view)
-            self.drawer.set_content(content)
+            self.drawer.set_content(content, detail_footer(self, cand_view))                              # 서랍 방식에도 같은 아래 고정 행동 줄(P4e)
             self.drawer.setAccessibleName(cand_view["a11y"])                       # 서랍 틀의 읽기용 이름도 이 내용의 것이다
             self.drawer.scroll.setAccessibleName(cand_view["a11y"])
             if not self.drawer.is_open:
@@ -378,7 +399,7 @@ class AppShell(QMainWindow):
 
     def show_sample_info(self, screen="home"):
         """'예시 데이터' 설명 — 화면마다 보이는 것이 달라 설명도 그 화면 것이다(홈은 주제·숫자, 설정은 키 이름·사용량 숫자)."""
-        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
+        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"], "drafts": T["drf_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
 
     def escape(self):
         if self.dialog.is_open:
@@ -391,6 +412,8 @@ class AppShell(QMainWindow):
         self._relayout_timer.start(RELAYOUT_AFTER_RESIZE_MS)                  # 끌어 바꾸는 동안은 미루고 멈춘 뒤 한 번만
         if self.state.page == "topics" and self._detail_layout is not None and self.detail_layout() != self._detail_layout:
             self.render()                                                      # 상세 창 방식·카드 열 수가 바뀌는 문턱(논리 폭 1600·1366)을 넘었다 — 고른 후보는 컨트롤러가 들고 있어 그대로다
+        elif self.state.page == "drafts" and self._drafts_side is not None and draft_rules.side_by_side(self.width()) != self._drafts_side:
+            self.render()                                                      # 오른쪽 칸을 옆에 둘지 아래로 내릴지 바뀌는 문턱(논리 폭 1280)을 넘었다 — 제목·본문·고친 내용은 컨트롤러가 들고 있어 그대로 다시 놓인다
         self.drawer.place()
         if self.dialog.is_open:
             self.dialog.place()
@@ -405,8 +428,19 @@ class AppShell(QMainWindow):
     def notify_soon(self, name):
         self.notify(self.state.soon(name))
 
-    def go(self, key):
-        if self.state.nav(key):
+    def _sync_nav_checks(self):
+        """사이드바 메뉴 단추의 눌림 표시를 지금 화면에 맞춘다(눌렀지만 확인창에서 막혔을 때 누른 단추가 눌린 채로 남지 않게)."""
+        for nav_key, button in self.nav_buttons.items():
+            button.setChecked(nav_key == self.state.page)
+
+    def go(self, key, force=False):
+        """화면을 옮긴다. 초안 작성 화면에서 고친 내용이 사라지는 이동이면 확인창이 먼저다(처음 포커스는 취소 — `그래도 이동` 을 눌러야 `force` 로 옮긴다). 고친 곳이 없으면 바로 옮기고 초안은 메모리에서 지운다."""
+        dialog = None if force else self.state.leave_guard(key)
+        if dialog is not None:
+            self._sync_nav_checks()
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=lambda: self.go(key, force=True), safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+            return
+        if self.state.nav(key, force=force):
             self.close_drawer_silently()
             if key == "settings":                                                     # 설정 화면은 열 때마다 읽는다(이미 읽는 중이면 그대로 둔다) — 읽기는 작업 스레드에서
                 self.state.start_conn_load(**self.conn_bridge.callbacks())
@@ -1099,6 +1133,233 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    # ---- 초안 작성 화면(P4e) — **아무것도 저장하지 않는다**(읽기·고치기·복사뿐). 초안 만들기는 작업 스레드에서 읽기만 하고, 클립보드에는 사용자가 단추를 눌러 복사 전 관문(`copy_decision`)을 지났을 때만 쓴다. 글을 칠 때는 화면 전체를 다시 그리지 않는다 ----
+    def cand_make_draft(self):
+        """후보 상세의 `이 주제로 만들기` — 고른 후보로 초안 화면을 열고 초안을 만든다(읽기뿐 — 후보 상태·보관함은 바뀌지 않는다). 안전 판정 중지 후보는 단추가 꺼져 있고 이 길에서도 화면 상태가 공급자를 부르지 않고 거절한다."""
+        view = self.state.candidates.detail_view()
+        if view is None:
+            return
+        if not view["draft"]["enabled"]:                                             # 꺼 둔 단추(중지 후보·네이버가 아닌 채널·만드는 중)를 코드로 불러도 초안 화면을 열지 않는다 — 까닭만 알린다
+            self.notify(view["draft"]["reason"])
+            return
+        target = self.state.candidates.draft_target()
+        if target is None:
+            return
+        self.state.drafts.open_target(target)
+        self.go("drafts")
+        self._start_draft()
+
+    def _start_draft(self):
+        status, _job = self.state.drafts.start_make(**self.drafts_bridge.callbacks())
+        if status == "busy":
+            self.notify(T["load_busy"])
+        self.render()                                                              # 읽는 중(또는 거절) 모습으로 다시 그린다
+
+    def drf_retry(self):
+        """오류 화면의 `다시 만들기` — 같은 후보로 처음부터 다시 만든다."""
+        self._start_draft()
+
+    def drf_to_topics(self):
+        """초안 화면의 `← 주제 후보`·`주제 후보로 가기` — 이미 있는 주제 후보 화면으로 간다(고친 내용이 있으면 `go` 가 확인창을 먼저 띄운다). 화면 부품은 화면 이동을 직접 부르지 않고 이 함수로 요청한다."""
+        self.go("topics")
+
+    def _render_drafts(self):
+        if self.state.page == "drafts":                                          # 다른 화면을 보는 중이면 값만 받아 둔다(떠난 뒤에 온 답은 컨트롤러가 버린다)
+            self.render()
+
+    def _on_drafts_made(self, result):
+        self._guarded(self._show_drafts_made, result, recover=self._recover_drafts)
+
+    def _on_drafts_failed(self, failure):
+        self._guarded(self._show_drafts_failed, failure, recover=self._recover_drafts)
+
+    def _on_drafts_cancelled(self):
+        self._guarded(self._show_drafts_cancelled, recover=self._recover_drafts)
+
+    def _show_drafts_made(self, result):
+        self.state.drafts.apply_made(result)
+        self._render_drafts()
+
+    def _show_drafts_failed(self, failure):
+        self.state.drafts.apply_make_failed(failure, self.clock.now())
+        self._render_drafts()
+
+    def _show_drafts_cancelled(self):
+        self.state.drafts.apply_cancelled()
+        self._render_drafts()
+
+    def _recover_drafts(self, error):
+        """초안 슬롯에서 예외가 났다 — 받아 둔 값을 버리고 쉬운 문장의 오류 상태로(예외 이름만 진단 정보에). 오류 화면마저 못 그리면 안내만 한다."""
+        report_unexpected(type(error), error)
+        self.state.drafts.apply_unexpected(error, self.clock.now())
+        try:
+            self._render_drafts()
+        except Exception:
+            self.notify(T["job_failed"])
+
+    def _drafts_screen(self):
+        """지금 그려진 초안 화면(그 자리에서 고칠 부품을 들고 있는 것) — 다른 화면이면 None."""
+        page = self.screen_widget
+        return page if self.state.page == "drafts" and page is not None and hasattr(page, "drf_ui") else None
+
+    def _live_drafts(self, *, picks=False, status=False, inspect=False, options=False):
+        """글을 고친 뒤 — 화면을 다시 그리지 않고 글자 수·고친 정도·제목 후보 표시·검사 카드·만드는 방법 칸만 그 자리에서 바꾼다(입력 중이던 커서·한글 조합이 사라지지 않게)."""
+        page = self._drafts_screen()
+        if page is None:
+            return
+        from . import draft_screen as ds
+        controller = self.state.drafts
+        if status:
+            ds.refresh_editor_status(page, controller.editor_status())
+        if picks:
+            ds.refresh_picks(page, controller.title_picks())
+        if inspect:
+            ds.refresh_inspection(page, controller.inspect_card())
+        if options:
+            ds.refresh_options(page, controller.options_vm())
+
+    def drf_title_edited(self, text):
+        self.state.drafts.set_title(text)
+        self._live_drafts(picks=True, status=True, inspect=True)
+
+    def drf_body_edited(self, text):
+        self.state.drafts.set_body(text)
+        self._live_drafts(status=True, inspect=True)
+
+    def drf_option_edited(self, name, text):
+        if self.state.drafts.set_option(name, text):
+            self._live_drafts(options=True)
+
+    def drf_pick(self, index):
+        """제목 후보를 고른다 — 고친 제목이 있으면 사라지므로 확인창이 먼저다(처음 포커스는 취소)."""
+        controller = self.state.drafts
+        status = controller.pick_title(index)
+        if status == "ok":
+            self._show_picked_title()
+        elif status == "confirm":
+            dialog = controller.pick_dialog()
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self.drf_pick_confirmed, safe_focus=True, on_cancel=controller.discard_pick)
+
+    def drf_pick_confirmed(self):
+        if self.state.drafts.confirm_pick():
+            self._show_picked_title()
+
+    def _show_picked_title(self):
+        page = self._drafts_screen()
+        if page is not None:
+            from . import draft_screen as ds
+            ds.show_title(page, self.state.drafts.title)
+        self._live_drafts(picks=True, status=True, inspect=True)
+
+    def drf_inspect(self):
+        """`검사하기` — 편집기의 제목·본문을 훑는다(읽기뿐). 결과는 검사 카드에 보이고 파일·클립보드는 바뀌지 않는다."""
+        self.state.drafts.inspect()
+        self._live_drafts(inspect=True)
+
+    def drf_toggle_options(self):
+        self.state.drafts.toggle_options()
+        self._live_drafts(options=True)
+
+    def drf_blog(self, key):
+        if self.state.drafts.set_blog(key):
+            self._live_drafts(options=True)
+
+    def drf_post_type(self, key):
+        if self.state.drafts.set_post_type(key):
+            self._live_drafts(options=True)
+
+    def drf_toggle_image(self):
+        self.state.drafts.toggle_image()
+        page = self._drafts_screen()
+        if page is not None:
+            from . import draft_screen as ds
+            ds.refresh_image(page, self.state.drafts.view()["normal"]["side"]["image"])
+
+    def drf_checks_toggled(self, key, opened):
+        """확인 권장의 펼침·접힘을 기억만 한다(다시 그리지 않는다) — 모든 글 공통 묶음만 기억한다."""
+        if key == "common":
+            self.state.drafts.set_common_open(opened)
+
+    def drf_remake(self):
+        """`다시 만들기` — 고친 제목·본문이 사라지면 확인창이 먼저다(처음 포커스는 취소). 바꾼 블로그·글 유형·선택 입력으로 새 초안을 만든다(읽기뿐)."""
+        controller = self.state.drafts
+        dialog = controller.regen_dialog()
+        if dialog is not None:
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self.drf_remake_confirmed, safe_focus=True, on_cancel=controller.discard_regen)
+            return
+        self.drf_remake_confirmed()
+
+    def drf_remake_confirmed(self):
+        status, _job = self.state.drafts.start_regenerate(**self.drafts_bridge.callbacks())
+        if status == "started":
+            self.render()
+        elif status == "busy":
+            self.notify(T["load_busy"])
+
+    def drf_action(self, key):
+        """아래 고정 행동 줄의 단추(`더보기 ⋮` 로 접힌 것 포함) — `네이버 글쓰기 열기` 는 주소만 열고 나머지는 복사다."""
+        if key == "open":
+            self.drf_open()
+        else:
+            self.drf_copy(key)
+
+    def drf_copy(self, item):
+        """복사 단추 — **복사 전 관문**을 지난 글만 클립보드에 쓴다: 키·토큰 모양이면 막고(안내창), 이 글에만 해당하는 확인 권장·분야 못 읽음·점검 걸림·거의 안 고침이 있으면 확인창이 먼저다(처음 포커스는 취소).
+        클립보드에 쓰는 곳은 `_drf_do_copy` 하나이고 그곳은 관문이 '복사해도 된다' 고 한 글이나 확인창의 `그래도 복사` 를 거친 글만 받는다."""
+        controller = self.state.drafts
+        kind, payload = controller.copy_decision(item)
+        if kind == "copy":
+            self._drf_do_copy(item, payload)
+        elif kind == "blocked":
+            self.show_dialog(payload["title"], payload["body"], ok=payload["ok"], cancel=None)
+        elif kind == "confirm":
+            self.show_dialog(payload["title"], payload["body"], ok=payload["ok"], cancel=payload["cancel"], on_ok=lambda: self.drf_copy_confirmed(item), safe_focus=True, on_cancel=controller.discard_copy)
+
+    def drf_copy_confirmed(self, item):
+        text = self.state.drafts.confirm_copy(item)
+        if text is None:
+            self.notify(T["drf_copy_failed"])
+            return
+        self._drf_do_copy(item, text)
+
+    def _drf_do_copy(self, item, text):
+        if not self.copy(text):
+            self.notify(T["drf_copy_failed"])
+            return
+        controller = self.state.drafts
+        controller.mark_copied(item)
+        self._show_copy_look(item, True)
+        timer = self._copy_timers.get(item)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda item=item: self._clear_copy_look(item))
+            self._copy_timers[item] = timer
+        timer.start(K.COPY_FEEDBACK_MS)                                              # 1.5~2초(C-Type §10.6) 동안 `✓ 본문 복사됨` — 성공색과 글자가 함께 바뀐다
+
+    def _show_copy_look(self, item, copied):
+        page = self._drafts_screen()
+        if page is not None:
+            from . import draft_screen as ds
+            ds.show_copy(page, item, self.state.drafts.copied_text(item), copied)
+
+    def _clear_copy_look(self, item):
+        self.state.drafts.clear_copied(item)
+        self._show_copy_look(item, False)
+
+    def drf_open(self):
+        """`네이버 글쓰기 열기` — **주소만 연다**(자동 로그인·입력·발행 없음). 프로필의 블로그 주소가 `https://blog.naver.com/<아이디>` 모양이 아니면 단추가 꺼져 있고 이 길에서도 열지 않는다."""
+        url, why = self.state.drafts.open_info()
+        if not url.startswith("https://blog.naver.com/"):
+            self.notify(why or T["drf_open_why_profile"])
+            return
+        try:
+            opened = self._url_opener(url)
+        except Exception:                                                            # 브라우저를 못 여는 환경 — 주소는 오류에 담지 않는다
+            opened = False
+        if not opened:
+            self.notify(T["drf_open_failed"])
+
     def _guarded(self, work, *args, recover=None):
         try:
             work(*args)
@@ -1326,7 +1587,19 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    def _close_after_confirm(self):
+        self._close_confirmed = True
+        self.close()
+
     def closeEvent(self, event):
+        # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(고친 내용은 사라진다 — 저장하지 않는 화면이다, D-281). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
+        # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
+        if not self._close_confirmed and not QGuiApplication.instance().isSavingSession():
+            dialog = self.state.close_guard()                                     # 초안의 고친 내용은 저장하지 않아 앱을 닫으면 사라진다 — 확인창이 먼저다(처음 포커스는 취소)
+            if dialog is not None:
+                event.ignore()
+                self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+                return
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
         self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)
         if self.state.keys.busy:                                                  # 키 쓰기도 중간에 끊을 수 없다 — 끝나기를 기다린다(보관소·파일 쓰기를 마치게)
