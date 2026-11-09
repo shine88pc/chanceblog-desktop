@@ -52,9 +52,10 @@ class TableValuesTest(unittest.TestCase):                                       
                     self.assertEqual(tuple(value), expected)
 
     def test_the_sizes_are_the_documented_ones(self):
-        sizes = {"HEALTH_SYMPTOM_KO": 39, "HEALTH_SYMPTOM_EN": 15, "HEALTH_DISEASE_KO": 71, "HEALTH_DISEASE_EN": 26, "HEALTH_EFFECT_KO": 34, "HEALTH_EFFECT_EN": 13, "HEALTH_MEDICAL_KO": 6,
-                 "HEALTH_MEDICAL_EN": 11, "HEALTH_PRODUCT_KO": 45, "HEALTH_PRODUCT_EN": 22, "HEALTH_ASSERT_KO": 12, "HEALTH_ASSERT_EN": 10, "HEALTH_ASSERT_EFFECT_KO": 16, "HEALTH_ASSERT_EFFECT_EN": 10,
-                 "HEALTH_ASSERT_SOFT_KO": 7, "HEALTH_ASSERT_SOFT_EN": 5, "HEALTH_MASKS_KO": 48, "HEALTH_MASKS_EN": 11, "HEALTH_WARNING_KO": 19, "HEALTH_WARNING_EN": 11, "NEGATION_TOKENS_EN": 5,
+        # 의도적 갱신(WP-B5, D-291·D-292): 증상 39 → 52·질환 71 → 76·효과 단정 서술 16 → 19·마스크 48 → 56 (새 낱말은 모두 초기값 — 운영자 확인 전) · 의도적 갱신(WP-B5 수정 라운드, D-298): 증상 52 → 59·마스크 56 → 66(다섯을 지우고 열다섯을 더함) · 의도적 갱신(WP-B5 3차 수정, D-307): 마스크 66 → 64(한 낱말 마스크 `한눈에`·`첫눈에` 를 지움). 그 밖의 표 크기는 그대로다
+        sizes = {"HEALTH_SYMPTOM_KO": 59, "HEALTH_SYMPTOM_EN": 15, "HEALTH_DISEASE_KO": 76, "HEALTH_DISEASE_EN": 26, "HEALTH_EFFECT_KO": 34, "HEALTH_EFFECT_EN": 13, "HEALTH_MEDICAL_KO": 6,
+                 "HEALTH_MEDICAL_EN": 11, "HEALTH_PRODUCT_KO": 45, "HEALTH_PRODUCT_EN": 22, "HEALTH_ASSERT_KO": 12, "HEALTH_ASSERT_EN": 10, "HEALTH_ASSERT_EFFECT_KO": 19, "HEALTH_ASSERT_EFFECT_EN": 10,
+                 "HEALTH_ASSERT_SOFT_KO": 7, "HEALTH_ASSERT_SOFT_EN": 5, "HEALTH_MASKS_KO": 64, "HEALTH_MASKS_EN": 11, "HEALTH_WARNING_KO": 19, "HEALTH_WARNING_EN": 11, "NEGATION_TOKENS_EN": 5,
                  "SPONSOR_MARKERS_KO": 18, "SPONSOR_MASKS_KO": 15, "SPONSOR_STRONG_EN": 23, "SPONSOR_WEAK_EN": 7, "SPONSOR_MARKERS_EN": 8, "EXPERIENCE_GENRE_STRONG_KO": 7, "EXPERIENCE_GENRE_WEAK_KO": 2,
                  "EXPERIENCE_MARKERS_KO": 11, "EXPERIENCE_MASKS_KO": 13, "EXPERIENCE_PHRASES_EN": 19, "GENERAL_WORDS": 57}
         for name, size in sizes.items():
@@ -444,6 +445,16 @@ def boundary_tables():
     return rows
 
 
+def expected_mode(name, entry):
+    """표 항목의 읽기 방식 — 증상 표만 낱말 처음 읽기 방식 문자열(`"start"`·`"wordstart"`·`"bare"`, D-303·D-307)을 갖고, 나머지는 띄어쓰기가 없는 항목이 참이다."""
+    if name == "증상":
+        if entry in cn.HEALTH_SYMPTOM_BARE_KO:
+            return "bare"
+        if entry in cn.HEALTH_SYMPTOM_START_KO:
+            return "start" if " " not in entry else "wordstart"
+    return " " not in entry
+
+
 def pure_hangul(entry):
     return all("가" <= char <= "힣" for char in entry)
 
@@ -493,10 +504,14 @@ class WordBoundaryTest(unittest.TestCase):                                      
                 checked += 1
                 with self.subTest(table=name, entry=entry):
                     self.assertIn(entry, hits(table, f"예시 {entry} 글"))
-                    self.assertIn(entry, hits(table, f"예시 가{entry}나 글"), "붙여 쓴 복합어·조사는 읽는다")
+                    if expected_mode(name, entry) in ("start", "bare"):
+                        self.assertNotIn(entry, hits(table, f"예시 가{entry}나 글"), "낱말 처음에서만 읽는 증상은 낱말 한가운데 붙은 글자 뒤(`가감기나`)는 읽지 않는다 — 앞 글자가 허용 수식어일 때만 읽는다(D-303·D-307)")
+                        self.assertIn(entry, hits(table, f"예시 {entry}를 글"), "낱말 처음에서 시작하고 조사가 붙은 글은 읽는다")
+                    else:
+                        self.assertIn(entry, hits(table, f"예시 가{entry}나 글"), "붙여 쓴 복합어·조사는 읽는다")
                     for text in (f"예시 {first} {second} 글", f"예시 가{first} {second}나 글", f"예시 {first}-{second} 글", f"예시 가{first} {second} 글"):
                         self.assertNotIn(entry, hits(table, text), text)
-        self.assertEqual(checked, 111, "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다")
+        self.assertEqual(checked, 124, "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(의도적 갱신 D-291(WP-B5): 두 글자 새 증상 낱말 여덟 — 요통·몸살·감기·시력·설사·기침·저림·이명 — 이 더해져 옛 111 · 의도적 갱신 D-298(수정 라운드): 두 글자 새 증상 낱말 다섯 — 복통·치통·콧물·무좀·습진 — 이 더해져 119. 이 시험은 **운영 증상 표**(`Tables.s_weak`)로 돈다 — 낱말 처음에서만 읽는 아홉 낱말은 한가운데 붙은 글자를 읽지 않는 것이 맞다(D-307, 독립 검증 D9 — 한때 기본 읽기 표로 돌아 낱말 가로지름 회귀를 못 봤다))")
 
     def test_a_longer_word_is_read_across_spaces_only_from_the_start_of_a_word_and_never_ending_in_a_lone_letter(self):
         natural = blocked = 0
@@ -513,7 +528,7 @@ class WordBoundaryTest(unittest.TestCase):                                      
                                  f"예시 가{entry[0]} {entry[1:]} 글"):                                               # 앞 낱말의 끝글자가 걸쳐 있다
                         blocked += 1
                         self.assertNotIn(entry, hits(table, text), text)
-        self.assertEqual((natural, blocked), (212, 444), "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(제품 표 +11: 처방약 낱말 열한 개 D-133·D-137, 마스크 +7: 기기 암 여섯 D-136 · 보험 보장 하나 D-134 — 옛 (204, 423))")
+        self.assertEqual((natural, blocked), (227, 474), "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(제품 표 +11: 처방약 낱말 열한 개 D-133·D-137, 마스크 +7: 기기 암 여섯 D-136 · 보험 보장 하나 D-134 — 옛 (204, 423) · 의도적 갱신 D-291(WP-B5): 석 자 이상의 순한글 새 낱말 여덟(가려움·생리통·코골이·손목터널증후군·오십견·두드러기·구내염·치주염)이 끊는 자리 +13·막는 모양 +24 — 옛 (212, 444) · 의도적 갱신 D-298(수정 라운드): 석 자 이상의 순한글 새 증상 낱말 둘(인후통·관절통)이 끊는 자리 +2·막는 모양 +6 — 옛 (225, 468))")
 
     def test_names_written_as_whole_words_with_spaces_are_still_read(self):
         for text, field, entry in (("허리 디스크 운동", "disease", "허리디스크"), ("목 디스크 증상", "disease", "목디스크"), ("건강 식품 고르기", "product", "건강식품"), ("건강 기능 식품 고르기", "product", "건강기능식품"),
@@ -548,7 +563,7 @@ class WordBoundaryTest(unittest.TestCase):                                      
             with self.subTest(table=name):
                 self.assertEqual([entry for entry, _pattern, _strict in table], list(entries))
                 for entry, _pattern, strict in table:
-                    self.assertEqual(strict, " " not in entry, entry)
+                    self.assertEqual(strict, expected_mode(name, entry), entry)
 
     def test_compact_marked_remembers_where_each_word_starts_and_the_text_matches_compact(self):
         joined, starts = cn.compact_marked(["설치 매뉴얼-a", "b c", ""])

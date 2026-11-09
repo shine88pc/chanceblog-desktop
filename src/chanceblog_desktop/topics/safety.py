@@ -22,6 +22,9 @@
 
 **건강 판정 문맥 구분(D-130~D-135, 운영자 2026-11-06 ~19:55 결정 ①②③)**: 단정 낱말이 글에 있다는 이유만으로 판정하지 않고 **행동 순서를 꾸미는지 효과 결과를 꾸미는지** 가른다(`concepts.scope_of`). 영양제 + `바로·즉시` 가 행동 순서면 중지가 아니고(A, 복용 허용 질문이면 B),
 증상 + 효과 결과를 꾸미는 `즉시·바로·완전히·확실히·무조건` 은 단정 위험(C)이며, 질환 단독은 근거 확인 필요(B)·질환 + 강한 단정은 효과 동사가 없어도 C 다. **옛 중지(C)를 느슨하게 만들지 않는 바닥**(`LEGACY_STOP_KEYS`)이 있어 영양제 + 행동 순서 `바로·즉시` 만 예외로 내려간다.
+
+**미탐 보강(WP-B5, D-290–D-296)**: 단계표(`HEALTH_MATRIX`)와 바닥(`LEGACY_STOP_KEYS`)은 **바꾸지 않았다** — 5채널 독립 검증이 찾은 미탐 10개는 `concepts.py` 가 신호를 바르게 읽도록 고쳐 단계표의 열쇠가 달라진 것이다(의문 꼬리가 낱말 경계를 넘어 읽히던 것·증상 낱말·즉각 표현·처방약 복용 중단 단정). 수정 라운드(D-298–D-306)도 같다 — 단계표와 바닥은 그대로이고 신호를 읽는 쪽(`concepts.py`)만 다듬었으며 알림 카드의 효과 칸이 결과 서술어(`HealthSignals.resolve`)를 함께 보인다. 3차 수정(D-307–D-311)도 같다 — 단계표와 바닥은 그대로이고 신호를 읽는 쪽(`concepts.py` — 마스크·낱말 처음 읽기·증상 앞 수식어·복용 중단 결과어·`풀어보는`)만 다듬었다.
+새 즉각 표현은 옛 중지 바닥의 바탕 표에 넣지 않았다 — 바닥은 옛 코드의 중지를 지키는 안전망이다. 새 낱말·표현은 모두 초기값 — 운영자 확인 전이다.
 """
 from __future__ import annotations
 
@@ -252,7 +255,7 @@ def _assert_shown(signals, stage):
 
 def _health_shown(signals, stage=STAGE_STOP):
     """개념군마다 첫 낱말을 증상 → 효과 → 제품 → 단정 순서로 모은다(최대 `MAX_SHOWN`) — (낱말들, 개념군 이름들)."""
-    rows = ((concepts.GROUP_KO["symptom"], _first(signals.counted("symptom"), signals.counted("disease"))), (concepts.GROUP_KO["effect"], _first(signals.counted("effect"), signals.counted("medical"))),
+    rows = ((concepts.GROUP_KO["symptom"], _first(signals.counted("symptom"), signals.counted("disease"))), (concepts.GROUP_KO["effect"], _first(signals.counted("effect"), signals.counted("medical"), signals.resolve)),
             (concepts.GROUP_KO["product"], _first(signals.product)), (concepts.GROUP_KO["assertion"], _assert_shown(signals, stage)))
     found = [(group, word.rstrip("*")) for group, word in rows if word]
     return tuple(word for _group, word in found)[:MAX_SHOWN], tuple(group for group, _word in found)[:MAX_SHOWN]

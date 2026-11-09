@@ -701,7 +701,7 @@ class NamesInsideNamesTest(unittest.TestCase):                                  
             checked += 1
             with self.subTest(group="assert_effect", entry=entry):
                 self.assertEqual(stage(f"예시 {show(entry)} 글"), STOP if entry in medical_assertions else GENERAL)
-        self.assertEqual(checked, 54 + 97 + 67 + 17 + 47 + 22 + 12 + 26, "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(제품 표 56 → 67: 처방약 낱말 열한 개, D-133·D-137)")
+        self.assertEqual(checked, 74 + 102 + 67 + 17 + 47 + 22 + 12 + 29, "표 항목 전수 — 표 크기가 바뀌면 이 수도 의식적으로 함께 고친다(제품 표 56 → 67: 처방약 낱말 열한 개, D-133·D-137 · 의도적 갱신 D-291·D-292(WP-B5): 증상 54 → 67·질환 97 → 102·효과 단정 서술 26 → 29 · 의도적 갱신 D-298(수정 라운드): 증상 67 → 74)")
 
 
 class DocumentsTest(unittest.TestCase):                                                                         # H13
@@ -741,7 +741,7 @@ class DocumentsTest(unittest.TestCase):                                         
             self.assertIn(word, concepts_doc)
 
     def test_the_health_word_tables_are_not_changed_by_this_work(self):
-        self.assertEqual((len(cn.HEALTH_SYMPTOM_KO), len(cn.HEALTH_DISEASE_KO), len(cn.HEALTH_PRODUCT_KO), len(cn.HEALTH_MEDICAL_KO), len(cn.HEALTH_EFFECT_KO)), (39, 71, 45, 6, 34), "제품 표만 34 → 45(처방약 낱말 넷 D-133 + 일곱 D-137, 의도적 갱신)")
+        self.assertEqual((len(cn.HEALTH_SYMPTOM_KO), len(cn.HEALTH_DISEASE_KO), len(cn.HEALTH_PRODUCT_KO), len(cn.HEALTH_MEDICAL_KO), len(cn.HEALTH_EFFECT_KO)), (59, 76, 45, 6, 34), "제품 표만 34 → 45(처방약 낱말 넷 D-133 + 일곱 D-137, 의도적 갱신) · 의도적 갱신(D-291, WP-B5): 증상 39 → 52·질환 71 → 76(독립 검증이 찾은 빠진 낱말 — 초기값, 운영자 확인 전), 효과 낱말 표는 그대로 34")
         for word in ("피로", "불면", "통증", "자세", "체중"):
             self.assertIn(word, cn.HEALTH_SYMPTOM_KO)
         self.assertIn("영양제", cn.HEALTH_PRODUCT_KO)
