@@ -157,7 +157,7 @@ ui/candidates_adapter.py → service/topics.py(list_candidates·plan_candidates�
 화면은 뷰모델(`ui/core/drafts_view.py` 의 `DraftsController` 가 만든 딕셔너리)을 공통 부품과 이 화면의 부품으로 조립하기만 하고 **이 파일들에는 쓰기·복사·네트워크·서비스 호출이 없다**(시험이 소스를 훑는다). 단추를 누르면 셸(`shell.drf_*`)이 상태를 거쳐 어댑터(`ui/drafts_adapter.py` — 서비스 `make_body_for_engine` 하나만 부른다)와 클립보드를 부른다. **클립보드에 쓰는 곳은 셸의 `_drf_do_copy` 하나**이고 복사 관문(D-284)이 '복사해도 된다' 고 한 글이나 확인창의 `그래도 복사` 를 거친 글만 받는다(시험이 소스를 훑는다). 주소를 여는 곳(`drf_open`)도 한 곳이다.
 
 ```text
-core/draft_text.py(문구) · core/draft_rules.py(확인 권장 가르기·고친 정도·검사·복사 관문·열기 주소·선택 입력) · core/drafts.py(값·공급자 틀·가짜 공급자)
+core/draft_text.py(문구) · core/draft_rules.py(확인 권장 가르기·고친 정도·검사·복사 관문·열기 주소·선택 입력) · core/drafts.py(값·공급자 틀·가짜 공급자) · core/draft_garbage.py(글 모양 점검 — 위치 문구·가림·무시 기억·세대 번호·카드 뷰모델, 복사 관문을 모른다)
   → core/drafts_view.py(DraftsController — 상태·편집·검사·관문·뷰모델) → qt/draft_parts.py(부품) → qt/draft_screen.py(화면 조립) → qt/shell.py(작업 스레드·확인창·클립보드·주소 열기·떠나기 막기)
 ui/drafts_adapter.py → service/draft_engine.py(make_body_for_engine — 읽기 전용)
 ```
@@ -167,6 +167,7 @@ ui/drafts_adapter.py → service/draft_engine.py(make_body_for_engine — 읽기
 | `TextArea`(`draft_parts.py`) | 여러 줄 편집기(`QPlainTextEdit`) — 본문 편집기와 선택 입력의 여러 줄 칸. 한글 입력기 조합이 끊기지 않게 글자를 칠 때마다 화면을 다시 그리지 않는다(`edited(글)` 신호만). **Tab 은 들여쓰기가 아니라 다음 칸으로 간다**(`setTabChangesFocus`). 모서리·테두리·포커스 링은 스타일시트(`QPlainTextEdit[editor]`). 새 초안을 만드는 동안(다시 만들기)에는 본문 편집기와 제목 입력 칸이 **읽기 전용**이다(`setReadOnly` — 친 글이 새 초안에 덮이지 않게, D-297) | 이름이 있고(본문 편집기·`… 입력(선택)`) 키보드 정거장 하나. 읽기 전용일 때 접근 설명 `새 초안을 만드는 동안에는 고칠 수 없어요.` |
 | `TitlePick` | 제목 후보 한 줄 — `후보 1` + 제목 글(둘째 줄까지) + 고른 것에 `선택됨` 표시. 전체가 누르는 칸(Enter·Space). 스타일시트 `QFrame[draftpick]`(선택·hover·포커스) | 이름 `제목 후보 1: …`·정거장 하나(새 초안을 만드는 동안에는 꺼진다) |
 | `InspectCard` | 검사 결과 — 상태 글 하나와 줄 목록(검사 전·고침 표시·키 모양과 걸린 자리·건강 효과 단정·확인이 필요한 곳·직접 쓴 글의 건강 낱말·거의 안 고침·**본 범위를 밝히는 초록 문구**). 글을 칠 때 그 자리에서 바뀐다 | 상태 글을 읽는다 |
+| `GarbageCard` | 글 모양 점검 카드(N-2)의 글 — 상태 줄(안내 파랑·흐린 회색뿐)·`본문이 변경됨` 줄·종류별 묶음(이름·`N건`·이유 한 번)과 항목 줄 + 항목마다 `무시`, 보이면 `모두 무시(N건)`·`무시한 N건 다시 보기`. 모양이 그대로면 아무것도 다시 만들지 않아 글을 칠 때마다 불려도 가볍다. 단추는 항목마다 새로 만들어 접근 이름(`‘종류’ 경고 N번 무시하기`)·열쇠 `drf-garbage:…` 를 달고 `stops()` 가 지금 Tab 에 걸리는 단추를 돌려주어 화면이 `검사하기` 다음으로 Tab 순서를 다시 잇는다. 이 부품에는 글을 고치거나 복사하는 코드가 없다(경고만) | `무시` 단추마다 접근 이름·정거장 하나, 누른 단추가 사라지면 포커스는 이웃 단추(없으면 `검사하기`)로 간다 |
 | `lines_box`·`set_copy_look` | 줄 목록 상자·복사 단추의 `✓ … 복사됨` 모양(성공 색 + 글자가 함께 — 스타일시트 `QPushButton[copied="true"]`, 끝나면 원래 글로) | 접근 이름도 `✓ 본문 복사됨` 으로 함께 바뀌어 화면 읽기 프로그램이 읽는다(끝나면 원래 이름 `본문 복사`) |
 | `ActionBar`(`bars.py`, 재사용) | 아래 고정 행동 줄 — 안쪽 스크롤 밖. 복사 셋(보조 둘·주요 `전체 복사`)·`네이버 글쓰기 열기`(보조). 폭이 모자라면 `더보기 ⋮` 로 접힌다. 후보 상세의 아래 고정 줄(`이 주제로 만들기`)도 같은 부품이다 | 꺼진 단추의 까닭은 툴팁·접근 설명(키보드로도 읽힌다) |
 | `Accordion`(재사용) | 확인 권장 — 카드 맨 위의 작은 글자 한 줄(`출처: … · 확인 필요 N건`) 아래에 `이 글에만 해당`(펼침)·`모든 글 공통`(접힘), 건수 칩. 펼침 상태는 컨트롤러가 기억한다 | 머리 단추가 정거장·열쇠 `drf-checks:specific`·`drf-checks:common` |

@@ -113,14 +113,84 @@ class InspectCard:
         self.status.set_tone({"ok": "green", "error": "red", "warning": "orange", "info": "blue", "muted": "slate"}.get(vm["tone"], "slate"))
         layout = self.lines.layout()
         while layout.count():
-            item = layout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().hide()
-                item.widget().setParent(None)
-                item.widget().deleteLater()
+            widget = layout.takeAt(0).widget()                                  # 한 번만 꺼내 쓴다 — 부모를 떼고 나면 같은 항목에서 다시 꺼내면 None 이라, 줄이 있던 카드를 다시 그릴 때(검사한 뒤 글을 칠 때) 예외가 났다
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
         for line in vm["lines"]:
             layout.addWidget(UI.label(line, "small", wrap=True))
         self.lines.setVisible(bool(vm["lines"]))
+
+
+class GarbageCard:
+    """글 모양 점검 카드(N-2)의 글 — 카드 틀은 화면이 만들고 이 도우미가 상태 줄·`본문이 변경됨`·종류별 묶음과 항목·`무시` 단추를 그 자리에서 바꾼다(편집기를 다시 그리지 않는다). 항목이 그대로면 아무것도 다시 만들지 않아
+    글을 칠 때마다 불려도 가볍다. `무시` 단추는 항목마다 새로 만들어 접근 이름·포커스 키를 달고, `stops()` 가 지금 Tab 에 걸리는 단추를 순서대로 돌려준다(화면이 Tab 순서를 다시 잇는다). 단추를 눌러도 글은 바뀌지 않는다 —
+    이 카드에는 글을 고치거나 복사하는 코드가 없다(경고만)."""
+
+    def __init__(self, status, stale, rows_box, ignore_all, restore, on_ignore, on_ignore_all, on_restore):
+        self.status, self.stale, self.rows_box, self.ignore_all, self.restore = status, stale, rows_box, ignore_all, restore
+        self.on_ignore = on_ignore
+        self.buttons = []                                                       # 지금 있는 항목별 `무시` 단추(보이는 순서)
+        self.keys = []                                                          # 그 단추들의 항목 열쇠
+        self._signature = None
+        ignore_all.clicked.connect(lambda _=False: on_ignore_all())
+        restore.clicked.connect(lambda _=False: on_restore())
+
+    @staticmethod
+    def signature(vm):
+        return (vm["state"], vm["tone"], vm["status"], vm["stale_text"], vm["ignore_all"]["visible"], vm["restore"]["text"] if vm["restore"]["visible"] else "",
+                tuple((group["title"], group["chip"], group["reason"], group["more"], tuple((row["key"], row["text"]) for row in group["rows"])) for group in vm["groups"]))
+
+    def set_state(self, vm):
+        """카드를 그린다 → 모양이 바뀌어 단추가 새로 만들어졌으면 True(Tab 순서를 다시 이어야 한다)."""
+        signature = self.signature(vm)
+        if signature == self._signature:
+            return False
+        self._signature = signature
+        self.status.set_text(vm["status"])
+        self.status.set_tone({"info": "blue", "muted": "slate"}.get(vm["tone"], "slate"))
+        self.stale.set_text(vm["stale_text"])
+        self.stale.setVisible(bool(vm["stale_text"]))
+        layout = self.rows_box.layout()
+        while layout.count():
+            widget = layout.takeAt(0).widget()                                  # 한 번만 꺼내 쓴다 — 부모를 떼고 나면 같은 항목에서 다시 꺼낼 수 없다
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+        self.buttons, self.keys = [], []
+        for group in vm["groups"]:
+            layout.addWidget(UI.label(f"{group['title']} · {group['chip']}", "body"))
+            layout.addWidget(UI.label(group["reason"], "caption", wrap=True))
+            for row in group["rows"]:
+                line = QWidget()
+                box = QHBoxLayout(line)
+                box.setContentsMargins(K.SPACE["2"], 0, 0, 0)
+                box.setSpacing(K.SPACE["3"])
+                box.addWidget(UI.label("· " + row["text"], "small", wrap=True), 1)
+                button = UI.Button("ghost", row["button"], size="sm", accessible=row["a11y"], focus_key="drf-garbage:" + row["key"])
+                button.clicked.connect(lambda _=False, key=row["key"]: self.on_ignore(key))
+                box.addWidget(button, 0, Qt.AlignTop)
+                layout.addWidget(line)
+                self.buttons.append(button)
+                self.keys.append(row["key"])
+            if group["more"]:
+                layout.addWidget(UI.label(group["more"], "caption"))
+        self.rows_box.setVisible(bool(vm["groups"]))
+        self.ignore_all.setVisible(vm["ignore_all"]["visible"])
+        if vm["ignore_all"]["visible"]:
+            self.ignore_all.setText(vm["ignore_all"]["text"])                  # `모두 무시(25건)` — 건수가 바뀌면 글도 바뀐다
+            self.ignore_all.setAccessibleName(vm["ignore_all"]["a11y"])
+        self.restore.setVisible(vm["restore"]["visible"])
+        if vm["restore"]["visible"]:
+            self.restore.setText(vm["restore"]["text"])
+            self.restore.setAccessibleName(vm["restore"]["a11y"])
+        return True
+
+    def stops(self):
+        """지금 Tab 에 걸리는 단추들 — 항목별 `무시`, 보이면 `모두 무시`·`무시한 N건 다시 보기`."""
+        return [*self.buttons, *(button for button in (self.ignore_all, self.restore) if not button.isHidden())]
 
 
 def lines_box():
@@ -139,4 +209,4 @@ def set_copy_look(button, text, copied, a11y=None):
     UI.repolish(button)
 
 
-__all__ = ["InspectCard", "TextArea", "TitleInput", "TitlePick", "lines_box", "set_copy_look"]
+__all__ = ["GarbageCard", "InspectCard", "TextArea", "TitleInput", "TitlePick", "lines_box", "set_copy_look"]

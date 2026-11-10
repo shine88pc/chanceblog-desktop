@@ -13,23 +13,27 @@ import ast
 import dataclasses
 import re
 import sys
+import threading
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from draft_samples import CONTROL, DAILY, KNOWN_LIMITS, NORMAL_ADDRESSES, NORMAL_FILE_NAMES, NORMAL_MORE, OPERATOR_C, SECRET_ADDRESSES, hexed, mixed  # noqa: E402
+import garbage_samples as GS  # noqa: E402
 
 from chanceblog_desktop.check import claims as claim_check  # noqa: E402
+from chanceblog_desktop.check import garbage as garbage_rule  # noqa: E402
 from chanceblog_desktop.content import body_bank  # noqa: E402
 from chanceblog_desktop.content import candidates as cd  # noqa: E402
 from chanceblog_desktop.content import draft_body as cdb  # noqa: E402
 from chanceblog_desktop.content import draft_options as do  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.topics import safety  # noqa: E402
-from chanceblog_desktop.ui.core import app_state, draft_rules as rules, draft_text, drafts, drafts_view as dv, jobs, text  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, draft_garbage as dg, draft_rules as rules, draft_text, drafts, drafts_view as dv, jobs, text  # noqa: E402
 from chanceblog_desktop.ui.core import candidates as ucd  # noqa: E402
 from chanceblog_desktop.ui.core import candidates_view as cv  # noqa: E402
 
@@ -1532,9 +1536,857 @@ class TextTest(unittest.TestCase):
         self.assertGreater(count, 300)
 
 
+# ---- 5) 글 모양 점검(N-2) — 경고만 한다: 규칙은 `check/garbage.py`, 이 묶음은 그 결과를 사람이 읽는 말로 바꾸는 화면 계층(`draft_garbage.py`)과 컨트롤러 연결 ------------------------------------------------------------------
+def run_garbage(controller):
+    """`검사하기` 와 같은 길 — 작업 스레드에서 돌리고 도착한 결과를 적용한다(순수 시험이라 콜백이 모은 값을 직접 적용한다)."""
+    got = {}
+    status, job = controller.start_garbage(on_done=lambda result, payload: got.setdefault("ok", result), on_error=lambda failure, payload: got.setdefault("err", failure))
+    if job is not None:
+        job.join(30)
+    if "ok" in got:
+        controller.apply_garbage(got["ok"])
+    elif "err" in got:
+        controller.apply_garbage_failed(got["err"])
+    return status
+
+
+def checked(body, title=None, row=SOFTWARE):
+    """초안을 만들고 본문(과 제목)을 고쳐 글 모양 점검까지 마친 컨트롤러."""
+    controller = made(row)
+    controller.set_body(body)
+    if title is not None:
+        controller.set_title(title)
+    run_garbage(controller)
+    return controller
+
+
+def card_rows(card):
+    return [row["text"] for group in card["groups"] for row in group["rows"]]
+
+
+class Held:
+    """검사 작업을 시험이 문을 열어 줄 때까지 붙잡는다 — 시간에 기대지 않고 '도는 중' 을 확실히 본다."""
+
+    def __init__(self):
+        self.entered, self.release = threading.Event(), threading.Event()
+        self.threads = []
+        self.real = dg.run
+
+    def __call__(self, generation, title, body):
+        self.threads.append(threading.current_thread())
+        self.entered.set()
+        if not self.release.wait(30):
+            raise AssertionError("시험이 문을 열어 주지 않았다")
+        return self.real(generation, title, body)
+
+
+class Forbidden:
+    """불리면 실패하는 규칙 — '복사 길·글 치기·보기에서는 규칙을 부르지 않는다' 를 증명한다."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        raise AssertionError("글 모양 점검 규칙이 불렸다")
+
+
+class GarbageTrackerTest(unittest.TestCase):
+    """세대 번호·낡은 결과 판정·무시 기억·카드 — Qt 도 작업 스레드도 없이 도는 순수 논리(CI 가 돌린다)."""
+
+    def tracker_with(self, title, body):
+        tracker = dg.GarbageTracker()
+        generation = tracker.begin(title, body)
+        self.assertTrue(tracker.deliver(dg.run(generation, title, body)))
+        return tracker
+
+    def test_a_new_tracker_shows_the_before_state_and_has_nothing(self):
+        card = dg.GarbageTracker().card("", "")
+        self.assertEqual((card["state"], card["tone"], card["status"], card["busy"], card["groups"], card["stale"]), ("before", "muted", T["drf_g_before"], False, [], ""))
+        self.assertEqual((card["button"]["text"], card["button"]["enabled"]), (T["drf_inspect_btn"], True))
+
+    def test_each_check_gets_a_new_generation_and_a_second_start_is_refused_while_one_runs(self):
+        tracker = dg.GarbageTracker()
+        first = tracker.begin("제목", "본문")
+        self.assertEqual((tracker.running, tracker.begin("제목", "본문")), (True, None))
+        self.assertTrue(tracker.deliver(dg.run(first, "제목", "본문")))
+        second = tracker.begin("제목", "본문")
+        self.assertGreater(second, first)
+        self.assertGreater(first, 0)
+
+    def test_the_running_card_says_so_and_turns_the_button_into_checking(self):
+        tracker = dg.GarbageTracker()
+        tracker.begin("제목", "본문")
+        card = tracker.card("제목", "본문")
+        self.assertEqual((card["state"], card["tone"], card["status"], card["busy"]), ("running", "muted", T["drf_g_running"], True))
+        self.assertEqual(card["button"], {"text": "검사 중…", "a11y": T["drf_g_busy_a11y"], "enabled": False})
+
+    def test_a_result_is_taken_once_and_only_for_the_running_check(self):
+        tracker = dg.GarbageTracker()
+        generation = tracker.begin("제목", "본문")
+        result = dg.run(generation, "제목", "본문")
+        self.assertTrue(tracker.deliver(result))
+        self.assertFalse(tracker.deliver(result), "같은 결과를 두 번 받지 않는다")
+        self.assertEqual(tracker.card("제목", "본문")["state"], "clean")
+
+    def test_a_result_of_another_generation_is_dropped_and_the_running_check_goes_on(self):
+        tracker = dg.GarbageTracker()
+        generation = tracker.begin("제목", "본문")
+        stranger = dg.run(generation + 7, "제목", "본문")
+        self.assertFalse(tracker.deliver(stranger))
+        self.assertEqual((tracker.pending, tracker.result), (generation, None))
+        self.assertFalse(tracker.deliver(None))
+        self.assertTrue(tracker.deliver(dg.run(generation, "제목", "본문")))
+
+    def test_reset_while_running_drops_the_late_result_and_clears_everything(self):
+        tracker = dg.GarbageTracker()
+        generation = tracker.begin("제목", "{{a}} {{b}}")
+        late = dg.run(generation, "제목", "{{a}} {{b}}")
+        tracker.ignored.add("placeholder:x")
+        tracker.reset()
+        self.assertFalse(tracker.deliver(late))
+        self.assertEqual((tracker.pending, tracker.result, tracker.ignored, tracker.failed, tracker.card("제목", "")["state"]), (None, None, set(), False, "before"))
+        self.assertGreater(tracker.generation, generation)
+
+    def test_a_failure_is_taken_only_for_the_running_check_and_the_next_start_clears_it(self):
+        tracker = dg.GarbageTracker()
+        generation = tracker.begin("제목", "본문")
+        self.assertFalse(tracker.fail(generation + 1))
+        self.assertTrue(tracker.running)
+        self.assertTrue(tracker.fail(generation))
+        card = tracker.card("제목", "본문")
+        self.assertEqual((card["state"], card["tone"], card["status"], card["busy"]), ("failed", "muted", T["drf_g_failed"], False))
+        self.assertFalse(tracker.fail(generation), "이미 끝난 검사의 실패를 다시 받지 않는다")
+        self.assertIsNotNone(tracker.begin("제목", "본문"))
+        self.assertEqual(tracker.card("제목", "본문")["state"], "running")
+
+    def test_stale_follows_the_digest_of_what_was_checked(self):
+        tracker = self.tracker_with("제목", "가나다")
+        self.assertEqual(tracker.stale("제목", "가나다"), "")
+        self.assertEqual(tracker.stale("제목", "가나다라"), "body", "글자 수가 다르면 바뀐 것")
+        self.assertEqual(tracker.stale("제목", "가나라"), "body", "글자 수가 같아도 지문이 다르면 바뀐 것")
+        self.assertEqual(tracker.stale("다른 제목", "가나다"), "title")
+        self.assertEqual(tracker.stale("다른 제목", "가나다라"), "body", "본문이 먼저다")
+        self.assertEqual(tracker.stale("제목", "가나다"), "", "고쳤다 되돌리면 낡지 않았다")
+        self.assertEqual(tracker.stale("제목", "".join(["가", "나", "다"])), "", "같은 글이면 다른 객체여도 같다")
+
+    def test_the_digest_is_a_short_hash_that_does_not_hold_the_text(self):
+        digest = dg.digest_of("고유표지문장")
+        self.assertEqual((len(digest), set(digest) <= set("0123456789abcdef")), (16, True))
+        self.assertEqual(dg.digest_of("고유표지문장"), digest)
+        self.assertNotEqual(dg.digest_of("고유표지문장 "), digest)
+        result = dg.run(3, "고유제목표지", "고유본문표지")
+        self.assertNotIn("고유", repr(result))
+        self.assertEqual((result.generation, result.title_digest, result.body_digest), (3, dg.digest_of("고유제목표지"), dg.digest_of("고유본문표지")))
+
+    def test_the_stale_card_keeps_the_result_and_says_the_body_changed(self):
+        tracker = self.tracker_with("제목", "앞 {{이름}} 뒤")
+        fresh = tracker.card("제목", "앞 {{이름}} 뒤")
+        stale = tracker.card("제목", "앞 {{이름}} 뒤 더")
+        self.assertEqual((fresh["stale"], fresh["stale_text"]), ("", ""))
+        self.assertEqual((stale["stale"], stale["state"], stale["stale_text"]), ("body", "found", T["drf_g_stale_body"]))
+        self.assertTrue(stale["stale_text"].startswith("본문이 변경됨"))
+        self.assertEqual(stale["groups"], fresh["groups"], "결과는 지우지 않는다")
+        title_only = tracker.card("다른 제목", "앞 {{이름}} 뒤")
+        self.assertEqual((title_only["stale"], title_only["stale_text"]), ("title", T["drf_g_stale_title"]))
+
+    def test_ignoring_one_hides_every_same_fingerprint_and_restore_brings_them_back(self):
+        tracker = self.tracker_with("", "가&nbsp;나&nbsp;다&nbsp;라 {{이름}}")
+        card = tracker.card("", "가&nbsp;나&nbsp;다&nbsp;라 {{이름}}")
+        self.assertEqual(card["status"], T["drf_g_found"].format(n=4))
+        entity = next(group for group in card["groups"] if group["kind"] == "entity")
+        self.assertEqual(len(entity["rows"]), 3)
+        self.assertTrue(tracker.ignore(entity["rows"][1]["key"]))
+        after = tracker.card("", "가&nbsp;나&nbsp;다&nbsp;라 {{이름}}")
+        self.assertEqual((after["status"], [group["kind"] for group in after["groups"]]), (T["drf_g_found"].format(n=1), ["placeholder"]))
+        self.assertEqual((after["restore"]["visible"], after["restore"]["text"]), (True, T["drf_g_restore"].format(n=3)))
+        self.assertTrue(tracker.restore())
+        self.assertEqual((tracker.card("", "")["restore"]["visible"], tracker.restore()), (False, False))
+
+    def test_ignore_all_takes_what_was_only_counted_not_just_what_was_shown(self):
+        body = "\n".join("줄 {{" + f"p{number:02d}" + "}} 입니다" for number in range(25))
+        tracker = self.tracker_with("", body)
+        card = tracker.card("", body)
+        self.assertEqual((card["status"], len(card["groups"][0]["rows"]), card["groups"][0]["more"]), (T["drf_g_found"].format(n=25), 10, T["drf_g_more"].format(n=15)))
+        self.assertEqual(card["ignore_all"], {"text": "모두 무시(25건)", "a11y": T["drf_g_ignore_all_a11y"].format(n=25), "visible": True}, "숨은 건까지 무시되므로 단추에 건수가 적힌다")
+        self.assertTrue(tracker.ignore_all())
+        after = tracker.card("", body)
+        self.assertEqual((after["state"], after["status"], after["groups"], after["restore"]["text"]), ("clean", T["drf_g_clean_ignored"].format(n=25), [], T["drf_g_restore"].format(n=25)))
+        self.assertFalse(tracker.ignore_all(), "더 무시할 것이 없다")
+
+    def test_the_next_check_forgets_ignored_things_that_are_gone_and_keeps_those_that_remain(self):
+        tracker = self.tracker_with("", "{{a}} {{b}}")
+        self.assertTrue(tracker.ignore_all())
+        generation = tracker.begin("", "{{a}} {{c}}")
+        tracker.deliver(dg.run(generation, "", "{{a}} {{c}}"))
+        card = tracker.card("", "{{a}} {{c}}")
+        self.assertEqual((card["status"], card["restore"]["text"], len(tracker.ignored)), (T["drf_g_found"].format(n=1), T["drf_g_restore"].format(n=1), 1))
+        self.assertEqual(card_rows(card), ["본문 1문단 1번째 줄 앞에서 7번째 글자 · ‘{{c}}’"], "새로 생긴 것은 새 항목으로 보인다")
+
+    def test_the_ignore_all_button_says_how_many_it_takes_and_follows_the_visible_count(self):
+        """N2FIX — `모두 무시` 는 숨은 건(10건을 넘어 개수로만 보이던 것)까지 지문으로 무시하므로 단추 글에 건수를 적는다. 건수는 지금 보이는 건수를 따라 바뀐다."""
+        body = "{{a}} {{b}} {{c}} {{d}}"
+        tracker = self.tracker_with("", body)
+        card = tracker.card("", body)
+        self.assertEqual(card["ignore_all"], {"text": "모두 무시(4건)", "a11y": T["drf_g_ignore_all_a11y"].format(n=4), "visible": True})
+        self.assertTrue(tracker.ignore(card["groups"][0]["rows"][0]["key"]))
+        self.assertEqual(tracker.card("", body)["ignore_all"], {"text": "모두 무시(3건)", "a11y": T["drf_g_ignore_all_a11y"].format(n=3), "visible": True})
+        self.assertTrue(tracker.ignore(tracker.card("", body)["groups"][0]["rows"][0]["key"]))
+        self.assertEqual(tracker.card("", body)["ignore_all"], {"text": "모두 무시(2건)", "a11y": T["drf_g_ignore_all_a11y"].format(n=2), "visible": True})
+        self.assertTrue(tracker.ignore(tracker.card("", body)["groups"][0]["rows"][0]["key"]))
+        self.assertEqual(tracker.card("", body)["ignore_all"], {"text": "", "a11y": "", "visible": False}, "하나만 남으면 단추가 없다")
+        for state_card in (dg.GarbageTracker().card("", ""), self.tracker_with("", "깨끗해요").card("", "깨끗해요")):
+            self.assertEqual(state_card["ignore_all"], {"text": "", "a11y": "", "visible": False})
+
+    def test_a_key_whose_number_is_the_count_of_the_visible_items_changes_nothing(self):
+        """B04 — 열쇠의 순번은 0 부터 보이는 건수 미만이다. 건수와 같은 순번(마지막 다음)은 받지 않는다."""
+        body = "{{a}} {{b}} {{c}}"
+        tracker = self.tracker_with("", body)
+        generation = tracker.card("", body)["groups"][0]["rows"][0]["key"].partition(".")[0]
+        self.assertFalse(tracker.ignore(f"{generation}.{len(tracker.visible())}"))
+        self.assertEqual(tracker.ignored, set())
+        self.assertTrue(tracker.ignore(f"{generation}.{len(tracker.visible()) - 1}"), "마지막 순번은 받는다")
+        self.assertFalse(tracker.ignore(f"{generation}.{len(tracker.visible())}"), "하나 줄어든 건수와 같은 순번도 받지 않는다")
+        self.assertEqual(len(tracker.ignored), 1)
+
+    def test_ignore_all_after_ignoring_one_keeps_the_first_one_and_takes_the_rest(self):
+        """B05 — 먼저 하나를 무시한 뒤 `모두 무시` 를 눌러도 먼저 무시한 것이 되살아나지 않는다(합쳐서 무시한 건수가 전체다)."""
+        body = "{{a}} {{b}} {{c}} {{d}}"
+        tracker = self.tracker_with("", body)
+        self.assertTrue(tracker.ignore(tracker.card("", body)["groups"][0]["rows"][0]["key"]))
+        self.assertTrue(tracker.ignore_all())
+        card = tracker.card("", body)
+        self.assertEqual((len(tracker.ignored), card["state"], card["restore"]["text"]), (4, "clean", T["drf_g_restore"].format(n=4)))
+
+    def test_abandon_turns_a_delivered_result_into_the_failed_card_and_the_next_check_works(self):
+        """D4 — 결과를 받은 뒤 화면에 그리다 예외가 났을 때(`deliver()` 가 이미 도는 중 번호를 지운 뒤) 카드를 `점검을 끝내지 못했어요` 로 둔다. `fail()` 은 이 길에서 아무것도 못 한다."""
+        tracker = self.tracker_with("제목", "{{a}} {{b}}")
+        tracker.ignored.add("placeholder:keep")
+        tracker.abandon()
+        card = tracker.card("제목", "{{a}} {{b}}")
+        self.assertEqual((card["state"], card["tone"], card["status"], card["busy"], card["groups"], card["button"]["enabled"], card["ignore_all"]["visible"], card["restore"]["visible"]),
+                         ("failed", "muted", T["drf_g_failed"], False, [], True, False, False))
+        self.assertEqual((tracker.running, tracker.result, tracker.pending, tracker.failed, tracker.ignored), (False, None, None, True, {"placeholder:keep"}), "무시 기억은 그대로")
+        self.assertEqual((tracker._snapshot, tracker._asked), (None, None), "검사했던 글의 복사본을 놓는다(받아 둔 원문을 쥐고 있지 않는다)")
+        self.assertEqual((tracker.visible(), tracker.ignored_count(), tracker.stale("제목", "다른 글"), tracker.ignore("1.0"), tracker.ignore_all()), ((), 0, "", False, False))
+        self.assertFalse(tracker.fail(tracker.generation), "이미 끝난 것의 실패를 다시 받지 않는다")
+        generation = tracker.begin("제목", "{{a}} {{b}}")
+        self.assertTrue(tracker.deliver(dg.run(generation, "제목", "{{a}} {{b}}")))
+        self.assertEqual((tracker.card("제목", "{{a}} {{b}}")["state"], tracker.failed), ("found", False), "다음 검사는 정상이다")
+
+    def test_abandon_while_a_check_is_running_drops_its_late_result(self):
+        tracker = dg.GarbageTracker()
+        generation = tracker.begin("제목", "{{a}}")
+        late = dg.run(generation, "제목", "{{a}}")
+        self.assertEqual(tracker._asked, ("제목", "{{a}}"), "(전제) 도는 동안 검사 때의 글 복사본을 쥐고 있다")
+        tracker.abandon()
+        self.assertEqual((tracker.running, tracker.card("제목", "{{a}}")["state"]), (False, "failed"))
+        self.assertEqual((tracker._asked, tracker._snapshot), (None, None), "도는 중에 버리면 검사 때의 글 복사본도 놓는다")
+        self.assertFalse(tracker.deliver(late), "도는 중 번호를 지웠으니 늦게 온 결과는 받지 않는다")
+
+    def test_a_key_of_another_generation_or_out_of_range_changes_nothing(self):
+        tracker = self.tracker_with("", "{{a}}")
+        key = tracker.card("", "{{a}}")["groups"][0]["rows"][0]["key"]
+        generation, _dot, number = key.partition(".")
+        for bad in (f"{int(generation) + 1}.{number}", f"{generation}.99", f"{generation}.-1", f"{generation}.x", "", "x", None, 5, f"{generation}."):
+            with self.subTest(bad):
+                self.assertFalse(tracker.ignore(bad))
+        self.assertEqual(tracker.ignored, set())
+        self.assertTrue(tracker.ignore(key))
+
+    def test_the_card_only_uses_the_info_and_muted_tones_in_every_state(self):
+        bodies = ("", "깨끗한 글이에요.", "{{a}}", "{{a}} " + GS.ZWSP, "가" * 100_001)
+        tones = set()
+        for body in bodies:
+            tracker = dg.GarbageTracker()
+            generation = tracker.begin("제목", body)
+            tracker.deliver(dg.run(generation, "제목", body))
+            tones.add(tracker.card("제목", body)["tone"])
+            tones.add(tracker.card("제목", body + "더")["tone"])
+            tracker.ignore_all()
+            tones.add(tracker.card("제목", body)["tone"])
+        running = dg.GarbageTracker()
+        running.begin("", "")
+        failed = dg.GarbageTracker()
+        failed.fail(failed.begin("", ""))
+        tones |= {dg.GarbageTracker().card("", "")["tone"], running.card("", "")["tone"], failed.card("", "")["tone"]}
+        self.assertEqual(tones, {"info", "muted"}, "빨강(error)·주황(warning)·초록(ok) 은 막음·확인창·안전의 뜻이라 쓰지 않는다")
+
+    def test_the_states_have_their_own_status_lines(self):
+        fresh = self.tracker_with("제목", "깨끗해요").card("제목", "깨끗해요")
+        self.assertEqual((fresh["state"], fresh["status"], fresh["groups"], fresh["ignore_all"]["visible"], fresh["restore"]["visible"]), ("clean", T["drf_g_clean"], [], False, False))
+        found = self.tracker_with("", "{{a}} {{b}}").card("", "{{a}} {{b}}")
+        self.assertEqual((found["state"], found["tone"], found["status"], found["ignore_all"]["visible"]), ("found", "info", T["drf_g_found"].format(n=2), True))
+        single = self.tracker_with("", "{{a}}").card("", "{{a}}")
+        self.assertEqual(single["ignore_all"]["visible"], False, "하나뿐이면 '모두 무시' 가 따로 필요 없다")
+        skipped = self.tracker_with("", "가" * 100_001).card("", "가" * 100_001)
+        self.assertEqual((skipped["state"], skipped["tone"], skipped["status"], skipped["groups"]), ("skipped", "muted", T["drf_g_skipped"], []))
+
+    def test_at_most_ten_details_of_one_kind_are_shown_and_the_rest_is_only_a_count(self):
+        for total in (9, 10, 11, 35):
+            with self.subTest(total):
+                body = "\n".join("{{" + f"p{number:02d}" + "}}" for number in range(total))
+                tracker = self.tracker_with("", body)
+                group = tracker.card("", body)["groups"][0]
+                self.assertEqual((len(group["rows"]), group["chip"], group["more"]), (min(total, 10), T["drf_g_chip"].format(n=total), T["drf_g_more"].format(n=total - 10) if total > 10 else ""))
+
+    def test_an_ignored_item_lets_the_next_hidden_one_take_its_place(self):
+        body = "\n".join("{{" + f"p{number:02d}" + "}}" for number in range(12))
+        tracker = self.tracker_with("", body)
+        group = tracker.card("", body)["groups"][0]
+        self.assertEqual(group["more"], T["drf_g_more"].format(n=2))
+        tracker.ignore(group["rows"][0]["key"])
+        group = tracker.card("", body)["groups"][0]
+        self.assertEqual((len(group["rows"]), group["more"], group["chip"]), (10, T["drf_g_more"].format(n=1), T["drf_g_chip"].format(n=11)))
+        self.assertTrue(group["rows"][-1]["text"].endswith("‘{{p10}}’"))
+
+    def test_the_kinds_come_in_the_fixed_order_and_every_key_is_unique(self):
+        body = S_ALL_KINDS
+        tracker = self.tracker_with("", body)
+        card = tracker.card("", body)
+        self.assertEqual([group["kind"] for group in card["groups"]], list(garbage_rule.KINDS))
+        keys = [row["key"] for group in card["groups"] for row in group["rows"]]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual([group["title"] for group in card["groups"]], [T["drf_g_kind_" + kind] for kind in garbage_rule.KINDS])
+        for group in card["groups"]:
+            self.assertEqual(group["reason"].count("\n"), 0)
+            self.assertTrue(group["reason"].startswith(T["drf_g_why_" + group["kind"]]))
+
+    def test_each_row_names_its_place_and_its_reason(self):
+        body = "첫 문단\n\n안녕" + GS.ZWSP + "하세요 {{이름}}"
+        rows = card_rows(self.tracker_with("제목 {{a}}", body).card("제목 {{a}}", body))
+        self.assertEqual(rows, ["본문 2문단 1번째 줄 앞에서 3번째 글자 · ‘안녕’ 바로 뒤 · 폭 없는 공백(U+200B) 1개", "제목 앞에서 4번째 글자 · ‘{{a}}’", "본문 2문단 1번째 줄 앞에서 8번째 글자 · ‘{{이름}}’"])
+
+    def test_every_kind_has_a_row_shape(self):
+        sentence = "사랑해요 영원히 변하지 않을 거예요."
+        cases = {
+            "broken": ("앞 글자" + GS.FFFD + GS.FFFD, "본문 1문단 1번째 줄 앞에서 5번째 글자 · ‘앞 글자’ 바로 뒤 · 대체 문자(U+FFFD) 2개"),
+            "control": ("색 " + GS.ESC + "빨강", "본문 1문단 1번째 줄 앞에서 3번째 글자 · ‘색’ 바로 뒤 · 제어 문자 이스케이프(U+001B)"),
+            "entity": ("가격&nbsp;12", "본문 1문단 1번째 줄 앞에서 3번째 글자 · ‘&nbsp;’"),
+            "fence": (GS.fenced("코드"), "본문 1문단 1번째 줄 앞에서 1번째 글자 외 1곳 · 역따옴표 세 개 줄 2줄"),
+            "dup_word": ("그래서 좋아요 좋아요 좋아요", "본문 1문단 1번째 줄 앞에서 5번째 글자 · ‘좋아요 좋아요 좋아요’ · 붙어서 3번"),
+            "dup_sentence": (sentence + "\n\n다른 문단이에요.\n\n" + sentence, "본문 1문단 1번째 줄과 3문단 1번째 줄 · ‘사랑해요 영원히 변하지…’ · 2번 나와요"),
+        }
+        for kind, (body, wanted) in cases.items():
+            with self.subTest(kind):
+                card = self.tracker_with("", body).card("", body)
+                self.assertEqual([row["text"] for group in card["groups"] if group["kind"] == kind for row in group["rows"]], [wanted])
+
+    def test_the_same_sentence_twice_on_one_line_is_told_apart_by_the_character_numbers(self):
+        sentence = "사랑해요 영원히 변하지 않을 거예요."
+        body = sentence + " " + sentence + " " + sentence
+        rows = card_rows(self.tracker_with("", body).card("", body))
+        self.assertEqual(rows, ["본문 1문단 1번째 줄 앞에서 1번째 글자와 22번째 글자 외 1곳 · ‘사랑해요 영원히 변하지…’ · 3번 나와요"])
+        two = card_rows(self.tracker_with("", sentence + " " + sentence).card("", sentence + " " + sentence))
+        self.assertEqual(two, ["본문 1문단 1번째 줄 앞에서 1번째 글자와 22번째 글자 · ‘사랑해요 영원히 변하지…’ · 2번 나와요"])
+        other_line = card_rows(self.tracker_with("", sentence + "\n" + sentence).card("", sentence + "\n" + sentence))
+        self.assertEqual(other_line, ["본문 1문단 1번째 줄과 1문단 2번째 줄 · ‘사랑해요 영원히 변하지…’ · 2번 나와요"], "다른 줄이면 줄 번호로 가른다")
+
+    def test_a_hit_on_a_blank_line_and_on_a_leading_blank_line_say_so(self):
+        for body, wanted in (("첫 문단\n\n" + GS.ZWSP + "\n\n끝", "본문 1문단 다음 빈 줄 앞에서 1번째 글자 · 줄 맨 앞 · 폭 없는 공백(U+200B) 1개"), ("\n" + GS.ZWSP + "\n본문", "본문 맨 앞 빈 줄 앞에서 1번째 글자 · 줄 맨 앞 · 폭 없는 공백(U+200B) 1개")):
+            with self.subTest(body[:8]):
+                self.assertEqual(card_rows(self.tracker_with("", body).card("", body)), [wanted])
+
+    def test_a_hit_in_the_title_names_the_title_and_a_hit_at_its_start_says_so(self):
+        card = self.tracker_with(GS.ZWSP + "제목", "본문").card(GS.ZWSP + "제목", "본문")
+        self.assertEqual(card_rows(card), ["제목 앞에서 1번째 글자 · 제목 맨 앞 · 폭 없는 공백(U+200B) 1개"])
+
+    def test_the_text_before_a_hit_is_cut_to_eight_characters_and_the_caught_text_to_twelve(self):
+        before = "일이삼사오육칠팔구십" + GS.ZWSP
+        self.assertEqual(card_rows(self.tracker_with("", before).card("", before)), ["본문 1문단 1번째 줄 앞에서 11번째 글자 · ‘…삼사오육칠팔구십’ 바로 뒤 · 폭 없는 공백(U+200B) 1개"])
+        sentence = "사랑해요 영원히 변하지 않을 거예요."
+        body = sentence + "\n\n" + sentence
+        row = card_rows(self.tracker_with("", body).card("", body))[0]
+        self.assertIn("‘사랑해요 영원히 변하지…’", row)
+        self.assertNotIn("않", row)
+        short = "{{" + "가" * 30 + "}}"
+        self.assertIn("‘{{" + "가" * 10 + "…’", card_rows(self.tracker_with("", short).card("", short))[0])
+
+    def test_a_group_of_the_same_character_is_one_row_with_a_count_and_the_first_place(self):
+        body = "가" + GS.ZWSP * 3 + "나\n\n다" + GS.ZWSP + "라"
+        rows = card_rows(self.tracker_with("", body).card("", body))
+        self.assertEqual(rows, ["본문 1문단 1번째 줄 앞에서 2번째 글자 외 3곳 · ‘가’ 바로 뒤 · 폭 없는 공백(U+200B) 4개"])
+
+    def test_every_invisible_character_of_the_rule_has_a_name_and_the_code_is_shown(self):
+        named = []
+        for code in range(0xE0100):
+            if garbage_rule._INVISIBLE.fullmatch(chr(code)):
+                self.assertNotEqual(dg.invisible_name(code), T["drf_g_n_other"], hex(code))
+                named.append(code)
+        self.assertGreater(len(named), 100)
+        self.assertEqual(dg.invisible_name(0x1F600), T["drf_g_n_other"])
+
+    def test_invisible_and_control_characters_beside_a_hit_are_shown_as_boxes_and_never_raw_anywhere_on_the_card(self):
+        body = "가나" + GS.WJ + "다" + GS.ZWSP + " 색 " + GS.ESC + GS.FFFD + "끝 {{이름}}"
+        card = self.tracker_with("제목" + GS.BOM, body).card("제목" + GS.BOM, body)
+        rows = card_rows(card)
+        self.assertTrue([row for row in rows if "가나" + dg.BOX + "다" in row], rows)
+        for value in all_strings(card, KEYS_NOT_SHOWN):
+            self.assertIsNone(garbage_rule.HIDDEN.search(value), f"보이지 않는 글자가 카드에 날것으로 나갔다: {value[:40]!r}")
+
+    def test_a_key_shape_next_to_a_hit_is_never_repeated_on_the_card(self):
+        key = GS.KEY_SHAPED
+        cases = (key + GS.ZWSP + "뒤", "앞" + GS.ZWSP + key, key + "{{이름}}", "{{이름}}" + key, " ".join([key] * 4), key + GS.FFFD + key, key + "&nbsp;" + key, key + GS.ESC + key, key + " 좋아요 좋아요 좋아요 " + key, "{{" + key + "}}",
+                 key + GS.fenced("코드") + key, "\n\n".join([key + " 같은 문장이 되풀이돼요 정말로 그래요.", key + " 같은 문장이 되풀이돼요 정말로 그래요."]))
+        for body in cases:
+            with self.subTest(body[:30].replace("\n", " ")):
+                card = self.tracker_with(key + " 제목" + GS.ZWSP, body).card(key + " 제목" + GS.ZWSP, body)
+                shown = " ".join(all_strings(card, KEYS_NOT_SHOWN))
+                for start in range(0, len(key) - 7):
+                    self.assertNotIn(key[start:start + 8], shown, "키 모양의 조각이 카드에 되풀이됐다")
+
+    def test_the_card_has_no_original_sentence_beyond_the_cut_pieces(self):
+        long_sentence = "고유한표지문장은이렇게길어서한번에다보이면안되는문장이에요."
+        body = long_sentence + "\n\n" + long_sentence
+        shown = " ".join(all_strings(self.tracker_with("", body).card("", body), KEYS_NOT_SHOWN))
+        self.assertNotIn(long_sentence[:16], shown)
+        self.assertIn(long_sentence[:12], shown)
+
+    def test_the_card_texts_have_no_python_text_enum_name_or_forbidden_word(self):
+        leaks = r"\['|\bNone\b|\bTrue\b|\bFalse\b|Traceback|\bnaver_[ab]\b|\bgeneric\b|\bplaceholder\b|\bdup_word\b|\bdup_sentence\b|\binvisible\b|\bbroken\b|\bfence\b|\bentity\b|\bcontrol\b"
+        card = self.tracker_with("", S_ALL_KINDS).card("", S_ALL_KINDS)
+        strings = list(all_strings(card, KEYS_NOT_SHOWN))
+        self.assertGreater(len(strings), 40)
+        for value in strings:
+            self.assertNotRegex(value, leaks)
+            for word in FORBIDDEN_WORDS + text.FORBIDDEN:
+                self.assertFalse(word in value, f"{word} / {value[:40]}")
+
+    def test_five_thousand_findings_make_the_card_fast_and_repeated_cards_are_cheap(self):
+        import time
+        body = "\n".join("{{" + f"p{number:04d}" + "}}" for number in range(5000))
+        tracker = self.tracker_with("", body)
+        start = time.perf_counter()
+        card = tracker.card("", body)
+        built = time.perf_counter() - start
+        self.assertLess(built, 2.0)
+        self.assertEqual((card["status"], card["groups"][0]["more"]), (T["drf_g_found"].format(n=5000), T["drf_g_more"].format(n=4990)))
+        start = time.perf_counter()
+        for _ in range(200):
+            tracker.card("", body + "더")
+        self.assertLess(time.perf_counter() - start, 1.0, "글을 칠 때마다 불러도 가볍다(가공은 결과가 바뀔 때만)")
+
+
+S_ALL_KINDS = ("깨진 " + GS.FFFD + " 글자 그리고 " + GS.ZWSP + "\n\n색 " + GS.ESC + "빨강 가격&nbsp;12 {{이름}} 그래서 좋아요 좋아요 좋아요\n\n" + GS.fenced("코드") +
+               "\n\n사랑해요 영원히 변하지 않을 거예요.\n\n그날을 기억해요.\n\n사랑해요 영원히 변하지 않을 거예요.")
+
+
+class GarbageControllerTest(unittest.TestCase):
+    """컨트롤러 연결 — 작업 스레드로 한 길만 돌고, 세대 번호로 낡은 결과를 버리고, 새 초안·떠남·닫기에서 모두 지운다."""
+
+    def test_a_check_needs_a_draft_and_is_refused_while_the_draft_is_being_made(self):
+        empty = new_controller()
+        self.assertEqual(empty.start_garbage(), ("unavailable", None))
+        busy = made(SOFTWARE)
+        with mock.patch.object(type(busy), "busy", new_callable=mock.PropertyMock, return_value=True):
+            self.assertEqual(busy.start_garbage(), ("unavailable", None))
+
+    def test_the_check_runs_on_another_thread_and_the_callbacks_too_and_the_result_holds_no_text(self):
+        controller = made(SOFTWARE)
+        controller.set_body("고유본문표지 {{a}}")
+        threads, got = [], {}
+        held = Held()
+        with mock.patch.object(dg, "run", held):
+            status, job = controller.start_garbage(on_done=lambda result, payload: (threads.append(threading.current_thread()), got.setdefault("ok", result)), on_error=lambda failure, payload: None)
+            held.release.set()
+            job.join(30)
+        self.assertEqual(status, "started")
+        self.assertIsNot(held.threads[0], threading.current_thread(), "검사는 화면 스레드가 아니라 작업 스레드에서 돈다")
+        self.assertIsNot(threads[0], threading.current_thread())
+        self.assertNotIn("고유본문", repr(got["ok"]))
+        self.assertTrue(controller.apply_garbage(got["ok"]))
+
+    def test_while_running_the_card_says_checking_and_a_second_start_is_busy(self):
+        held = Held()
+        with mock.patch.object(dg, "run", held):
+            controller = made(SOFTWARE)
+            controller.set_body("{{a}}")
+            status, job = controller.start_garbage()
+            self.assertTrue(held.entered.wait(10))
+            card = controller.garbage_card()
+            self.assertEqual((status, card["state"], card["busy"], card["button"]["text"], card["button"]["enabled"]), ("started", "running", True, "검사 중…", False))
+            self.assertEqual(controller.start_garbage(), ("busy", None), "중복 실행 방지")
+            held.release.set()
+            job.join(10)
+        self.assertEqual(controller.garbage_card()["state"], "running", "결과를 적용하기 전까지는 도는 중이다")
+
+    def test_the_result_is_applied_once_and_a_second_check_works(self):
+        controller = checked("{{a}} 와 {{b}}")
+        card = controller.garbage_card()
+        self.assertEqual((card["state"], card["status"], card["busy"]), ("found", T["drf_g_found"].format(n=2), False))
+        self.assertEqual((card["stale"], card["stale_text"]), ("", ""), "방금 검사한 글은 낡지 않았다")
+        controller.set_body(controller.body + " 더")
+        self.assertEqual((controller.garbage_card()["stale"], controller.garbage_card()["stale_text"]), ("body", T["drf_g_stale_body"]))
+        controller.set_body(controller.body[:-2])
+        self.assertEqual(controller.garbage_card()["stale"], "", "되돌리면 낡지 않았다")
+        controller.set_title(controller.title + "!")
+        self.assertEqual(controller.garbage_card()["stale"], "title")
+        controller.set_title(controller.title[:-1])
+        self.assertEqual(run_garbage(controller), "started")
+        self.assertEqual(controller.garbage_card()["status"], T["drf_g_found"].format(n=2))
+
+    def test_editing_while_the_check_runs_marks_the_result_stale_when_it_arrives(self):
+        held = Held()
+        with mock.patch.object(dg, "run", held):
+            controller = made(SOFTWARE)
+            controller.set_body("{{a}}")
+            got = {}
+            status, job = controller.start_garbage(on_done=lambda result, payload: got.setdefault("ok", result))
+            held.entered.wait(10)
+            controller.set_body("{{a}} 더 썼어요")
+            held.release.set()
+            job.join(10)
+        self.assertTrue(controller.apply_garbage(got["ok"]))
+        card = controller.garbage_card()
+        self.assertEqual((card["state"], card["stale"], card["stale_text"]), ("found", "body", T["drf_g_stale_body"]))
+        self.assertEqual(card_rows(card), ["본문 1문단 1번째 줄 앞에서 1번째 글자 · ‘{{a}}’"])
+
+    def test_leaving_the_screen_while_running_drops_the_late_result(self):
+        held = Held()
+        with mock.patch.object(dg, "run", held):
+            controller = made(SOFTWARE)
+            controller.set_body("{{a}}")
+            got = {}
+            status, job = controller.start_garbage(on_done=lambda result, payload: got.setdefault("ok", result), on_cancel=lambda payload: got.setdefault("cancelled", True))
+            held.entered.wait(10)
+            controller.leave()
+            held.release.set()
+            job.join(10)
+        self.assertEqual(got.keys() & {"ok"}, set(), "취소된 작업은 완료로 알리지 않는다")
+        self.assertFalse(controller.apply_garbage(got.get("ok")))
+        self.assertEqual(controller.garbage.card("", "")["state"], "before")
+
+    def test_the_worker_checks_the_text_of_the_moment_the_check_started_even_when_it_only_begins_after_an_edit(self):
+        """D5 D01 — 작업자가 시작 때의 글 복사본이 아니라 **지금 컨트롤러의 글**을 읽으면(작업자가 늦게 시작하면 그 사이에 바뀐 글을 읽는다) 낡은 글의 점검이 새 글의 결과인 척한다. 작업의 시작을 시험이 미뤄 그 틈을 만든다 — 붙잡는 `Held` 는 인자를 받은 뒤에 붙잡아 이 틈을 못 본다."""
+        deferred = []
+
+        class Deferred(dv.Job):
+            def start(self):                                             # 시작을 미룬다 — 시험이 글을 바꾼 뒤 직접 돌린다
+                deferred.append(self)
+                return True
+
+        seen = []
+        real = dg.run
+
+        def spy(generation, title, body):
+            seen.append((title, body))
+            return real(generation, title, body)
+
+        controller = made(SOFTWARE)
+        controller.set_title("시작 때 제목")
+        controller.set_body("시작 때 본문 {{a}}")
+        with mock.patch.object(dv, "Job", Deferred), mock.patch.object(dg, "run", spy):
+            status, job = controller.start_garbage()
+            controller.set_title("고친 제목")
+            controller.set_body("고친 본문")
+            deferred[0]._run()                                           # 작업자는 글이 바뀐 뒤에야 일을 시작한다
+        self.assertEqual((status, seen), ("started", [("시작 때 제목", "시작 때 본문 {{a}}")]))
+
+    def test_a_late_cancel_notice_never_changes_the_check_that_is_running_now(self):
+        """E02 의 순수 쪽 — 취소 알림은 아무것도 바꾸지 않는다(새 초안·떠남·닫기에서 이미 모두 지웠다)."""
+        held = Held()
+        controller = made(SOFTWARE)
+        controller.set_body("{{a}}")
+        with mock.patch.object(dg, "run", held):
+            status, job = controller.start_garbage()
+            self.assertTrue(held.entered.wait(10))
+            self.assertFalse(controller.apply_garbage_cancelled())
+            card = controller.garbage_card()
+            self.assertEqual((card["state"], controller.garbage.running, controller.garbage.failed), ("running", True, False))
+            held.release.set()
+            job.join(10)
+
+    def test_a_new_draft_or_another_candidate_while_running_drops_the_late_result(self):
+        for action in ("regenerate", "open_target"):
+            with self.subTest(action):
+                held = Held()
+                with mock.patch.object(dg, "run", held):
+                    controller = made(SOFTWARE)
+                    controller.set_body("{{a}}")
+                    got = {}
+                    status, job = controller.start_garbage(on_done=lambda result, payload: got.setdefault("ok", result))
+                    held.entered.wait(10)
+                    if action == "regenerate":
+                        drive(controller, controller.start_make)
+                    else:
+                        controller.open_target(target_of(APPLIANCE))
+                    held.release.set()
+                    job.join(10)
+                self.assertFalse(controller.apply_garbage(got.get("ok")))
+                self.assertEqual(controller.garbage.card("", "")["state"], "before")
+
+    def test_a_rule_that_raises_makes_a_failed_card_and_the_next_check_works(self):
+        controller = made(SOFTWARE)
+        controller.set_body("{{a}}")
+        with mock.patch.object(dg, "run", Forbidden()):
+            self.assertEqual(run_garbage(controller), "started")
+        card = controller.garbage_card()
+        self.assertEqual((card["state"], card["status"], card["busy"], card["tone"]), ("failed", T["drf_g_failed"], False, "muted"))
+        self.assertEqual(controller.state, "normal", "글 모양 점검의 실패가 초안 화면을 오류 상태로 만들지 않는다")
+        self.assertEqual(run_garbage(controller), "started")
+        self.assertEqual(controller.garbage_card()["state"], "found")
+
+    def test_an_old_failure_does_not_fail_the_new_check(self):
+        controller = made(SOFTWARE)
+        controller.set_body("{{a}}")
+        generation = controller.garbage.begin(controller.title, controller.body)                  # 작업 없이 '도는 중' 상태만 만든다
+        old = jobs.JobFailure("x", "Boom")
+        old.generation = generation - 100
+        self.assertFalse(controller.apply_garbage_failed(old))
+        self.assertTrue(controller.garbage.running)
+        self.assertFalse(controller.apply_garbage_failed(jobs.JobFailure("x", "Boom")), "어느 검사의 실패인지 모르면 받지 않는다")
+        current = jobs.JobFailure("x", "Boom")
+        current.generation = generation
+        self.assertTrue(controller.apply_garbage_failed(current))
+        self.assertEqual(controller.garbage_card()["state"], "failed")
+
+    def test_shutdown_drops_the_result_and_does_not_wait_for_the_worker(self):
+        import time
+        held = Held()
+        with mock.patch.object(dg, "run", held):
+            controller = made(SOFTWARE)
+            controller.set_body("{{a}}")
+            got = {}
+            status, job = controller.start_garbage(on_done=lambda result, payload: got.setdefault("ok", result))
+            held.entered.wait(10)
+            start = time.perf_counter()
+            controller.shutdown()
+            self.assertLess(time.perf_counter() - start, 0.5, "작업자 종료를 기다리지 않는다")
+            held.release.set()
+            job.join(10)
+        self.assertEqual(got, {})
+        self.assertFalse(controller.garbage.running)
+
+    def test_the_side_card_list_has_the_garbage_card_right_after_the_inspect_card(self):
+        side = made(SOFTWARE).view()["normal"]["side"]
+        keys = list(side)
+        self.assertEqual(keys[:3], ["inspect", "garbage", "keywords"])
+        self.assertEqual(side["garbage"]["title"], "글 모양 점검")
+        self.assertEqual(side["garbage"]["note"], "복사를 막지 않아요")
+        self.assertEqual(side["garbage"], made(SOFTWARE).garbage_card())
+
+    def test_ignore_methods_work_through_the_controller_and_a_new_draft_clears_the_memory(self):
+        controller = checked("{{a}} {{b}}")
+        key = controller.garbage_card()["groups"][0]["rows"][0]["key"]
+        self.assertTrue(controller.ignore_garbage(key))
+        self.assertEqual(controller.garbage_card()["status"], T["drf_g_found"].format(n=1))
+        self.assertTrue(controller.restore_garbage())
+        self.assertTrue(controller.ignore_all_garbage())
+        self.assertEqual(controller.garbage_card()["state"], "clean")
+        controller.set_body("{{a}} {{b}}")
+        drive(controller, controller.start_make)
+        self.assertEqual(controller.garbage.ignored, set(), "새 초안은 무시 기억을 지운다")
+        self.assertEqual(controller.garbage_card()["state"], "before")
+
+    def test_the_ignore_memory_lives_only_in_memory(self):
+        source = (UI_DIR / "core" / "draft_garbage.py").read_text(encoding="utf-8")
+        for forbidden in ("open(", "write", "json", "sqlite", "pickle", "shelve", "os.", "pathlib", "settings", "environ"):
+            self.assertNotIn(forbidden, source, forbidden)
+        controller = checked("{{a}} {{b}}")
+        controller.ignore_all_garbage()
+        simple = (type(None), bool, int, str, tuple, list, set, frozenset, dict, dg.GarbageResult)
+        for name, value in vars(controller.garbage).items():
+            self.assertIsInstance(value, simple, f"추적기의 {name} 칸은 메모리 값뿐이다(파일·소켓·스레드를 쥐지 않는다)")
+
+    def test_the_scan_is_not_called_while_typing_inspecting_viewing_or_copying(self):
+        controller = made(SOFTWARE)
+        forbidden = Forbidden()
+        with mock.patch.object(dg, "run", forbidden), mock.patch.object(garbage_rule, "scan", forbidden):
+            for index in range(5):
+                controller.set_title("제목 " + "가" * index)
+                controller.set_body(controller.body + " 더 {{a}} " + GS.ZWSP)
+            controller.inspect()
+            controller.view()
+            controller.garbage_card()
+            controller.editor_status()
+            controller.title_picks()
+            controller.inspect_card()
+            controller.options_vm()
+            for item in rules.COPY_ITEMS:
+                controller.copy_decision(item)
+                controller.blocks_for(item)
+                controller.final_text(item)
+                controller.confirm_copy(item)
+            controller.leave_dialog()
+            controller.regen_dialog()
+        self.assertEqual(forbidden.calls, 0)
+
+    def test_only_start_garbage_reaches_the_rule_in_the_controller_source(self):
+        path = UI_DIR / "core" / "drafts_view.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        users = []
+        for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+            for node in ast.walk(function):
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "garbage" and node.attr == "run":
+                    users.append(function.name)
+        self.assertEqual(users, ["start_garbage"])
+        source = path.read_text(encoding="utf-8")
+        self.assertNotIn("scan(", source)
+        self.assertNotIn("check.garbage", source)
+        self.assertNotIn("check import garbage", source)
+
+
+class GarbageSeparationTest(unittest.TestCase):
+    """운영자 조건: 경고만 — 복사 길·확인창·단추 상태·건강·출처·안전 점검과 분리. 글 모양 점검이 있든 없든 복사 결과가 글자까지 같다."""
+    GATE_FUNCTIONS = ("gate", "copy_decision", "confirm_copy", "final_text", "blocks_for", "blocked_dialog", "gate_dialog", "text_for", "checks", "health_for", "user_health", "_inspect_now")
+
+    def outcomes(self, controller):
+        """복사 단추를 누른 결과를 모두 모은다 — 항목마다 (결정, 안내창 글·복사할 글), 막음 이유, 마지막 글, 확인한 뒤의 글. 확인 기억은 매번 지운다."""
+        found = []
+        for item in rules.COPY_ITEMS:
+            controller.ack, controller.copy_asked = {}, None
+            kind, payload = controller.copy_decision(item)
+            confirmed = controller.confirm_copy(item) if kind == "confirm" else None
+            found.append((item, kind, payload, controller.blocks_for(item), controller.final_text(item), confirmed))
+            controller.ack, controller.copy_asked = {}, None
+        return found
+
+    def test_the_copy_path_gives_the_same_results_for_three_hundred_different_inputs_with_or_without_a_check(self):
+        bodies = GS.mixed_bodies(300)
+        self.assertEqual(len(set(bodies)), 300)
+        controller = made(SOFTWARE)
+        kinds = {"unavailable": 0, "blocked": 0, "confirm": 0, "copy": 0}
+        with mock.patch.object(dg, "run", Forbidden()):
+            before = []
+            for body in bodies:
+                controller.set_body(body)
+                before.append(self.outcomes(controller))
+        for number, body in enumerate(bodies):
+            controller.set_body(body)
+            self.assertEqual(run_garbage(controller), "started")
+            if number % 3 == 0:
+                controller.ignore_all_garbage()
+            elif number % 3 == 1:
+                card = controller.garbage_card()
+                if card["groups"]:
+                    controller.ignore_garbage(card["groups"][0]["rows"][0]["key"])
+            with mock.patch.object(dg, "run", Forbidden()), mock.patch.object(garbage_rule, "scan", Forbidden()):
+                after = self.outcomes(controller)
+            self.assertEqual(after, before[number], f"입력 {number} 의 복사 결과가 글 모양 점검 때문에 달라졌다")
+            for entry in after:
+                kinds[entry[1]] += 1
+        self.assertGreater(kinds["blocked"], 100, "막음이 여러 번 일어난 입력 모음이어야 한다")
+        self.assertGreater(kinds["confirm"], 30)
+        self.assertGreater(kinds["copy"], 100)
+
+    def test_the_dialogs_never_contain_a_phrase_of_the_new_card(self):
+        phrases = {T["drf_g_title"], T["drf_g_note"], T["drf_g_stale_body"], T["drf_g_busy"], *(T["drf_g_kind_" + kind] for kind in garbage_rule.KINDS)}
+        controller = made(SOFTWARE)
+        seen = 0
+        for body in GS.mixed_bodies(60):
+            controller.set_body(body)
+            run_garbage(controller)
+            for item in rules.GATED:
+                controller.ack, controller.copy_asked = {}, None
+                kind, payload = controller.copy_decision(item)
+                if kind in ("confirm", "blocked"):
+                    seen += 1
+                    for value in all_strings(payload):
+                        for phrase in phrases:
+                            self.assertNotIn(phrase, value)
+        self.assertGreater(seen, 30)
+
+    def test_the_action_buttons_are_the_same_before_during_and_after_a_check_and_with_findings(self):
+        controller = made(SOFTWARE)
+        controller.set_body("{{a}} " + GS.ZWSP)
+        plain = controller.view()["normal"]["actions"]
+        held = Held()
+        with mock.patch.object(dg, "run", held):
+            status, job = controller.start_garbage()
+            held.entered.wait(10)
+            self.assertEqual(controller.view()["normal"]["actions"], plain, "검사 중에도 복사 단추는 그대로")
+            held.release.set()
+            job.join(10)
+        run_garbage(controller)
+        self.assertEqual(controller.view()["normal"]["actions"], plain)
+        controller.ignore_all_garbage()
+        self.assertEqual(controller.view()["normal"]["actions"], plain)
+
+    def test_the_other_cards_are_unchanged_by_the_check(self):
+        controller = made(SOFTWARE)
+        controller.set_body(controller.body + "\n\n직접 써 보니 정말 좋았습니다.\n\n{{a}}")
+        controller.inspect()
+        before = {key: value for key, value in controller.view()["normal"]["side"].items() if key != "garbage"}
+        run_garbage(controller)
+        controller.ignore_all_garbage()
+        self.assertEqual({key: value for key, value in controller.view()["normal"]["side"].items() if key != "garbage"}, before)
+        self.assertEqual((controller.inspect_card()["tone"], controller.state), ("warning", "normal"))
+
+    def test_a_check_does_not_change_the_text_the_marks_the_acknowledgements_or_the_unsaved_state(self):
+        controller = made(SOFTWARE)
+        controller.set_title(controller.title + " 고침")
+        controller.set_body(GS.mixed_bodies(5)[3])
+        controller.mark_copied("body")
+        def state():
+            return (controller.title.encode("utf-8", "surrogatepass"), controller.body.encode("utf-8", "surrogatepass"), set(controller.copied), dict(controller.ack), controller.has_unsaved(), controller.copy_asked,
+                    [controller.text_for(item) for item in rules.COPY_ITEMS], controller.editor_status())
+
+        before = state()
+        controller.inspect()
+        run_garbage(controller)
+        controller.ignore_all_garbage()
+        controller.restore_garbage()
+        self.assertEqual(state(), before, "검사 전후 제목·본문 바이트와 복사할 글이 같다")
+
+    def test_the_gate_functions_never_reach_the_new_state(self):
+        tree = ast.parse((UI_DIR / "core" / "drafts_view.py").read_text(encoding="utf-8"))
+        functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+        for name in self.GATE_FUNCTIONS:
+            with self.subTest(name):
+                self.assertIn(name, functions)
+                for node in ast.walk(functions[name]):
+                    if isinstance(node, ast.Attribute):
+                        self.assertNotIn(node.attr, ("garbage", "garbage_card", "start_garbage", "apply_garbage", "ignore_garbage"))
+                    if isinstance(node, ast.Name):
+                        self.assertNotIn(node.id, ("garbage", "dg"))
+
+    def test_the_gate_the_claims_check_the_safety_check_and_the_services_do_not_know_the_rule(self):
+        src = ROOT / "src" / "chanceblog_desktop"
+        self.assertNotIn("garbage", (src / "ui" / "core" / "draft_rules.py").read_text(encoding="utf-8"))
+        for folder in ("service", "topics", "render", "content", "publish", "security", "topicdb"):
+            for path in sorted((src / folder).rglob("*.py")):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    modules = [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""] if isinstance(node, ast.ImportFrom) else []
+                    for module in modules:
+                        self.assertNotIn("garbage", module, f"{path.name}: {module}")
+        for name in ("claims.py", "similarity.py", "profile_options.py"):
+            self.assertNotIn("garbage", (src / "check" / name).read_text(encoding="utf-8"), name)
+        self.assertNotIn("garbage", (src / "ui" / "core" / "drafts.py").read_text(encoding="utf-8"))
+
+    def test_the_card_has_no_button_for_copying_or_for_the_gate_and_no_new_dialog(self):
+        card = checked(S_ALL_KINDS).garbage_card()
+        self.assertEqual(sorted(card["button"]), ["a11y", "enabled", "text"])
+        self.assertEqual(sorted(card["ignore_all"]), ["a11y", "text", "visible"])
+        for group in card["groups"]:
+            self.assertEqual(sorted(group), ["chip", "kind", "more", "reason", "rows", "title"])
+            for row in group["rows"]:
+                self.assertEqual(sorted(row), ["a11y", "button", "key", "text"])
+        self.assertFalse([name for name in dir(dg.GarbageTracker) if "copy" in name or "dialog" in name or "gate" in name])
+
+
+class GarbageTextTest(unittest.TestCase):
+    def test_the_phrases_the_operator_named_are_in_the_texts(self):
+        self.assertEqual(T["drf_g_title"], "글 모양 점검")
+        self.assertTrue(T["drf_g_stale_body"].startswith("본문이 변경됨"))
+        self.assertEqual(T["drf_g_more"].format(n=3), "… 외 3건")
+        self.assertEqual(T["drf_g_busy"], "검사 중…")
+        self.assertIn("검사하기", T["drf_g_hint"])
+        self.assertIn("복사", T["drf_g_note"])
+        self.assertEqual(dg.DETAIL_MAX, 10)
+
+    def test_every_new_text_key_starts_with_the_new_prefix_and_is_used_by_the_screen_layer_or_the_qt_files(self):
+        keys = [key for key in draft_text.DRAFT_T if key.startswith("drf_g_")]
+        self.assertGreater(len(keys), 60)
+        sources = "".join(path.read_text(encoding="utf-8") for path in (UI_DIR / "core" / "draft_garbage.py", UI_DIR / "core" / "drafts_view.py"))
+        for key in keys:
+            used = key in sources or any(key.startswith(prefix) for prefix in ("drf_g_kind_", "drf_g_why_")) or key.startswith(("drf_g_n_", "drf_g_c_"))
+            self.assertTrue(used, key)
+
+
 # ---- 4) 소스 규칙 -----------------------------------------------------------------------------------------------------------------------------
 class SourceRulesTest(unittest.TestCase):
-    CORE = [UI_DIR / "core" / name for name in ("draft_rules.py", "drafts.py", "drafts_view.py", "draft_text.py")]
+    CORE = [UI_DIR / "core" / name for name in ("draft_rules.py", "drafts.py", "drafts_view.py", "draft_text.py", "draft_garbage.py")]       # 글 모양 점검 화면 계층(N-2)을 더했다 — 더하는 방향으로만 고친다
     ALL_NEW = CORE + [UI_DIR / "drafts_adapter.py"]
     REAL_BLOGS = ("ssae" + "ssace", "shine" + "5652", "스마트" + "프라이싱", "스마트" + "초이스", "실전" + "노트", "디지털" + "찬스")
 

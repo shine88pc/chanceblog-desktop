@@ -594,6 +594,62 @@ python scripts/ui_capture.py <폴더> --env 1920x1080@125 --gallery --check   # 
 
 **남는 것(운영자 PC 확인)**: 실제 윈도 125·150% 렌더에서 편집기·제목 후보·확인 권장 접이식·아래 고정 줄 모양 · **한글 입력기(IME)로 본문·제목을 칠 때의 조합·커서**(시험은 입력기 확정 이벤트로 흉내 냈다 — `QTest.keyClicks` 는 이 환경에서 한글에 프로세스가 죽는다) · 화면 읽기 프로그램이 제목 후보·편집기·확인창·복사 단추를 어떻게 읽는지 · **실제 사용자 폴더·실제 블로그 프로필로 초안을 한 번 만들어 읽어 보기**(제목 후보·본문·확인 권장이 사람이 읽기에 어색하지 않은지, 프로필의 블로그 주소가 `https://blog.naver.com/<아이디>` 한 모양이어서 `네이버 글쓰기 열기` 가 켜지는지) · **`네이버 글쓰기 열기` 가 실제 브라우저에서 글쓰기 화면을 여는지**(주소 모양 `?Redirect=Write` 는 관례에 기댄 값이라 확인이 필요하다 — D-289 ㉡) · 복사한 글을 네이버 편집기에 붙였을 때 줄바꿈·서식이 기대와 같은지 · 실제 윈도 클립보드를 다른 프로그램이 잡고 있을 때 `복사하지 못했어요` 가 보이는지(시험은 쓰기가 먹지 않는 가짜 클립보드로 했다 — V7) · 건강 효과 단정 막음 안내(`걸린 곳(앞부분만 보여요)`)가 사람이 읽기에 쉬운지.
 
+## 10-8. 글 모양 점검 카드 — 사진·점검·병합 조건 증명·시험·변이 점검 (2026-11-10)
+
+초안 작성 화면 오른쪽 칸의 새 카드다(결정 D-315부터 D-324까지, 변경 등급 T1 — 복사 관문 바로 옆이라 독립 검증 1회 권고). 규칙의 뜻은 [`UI_STATES.md`](UI_STATES.md) §5-6b, 화면 규칙은 [`UI_DESIGN_SPEC.md`](UI_DESIGN_SPEC.md) §4-7, 결정은 [`DECISIONS.md`](DECISIONS.md) 에 있다. 이 절은 증거만 모았다.
+
+**사진**(offscreen — 실제 창을 띄우지 않았다. 후보·블로그 이름·글은 모두 가짜이고 가짜 글의 보이지 않는 글자는 코드 숫자로 만든 것이다. 폭 1000px 로 줄였다):
+
+| 환경 | 사진 |
+|---|---|
+| 1920×1080 / 125%(배율 흉내 — 논리 1536×864, 두 칸) | ![글 모양 점검 — 결과 있음(종류별 항목·무시)](images/ui/1920x1080_125_drafts_garbage.png) ![본문이 변경됨 — 하나를 무시하고 글을 더 친 모습](images/ui/1920x1080_125_drafts_garbage_stale.png) |
+| 최소 창 900×560(한 칸) | ![한 칸으로 쌓인 카드](images/ui/1366x768_100_drafts_garbage_narrow.png) |
+
+**점검**(`scripts/ui_capture.py` 의 초안 장면 — 환경 5개(1366×768 100%·125%, 1920×1080 100%·125%·150%) × 장면 19개 = 95번): 글자 잘림 0·가로 스크롤 0·아래 고정 줄이 창 안(65곳)·칸 수가 규칙대로 — 문제 0. 기존 초안 사진(`*_drafts.png` 들)은 이 카드가 생기기 전 모습이라 **새 카드(또는 확인창 뒤 흐린 배경의 새 카드)가 보여 모양이 달라진 14장을 같은 방법으로 다시 찍어 바꿨다**(새로 찍은 것과 다른 픽셀이 0.5% 를 넘는 사진만 — 쪽 스크롤바 막대 길이만 달라진 사진과 카드가 안 보이는 장면은 그대로 둔다).
+
+**표 10-8-1. 운영자 추가 조건 8개와 증명**(2026-11-10):
+
+| # | 조건 | 증명 |
+|---|---|---|
+| 1 | `검사하기` 를 눌렀을 때만 실행(자동 실행 금지) | 규칙을 '불리면 실패하는 함수' 로 바꿔 놓고 글 치기·보기·검사 카드·복사 결정 전부를 돌려도 0번(`GarbageControllerTest.test_the_scan_is_not_called_while_typing_inspecting_viewing_or_copying`·Qt `test_typing_in_the_editor_or_the_title_never_runs_the_rule`)·소스 시험이 `start_garbage` 를 부르는 곳이 `drf_inspect` 하나뿐임을 못박는다(`GarbageSourceRulesTest`) |
+| 2 | 검사한 뒤 본문이 바뀌면 `본문이 변경됨` | `GarbageTrackerTest` 의 낡음 판정(같은 글자 수·다른 글·고쳤다 되돌림·제목만)·Qt `test_the_body_changed_note_shows_right_after_typing_and_goes_away_when_the_text_is_back`·`test_editing_while_the_check_runs_shows_body_changed_when_the_result_arrives` |
+| 3 | 동일 유형 상세 최대 10건·나머지는 개수만 | `test_at_most_ten_details_of_one_kind_are_shown_and_the_rest_is_only_a_count`(9·10·11·35건)·`test_ignore_all_takes_what_was_only_counted_not_just_what_was_shown`·Qt 폭마다 `외 5건` |
+| 4 | 코드 블록·한 줄 코드·`>` 인용 줄 안의 자리표시·HTML 표시는 검사 제외 | `test_check_garbage` 의 `CodeRegionTest`·`EntityTest`·`PlaceholderTest`·변이 killer M05·M26부터 M29까지(한 줄 코드 200자 경계·닫는 줄 조건·인용 줄 들여쓰기 한계) |
+| 5 | 모든 경고는 비차단 | 분리 증명 8개(표 10-8-2) — 복사 결정·확인창 글·`actions` 불변 |
+| 6 | 검사 전후 본문 바이트·복사 결과 동일 | 순수 `test_a_check_does_not_change_the_text_the_marks_the_acknowledgements_or_the_unsaved_state`·같은 입력 300개 차분·Qt `test_the_text_bytes_and_every_copy_result_are_the_same_before_and_after_a_check`(편집기 `toPlainText()` 바이트와 항목 여섯의 복사 글) |
+| 7 | 무시 상태는 화면 메모리에만 | `test_the_ignore_memory_lives_only_in_memory`(소스에 파일·직렬화 낱말 0·추적기가 가진 값이 메모리 값뿐)·Qt `test_leaving_the_screen_and_coming_back_with_a_new_draft_clears_the_ignore_memory`·읽기 전용 증명(데이터 폴더 전체 바이트 같음) |
+| 8 | 글 모양 점검이 화면 스레드를 막지 않음(작업 스레드·세대 번호 — 같은 단추의 기존 검사 `inspect()` 는 아직 동기라 이 증명 밖이다, D-320 ㉩) | 순수 `GarbageTrackerTest`(세대 번호·낡은 결과·한 번만)·`GarbageControllerTest`(작업 스레드에서 돎·검사 중 단추·낡은 결과 버림·닫기에 안 기다림)·**Qt 실제 위젯**: 붙잡아 둔 점검이 도는 동안에도 화면 스레드의 시계가 계속 돈다(시계 8번을 센다)·**실제 규칙으로 U+FDFA 10만 개 한 문장을 검사해도 화면 스레드 공백이 1.5초 안**(옛 규칙은 3초 넘게 멈췄다 — D-322)·작업 스레드의 실패와 그리기 실패의 복구·옛 검사의 늦은 취소 알림이 새 검사를 건드리지 않음·작업자가 시작 때의 글로 돎(작업의 시작을 미뤄 확인)·결과 한 번 전달·검사 중 글을 바꾸면 `본문이 변경됨`·닫기 중 도착한 결과 버림(닫는 데 1초도 안 든다)·새 초안 중 도착한 결과 버림 |
+
+**표 10-8-2. 복사 관문과의 분리 증명**(`tests/test_ui_drafts_core.py` 의 `GarbageSeparationTest`·`GarbageControllerTest`):
+
+| 증명 | 시험 |
+|---|---|
+| 복사 길에서 규칙이 불리지 않는다(불리면 실패) | `test_the_scan_is_not_called_while_typing_inspecting_viewing_or_copying`·300개 차분 시험 안의 `Forbidden` |
+| **같은 입력 300개**의 복사 결과가 점검 전·후(일부는 무시한 뒤)에 글자까지 같다 — 막음 950번·확인창 241번·바로 복사 609번이 일어나는 모음 | `test_the_copy_path_gives_the_same_results_for_three_hundred_different_inputs_with_or_without_a_check` |
+| 확인창·안내창 글에 새 카드의 문구가 안 나온다 | `test_the_dialogs_never_contain_a_phrase_of_the_new_card` |
+| 복사 단추 뷰모델(`actions`)이 점검 전·중·후에 같다 | `test_the_action_buttons_are_the_same_before_during_and_after_a_check_and_with_findings` |
+| 다른 카드의 뷰모델이 같다 | `test_the_other_cards_are_unchanged_by_the_check` |
+| 관문 함수가 새 상태를 읽지 않는다(소스) | `test_the_gate_functions_never_reach_the_new_state` |
+| 관문·`check/claims`·서비스·주제 엔진·렌더·콘텐츠·보관소·보안이 이 규칙을 모른다(가져오기 0) | `test_the_gate_the_claims_check_the_safety_check_and_the_services_do_not_know_the_rule` |
+| 카드에 복사·확인창으로 이어지는 단추·뷰모델이 없다 | `test_the_card_has_no_button_for_copying_or_for_the_gate_and_no_new_dialog` |
+
+**표 10-8-3. 병합 조건 6개 증거**(이 PC·offscreen·3.12 와 3.10):
+
+| 조건 | 결과 |
+|---|---|
+| 정상 글 402개 오탐 0(짧은 정상 글 196·실제 모양 글 2·앱이 만든 초안 204 — 새 제외 영역 규칙 뒤) | **걸림 0** — `test_check_garbage_normal`(개수와 함께 못박는다. 초안의 제목 후보 셋도 따로 본다). 독립 검증 1차 뒤 부호·괄호가 낀 같은 낱말의 **합성 문장 22개**를 더했고(걸림 0 — 부호를 뺀 같은 글은 걸린다는 대조 포함, D-323) 실제 블로그 글 56편의 오탐은 6건(4편) → **0건** |
+| 10만 자 2초 이내(순수 규칙) | 정상 10만 자 **0.09초**·병적 입력(열림만 있는 `{{`·`&`·역따옴표·길이가 다른 역따옴표 열림·공백·같은 낱말 5만 번·보이지 않는 글자 10만 개·엔티티 1만 6천 개·**정규화가 느린 한 문장 — U+0F73·U+FDFA 10만 개와 내가 더 찾은 것**) **가장 느린 3.12 0.31초·3.10 0.46초**(고치기 전 한 문장 U+0F73 10만 개는 3.12 18.3초·3.10 15.2초, U+FDFA 는 2.7초·3.0초 — D-322) — 시험 상한은 넉넉하게 2초(값의 5배 이상, `test_check_garbage_perf`) |
+| 복사 결과 300건 완전 동일 | 표 10-8-2 |
+| 건강·출처·안전 검사 영향 0 | `git diff` — 복사 관문(`draft_rules.py`)·`check/claims.py`·`topics/`·`service/`·`render/`·`content/`·`vendor/`·`.github` **변경 0**(`git diff --stat 7903a6d 가 이 경로들에서 빈 출력`)·복사 결과 300건 동일·확인창 글 같음 |
+| Qt 실제 화면 시험 | **실제 위젯 시험 32개 + 소스 규칙 3개 통과**(`GarbageTest`·`GarbageSourceRulesTest`, PySide6 6.12.0·offscreen) — 모듈 전체 92개 통과(기존 57개 포함). CI 에는 PySide6 가 없어 이 시험은 건너뛰고 순수 시험이 증거의 중심이다 |
+| 독립 검증 | 1차 **조건부 통과** — 지적(D1–D9)을 반영했다(D-322–D-324, 보고서 ⑧). 2차는 총괄이 정한다 |
+
+**변이 점검**(사본에서 소스 한 곳씩 바꿔 시험을 돌리고 원복 뒤 해시를 확인했다): 규칙 `check/garbage.py` 166곳·화면 순수(`draft_garbage.py`·`drafts_view.py`) 51곳·Qt 연결(`shell.py`·`draft_screen.py`·`draft_parts.py`) 32곳(합 249곳 — 독립 검증 1차 뒤 새 코드의 98곳을 더했다) — **모두 잡혔다**. 처음 한 바퀴에서 규칙 5곳(엔티티 이름표의 세미콜론·닫는 줄의 글자·문장 지문의 한글 채움 글자·NFKC·같은 글자 묶음의 칸 순서)과 화면 순수 2곳(조각의 보이지 않는 글자를 네모로·컨트롤러 카드의 낡음 판정)이 살아남아 시험을 더했고 다시 모두 잡혔다(화면 순수에는 같은 줄에 두 번 나온 같은 문장의 위치 가지 2곳을 나중에 더했다). Qt 연결은 처음 20곳 중 18곳이 잡혔고 살아남은 2곳(카드 모양이 같으면 다시 안 그리는 지름길·`모두 무시`·`다시 보기` 단추의 Tab 정거장)은 시험을 더해 잡았으며, 카드 위치 규칙 1곳과 실제 위젯 시험만으로 잡히는지 보는 4곳을 나중에 더했다. 독립 검증자가 살려 낸 여덟 곳(B04·B05·C02·C04·C07·D01·D01q·E01·E02)은 killer 시험을 더한 뒤 같은 정의로 다시 걸어 **모두 잡힌다**(9곳). 독립 검증자는 자기 변이로 한 번 더 할 수 있다.
+
+**시험 수**: 새 시험 **310개**(독립 검증 1차 반영 전 267개) — 규칙 211(`test_check_garbage` 132·`_mutants` 48·`_normal` 12·`_perf` 19)·화면 순수 +64(`test_ui_drafts_core` 108 → 172)·Qt +35(`test_ui_qt_drafts` 57 → 92). 시작 전 보고의 '약 150부터 180개' 보다 많은 것은 변이 killer 48개와 운영자 추가 조건 8개의 시험, 독립 검증 1차 반영의 시험이 더해졌기 때문이다.
+
+**알려 둔 한계**(D-320): 운영자의 실제 글에서의 오탐률은 모른다(구현 뒤 실제 글 몇 편으로 눈으로 확인하길 권한다)·방향 제어 글자·`?` 로 바뀐 글자 등은 보지 않는다·실제 윈도 125·150%·한글 입력기·화면 읽기 프로그램은 못 봤다·독립 검증은 1차 지적을 반영한 뒤 2차 전이다(기존 `inspect()` 의 동기 실행·쉼표로 이은 반복·맨 물결 줄 둘의 한계는 D-320 ㉥·㉩·㉪).
+
 ## 11. UI-C1d 홈 모양 — 사진·점검·다른 화면에 영향 없음 (2026-11-07)
 
 새 홈(KPI 넷·Naver A·B 추천·작성 중 초안·최근 발행·연결 상태 한 줄 — D-201·D-202)을 그렸다. 사진은 `scripts/ui_capture.py` 로 네 환경(1366×768/125% 는 점검만)에서 다시 찍었다. 도구에는 새 홈 장면 둘이 더해졌다 — `home_before_connect`(새 구역을 읽지 않는 공급자: `연결 전`·`집계 전`)와 `home_sections`(구역마다 다른 상태: 못 읽음·꺼짐·발행일 확인 불가 — 페이지 전체를 한 장에) — 서랍 사진은 추천 줄을 눌러 연다.

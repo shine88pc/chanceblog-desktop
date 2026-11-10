@@ -17,6 +17,7 @@ import importlib.util
 import re
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,11 +25,13 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
-from test_ui_drafts_core import CATALOG, KEY_SHAPED, SOFTWARE, GENERIC, APPLIANCE, STOPPED, OTHER_CHANNEL  # noqa: E402
+from test_ui_drafts_core import CATALOG, KEY_SHAPED, SOFTWARE, GENERIC, APPLIANCE, STOPPED, OTHER_CHANNEL, Held, Forbidden  # noqa: E402
+import garbage_samples as GS  # noqa: E402
 from test_ui_drafts_service import Bomb, NoNetwork, Setup  # noqa: E402
 
+from chanceblog_desktop.check import garbage as garbage_rule  # noqa: E402
 from chanceblog_desktop.ui.core import candidates as cd  # noqa: E402
-from chanceblog_desktop.ui.core import drafts, services, text, tokens  # noqa: E402
+from chanceblog_desktop.ui.core import draft_garbage as dg, drafts, drafts_view as dv, services, text, tokens  # noqa: E402
 from chanceblog_desktop.ui.core.clock import FixedClock  # noqa: E402
 
 HAVE = importlib.util.find_spec("PySide6") is not None
@@ -36,7 +39,7 @@ if HAVE:
     sys.path.insert(0, str(ROOT / "scripts"))
     import ui_offscreen
     ui_offscreen.prepare_environment()
-    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtCore import QEvent, Qt, QTimer
     from PySide6.QtGui import QGuiApplication, QInputMethodEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QLineEdit, QPlainTextEdit, QScrollArea, QWidget
@@ -1165,6 +1168,695 @@ class RealServiceTest(Base):
         self.assertEqual(len(self.copied), 1)
         self.assertIn("직접 써 보니 정말 좋았습니다.", self.copied[0])
         self.assertIsInstance(setup.ctx.keystore, Bomb)
+
+
+# ---- 8) 글 모양 점검(N-2) — 실제 위젯 ------------------------------------------------------------------------------------------------------------
+GARBAGE_BODY = "첫 문단이에요.\n\n안녕" + GS.ZWSP + "하세요 {{이름}} 님 가격&nbsp;12 좋아요 좋아요 좋아요\n\n" + GS.fenced("코드")      # 걸리는 것 다섯: 보이지 않는 글자·HTML 표시·코드 블록 표시·자리표시·같은 낱말 반복
+PLAIN_GARBAGE = "첫 문단이에요.\n\n안녕" + GS.ZWSP + "하세요 {{이름}} 님 좋아요 좋아요 좋아요"                                      # 건강·경험·가격 낱말이 없어 복사 관문이 바로 통과시키는 글
+
+
+def long_prose(size):
+    parts, length, number = [], 0, 0
+    while length < size:
+        number += 1
+        piece = f"{number}번째 날에는 날씨가 맑아서 산책을 다녀왔고 점심에는 따뜻한 국수를 먹었어요.\n"
+        parts.append(piece)
+        length += len(piece)
+    return "".join(parts)[:size]
+
+
+class GarbageSourceRulesTest(unittest.TestCase):
+    """PySide6 없이도 도는 소스 규칙 — 카드 부품은 규칙을 모르고, 검사는 `검사하기` 핸들러 하나만 시작한다."""
+
+    def test_the_card_files_never_run_the_rule_copy_or_open_a_dialog(self):
+        for name in NEW_QT:
+            tree = ast.parse((QT_DIR / name).read_text(encoding="utf-8"))
+            names = called_names(tree)
+            self.assertFalse(names & {"scan", "run", "start_garbage", "apply_garbage", "show_dialog", "copy", "submit", "write", "write_text"}, (name, names & {"scan", "run", "start_garbage"}))
+            source = (QT_DIR / name).read_text(encoding="utf-8")
+            for forbidden in ("check.garbage", "draft_garbage", "garbage_rule", "threading", "QThread", "QRunnable", "QThreadPool"):
+                self.assertFalse(forbidden in source, f"{name}: {forbidden}")
+
+    def test_only_the_inspect_handler_starts_a_check_and_the_shell_never_runs_the_rule_itself(self):
+        methods = methods_of(QT_DIR / "shell.py", "AppShell")
+        starters = [name for name, function in methods.items() if "start_garbage" in called_names(function)]
+        self.assertEqual(starters, ["drf_inspect"], "글 모양 점검은 `검사하기` 로만 시작한다 — 글을 칠 때·복사할 때·화면을 그릴 때는 시작하지 않는다")
+        for name, function in methods.items():
+            source = "\n".join(ast.unparse(statement) for statement in function.body)
+            self.assertNotIn("garbage_rule", source)
+            self.assertNotIn(".scan(", source, name)
+        self.assertIn("garbage", ast.unparse(methods["_live_drafts"]))
+        self.assertIn("shutdown", called_names(methods["closeEvent"]), "닫을 때 도는 검사의 답을 버린다")
+
+    def test_the_garbage_handlers_of_the_shell_never_redraw_the_whole_screen_or_copy(self):
+        methods = methods_of(QT_DIR / "shell.py", "AppShell")
+        found = [name for name in methods if name.startswith(("drf_garbage", "_drf_garbage"))]
+        self.assertGreaterEqual(len(found), 8)
+        for name in found:
+            self.assertNotIn("render", called_names(methods[name]), name)
+            self.assertFalse(called_names(methods[name]) & {"copy", "_drf_do_copy", "copy_decision", "confirm_copy", "show_dialog", "open", "write"}, name)
+        self.assertEqual([name for name, function in methods.items() if "_drf_do_copy" in called_names(function)], ["drf_copy", "drf_copy_confirmed"], "클립보드로 가는 길은 그대로다")
+        for name in ("drf_title_edited", "drf_body_edited"):
+            self.assertIn("garbage", ast.unparse(methods[name]), "글을 치면 `본문이 변경됨` 표시만 그 자리에서 갱신한다")
+            self.assertNotIn("start_garbage", called_names(methods[name]), "글을 치는 동안 검사를 돌리지 않는다")
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class GarbageTest(Base):
+    def put(self, window, text):
+        editor = self.ui(window).editor
+        editor.setPlainText(text)
+        self.settle(2)
+        return editor
+
+    def check(self, window, timeout=20):
+        self.button(window, "drf-inspect").click()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not window.state.drafts.garbage.running, timeout), "검사가 끝나지 않았다")
+        self.settle(3)
+
+    def row_texts(self, window):
+        """카드의 항목 줄 글(앞의 점 표시를 뗀 것)."""
+        return [text[2:] for text in self.texts(self.ui(window).garbage.rows_box) if text.startswith("\u00b7 ")]
+
+    def test_the_card_stands_right_below_the_inspect_card_and_starts_before_any_check(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        shown = self.texts(window.screen_widget)
+        for wanted in ("글 모양 점검", "복사를 막지 않아요", T["drf_g_before"], T["drf_g_hint"], "검사 결과"):
+            self.assertIn(wanted, shown)
+        position = lambda widget: widget.mapTo(window, widget.rect().topLeft())  # noqa: E731
+        self.assertLess(position(ui.inspect.status).y(), position(ui.garbage.status).y(), "검사 결과 카드 아래")
+        if ui.side:
+            self.assertEqual(position(ui.inspect.status).x(), position(ui.garbage.status).x(), "같은 칸 — 오른쪽 칸 맨 위에서 둘째")
+        self.assertLess(position(ui.garbage.status).y(), position(ui.copy["keywords"]).y(), "키워드 카드보다 위")
+        self.assertEqual((ui.garbage.buttons, ui.garbage.ignore_all.isHidden(), ui.garbage.restore.isHidden(), ui.garbage.stale.isHidden(), ui.garbage.rows_box.isHidden()), ([], True, True, True, True))
+        self.assertEqual(ui.garbage.status.property("tone"), "slate", "검사 전은 흐린 회색")
+
+    def test_one_press_of_the_inspect_button_fills_both_cards_and_nothing_is_copied_or_changed(self):
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        before = (controller.title, controller.body, list(self.copied))
+        self.check(window)
+        self.assertNotEqual(ui.inspect.status.plain_text(), T["drf_inspect_before"], "검사 결과 카드도 채워졌다")
+        self.assertEqual(ui.garbage.status.plain_text(), T["drf_g_found"].format(n=5))
+        self.assertEqual(ui.garbage.status.property("tone"), "blue", "찾으면 안내 파랑")
+        self.assertEqual(sorted(self.row_texts(window)), sorted(["본문 2문단 1번째 줄 앞에서 3번째 글자 · ‘안녕’ 바로 뒤 · 폭 없는 공백(U+200B) 1개", "본문 2문단 1번째 줄 앞에서 8번째 글자 · ‘{{이름}}’",
+                                                                "본문 2문단 1번째 줄 앞에서 19번째 글자 · ‘&nbsp;’", "본문 2문단 1번째 줄 앞에서 28번째 글자 · ‘좋아요 좋아요 좋아요’ · 붙어서 3번", "본문 3문단 1번째 줄 앞에서 1번째 글자 외 1곳 · 역따옴표 세 개 줄 2줄"]))
+        self.assertEqual((ui.inspect_button.text(), ui.inspect_button.isEnabled()), ("검사하기", True))
+        self.assertEqual((controller.title, controller.body, self.copied), before, "글도 클립보드도 그대로")
+        self.assertFalse(window.dialog.is_open, "확인창은 뜨지 않는다")
+
+    def test_a_clean_text_shows_the_grey_nothing_found_line_and_no_button(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, "깨끗한 글이에요. 아무 문제가 없어요.")
+        self.check(window)
+        self.assertEqual((ui.garbage.status.plain_text(), ui.garbage.status.property("tone"), ui.garbage.buttons, ui.garbage.rows_box.isHidden()), (T["drf_g_clean"], "slate", [], True))
+
+    def test_the_ignore_buttons_hide_items_without_redrawing_the_screen_and_restore_brings_them_back(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        page = window.screen_widget
+        names = [button.accessibleName() for button in ui.garbage.buttons]
+        self.assertEqual(len(names), 5)
+        self.assertTrue(all(name.strip() for name in names) and len(set(names)) == 5, names)
+        self.assertTrue(ui.garbage.ignore_all.isVisibleTo(window.screen_widget) and ui.garbage.restore.isHidden())
+        self.assertEqual((ui.garbage.ignore_all.text(), ui.garbage.ignore_all.accessibleName()), ("모두 무시(5건)", T["drf_g_ignore_all_a11y"].format(n=5)))
+        ui.garbage.buttons[0].click()
+        self.settle(2)
+        self.assertIs(window.screen_widget, page, "무시해도 화면 전체를 다시 그리지 않는다")
+        self.assertEqual((ui.garbage.ignore_all.text(), ui.garbage.ignore_all.accessibleName()), ("모두 무시(4건)", T["drf_g_ignore_all_a11y"].format(n=4)), "건수가 지금 보이는 건수를 따라 바뀐다")
+        self.assertEqual((len(ui.garbage.buttons), ui.garbage.status.plain_text()), (4, T["drf_g_found"].format(n=4)))
+        self.assertEqual((ui.garbage.restore.isHidden(), ui.garbage.restore.text(), ui.garbage.restore.accessibleName()), (False, "무시한 1건 다시 보기", T["drf_g_restore_a11y"].format(n=1)))
+        ui.garbage.ignore_all.click()
+        self.settle(2)
+        self.assertEqual((ui.garbage.buttons, ui.garbage.status.plain_text(), ui.garbage.ignore_all.isHidden(), ui.garbage.restore.text()), ([], T["drf_g_clean_ignored"].format(n=5), True, "무시한 5건 다시 보기"))
+        self.assertEqual(ui.garbage.status.property("tone"), "slate")
+        ui.garbage.restore.click()
+        self.settle(2)
+        self.assertEqual((len(ui.garbage.buttons), ui.garbage.status.plain_text(), ui.garbage.restore.isHidden()), (5, T["drf_g_found"].format(n=5), True))
+        self.assertEqual(self.copied, [], "무시는 복사와 상관없다")
+
+    def test_ignoring_never_touches_the_text_or_the_copy_buttons(self):
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        editor = self.put(window, GARBAGE_BODY)
+        self.check(window)
+        before = (editor.toPlainText().encode("utf-8", "surrogatepass"), [button.isEnabled() for button in ui.copy.values()], [button.text() for button in ui.action_bar.buttons])
+        ui.garbage.buttons[1].click()
+        ui.garbage.ignore_all.click()
+        ui.garbage.restore.click()
+        self.settle(2)
+        self.assertEqual((editor.toPlainText().encode("utf-8", "surrogatepass"), [button.isEnabled() for button in ui.copy.values()], [button.text() for button in ui.action_bar.buttons]), before)
+        self.assertEqual((controller.body, window.dialog.is_open), (GARBAGE_BODY, False))
+
+    def test_the_ignore_buttons_join_the_tab_order_right_after_the_inspect_button_and_focus_goes_to_a_neighbour(self):
+        window = self.drafted("AI 서비스", size=(1366, 768))
+        ui = self.ui(window)
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        self.activate(window)
+        self.assertLess(ui.stops.index(ui.inspect_button), ui.stops.index(ui.garbage.buttons[0]))
+        expected = [*ui.garbage.buttons, ui.garbage.ignore_all]                      # 항목마다 `무시` 와 `모두 무시`(무시한 것이 없으니 `다시 보기` 는 숨어 있다) — 카드가 스스로 말하는 목록이 아니라 눈에 보이는 단추로 적는다
+        self.assertEqual(len(expected), 6)
+        self.assertEqual(ui.stops[ui.stops.index(ui.inspect_button) + 1:ui.stops.index(ui.inspect_button) + 1 + len(expected)], expected)
+        self.assertEqual(ui.stops[ui.stops.index(ui.inspect_button) + 1 + len(expected)], ui.copy["keywords"])
+        ui.inspect_button.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        seen = []
+        for _ in range(len(expected) + 1):
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key_Tab)
+            self.settle(1)
+            seen.append(QApplication.focusWidget())
+        self.assertEqual(seen, [*expected, ui.copy["keywords"]], "Tab 은 검사하기 다음에 무시 단추들과 모두 무시를 지나 키워드 복사로 간다")
+        ui.garbage.buttons[1].setFocus(Qt.TabFocusReason)
+        QTest.keyClick(ui.garbage.buttons[1], Qt.Key_Space)
+        self.settle(3)
+        self.assertEqual(len(ui.garbage.buttons), 4)
+        self.assertIs(QApplication.focusWidget(), ui.garbage.buttons[1], "누른 단추는 사라졌고 포커스는 이웃 단추로 간다")
+        self.assertEqual(len(ui.stops), len(set(ui.stops)), "정거장이 겹치지 않는다")
+        self.assertTrue(all(stop.accessibleName().strip() for stop in ui.stops))
+        after = [*ui.garbage.buttons, ui.garbage.ignore_all]
+        self.assertEqual(len(after), 5)
+        for first, second in zip(after, after[1:]):
+            first.setFocus(Qt.TabFocusReason)
+            QTest.keyClick(first, Qt.Key_Tab)
+            self.settle(1)
+            self.assertIs(QApplication.focusWidget(), second, "다시 만든 단추도 Tab 순서가 이어진다")
+
+    def test_the_event_loop_keeps_running_while_the_check_runs_and_the_button_says_checking(self):
+        held = Held()
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        ticks = []
+        timer = QTimer()
+        timer.setInterval(10)
+        timer.timeout.connect(lambda: ticks.append(1))
+        timer.start()
+        try:
+            with mock.patch.object(dg, "run", held):
+                self.button(window, "drf-inspect").click()
+                self.assertTrue(held.entered.wait(10))
+                before = len(ticks)
+                self.assertTrue(ui_offscreen.wait_until(self.app, lambda: len(ticks) - before >= 8, 5), "붙잡아 둔 점검이 도는 동안에도 화면 스레드의 시계가 계속 돈다 — 점검은 작업 스레드에서 돈다(실제 규칙의 공백은 아래 시험이 잰다)")
+                self.assertTrue(controller.garbage.running)
+                self.assertEqual((ui.inspect_button.text(), ui.inspect_button.isEnabled(), ui.garbage.status.plain_text()), ("검사 중…", False, T["drf_g_running"]))
+                self.assertIsNot(held.threads[0], threading.current_thread())
+                held.release.set()
+                self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 10))
+            self.settle(3)
+        finally:
+            timer.stop()
+            held.release.set()
+        self.assertEqual((ui.inspect_button.text(), ui.inspect_button.isEnabled(), ui.garbage.status.plain_text()), ("검사하기", True, T["drf_g_found"].format(n=5)))
+
+    def test_the_result_is_delivered_exactly_once_for_each_press(self):
+        window = self.drafted("AI 서비스")
+        controller = window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        outcomes = []
+        real = controller.apply_garbage
+        controller.apply_garbage = lambda result: outcomes.append(real(result)) or outcomes[-1]
+        self.check(window)
+        self.settle(4)
+        self.assertEqual(outcomes, [True])
+        self.put(window, GARBAGE_BODY + "\n\n{{둘째}}")
+        self.check(window)
+        self.settle(4)
+        self.assertEqual(outcomes, [True, True], "누를 때마다 한 번씩만 전달된다")
+        self.assertEqual(self.ui(window).garbage.status.plain_text(), T["drf_g_found"].format(n=6), "두 번째 결과가 첫 결과를 바꾼다")
+
+    def test_editing_while_the_check_runs_shows_body_changed_when_the_result_arrives(self):
+        held = Held()
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        with mock.patch.object(dg, "run", held):
+            self.button(window, "drf-inspect").click()
+            self.assertTrue(held.entered.wait(10))
+            self.put(window, GARBAGE_BODY + " 더 썼어요")
+            held.release.set()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 10))
+        self.settle(3)
+        self.assertEqual(ui.garbage.status.plain_text(), T["drf_g_found"].format(n=5), "낡은 결과도 지우지 않고 보인다")
+        self.assertFalse(ui.garbage.stale.isHidden())
+        self.assertTrue(ui.garbage.stale.plain_text().startswith("본문이 변경됨"))
+        self.assertEqual(len(ui.garbage.buttons), 5)
+
+    def test_the_body_changed_note_shows_right_after_typing_and_goes_away_when_the_text_is_back(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        self.assertTrue(ui.garbage.stale.isHidden())
+        page = window.screen_widget
+        self.put(window, GARBAGE_BODY + "x")
+        self.assertIs(window.screen_widget, page)
+        self.assertFalse(ui.garbage.stale.isHidden())
+        self.assertEqual(ui.garbage.stale.plain_text(), T["drf_g_stale_body"])
+        self.assertEqual((len(ui.garbage.buttons), ui.garbage.status.plain_text()), (5, T["drf_g_found"].format(n=5)), "결과는 그대로")
+        self.put(window, GARBAGE_BODY)
+        self.assertTrue(ui.garbage.stale.isHidden(), "되돌리면 낡지 않았다")
+        ui.title.setFocus(Qt.OtherFocusReason)
+        QTest.keyClicks(ui.title, "!")
+        self.settle(2)
+        self.assertEqual(ui.garbage.stale.plain_text(), T["drf_g_stale_title"], "제목만 바뀌면 제목이 변경됨")
+
+    def test_typing_on_after_the_body_changed_note_does_not_rebuild_the_card(self):
+        """글을 칠 때마다 카드를 다시 만들면 무겁고 키보드 포커스를 잃는다 — 모양이 그대로면(이미 `본문이 변경됨` 인 채 더 침) 같은 단추 객체를 그대로 둔다."""
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        self.put(window, GARBAGE_BODY + "x")                                         # 낡은 표시가 처음 생긴다 — 이때는 다시 그린다
+        first = list(ui.garbage.buttons)
+        self.assertEqual(len(first), 5)
+        self.put(window, GARBAGE_BODY + "xy")
+        self.put(window, GARBAGE_BODY + "xyz")
+        self.assertTrue(len(ui.garbage.buttons) == 5 and all(left is right for left, right in zip(first, ui.garbage.buttons)), "모양이 그대로면 단추를 다시 만들지 않는다")
+        self.assertFalse(ui.garbage.set_state(window.state.drafts.garbage_card()), "같은 카드를 다시 그려 달라고 해도 아무것도 안 한다")
+
+    def test_typing_in_the_editor_or_the_title_never_runs_the_rule(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        forbidden = Forbidden()
+        with mock.patch.object(dg, "run", forbidden), mock.patch.object(garbage_rule, "scan", forbidden):
+            ui.editor.setFocus(Qt.OtherFocusReason)
+            QTest.keyClicks(ui.editor, "abc {{x}} &nbsp; ")
+            self.type_ime(ui.editor, "한글 입력 좋아요 좋아요 좋아요")
+            ui.title.setFocus(Qt.OtherFocusReason)
+            QTest.keyClicks(ui.title, "!")
+            self.settle(6)
+            QTest.qWait(300)
+        self.assertEqual(forbidden.calls, 0, "글을 쳐도 규칙이 불리지 않는다 — `검사하기` 를 눌러야 한다")
+        self.assertEqual(ui.garbage.status.plain_text(), T["drf_g_before"])
+
+    def test_the_inspect_button_gets_its_focus_back_after_a_keyboard_check(self):
+        held = Held()
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        self.activate(window)
+        ui.inspect_button.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        self.assertTrue(ui.inspect_button.hasFocus())
+        with mock.patch.object(dg, "run", held):
+            QTest.keyClick(ui.inspect_button, Qt.Key_Space)
+            self.assertTrue(held.entered.wait(10))
+            self.settle(2)
+            self.assertFalse(ui.inspect_button.isEnabled())
+            held.release.set()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 10))
+        self.settle(3)
+        self.assertTrue(ui.inspect_button.isEnabled())
+        self.assertTrue(ui.inspect_button.hasFocus(), "키보드로 누른 단추가 꺼졌다 켜져도 자리를 잃지 않는다")
+
+    def test_a_check_of_a_hundred_thousand_slow_to_normalize_characters_leaves_the_screen_thread_free(self):
+        """D-322 — **실제 규칙**(가짜로 붙잡지 않는다)으로 U+FDFA 10만 개 한 문장을 작업 스레드에서 검사해도 화면 스레드의 공백이 짧다. 옛 규칙은 정규화 한 번이 GIL 을 쥔 채 3초 넘게 화면을 멈췄다(검증자가 잰 값 3.4–4.5초, U+0F73 은 19초).
+        같은 단추의 기존 검사(`inspect()`)는 이 시험 밖이다(동기, D-320 한계) — 작업 스레드의 시작·도착·카드 갱신만 지난다."""
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        controller.set_body(chr(0xFDFA) * 100_000)
+        stamps = []
+        timer = QTimer()
+        timer.setInterval(10)
+        timer.timeout.connect(lambda: stamps.append(time.perf_counter()))
+        timer.start()
+        try:
+            stamps.append(time.perf_counter())
+            status, job = controller.start_garbage(**window.garbage_bridge.callbacks())
+            window._live_drafts(garbage=True)
+            self.assertEqual(status, "started")
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 30), "검사가 끝나지 않았다")
+            self.settle(3)
+            stamps.append(time.perf_counter())
+        finally:
+            timer.stop()
+        worst = max(later - earlier for earlier, later in zip(stamps, stamps[1:]))
+        self.assertLess(worst, 1.5, "작업 스레드가 도는 동안 화면 스레드가 이만큼 못 쉬면 안 된다")
+        self.assertEqual((ui.garbage.status.plain_text(), controller.garbage.failed), (T["drf_g_clean"], False))
+
+    def test_a_check_that_raises_in_the_worker_ends_as_the_failed_card_and_a_second_press_works(self):
+        """D5 E01 — 작업 스레드의 실패를 셸이 받아 카드를 `점검을 끝내지 못했어요` 로 두고 단추를 다시 켠다(실제 Qt 경로). 이 길이 끊기면 카드가 `검사 중…` 으로 남는다."""
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        for error in (RuntimeError("규칙 버그"), MemoryError(), SystemExit(3)):
+            with self.subTest(error=type(error).__name__):
+                def boom(*args, **kwargs):
+                    raise error
+                with mock.patch.object(garbage_rule, "scan", boom):
+                    self.check(window)
+                self.assertEqual((ui.garbage.status.plain_text(), ui.inspect_button.text(), ui.inspect_button.isEnabled(), controller.garbage.failed, controller.garbage.running),
+                                 (T["drf_g_failed"], "검사하기", True, True, False))
+        self.check(window)
+        self.assertEqual((ui.garbage.status.plain_text(), controller.garbage.failed), (T["drf_g_found"].format(n=5), False), "다시 누르면 정상이다")
+
+    def test_the_late_cancel_notice_of_an_old_check_never_fails_the_new_one(self):
+        """D5 E02 — 새 초안 때문에 취소된 옛 검사가 늦게 끝나며 보내는 취소 알림이 지금 도는 새 검사를 실패로 만들지 않는다(옛 검사와 새 검사가 겹치는 경로)."""
+        gates, entered, threads = [threading.Event(), threading.Event()], [threading.Event(), threading.Event()], []
+        real_scan = garbage_rule.scan
+
+        def gated(title, body):
+            number = len(threads)
+            threads.append(threading.current_thread())
+            entered[number].set()
+            if not gates[number].wait(30):
+                raise AssertionError("시험이 문을 열어 주지 않았다")
+            return real_scan(title, body)
+
+        window = self.drafted("AI 서비스")
+        controller = window.state.drafts
+        notices = []
+        real_cancelled = controller.apply_garbage_cancelled
+        controller.apply_garbage_cancelled = lambda: notices.append(1) or real_cancelled()       # 취소 알림이 화면 스레드에 닿았는지 센다
+        self.put(window, GARBAGE_BODY)
+        with mock.patch.object(garbage_rule, "scan", gated):
+            self.button(window, "drf-inspect").click()                                  # 옛 검사
+            self.assertTrue(entered[0].wait(10))
+            window.drf_remake()
+            self.settle(3)
+            self.dialog_buttons(window)["다시 만들기"].click()                           # 새 초안 — 옛 검사는 취소된다
+            self.assertTrue(self.wait_draft(window))
+            ui = self.ui(window)                                                        # 새 초안은 화면을 새로 그린다 — 카드도 새 것이다
+            self.put(window, GARBAGE_BODY)
+            self.button(window, "drf-inspect").click()                                  # 새 검사
+            self.assertTrue(entered[1].wait(10))
+            gates[0].set()                                                              # 옛 검사가 이제야 끝난다 — 취소 알림이 간다
+            threads[0].join(10)
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: bool(notices), 10), "옛 검사의 취소 알림이 화면 스레드에 닿았다")
+            self.settle(4)
+            self.assertTrue(controller.garbage.running, "옛 검사의 취소 알림이 새 검사를 끝내지 않는다")
+            self.assertEqual((ui.inspect_button.text(), ui.garbage.status.plain_text(), controller.garbage.failed), ("검사 중…", T["drf_g_running"], False))
+            gates[1].set()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 10))
+        self.settle(3)
+        self.assertEqual((ui.garbage.status.plain_text(), controller.garbage.failed), (T["drf_g_found"].format(n=5), False), "새 검사의 결과는 정상으로 받는다")
+
+    def test_the_worker_checks_the_text_of_the_moment_the_press_started_it_even_if_it_only_begins_after_an_edit(self):
+        """D5 D01q — 작업자는 단추를 눌렀을 때의 글 복사본으로 돈다(지금 컨트롤러의 글을 읽지 않는다). 작업자의 시작을 미뤄 그 사이에 같은 길이로 글을 바꿔도 시작 때의 글이 검사된다 — 지금 글을 읽으면 결과가 새 글의 것이 되어 `본문이 변경됨` 도 사라진다."""
+        gate = threading.Event()
+
+        class Gated(dv.Job):
+            def __init__(self, key, work, **kwargs):
+                def late(progress, cancelled):
+                    if not gate.wait(30):
+                        raise AssertionError("시험이 문을 열어 주지 않았다")
+                    return work(progress, cancelled)
+                super().__init__(key, late, **kwargs)
+
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        started, edited = "앞 &nbsp; 뒤 좋아요", "앞 &nbsp, 뒤 좋아요"                    # 같은 길이 — 지문만 다르다
+        self.assertEqual(len(started), len(edited))
+        self.put(window, started)
+        with mock.patch.object(dv, "Job", Gated):
+            self.button(window, "drf-inspect").click()
+            self.put(window, edited)                                                     # 작업자가 일을 시작하기 전에 글을 바꾼다
+            gate.set()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 10))
+        self.settle(3)
+        self.assertEqual(ui.garbage.status.plain_text(), T["drf_g_found"].format(n=1), "시작 때의 글로 돌았다 — HTML 표시 하나")
+        self.assertFalse(ui.garbage.stale.isHidden(), "지금 글은 다르니 본문이 변경됨")
+        self.assertTrue(ui.garbage.stale.plain_text().startswith("본문이 변경됨"))
+
+    def test_a_second_check_of_the_same_text_gives_the_buttons_the_new_keys_and_a_press_still_ignores(self):
+        """D5 C02 — 같은 글을 다시 검사하면 세대 번호가 올라 항목 열쇠가 모두 새로워진다. 카드가 같은 모양이라며 단추를 다시 만들지 않으면 낡은 열쇠로 `무시` 가 아무 일도 못 한다."""
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        first = list(ui.garbage.keys)
+        self.check(window)
+        generation = controller.garbage.result.generation
+        self.assertEqual(len(ui.garbage.keys), 5)
+        self.assertNotEqual(list(ui.garbage.keys), first)
+        self.assertTrue(all(key.startswith(f"{generation}.") for key in ui.garbage.keys), ui.garbage.keys)
+        ui.garbage.buttons[0].click()
+        self.settle(2)
+        self.assertEqual((len(ui.garbage.buttons), ui.garbage.status.plain_text()), (4, T["drf_g_found"].format(n=4)), "새 열쇠로 무시가 된다")
+
+    def test_the_card_signature_carries_the_item_keys_so_new_keys_always_redraw_the_buttons(self):
+        """D5 C02 — 같은 글을 다시 검사하면 항목 열쇠(세대 번호.순번)만 새로워진다. 서명이 열쇠를 싣지 않으면 '같은 모양' 이라며 카드를 다시 그리지 않아 낡은 열쇠의 단추가 남고 `무시` 가 아무 일도 못 한다. 실제 흐름에서는 검사 중 모양이 사이에 끼어 가려 주지만 서명이 스스로 지켜야 한다."""
+        from chanceblog_desktop.ui.qt import draft_parts
+        tracker = dg.GarbageTracker()
+        body = "{{a}} {{b}}"
+        cards = []
+        for _ in range(2):
+            generation = tracker.begin("", body)
+            self.assertTrue(tracker.deliver(dg.run(generation, "", body)))
+            cards.append(tracker.card("", body))
+        texts = [[row["text"] for group in card["groups"] for row in group["rows"]] for card in cards]
+        keys = [[row["key"] for group in card["groups"] for row in group["rows"]] for card in cards]
+        self.assertEqual(texts[0], texts[1], "(전제) 같은 글이라 항목 글이 같다")
+        self.assertNotEqual(keys[0], keys[1], "(전제) 열쇠는 세대마다 새롭다")
+        self.assertNotEqual(draft_parts.GarbageCard.signature(cards[0]), draft_parts.GarbageCard.signature(cards[1]))
+        self.assertEqual(draft_parts.GarbageCard.signature(cards[0]), draft_parts.GarbageCard.signature(cards[0]), "같은 카드는 같은 서명이다")
+
+    def test_the_ignore_all_and_the_restore_buttons_have_their_own_focus_keys(self):
+        """D5 C04 — 두 단추를 열쇠로 찾을 수 있어야 포커스를 돌려줄 수 있다(같은 열쇠면 하나를 못 찾는다)."""
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        ui.garbage.buttons[0].click()
+        self.settle(2)
+        self.assertIs(self.button(window, "drf-garbage:all"), ui.garbage.ignore_all)
+        self.assertIs(self.button(window, "drf-garbage:restore"), ui.garbage.restore)
+        self.assertEqual({button.property("focus_key") for button in ui.garbage.buttons}, {"drf-garbage:" + key for key in ui.garbage.keys})
+
+    def test_a_failure_while_drawing_the_result_ends_as_the_failed_card_not_a_card_stuck_on_checking(self):
+        """D4 — 결과를 그리는 코드가 계속 예외를 내도(복구가 한 번 더 그려도 또 실패) 카드는 `검사 중…` 으로 남지 않고 `점검을 끝내지 못했어요` 가 된다. 이 줄이 죽은 코드이던 것을 독립 검증이 찾았다(변이 C07)."""
+        from chanceblog_desktop.ui.qt import draft_screen as ds
+        real = ds.refresh_garbage
+
+        def flaky(page, vm):
+            if vm["state"] in ("found", "clean"):
+                raise RuntimeError("그리기 버그")
+            return real(page, vm)
+
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        with mock.patch.object(ds, "refresh_garbage", flaky):
+            self.button(window, "drf-inspect").click()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 20))
+            self.settle(5)
+        self.assertEqual((ui.garbage.status.plain_text(), ui.inspect_button.text(), ui.inspect_button.isEnabled(), controller.garbage.failed, controller.garbage.running),
+                         (T["drf_g_failed"], "검사하기", True, True, False))
+        self.check(window)
+        self.assertEqual((ui.garbage.status.plain_text(), controller.garbage.failed), (T["drf_g_found"].format(n=5), False), "버그가 사라진 뒤 다시 누르면 정상이다")
+
+    def test_a_failure_while_drawing_the_result_that_happens_only_once_still_shows_the_result(self):
+        """D4 — 그리다 난 예외가 한 번뿐이면 복구의 다시 그리기가 성공해 결과가 그대로 보인다(실패 카드로 바꾸지 않는다)."""
+        from chanceblog_desktop.ui.qt import draft_screen as ds
+        real = ds.refresh_garbage
+        once = {"n": 0}
+
+        def flaky_once(page, vm):
+            if vm["state"] in ("found", "clean") and once["n"] == 0:
+                once["n"] += 1
+                raise RuntimeError("그리기 버그 한 번")
+            return real(page, vm)
+
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        with mock.patch.object(ds, "refresh_garbage", flaky_once):
+            self.button(window, "drf-inspect").click()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 20))
+            self.settle(5)
+        self.assertEqual((ui.garbage.status.plain_text(), ui.inspect_button.isEnabled(), controller.garbage.failed), (T["drf_g_found"].format(n=5), True, False))
+
+    def test_if_even_the_failed_card_cannot_be_drawn_the_user_gets_one_gentle_notice_and_the_screen_stays(self):
+        """D4 의 마지막 안전망 — 결과 카드도 실패 카드도 못 그릴 만큼 그리는 코드가 망가졌어도 화면은 오류 상태로 가지 않고(초안이 그대로다) 쉬운 안내 한 줄만 뜬다."""
+        from chanceblog_desktop.ui.qt import draft_screen as ds
+        real = ds.refresh_garbage
+
+        def broken(page, vm):
+            if vm["state"] in ("found", "clean", "failed"):
+                raise RuntimeError("그리기 버그")
+            return real(page, vm)
+
+        window = self.drafted("AI 서비스")
+        controller = window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        page = window.screen_widget
+        with mock.patch.object(ds, "refresh_garbage", broken):
+            self.button(window, "drf-inspect").click()
+            self.assertTrue(ui_offscreen.wait_until(self.app, lambda: not controller.garbage.running, 20))
+            self.settle(5)
+        self.assertEqual(window.toast.text(), T["job_failed"])
+        self.assertIs(window.screen_widget, page, "초안 화면은 그대로다(오류 상태로 다시 그리지 않는다)")
+        self.assertEqual(controller.state, "normal")
+
+    def test_closing_the_window_while_the_check_runs_is_quick_and_the_late_result_is_dropped(self):
+        held = Held()
+        window = self.drafted("AI 서비스")
+        controller = window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        with mock.patch.object(dg, "run", held):
+            self.button(window, "drf-inspect").click()
+            self.assertTrue(held.entered.wait(10))
+            window._close_confirmed = True                                           # 고친 내용 확인창은 이 시험이 보려는 것이 아니다
+            start = time.perf_counter()
+            window.close()
+            self.assertLess(time.perf_counter() - start, 1.0, "닫을 때 작업자 종료를 기다리지 않는다")
+            held.release.set()
+            held.threads[0].join(10)
+            self.settle(6)
+        self.assertEqual((controller.garbage.result, controller.garbage.running), (None, False))
+
+    def test_a_new_draft_while_the_check_runs_drops_the_late_result(self):
+        held = Held()
+        window = self.drafted("AI 서비스")
+        controller = window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        with mock.patch.object(dg, "run", held):
+            self.button(window, "drf-inspect").click()
+            self.assertTrue(held.entered.wait(10))
+            window.drf_remake()
+            self.settle(3)
+            self.dialog_buttons(window)["다시 만들기"].click()
+            self.assertTrue(self.wait_draft(window))
+            held.release.set()
+            held.threads[0].join(10)
+            self.settle(6)
+        ui = self.ui(window)
+        self.assertEqual((ui.garbage.status.plain_text(), ui.garbage.buttons, controller.garbage.result, controller.garbage.running), (T["drf_g_before"], [], None, False), "새 초안은 낡은 검사의 결과를 받지 않는다")
+        self.assertEqual(ui.inspect_button.text(), "검사하기")
+        self.assertEqual(self.copied, [])
+
+    def test_leaving_the_screen_and_coming_back_with_a_new_draft_clears_the_ignore_memory(self):
+        window = self.drafted("AI 서비스")
+        controller = window.state.drafts
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        self.ui(window).garbage.ignore_all.click()
+        self.settle(2)
+        self.assertEqual(len(controller.garbage.ignored), 5)
+        controller.leave()
+        window.go("topics")
+        self.settle(3)
+        self.assertEqual((controller.garbage.ignored, controller.garbage.result), (set(), None))
+        self.open_candidate(window, "AI 서비스")
+        self.make_button(window).click()
+        self.assertTrue(self.wait_draft(window))
+        self.assertEqual((self.ui(window).garbage.status.plain_text(), controller.garbage.ignored), (T["drf_g_before"], set()))
+
+    def test_the_text_bytes_and_every_copy_result_are_the_same_before_and_after_a_check(self):
+        window = self.drafted("AI 서비스")
+        ui, controller = self.ui(window), window.state.drafts
+        editor = self.put(window, PLAIN_GARBAGE)
+
+        def copies():
+            self.copied.clear()
+            for item in ("title", "body", "all", "keywords", "tags", "summary"):
+                ui.copy[item].click()
+                self.settle(2)
+                self.assertFalse(window.dialog.is_open, item)
+            return list(self.copied)
+
+        text_before = (editor.toPlainText().encode("utf-8", "surrogatepass"), controller.title, controller.body)
+        before = copies()
+        self.assertEqual(len(before), 6)
+        self.check(window)
+        ui.garbage.buttons[0].click()
+        self.settle(2)
+        after = copies()
+        self.assertEqual(after, before, "검사한 것과 안 한 것의 복사 결과가 글자까지 같다")
+        self.assertEqual((editor.toPlainText().encode("utf-8", "surrogatepass"), controller.title, controller.body), text_before, "검사 전후 본문 바이트가 같다")
+        self.assertIn(PLAIN_GARBAGE, before[1])
+
+    def test_a_text_of_a_hundred_thousand_characters_is_checked_and_a_longer_one_is_skipped(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, long_prose(100_000))
+        start = time.perf_counter()
+        self.check(window, timeout=30)
+        self.assertLess(time.perf_counter() - start, 20)
+        self.assertEqual(ui.garbage.status.plain_text(), T["drf_g_clean"])
+        self.put(window, long_prose(100_001))
+        self.assertFalse(ui.garbage.stale.isHidden(), "글이 바뀌었다")
+        self.check(window, timeout=30)
+        self.assertEqual((ui.garbage.status.plain_text(), ui.garbage.status.property("tone"), ui.garbage.buttons), (T["drf_g_skipped"], "slate", []))
+        self.assertTrue(ui.garbage.stale.isHidden())
+
+    def test_the_card_fits_at_every_window_width_with_no_sideways_scroll_and_no_clipped_text(self):
+        window = self.drafted("AI 서비스", size=(1920, 1080))
+        ui = self.ui(window)
+        body = "\n".join("{{" + f"p{number:02d}" + "}}" for number in range(14)) + "\n\n" + GARBAGE_BODY
+        self.put(window, body)
+        self.check(window)
+        for width, height in SIZES:
+            with self.subTest(size=(width, height)):
+                window.resize(width, height)
+                self.settle(8)
+                ui = self.ui(window)
+                inner = window.screen_widget.findChild(QScrollArea)
+                self.assertEqual((inner.horizontalScrollBar().maximum(), window.scroll.horizontalScrollBar().maximum()), (0, 0))
+                card = ui.garbage.status.parentWidget()
+                self.assertEqual(ui_offscreen.find_clipping(card), [])
+                self.assertEqual(ui_offscreen.find_squeezed(card), [])
+                self.assertLessEqual(card.mapTo(window, card.rect().topRight()).x(), window.width())
+                for button in ui.garbage.stops():
+                    self.assertGreaterEqual(button.height(), 36)
+                    self.assertLessEqual(button.mapTo(window, button.rect().topRight()).x(), window.width())
+                self.assertEqual(len(ui.garbage.buttons), 10 + 4, "종류마다 상세는 최대 10건 — 자리표시 10건 + 나머지 종류 4건")
+                self.assertIn(T["drf_g_more"].format(n=5), self.texts(ui.garbage.rows_box), "나머지는 개수만")
+
+    def test_typing_after_a_check_that_found_claims_raises_no_exception_in_the_inspect_card(self):
+        """M036 의 잠복 결함 재현 — 검사 결과 카드에 걸린 줄이 있을 때 글을 치면(카드가 줄을 다시 그린다) 슬롯 예외가 났다(`tearDown` 이 예외를 잡는다)."""
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.edit_body(window, "\n\n직접 써 보니 정말 좋았습니다.")
+        self.button(window, "drf-inspect").click()
+        self.settle(3)
+        self.assertTrue(self.texts(ui.inspect.lines), "걸린 줄이 있다")
+        self.edit_body(window, " 더 씁니다")
+        self.assertEqual(ui.inspect.status.plain_text(), T["drf_inspect_stale"])
+        self.assertEqual(self.texts(ui.inspect.lines), set())
+
+    def test_the_card_texts_have_no_forbidden_word_and_every_new_name_is_set(self):
+        window = self.drafted("AI 서비스")
+        ui = self.ui(window)
+        self.put(window, GARBAGE_BODY)
+        self.check(window)
+        for value in self.everything(window):
+            for word in FORBIDDEN_WORDS + text.FORBIDDEN:
+                self.assertFalse(word in value, f"{word} / {value[:40]}")
+        self.assertEqual(ui.garbage.ignore_all.accessibleName(), T["drf_g_ignore_all_a11y"].format(n=5))
+        for button in ui.garbage.buttons:
+            self.assertTrue(button.accessibleName().startswith("‘"), button.accessibleName())
+
+    def test_the_whole_flow_with_the_real_service_changes_no_file_and_calls_neither_the_network_nor_the_key_store(self):
+        setup = Setup(self, profiles=True, count=6)
+        candidates_provider = candidates_adapter.ServiceCandidatesProvider(context_factory=lambda data_dir=None: setup.ctx)
+        window = self.make(candidates=candidates_provider, drafts_provider=setup.provider)
+        before, listing = setup.world.tree(), setup.world.listing()
+        with NoNetwork():
+            window.cand_open(setup.engines[2].candidate_id)
+            self.settle(6)
+            self.make_button(window).click()
+            self.assertTrue(self.wait_draft(window))
+            ui = self.ui(window)
+            self.put(window, GARBAGE_BODY)
+            self.check(window)
+            self.assertEqual(len(ui.garbage.buttons), 5)
+            ui.garbage.buttons[0].click()
+            ui.garbage.ignore_all.click()
+            ui.garbage.restore.click()
+            self.put(window, GARBAGE_BODY + "x")
+            self.settle(2)
+            window.go("topics", force=True)                                          # 고친 내용이 있어도 이동한다 — 확인창은 이 시험이 보려는 것이 아니다
+            self.settle(3)
+        self.assertEqual((setup.world.tree(), setup.world.listing()), (before, listing), "글 모양 점검과 무시가 파일을 하나도 안 바꿨다")
+        self.assertIsInstance(setup.ctx.keystore, Bomb)
+        self.assertEqual(self.copied, [])
 
 
 if __name__ == "__main__":
