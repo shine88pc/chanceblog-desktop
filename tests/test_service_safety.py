@@ -6,6 +6,7 @@
   3) git 을 직접 쓰는 명령은 읽기 전용(`rev-parse`·`rev-list`·`ls-tree`·`cat-file`·`diff-tree`·`log`·`--version`)뿐이다 — commit·push·되돌리기는 모두 `publish/pages.py` 가 한다. 강제 push·`reset --hard` 같은 말은 어디에도 없다.
   4) 서비스 코드가 파일을 쓰는 곳은 설정·발행 기록·잠금 파일(`context.write_json`·`journal`·`lock` — 글 잠금은 데이터 폴더에, 저장소 잠금은 연결한 저장소의 `.git` 안에 둔다)뿐이다 — 연결한 저장소에 글 파일은 쓰지 않는다(그건 `publish/pages.py`).
      그 허용은 파일 전체가 아니라 **(파일, 함수)** 단위다(`FILE_WRITERS`·`OS_CALLS`) — 같은 파일의 다른 함수에 새로 생긴 쓰기·`os.open`·`os.replace`·`write_text` 도 걸린다(합성 소스로 규칙 자체를 시험한다).
+     파일을 **읽기 전용으로 여는** 곳도 한 곳뿐이다(`READ_OPENS` — `own_posts.py` 의 `_read_prefix` 가 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는다. 열기 모드가 글자 `rb` 인 호출만 허용한다).
   5) 키·토큰을 읽지 않는다: 읽는 환경 변수는 데이터 폴더·저장소 폴더 위치뿐이고, 영어 비밀 낱말(`api key`·`secret`·`token`·`password`)이 서비스 코드의 문자열에 없다.
   6) 이 PC 의 절대경로는 commit 되는 글·commit 제목에 들어가지 않는다.
 """
@@ -36,6 +37,9 @@ OS_CALLS = {                                      # 낮은 수준 파일 호출�
     "os.link": {("lock.py", "_take_over")},
     "os.rename": set(), "os.remove": set(),
 }
+# 파일을 읽기 전용으로 여는 곳(내장 `open`)은 **(파일, 함수)** 하나뿐이다 — 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는 `own_posts.py` 의 `_read_prefix`.
+# 허용은 모드가 글자 `rb` 인 `open(경로, "rb")` 호출에만 걸린다 — 쓰기·덧붙이기·갱신 모드와 모드를 안 적은 호출·`.open` 속성 호출은 그대로 걸린다(합성 소스로 시험한다).
+READ_OPENS = {("own_posts.py", "_read_prefix")}
 WRITE_CALLS = {"write_text", "write_bytes", "write", "unlink", "mkdir", "rmdir", "replace", "rename", "remove", "rmtree", "copy", "copy2", "copyfile", "copytree", "move", "touch", "open", "makedirs", "chmod"}
 ENV_NAMES = {"CHANCEBLOG_DESKTOP_DATA", "CHANCEBLOG_LOCAL_REPO", "LOCALAPPDATA", "XDG_DATA_HOME"}
 OTHER_NAMES = {"VERSION", "O_BINARY"}           # 파일 이름(프로그램 버전을 적은 파일) · 잠금 파일을 만들 때 Windows 에서 쓰는 열기 표시(os.O_BINARY)
@@ -53,6 +57,12 @@ def calls_with_function(node, function=""):
         yield from calls_with_function(child, child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else function)
 
 
+def read_only_open(node, place):
+    """허용된 (파일, 함수)의 내장 `open(경로, "rb")` — 모드가 글자 상수 'rb' 하나뿐이고 이름 붙은 인자가 없는 호출인가."""
+    return (place in READ_OPENS and isinstance(node.func, ast.Name) and node.func.id == "open" and len(node.args) == 2 and not node.keywords
+            and isinstance(node.args[1], ast.Constant) and node.args[1].value == "rb")
+
+
 def write_violations(file_name, tree):
     """서비스 파일 하나(`file_name`)의 소스에서 정해진 (파일, 함수) 밖의 쓰기·지우기·열기 호출을 모은다."""
     found = []
@@ -65,7 +75,7 @@ def write_violations(file_name, tree):
             found.append(f"{where}: {name}")
         if full in OS_CALLS and place not in OS_CALLS[full]:
             found.append(f"{where}: {full}")
-        if name in ("makedirs", "rmtree", "copytree", "copyfile", "copy2") or (name == "open" and full not in ("Store.open", "os.open")):
+        if name in ("makedirs", "rmtree", "copytree", "copyfile", "copy2") or (name == "open" and full not in ("Store.open", "os.open") and not read_only_open(node, place)):
             found.append(f"{where}: 파일을 직접 열거나 복사한다({full})")
     return found
 
@@ -222,10 +232,19 @@ class SourceRulesTest(unittest.TestCase):
             ("journal.py", "def other(p):\n    p.unlink()\n", True), ("pages_flow.py", "def f(p):\n    os.open(p, 0)\n", True), ("pages_flow.py", "def f(p):\n    p.write_bytes(b'')\n", True),
             ("pages_flow.py", "def f(p):\n    open(p)\n", True), ("cli.py", "def f(p):\n    shutil.rmtree(p)\n", True), ("cli.py", "def f(p):\n    shutil.copytree(p, p)\n", True),
             ("projects.py", "def f(s):\n    Store.open(s)\n", False), ("projects.py", "def f(p):\n    p.read_text()\n    p.stat()\n", False),
+            ("own_posts.py", "def _read_prefix(p):\n    open(p, 'rb')\n", False), ("own_posts.py", "def _read_prefix(p):\n    open(p, 'wb')\n", True), ("own_posts.py", "def _read_prefix(p):\n    open(p, 'rb+')\n", True),
+            ("own_posts.py", "def _read_prefix(p):\n    open(p)\n", True), ("own_posts.py", "def _read_prefix(p):\n    open(p, mode='rb')\n", True), ("own_posts.py", "def _read_prefix(p):\n    open(p, 'rb', 0)\n", True),
+            ("own_posts.py", "def _read_prefix(p):\n    p.open('rb')\n", True), ("own_posts.py", "def _read_prefix(p):\n    os.open(p, 0)\n", True), ("own_posts.py", "def other(p):\n    open(p, 'rb')\n", True),
+            ("projects.py", "def _read_prefix(p):\n    open(p, 'rb')\n", True), ("cli.py", "def _read_prefix(p):\n    open(p, 'rb')\n", True), ("own_posts.py", "def _read_prefix(p):\n    open(p, 'rb')\n    p.write_bytes(b'')\n", True),
+            ("own_posts.py", "def _read_prefix(p, f):\n    open(p, 'rb', opener=f)\n", True), ("own_posts.py", "def _read_prefix(p):\n    io.open(p, 'rb')\n", True),
         )
         for file_name, source, violated in cases:
             with self.subTest(file=file_name, source=source.replace("\n", " ; ")[:60]):
                 self.assertEqual(bool(write_violations(file_name, ast.parse(source))), violated, source)
+
+    def test_the_read_only_open_allowance_is_exactly_one_function_in_one_file(self):
+        """읽기 전용 열기 허용(`READ_OPENS`)을 몰래 넓히면(함수를 하나 더 넣는 것 등) 여기서 걸린다 — 허용은 `own_posts.py` 의 `_read_prefix` 하나뿐이다(독립 검증의 변이 S07, OWNFIX D4)."""
+        self.assertEqual(READ_OPENS, {("own_posts.py", "_read_prefix")})
 
     def test_only_the_known_environment_variables_are_named_and_no_secret_words_appear(self):
         secret_words = re.compile(r"(?i)\b(api[_ -]?key|secret|token|passw(?:or)?d|credential)s?\b")
