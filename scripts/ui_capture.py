@@ -13,7 +13,7 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 **키 연결 화면**(P4f)은 환경마다 12장면(카드의 키 구역·등록 대화상자 입력/확인/칸 문제/칸 셋/둘째 키 약관·삭제 확인창·별칭 바꾸기·쓰는 중·저장소 없음·실패 안내·실제 어댑터)을 찍고 점검한다 — `--only keys` 를 주면 이 장면만 찍는다(다른 사진을 다시 만들지 않는다).
 **키는 사진에 나오지 않는다**: 입력 칸은 점으로만 보이고(가짜 글 열두 자), 이름은 모두 가짜이며, 실제 어댑터 장면도 이 도구가 만든 임시 폴더와 프로그램 안의 가짜 보관소만 쓴다(자격 증명 관리자는 건드리지 않는다).
 **주제 후보 화면**(D-270)은 환경마다 20장면(기본·거르기·글 검색·상세·상세의 아래쪽·자동 초안 중지 후보·점수 계산 전 후보·빈 목록 셋(보관함 없음·후보 없음·거른 결과 없음)·옛 구조·읽는 중·읽기 오류·만들 수 없을 때의 준비 안내·후보 만들기 확인창·만든 뒤·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — 후보·채널 이름은 모두 가짜이고(`예시 후보 가` …) 실제 어댑터 장면은 임시 폴더에만 쓴다.
-**초안 작성 화면**(D-280~D-289)은 환경마다 16장면(기본(협찬 줄이 있는 초안)·소프트웨어 초안·`모든 글 공통` 펼침·만드는 방법 펼침·복사 직후·분야 못 읽는 초안의 복사 전 확인창·고친 글의 확인창·거의 안 고친 초안의 안내·거절·후보 없음·읽는 중·찾지 못함·오류·좁은 창·실제 어댑터 둘)을 찍고 점검한다 — 후보·블로그 이름·글은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다(클립보드·주소 열기는 기록만 하는 가짜). `--only drafts` 를 주면 이 장면만 찍는다.
+**초안 작성 화면**(D-280부터 D-289까지, 글 모양 점검 D-315)은 환경마다 19장면(글 모양 점검 셋(결과 있음·본문이 변경됨·최소 창)과 기본(협찬 줄이 있는 초안)·소프트웨어 초안·`모든 글 공통` 펼침·만드는 방법 펼침·복사 직후·분야 못 읽는 초안의 복사 전 확인창·고친 글의 확인창·거의 안 고친 초안의 안내·거절·후보 없음·읽는 중·찾지 못함·오류·좁은 창·실제 어댑터 둘)을 찍고 점검한다 — 후보·블로그 이름·글은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다(클립보드·주소 열기는 기록만 하는 가짜). `--only drafts` 를 주면 이 장면만 찍는다.
 """
 from __future__ import annotations
 
@@ -1134,6 +1134,45 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 6)
     shoot(window, "drafts_error")
     audit(window, "drafts_error")
+    window.close()
+    sample = "첫 문단이에요.\n\n안녕" + chr(0x200B) + "하세요 {{이름}} 님 가격&nbsp;12 좋아요 좋아요 좋아요\n\n" + chr(0x60) * 3 + "\n코드 줄\n" + chr(0x60) * 3             # 글 모양 점검 사진용 가짜 글 — 보이지 않는 글자·자리표시·HTML 표시·같은 낱말 반복·코드 블록 표시
+
+    def garbage_checked(size=None):
+        """초안을 만들고 가짜 글을 넣은 뒤 `검사하기` 를 눌러 글 모양 점검 결과가 카드에 보이게 한다."""
+        win = make(size=size)
+        draft_of(win, software)
+        ui_of(win).editor.setPlainText(sample)
+        ui_offscreen.settle(app, 6)
+        win.drf_inspect()
+        ui_offscreen.wait_until(app, lambda: not win.state.drafts.garbage.running, 15)
+        ui_offscreen.settle(app, 8)
+        return win
+
+    def scroll_garbage(win):
+        """글 모양 점검 카드가 사진 위쪽에 보이게 안쪽 스크롤을 내린다(카드는 오른쪽 칸 — 좁은 창에서는 아래쪽에 쌓인다)."""
+        inner = win.screen_widget.findChild(QScrollArea)
+        target = ui_of(win).garbage.status.parentWidget()                             # 카드 틀(상태 줄이 들어 있는 카드)
+        inner.verticalScrollBar().setValue(max(0, target.mapTo(inner.widget(), target.rect().topLeft()).y() - 24))
+        ui_offscreen.settle(app, 6)
+
+    window = garbage_checked()                                                          # 글 모양 점검(N-2) — 결과 있음: 종류별 항목과 `무시`·`모두 무시`
+    scroll_garbage(window)
+    shoot(window, "drafts_garbage")
+    audit(window, "drafts_garbage")
+    ui_of(window).garbage.buttons[0].click()                                            # 하나를 무시하고 글을 더 쳤다 — `본문이 변경됨`·`무시한 1건 다시 보기`
+    editor = ui_of(window).editor
+    editor.setPlainText(editor.toPlainText() + " 더")
+    ui_offscreen.settle(app, 8)
+    scroll_garbage(window)
+    shoot(window, "drafts_garbage_stale")
+    audit(window, "drafts_garbage_stale")
+    window.state.drafts.leave()
+    window.close()
+    window = garbage_checked((900, 560))                                                # 최소 창 — 한 칸으로 쌓인 카드
+    scroll_garbage(window)
+    shoot(window, "drafts_garbage_narrow")
+    audit(window, "drafts_garbage_narrow")
+    window.state.drafts.leave()
     window.close()
     window = make(size=(900, 560))                                                      # 최소 창 — 한 칸으로 쌓인다·아래 고정 줄이 창 안에 있다
     draft_of(window, appliance)

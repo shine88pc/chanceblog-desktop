@@ -17,7 +17,7 @@ from . import components as UI
 from .bars import ActionBar
 from .blog_parts import NoticeBar
 from .candidate_parts import CardChip
-from .draft_parts import InspectCard, TextArea, TitleInput, TitlePick, lines_box, set_copy_look
+from .draft_parts import GarbageCard, InspectCard, TextArea, TitleInput, TitlePick, lines_box, set_copy_look
 from .screens import page_head
 
 
@@ -34,6 +34,8 @@ class DraftsUi:
         self.back = self.apply = self.actions = self.action_bar = None
         self.side = False
         self.stops = []
+        self.garbage = None                                                      # 글 모양 점검 카드(`draft_parts.GarbageCard`) — 항목별 무시 단추가 동적이라 Tab 순서를 다시 잇는다
+        self.garbage_focus = False                                               # 검사 중 꺼 둔 `검사하기` 단추가 포커스를 쥐고 있었다 — 끝나면 돌려준다
 
 
 def _section(title):
@@ -243,6 +245,27 @@ def _inspect_card(shell, vm, ui):
     return card
 
 
+def _garbage_card(shell, vm, ui):
+    """글 모양 점검 카드(N-2) — 검사 결과 카드 바로 아래의 새 카드. 머리에 `복사를 막지 않아요` 한 줄, 안내·상태 줄·`본문이 변경됨`·종류별 항목과 `무시` 단추. 색은 안내(파랑)와 흐림(회색)뿐이고 복사·확인창과 이어진 것이 없다."""
+    card, inner = _section(vm["title"])
+    inner.addWidget(UI.label(vm["note"], "caption"))
+    inner.addWidget(UI.label(vm["hint"], "caption", wrap=True))
+    status = UI.label(vm["status"], "body", wrap=True)
+    inner.addWidget(status)
+    stale = UI.label(vm["stale_text"], "small", wrap=True)
+    inner.addWidget(stale)
+    rows = lines_box()
+    rows.layout().setSpacing(K.SPACE["2"])
+    inner.addWidget(rows)
+    ignore_all = UI.Button("ghost", vm["ignore_all"]["text"], size="sm", accessible=vm["ignore_all"]["a11y"], focus_key="drf-garbage:all")
+    restore = UI.Button("ghost", vm["restore"]["text"] or "-", size="sm", accessible=vm["restore"]["a11y"] or "-", focus_key="drf-garbage:restore")
+    inner.addWidget(ignore_all, 0, Qt.AlignLeft)
+    inner.addWidget(restore, 0, Qt.AlignLeft)
+    ui.garbage = GarbageCard(status, stale, rows, ignore_all, restore, shell.drf_garbage_ignore, shell.drf_garbage_ignore_all, shell.drf_garbage_restore)
+    ui.garbage.set_state(vm)
+    return card
+
+
 def _chips_card(shell, ui, title, parts, copy_vm):
     card, inner = _section(title)
     for label, items in parts:
@@ -294,6 +317,7 @@ def _right(shell, side, ui):
     column = QVBoxLayout()
     column.setSpacing(K.LAYOUT["gap"])
     column.addWidget(_inspect_card(shell, side["inspect"], ui))
+    column.addWidget(_garbage_card(shell, side["garbage"], ui))                  # 글 모양 점검 — 검사 결과 카드 바로 아래, 따로 선 새 카드(경고만)
     keywords = side["keywords"]
     column.addWidget(_chips_card(shell, ui, keywords["title"], ((keywords["core_title"], keywords["core"]), (keywords["sub_title"], keywords["sub"])), keywords["copy"]))
     column.addWidget(_chips_card(shell, ui, side["tags"]["title"], ((None, side["tags"]["items"]),), side["tags"]["copy"]))
@@ -376,10 +400,10 @@ def _normal_page(shell, vm):
 
 
 def _stops(ui):
-    """Tab 정거장의 읽는 순서 — 뒤로 → 만드는 방법 → (펼쳤다면 그 안) → 제목 → 제목 후보 → 본문 → 오른쪽 칸 → 아래 행동 줄."""
+    """Tab 정거장의 읽는 순서 — 뒤로 → 만드는 방법 → (펼쳤다면 그 안) → 제목 → 제목 후보 → 본문 → 오른쪽 칸(`검사하기` 다음에 글 모양 점검의 `무시` 단추들이 이어진다) → 아래 행동 줄."""
     chain = [ui.back, ui.options_toggle]
     chain += [ui.blog_chips.get(key) for key in ("naver_a", "naver_b")] + list(ui.type_chips.values()) + list(ui.fields.values()) + [ui.apply]
-    chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button]
+    chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, *(ui.garbage.stops() if ui.garbage is not None else []), ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button]
     chain += [ui.accordions[key].toggle for key in ("specific", "common")]
     chain += [ui.actions[key] for key in ("title", "body", "all", "open")]
     return [widget for widget in chain if widget is not None]
@@ -424,6 +448,43 @@ def refresh_inspection(page, vm):
     ui = _ui(page)
     if ui is not None and ui.inspect is not None:
         ui.inspect.set_state(vm)
+
+
+def refresh_garbage(page, vm):
+    """글 모양 점검 카드를 그 자리에서 바꾼다 — 상태 줄·`본문이 변경됨`·항목·`무시` 단추와, 검사 중에는 공용 `검사하기` 단추의 글(`검사 중…`)과 꺼짐. 항목이 그대로면 아무것도 다시 만들지 않는다(글을 칠 때마다 불린다).
+    단추가 새로 만들어졌으면 Tab 순서를 다시 잇는다. 꺼 둔 단추가 포커스를 쥐고 있었다면 검사가 끝났을 때 돌려준다(키보드 사용자가 자리를 잃지 않게)."""
+    ui = _ui(page)
+    if ui is None or ui.garbage is None:
+        return
+    button = ui.inspect_button
+    if not vm["button"]["enabled"] and button.hasFocus():
+        ui.garbage_focus = True
+    button.setText(vm["button"]["text"])
+    button.setAccessibleName(vm["button"]["a11y"])
+    button.setEnabled(vm["button"]["enabled"])
+    if vm["button"]["enabled"] and ui.garbage_focus:
+        ui.garbage_focus = False
+        button.setFocus(Qt.OtherFocusReason)
+    if ui.garbage.set_state(vm):
+        ui.stops = _stops(ui)
+        for first, second in zip(ui.stops, ui.stops[1:]):
+            QWidget.setTabOrder(first, second)
+
+
+def garbage_button_index(page, key):
+    """항목 열쇠의 `무시` 단추가 몇 번째인가(없으면 -1) — 누른 단추가 사라진 뒤 포커스를 이웃에게 주려고 쓴다."""
+    ui = _ui(page)
+    return ui.garbage.keys.index(key) if ui is not None and ui.garbage is not None and key in ui.garbage.keys else -1
+
+
+def focus_garbage(page, index):
+    """무시한 뒤 포커스를 이웃 `무시` 단추로(없으면 `검사하기` 로) 옮긴다 — 눌렀던 단추는 사라졌다."""
+    ui = _ui(page)
+    if ui is None or ui.garbage is None:
+        return
+    buttons = ui.garbage.buttons
+    target = buttons[min(max(index, 0), len(buttons) - 1)] if buttons else ui.inspect_button
+    target.setFocus(Qt.OtherFocusReason)
 
 
 def refresh_options(page, options):

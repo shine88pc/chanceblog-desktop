@@ -162,6 +162,10 @@ class AppShell(QMainWindow):
         self.drafts_bridge.loaded.connect(self._on_drafts_made)
         self.drafts_bridge.failed.connect(self._on_drafts_failed)
         self.drafts_bridge.cancelled.connect(self._on_drafts_cancelled)
+        self.garbage_bridge = JobBridge(self)                                           # 글 모양 점검(N-2)의 다리 — 작업 스레드가 돌려준 결과 값(걸린 글 없음)을 화면 스레드로 넘긴다. 초안 만들기와 따로 돈다
+        self.garbage_bridge.loaded.connect(self._drf_garbage_arrived)
+        self.garbage_bridge.failed.connect(self._drf_garbage_failed)
+        self.garbage_bridge.cancelled.connect(self._drf_garbage_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -1202,8 +1206,8 @@ class AppShell(QMainWindow):
         page = self.screen_widget
         return page if self.state.page == "drafts" and page is not None and hasattr(page, "drf_ui") else None
 
-    def _live_drafts(self, *, picks=False, status=False, inspect=False, options=False):
-        """글을 고친 뒤 — 화면을 다시 그리지 않고 글자 수·고친 정도·제목 후보 표시·검사 카드·만드는 방법 칸만 그 자리에서 바꾼다(입력 중이던 커서·한글 조합이 사라지지 않게)."""
+    def _live_drafts(self, *, picks=False, status=False, inspect=False, options=False, garbage=False):
+        """글을 고친 뒤 — 화면을 다시 그리지 않고 글자 수·고친 정도·제목 후보 표시·검사 카드·글 모양 점검 카드(`본문이 변경됨`)·만드는 방법 칸만 그 자리에서 바꾼다(입력 중이던 커서·한글 조합이 사라지지 않게)."""
         page = self._drafts_screen()
         if page is None:
             return
@@ -1215,16 +1219,18 @@ class AppShell(QMainWindow):
             ds.refresh_picks(page, controller.title_picks())
         if inspect:
             ds.refresh_inspection(page, controller.inspect_card())
+        if garbage:
+            ds.refresh_garbage(page, controller.garbage_card())
         if options:
             ds.refresh_options(page, controller.options_vm())
 
     def drf_title_edited(self, text):
         self.state.drafts.set_title(text)
-        self._live_drafts(picks=True, status=True, inspect=True)
+        self._live_drafts(picks=True, status=True, inspect=True, garbage=True)
 
     def drf_body_edited(self, text):
         self.state.drafts.set_body(text)
-        self._live_drafts(status=True, inspect=True)
+        self._live_drafts(status=True, inspect=True, garbage=True)
 
     def drf_option_edited(self, name, text):
         if self.state.drafts.set_option(name, text):
@@ -1252,9 +1258,68 @@ class AppShell(QMainWindow):
         self._live_drafts(picks=True, status=True, inspect=True)
 
     def drf_inspect(self):
-        """`검사하기` — 편집기의 제목·본문을 훑는다(읽기뿐). 결과는 검사 카드에 보이고 파일·클립보드는 바뀌지 않는다."""
-        self.state.drafts.inspect()
-        self._live_drafts(inspect=True)
+        """`검사하기` — 편집기의 제목·본문을 훑는다(읽기뿐). 결과는 검사 카드에 보이고 파일·클립보드는 바뀌지 않는다. 글 모양 점검도 이 단추로만 시작한다(**글 모양 점검은** 작업 스레드 — 결과는 따로 선 카드에 나중에 채워지고
+        그동안 이 단추는 `검사 중…` 으로 꺼진다). 글을 치는 동안이나 복사할 때는 부르지 않는다. 같은 단추의 기존 검사(`inspect()`)는 아직 화면 스레드에서 동기로 돈다 — 수천 자는 순식간이지만 10만 자는 4초 안팎이다(M036 부터 있던 것, 같은 길로 옮기는 일은 후속 — D-320)."""
+        controller = self.state.drafts
+        controller.inspect()
+        controller.start_garbage(**self.garbage_bridge.callbacks())
+        self._live_drafts(inspect=True, garbage=True)
+
+    def _drf_garbage_arrived(self, result):
+        self._guarded(self._drf_garbage_show, result, recover=self._drf_garbage_recover)
+
+    def _drf_garbage_show(self, result):
+        if self.state.drafts.apply_garbage(result):                                  # 세대가 다른(새 초안·떠난 뒤의) 결과는 받지 않는다
+            self._live_drafts(garbage=True)
+
+    def _drf_garbage_failed(self, failure):
+        self._guarded(self._drf_garbage_fail_show, failure, recover=self._drf_garbage_recover)
+
+    def _drf_garbage_fail_show(self, failure):
+        if self.state.drafts.apply_garbage_failed(failure):
+            self._live_drafts(garbage=True)
+
+    def _drf_garbage_cancelled(self):
+        self.state.drafts.apply_garbage_cancelled()
+
+    def _drf_garbage_recover(self, error):
+        """결과를 그리다 예외가 났다 — 먼저 한 번 다시 그려 본다(한 번만 난 예외면 결과가 그대로 보인다). 또 실패하면 이 카드만 `점검을 끝내지 못했어요` 로 두고(`abandon()` — 도는 중으로 남지 않는다) 초안 화면은 그대로다(글 모양 점검은 경고뿐이라 다른 것을 멈추지 않는다).
+        실패 카드를 그리는 코드까지 예외를 내면 안내 한 줄만 띄운다."""
+        report_unexpected(type(error), error)
+        try:
+            self._live_drafts(garbage=True)
+        except Exception:
+            self.state.drafts.garbage.abandon()
+            try:
+                self._live_drafts(garbage=True)
+            except Exception:
+                self.notify(T["job_failed"])
+
+    def drf_garbage_ignore(self, key):
+        """`무시` — 그 경고(같은 지문은 모두)를 이 화면의 메모리에서만 숨긴다. 글·복사·파일은 바뀌지 않는다."""
+        page = self._drafts_screen()
+        from . import draft_screen as ds
+        index = ds.garbage_button_index(page, key) if page is not None else -1
+        if self.state.drafts.ignore_garbage(key):
+            self._live_drafts(garbage=True)
+            if page is not None:
+                ds.focus_garbage(page, index)
+
+    def drf_garbage_ignore_all(self):
+        if self.state.drafts.ignore_all_garbage():
+            self._live_drafts(garbage=True)
+            page = self._drafts_screen()
+            if page is not None:
+                from . import draft_screen as ds
+                ds.focus_garbage(page, 0)
+
+    def drf_garbage_restore(self):
+        if self.state.drafts.restore_garbage():
+            self._live_drafts(garbage=True)
+            page = self._drafts_screen()
+            if page is not None:
+                from . import draft_screen as ds
+                ds.focus_garbage(page, 0)
 
     def drf_toggle_options(self):
         self.state.drafts.toggle_options()
@@ -1618,6 +1683,7 @@ class AppShell(QMainWindow):
             job = self.state.runner.job(CANDIDATES_WRITE_KEY)
             if job is not None:
                 job.join(WRITE_CLOSE_WAIT)
+        self.state.drafts.shutdown()                                              # 도는 글 모양 점검의 답은 버린다 — 작업자 종료를 기다리지 않는다(끝난 스레드의 답은 어디에도 보이지 않는다)
         self.state.runner.cancel_all()
         self.state.runner.join_all(1.0)
         super().closeEvent(event)

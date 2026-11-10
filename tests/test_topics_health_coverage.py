@@ -1675,12 +1675,12 @@ class DocumentsTest(unittest.TestCase):                                         
             self.assertNotIn("http", mine)
 
     def test_no_other_number_between_d290_and_d319_is_used_here_except_the_ones_another_work_package_owns(self):
-        # D-297 과 D-312–D-314 는 다른 묶음(P4e 초안 작성 화면)이 쓰는 번호다 — 병합 때 겹치지 않게 이 묶음은 D-290–D-296 과 D-298–D-311 만 쓴다(그 번호들이 있어도 시험은 그대로 통과한다 — P4e 와 합친 뒤 main 에서도 이 시험이 초록이어야 한다)
+        # D-297 과 D-312–D-314 는 다른 묶음(P4e 초안 작성 화면)이 쓰는 번호다 — 병합 때 겹치지 않게 이 묶음은 D-290–D-296 과 D-298–D-311 만 쓴다(그 번호들이 있어도 시험은 그대로 통과한다 — P4e 와 합친 뒤 main 에서도 이 시험이 초록이어야 한다) · D-315–D-321 은 글 모양 점검(N-2)이 쓰는 번호다 — 이 시험의 범위(D-31x)에 드는 D-315–D-319 를 아래 목록에 더했다
         text, _rows = self.rows()
         found = [line.split(" | ")[0].lstrip("| ") for line in text.splitlines() if line.startswith("| D-")]
         mine = set(self.ROUND_ONE) | set(self.ROUND_TWO) | set(self.ROUND_THREE)
         others = {item for item in found if len(item) == 5 and item[:4] in ("D-29", "D-30", "D-31") and item not in mine}
-        self.assertTrue(others <= {"D-297", "D-312", "D-313", "D-314"}, others)
+        self.assertTrue(others <= {"D-297", "D-312", "D-313", "D-314", "D-315", "D-316", "D-317", "D-318", "D-319"}, others)
         for number in mine:
             self.assertEqual(found.count(number), 1, f"{number} 은 한 번씩만 — 다른 묶음의 행이 같은 번호를 쓰면 병합 때 이 시험이 알려 준다")
 

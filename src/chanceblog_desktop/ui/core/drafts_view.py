@@ -14,9 +14,10 @@
 from __future__ import annotations
 
 from ...content.profiles import POST_TYPES
+from . import draft_garbage as garbage
 from . import draft_rules as rules
 from .drafts import DraftFailure, DraftRequest, review_health
-from .jobs import JobFailure
+from .jobs import Job, JobFailure
 from .text import T
 
 DRAFT_KEY = "drafts-make"                                    # 초안을 만드는 작업의 이름(후보·홈·설정 읽기와 따로 돈다)
@@ -32,6 +33,8 @@ class DraftsController:
         self.target = None
         self.pending = None
         self.make_count = 0
+        self.garbage = garbage.GarbageTracker()              # 글 모양 점검(N-2) — 복사 관문과 다른 결과 칸이다(경고만, `gate`·`copy_decision` 은 이 상태를 읽지 않는다)
+        self._garbage_job = None
         self._clear_draft()
         self.state = "empty"
 
@@ -57,6 +60,7 @@ class DraftsController:
         self.pick_asked = None
         self.regen_asked = False
         self.leave_asked = None
+        self._cancel_garbage()                               # 새 초안·떠남 — 도는 글 모양 점검의 답은 받지 않고 결과·무시 기억을 지운다(저장하지 않는다)
 
     # ---- 읽기(파일·폴더를 만들지 않는다) ----
     @property
@@ -132,6 +136,7 @@ class DraftsController:
         self.ack, self.copied, self.inspection, self.inspected_for = {}, set(), None, None
         self.copy_asked = self.pick_asked = self.leave_asked = None
         self.regen_asked = False
+        self._cancel_garbage()                               # 새 초안이 오면 글 모양 점검의 결과·무시 기억도 새로 시작한다
         self.failure, self.state = None, "normal"
         notes = []
         if result.rejected:
@@ -329,6 +334,63 @@ class DraftsController:
 
     def inspection_fresh(self):
         return self.inspection is not None and self.inspected_for == (self.title, self.body)
+
+    # ---- 글 모양 점검(N-2) — 경고만 한다: 복사 관문(`gate`·`copy_decision` …)과 다른 결과 칸이고 그쪽은 이 상태를 읽지 않는다. 글을 바꾸지도 않는다 ----
+    def start_garbage(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """`검사하기` 를 눌렀을 때만 — 글 모양 점검을 **작업 스레드**에서 시작한다(읽기뿐, 글을 치는 동안·복사할 때는 부르지 않는다). 글의 바뀌지 않는 복사본(문자열)만 넘기고 결과 값(걸린 글 없음)을 받는다.
+        `(상태, 작업)`: `unavailable`(초안이 없다·새 초안을 만드는 중)·`busy`(도는 검사가 이미 있다 — 중복 실행 방지)·`started`. 화면 도구는 콜백을 자기 화면 스레드로 넘겨(Qt: 시그널) `apply_garbage`·`apply_garbage_failed` 를 부른다."""
+        if self.result is None or self.state != "normal" or self.busy:
+            return "unavailable", None
+        title, body = self.title, self.body
+        generation = self.garbage.begin(title, body)
+        if generation is None:
+            return "busy", None
+
+        def failed(failure, payload):
+            failure.generation = payload                         # 어느 검사의 실패인지(낡은 검사의 실패가 지금 검사를 실패로 만들지 않게)
+            if on_error is not None:
+                on_error(failure, payload)
+
+        job = Job(garbage.GARBAGE_KEY, lambda progress, cancelled: garbage.run(generation, title, body), payload=generation, on_done=on_done, on_error=failed, on_cancel=on_cancel)
+        self._garbage_job = job
+        job.start()
+        return "started", job
+
+    def apply_garbage(self, result):
+        """검사 결과가 왔다 → 받았으면 True. 세대 번호가 지금 도는 검사와 다르면(그 사이 새 초안·떠남) 버린다."""
+        return self.garbage.deliver(result)
+
+    def apply_garbage_failed(self, failure):
+        """검사가 끝내 실패했다 → 지금 검사의 실패였으면 True(카드가 `점검을 끝내지 못했어요` 를 보인다)."""
+        return self.garbage.fail(getattr(failure, "generation", None))
+
+    def apply_garbage_cancelled(self):
+        """취소된 검사의 알림 — 취소는 새 초안·떠남·닫기에서만 일어나고 그때 이미 모두 지웠으므로 할 일이 없다."""
+        return False
+
+    def _cancel_garbage(self):
+        job, self._garbage_job = self._garbage_job, None
+        if job is not None:
+            job.cancel()                                         # 기다리지 않는다 — 끝난 스레드의 답은 세대가 달라 어디에도 보이지 않는다
+        self.garbage.reset()
+
+    def shutdown(self):
+        """앱을 닫는다 — 도는 글 모양 점검의 답을 버린다(작업자 종료를 기다리지 않는다)."""
+        self._cancel_garbage()
+
+    def garbage_card(self):
+        """글 모양 점검 카드의 글(검사 전·검사 중·결과 있음·결과 없음·본문이 변경됨·너무 길어 건너뜀) — 글을 칠 때마다 이것만 다시 만들어 보인다(결과는 지우지 않고 낡았음을 알린다)."""
+        return self.garbage.card(self.title, self.body)
+
+    def ignore_garbage(self, key):
+        """항목 하나를 무시한다(이 화면의 메모리에만 기억 — 새 초안·떠남에서 지운다) → 바뀌었으면 True."""
+        return self.garbage.ignore(key)
+
+    def ignore_all_garbage(self):
+        return self.garbage.ignore_all()
+
+    def restore_garbage(self):
+        return self.garbage.restore()
 
     # ---- 건강 판정(두 번째 방어선) ----
     def _health_units(self, item):
@@ -596,6 +658,7 @@ class DraftsController:
         specific, common, _gate_lines, _unknown = self.checks()
         return {
             "inspect": self._inspect_card(),
+            "garbage": self.garbage_card(),
             "keywords": {"title": T["drf_side_keywords"], "core_title": T["drf_kw_core"], "core": [rules.shown(item, 40) for item in body.core_keywords], "sub_title": T["drf_kw_sub"], "sub": [rules.shown(item, 40) for item in body.sub_keywords],
                          "copy": self._copy_button("keywords", T["drf_copy_keywords"])},
             "tags": {"title": T["drf_side_tags"], "items": [rules.shown(item, 40) for item in body.tags], "copy": self._copy_button("tags", T["drf_copy_tags"])},
