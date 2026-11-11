@@ -20,13 +20,17 @@ from ..core.candidates_view import WRITE_KEY as CANDIDATES_WRITE_KEY
 from ..core.seeds_view import WRITE_KEY as SEEDS_WRITE_KEY
 from ..core.keys_view import WRITE_KEY as KEYS_WRITE_KEY
 from ..core.clock import SystemClock
+from ..core.style_view import StyleStudy
 from ..core.text import T
 from ..core.version import read_version
+from ..style_adapter import ServiceStyleProvider
 from . import components as UI
 from . import screens as S
 from .key_parts import KeyDialog, RenameForm
 from .candidate_parts import DetailPane
 from .sidebar import Sidebar
+from .style_dialog import DIALOG_WIDTH as STYLE_DIALOG_WIDTH
+from .style_dialog import StyleDialog
 from .topbar import TopBar
 from .workers import JobBridge
 
@@ -71,7 +75,7 @@ def qt_file_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
@@ -166,6 +170,12 @@ class AppShell(QMainWindow):
         self.garbage_bridge.loaded.connect(self._drf_garbage_arrived)
         self.garbage_bridge.failed.connect(self._drf_garbage_failed)
         self.garbage_bridge.cancelled.connect(self._drf_garbage_cancelled)
+        self.style = StyleStudy(style or ServiceStyleProvider())                         # 내 글 문체 참고값 보기(N-3a)의 상태 — 앱이 사는 동안 하나이고 열 때 비우고 닫을 때 버린다(세대 번호가 이어 올라 옛 계산이 새 창에 섞이지 않는다)
+        self.style_form = None                                                           # 열려 있는 대화상자의 안쪽 부품(없으면 None)
+        self.style_bridge = JobBridge(self)                                              # 문체 숫자 계산(읽기뿐 — 아무것도 저장하지 않는다)의 다리 — `계산하기` 를 눌렀을 때만 시작한다
+        self.style_bridge.loaded.connect(self._style_arrived)
+        self.style_bridge.failed.connect(self._style_failed)
+        self.style_bridge.cancelled.connect(self._style_cancelled)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -1649,6 +1659,108 @@ class AppShell(QMainWindow):
         try:
             if self.state.page in ("settings", "home"):
                 self.render()
+        except Exception:
+            self.notify(T["job_failed"])
+
+    # ---- 내 글 문체 참고값 보기(N-3a) — 설정 화면 맨 아래 카드가 여는 **읽기 전용** 대화상자. 저장·AI·네트워크가 없고 프로필·설정·보관함을 읽지도 쓰지도 않는다. 읽기는 작업 스레드, 결과는 닫으면 모두 버려진다 ----
+    def style_open(self):
+        """카드의 `열기` — 대화상자를 연다(다른 대화상자가 열려 있으면 열지 않는다). 열 때마다 새 세대로 시작하고, 어느 길로든 닫히면 입력 칸·고른 글·결과를 모두 버린다."""
+        if self.dialog.is_open:
+            return None
+        self.style.open()
+        form = StyleDialog(self, self.style)
+        self.dialog.clear()
+        self.dialog.cleanups.append(self._style_discard)                                 # 단추·Esc·다른 대화상자로 바뀜·앱 닫기 — 어느 길로든 부른다
+        self.dialog.setAccessibleName(T["style_title"])
+        self.dialog.layout_.addWidget(form)
+        form.show()                                                                      # 이미 열려 있던 대화상자 안쪽을 바꿔 끼울 때 새 부품이 높이 계산에서 빠지지 않게 바로 보인다고 알린다
+        self._dialog_return = QApplication.focusWidget()
+        self.dialog.present(STYLE_DIALOG_WIDTH)
+        self._trap_focus(True, self.dialog)
+        form.focus_start()
+        self.style_form = form
+        return form
+
+    def _style_discard(self):
+        """대화상자가 닫히거나 바뀔 때 — 입력 칸·고른 글·결과 표를 비우고 도는 계산의 답은 앞으로 받지 않는다(세대가 달라진다). 여러 번 불러도 같다."""
+        form, self.style_form = self.style_form, None
+        if form is not None:
+            form.discard()
+        self.style.close()
+
+    def style_close(self):
+        """`닫기` — 모두 버리고 닫는다(정리는 `_style_discard`)."""
+        self.close_dialog()
+
+    def style_pick(self):
+        """`파일 고르기` — 파일 선택 창(위치만 준다)에서 글 파일 하나를 고른다. 취소하면(빈 위치) 읽지 않는다. 거절 문장은 대화상자 안에 보이고 경로·파일 이름은 어디에도 되풀이하지 않는다."""
+        study, form = self.style, self.style_form
+        if form is None or not study.is_open or not study.view(form.pasted_chars())["pick"]["enabled"]:
+            return None
+        path = self._file_picker(self, T["style_pick_title"], f"{T['style_pick_filter']} (*.txt *.md)")
+        status = study.add_file(path, form.pasted_chars())
+        form.refresh()
+        if status != "cancelled":
+            form.focus_after_pick()
+        return status
+
+    def style_remove(self, index):
+        """고른 파일 하나를 뺀다."""
+        form = self.style_form
+        if form is not None and self.style.remove_file(index):
+            form.refresh()
+            form.focus_after_pick()
+
+    def style_compute(self):
+        """`계산하기` — 고른 글을 작업 스레드에서 읽고 센다(읽기뿐). 입력 칸의 글은 이때 한 번 읽어 값으로 넘기고, 숫자가 돌아오면 칸을 비운다."""
+        study, form = self.style, self.style_form
+        if form is None or not study.is_open:
+            return None
+        status, _job = study.start(form.pasted_text(), **self.style_bridge.callbacks())
+        form.refresh()
+        if status in ("refused", "nothing", "toomany"):
+            form.focus_after_pick()
+        return status
+
+    def style_again(self):
+        """`다른 글로 다시 하기` — 결과와 고른 글을 모두 버리고 고르기 모습으로."""
+        study, form = self.style, self.style_form
+        if form is None or not study.is_open:
+            return
+        study.reset()
+        form.wipe_paste()
+        form.refresh()
+        form.focus_start()
+
+    def _style_arrived(self, outcome):
+        self._guarded(self._style_show, outcome, recover=self._style_recover)
+
+    def _style_show(self, outcome):
+        form = self.style_form
+        if self.style.apply(outcome) and form is not None:                               # 세대가 다른(닫은 뒤·다시 한 뒤에 온) 결과는 받지 않는다
+            form.wipe_paste()                                                            # 숫자를 센 뒤 입력 칸을 비운다
+            form.refresh()
+            form.focus_result()
+
+    def _style_failed(self, failure):
+        self._guarded(self._style_fail_show, failure, recover=self._style_recover)
+
+    def _style_fail_show(self, failure):
+        form = self.style_form
+        if self.style.apply_failed(failure) and form is not None:
+            form.refresh()
+            form.focus_after_pick()
+
+    def _style_cancelled(self):
+        self.style.apply_cancelled()
+
+    def _style_recover(self, error):
+        """화면 스레드에서 예외가 났다 — 쉬운 문장만 알리고(예외 내용은 어디에도 없다) 고르기 모습으로 돌아간다. 표준 오류에도 **예외 이름만** 남긴다(글이 닿는 곳이라 내용은 싣지 않는다)."""
+        report_unexpected(type(error), "")
+        self.style.apply_unexpected()
+        try:
+            if self.style_form is not None:
+                self.style_form.refresh()
         except Exception:
             self.notify(T["job_failed"])
 

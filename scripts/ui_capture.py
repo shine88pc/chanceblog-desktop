@@ -14,6 +14,7 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 **키는 사진에 나오지 않는다**: 입력 칸은 점으로만 보이고(가짜 글 열두 자), 이름은 모두 가짜이며, 실제 어댑터 장면도 이 도구가 만든 임시 폴더와 프로그램 안의 가짜 보관소만 쓴다(자격 증명 관리자는 건드리지 않는다).
 **주제 후보 화면**(D-270)은 환경마다 20장면(기본·거르기·글 검색·상세·상세의 아래쪽·자동 초안 중지 후보·점수 계산 전 후보·빈 목록 셋(보관함 없음·후보 없음·거른 결과 없음)·옛 구조·읽는 중·읽기 오류·만들 수 없을 때의 준비 안내·후보 만들기 확인창·만든 뒤·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — 후보·채널 이름은 모두 가짜이고(`예시 후보 가` …) 실제 어댑터 장면은 임시 폴더에만 쓴다.
 **초안 작성 화면**(D-280부터 D-289까지, 글 모양 점검 D-315)은 환경마다 19장면(글 모양 점검 셋(결과 있음·본문이 변경됨·최소 창)과 기본(협찬 줄이 있는 초안)·소프트웨어 초안·`모든 글 공통` 펼침·만드는 방법 펼침·복사 직후·분야 못 읽는 초안의 복사 전 확인창·고친 글의 확인창·거의 안 고친 초안의 안내·거절·후보 없음·읽는 중·찾지 못함·오류·좁은 창·실제 어댑터 둘)을 찍고 점검한다 — 후보·블로그 이름·글은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다(클립보드·주소 열기는 기록만 하는 가짜). `--only drafts` 를 주면 이 장면만 찍는다.
+**내 글 문체 참고값 보기**(N-3a, D-330)는 환경마다 13장면(설정 화면 맨 아래의 진입 카드·고르기·글 둘을 고른 모습·거절 문장·세는 중·결과 하나·결과 둘·차이가 커서 범위만 보이는 결과·글이 짧은 결과·파일 하나와 붙여 넣은 글 하나의 결과(열 머리에 `(붙여 넣음)`)와 그 최소 창, 두 장면 모두 맨 아래로 내린 모습까지)을 찍고 점검한다 — 글은 모두 가짜 공급자의 예시 글(저장소의 시험용 예시 글에서 뽑았다)이고 파일 선택기도 가짜라 앱은 어떤 파일도 열지 않는다. `--only style` 을 주면 이 장면만 찍는다.
 """
 from __future__ import annotations
 
@@ -126,6 +127,10 @@ def child(args):
         return 0
     if getattr(args, "only", "") == "drafts":                                            # 초안 작성 장면만(다른 사진은 건드리지 않는다)
         drafts_shots(app, ui_offscreen, args, report, logical, tag, out)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
+    if getattr(args, "only", "") == "style":                                             # 내 글 문체 참고값 보기(N-3a) 장면만(다른 사진은 건드리지 않는다)
+        style_shots(app, ui_offscreen, args, report, logical, tag, out)
         print(json.dumps(report, ensure_ascii=False))
         return 0
     window = make("normal")
@@ -1221,13 +1226,183 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
         window.close()
 
 
+def style_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """내 글 문체 참고값 보기(N-3a, D-330–D-339) 사진·점검 — 설정 화면 맨 아래 카드(페이지 전체)·대화상자(고르기·고른 뒤·거절·세는 중·결과 하나·결과 둘(합산)·결과 둘(범위만)·붙여 넣은 글이 든 결과(보통 창·최소 창)·최소 창의 결과).
+    **글은 모두 가짜 공급자의 예시 글**(저장소의 자동 발행 글 한 편과 거기서 뽑은 문단·짧은 일상 글)이고 파일 위치·이름은 사진에 나오지 않는다 — 화면에는 숫자와 고정 문장뿐이다. 실제 파일·데이터 폴더·설정은 읽지도 쓰지도 않는다.
+    점검은 글자 잘림(눌려 반쯤 잘린 부품 포함)·가로 스크롤·'대화상자가 창 안에 들어오는가'(`fits_window`)·단추 줄이 창 안에 보이는가(`buttons_visible`)다."""
+    import threading
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
+    from chanceblog_desktop.ui.core.clock import FixedClock
+    from chanceblog_desktop.ui.core.services import FakeConnectionsProvider, FakeHomeProvider
+    from chanceblog_desktop.ui.core.style_view import FakeStyleProvider
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    fixture = (HERE.parent / "tests" / "fixtures" / "chance_post_ko.md").read_text(encoding="utf-8")
+    body = fixture.partition("\n---\n\n")[2]
+    prose = [block for block in body.split("\n\n") if block and not block.lstrip().startswith(("#", "-", "*", "!", ">", "|", "<", "“"))]
+    texts = {"예시-글-1.md": (fixture, "md"), "예시-글-2.txt": ("\n\n".join(prose[:9]), "txt"),
+             "예시-글-3.txt": ("오늘은 날씨가 좋아서 산책을 했어요. 공원에 사람이 많더라고요. 여러분은 어떤 운동을 좋아하세요?\n\n내일도 걸을 거예요.", "txt")}
+
+    class Gated(FakeStyleProvider):
+        gate = threading.Event()
+
+        def compute(self, paths, pasted_text):
+            self.gate.wait(20)
+            return super().compute(paths, pasted_text)
+
+    picks = []
+
+    def picker(parent, title, filter_text):
+        return picks.pop(0) if picks else ""
+
+    def make(provider=None, size=None):
+        window = AppShell(FakeHomeProvider(), connections=FakeConnectionsProvider(), autoload=False, clock=FixedClock(CAPTURE_TIME), file_picker=picker, style=provider or FakeStyleProvider(texts, refuse=("거절",)))
+        window.resize(*(size or logical))
+        window.show()
+        window.go("settings")
+        ui_offscreen.wait_until(app, lambda: window.state.conn_state != "loading", 10)
+        ui_offscreen.settle(app, 8)
+        return window
+
+    def opened(window):
+        card = next(widget for widget in window.screen_widget.findChildren(QWidget) if widget.property("style_entry"))
+        card.entry_button.click()
+        ui_offscreen.settle(app, 8)
+        return window.style_form
+
+    def audit(window, name):
+        dialog = window.dialog
+        form = window.style_form
+        inside = (not dialog.is_open) or window.rect().contains(dialog.geometry())
+        buttons = [] if form is None else [button for button in form.findChildren(QAbstractButton) if button.isVisible() and not form.scroll.isAncestorOf(button)]
+        visible = all(window.rect().contains(button.mapTo(window, button.rect().bottomRight())) for button in buttons)
+        report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window) + ui_offscreen.find_squeezed(window),
+                                  "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0 or (form is not None and form.scroll.horizontalScrollBar().maximum() > 0),
+                                  "fits_window": bool(inside), "buttons_visible": bool(visible), "width_ok": (not dialog.is_open) or dialog.width() <= int(window.width() * 0.94)}
+
+    def shoot(window, name, whole=False):
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+        if whole:                                                                      # 페이지 전체 — 창을 아주 길게 늘려 찍고 마지막 위젯 아래까지만 남긴다
+            window.resize(logical[0], 6000)
+            ui_offscreen.settle(app, 8)
+            bottom = max(w.mapTo(window, w.rect().bottomLeft()).y() for w in window.screen_widget.findChildren(QWidget) if w.isVisible()) + 40
+            pixmap = window.grab()
+            pixmap = pixmap.copy(QRect(0, 0, pixmap.width(), min(pixmap.height(), round(bottom * pixmap.devicePixelRatio()))))
+            window.resize(*logical)
+            ui_offscreen.settle(app)
+        else:
+            ui_offscreen.settle(app, 3)
+            pixmap = window.grab()
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    def finish(window, *names):
+        """고른 글(가짜 위치)로 계산을 끝까지 돌린다."""
+        picks[:] = list(names)
+        for _ in names:
+            window.style_pick()
+        ui_offscreen.settle(app, 4)
+        window.style_compute()
+        ui_offscreen.wait_until(app, lambda: window.style.phase == "result", 15)
+        ui_offscreen.settle(app, 10)
+
+    window = make()
+    shoot(window, "style_entry", whole=True)
+    audit(window, "style_entry")
+    form = opened(window)
+    shoot(window, "style_select")
+    audit(window, "style_select")
+    picks[:] = ["예시-글-1.md"]
+    window.style_pick()
+    form.paste.setPlainText("붙여 넣은 글은 이런 모습으로 보여요. 직접 쓴 글만 넣어 주세요.")
+    ui_offscreen.settle(app, 6)
+    shoot(window, "style_picked")
+    audit(window, "style_picked")
+    window.style_close()
+    ui_offscreen.settle(app, 4)
+    form = opened(window)
+    picks[:] = ["거절-글.txt"]
+    window.style_pick()
+    ui_offscreen.settle(app, 6)
+    shoot(window, "style_refused")
+    audit(window, "style_refused")
+    window.close()
+    gated = Gated(texts)
+    gated.gate.clear()
+    window = make(gated)
+    form = opened(window)
+    picks[:] = ["예시-글-1.md"]
+    window.style_pick()
+    window.style_compute()
+    ui_offscreen.settle(app, 8)
+    shoot(window, "style_running")
+    audit(window, "style_running")
+    gated.gate.set()
+    ui_offscreen.wait_until(app, lambda: window.style.phase == "result", 15)
+    ui_offscreen.settle(app, 8)
+    shoot(window, "style_result_one")
+    audit(window, "style_result_one")
+    window.close()
+    window = make()
+    opened(window)
+    finish(window, "예시-글-1.md", "예시-글-2.txt")
+    shoot(window, "style_result_two")
+    audit(window, "style_result_two")
+    report["checks"]["style_result_two"]["range_only"] = bool(window.style.outcome.summary.range_only)
+    window.close()
+    window = make()
+    opened(window)
+    finish(window, "예시-글-1.md", "예시-글-3.txt")
+    shoot(window, "style_result_range")
+    audit(window, "style_result_range")
+    report["checks"]["style_result_range"]["range_only"] = bool(window.style.outcome.summary.range_only)
+    window.close()
+    window = make(size=(900, 560))
+    opened(window)
+    finish(window, "예시-글-1.md", "예시-글-3.txt")
+    shoot(window, "style_result_min")
+    audit(window, "style_result_min")
+    window.close()
+
+    def pasted_result(window, form, name):
+        """파일 하나와 붙여 넣은 글 하나의 결과 — 어느 열이 붙여 넣은 글인지 열 머리가 말한다(D-434). 붙여 넣은 글은 가짜 공급자의 예시 글과 같은 문단들이다."""
+        picks[:] = ["예시-글-1.md"]
+        window.style_pick()
+        form.paste.setPlainText(texts["예시-글-2.txt"][0])
+        ui_offscreen.settle(app, 6)
+        window.style_compute()
+        ui_offscreen.wait_until(app, lambda: window.style.phase == "result", 15)
+        ui_offscreen.settle(app, 10)
+        shoot(window, name)
+        audit(window, name)
+        report["checks"][name]["range_only"] = bool(window.style.outcome.summary.range_only)
+        report["checks"][name]["pasted_header"] = [column["text"] for column in window.style.view(0)["result"]["columns"]]
+        bar = window.style_form.scroll.verticalScrollBar()                                 # 맨 아래로 내린 모습 — 표 아래 마지막 세 줄(참고값 안내·직접 쓴 글 안내·글자 모양 규칙 안내)이 잘리지 않는지
+        bar.setValue(bar.maximum())
+        ui_offscreen.settle(app, 6)
+        shoot(window, name + "_bottom")
+        audit(window, name + "_bottom")
+        report["checks"][name + "_bottom"]["scrolled"] = bar.maximum() > 0
+
+    window = make()
+    pasted_result(window, opened(window), "style_result_pasted")
+    window.close()
+    window = make(size=(900, 560))
+    pasted_result(window, opened(window), "style_result_pasted_min")
+    window.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("out", nargs="?", default="ui_shots")
     parser.add_argument("--env", action="append", default=None, help="가로x세로@배율% (여러 번 줄 수 있다)")
     parser.add_argument("--check", action="store_true", help="사진을 저장하지 않고 점검만")
     parser.add_argument("--gallery", action="store_true", help="앱 화면 대신 공통 부품 모음(개발용)을 찍고 점검한다")
-    parser.add_argument("--only", choices=("keys", "drafts"), default="", help="키 연결 화면(P4f) 또는 초안 작성 화면(P4e) 장면만 찍고 점검한다")
+    parser.add_argument("--only", choices=("keys", "drafts", "style"), default="", help="키 연결 화면(P4f)·초안 작성 화면(P4e)·내 글 문체 참고값 보기(N-3a) 장면만 찍고 점검한다")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.child:

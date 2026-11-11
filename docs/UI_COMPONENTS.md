@@ -176,6 +176,27 @@ ui/drafts_adapter.py → service/draft_engine.py(make_body_for_engine — 읽기
 
 **Tab 순서**: 메뉴 → 머리(`← 주제 후보`) → `만드는 방법 바꾸기` → (펼쳤다면 블로그·글 유형 칩 → 선택 입력 칸들 → `다시 만들기`) → 제목 입력 → 제목 후보 셋 → 본문 편집기 → `검사하기` → `키워드 복사` → `태그 복사` → `요약 복사` → 이미지 단추 → `이 글에만 해당` → `모든 글 공통` → 아래 줄(`제목 복사` → `본문 복사` → `전체 복사` → `네이버 글쓰기 열기`). 확인창이 열리면 그 안에서만 돈다(처음 포커스는 취소). 모든 정거장에 접근 이름이 있고 같은 곳을 두 번 지나지 않는다(시험이 한 바퀴를 돈다). **하지 않는 것**: 눌러도 아무 일 없는 단추·이미지 검색 단추·썸네일·초안 저장 단추·AI 단추·발행 단추.
 
+## 3-7. 내 글 문체 참고값 보기 부품 (N-3a — `ui/qt/style_dialog.py`, 저장도 AI 도 네트워크도 없는 읽기 전용 대화상자)
+
+화면은 뷰모델(`ui/core/style_view.py` 의 `StyleStudy.view` 가 만든 딕셔너리)을 공통 부품으로 조립하기만 하고 **이 파일들에는 저장·복사·네트워크·서비스 호출이 없다**(시험이 소스를 훑는다). 파일 검사와 계산은 공급자(`ui/style_adapter.py` 의 `ServiceStyleProvider` — 읽기 기반 `read_own_files`·`check_pasted_text` 와 순수 계산 `analyze`·`summarize` 네 함수만 부른다)가 작업 스레드에서 한다.
+
+```text
+core/style_text.py(문구 — T 에 합쳐진다) · core/style_view.py(StyleStudy — 상태·세대 번호·뷰모델, StyleProvider 틀·FakeStyleProvider, 숫자 서식)
+  → qt/style_dialog.py(style_entry_card·PasteBox·StyleDialog) → qt/shell.py(style_open·style_pick·style_compute·style_again·결과·실패 받기·버리기)
+ui/style_adapter.py → service/own_posts.py(읽기 전용) · content/style_stats.py(순수 계산)
+```
+
+| 부품 | 모양·규칙 | 접근성·키보드 |
+|---|---|---|
+| `style_entry_card`(`style_dialog.py`) | 설정 화면 맨 아래의 일반 카드 — 제목·한 줄 설명·`열기`(보조 단추). 카드 틀에는 접근 이름을 달지 않는다(안의 단추가 이름을 가진다). 속성 `style_entry` 로 시험이 찾는다 | 단추 이름 `내 글 문체 참고값 보기 열기`·Tab 정거장 `style-open` |
+| `PasteBox` | 붙여 넣기 칸(`QPlainTextEdit`) — 평문뿐, **Tab 은 글자가 아니라 다음 칸으로**(`setTabChangesFocus`), 최소 높이 110px. 비울 때는 `wipe`(되돌리기·다시 하기 기록까지 지운다). 읽기 전용·꺼진 동안은 입력기가 확정한 글도 받지 않는다 | 이름 `붙여 넣을 글`·글자 수 줄의 이름 `붙여 넣은 글자 수 N자`·정거장 `style:paste` |
+| `StyleDialog` | 대화상자의 안쪽 — 고르기 모습(안내·`파일 고르기`·고른 글 줄·붙여 넣기 칸·거절 문장·상태)·결과 모습(표 카드·센 개수·안내)·아래 단추 줄. 모습은 컨트롤러가 정하고 `refresh()` 가 그린다. 표는 뷰모델의 모양(서명)이 바뀔 때만 다시 만든다 | 몸(`DialogScroll`)이 이름 `문체 참고값 대화상자 내용` 의 정거장·단추마다 이름 |
+| `DialogScroll`(`key_parts.py`, 재사용) | 몸의 스크롤 — 창이 낮을 때만 스크롤되고 키보드(방향키)로 스크롤된다 | 정거장 `style:scroll` |
+| `Dialog`(`shell.py` 의 창 안 대화상자, 재사용) | 폭 760px(창 논리 폭의 94% 를 넘지 않는다)·정리 훅(`cleanups`) — 닫는 어느 길로든 `StyleDialog.discard` 가 입력 칸·고른 글·결과를 비운다 | Esc 로 닫으면 포커스가 `열기` 로 돌아간다·Tab 은 대화상자 안에서만 돈다 |
+| `UI.Card`·`UI.label`·`UI.Button`(재사용) | 진입 카드·표 카드·글·단추 | 기존과 같다 |
+
+**Tab 순서**: 몸(스크롤) → `파일 고르기` → `빼기`들 → 붙여 넣기 칸 → `다른 글로 다시 하기`(결과 모습만) → `닫기` → `계산하기`(고르기 모습만). 안 보이거나 꺼진 부품은 Qt 가 건너뛴다. 열면 `파일 고르기`, 결과가 나오면 몸(스크롤), 고른 뒤에는 `파일 고르기`(꺼졌으면 `계산하기`, 그것도 꺼졌으면 `닫기`)에 포커스가 간다.
+
 ## 4. 새 부품을 더할 때
 
 ① 색·크기는 `tokens.py` 에 키를 더하고 `theme.py` 스타일시트에서만 쓴다 ② 접근 이름·키보드·포커스 링 ③ `components.py` 에 한 곳으로(그리는 부품은 `gauges.py`, 줄 모양 부품은 `bars.py` — 새 파일도 직접 색·인라인 스타일 시험이 훑는다. 계산은 PySide6 없이 시험하도록 `ui/core/` 의 순수 모듈에 둔다) ④ 시험(접근 이름·36px·직접 색 없음은 자동으로 훑는다) ⑤ 이 표에 한 줄.
