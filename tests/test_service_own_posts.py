@@ -1388,6 +1388,106 @@ class FuzzTest(OwnCase):
         self.assertGreater(refused, 20)
 
 
+# ---- 14-2) 붙여 넣은 글 한 개(N-3a, D-330) --------------------------------------------------------------------------------------------
+class PastedTextTest(OwnCase):
+    """`check_pasted_text` — 운영자가 직접 붙여 넣은 글 하나를 **파일과 같은 한도·같은 거절 문장**으로 검사한다(`_check_text` 를 감싸기만 한다). 파일·시계·환경을 건드리지 않고, 거절 오류에 글이 없고, 거절 직전에 이 함수의 `text` 를 비운다."""
+    MARK = "UNIQ-PASTE-k4m8-본문"
+    INVISIBLE = chr(0x200B) * 3 + chr(0x2060) + chr(0x200D) * 2 + chr(0xFEFF)
+
+    def refuse_text(self, build):
+        """`build()` 가 만든 글을 붙여 넣으면 나는 오류를 돌려준다 — 글은 이 틀의 지역 변수가 아니라 임시 값이라 호출 흔적 검사(`leaking_locals`)가 이 시험 자신을 잡지 않는다.
+        `assertRaises` 는 쓰지 않는다(잡은 오류의 틀을 비워 지역 변수를 볼 수 없게 만든다)."""
+        try:
+            op.check_pasted_text(build())
+        except AppError as error:
+            return error
+        self.fail("거절되지 않았다")
+
+    def test_a_normal_pasted_text_comes_back_with_its_length_and_the_utf8_charset_name(self):
+        text = "붙여 넣은 글입니다.\n둘째 줄입니다."
+        result = op.check_pasted_text(text)
+        self.assertIsInstance(result, op.OwnText)
+        self.assertEqual((result.text, result.chars, result.encoding), (text, len(text), "utf-8"))
+        self.assertEqual(op.check_pasted_text("글").chars, 1)
+
+    def test_line_endings_are_kept_and_counted_like_a_file(self):
+        text = "a\r\nb\rc\nd"
+        self.assertEqual(op.check_pasted_text(text).text, text)
+        self.assertEqual(op.check_pasted_text(text).chars, len(text))
+
+    def test_each_refusal_is_the_same_sentence_the_file_path_gives(self):
+        cases = (("empty", lambda: ""), ("empty", lambda: " \n\t "), ("empty", lambda: self.INVISIBLE), ("binary", lambda: "a\x00b"), ("long", lambda: "x" * (op.MAX_TEXT_CHARS + 1)),
+                 ("empty", lambda: None), ("empty", lambda: 5), ("empty", lambda: b"abc"), ("empty", lambda: ["가"]))
+        for key, build in cases:
+            with self.subTest(key=key, kind=type(build()).__name__):
+                error = self.refuse_text(build)
+                self.assertEqual(error.code, "CONTENT_INVALID")
+                self.assertEqual(error.requested_code, "CONTENT_INVALID")
+                self.assertTrue(error.slots["항목"].startswith("기존 글 파일 — "))
+                self.assertIn(SAYS[key], error.slots["항목"])
+        for key, content in (("empty", " \n"), ("binary", b"a\x00b"), ("long", "x" * (op.MAX_TEXT_CHARS + 1))):
+            with self.subTest(key=key, side="file"):
+                from_file = self.refused([self.put(f"{key}.txt", content)], key).slots["항목"]
+                text = content.decode("utf-8") if isinstance(content, bytes) else content
+                self.assertEqual(self.refuse_text(lambda text=text: text).slots["항목"], from_file, "파일과 붙여 넣은 글의 거절 문장이 같다")
+
+    def test_the_length_limit_is_exact_and_a_long_text_is_never_cut_short(self):
+        self.assertEqual(op.check_pasted_text("가" * op.MAX_TEXT_CHARS).chars, 100_000)
+        self.assertIn(SAYS["long"], self.refuse_text(lambda: "가" * (op.MAX_TEXT_CHARS + 1)).slots["항목"])
+        self.assertEqual(len(op.check_pasted_text("가나다 " * 25000).text), 100_000)
+
+    def test_a_single_visible_character_among_blanks_is_enough(self):
+        self.assertEqual(op.check_pasted_text(" \n" + self.INVISIBLE + "글\n").chars, len(" \n" + self.INVISIBLE + "글\n"))
+
+    def test_it_never_touches_the_file_system_the_clock_or_the_environment(self):
+        def forbidden(*args, **kwargs):
+            raise AssertionError("붙여 넣은 글 검사가 파일 시스템을 건드렸다")
+        with mock.patch("builtins.open", forbidden), mock.patch.object(os, "lstat", forbidden), mock.patch.object(os, "stat", forbidden), mock.patch.object(os, "fstat", forbidden), \
+                mock.patch.object(os, "listdir", forbidden), mock.patch.object(os, "scandir", forbidden), mock.patch.object(os, "getenv", forbidden):
+            self.assertEqual(op.check_pasted_text("글입니다.").chars, 5)
+            for build in (lambda: "", lambda: "a\x00", lambda: "x" * (op.MAX_TEXT_CHARS + 1), lambda: None):
+                self.assertEqual(self.refuse_text(build).code, "CONTENT_INVALID")
+
+    def test_a_refusal_never_repeats_the_text_and_carries_no_earlier_error(self):
+        for label, build in (("binary", lambda: self.MARK + "\x00" + self.MARK), ("long", lambda: (self.MARK + " ") * 6000), ("blank", lambda: self.INVISIBLE)):
+            with self.subTest(label=label):
+                error = self.refuse_text(build)
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+                for channel, shown in channels(error).items():
+                    self.assertNotIn(self.MARK, shown, channel)
+                    self.assertNotIn(self.MARK[:8], shown, channel)
+                    self.assertNotIn(self.INVISIBLE, shown, channel)
+
+    def test_a_refusal_leaves_the_text_in_no_frame_of_its_own_call_chain(self):
+        for label, build, markers in (("long", lambda: (self.MARK + " ") * 6000, [self.MARK]), ("nul", lambda: self.MARK + "\x00" + self.MARK, [self.MARK]), ("blank", lambda: self.INVISIBLE, [self.INVISIBLE])):
+            with self.subTest(label=label):
+                self.assertEqual(leaking_locals(self.refuse_text(build), markers), [])
+
+    def test_nothing_is_logged_printed_or_warned(self):
+        out, err = io.StringIO(), io.StringIO()
+        with warnings.catch_warnings(record=True) as caught, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), self.assertNoLogs(level="DEBUG"):
+            warnings.simplefilter("always")
+            op.check_pasted_text(self.MARK)
+            for build in (lambda: "", lambda: self.MARK + "\x00", lambda: None):
+                self.refuse_text(build)
+        self.assertEqual((out.getvalue(), err.getvalue(), [str(item.message) for item in caught]), ("", "", []))
+
+    def test_the_function_is_public_wraps_the_internal_check_and_uses_nothing_else(self):
+        self.assertEqual(op.__all__, ["OwnText", "check_pasted_text", "read_own_files"])
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "check_pasted_text")
+        calls = {ast.unparse(node.func) for node in ast.walk(function) if isinstance(node, ast.Call)}
+        self.assertEqual(calls, {"isinstance", "_check_text", "_refuse", "OwnText", "len"})
+        self.assertEqual([name.arg for name in function.args.args], ["text"])
+
+    def test_the_value_is_frozen_and_shows_no_text_in_its_repr(self):
+        result = op.check_pasted_text(self.MARK)
+        self.assertNotIn(self.MARK, repr(result) + str(result))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            result.text = "다른 글"
+
+
 # ---- 15) 문서 ---------------------------------------------------------------------------------------------------------------------
 class DocsTest(unittest.TestCase):
     """문서 시험 — 이 묶음의 결정 행(D-325–D-329)과 구조·보안·변경 이력의 이 묶음 줄을 못박는다.

@@ -396,7 +396,7 @@ class AccessibilityTest(Base):
         self.settle()
         self.assertEqual(len(self.interactive(window)), before + 1)                                       # 정보를 펴면 '진단 정보 보기' 하나만
         card_buttons = [w for w in window.screen_widget.findChildren(QAbstractButton) if not w.property("acc") and w.isVisible()]
-        self.assertTrue(all(w.accessibleName() in (text.T["conn_refresh"], text.T["diag_show"], "예시 데이터") for w in card_buttons), [w.accessibleName() for w in card_buttons])
+        self.assertTrue(all(w.accessibleName() in (text.T["conn_refresh"], text.T["diag_show"], "예시 데이터", text.T["style_entry_open_a11y"]) for w in card_buttons), [w.accessibleName() for w in card_buttons])        # 의도적 갱신(N-3a, D-330): 맨 아래의 '내 글 문체 참고값 보기' 카드의 `열기` 단추 하나가 더해졌다(읽기 전용 대화상자만 연다)
 
     def test_the_card_groups_have_a_name_a_screen_reader_can_read(self):
         window = self.make()

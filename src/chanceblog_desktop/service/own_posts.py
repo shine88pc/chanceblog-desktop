@@ -1,5 +1,6 @@
 """기존 글 읽기 기반(화면 없음) — 운영자가 파일 선택 창에서 직접 고른 본인 글 파일 1–2개를 **읽기만** 하는 서비스 함수(결정 D-325–D-329).
 다음 묶음(N-3a, 본인 글의 문체 수치를 화면에 보여 주는 분석)이 쓸 읽기 길만 만든다. 이 모듈은 파일을 읽어 글(문자열)과 글자 수를 돌려줄 뿐이다.
+N-3a 가 붙여 넣은 글도 받으므로 같은 한도·같은 거절 문장으로 글 하나를 검사하는 `check_pasted_text` 가 하나 더 있다(D-330 — 파일을 만지지 않고 `_check_text` 를 감싸기만 한다).
 
 규칙(모두 fail closed — 의심스러우면 읽지 않고 고정 문장으로 거절한다):
   · 한 번에 파일 1–2개(`MAX_FILES`), 파일 하나 2MB 이하(`MAX_FILE_BYTES`), 읽은 글 10만 자 이하(`MAX_TEXT_CHARS`), 형식은 `.txt`·`.md` 둘뿐(`ALLOWED_SUFFIXES`, 대소문자 무시).
@@ -267,4 +268,15 @@ def read_own_files(paths):
     return tuple(_read_one(pure, info) for pure, info in zip(pures, infos, strict=True))
 
 
-__all__ = ["OwnText", "read_own_files"]
+def check_pasted_text(text):
+    """운영자가 직접 붙여 넣은 글 하나를 파일과 **같은 한도·같은 거절 문장**으로 검사해 `OwnText`(글자표 이름은 `utf-8`) 로 돌려준다(D-330). 파일을 만지지 않고 내부 검사 `_check_text` 를 감싸기만 한다 —
+    10만 자 초과(잘라 쓰지 않는다)·NUL·공백이나 눈에 안 보이는 글자뿐인 글·문자열이 아닌 것은 `AppError("CONTENT_INVALID")`(고정 문장, 글 내용은 없다). 거절 직전에 이 함수의 `text` 를 비워 오류의 호출 흔적이 글을 붙들지 않게 한다
+    (부른 쪽이 쥔 글은 부른 쪽 몫이다 — 쓰고 버린다)."""
+    reason = _R_EMPTY if not isinstance(text, str) else _check_text(text)
+    if reason is not None:
+        text = None
+        raise _refuse(reason)
+    return OwnText(text, len(text))
+
+
+__all__ = ["OwnText", "check_pasted_text", "read_own_files"]

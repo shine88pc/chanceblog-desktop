@@ -149,6 +149,10 @@ from .draft_text import DRAFT_T  # noqa: E402
 
 T.update(DRAFT_T)                                                    # 초안 작성 화면(P4e)의 문구도 새 파일(`draft_text.py`)에 따로 두고 합친다
 
+from .style_text import STYLE_T  # noqa: E402
+
+T.update(STYLE_T)                                                    # 내 글 문체 참고값 보기(N-3a)의 문구도 새 파일(`style_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 
