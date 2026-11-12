@@ -1,0 +1,19 @@
+# 개인 PC 제한 시험용 Package 를 만들 때의 의존성 잠금 — 정확한 버전(==)만 쓴다. Python 3.12(64비트, Windows) 기준.
+# 설치: python -m pip install -r packaging/requirements-package.txt   (빌드 스크립트는 설치된 버전이 이 파일과 다르면 거절한다)
+# 한계: 배포 파일(wheel)의 --hash 는 담지 못했다(이 파일을 만든 PC 에서 네트워크를 쓰지 않았다). 네트워크가 있는 곳에서
+#       python -m pip hash 또는 pip-compile --generate-hashes 로 해시를 더하면 --require-hashes 로 설치할 수 있다(docs/PACKAGE.md).
+#       대신 빌드가 설치된 파일 내용의 지문(RECORD 해시 요약)을 PACKAGE_INFO.json 에 적는다.
+# 줄 앞의 [runtime]·[build] 표시는 그 아래 패키지가 묶음 안에 들어가는지(runtime) 묶음을 만드는 도구인지(build) 알린다.
+
+# [runtime]
+PySide6_Essentials==6.12.0
+shiboken6==6.12.0
+
+# [build]
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
+altgraph==0.17.5
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+packaging==26.3
+setuptools==84.0.0

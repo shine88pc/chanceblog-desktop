@@ -1,0 +1,12 @@
+이 폴더의 라이선스 전문(LGPL-3.0.txt·GPL-3.0.txt)의 출처 기록 — 묶음의 LICENSES 폴더로 그대로 복사된다(법률 판단이 아니다).
+
+LGPL-3.0.txt
+  - 크기 7639 바이트 · SHA-256 a853c2ffec17057872340eee242ae4d96cbf2b520ae27d903e1b2fef1a5f9d1c
+  - 출처: Windows 용 Git(2.55.0.windows.2)의 라이선스 폴더(mingw64/share/licenses/libunistring/LICENSE.LIB) — GNU Lesser General Public License 3 판 원문
+GPL-3.0.txt
+  - 크기 35149 바이트 · SHA-256 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986
+  - 출처: 같은 폴더의 xz 패키지(mingw64/share/licenses/xz/COPYING.GPLv3, libunistring/LICENSE 와 바이트까지 같음) — GNU General Public License 3 판 원문
+
+한 글자도 바꾸지 않고 복사했다(.gitattributes 의 `packaging/LICENSES/** -text` 로 윈도의 줄바꿈 변환도 막는다).
+라이선스 공식 배포처의 원문과 대조는 하지 못했다(이 PC 는 네트워크를 쓰지 않았다) — 다른 PC 에서 대조할 때는 위 SHA-256 은 참고일 뿐 원문의 줄바꿈·공백 차이는 내용의 차이가 아니다.
+이 두 전문이 필요한 까닭: 묶음 안의 Qt(PySide6)는 LGPL-3.0 조건으로 쓰며, LGPL-3.0 은 GPL-3.0 의 조건을 포함하므로 사본을 함께 둔다.

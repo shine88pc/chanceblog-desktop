@@ -4,3 +4,6 @@ vendor/** -text
 
 # 시험용 실제 글(tests/fixtures)은 글자 하나까지 같아야 하는 기준 자료라 줄바꿈 변환(Windows autocrlf 포함)을 하지 않는다.
 tests/fixtures/** -text
+
+# 개인 PC 제한 시험용 Package 에 그대로 복사되는 라이선스 전문(packaging/LICENSES)도 한 글자도 바뀌면 안 되므로 줄바꿈 변환(Windows autocrlf 포함)을 하지 않는다.
+packaging/LICENSES/** -text

@@ -294,6 +294,8 @@ def info_card(info):
     row.addWidget(UI.label(info["version"]["text"], "body"))
     row.addStretch(1)
     inner.addLayout(row)
+    if info["version"].get("notice"):                                              # 개인 PC 제한 시험용 묶음의 안내 한 줄(미서명 표시) — 개발 화면에는 없다
+        inner.addWidget(UI.label(info["version"]["notice"], "caption", wrap=True))
     inner.addWidget(UI.Disclosure(info["diag"]["show"], info["diag"]["hide"], info["diag"]["text"], left=True))
     inner.addWidget(UI.label(info["diag"]["note"], "caption", wrap=True))
     inner.addStretch(1)
