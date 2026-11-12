@@ -218,7 +218,7 @@ class MakeTest(unittest.TestCase):
         drive(controller)
         self.assertEqual(controller.state, "normal")
         self.assertEqual(controller.open_info(), ("", T["drf_open_why_profile"]))
-        self.assertFalse(controller.view()["normal"]["actions"]["buttons"][3]["enabled"])
+        self.assertFalse(next(button for button in controller.view()["normal"]["actions"]["buttons"] if button["key"] == "open")["enabled"])      # 자리 번호가 아니라 열쇠로 — 실제 공급자는 맨 앞에 `저장` 이 더해진다(D-361)
 
     def test_the_same_input_gives_the_same_draft_and_the_fake_provider_makes_the_same_text(self):
         setup = Setup(self, count=3)

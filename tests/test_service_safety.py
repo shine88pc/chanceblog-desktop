@@ -315,6 +315,37 @@ class NoLocalPathLeakTest(unittest.TestCase):
             self.assertEqual(backend.count("commit"), 0)
 
 
+# 저장한 초안(LOCALSAVE, D-361) — 글 보관함(`Store`)의 `drafts` 표에 초안을 쓰거나 지우는 서비스 함수는 **둘뿐**이다. 새 쓰기 함수가 생기면 아래 허용 목록에 (파일, 함수)와 이유 한 줄을 더해야 한다(몰래 늘면 걸린다).
+STORE_DRAFT_WRITERS = {
+    ("draft_store.py", "save_draft"): "사용자가 `저장`(Ctrl+S)을 눌렀을 때 — 저장 직전 키·토큰 모양 검사(`security/scan.py`)를 통과한 글만, `Store.update_draft` 한 트랜잭션으로(읽기·확인·쓰기가 한 쓰기 잠금 안 — D-369, 건너뛰는 인자 없음)",
+    ("draft_store.py", "delete_draft"): "사용자가 저장한 초안의 `지우기` 확인창에서 `지우기` 를 눌렀을 때 — 지우기 직전 사본(`backups/before-delete`)을 먼저 만들고, 확인(`confirmed=True`)이 없으면 아무것도 하지 않는다",
+}
+
+
+class StoreDraftWritersTest(unittest.TestCase):
+    def test_only_the_two_known_service_functions_write_or_delete_drafts_in_the_store(self):
+        found = {}
+        for path in FILES:
+            for function in [node for node in ast.walk(parse(path)) if isinstance(node, ast.FunctionDef)]:
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("save_draft", "update_draft", "discard_draft"):
+                        found.setdefault((path.name, function.name), set()).add(node.func.attr)
+        self.assertEqual(sorted(found), sorted(STORE_DRAFT_WRITERS), "초안을 쓰는 서비스 함수가 허용 목록과 다르다 — 새 함수는 이유와 함께 목록에 더한다")
+        self.assertEqual(found[("draft_store.py", "save_draft")], {"update_draft"}, "저장은 `Store.save_draft`(읽고 따로 쓰는 틈이 있다)가 아니라 한 트랜잭션인 `update_draft` 로만 쓴다")
+        self.assertEqual(found[("draft_store.py", "delete_draft")], {"discard_draft"})
+        self.assertTrue(all(reason.strip() for reason in STORE_DRAFT_WRITERS.values()))
+
+    def test_the_two_writers_are_the_only_functions_that_reach_the_store_for_a_draft_and_the_delete_asks_first(self):
+        tree = parse(SERVICE / "draft_store.py")
+        delete = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "delete_draft")
+        body = [node for node in delete.body if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
+        first = body[0]
+        self.assertTrue(isinstance(first, ast.Expr) and isinstance(first.value, ast.Call) and ast.unparse(first.value.func) == "require_confirmation", "지우기는 확인부터 한다")
+        names = [arg.arg for arg in delete.args.kwonlyargs]
+        self.assertIn("confirmed", names)
+        self.assertIsNone(delete.args.kw_defaults[names.index("confirmed")], "확인에는 기본값이 없다(빠뜨리면 TypeError)")
+
+
 def setUpModule():
     ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
 

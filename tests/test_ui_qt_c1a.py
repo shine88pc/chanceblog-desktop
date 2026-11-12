@@ -449,7 +449,9 @@ class NoRouteToUnfinishedScreensTest(QtBase):
         # 그 호출은 `key in ("seed", "blogs")`(완성된 두 화면) 가지 안에만 있다(소스로 확인). 사이드바와 셸의 `go`→`nav` 는 그대로, 화면·부품(`candidate_screen.py` 포함)에는 여전히 하나도 없다.
         # 의도적 갱신(P4e, D-282): 셸에는 `go` 의 `nav` 호출(고친 내용이 있으면 `force` 로만 옮긴다 — 인자가 하나 늘었다)·확인창의 `그래도 이동` 이 부르는 `go(key, force=True)`·후보 상세의 `이 주제로 만들기` 가 초안 화면을 여는
         # `go('drafts')`·초안 화면의 되돌아가기 단추가 부르는 `go('topics')` 가 더해졌다 — 아래에서 자리를 확인한다.
-        self.assertEqual(sorted(found["shell.py"]), sorted(["self.state.nav(key, force=force)", "self.go(key)", "self.go(key, force=True)", "self.go('drafts')", "self.go('topics')"]), "셸의 `go` 가 상태의 `nav` 를 부르는 곳과, 완성된 화면으로 가는 `go` 몇 곳뿐")
+        # 의도적 갱신(LOCALSAVE, D-364): 홈의 `저장한 초안 보기` 단추가 **이미 있는 완성된 화면(초안 작성)으로** 가는 길이 하나 더해졌다 — 셸의 `home_saved_drafts` 가 `self.go('drafts')` 를 부르는 한 곳뿐이고
+        # 화면·부품(`screens.py`)에는 여전히 하나도 없다(홈 화면은 그 셸 함수만 부른다). 떠나기 확인창의 세 갈래(저장 / 저장 안 하고 나가기)는 `go` 안의 같은 `go(key, force=True)` 한 곳을 함께 쓴다.
+        self.assertEqual(sorted(found["shell.py"]), sorted(["self.state.nav(key, force=force)", "self.go(key)", "self.go(key, force=True)", "self.go('drafts')", "self.go('drafts')", "self.go('topics')"]), "셸의 `go` 가 상태의 `nav` 를 부르는 곳과, 완성된 화면으로 가는 `go` 몇 곳뿐")
         shell_tree = ast.parse((QT_DIR / "shell.py").read_text(encoding="utf-8"))
         prep = [node for node in ast.walk(shell_tree) if isinstance(node, ast.FunctionDef) and node.name == "cand_prep_action"]
         self.assertEqual(len(prep), 1)
@@ -459,9 +461,14 @@ class NoRouteToUnfinishedScreensTest(QtBase):
         self.assertTrue(any(inner is gos[0] for statement in guards[0].body for inner in ast.walk(statement)), "`go` 호출이 `key in ('seed', 'blogs')` 가지 밖에 있다")    # 독립 검증(P4d 수정 F4): `else` 쪽(`orelse`)은 가지 안이 아니다 — `go` 를 `else` 로 옮기는 변이도 잡는다
         self.assertEqual({"seed", "blogs"} - REAL, set(), "준비 안내가 가는 두 화면은 완성된 실제 메뉴다")
         wanted = ("self.go('drafts')", "self.go('topics')", "self.go(key, force=True)")
-        owners = {ast.unparse(call): node.name for node in ast.walk(shell_tree) if isinstance(node, ast.FunctionDef) for call in ast.walk(node) if isinstance(call, ast.Call) and ast.unparse(call) in wanted}
-        self.assertEqual(owners, {"self.go('drafts')": "cand_make_draft", "self.go('topics')": "drf_to_topics", "self.go(key, force=True)": "go"},
-                         "초안 화면을 여는 `go` 는 후보 상세의 `이 주제로 만들기` 처리 안에 하나, 되돌아가기는 `drf_to_topics` 안에 하나, `force` 이동은 `go` 안의 확인창 콜백 하나뿐이다")
+        owners = {}
+        for node in ast.walk(shell_tree):
+            if isinstance(node, ast.FunctionDef):
+                for call in ast.walk(node):
+                    if isinstance(call, ast.Call) and ast.unparse(call) in wanted:
+                        owners.setdefault(ast.unparse(call), set()).add(node.name)
+        self.assertEqual(owners, {"self.go('drafts')": {"cand_make_draft", "home_saved_drafts"}, "self.go('topics')": {"drf_to_topics"}, "self.go(key, force=True)": {"go"}},
+                         "초안 화면을 여는 `go` 는 후보 상세의 `이 주제로 만들기` 처리 안에 하나와 홈의 `저장한 초안 보기` 처리(`home_saved_drafts`)에 하나, 되돌아가기는 `drf_to_topics` 안에 하나, `force` 이동은 `go` 안의 확인창 콜백 하나뿐이다")
         self.assertEqual({"drafts", "topics"} - REAL, set(), "초안 화면과 주제 후보 화면은 완성된 실제 메뉴다")
 
     def test_every_button_and_card_on_both_real_screens_never_asks_for_an_unfinished_screen(self):

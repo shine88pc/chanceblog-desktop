@@ -1055,12 +1055,13 @@ class SafetyTest(QtBase):
     def test_a_key_in_a_blog_name_and_in_candidate_text_never_reaches_a_widget_through_the_real_adapter(self):
         """어댑터를 거치는 시험(검증 M-1) — 블로그 이름이 마스킹 전에 잘려 키 앞 24~26자가 화면에 보였다. 화면의 모든 글자(글자·단추·툴팁·접근 이름)에 키 조각이 없다.
         의도적 갱신(UI-C1d, D-201): 옛 시험은 오른쪽 패널(내 블로그 현황)의 블로그 이름과 옛 후보 행을 봤다. 새 홈에서는 블로그 이름이 추천 구역 머리에, 후보의 글이 주제 엔진 후보 줄(과 서랍)에 나간다 — 같은 가짜 키를 거기에 넣고
-        같은 모든 글자를 훑는다(옛 후보 저장소의 후보에도 넣어 홈 뷰모델에 새지 않는지 함께 본다)."""
+        같은 모든 글자를 훑는다(옛 후보 저장소의 후보에도 넣어 홈 뷰모델에 새지 않는지 함께 본다).
+        의도적 갱신(PCSEC1 M3, D-375): PCSEC1 이후 `add_candidate` 는 키·토큰 모양을 쓰기 전에 거절하므로(그 거절은 `test_secret_shape_refusal` 이 본다) 옛 후보는 보관함에 직접 넣는다 —
+        `service_support.inject_candidate`(옛 버전이 저장한 것처럼). '화면 어디에도 닿지 않는다' 는 단언은 그대로이고, 후보가 실제로 들어갔다는 준비 확인 한 줄을 더했다."""
         sys.path.insert(0, str(ROOT / "tests"))
         import service_support as support
         import topics_support as ts
         from chanceblog_desktop.content.profiles import NaverProfile
-        from chanceblog_desktop.service import candidates as candidate_service
         from chanceblog_desktop.service import topic_files as tf
         from chanceblog_desktop.topicdb.store import open_for_write
         from chanceblog_desktop.ui import adapters
@@ -1074,7 +1075,9 @@ class SafetyTest(QtBase):
             ctx = support.make_ctx(tmp)
             ctx.settings.save_naver_profile(NaverProfile("naver_a", "블로그 " + key, "https://blog.naver.com/exampleaaa", default_tags=("생활",), min_chars=10, max_chars=20000))
             ctx.settings.save_naver_profile(NaverProfile("naver_b", "블로그 비 " + github, "https://blog.naver.com/examplebbb", default_tags=("정보",), min_chars=10, max_chars=20000))
-            candidate_service.add_candidate(ctx, topic="옛 제목 " + key, keyword="키워드 " + github, blogs=("naver_a", "naver_b"), sub_keywords=("보조 " + key,), reason="이유 " + key + " " + github)
+            support.inject_candidate(ctx, topic="옛 제목 " + key, keyword="키워드 " + github, blogs=("naver_a", "naver_b"), sub_keywords=("보조 " + key,), reason="이유 " + key + " " + github)         # 옛 버전이 저장한 것처럼 보관함에 직접 — PCSEC1 이후 `add_candidate` 는 키·토큰 모양을 쓰기 전에 거절한다
+            with ctx.store() as legacy:
+                self.assertEqual(len(legacy.list_candidates()), 1, "옛 후보 저장소에 키 모양이 든 후보가 실제로 들어 있다 — 준비가 비면 아래의 '새지 않는다' 단언이 아무것도 보지 못한다")
             with open_for_write(tf.topic_paths(ctx.workspace).database) as store:
                 store.add_candidates(lambda existing: [ts.rated(90, channel="naver_a", candidate_id="tc-naver_a-seed-aaaa000000000001", topic="제목 " + key),
                                                        ts.rated(80, channel="naver_b", candidate_id="tc-naver_b-seed-bbbb000000000002", topic="제목 비 " + github)], now="2026-11-10T01:00:00Z")

@@ -18,7 +18,7 @@ from itertools import islice
 
 from . import gauges
 from . import settings_view as sv
-from .services import HOME_CHANNELS, HOME_LIMIT, INTERESTS, STAGES, Topic
+from .services import HOME_CHANNELS, HOME_LIMIT, INTERESTS, SAVED_STAGE, STAGES, Topic
 from .text import T, display_text
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -130,7 +130,7 @@ def channel_vm(channel, trend_hidden=False):
 # ---- 작성 중 초안·최근 발행 -----------------------------------------------------------------------------------------------------------
 def draft_vm(row, rank):
     title = _shown(row.title, TITLE_LIMIT)
-    stage = row.stage if row.stage in STAGES else ""
+    stage = row.stage if row.stage in (*STAGES, SAVED_STAGE) else ""
     label = T["board_stage_" + stage] if stage else ""
     when = time_text(row.updated)
     sample = bool(row.sample)
@@ -172,6 +172,18 @@ def list_vm(read, build, titles, state=None):
 
 
 DRAFT_TEXTS = ("board_draft_title", "board_draft_empty_title", "board_draft_empty_desc", "board_draft_error_title")
+
+
+def draft_extras(read, view):
+    """작성 중 초안 구역의 머리 개수와 `저장한 초안 보기` 연결 — 공급자가 전체 수(`total`)를 준 때(저장한 초안까지 읽는 실제 공급자)만 있고, 읽을 수 있는 구역(줄이 있거나 정상 빈 상태)일 때만 보인다.
+    개수는 보이는 줄 수가 아니라 전체 수다(줄은 많아야 5개). 연결은 초안 작성 화면의 저장한 초안 목록으로 간다 — 저장한 초안이 하나도 없으면 갈 목록이 없으니 연결은 없다(빈 상태 그대로)."""
+    total = getattr(read, "total", None)
+    if not _count(total) or view["state"] not in ("normal", "empty"):
+        return {}
+    extras = {"count": total, "count_text": T["board_draft_count"].format(n=total)}
+    if total:
+        extras["link"] = {"text": T["board_draft_link"], "a11y": T["board_draft_link_a11y"]}
+    return extras
 RECENT_TEXTS = ("board_recent_title", "board_recent_empty_title", "board_recent_empty_desc", "board_recent_error_title")
 
 
@@ -246,6 +258,7 @@ def build_board_view(data, list_state, *, conn_data=None, conn_state="", conn_lo
         by_key = {channel.key: channel for channel in board.channels}
         recommend = [channel_vm(by_key.get(key) or _ABSENT[key], trend_hidden) for key in HOME_CHANNELS]
         drafts, recent = list_vm(board.drafts, draft_vm, DRAFT_TEXTS), list_vm(board.recent, recent_vm, RECENT_TEXTS)
+        drafts = {**drafts, **draft_extras(board.drafts, drafts)}
     else:
         recommend = [{**channel_vm(_ABSENT[key]), "state": state, "empty": idle_text(state)} for key in HOME_CHANNELS]
         drafts, recent = list_vm(None, draft_vm, DRAFT_TEXTS, state), list_vm(None, recent_vm, RECENT_TEXTS, state)

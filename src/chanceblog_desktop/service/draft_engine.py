@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from ..content import candidates as cd
@@ -36,6 +37,32 @@ class EngineBody:
     blog_url: str                   # 네이버 프로필의 블로그 주소(프로필이 없으면 '')
     blog_names: tuple               # ((`naver_a`, 표시 이름), (`naver_b`, 표시 이름)) — 채널 프로필의 표시 이름
     stopped: bool = False           # 항상 False — 중지 후보는 이 값을 돌려주지 않고 거절한다(CONTENT_INVALID)
+    address: str = "none"           # `blog_url` 이 어디서 왔나: `profile`(옛 네이버 프로필) · `channel`(채널 프로필의 블로그 ID·주소) · `unusable`(적어 둔 주소가 네이버 블로그 주소가 아님) · `none`(어디에도 없음)
+
+
+_BLOG_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
+_BLOG_ADDRESS = re.compile(r"(?i:https)://(?i:blog\.naver\.com)/([A-Za-z0-9_-]{1,40})/?")             # 방식·호스트 글자 크기만 가리지 않는다 — 아이디는 크기를 그대로 둔다
+ADDRESS_STATES = ("profile", "channel", "unusable", "none")
+
+
+def naver_blog_url(text):
+    """채널 프로필의 `블로그 ID 또는 주소` → 네이버 블로그 주소(방식 https·호스트 blog.naver.com·경로는 아이디 한 토막). 아이디 한 토막(영문·숫자·`_`·`-`, 40자까지)이거나 그 모양의 주소(끝의 `/` 하나는 괜찮다)
+    일 때만 만들고, 그 밖은 `''` 다(다른 호스트·다른 방식·로그인 정보·포트·인자·조각·여러 토막 경로·`//`·공백·200자 넘는 글). 주소 문자열을 풀어 읽는 도구를 쓰지 않고 모양을 통째로 맞춘다 —
+    화면의 `네이버 글쓰기 열기` 가 마지막으로 한 번 더 본다(`ui/core/draft_rules.naver_write_url`, 화면 규칙이 더 느슨하다 — 시험이 이 규칙이 만든 주소는 늘 화면 규칙도 받는지 견준다)."""
+    if not isinstance(text, str) or not text or len(text) > 200 or any(ch.isspace() for ch in text):
+        return ""
+    found = _BLOG_ADDRESS.fullmatch(text) if "://" in text else _BLOG_ID.fullmatch(text)
+    if found is None:
+        return ""
+    return "https://blog.naver.com/" + (found.group(1) if "://" in text else text)
+
+
+def channel_address(blog_ref):
+    """채널 프로필의 `blog_ref` 에서 글쓰기 주소의 바탕을 얻는다 → `(주소, 상태)`: 만들었으면 `(주소, "channel")`, 적어 두었지만 네이버 블로그 주소가 아니면 `("", "unusable")`, 비어 있으면 `("", "none")`."""
+    if not isinstance(blog_ref, str) or not blog_ref.strip():
+        return "", "none"
+    url = naver_blog_url(blog_ref)
+    return (url, "channel") if url else ("", "unusable")
 
 
 def legacy_of(engine):
@@ -75,8 +102,32 @@ def make_body_for_engine(ctx, candidate_id, *, blog=None, post_type=None, option
     channel = next(item for item in snapshot.profiles if item.key == chosen)
     names = tuple((item.key, item.display_name) for item in snapshot.profiles if item.key in ("naver_a", "naver_b"))
     body = db.build_body(legacy, profile, options, today=draft.today_kst(ctx), blog=chosen, post_type=post_type, channel=channel, safety=report)
+    old_url = getattr(profile, "blog_url", "") if profile is not None else ""
+    blog_url, address = (old_url, "profile") if old_url else channel_address(channel.blog_ref)           # 옛 네이버 프로필에 주소가 있으면 지금까지와 같다 — 없을 때만 채널 프로필(블로그 관리 화면)에서 얻는다
     return EngineBody(row.candidate.candidate_id, row.ordinal, row.candidate.channel, chosen, body.post_type, body, options, row.candidate.work_status == cd.REJECTED, found, snapshot.state == tf.STATE_OK,
-                      getattr(profile, "blog_url", "") if profile is not None else "", names)
+                      blog_url, names, address=address)
 
 
-__all__ = ["EngineBody", "find_row", "legacy_of", "make_body_for_engine"]
+@dataclass(frozen=True)
+class BlogContext:
+    """저장한 초안을 다시 열 때 필요한 블로그 쪽 정보 — `make_body_for_engine` 이 초안과 함께 알려 주던 것(블로그 이름들·글쓰기 주소와 그 출처·프로필을 읽었나)."""
+    blog: str
+    blog_names: tuple
+    blog_url: str
+    address: str
+    profile_found: bool
+    channel_found: bool
+
+
+def blog_context(ctx, blog):
+    """그 네이버 블로그(`naver_a`·`naver_b`)의 이름·글쓰기 주소 — 초안을 만들 때와 **같은 규칙**이다(옛 프로필 주소가 먼저, 없으면 채널 프로필의 블로그 ID·주소). 읽기만 한다. 설정 파일이 깨졌으면 그 오류(`SETTINGS_INVALID` 등)를 그대로 낸다."""
+    profile, found = draft.load_profile(ctx, blog)
+    snapshot = blog_profiles.read_snapshot(ctx)
+    channel = next(item for item in snapshot.profiles if item.key == blog)
+    names = tuple((item.key, item.display_name) for item in snapshot.profiles if item.key in ("naver_a", "naver_b"))
+    old_url = getattr(profile, "blog_url", "") if profile is not None else ""
+    blog_url, address = (old_url, "profile") if old_url else channel_address(channel.blog_ref)
+    return BlogContext(blog, names, blog_url, address, found, snapshot.state == tf.STATE_OK)
+
+
+__all__ = ["BlogContext", "EngineBody", "blog_context", "channel_address", "find_row", "legacy_of", "make_body_for_engine", "naver_blog_url"]

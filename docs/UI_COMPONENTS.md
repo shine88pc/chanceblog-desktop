@@ -223,3 +223,12 @@ ui/style_adapter.py → service/own_posts.py(읽기 전용) · content/style_sta
 **하지 않는 것**: 폴더 열기 단추·탐색기 호출·파일 선택 창(백업 위치는 글자뿐 — D-394)·'무시하고 백업' 단추. 포커스 열쇠는 `backup-create`·`backup-excluded`·`backup-restore:<폴더 이름>` 이고 확인창은 공통 `dialog-cancel`·`dialog-ok` 를 쓴다. 모든 눌리는 부품은 접근 이름과 36px 이상의 누르는 칸을 가지며 꺼진 단추는 까닭을 툴팁·접근 설명에 둔다.
 
 **멈춘 복원 안내 부품(D-463)**: `BackupSection.interrupted`(`NoticeBar` 주의 수준)·`interrupted_lines`(시작한 때 줄)·`revert_button`(`secondary` 단추, 포커스 열쇠 `backup-revert`, 접근 이름 '멈춘 복원을 안전 사본으로 되돌리기', 누르는 칸 36px 이상, 꺼진 까닭은 툴팁·접근 설명). 눌림은 `shell.backup_revert()`(확인창) → `backup_revert_confirmed()` 로만 넘긴다. 새 외부 호출은 없다.
+
+## 8. 저장한 초안 부품 (LOCALSAVE — `ui/qt/draft_parts.py`·`draft_screen.py`·`shell.py`)
+
+- `SavedRowCard`(`draft_parts.py`): 저장한 초안 목록의 한 줄 — 제목·메타 글과 `열기`·`지우기` 단추. 줄은 아무것도 하지 않고 신호(`opened(번호)`·`deleted(번호)`)만 보낸다(번호는 열쇠일 뿐 글에 나가지 않는다). 단추 포커스 키 `drf-saved-open:<순번>`·`drf-saved-delete:<순번>`, 읽을 수 없는 초안은 `지우기` 만. `stops()` 가 Tab 에 걸리는 단추를 돌려준다.
+- `draft_screen._saved_card`: 빈 화면 아래의 목록 카드(읽는 중·오류(`drf-saved-retry`)·비어 있음·줄들·위의 알림 한 줄). 읽기뿐이고 단추는 셸(`drf_saved_open`·`drf_saved_delete`·`drf_saved_retry`)에 신호를 보낸다.
+- 저장 상태 줄(`DraftsUi.save_status`)과 `refresh_save`/`refresh_editor_status`: 글을 칠 때·저장이 끝났을 때 그 자리에서 바꾼다(편집기를 다시 그리지 않는다).
+- 머리의 `저장한 초안` 단추(`DraftsUi.saved_list`, 포커스 키 `drf-saved-list`)와 아래 행동 줄의 `저장`(`act:save` — 공통 부품 `bars.ActionBar` 의 보조 단추).
+- `AppShell.show_choice_dialog(제목, 본문, 선택들, first=열쇠, on_cancel=…)`: 여러 갈래 확인창의 한 곳 — 선택 `(열쇠, 글, 종류, 함수)`, 함수가 없는 선택(`계속 고치기`)은 취소·Esc 와 같다. 떠나기·`← 주제 후보`·`저장한 초안`·앱 닫기 앞의 세 갈래는 모두 `_show_leave_choices` 를 거친다(시험이 확인한다). 기존 `show_dialog`(두 갈래)는 그대로다.
+- 홈: `screens._posts` 가 작성 중인 초안 구역의 머리 개수(`count_text`)와 `저장한 초안 보기`(`link`, 포커스 키 `home-drafts-link`)를 그린다 — 뷰모델에 `link` 가 있을 때만(전체 개수를 알고 그 개수가 1 이상인 공급자 — 그 단추가 부르는 셸 함수 `home_saved_drafts` 가 화면을 요청하는 호출 한 곳이고 화면 부품은 `go` 를 직접 부르지 않는다).

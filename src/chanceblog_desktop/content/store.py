@@ -641,6 +641,28 @@ class Store:
             "INSERT INTO drafts (project_id, text, saved_at) VALUES (?, ?, ?)"
             " ON CONFLICT (project_id) DO UPDATE SET text = excluded.text, saved_at = excluded.saved_at", (project_id, text, stamp)))
 
+    def update_draft(self, project_id, decide, *, prefix="", now=None):
+        """초안 한 행을 **한 트랜잭션 안에서** 읽고 고친다(저장한 초안 — D-369). `decide(지금 글 또는 None, 번호가 prefix 로 시작하는 초안의 수)` 가 새 글(`str`)을 돌려주면 그 글로 바꾸고(없으면 만들고)
+        `None` 을 돌려주면 아무것도 쓰지 않는다. `decide` 가 `AppError` 를 던지면 쓰기 전 상태로 되돌리고 그 오류를 그대로 낸다. 확인(저장 횟수 비교·한도)과 쓰기가 같은 쓰기 잠금(`BEGIN IMMEDIATE`) 안이라
+        그 사이에 다른 프로세스가 끼어들 수 없다 — `load_draft` 로 읽은 뒤 `save_draft` 로 쓰면 그 사이의 틈에서 다른 쪽의 저장을 덮어쓸 수 있다. `decide` 는 짧아야 하고(잠금을 쥐고 있다) 파일·네트워크를 쓰지 않는다."""
+        _check_id(project_id)
+        if not isinstance(prefix, str):
+            raise AppError("CONTENT_INVALID", {"항목": "초안 번호 머리"})
+        stamp = utc_now() if now is None else now
+
+        def work(db):
+            row = db.execute("SELECT text FROM drafts WHERE project_id = ?", (project_id,)).fetchone()
+            count = db.execute("SELECT COUNT(*) FROM drafts WHERE substr(project_id, 1, ?) = ?", (len(prefix), prefix)).fetchone()[0]
+            text = decide(None if row is None else row[0], count)
+            if text is None:
+                return None
+            if not isinstance(text, str) or len(text) > MAX_DRAFT_CHARS:
+                raise AppError("CONTENT_INVALID", {"항목": "초안"})
+            db.execute("INSERT INTO drafts (project_id, text, saved_at) VALUES (?, ?, ?) ON CONFLICT (project_id) DO UPDATE SET text = excluded.text, saved_at = excluded.saved_at", (project_id, text, stamp))
+            return text
+
+        return self._write(work)
+
     def load_draft(self, project_id):
         _check_id(project_id)
         rows = self._read("SELECT project_id, text, saved_at FROM drafts WHERE project_id = ?", (project_id,))

@@ -1427,7 +1427,8 @@ class OpenAddressTest(unittest.TestCase):
             with self.subTest(blog_url=blog_url):
                 controller.result = drafts.DraftResult(controller.result.candidate_id, controller.result.body, "naver_a", "정보형", {}, controller.result.blog_names, blog_url, False, False, False, True)
                 button = controller.view()["normal"]["actions"]["buttons"][3]
-                self.assertEqual((controller.open_info()[0], button["enabled"], button["tip"]), ("", False, T["drf_open_why_profile"]))
+                why = T["drf_open_why_unusable" if blog_url else "drf_open_why_profile"]          # D-362: 비어 있으면 '적으면 열 수 있어요', 적어 둔 주소가 네이버 블로그 주소가 아니면 '그 주소는 열지 않아요'
+                self.assertEqual((controller.open_info()[0], button["enabled"], button["tip"]), ("", False, why))
         controller.state = "loading"
         self.assertEqual(controller.open_info(), ("", T["drf_open_why_wait"]))
 

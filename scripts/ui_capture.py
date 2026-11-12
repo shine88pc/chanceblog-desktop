@@ -15,6 +15,7 @@ Qt 가 직접 지원하는 환경 변수(`QT_SCALE_FACTOR`)로 흉내 낸다 —
 **주제 후보 화면**(D-270)은 환경마다 20장면(기본·거르기·글 검색·상세·상세의 아래쪽·자동 초안 중지 후보·점수 계산 전 후보·빈 목록 셋(보관함 없음·후보 없음·거른 결과 없음)·옛 구조·읽는 중·읽기 오류·만들 수 없을 때의 준비 안내·후보 만들기 확인창·만든 뒤·좁은 창과 그 서랍·실제 어댑터 둘)을 찍고 점검한다 — 후보·채널 이름은 모두 가짜이고(`예시 후보 가` …) 실제 어댑터 장면은 임시 폴더에만 쓴다.
 **초안 작성 화면**(D-280부터 D-289까지, 글 모양 점검 D-315)은 환경마다 19장면(글 모양 점검 셋(결과 있음·본문이 변경됨·최소 창)과 기본(협찬 줄이 있는 초안)·소프트웨어 초안·`모든 글 공통` 펼침·만드는 방법 펼침·복사 직후·분야 못 읽는 초안의 복사 전 확인창·고친 글의 확인창·거의 안 고친 초안의 안내·거절·후보 없음·읽는 중·찾지 못함·오류·좁은 창·실제 어댑터 둘)을 찍고 점검한다 — 후보·블로그 이름·글은 모두 가짜이고 실제 어댑터 장면은 임시 폴더에만 쓴다(클립보드·주소 열기는 기록만 하는 가짜). `--only drafts` 를 주면 이 장면만 찍는다.
 **내 글 문체 참고값 보기**(N-3a, D-330)는 환경마다 13장면(설정 화면 맨 아래의 진입 카드·고르기·글 둘을 고른 모습·거절 문장·세는 중·결과 하나·결과 둘·차이가 커서 범위만 보이는 결과·글이 짧은 결과·파일 하나와 붙여 넣은 글 하나의 결과(열 머리에 `(붙여 넣음)`)와 그 최소 창, 두 장면 모두 맨 아래로 내린 모습까지)을 찍고 점검한다 — 글은 모두 가짜 공급자의 예시 글(저장소의 시험용 예시 글에서 뽑았다)이고 파일 선택기도 가짜라 앱은 어떤 파일도 열지 않는다. `--only style` 을 주면 이 장면만 찍는다.
+**저장한 초안**(D-361 에서 D-363 까지)은 `--only drafts_save` 로 5장면(저장 안 됨·저장됨·저장한 뒤 고친 채 떠날 때의 세 갈래 확인창·키 모양 알림창·저장한 초안 목록 셋)만 찍고 점검한다 — 가짜 공급자의 메모리 저장소만 쓰고(파일을 만들지 않는다) 키 모양 글은 실행할 때 조각을 이어 붙인 가짜다.
 """
 from __future__ import annotations
 
@@ -125,7 +126,7 @@ def child(args):
         keys_shots(app, ui_offscreen, args, report, logical, tag, out)
         print(json.dumps(report, ensure_ascii=False))
         return 0
-    if getattr(args, "only", "") == "drafts":                                            # 초안 작성 장면만(다른 사진은 건드리지 않는다)
+    if getattr(args, "only", "") in ("drafts", "drafts_save"):                           # 초안 작성 장면만(다른 사진은 건드리지 않는다) — `drafts_save` 는 그 가운데 저장한 초안 장면(D-361 에서 D-363 까지)만
         drafts_shots(app, ui_offscreen, args, report, logical, tag, out)
         print(json.dumps(report, ensure_ascii=False))
         return 0
@@ -1062,6 +1063,79 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
         inner.verticalScrollBar().setValue(max(0, target.mapTo(inner.widget(), target.rect().topLeft()).y() - 40))
         ui_offscreen.settle(app, 6)
 
+    def save_scenes():
+        """저장한 초안(D-361 에서 D-363 까지) 장면 — 저장 안 됨·저장됨·(저장한 뒤 고쳐서 떠날 때의) 세 갈래 확인창·키 모양 알림·저장한 초안 목록(저장한 초안 셋). 가짜 공급자의 메모리 저장소만 쓴다(파일을 만들지 않는다). 키 모양 글은 실행할 때 조각을 이어 붙인 가짜다."""
+        from chanceblog_desktop.content import saved_draft as saved_record
+
+        def extra_draft(title, topic, blog, stamp):
+            body = "예시 본문이에요. " * 30
+            return saved_record.SavedDraft.build(draft_id=saved_record.make_draft_id(stamp, "", blog, title, body), revision=1, created_at=stamp, updated_at=stamp, title=title, body=body, topic=topic, blog=blog, post_type="정보형")
+
+        seeded = [extra_draft("예시 가전 후보 비교 정리", "예시 가전 후보", "naver_b", "2026-11-05T08:30:00Z"), extra_draft("예시 소프트웨어 설정 가이드", "예시 소프트웨어 후보", "naver_a", "2026-11-04T21:10:00Z")]
+
+        def show_status(window):
+            """저장 상태 줄이 보이게 안쪽 스크롤을 내리고 토스트는 거둔다(사진에서 가리지 않게)."""
+            window.toast.hide()
+            inner = window.screen_widget.findChild(QScrollArea)
+            if inner is not None and ui_of(window).save_status is not None:
+                inner.ensureWidgetVisible(ui_of(window).save_status, 0, 160)
+            ui_offscreen.settle(app, 6)
+
+        def to_top(window):
+            window.toast.hide()
+            inner = window.screen_widget.findChild(QScrollArea)
+            if inner is not None:
+                inner.verticalScrollBar().setValue(0)
+            ui_offscreen.settle(app, 4)
+
+        fake = drafts.FakeDraftsProvider(lambda: [generic, software, appliance, stopped, other], saving=True, saved={item.draft_id: item for item in seeded})
+        window = make(drafts_provider=fake)
+        draft_of(window, software)
+        show_status(window)
+        shoot(window, "drafts_save_unsaved")                                            # 저장 안 됨 — 아래 행동 줄 맨 앞의 `저장` 과 편집기 아래의 저장 상태 줄
+        audit(window, "drafts_save_unsaved")
+        window.drf_save()
+        ui_offscreen.wait_until(app, lambda: not window.state.drafts.store_busy and window.state.drafts.store_pending is None, 10)
+        ui_offscreen.settle(app, 8)
+        show_status(window)
+        shoot(window, "drafts_save_saved")
+        audit(window, "drafts_save_saved")
+        editor = ui_of(window).editor
+        editor.setPlainText(editor.toPlainText() + "\n\n저장한 뒤에 더 적은 문단이에요.")
+        ui_offscreen.settle(app, 6)
+        window.go("topics")                                                             # 저장한 뒤 고쳤다 → 세 갈래 확인창(저장 / 저장 안 하고 나가기 / 계속 고치기)
+        ui_offscreen.settle(app, 8)
+        to_top(window)
+        shoot(window, "drafts_save_leave")
+        audit_dialog(window, "drafts_save_leave")
+        report["checks"]["drafts_save_leave"]["choices"] = [button.text() for button in window.dialog.findChildren(QAbstractButton) if button.isVisibleTo(window.dialog)]
+        window.close_dialog()
+        editor.setPlainText(editor.toPlainText() + "\n" + "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")        # 키 모양(가짜) — 저장하지 않고 위치와 종류만 알린다
+        ui_offscreen.settle(app, 6)
+        window.drf_save()
+        ui_offscreen.wait_until(app, lambda: window.dialog.is_open, 10)
+        ui_offscreen.settle(app, 8)
+        to_top(window)
+        shoot(window, "drafts_save_alert")
+        audit_dialog(window, "drafts_save_alert")
+        window.close_dialog()
+        window.state.drafts.leave()
+        window.go("home")
+        ui_offscreen.settle(app, 4)
+        window.go("drafts")                                                             # 후보 없이 `초안 작성` 을 열면 저장한 초안 목록
+        ui_offscreen.wait_until(app, lambda: window.state.drafts.list_state == "ok", 10)
+        ui_offscreen.settle(app, 8)
+        window.toast.hide()
+        bar = window.scroll.verticalScrollBar()                                          # 저장한 초안 셋이 다 보이게 아래로 내린다
+        bar.setValue(bar.maximum())
+        ui_offscreen.settle(app, 4)
+        shoot(window, "drafts_save_list")
+        audit(window, "drafts_save_list")
+        window.close()
+
+    if getattr(args, "only", "") == "drafts_save":
+        save_scenes()
+        return
     window = make()
     draft_of(window, appliance)                                                         # 기본 — 협찬 안내 줄이 있는 초안(이 글에만 해당 1건·모든 글 공통 접힘)
     shoot(window, "drafts")
@@ -1648,7 +1722,7 @@ def main(argv=None):
     parser.add_argument("--env", action="append", default=None, help="가로x세로@배율% (여러 번 줄 수 있다)")
     parser.add_argument("--check", action="store_true", help="사진을 저장하지 않고 점검만")
     parser.add_argument("--gallery", action="store_true", help="앱 화면 대신 공통 부품 모음(개발용)을 찍고 점검한다")
-    parser.add_argument("--only", choices=("keys", "drafts", "style", "backup"), default="", help="키 연결 화면(P4f)·초안 작성 화면(P4e)·내 글 문체 참고값 보기(N-3a)·백업·복원 카드(BACKUPUI) 장면만 찍고 점검한다")
+    parser.add_argument("--only", choices=("keys", "drafts", "style", "backup", "drafts_save"), default="", help="키 연결 화면(P4f)·초안 작성 화면(P4e)·내 글 문체 참고값 보기(N-3a)·백업·복원 카드(BACKUPUI)·초안 작성 화면의 저장한 초안(D-361 에서 D-363 까지) 장면만 찍고 점검한다")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.child:

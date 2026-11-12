@@ -140,7 +140,7 @@ def home_screen(shell, vm):
         outer.addWidget(_error(shell, vm))
     else:
         outer.addWidget(FlowGrid([_recommend(shell, section) for section in data["recommend"]], part_rules.HOME_SECTION_OPTIONS, K.LAYOUT["section_min_col"], K.LAYOUT["gap"]))
-        outer.addWidget(FlowGrid([_posts(data["drafts"], board.draft_row), _posts(data["recent"], board.recent_row)], part_rules.HOME_SECTION_OPTIONS, K.LAYOUT["posts_min_col"], K.LAYOUT["gap"]))
+        outer.addWidget(FlowGrid([_posts(data["drafts"], board.draft_row, shell), _posts(data["recent"], board.recent_row)], part_rules.HOME_SECTION_OPTIONS, K.LAYOUT["posts_min_col"], K.LAYOUT["gap"]))
         outer.addWidget(board.connection_strip(data["connection"]))
     outer.addStretch(1)
     return page
@@ -202,9 +202,11 @@ def _recommend(shell, section):
     return frame
 
 
-def _posts(section, build_row):
-    """작성 중 초안·최근 발행 한 구역 — 글 줄(최대 5, 눌리지 않는다) 또는 이 구역만의 안내(빈 상태·읽지 못함 — 홈은 그대로)."""
-    frame, inner = board.section_card(section["title"])
+def _posts(section, build_row, shell=None):
+    """작성 중 초안·최근 발행 한 구역 — 글 줄(최대 5, 눌리지 않는다) 또는 이 구역만의 안내(빈 상태·읽지 못함 — 홈은 그대로). 작성 중 초안은 머리에 전체 개수(`count_text` — 저장한 초안 수와 같다)가 있고
+    구역 맨 아래에 작은 `저장한 초안 보기`(`link`)가 있어 초안 작성 화면의 저장한 초안 목록으로 간다(D-363)."""
+    count = section.get("count_text", "")
+    frame, inner = board.section_card(section["title"], count, accessible=T["board_section_a11y"].format(title=section["title"], count=count) if count else section["title"])
     if section["state"] == "normal":
         for row in section["rows"]:
             frame.rows_layout.addWidget(build_row(row))
@@ -212,6 +214,11 @@ def _posts(section, build_row):
             inner.addWidget(UI.label(section["note"], "caption", wrap=True))
     else:
         inner.addWidget(_note(section["state"], section))
+    link = section.get("link")
+    if link and shell is not None:
+        button = UI.Button("ghost", link["text"], size="sm", accessible=link["a11y"], focus_key="home-drafts-link")
+        button.clicked.connect(lambda _=False: shell.home_saved_drafts())
+        inner.addWidget(button, 0, Qt.AlignLeft)
     board.finish_section(frame, inner)
     return frame
 
