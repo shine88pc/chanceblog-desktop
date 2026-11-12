@@ -33,6 +33,7 @@ from ..content.profiles import DEFAULT_TOPIC_REUSE_DAYS
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..echo import shown_ref
 from ..errors import AppError
+from ..security.refuse import refuse_secret_shapes, secret_reason, text_of
 from . import projects
 
 MIN_PREFIX = 4                                       # 번호 앞부분으로 고를 때 최소 글자 수(글 번호와 같다)
@@ -263,9 +264,16 @@ def _check_day_not_future(ctx, day):
         raise AppError("CANDIDATE_INVALID", {"항목": cd.LABELS["data_date"], "이유": reason})
 
 
+def _secret_fields(topic, keyword, fields):
+    """후보의 글칸(주제·핵심 키워드·보조 키워드·추천 이유) — 비밀 형태 검사 대상(PCSEC1 M3). 칸 이름은 화면의 이름(`cd.LABELS`)이다."""
+    return {cd.LABELS["topic"]: topic, cd.LABELS["keyword"]: keyword, cd.LABELS["sub_keywords"]: text_of(fields.get("sub_keywords")), cd.LABELS["reason"]: fields.get("reason")}
+
+
 def add_candidate(ctx, *, topic, keyword, blogs, **fields):
     """후보 하나를 직접 더한다. 값 검사(CANDIDATE_INVALID)는 후보 자료가 한다(조회일은 오늘보다 하루 뒤까지). 같은 핵심 키워드·주제·블로그의 후보가 이미 있으면 더하지 않고 그 후보를 알려 준다.
-    '이미 있나 확인 → 저장' 은 보관함의 한 쓰기 트랜잭션 안에서 한다(같은 후보를 동시에 더해도 겹치지 않는다)."""
+    '이미 있나 확인 → 저장' 은 보관함의 한 쓰기 트랜잭션 안에서 한다(같은 후보를 동시에 더해도 겹치지 않는다).
+    주제·핵심 키워드·보조 키워드·추천 이유에 비밀 형태가 있으면 값 검사보다 먼저 저장을 멈춘다(SECRET_SHAPE_FOUND — 위치·유형만 알리고 글은 되풀이하지 않는다)."""
+    refuse_secret_shapes(_secret_fields(topic, keyword, fields), "저장")
     _check_day_not_future(ctx, fields.get("data_date"))
     checked = cd.Candidate.new(topic, keyword, tuple(blogs), now=ctx.stamp(), **fields)         # 값 검사 — 틀렸으면 보관함을 열기 전에 CANDIDATE_INVALID
     outcome = {}
@@ -571,6 +579,10 @@ def import_csv(ctx, path, *, blogs=(), data_date=None):
             if reason is not None:
                 raise csvmod.CsvCellError(cd.LABELS["data_date"], reason)
             candidate = cd.Candidate.new(fields.pop("topic"), fields.pop("keyword"), fields.pop("blogs"), candidate_id=ids[position], now=now, **fields)
+            reason = secret_reason(_secret_fields(candidate.topic, candidate.keyword, {"sub_keywords": candidate.sub_keywords, "reason": candidate.reason}))
+            if reason is not None:
+                rejected.append(LineNote(record.line, reason + _span_hint(record)))                  # 비밀 형태가 든 줄은 저장하지 않고 거절한다 — 위치·유형만 알린다(PCSEC1 M3)
+                continue
         except csvmod.CsvCellError as error:
             rejected.append(LineNote(record.line, str(error) + _span_hint(record)))
             continue

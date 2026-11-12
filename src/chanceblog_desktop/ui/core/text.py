@@ -92,6 +92,11 @@ T = {
     "state_active": "사용", "state_standby": "예비", "state_off": "꺼짐",
     "prep_note": "아직 연결 기능이 없어요. 키가 없어도 핵심 기능은 그대로예요.",                               # 카드 글 줄이기(UI-C1b, D-183): 뜻·안전 안내는 그대로, 군말만 뺐다
     "nokey_note": "키를 받지 않고 컴퓨터의 Git 로그인을 써요. 로그인 확인은 아직 못 해요.",
+    "keys_store_fake": "시험용 보관소 — 실제 키를 넣지 마세요", "keys_store_fake_why": "지금은 시험 전용 가짜 보관소를 쓰고 있어요. 여기에 넣은 키는 안전하게 보관되지 않아요.",          # PCSEC1 M2
+    "nokey_note_off": "이 시험 버전은 글을 GitHub 에 올리지 않아 Git 로그인도 안 써요.",                                  # 외부 게시가 꺼진 빌드(PCSEC1 H3) — 'Git 로그인을 써요' 라고 말하지 않는다
+    "purpose_github_repo_off": "이 시험 버전은 글을 GitHub 에 올리지 않아요(외부 게시가 꺼져 있어요).",
+    "purpose_blogger_off": "이 시험 버전은 Blogger 로 글을 보내지 않아요.",
+    "blogger_off_note": "Blogger 로그인 정보는 받지 않아요. 준비 중이에요.",           # Blogger 입력이 꺼진 빌드(PCSEC1 — 운영자 결정 2026-11-11)
     "legacy_note": "호출하지 않아요. 새 키는 더할 수 없고 저장된 키는 지우지 않았어요.",
     "policy_single": "키는 1개만 써요 · 한도에 닿아도 다른 키로 넘어가지 않아요",
     "limit_naver_apihub": "한도 도달 시 저장된 데이터로 계속", "limit_desc_naver_apihub": "새 API 호출을 중지하고 Seed, 캘린더와 기존 발행 이력으로 후보를 생성합니다.",
@@ -166,6 +171,14 @@ def fmt_demand(value):
 
 def fmt_docs(value):
     return NO_DATA if value is None else f"{value:,}{T['unit_docs']}"
+
+
+def display_text(value, limit=300):
+    """화면에 나가는 동적 글(후보 제목·이름·오류 문장·외부에서 읽은 글 …)을 비밀 모양을 가린 한 줄로 줄인다 — **UI 쪽에서 `security.mask.safe_detail` 을 부르는 유일한 문**이다
+    (PCSEC1 H1: 화면 글이 지나가는 한 지점 — 뷰모델을 만드는 곳마다 따로 부르지 않는다. 시험 `test_source_rules_output` 이 이 파일 밖의 직접 호출을 막는다).
+    **가리기가 먼저, 줄이기가 나중이다**(상한에 걸친 비밀이 반쪽으로 남지 않는다) — 명령줄 출력과 같은 규칙(`security/mask.py`)이다."""
+    from ...security.mask import safe_detail                                   # 늦게 가져온다(가리기 모듈은 vendor/ 를 먼저 올려야 한다)
+    return safe_detail(value, limit)
 
 
 WEEKDAYS = "월화수목금토일"

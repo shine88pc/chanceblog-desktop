@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import capabilities
 from ..core import load_vendored_script
 from ..errors import AppError
 from ..security.mask import mask
@@ -95,6 +96,7 @@ def expected_url(root, path, text, *, now=None):
 
 def check_deployed(root, path, text, *, deadline=720, interval=10, fetcher=None, sleep=None, clock=None, now=None, token="app"):
     """올린 글의 공개 주소가 열릴 때까지 확인한다(기본 최대 12분, 대기 10초에서 시작해 2배씩). 열리면 DeployResult, 끝내 안 열리면 PAGES_DEPLOY_NOT_VISIBLE."""
+    capabilities.require_external_write("올린 글의 공개 주소 확인(네트워크)")        # 외부 관문 — 이 시험 버전은 꺼져 있어 요청을 한 번도 보내지 않는다
     url = expected_url(root, path, text, now=now)                 # 검사·주소 계산을 먼저(여기서 막히면 기다리지 않는다)
     verifier = _verifier()
     base = site_base(root)

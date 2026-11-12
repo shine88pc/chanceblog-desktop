@@ -262,7 +262,7 @@ class AddressShapeTest(unittest.TestCase):
         self.assertIn("[가림", places[0], "정본 비밀 모양은 가려서 보인다")
         long_login = rules.secret_places(("본문", "https://user:" + "pw1234" + "@example.com/" + "a" * 80))[0]
         self.assertLessEqual(len(long_login.split(" — ", 1)[1]), rules.PREVIEW + 1, "가린 뒤에도 긴 주소는 앞 40자만 보인다")
-        many = [("본문", f"{chr(65 + number)}1b2C3d4E5f6G7h8I9j0K1l2M3n4") for number in range(9)]
+        many = [("본문", f"문장 {number} {chr(65 + number)}1b2C3d4E5f6G7h8I9j0K1l2M3n4") for number in range(9)]          # 의도적 갱신(PCSEC1V D16): 미리보기가 덩어리의 앞 글자를 보이지 않으므로 서로 다른 자리는 앞의 글(문맥)로 가른다
         self.assertEqual(len(rules.secret_places(*many)), rules.SPOT_LIMIT)
         self.assertEqual(rules.secret_places(("본문", "정상 글입니다.")), ())
         self.assertEqual(rules.secret_places(("본문", 123)), ("본문",), "글이 아닌 값은 이름만 짚는다")
@@ -332,6 +332,25 @@ class AddressSecretTest(unittest.TestCase):
         self.assertNotIn(secret[:6], place)
         webhook = rules.secret_places(("본문", "https://discord.com/api/webhooks/112233445566778899/" + mixed("c6", 68, "_-")))[0]
         self.assertTrue(webhook.endswith(T["drf_spot_hidden"]), "이름·모양으로 알아본 자리는 글자 없이 표시만 남는다")
+
+    def test_a_long_unrecognized_chunk_is_hidden_without_its_first_characters(self):
+        """PCSEC1V D16: 이름·모양으로 알아보지 못한 긴 영숫자 덩어리는 어디서부터인지만 짚고(`[가림]`) 앞 8글자도 화면에 되풀이하지 않는다 — 키 파생 글자를 보이지 않는 H2 와 같은 정신."""
+        chunk = "D0f6YYIg" + "k3Xa9Qm2" + "Lw7Ze5Rt" + "Pb1Nc8Vh" + "Js4Ug6Wd" + "0Fi3"
+        pem_body = "MIIEvQIBADANBgkq" + "hkiG9w0BAQEFAASC" + "BKcwggSjAgEAAoIB" + "AQC7VJTUt9Us8cKj"                    # 개인 키 본문 한 줄(머리 줄만 가려지고 본문 덩어리는 옛 긴 영숫자 규칙이 잡는다)
+        for pem in ("-----BEGIN " + "PRIVATE KEY-----\n" + pem_body + "\n-----END " + "PRIVATE KEY-----", "앞 글\n-----BEGIN " + "PRIVATE KEY-----\n" + pem_body + "\n뒤 글"):
+            with self.subTest(text=pem[:16]):
+                places = rules.secret_places(("본문", pem))
+                self.assertTrue(places)
+                for place in places:
+                    for piece in (pem_body[:8], pem_body[:4], pem_body[8:16]):
+                        self.assertNotIn(piece, place, "개인 키 본문의 글자도 미리보기에 되풀이하지 않는다")
+        for text in ("앞 글 " + chunk + " 뒤 글", chunk, "첫 줄\n" + chunk):
+            with self.subTest(text=text[:12]):
+                places = rules.secret_places(("본문", text))
+                self.assertEqual(len(places), 1)
+                for piece in (chunk[:8], chunk[:4], chunk[-4:]):
+                    self.assertNotIn(piece, places[0])
+                self.assertTrue(places[0].endswith(T["drf_spot_hidden"]), places[0])
 
     def test_a_preview_next_to_an_argument_name_has_balanced_brackets(self):
         """독립 검증 D4(겉모양): `…key=[가림: 주소 인자] Google API 키]` 처럼 닫는 괄호가 하나 남지 않는다."""

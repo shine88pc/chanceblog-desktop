@@ -2,7 +2,7 @@
 
 문구는 docs/TROUBLESHOOTING.md 의 것을 그대로 쓰고, `「이름」` 자리에만 값을 넣는다. 외부 응답(HTTP 본문 등)을
 문구에 통째로 끼워 넣지 않는다 — 정해진 칸의 값만 길이·제어 문자를 정리해서 넣는다. 키·토큰 가리기는
-보안 모듈(로그 마스킹)의 일이고 여기서는 하지 않는다.
+보안 모듈(로그 마스킹)의 일이다 — 이 모듈은 슬롯 값을 문구에 넣기 직전에 그 모듈의 `mask` 를 부르기만 한다(`_masked`).
 """
 from __future__ import annotations
 
@@ -43,10 +43,23 @@ class Rendered:
     retry_text: str
 
 
+MASK_UNAVAILABLE = "(가릴 수 없어 생략)"
+
+
+def _masked(value):
+    """슬롯 값에서 비밀 모양을 가린 글 — 문구(`rendered().message`·`action`)에 값이 들어가기 전에 늘 거친다(PCSEC1 H1: 어느 길로 만든 오류든 같은 가리기를 지난다).
+    가리기 모듈을 못 쓰는 상황(가져오기 실패 등)에서도 오류 안내가 또 실패하지 않게 값을 내보내지 않고 고정 문장으로 바꾼다. 가리기가 먼저, 자르기(`clean_slot`)가 나중이다 — 상한에 걸친 비밀이 반쪽으로 남지 않게."""
+    try:
+        from ..security.mask import mask  # 늦게 가져온다 — 이 모듈은 가리기 모듈보다 먼저 불릴 수 있다
+        return mask(value)
+    except Exception:
+        return MASK_UNAVAILABLE
+
+
 def _fill(text, slots):
     def put(match):
         value = slots.get(match.group(1))
-        shown = clean_slot(value) if value is not None else ""
+        shown = clean_slot(_masked(value)) if value is not None else ""
         return "「" + (shown or UNKNOWN_SLOT) + "」"
 
     return _SLOT.sub(put, text).replace("**", "")

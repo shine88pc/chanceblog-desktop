@@ -25,6 +25,8 @@ from ..content.store import _read_only_uri
 from ..echo import shown_topic_backup
 from ..errors import AppError
 from ..security.mask import has_key_shape
+from ..security.refuse import kinds_of as secret_kinds, locate as secret_locate, table_label as secret_table_label
+from ..security.scan import has_secret, scan_secrets
 from ..topics import layout
 from ..topics import wording
 from ..topics.channels import invalid_in, profiles_from_dict
@@ -35,6 +37,9 @@ from .store import TopicStore
 
 MANIFEST_NAME = "MANIFEST.json"
 MANIFEST_SCHEMA = 1
+CREDENTIAL_NOTE = "자격 증명(키·토큰·쿠키·세션)은 이 백업에 들어 있지 않아요 — 복원한 뒤 키는 다시 등록하세요"           # 새 백업 목록(MANIFEST.json)에 적는 쉬운 문장(PCSEC1 M4 — 무엇을 담는지는 바꾸지 않는다)
+_MANIFEST_KEYS = frozenset({"schema", "created_at", "files", "missing"})                                          # 옛 백업의 목록 칸(이 칸들뿐인 백업도 읽는다)
+_MANIFEST_KEYS_NEW = _MANIFEST_KEYS | {"credential_excluded", "credential_excluded_note"}
 KEEP_BACKUPS = 10
 SAFETY_FOLDER = "before-restore"
 BACKUP_NAME = re.compile(r"topic-[0-9]{8}-[0-9]{6}(?:-[0-9]{1,3})?")
@@ -150,23 +155,40 @@ _KEY_WINDOW = 150_000                                            # 한 번에 �
 _KEY_OVERLAP = 4_096                                             # 창이 겹치는 글자 수 — 키·토큰 모양은 이보다 짧아 창 경계에서 놓치지 않는다
 
 
+def _shaped(text):
+    """한 토막에 키·토큰 모양이 있는가 — 옛 정본 패턴(`has_key_shape`)과 본문 속 비밀 형태 검사기(`security/scan.py` — Google API 키·GitHub 토큰·Bearer 토큰·OAuth 토큰·AWS 액세스 키·개인 키)를
+    **둘 다** 본다(PCSEC1 M3 — 읽기·화면 저장·백업이 같은 종류를 막는다. 새 규칙은 이 함수에 만들지 않고 검사기를 부르기만 한다)."""
+    return has_key_shape(text) or has_secret(text)
+
+
 def scan_key_shape(text):
     """글 **전체**에 키·토큰 모양이 있는가. `has_key_shape` 의 20만 자 상한은 가리기용(그 뒤는 내보내지 않는다)이라 여기서는 겹친 창으로 끝까지 훑는다(8MB 도 몇 초 안, 창마다 같은 선형 정규식)."""
     if len(text) <= _KEY_WINDOW:
-        return has_key_shape(text)
+        return _shaped(text)
     step = _KEY_WINDOW - _KEY_OVERLAP
     for start in range(0, len(text), step):
-        if has_key_shape(text[start:start + _KEY_WINDOW]):
+        if _shaped(text[start:start + _KEY_WINDOW]):
             return True
         if start + _KEY_WINDOW >= len(text):
             break
     return False
 
 
+def _json_reason(name, text):
+    """키·토큰 모양이 든 JSON 파일의 백업 중지 사유 → (쉬운 문장, 개발자용 세부). 검사기가 아는 유형이면 위치(파일·줄)와 유형을 말하고(글은 되풀이하지 않는다) 아니면 파일 이름만 말한다."""
+    found = secret_locate(text, name)
+    if found is None:
+        return f"{name} 안에 키·토큰처럼 보이는 글이 있어 백업하지 않았습니다 — 그 글을 지운 뒤 다시 만들어 주세요", f"{name}: 키 모양"
+    place, kinds = found
+    return f"{place}: {kinds}처럼 보이는 글이 있어 백업하지 않았습니다 — 그 글을 지운 뒤 다시 만들어 주세요", f"{name}: {place} · {kinds}"
+
+
 def _scan_json(name, data):
     check_json_bytes(name, data)
-    if scan_key_shape(data.decode("utf-8", errors="replace")):
-        raise _blocked(f"{name} 안에 키·토큰처럼 보이는 글이 있어 백업하지 않았습니다 — 그 글을 지운 뒤 다시 만들어 주세요", detail=f"{name}: 키 모양")
+    text = data.decode("utf-8", errors="replace")
+    if scan_key_shape(text):
+        reason, detail = _json_reason(name, text)
+        raise _blocked(reason, detail=detail)
 
 
 _PUBLIC_ROWS = ('INSERT INTO "history_ledger" ',)                # 발행 이력 장부의 행 — 이미 공개된 블로그 글의 제목·키워드·주소라 키 모양 검사에서 뺀다(D-75)
@@ -179,10 +201,42 @@ def _database_key_shaped(path):
         return any(scan_key_shape(line) for line in connection.iterdump() if not line.startswith(_PUBLIC_ROWS))
 
 
+TABLE_NAMES_KO = {"candidates": "후보", "hold_box": "보류함", "hold_history": "보류 이력", "score_snapshots": "점수 기록", "trend_cache": "검색어 트렌드 기록", "candidate_links": "후보 연결",
+                  "candidate_lineage": "후보 재생성 관계", "provenance": "출처 기록", "review_log": "점검 기록", "history_ledger": "발행 이력"}     # 보관함 표 이름 → 쉬운 말(표가 더해지면 이름 그대로 보인다)
+_INSERT_TABLE = re.compile(r'INSERT INTO "?([A-Za-z_][A-Za-z0-9_]*)"? ')
+
+
+def _database_location(path):
+    """키·토큰 모양이 있는 **첫 행**의 위치 → `(표 이름, 그 표의 몇 번째 행, 유형 구절 또는 '')`, 없으면 None. `_database_key_shaped` 와 같은 규칙(장부 행은 뺀다)으로 같은 줄을 찾는다. 행 글은 되풀이하지 않는다."""
+    counts = {}
+    with closing(sqlite3.connect(_read_only_uri(path), uri=True)) as connection:
+        for line in connection.iterdump():
+            match = _INSERT_TABLE.match(line)
+            table = match.group(1) if match else ""
+            if match:
+                counts[table] = counts.get(table, 0) + 1
+            if not line.startswith(_PUBLIC_ROWS) and scan_key_shape(line):
+                found = scan_secrets(line)
+                return table, counts.get(table, 0), secret_kinds(found) if found else ""
+    return None
+
+
+def _database_reason(path):
+    """키·토큰 모양이 든 SQLite 보관함의 백업 중지 사유 → (쉬운 문장, 개발자용 세부). 표·몇 번째 행·유형을 말한다(행 글은 되풀이하지 않는다)."""
+    where = _database_location(path)
+    if where is None:
+        return "주제 엔진 보관함 안에 키·토큰처럼 보이는 글이 있어 백업하지 않았습니다 — 그 글이 든 씨앗·후보는 `topics check` 로 찾을 수 있습니다", "topic_engine.db: 키 모양"
+    table, number, kinds = where
+    place = f"주제 엔진 보관함의 {TABLE_NAMES_KO.get(table, secret_table_label(table))} {number}번째 행" if table else "주제 엔진 보관함"
+    return (f"{place}에 {kinds or '키·토큰'}처럼 보이는 글이 있어 백업하지 않았습니다 — 그 글이 든 씨앗·후보는 `topics check` 로 찾을 수 있습니다",
+            f"topic_engine.db: {table or '구조'} {number}번째 · {kinds or '키 모양'}")
+
+
 def _scan_database(path):
-    """SQLite 사본의 모든 행 글에 키·토큰 모양이 있는지 훑는다(있으면 백업을 막는다)."""
+    """SQLite 사본의 모든 행 글에 키·토큰 모양이 있는지 훑는다(있으면 백업을 막는다 — 위치와 유형만 알린다)."""
     if _database_key_shaped(path):
-        raise _blocked("주제 엔진 보관함 안에 키·토큰처럼 보이는 글이 있어 백업하지 않았습니다 — 그 글이 든 씨앗·후보는 `topics check` 로 찾을 수 있습니다", detail="topic_engine.db: 키 모양")
+        reason, detail = _database_reason(path)
+        raise _blocked(reason, detail=detail)
 
 
 def _database_problem(path):
@@ -313,7 +367,7 @@ def make_backup(data_dir, backups_dir, *, now, keep=KEEP_BACKUPS, names=None):
                 data = contents[file_name]
                 _write_bytes(target, data)
             recorded[file_name] = {"size": len(data), "sha256": _sha256(data)}
-        manifest = {"schema": MANIFEST_SCHEMA, "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "files": recorded, "missing": list(missing)}
+        manifest = {"schema": MANIFEST_SCHEMA, "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "files": recorded, "missing": list(missing), "credential_excluded": True, "credential_excluded_note": CREDENTIAL_NOTE}
         _write_bytes(temp / MANIFEST_NAME, (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         try:
             _verify_folder(temp)                                  # 다 만든 것을 다시 읽어 확인한 뒤에야 이름을 바꾼다
@@ -380,8 +434,9 @@ def _verify_folder_files(folder):
         manifest = json.loads((folder / MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
         raise _invalid(folder, "백업의 목록 파일(MANIFEST.json)을 읽을 수 없습니다") from None
-    if (not isinstance(manifest, dict) or set(manifest) != {"schema", "created_at", "files", "missing"} or manifest["schema"] != MANIFEST_SCHEMA
-            or not isinstance(manifest["files"], dict) or not isinstance(manifest["missing"], list)):
+    if (not isinstance(manifest, dict) or frozenset(manifest) not in (_MANIFEST_KEYS, _MANIFEST_KEYS_NEW) or manifest["schema"] != MANIFEST_SCHEMA
+            or not isinstance(manifest["files"], dict) or not isinstance(manifest["missing"], list)
+            or ("credential_excluded" in manifest and (manifest["credential_excluded"] is not True or manifest["credential_excluded_note"] != CREDENTIAL_NOTE))):
         raise _invalid(folder, "백업의 목록 파일 모양이 맞지 않습니다")
     names, found = set(manifest["files"]), {entry.name for entry in folder.iterdir()}
     if not names <= set(BACKUP_FILES) or not names or found != names | {MANIFEST_NAME}:

@@ -37,58 +37,60 @@ KEY_LIKE = "AI" + "za" + "E" * 35
 TODAY = "2026-11-10"
 
 # P3 전(기준 커밋 85996f6)의 기존 명령 `--help` 글 해시(COLUMNS=100) — 기존 명령의 도움말은 바뀌지 않았다. 의식적으로 고칠 때는 이 값과 이유를 함께 고친다.
+# 의도적 갱신(PCSEC1 H2·M5): `--debug` 도움말이 '비밀은 가려집니다' 를 알리고(모든 명령의 도움말에 들어 있다) `keys list` 도움말에서 끝 4자 설명이 빠졌다 — 그래서 바뀐 도움말 해시 45개와
+# 아래 출력 해시 둘(`keys purposes` 의 Blogger 안내 줄 — 같은 이유)을 새 값으로 바꿨다. 바뀐 글은 위 두 가지뿐이다(기준 사본과 줄 단위로 견줘 확인).
 HELP = {
-    "approve": "6303abb9db1288852eca7eca9e5f5a776d2239d2e20736c621b66f06f0b06561",
-    "backup": "aedf15f075941513b8ff1c4b05fc44a4219dbe9c312a20f06dcc237e47872cfc",
-    "candidates": "c258e73fc0347d0df5c3e15e1f0406b9dc3cde265d72e5b8e57d46c1cd5483d6",
-    "candidates add": "dbc919dfac7cfa2b5abedbcbeac504baecc09cea2e5c1c65250eb44c31e7ef27",
-    "candidates delete": "d83a092f402d556340444339e88b793a592107161c3bb44f12ca65894519feb0",
-    "candidates hold": "00c980ccb443f2ecb50e6254302ad5b6c772128d51c9d3418bbb7f57d7d32088",
-    "candidates import-csv": "8cffd72c915bafdf2ad90b371a0d3db4aedc87da5ad885d7de6a88124d63d103",
-    "candidates link": "7291401a0b05d5d4974ccd2ecfb2da82d0119ff4734ceb7e732ec75bffb6dc4f",
-    "candidates list": "aff6b340a69e316e39c484d7b7e449370fc4fae5994801670a860f55ddc9aaf7",
-    "candidates reject": "bfd9fabca56311e4781ebbda78c0911fe1e3b5f0bf2110182ee8aa709639e947",
-    "candidates restore": "9867dacac39f5505dedf8d903467321cdbe2089939217198658c5ee81ddb34b9",
-    "candidates review": "36345abae757e5832295c3cf34a012d39215354a75febb1bf60b54c2c364236b",
-    "candidates select": "54dc0acac615c9b01149a1b59d9374663fccba0b82ce3cd143c8a722ebf78eeb",
-    "candidates show": "db083abdc0d81dbff9f8b39073c55453a2d299ab9780ec5dfe4bafc03cd7d695",
-    "candidates suggest": "96746b78999882ff7970fd88dfa99f4c02b1d390d29cf88b4907d1136918c2ce",
-    "candidates unlink": "5aebe7b610bcf92511a8a3bfca2c6c85a17e4bfdb2822c1a1c141b6acf1cb4ff",
-    "check-deploy": "29c203e2219b5eced52ee3959eeb0d30cb2d625de724edd96d8594e10c744c36",
-    "connect": "6afd1202688b63ee1938100cb07601de4ecfa79154131b3d8bbf2f434cae64b2",
-    "delete": "1ba24dd59c52fbad72bba624289901745211a92d95560598ae3ab8aabeeddf11",
-    "doctor": "d3de6c56f5a62bc2285b9c6a25664b2d1074555bae6d6a329f697d4f3b0a3078",
+    "approve": "d143e3610ab1737d3d9719f9a3525f158f68fda221a4ddba733721a8379e6beb",
+    "backup": "2388c3e485041b5c2317abde77c64518b39f03a628678dbfaa8a6e3b706d7333",
+    "candidates": "4a106f60b70c46bebca2edfd0416ac5b2cab6c142e29e81e5ba270a53b415911",
+    "candidates add": "2c87abace250e0dec9cc5442567a1a1b802ba3f9bd0b6d90be3f3983a5450b40",
+    "candidates delete": "aeeff296c0e5d8b807d3ca7575d6baecd2fa2bce63d441cca116dabc5fa0f472",
+    "candidates hold": "616d8499f7020d2cb8cbd67aa00c2a42be550f999c27e35939debe0617e41009",
+    "candidates import-csv": "b35a571a776a0da7b0b7b516269263679f0432530a402f6dd948fd12efab4ebd",
+    "candidates link": "acbc96b1c2bff7d2689ea32299ec0473841e6da9361cdb6346214d11826f2dce",
+    "candidates list": "00cb4e8c1f935d4cbab63013c01f23c899243c530d7c367d394d73376474f9f8",
+    "candidates reject": "21b91e324e65ae8803241901666d9d7b42e622cd81796e4a8148ce8696f356e4",
+    "candidates restore": "67af7f67eb60dd45b522a8eabd3162ee43b72b1cb3bf5ca8be2269c6a748d6c3",
+    "candidates review": "fe6790c14d67c8b76dc15992b14cdee3204c10c565144dd766c8986bacd8d03c",
+    "candidates select": "efaa71a2ac466059dcf3aa0d1d861a395661efdbbaf7205b45ed73c0e31c2e80",
+    "candidates show": "8832067c0d270664e16b47a383ae1eed340d9a0681aeabf7889736b3d9c18141",
+    "candidates suggest": "647ca257a842a6709c0ec2464c9bf4d435b6db349686ba4cb4ca55167e639db1",
+    "candidates unlink": "68306814071bfa955e3373055310c603c591167436f1b18c8e0ca0ca4c952d72",
+    "check-deploy": "97c98284e3bc069612dc940553f4dd2d3ec1104bddd2e3e89f93cab8523c2300",
+    "connect": "0799036be98cb0973c71e3d3d9744bcda30e2f7735162f8c69889df93eb1fb5f",
+    "delete": "f23de96f66354406ba4f561598277987ab5b09a9113e01acb5c06780b5e026e1",
+    "doctor": "2ebe6641cbe59182f2d5f3276211def47aaf437646fd0c43e329948994881842",
     # 의도적 갱신(DB — 규칙 기반 초안 본문): `draft` 그룹 도움말에 하위 명령 `body` 가 더해져(설명·예시 문구 포함) 글이 바뀌었다 — 이전 값은 c9da1654…(P3 전 기준 커밋). `draft plan` 은 그대로다(아래 값).
-    "draft": "1f526c22d37f71f647153522010f49de715ae1bd9bfb40066b3bff11a3340d5f",
-    "draft plan": "dd51871e68e3f8eab80a50fc60d07887ff919ba580d612128796d587da5ac796",
-    "edit": "9d96ffdd7603debafee49b72d40b6d198ae7d97ca5f11680748aabe8ff84fb20",
-    "import-html": "0fa510092c0ac4a8954a02717263ebfe8537fa2905321a439458282ea7765f68",
-    "keys": "6f91eec23e5584d442049675096e5db96c9c64970e31ee727cbf9669c9c3f3ff",
-    "keys add": "d1987295fa6129600743b17bb544575ed2854e76f3036ee07334c54810457c79",
-    "keys list": "82296217e44e8d9e4689c877c5ac0bb73f820582b6ed7a5a44837dc27a6e61e8",
-    "keys order": "0a33fca0ffe9777a26635e88664a91a4a8ac4d1cb597158f14325fe691bd2bea",
-    "keys policy": "d564871db1ce75795b5b52fadce8b9cd4f3087d072903461209c87f5fe592ea0",
-    "keys purposes": "6c0f730f886adb6f97fd6e0028cc3e6f232499039bbaec95fa5589ebfb3254ce",
-    "keys remove": "f8377d6d6c3df7c2a47e6568d1857ab0733151ee6c476651781d441378483ebd",
-    "keys state": "fa26505aa28338d1ce6432bd641cddd460f2b902b4579721c2c8d7949f169f27",
-    "keys test": "3f7da0c76a403f675a6c35120ed063b8b934bc8c3f79cab2f40accd3fd8a77ff",
-    "keys usage": "bb7be251778f242b496c197ca1b50372a725a850bbdee40c0c59f66e67c4bffc",
-    "list": "72a1ef087c7c5267bb20e75f4a3039dbb45b0737e63d1d9048441dfc1d5b8b54",
-    "naver-done": "7a15d442ca059b2e5b79dcca553e850b314e12186dcfdd53751cd5a83a82240f",
-    "naver-package": "49e6ebf80164960b8795306cd4f72d20f9f46867bd7515a3fd2406bdc81b5841",
-    "naver-profile": "65c6b90d230268d3cdf57f64b0cd2f73edb46adfadcee86d46da5179ff57f025",
-    "new": "ef6176324afe5f7149563af5e6f7451a08eddf4176b8b4a0ff1adf34cad70638",
-    "preview": "9e51f92ff34047df48457ddb1f20390f364229018d64630ffbf7fb5833476226",
-    "publish-pages": "f821ea0b2e8b986dd8d374f578c9af1448376f5e2569c456e5cfa6346cf21d3b",
-    "restore": "dabfd60addbf80ce3bdec933f376919abeea34f43c5f4a60a659b80575709279",
-    "review": "487ccedfd2bc5cc6e303d2a99e3d636b831a08596429339ecba4f4ce09bf0ad1",
-    "revoke": "024384417b24413a0d492a8ce4dd9828d2c92ec182c63d191cb158eb8ba4e532",
-    "show": "b469ca871851518a449f426d31d1d0fc6b5f8234d06ce12015013b939f570ed0",
+    "draft": "2b058895d2b76fbae481c3463e2f0878ae10321a1de85b322323d7fae8f4f7b2",
+    "draft plan": "dbf1d305ffa6eebda1b3a68bd24951787be9c13a5331584af8d029ff5b218e4a",
+    "edit": "d2939a6c1b1b4a77b64d63993a48c94d8e7a53514a5466369a9508b5e0655794",
+    "import-html": "17e0f4777e58c9198ced20074b8334e26068a83eb010cd6d346b1e7be66d97f7",
+    "keys": "7d33bee2ef9c3469402eb15b2f45f4ce6a4a399b262dfeb3414a27155faa194d",
+    "keys add": "ff62fea9eda2dd385d81e79d271f51afba4ef692b7040443192a4aafa8c419e8",
+    "keys list": "ad5fd9ae789c3c1e725b69bc20dd026e1b8c141734fea7cdf729e8dcbe0d504b",
+    "keys order": "495760ef7b60425c4848b109bbfedb1cb7040f8893b30960e09ed650695ca8c1",
+    "keys policy": "c7e7a0b5e157884f72c14a55090186b521e0d0e02826c5e45c7ec95fd052973e",
+    "keys purposes": "9a6314f843de66f8f05a98554b9866727529fc61673c309c0e85472fd0d1bded",
+    "keys remove": "59342fd115301645944d22dc35a1cf55b7333bdbf074bce1d06994067aae4d95",
+    "keys state": "8d8b08e532e2a97f3dc5f49ca2074a573beadf5153ac1a9ab669bbb0bafdb9eb",
+    "keys test": "4ffd778f559ad6ea844070d8d9c54ef302a19faaabbb2262e1ae16205444a543",
+    "keys usage": "29992f13287468fc1306289bdb161d9b6d25e8da6795e99d17b5f86c6a34c341",
+    "list": "c623636f61cff9614fc785dd49ce7cbe2eae5ca414babb1af581b8c16c6462d3",
+    "naver-done": "e3e9c5b9510d63746cb65dff8aaf90705609933a81236e36a3e3e4253ec499bf",
+    "naver-package": "d599b61347eeb64fa072987a1aa33b8b50d8ef03eb2a8269759a16c419ec0a7d",
+    "naver-profile": "623d66584e4ab56d85da0e704cb5cda4d3b02a4531ff56c57e1dfbc3960bf934",
+    "new": "bf3f0dfdf7677ea0501bd60f9b3ff616ce793a868b570fd437bffd926fc028fb",
+    "preview": "65024b9575d87ffc07c96d7668840d61eea85a1f0a4b50a7d99313f8364dfdc4",
+    "publish-pages": "c673ceb205311464dfd5a69f8e71552772b8f79d07b5f60a0da332d004ed3cc6",
+    "restore": "6dd3f7791a015ebeeac2e09796a56b932a037c809a5ad7563c7427e04ecd8376",
+    "review": "8d5f2498abe66db45221e9b2752366f9bf5bf2246e940510df143fd0074d3f58",
+    "revoke": "8549f1f969fa9fca45890374f38722bd60d3ea02c0d1ee7644207e6604943b02",
+    "show": "c5406e465dc143f84d72fba7c582fbca7606f8bacd1551516e353bdc8bd86371",
 }
 # P3 전의 기존 명령 출력(출력 글 해시 — 종료 코드와 함께). 번호·경로가 없는 것만 골랐다.
 OUTPUTS = (
-    (["keys", "purposes"], 0, "1f6d8fa62e6c462a4422d5377a0df2cc96e754a482c7ebc5e9812d0fa070221e"),
-    (["keys", "purposes", "--json"], 0, "8b3bd066757e772588f7a075b4bf11d05e994d59e55c7dfe508bee40edf90b61"),
+    (["keys", "purposes"], 0, "1915f05f4c386ad25c2dc905d6d4e13abf1ce9e7f01e323e6736640fe947ad57"),
+    (["keys", "purposes", "--json"], 0, "c2f32633c1fc8ecbf045272a3921832961b32331f07e49a4056485df2863bb4d"),
     (["keys", "list"], 0, "72d594c73fe59992b0e8bb7ea4af82f305ecd10032d02321481595ca62b0d168"),
     (["candidates", "list"], 0, "c64d2ea8fed0270ad2aad32467fa9bcfb614d55b6f904fbb67019f7d2f95071d"),
     (["candidates", "list", "--json"], 0, "1997486554adcbe7cfaf78337a3d7e9dd811522b1ddcd2408c34415301277abe"),
@@ -750,6 +752,14 @@ class StoreStatesInCliTest(unittest.TestCase):
                     self.assertEqual(code, 1)
                     self.assertTrue("TOPIC_STORE_VERSION_UNSUPPORTED" in err or "TOPIC_BACKUP_BLOCKED" in err, err)
                     self.assertEqual(database.read_bytes(), before, "더 새로운 파일은 한 바이트도 바뀌지 않는다")
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":

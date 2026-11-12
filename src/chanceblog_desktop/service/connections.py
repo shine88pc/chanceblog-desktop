@@ -2,7 +2,7 @@
 
 **비밀은 비밀 보관소(`security.keystore`)에만** 있고, 이 모듈이 데이터 폴더의 `connections.json` 에 두는 것은 비밀이 아닌 메타데이터뿐이다: 항목 번호(난수)·용도·제공자·이름·소속 프로젝트·순서·상태·
 만든·확인 시각·확인 결과·한도 묶음 이름(비밀이 아닌 칸 — 클라이언트 ID·고객 ID — 의 해시이거나 프로젝트 이름)·약관 확인 시각. **비밀 칸의 값에서 유도한 것(해시·지문·끝 글자)은 이 파일에 하나도 없다**
-(끝 4자는 목록을 보일 때 보관소에서 읽어 만든다).
+(키의 끝 4자·앞부분·길이 같은 일부 글자는 어디에도 만들지 않는다 — 목록은 제공자·항목 번호·등록 여부·마지막 연결 시험·등록 시각만 보인다, PCSEC1 H2).
 
 규칙(모두 시험이 지킨다):
   · 입력 오류 문구·세부·로그에 **입력한 값을 넣지 않는다**(모양 검사는 이유만 돌려준다 — `security.shape`).
@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .. import capabilities
 from ..errors import AppError
 from ..security import shape
 from ..security.keystore import encode_fields
@@ -69,7 +70,7 @@ STATUS_TEXT = {CONNECTED: "연결됨", NEEDS_CHECK: "연결 확인 필요", RATE
 class Field:
     name: str                  # 영문 소문자 칸 이름(`--stdin` JSON 의 키)
     label: str                 # 화면에 보이는 한국어 이름
-    secret: bool               # 화면에 값을 보이지 않는 칸(끝 4자만 — 16자 이상일 때)
+    secret: bool               # 화면에 값을 보이지 않는 칸(원문도 일부 글자(끝 4자·앞부분·길이)도 보이지 않는다)
     min_len: int
     max_len: int
     example: str               # 모양 안내(실제 값이 아니다)
@@ -512,31 +513,17 @@ class EntryView:
     ordinal: int
     entry: Entry
     status: str
-    tail: str                  # `****abcd`(값이 16자 이상일 때만, 아니면 '') — 진단 보고서에는 싣지 않는다
 
     def to_dict(self):
         entry = self.entry
         return {"ordinal": self.ordinal, "entry_id": entry.entry_id, "purpose": entry.purpose, "provider": entry.provider, "name": entry.name, "project": entry.project, "order": entry.order,
-                "state": entry.state, "state_text": STATE_TEXT[entry.state], "status": self.status, "status_text": STATUS_TEXT[self.status], "tail": self.tail,
-                "created_at": entry.created_at, "checked_at": entry.checked_at, "last_ok_at": entry.last_ok_at, "check_result": entry.check_result, "bucket": entry.bucket,
+                "state": entry.state, "state_text": STATE_TEXT[entry.state], "status": self.status, "status_text": STATUS_TEXT[self.status],
+                "created_at": entry.created_at, "checked_at": entry.checked_at, "last_ok_at": entry.last_ok_at, "check_result": entry.check_result,
                 "terms_ack_at": entry.terms_ack_at}
 
 
-def _tail_of(entry, spec, keystore):
-    name = spec.primary_secret()
-    if keystore is None or not name:
-        return ""
-    try:
-        fields = keystore.get(entry.ref)
-    except AppError:
-        return ""
-    if fields is None or name not in fields:
-        return ""
-    return shape.tail_hint(fields.reveal(name))
-
-
 def list_entries(ctx, *, purpose=None, registry=PURPOSES, keystore=None):
-    """마스크된 표시만 담은 항목 목록(읽기만 한다). `keystore` 를 주면 끝 4자와 값이 보관소에 있는지를 읽는다 — 못 읽으면 그 항목은 `연결 확인 필요`."""
+    """키 항목 목록(읽기만 한다) — 보이는 것은 제공자·항목 번호·등록 여부(상태)·마지막 연결 시험·등록 시각뿐이다(PCSEC1 H2). 키 원문·일부 글자(끝 4자·앞부분·접두어·길이)는 만들지도 읽지도 않는다. `keystore` 를 주면 값이 보관소에 **있는지만** 묻는다(`exists`) — 못 읽으면 그 항목은 `연결 확인 필요`."""
     data = load(ctx, registry)
     now = ctx.now()
     views = []
@@ -545,7 +532,7 @@ def list_entries(ctx, *, purpose=None, registry=PURPOSES, keystore=None):
             continue
         spec = registry[row.entry.purpose]
         present = secret_present(ctx, row.entry, keystore)
-        views.append(EntryView(row.ordinal, row.entry, entry_status(row.entry, spec, now=now, secret_present=bool(present)), _tail_of(row.entry, spec, keystore) if present else ""))
+        views.append(EntryView(row.ordinal, row.entry, entry_status(row.entry, spec, now=now, secret_present=bool(present))))
     return views
 
 
@@ -556,10 +543,19 @@ class AddResult:
     notes: tuple               # 쉬운 한국어 안내(예: 같은 묶음이라 한도가 늘지 않는다)
 
 
+def _labelled_secret(value):
+    """`client_secret=값`·`Cookie: …`·`Authorization: Bearer …` 처럼 가리기 규칙이 가릴 글이 이름·소속 프로젝트에 들어 있나(PCSEC1V — 이 두 칸은 비밀이 아닌 칸이라 `connections.json` 에 평문으로 남는다).
+    참·거짓만 돌려주고 값은 이 함수 밖으로 나가지 않는다."""
+    from ..security.mask import mask                       # 늦게 가져온다(가리기 모듈은 vendor/ 를 먼저 불러온다)
+    return isinstance(value, str) and mask(value) != value
+
+
 def _check_label(what, value, *, max_len, required):
     problem = shape.label_problem(value, max_len=max_len)
     if not problem and required and not value:
         problem = "비어 있습니다"
+    if not problem and _labelled_secret(value):
+        problem = "키나 토큰처럼 보이는 글이 들어 있습니다(이름에는 키를 적지 않습니다)"
     if problem:
         raise AppError("KEY_INVALID_SHAPE", {"항목": what, "이유": problem})
 
@@ -597,6 +593,34 @@ def refuse_legacy(spec, registry=PURPOSES):
         raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": f"옛 용도라 새 항목을 더하지 못합니다 — 새 키는 '{target.label if target else spec.legacy_to}'({spec.legacy_to})에 넣습니다. 옛 항목의 키는 지우지 않았습니다"})
 
 
+BLOGGER_PURPOSE = "blogger"
+BLOGGER_INPUT_OFF = "이 시험 버전에서는 Blogger 로그인 정보를 받지 않습니다 — Blogger 초안 기능을 만들 때 따로 검증한 뒤에 열립니다(저장된 항목은 `keys remove` 로 지웁니다)"      # 오류 문구 칸(160자)에 다 들어가게 짧게
+
+
+def accepts_input(spec):
+    """이 빌드에서 그 용도에 새 키 입력을 받는가 — 키를 받는 용도(`takes_keys`)이고, Blogger 는 입력이 열려 있을 때(`capabilities.BLOGGER_OAUTH_INPUT`, 이 빌드는 False — 호출 코드가 없다)만이다.
+    저장 구조(자격 증명 관리자·`connections.json`)와 이미 저장된 항목의 읽기·지우기는 그대로이고 **새 입력만** 막는다(PCSEC1 — 운영자 결정 2026-11-11)."""
+    if not spec.takes_keys:
+        return False
+    return spec.key != BLOGGER_PURPOSE or capabilities.blogger_oauth_input_enabled()
+
+
+GITHUB_OFF_NOTE = "이 시험 버전은 글을 GitHub 에 올리지 않아요 — 이 앱은 키를 받지 않고 컴퓨터의 Git 로그인도 쓰지 않습니다(외부 게시가 꺼져 있습니다)."      # 오류 문구 칸(160자)을 넘지 않는다
+
+
+def purpose_note(spec):
+    """용도의 안내 글 — GitHub 저장소는 외부 게시가 꺼진 빌드에서 'Git 로그인을 쓴다' 대신 '올리지 않는다' 고 사실대로 말한다(PCSEC1 D7). 그 밖의 용도는 표의 안내 그대로다."""
+    if spec.key == "github_repo" and not capabilities.external_write_enabled():
+        return GITHUB_OFF_NOTE
+    return spec.note
+
+
+def refuse_unavailable(spec):
+    """이 빌드에서 입력을 받지 않는 용도(Blogger)에 키를 넣으려 하면 **키를 묻기 전에** 같은 안내로 거절한다(`add_entry`·`keys add` 가 같은 규칙을 쓴다)."""
+    if spec.takes_keys and not accepts_input(spec):
+        raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": BLOGGER_INPUT_OFF})
+
+
 def check_room(spec, chosen, mine):
     """이 제공자에 키 항목을 하나 더할 자리가 있는지 — 없으면 `KEY_ENTRY_LIMIT`(화면·명령줄·`add_entry` 가 같은 규칙을 쓴다). `mine` 은 이 용도의 항목들이다.
     ① 같은 제공자의 항목 수가 제공자 상한(`Purpose.entry_cap`, 운영자 정책 표)에 닿았거나 ② 용도의 항목 수가 읽을 때의 천장(`Purpose.max_entries`)에 닿았으면 거절한다 — 더하기만 막고 이미 있는 항목은 건드리지 않는다."""
@@ -617,8 +641,9 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
     if spec is None:
         raise _not_found("용도 이름")
     if not spec.takes_keys:
-        raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": spec.note or "이 용도는 앱이 키를 받지 않습니다"})
+        raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": purpose_note(spec) or "이 용도는 앱이 키를 받지 않습니다"})
     refuse_legacy(spec, registry)
+    refuse_unavailable(spec)                                  # Blogger 입력은 이 빌드에서 받지 않는다(서비스·명령줄·화면이 같은 규칙)
     chosen = spec.provider(provider)
     if chosen is None:
         raise AppError("KEY_INVALID_SHAPE", {"항목": "제공자", "이유": "이 용도의 제공자는 " + ", ".join(spec.provider_keys()) + " 중에서 고릅니다"})

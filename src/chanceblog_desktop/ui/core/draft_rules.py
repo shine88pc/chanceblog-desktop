@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
-from .text import T
+from .text import T, display_text
 
 GENERIC_DOMAIN = "generic"                                   # `content.body_bank.DOMAINS` 의 마지막 — 후보의 낱말에서 분야를 못 읽었을 때(시험이 같은 값인지 견준다)
 UNCHANGED_BELOW = 120                                         # 고친 글자 수가 이보다 적으면 '거의 고치지 않은 초안'(D-285) — 한 문단 남짓
@@ -90,8 +90,7 @@ def derived_lines(body):
 # ---- 보이는 글 다듬기 ----------------------------------------------------------------------------------------------------------------------
 def shown(value, limit=PREVIEW):
     """화면에 나가는 외부 글(점검에 걸린 문장·후보 제목)에서 비밀 모양을 가리고 한 줄로 줄인다 — 명령줄 출력과 같은 규칙(`security/mask.py`)."""
-    from ...security.mask import safe_detail
-    return safe_detail(value, limit)
+    return display_text(value, limit)
 
 
 # ---- 키·토큰 모양 --------------------------------------------------------------------------------------------------------------------------
@@ -232,6 +231,21 @@ def _spot(base, end, hit):
     return (start, end if hit[1] is None else start + hit[1])
 
 
+_LINE_BREAK = re.compile(r"\r\n|\n|\r")
+
+
+def _scanner_spans(text):
+    """본문 속 비밀 형태 검사기(`security/scan.py` — Google API 키·GitHub 토큰·Bearer 토큰·OAuth 토큰·AWS 액세스 키·개인 키)가 찾은 자리들 → ((시작, 끝), …) 글자 번호(끝은 포함하지 않는다).
+    복사 관문이 저장·백업 전 검사와 **같은 종류**를 막게 한다(PCSEC1 M3) — 모양을 알아보는 규칙은 검사기 한 곳에 있고 여기서는 부르기만 한다."""
+    from ...security import scan
+    found = scan.scan_secrets(text)
+    if not found:
+        return ()
+    starts = [0]
+    starts.extend(match.end() for match in _LINE_BREAK.finditer(text))
+    return tuple((starts[item.line - 1] + item.col_start - 1, starts[item.line - 1] + item.col_end) for item in found)
+
+
 def secret_spots(text):
     """글에서 키·토큰 모양이 걸린 자리들 — ((시작, 끝), …) 순서대로. 없으면 빈 튜플. 글이 아니거나 너무 길면 믿을 수 없어 처음 한 자리를 돌려준다(실패 열림 금지).
     주소·파일 이름 모양은 알려진 키 모양만 보고(`_address_hit`), 그 밖의 덩어리는 `looks_secret`(접두사·긴 영숫자)을 그대로 쓴다. 정본 패턴(`has_key_shape`)은 글 전체에 건다."""
@@ -261,6 +275,9 @@ def secret_spots(text):
     if not spots and has_key_shape(text):                                        # 여러 덩어리에 걸친 정본 패턴(`Bearer …`·개인 키 블록 …)
         at = _first_difference(text, mask(text))
         spots.append((at, at + 1))
+    for span in _scanner_spans(text):                                            # 검사기의 여섯 유형도 같은 관문에서 막는다(위에서 이미 잡은 자리와 겹치면 그 자리가 대신한다)
+        if not any(span[0] < other[1] and other[0] < span[1] for other in spots):
+            spots.append(span)
     return tuple(sorted(spots))
 
 
@@ -270,12 +287,14 @@ def has_secret(*texts):
 
 
 def _place(name, text, start, end):
-    """막은 자리 하나의 미리보기 — `이름 — …걸린 곳 앞의 글 + 걸린 곳의 앞부분`(전체 PREVIEW 글자). 정본 비밀 모양은 가려서(`[가림: …]`), 그 밖의 긴 덩어리는 앞 8글자만 보인다 — 화면에 비밀을 되풀이하지 않는다."""
+    """막은 자리 하나의 미리보기 — `이름 — …걸린 곳 앞의 글 + 걸린 곳의 앞부분`(전체 PREVIEW 글자). 정본 비밀 모양은 가려서(`[가림: …]`), 그 밖의 긴 덩어리(알아보지 못한 영숫자)는 글자 없이 `[가림]` 표시만 남는다 — 앞 글자도 화면에 되풀이하지 않는다(PCSEC1 D16)."""
     from ...security.mask import mask
     before = text[max(0, start - CONTEXT_BEFORE):start]
     hit = text[start:end]
     masked = mask(hit)
-    front = T["drf_spot_hidden"] if not hit else (masked if masked != hit else hit[:8] + ("…" if len(hit) > 8 else ""))      # 길이가 0 인 자리(이름·모양으로 알아본 것)는 글자를 보이지 않고 어디서부터인지만 짚는다
+    front = T["drf_spot_hidden"] if not hit else (masked if masked != hit else T["drf_spot_hidden"])      # 길이가 0 인 자리(이름·모양으로 알아본 것)는 글자를 보이지 않고 어디서부터인지만 짚는다
+    if hit and masked == hit and any(start < other_end and other_start < end for other_start, other_end in _scanner_spans(text)):
+        front = T["drf_spot_hidden"]                                                         # 검사기가 찾은 자리와 겹치는데 가려지지 않는 글자는 한 자도 되풀이하지 않는다 — 어디서부터인지만 짚는다(PCSEC1 M3)
     if hit and masked != hit and before.endswith("="):
         front = T["drf_spot_hidden"]                                                         # `key=` 바로 뒤의 가림 이름이 `shown` 의 주소 인자 가림에 한 번 더 걸려 닫는 괄호가 남는 겉모양을 막는다
     return f"{name} — " + ("…" if start > CONTEXT_BEFORE else "") + shown(before + front, PREVIEW)

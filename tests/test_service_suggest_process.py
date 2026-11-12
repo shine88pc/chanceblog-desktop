@@ -127,7 +127,11 @@ class SessionTest(Base):
             self.assertNotIn(word, out)
 
     def test_a_key_shaped_text_in_the_profile_is_masked_in_the_real_output(self):
-        self.profile(name="이름 " + ss.KEY)
+        from chanceblog_desktop.content.profiles import NaverProfile
+        from chanceblog_desktop.service.context import Settings, Workspace
+        workspace = Workspace(self.data)                                 # 옛 버전이 저장한 것처럼 설정 파일에 직접 쓴다 — 명령줄 쓰기 길은 이제 키 모양을 거절한다(PCSEC1 M3)
+        workspace.ensure()
+        Settings(workspace.settings_path).save_naver_profile(NaverProfile("naver_a", "이름 " + ss.KEY, "https://blog.naver.com/exampleaaa", topic=TOPIC, default_tags=("절약", "보험")))
         for argv in (("candidates", "suggest"), ("--json", "candidates", "suggest"), ("--verbose", "candidates", "suggest"), ("naver-profile", "show")):
             out = self.ok(*argv)
             self.assertNotIn(ss.KEY, out)

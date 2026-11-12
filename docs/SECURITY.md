@@ -7,9 +7,9 @@
 | 비밀 | 어디에 | 이 저장소에 |
 |---|---|---|
 | 선택 보조 AI 키(Gemini 등 — 기본은 없음)·네이버·이미지 공급자 키 | **Windows 자격 증명 관리자**(OS 보안 저장소) — `keys add` 의 숨김 입력으로만 넣는다(§7). 키가 없어도 모든 핵심 기능이 동작한다 | 없음 |
-| Blogger OAuth 토큰·클라이언트 비밀 | 같은 곳(앱이 브라우저 loopback 로그인으로 받음) | 없음 |
+| Blogger OAuth 토큰·클라이언트 비밀 | 같은 곳(앱이 브라우저 loopback 로그인으로 받음) — **이 시험 버전은 입력 칸이 없고 서비스·명령줄도 받지 않는다**(`BLOGGER_OAUTH_INPUT = False`, 아래 PCSEC1 절) | 없음 |
 | 업데이트 서명 개인키 | GitHub Environment 시크릿 `UPDATE_SIGNING_KEY` + 운영자의 오프라인 백업 2곳 | 없음(공개키는 앱에 내장·저장소에 있음) |
-| GitHub 토큰 | 앱에 내장하지 않는다. Pages 발행은 PC 의 Git 로그인(자격 증명 관리자)을 쓴다 | 없음 |
+| GitHub 토큰 | 앱에 내장하지 않는다. Pages 발행은 PC 의 Git 로그인(자격 증명 관리자)을 쓴다 — **이 시험 버전은 외부 게시가 소스 상수로 꺼져 있어 그 로그인도 쓰지 않는다**(아래 PCSEC1 절) | 없음 |
 
 - 키는 소스·로그·설정 내보내기·DB 에 쓰지 않는다. 설정 내보내기 파일에는 키가 없다. 키가 없어도 앱은 수동 모드로 실행된다.
 - 선택 보조 AI 키를 만들게 되면 자동 발행(Actions)에 쓰는 키와 **분리**한다(한도를 나눠 쓰지 않고, 유출 범위를 줄인다). 보조 AI 연결 실패는 해당 기능만 건너뛰고 프로그램 오류로 번지지 않는다(`ASSIST_UNAVAILABLE`).
@@ -18,9 +18,9 @@
 
 ## 2. 로그
 
-요청 헤더·키·토큰·개인정보를 출력하지 않는다. 로그·오류 보고서에 나가는 글은 `src/chanceblog_desktop/security/mask.py` 의 `mask`·`safe_detail`(이를 쓰는 `AppError.log_line()` 포함)을 거친다. 규칙은 ① `chanceblog` 의 비밀 패턴 `pipeline/secret_patterns.py` 14종(`vendor/` 에 원본 그대로 — 패턴이 늘면 시험이 새 표본을 요구한다) ② 주소 속 `사용자:토큰@`(비밀번호에 `@` 가 있어도) ③ 주소의 `?access_token=`·`code=`·`session=` 같은 인자 ④ `Bearer`·`Basic` 토큰·JWT·Slack 웹훅 주소·npm 토큰·`aws_secret_access_key=`·따옴표 없는 `password: 값`·개인 키 블록 전체 ⑤ 눈에 안 보이는 글자(폭 없는 글자·방향 제어 등)로 쪼갠 토큰(그 글자를 먼저 지운다) ⑥ 정본의 `sk-` 패턴(영숫자만)이 못 알아보는 붙임표·밑줄이 든 새 키 모양 — OpenAI 프로젝트 키(`sk-proj-…`)·Anthropic 키(`sk-ant-api03-…`)·OpenRouter 키(`sk-or-v1-…`)와 그 밖의 `sk-` 긴 모양(꼬리 40자 이상에 앞 60자 안의 대문자·숫자)이다. 정본은 고치지 않고 `mask.py` 에서 더했고 `shape.py` 의 자기 검사는 이미 이 모양들을 키로 본다(시험이 둘의 일치를 지킨다). 다만 이 '가린다' 는 화면·기록 쪽이다 — 발행 직전의 비밀 차단(`publish/pages.py`)은 이 새 모양 4가지(`sk-proj-`·`sk-ant-api03-`·`sk-or-v1-`·`sk-` 일반형)를 아직 모른다(c3 이전부터의 한계이고 같은 모양 판정을 쓰게 하는 일은 후속이다). `sk-` 일반형은 대문자·숫자가 든 40자 이상 붙임표 슬러그(`sk-Hynix-Q3-2026-…`·`sk-proj-weekly-…`)도 키로 보고 가린다(오탐 — 정상 글이 가려질 수 있다). 어떤 입력에도 예외를 내지 않고, 이미 가린 글을 다시 가려도 같다(입력이 20만 자 이하일 때 — 그보다 긴 글은 비밀이 반쪽으로 잘리지 않게 공백에서 잘라 앞부분만 가리고 나머지는 내보내지 않는다). `AppError.detail` 은 화면에 내지 않고 `log_line()` 으로만 기록하며, git 의 출력은 끝 400자만 남기되 **자르기 전에** 가린다. 로그를 내보내기 전에 한 번 더 가린다. 이 규칙은 **알려진 모양**만 가린다 — 같은 종류의 토큰이 공백 없이 이어 붙은 것이나 낱말 경계로 시작하는 패턴이 앞 글자에 붙은 것(`키는ghp_…`), 줄바꿈으로 쪼갠 토큰이나 무작위 40자 문자열(AWS 비밀 키처럼 git 해시와 구분할 수 없는 것)은 못 가리므로, 비밀을 애초에 로그에 넣지 않는 것(§1)이 먼저다.
+요청 헤더·키·토큰·개인정보를 출력하지 않는다. 로그·오류 보고서에 나가는 글은 `src/chanceblog_desktop/security/mask.py` 의 `mask`·`safe_detail`(이를 쓰는 `AppError.log_line()` 포함)을 거친다. 규칙은 ① `chanceblog` 의 비밀 패턴 `pipeline/secret_patterns.py` 14종(`vendor/` 에 원본 그대로 — 패턴이 늘면 시험이 새 표본을 요구한다) ② 주소 속 `사용자:토큰@`(비밀번호에 `@` 가 있어도) ③ 주소의 `?access_token=`·`code=`·`session=` 같은 인자 ④ `Bearer`·`Basic` 토큰·JWT·Slack 웹훅 주소·npm 토큰·`aws_secret_access_key=`·따옴표 없는 `password: 값`·개인 키 블록 전체 ⑤ 눈에 안 보이는 글자(폭 없는 글자·방향 제어 등)로 쪼갠 토큰(그 글자를 먼저 지운다) ⑥ 정본의 `sk-` 패턴(영숫자만)이 못 알아보는 붙임표·밑줄이 든 새 키 모양 — OpenAI 프로젝트 키(`sk-proj-…`)·Anthropic 키(`sk-ant-api03-…`)·OpenRouter 키(`sk-or-v1-…`)와 그 밖의 `sk-` 긴 모양(꼬리 40자 이상에 앞 60자 안의 대문자·숫자)이다. 정본은 고치지 않고 `mask.py` 에서 더했고 `shape.py` 의 자기 검사는 이미 이 모양들을 키로 본다(시험이 둘의 일치를 지킨다). 다만 이 '가린다' 는 화면·기록 쪽이다 — 발행 직전의 비밀 차단(`publish/pages.py`)은 이 새 모양 4가지(`sk-proj-`·`sk-ant-api03-`·`sk-or-v1-`·`sk-` 일반형)를 아직 모른다(c3 이전부터의 한계이고 같은 모양 판정을 쓰게 하는 일은 후속이다). `sk-` 일반형은 대문자·숫자가 든 40자 이상 붙임표 슬러그(`sk-Hynix-Q3-2026-…`·`sk-proj-weekly-…`)도 키로 보고 가린다(오탐 — 정상 글이 가려질 수 있다). 어떤 입력에도 예외를 내지 않고, 이미 가린 글을 다시 가려도 같다(입력이 20만 자 이하일 때 — 그보다 긴 글은 비밀이 반쪽으로 잘리지 않게 공백에서 잘라 앞부분만 가리고 나머지는 내보내지 않는다). `AppError.detail` 은 화면에 내지 않고 `log_line()` 으로만 기록하며, git 의 출력은 끝 400자만 남기되 **자르기 전에** 가린다. 로그 파일과 내보내기 기능은 아직 없다(만든다면 기록이 만들어질 때 이미 가려져 있다 — 아래 PCSEC1 절 '공통 경계'). 이 규칙은 **알려진 모양**만 가린다 — 같은 종류의 토큰이 공백 없이 이어 붙은 것이나 낱말 경계로 시작하는 패턴이 앞 글자에 붙은 것(`키는ghp_…`), 이름 표지 없이 줄바꿈으로 쪼갠 토큰이나 무작위 40자 문자열(AWS 비밀 키처럼 git 해시와 구분할 수 없는 것)은 못 가리므로, 비밀을 애초에 로그에 넣지 않는 것(§1)이 먼저다. 가리기 규칙의 강화(이름 목록 확장·헤더 줄·눈속임 풀이)와 한계는 아래 PCSEC1 절이 정본이다.
 
-명령줄(`service/cli.py`)은 화면에 나가는 모든 글 — 일반 출력·오류·`--json` 값 — 을 같은 `mask` 로 가린다(원고·제목·git 의 오류 세부에 키 모양 문자열이 있어도 출력에는 없다). 환경 변수는 데이터 폴더·저장소 폴더 위치(`CHANCEBLOG_DESKTOP_DATA`·`CHANCEBLOG_LOCAL_REPO`)만 읽고 키·토큰은 읽지 않으며(시험 전용 가짜 보관소를 여는 `CHANCEBLOG_KEYSTORE` 는 §7 의 안전장치를 모두 통과할 때만 열린다 — `Context.get_keystore()` 가 받은 환경 변수 모음을 보관소 모듈(`security/keystore.py`)에 그대로 넘기고 그 값을 읽는 곳은 그 모듈 한 곳이다), 사용자 데이터는 저장소(git) 안에 둘 수 없다(`DATA_DIR_UNSAFE`). 시험(`tests/test_service_safety.py`)이 이 규칙들을 소스에서 직접 확인한다. 여러 줄에 걸친 비밀(개인 키 블록 — `-----BEGIN … PRIVATE KEY-----` 부터 END 까지·다음 줄에 이어지는 값)이 줄 단위 가리기를 빠져나가지 않도록 **출력 전체를 통째로** 가린다(`cli.mask_block` — 글이 아주 길면 줄 경계에서 나눠 가리되 열린 개인 키 블록 안에서는 끊지 않는다).
+명령줄(`service/cli.py`)은 화면에 나가는 모든 글 — 일반 출력·오류·`--json` 값 — 을 같은 `mask` 로 가린다(원고·제목·git 의 오류 세부에 키 모양 문자열이 있어도 출력에는 없다 — 가리는 함수 `mask_block`·`mask_deep` 은 공통 경계 `security/boundary.py` 에 있고 `cli` 는 같은 이름을 쓴다). 환경 변수는 데이터 폴더·저장소 폴더 위치(`CHANCEBLOG_DESKTOP_DATA`·`CHANCEBLOG_LOCAL_REPO`)만 읽고 키·토큰은 읽지 않으며(시험 전용 가짜 보관소를 여는 `CHANCEBLOG_KEYSTORE` 는 §7 의 안전장치를 모두 통과할 때만 열린다 — `Context.get_keystore()` 가 받은 환경 변수 모음을 보관소 모듈(`security/keystore.py`)에 그대로 넘기고 그 값을 읽는 곳은 그 모듈 한 곳이다), 사용자 데이터는 저장소(git) 안에 둘 수 없다(`DATA_DIR_UNSAFE`). 시험(`tests/test_service_safety.py`)이 이 규칙들을 소스에서 직접 확인한다. 여러 줄에 걸친 비밀(개인 키 블록 — `-----BEGIN … PRIVATE KEY-----` 부터 END 까지·다음 줄에 이어지는 값)이 줄 단위 가리기를 빠져나가지 않도록 **출력 전체를 통째로** 가린다(`cli.mask_block` — 글이 아주 길면 줄 경계에서 나눠 가리되 열린 개인 키 블록 안에서는 끊지 않는다).
 
 ## 3. 업데이트 보안
 
@@ -51,7 +51,7 @@
 
 ## 7. 키 보관(연결 설정) — 설계 D-30·D-31
 
-앱의 연결 설정(`keys` 명령 — 용도별로 키를 넣고, 같은 용도에 여러 개를 둘 수 있고(NAVER API HUB 는 하나만), 한도에 막혀 일이 멈추지 않게 하는 안전장치)은 **키를 Windows 자격 증명 관리자(OS 보안 저장소)에만** 둔다. 화면에 키 원문을 보이는 기능은 없다 — 보이는 것은 다섯 가지 상태 문구(연결 안 됨, 연결됨, 인증 정보 오류, 연결 확인 필요, 요청 한도 도달)와 이름뿐이고, 값이 16자 이상일 때만 끝 4자(`****abcd`)를 목록에 보인다. 키를 다시 보여 주는 기능은 만들지 않는다(잃어버리면 서비스 쪽에서 폐기하고 새로 받아 넣는다).
+앱의 연결 설정(`keys` 명령 — 용도별로 키를 넣고, 같은 용도에 여러 개를 둘 수 있고(NAVER API HUB 는 하나만), 한도에 막혀 일이 멈추지 않게 하는 안전장치)은 **키를 Windows 자격 증명 관리자(OS 보안 저장소)에만** 둔다. 화면에 키 원문을 보이는 기능은 없다 — 보이는 것은 다섯 가지 상태 문구(연결 안 됨, 연결됨, 인증 정보 오류, 연결 확인 필요, 요청 한도 도달)와 이름·제공자·항목 번호·등록 시각뿐이다 — 끝 4자 같은 키의 일부는 명령줄 목록에도 보이지 않는다(PCSEC1 H2, D-346). 키를 다시 보여 주는 기능은 만들지 않는다(잃어버리면 서비스 쪽에서 폐기하고 새로 받아 넣는다).
 
 **어디에 무엇이 있나.**
 
@@ -83,7 +83,7 @@
 
 ## 8. 화면에서 키 넣기(P4f) — 설계 D-250~D-259
 
-설정 화면의 연결 카드에서 키를 등록·삭제·시험하고 사용/예비·별칭·우선순위를 바꿀 수 있다(쓰기는 사용자가 단추를 눌렀을 때만 — 설정 화면을 열고 다시 읽는 것은 파일·보관소를 바꾸지 않는다). 저장 위치와 영구 저장 금지는 §7 그대로다: **키 원문은 Windows 자격 증명 관리자에만** 있고, 저장해도 되는 것은 별칭·제공자·등록 여부·사용 상태·마지막 성공 시각·마지막 확인 결과(`ok`·`auth_failed`·`error` 라는 결과 이름)·순서·약관 확인 시각뿐이다. **키 원문·앞뒤 일부 글자·길이·문자 구성·Authorization 헤더는 어디에도 저장하지 않는다.** 저장한 키는 화면에 다시 보이지 않는다(끝 4자도 — 화면 쪽은 `tail` 을 받지 않는다).
+설정 화면의 연결 카드에서 키를 등록·삭제·시험하고 사용/예비·별칭·우선순위를 바꿀 수 있다(쓰기는 사용자가 단추를 눌렀을 때만 — 설정 화면을 열고 다시 읽는 것은 파일·보관소를 바꾸지 않는다). 저장 위치와 영구 저장 금지는 §7 그대로다: **키 원문은 Windows 자격 증명 관리자에만** 있고, 저장해도 되는 것은 별칭·제공자·등록 여부·사용 상태·마지막 성공 시각·마지막 확인 결과(`ok`·`auth_failed`·`error` 라는 결과 이름)·순서·약관 확인 시각뿐이다. **키 원문·앞뒤 일부 글자·길이·문자 구성·Authorization 헤더는 어디에도 저장하지 않는다.** 저장한 키는 화면에 다시 보이지 않는다(끝 4자도 — 화면과 명령줄 어디에도 없다, D-346).
 
 **키가 지나가는 길과 막는 장치**(시험이 전수로 지킨다 — `tests/key_leak_support.py`: 가짜 키와 그 모든 네 글자 조각이 한 곳이라도 있으면 실패):
 
@@ -93,7 +93,7 @@
 | 입력 칸을 비운 뒤 | `setText("")` — `clear()` 는 지운 글을 되돌리기 기록에 남기지만 `setText` 는 기록까지 지운다. 저장·취소·Esc·다른 대화상자로 바뀜·창 닫힘 어느 길로든 비운다 |
 | 클립보드 | 붙여 넣은 글과 같은 글이 클립보드에 그대로 있으면 저장·닫을 때 비운다(다른 글은 건드리지 않고 앱이 키를 클립보드에 넣지 않는다) |
 | 서비스까지 | `SecretBox`(꺼내면 비워지고 `repr`·복사·직렬화가 글을 보이지 않는다) → 서비스 함수 인자. 뷰모델·컨트롤러·등록 초안·값 클래스·결과·실패·알림·행 안내·진단에는 키를 담는 칸이 없다. 작업 스레드의 일감은 통만 쥔다 |
-| 예외·호출 흔적 | 어댑터가 서비스 오류를 종류·칸 문제 이름·정해진 쉬운 문장으로만 바꾸고 서비스 오류의 `__traceback__` 를 끊으며 실패 객체는 `except` 밖에서 낸다(앞 오류가 `__context__` 로 따라붙지 않는다). 꺼낸 글을 담은 dict 는 `finally` 에서 비운다. 화면 쪽 슬롯에서 난 예기치 못한 예외는 표준 오류에 **예외 이름만** 남기고 내용은 싣지 않는다(키와 닿는 곳이라 어떤 글도 새지 않게) |
+| 예외·호출 흔적 | 어댑터가 서비스 오류를 종류·칸 문제 이름·정해진 쉬운 문장으로만 바꾸고 서비스 오류의 `__traceback__` 를 끊으며 실패 객체는 `except` 밖에서 낸다(앞 오류가 `__context__` 로 따라붙지 않는다). 꺼낸 글을 담은 dict 는 `finally` 에서 비운다. 화면 쪽 슬롯에서 난 예기치 못한 예외는 표준 오류에 **예외 이름과, 비밀 모양을 가리고 경로를 지운 짧은 한 줄**만 남긴다(`ui/core/app_state.unexpected_line` — 추적은 내지 않는다. 키와 닿는 곳이라 어떤 글도 새지 않게) |
 | 일이 끝난 뒤 | 컨트롤러가 등록 일감을 `try/finally` 로 감싸 공급자가 통을 꺼내지 않고 죽어도(예기치 못한 오류) 통을 비운다 — 끝난 일의 기록(`runner`)이 통을 쥐고 있어도 거기에 키가 없다(시험이 공급자를 일부러 죽여 확인한다) |
 | 별칭 칸 | 키처럼 보이는 글은 바로 비우고(눈에 보이는 칸이라) 거절한다. 서비스는 이름·소속 프로젝트에 키 값이 그대로 들었는지 거절하고, 별칭 바꾸기는 보관된 값이 이름에 들었는지도 거절한다 |
 | 로그·진단·파일 | 오류 문장은 종류별로 정해진 말이다. 진단 정보는 시각·개수뿐(별칭도 없다). `connections.json` 에는 비밀이 아닌 칸만 있다 |
@@ -103,3 +103,83 @@
 **연결 시험**: 사용자가 누를 때만, 호출 코드가 있는 용도에서만이고 시험에서 실제 네트워크를 부르는 일은 없다(지금 어느 용도도 호출 코드가 없다). 이용 약관을 확인하기 전 용도(NAVER API HUB)는 시험 함수를 건네줘도 호출하지 않는다. 시험은 다른 키로 바꿔 시도하지 않는다.
 
 **막지 못하는 것**: §7 과 같다(같은 Windows 사용자의 악성 프로그램·PC 관리자·메모리 덤프·파이썬 문자열을 메모리에서 못 지우는 것). 이 묶음이 더한 한계: Windows 의 한글 입력기(IME)가 조합 중인 글을 어떻게 다루는지·화면 읽기 프로그램이 마스킹 칸의 글자 수를 읽는지는 운영자 PC 에서 확인한다.
+
+## 본문 속 Secret 형태 검사(`security/scan.py`) — 설계 D-420–D-429
+
+운영자 결정(2026-11-11): **글을 저장하거나 백업하기 전에, 사용자가 본문에 붙여 넣은 Secret 형태를 검사한다.** 발견하면 토큰을 다시 보이지 않고 **어디에·어떤 유형이 있는지**만 알리고, 기본 동작은 저장·백업 중지다. 앱은 글을 자동으로 지우거나 바꾸지 않으며 **'무시하고 저장'은 없다** — 이 검사기에는 발견을 끄는 인자도 함수도 없고(소스 이름 검사 시험이 못박는다) 글을 돌려주지도 않는다.
+
+**찾는 것(여섯 가지)**: Google API 키(`AIza` + 35자 이상) · GitHub 토큰(`ghp_`·`gho_`·`ghu_`·`ghs_`·`ghr_` + 36자 이상, `github_pat_` + 22자 이상) · Bearer 토큰(`Bearer` + 공백 + 20자 이상) · OAuth 토큰(`ya29.`·`1//`·`GOCSPX-` + 20자 이상, JWT 세 덩어리, `access_token`·`refresh_token` 이름 뒤 20자 이상 값) · AWS 액세스 키 ID(`AKIA` 등 접두어 8가지 + 16자) · PEM 개인 키(`-----BEGIN` … `PRIVATE KEY` … `-----` 머리 줄). **모양만 본다** — 견본 키·공식 예시 키도 모양이 같으면 발견이다. 자세한 모양과 근거는 [`DECISIONS.md`](DECISIONS.md) D-421.
+
+**누가 언제 부르나**: 초안 저장 직전(제목·본문·키워드·태그·요약) · 전체 백업과 글 보관함·주제 엔진 백업 직전(원고·후보·초안 표, 프로필·Seed·캘린더·`settings.json` 값 — 부분 폴더를 남기지 않는다) · 옛 명령줄 쓰기(`candidates add`·`naver-profile set`·원고 제목·본문 쓰기) · 화면 쓰기 경로(블로그 프로필·Seed·초안 화면). 이 부품은 문자열만 받고 파일·DB·네트워크를 읽지 않으므로 어디를 훑을지·어느 오류 코드로 거절할지는 부르는 묶음이 정한다(D-427). 마스킹(`mask.py` — 출력에서 가린다)·키 모양 입력 검사(`shape.py`)와는 따로다 — 이것은 **쓰기 전에 막는다**.
+
+**사용자에게 보이는 것**: `describe`('본문 3번째 줄에 GitHub 토큰처럼 보이는 글이 있어요')와 `summarize`(칸·유형별 건수와 줄 번호, 마지막에 '해당 줄을 본문에서 지운 뒤 다시 저장해 주세요 — 앱은 자동으로 지우거나 바꾸지 않아요')뿐이다. 토큰 글자는 문장·결과 객체·예외 문구·직렬화(`asdict`·피클·JSON) 어디에도 없고, 문장에는 길이 힌트(열 범위를 풀어 쓴 글)도 없다(카나리 시험).
+
+**위치와 성능**: 줄은 1부터(CRLF·LF·CR), 열은 그 줄 안의 파이썬 글자 1부터(`col_end` 는 마지막 글자, 포함). 전각·수학 글자·특수 공백은 글자 하나씩 NFKC 로 맞춰 길이를 그대로 두므로 위치가 원문 그대로다. 정규식은 모두 선형이고 10만 글자 병적 입력 55가지가 파이썬 3.12·3.10 에서 모두 0.5초 안이다(D-424).
+
+**한계(사실대로)**: 이 검사기는 **모양을 아는 비밀만** 찾는다. ① 공백·줄바꿈·눈에 안 보이는 글자(`U+200B`·소프트 하이픈)로 쪼갠 토큰, 접두어 앞에 영문·숫자가 붙은 토큰(주소의 `%3D` 같은 퍼센트 구분자 바로 뒤는 괜찮다)은 못 찾는다 ② 여섯 가지 밖의 형식(OpenAI·Slack·텔레그램 봇·AWS 비밀 키·자유 글 속 비밀번호·이름 모르는 형식)과 하한보다 짧은 토큰은 못 찾는다 — 마스킹이 출력에서는 가려 주지만 쓰기를 막지는 않는다 ③ PEM 은 머리 줄만 본다(몸통만 붙여 넣으면 못 찾는다) ④ 견본 키·공식 문서의 예시 키·변수 이름처럼 긴 값(`access_token=` 뒤)도 모양이 같으면 걸린다 — 그 줄을 고쳐 쓰게 한다 ⑤ 글자 모양만 본다: 키가 진짜인지는 모른다 ⑥ 인코딩해 쓴 토큰(base64·16진수·퍼센트로 쓴 밑줄)·글자 순서를 뒤집은 토큰·대소문자를 바꾼 접두어·`Bearer` 와 값 사이의 줄바꿈은 못 찾는다(재귀적으로 풀어 찾지 않는다 — D-359). 올리는 글을 눈으로 확인하는 일(`AGENTS.md` §2 규칙 1)을 대신하지 않는다.
+
+## 보안 조사 반영 묶음(PCSEC1) — 설계 D-340–D-359
+
+운영자 결정(2026-11-11)에 따라 보안 조사의 높음 3건(로그 속 비밀·키 일부 표시·외부 쓰기)과 M3(본문 속 비밀 형태)를 개인 PC 제한 Package 전에 고쳤다. 이 절이 그 결과의 정본이다(위 §1–§8 에 있던 '끝 4자를 목록에 보인다'·'로그를 내보낸다'는 낡은 문장은 이 묶음에서 고쳤다).
+
+### 외부 게시는 완전히 꺼져 있다(H3 — D-341–D-343)
+
+이 시험 버전에는 글을 외부로 쓰는 길이 **없다** — PC 에 Git 로그인이 이미 있어도 push 할 수 없다. 설정 스위치를 '기본 꺼짐'으로 둔 것이 아니라 네 겹이 서로를 받친다.
+
+1. **서비스 비활성** — GitHub 에 올리기·올리기 권한 점검·원격 최신 받기·공개 확인·취소를 하는 모든 함수의 **첫 줄**이 `capabilities.require_external_write(작업)` 으로 `EXTERNAL_WRITE_DISABLED` 를 낸다(하위 프로세스·네트워크·파일 쓰기보다 먼저).
+2. **어댑터 미등록** — Blogger·네이버로 보내는 어댑터는 없고 등록부(`service/external.py`)는 비어 있다. 기본 git 은 모든 호출을 거절하는 `refusing_git`, 기본 백엔드는 파일만 읽는 `LocalOnlyBackend` 다.
+3. **소스 상수 Runtime Gate** — `capabilities.EXTERNAL_WRITE = False` 는 소스에 박힌 상수다. 설정 파일·환경 변수·명령줄·화면이 바꿀 수 없고 켜는 훅이 생산 코드에 없다(시험만 `mock.patch.object` 로 모듈 단위로 임시로 켠다).
+4. **Network Write 0 시험** — 모든 부명령과 화면 어댑터의 연결을 감시기(소켓·HTTP·`urllib`·`subprocess.Popen`·`os` 의 프로세스 실행 함수·`webbrowser`)를 켠 채 돌려 나간 호출이 0 임을 확인하고, 나가는 호출이 있는 소스 위치를 허용 목록으로 못박는다. **한계(D-359)**: 위치 규칙(AST)은 import 구문과 `os.<이름>` 만 본다 — `__import__('subprocess')`·`importlib.import_module`·`ctypes.WinDLL`·`from os import system`·`getattr(os, '문자'+'이어 붙이기')` 같은 **의도적** 우회는 막지 못하고 런타임 감시기는 실행되는 경로만 본다. 우발적인 추가(`import subprocess`·`webbrowser`·`os.system`)는 확실히 잡는다. `keys purposes` 의 GitHub 안내와 `doctor` 의 '올리기 권한' 줄은 이 빌드에서 '이 시험 버전은 글을 GitHub 에 올리지 않아요' 라고 말한다(D7).
+
+| 막는 일 | 막는 층 | 시험 |
+|---|---|---|
+| git commit·push·취소(글을 저장소에 쓰기) | 1·2 | `test_the_low_level_git_and_publish_modules_refuse_before_any_outgoing_call`·`test_a_git_backend_refuses_its_write_and_network_methods_before_calling_git`·`test_the_publish_flow_refuses_before_it_touches_the_store_or_the_backend` |
+| `publish-pages`·`check-deploy`·`doctor --online` | 1 | `test_the_command_line_commands_refuse_whatever_the_flags_say`·`test_the_two_online_entry_points_pass_the_gate_first_inside_their_online_branch`·`test_every_entry_point_passes_the_gate_as_its_first_statement` |
+| 올리기 권한 확인·원격 최신 받기·공개 확인 | 1·2 | 위 첫 줄의 저수준 시험과 같다 |
+| Blogger·네이버로 보내기 | 2 | `test_no_code_in_src_registers_an_adapter`·`test_the_registry_only_knows_three_kinds_and_a_test_can_plug_one_temporarily` |
+| 하위 프로세스·소켓·HTTP·브라우저 호출 어디서든 | 4 | `test_the_places_that_touch_the_outside_are_exactly_the_allowed_list`·`test_only_one_allowed_place_can_write_to_the_outside_and_it_sits_behind_the_gate`·`test_the_only_subprocess_launcher_is_the_gated_run_command`·`test_every_subcommand_with_and_without_yes_makes_no_outgoing_call`·`test_every_provider_method_makes_no_outgoing_call` |
+| 설정 파일·환경 변수·명령줄·코드로 켜기 | 3 | `test_the_shipped_constants_are_off`·`test_only_the_literal_true_opens_the_gate`·`test_nothing_in_src_stores_to_the_constant_except_the_one_false_in_capabilities`·`test_no_other_module_even_names_the_constant_and_no_code_sets_it_by_string`·`test_the_settings_file_has_no_field_for_it_and_still_refuses_unknown_fields`·`test_the_command_line_has_no_switch_or_settings_command`·`test_the_environment_variables_the_service_reads_are_only_the_two_locations`·`test_the_capabilities_module_reads_nothing_from_outside` |
+| 기존 Git 로그인이 있어도 push | 1·2·4 | `test_with_the_gate_off_every_step_is_done_and_git_is_never_called_and_the_remote_does_not_move`(진짜 `git`·로컬 bare 저장소 — 관문이 꺼졌을 때 git 호출 0·원격 불변, 시험이 관문을 열면 같은 단계가 진짜 push 해서 0 이 빈 실험이 아님을 확인) |
+
+이 빌드에서 사람이 하는 일: 글은 이 PC 에서 쓰고 검토한 뒤 복사해 직접 올린다(네이버는 글쓰기 페이지를 열어 붙여 넣는다). `connect` 는 `.git/config`·`HEAD` 파일만 읽고 원격에는 닿지 않으며, `doctor` 는 '외부 게시: 이 시험 버전에서는 꺼져 있어요' 를 알린다.
+
+**켜는 길(나중 일, 결정 기록 D-343 의 PUBPR 제안)**: ① 별도 묶음에서 '초안을 PR 로만 올리는' 어댑터 하나(main 직접 push 금지)·최소 권한 토큰·Scope·연결 해제·재인증 정책을 설계하고 독립 검증한다 ② 운영자가 명시로 승인한다 ③ `capabilities.py` 의 상수와 등록부를 고치는 소스 변경으로 연다(설정·환경 변수로는 열 수 없다) ④ Network Write 0 시험의 허용 목록을 '정확히 그 어댑터 하나'로 바꾼다.
+
+### 공통 경계와 가리기 규칙(H1 — D-344·D-345)
+
+비밀이 프로세스 밖으로 나가는 출구는 한 곳(`security/boundary.py`)에서 거른다. 진입점의 맨 앞에서 설치하면(화면 진입점은 둘이다 — 소스 실행의 `__main__` 과 묶음 실행 파일이 바로 부르는 `ui/launcher.main`. 둘 다 맨 앞에서 부르고 멱등이라 한 번만 깔린다) ① `sys.stdout`·`sys.stderr` 가 줄 단위로 가려 쓰는 래퍼가 되고(여러 `write()` 에 쪼개진 비밀도 줄이 끝날 때 가려진다) ② `sys.excepthook`·`threading.excepthook`·`sys.unraisablehook` 이 비밀을 가린 추적을 남기며(`--debug` 의 되던진 예외도 같다) ③ `logging` 은 기록이 만들어지는 순간 문장·인자·추적을 가린 글로 굳히고 ④ 화면(GUI)은 Qt 가 직접 찍는 메시지도 가려 표준 오류로 보낸다. 오류 문구의 슬롯 값은 `errors/render.py` 가, 화면 글은 `ui/core/text.py` 의 `display_text` 한 점이 가린다. 가리는 규칙(정규식)은 `security/mask.py` 한 곳에만 있다.
+
+| 출구(운영자 목록 11곳) | 거르는 곳 |
+|---|---|
+| 일반 로그·오류 로그 | `logging` 기록 공장·루트 로거·`lastResort` 필터, `AppError.log_line()` |
+| 예외 문구·스택 추적 | 오류 렌더링 슬롯 가리기, 예외 훅 셋, 가린 추적 |
+| 진단 정보(`doctor`)·연결 시험 결과 | 줄 단위 출력 래퍼, 화면은 `display_text` |
+| URL 질의·요청 헤더 | 주소 인자 이름 규칙, `Authorization`·`Cookie`·`Set-Cookie`·`X-API-Key` 줄 규칙 |
+| UI 메시지 | `display_text`, 위젯 글 전수 훑기 시험 |
+| 시험 실패 출력 | `tests/secret_support.assert_no_secret`(새·바꾼 시험), `MaskingTextTestRunner`(옛 시험은 한 줄도 고치지 않고 — CI 의 조각 러너 `scripts/ci_shard.py` 가 이 러너를 쓴다) |
+| 워크플로 산출물(artifact) | `test_workflow_artifacts`(`.github` 는 읽기만 — 업로드 단계가 있으면 그 경로를 허용 목록 네 모양(`ALLOWED_UPLOAD_FILES`: 패키지 압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json`)으로만 제한하고(새 업로드를 더하려면 이 목록과 결정을 같이 고친다), `secrets.` 는 `env:` 로만 넘기며 비밀 환경 변수·환경 전체를 출력하지 않는다) |
+
+가리는 이름: `Authorization`·`api_key`·`apikey`·`serviceKey`·`access_token`·`refresh_token`·`client_secret`·`password`·`Cookie`·`Set-Cookie`·`X-API-Key` 와 그 계열(`authKey`·`appKey`·`secretKey`·`X-Naver-Client-Secret`·`Ocp-Apim-Subscription-Key`·`crtfc_key`·`access_key`·`private_key`·`subscription_key`). `…key` 는 앞 낱말이 붙은 것만 이름이다(`monkey`·`keyword` 는 아니다). 규칙은 `Authorization` 줄은 값 전체(알려진 스킴 낱말만 남김), `Cookie` 는 **이름 불문 모든 값**(쿠키 이름은 남김), `Set-Cookie` 는 첫 쌍과 모르는 속성, 눈속임(전각·키릴·그리스 동형 문자·퍼센트·이스케이프 JSON·따옴표 두 겹·탭·base64 로 감싼 값 깊이 1·쪼갠 값)은 풀어서 가린다. 측정(`tests/pcsec1_mask_cases.py` 163건): 새는 입력 62 → 5, 오탐은 정상 글 122개와 앱이 실제로 내는 글 2,118개에서 0, 20만 자 입력 CPU 시간 최대 3.12 0.41초·3.10 0.50초(부하 PC 에서 세 번 중 최소 — 시험 한도는 2초).
+
+**한계(사실대로)**: ① **이름 표지가 없는 값**(경로 속 키·라벨 없는 한 줄·라벨 없는 10자 시크릿·64자 16진수·43자)은 가리지 않는다 — 모양만으로는 SHA-256·커밋 해시와 가를 수 없어 일부러 그렇게 했고 시험이 그 5건이 가려지지 않음을 못박는다 ② 이중 퍼센트·`\uXXXX` 로 쓴 이름·base64 두 겹·8192자 뒤에만 비밀이 있는 긴 base64 덩어리·이름 표지 없이 줄바꿈으로 쪼갠 값은 못 가린다 ③ 스트림 `.buffer` 로 바이트를 직접 쓰는 것·자식 프로세스의 직접 출력·`faulthandler`·Qt 가 아닌 라이브러리가 C 쪽에서 찍는 글은 경계를 지나지 않는다(앱 코드는 소스 규칙 시험이 막는다) ④ 설치 뒤 다른 코드가 `sys.stdout` 등을 다시 바꿔 끼우면 그 객체는 경계 밖이다(소스 규칙 시험이 앱 코드의 바꿔 끼움을 막는다) ⑤ 위젯 `setText` 161곳은 한 점에 모으지 않았다 — 위젯 글 전수 훑기 시험이 지킨다(새 화면은 그 시험에 장면을 더해야 한다) ⑥ 로그 파일 핸들러는 만들지 않았다(없는 기능) ⑦ **마스킹이 못 가리는 모양**(D-359): 이름과 값이 따로 있는 JSON·XML(`name`·`value` 칸 쌍·`<add key=… value=…/>`·`name=…&value=…`), YAML 블록 `api_key: >` 다음 줄, 닫히지 않은 따옴표(앞에서 잘린 글), HTML 엔티티 구분자(`&#61;`·`&equals;`)나 결합 글자가 낀 이름, `curl -u 사용자:값`·`passphrase=`·`password => x`, 줄바꿈으로 쪼갠 이름, JSON 배열의 `set-cookie`, 이름과 값 사이에 다른 낱말이 낀 문장(`my password is x`·`The api key is x`), 구분자 없이 이름 뒤에 오는 값이 짧거나(16자 미만) 숫자·글자 한쪽뿐인 것(`auth token x` — 낱말·번호와 가를 수 없어 일부러 그렇게 했다), 값이 빈 라벨 줄(`password:`) 바로 다음 줄의 헤더 일부(`X-API-Key` 값의 `_`·`-` 뒤 꼬리). 공백·점이 낀 이름(`API key: x`·`api.key=x`)·`Basic ` 낱말 바로 뒤의 `이름=값`·이름 낱말 바로 뒤에 구분자 없이 오는 값 모양(`auth token Zq8…`·`Your API key Zq8… is not valid` — 같은 줄에서 16자 이상이고 숫자와 글자가 모두 있을 때만, 규칙 사슬의 맨 끝)은 D4 에서 고쳤다 ⑧ **경계 스트림**(D-359): 공백 없는 조각이 16384자를 넘으면 쥐고 있던 것을 내보내 쪼갠 쓰기에서 라벨 뒤 값이 라벨 없이 나갈 수 있고, 이름과 값 사이에서 일부러 `flush()` 를 부르면 이름이 먼저 나간다 — 앱의 출력 경로는 출력 직전에 `mask_block` 을 먼저 지나므로 지금 영향이 없다. 헤더 줄(`Cookie`·`Set-Cookie`·`Authorization`)은 4096자를 넘어도 공백에서 자르지 않는다(D5 a 고침). 기존 시험 108곳(41개 파일)은 실패하면 비밀을 그대로 찍을 수 있어 목록으로 보고하고, `tests/run_masked.py` 로 돌리면 실패 글이 가려진다.
+
+### 키는 다섯 가지만 보인다(H2 — D-346)
+
+화면·명령줄(`keys list`·`keys add`)·`--json`·`doctor`·연결 시험에 보이는 키 관련 정보는 **제공자 이름·항목 번호(Key Slot)·등록 여부·마지막 연결 시험·등록 시각**뿐이다. 끝 4자·앞부분·접두어·길이는 어디에도 없고, 그것을 만들던 코드(`tail_hint`·`EntryView.tail`)도 지웠다. 소스 규칙 시험(`test_source_rules_key_display`)이 값의 일부를 자르는 이름·문구·식과 `reveal(` 호출이 `service/`·`ui/`·`security/` 에 없음을 확인하고, 화면 위젯 전수 훑기가 가짜 키와 그 모든 네 글자 조각이 어느 위젯 글에도 없음을 확인한다. `--json` 은 그 다섯 가지를 다루는 데 필요한 칸(항목 번호용 난수 `entry_id`·순서·상태·마지막 확인 시각과 결과·약관 확인 시각)만 낸다 — NAVER 고객 ID 같은 칸에서 만든 묶음 이름(`bucket`)은 싣지 않는다(D-358).
+
+### Blogger OAuth 입력(D-347)
+
+이 빌드에는 Blogger 를 부르는 코드가 없으므로 `BLOGGER_OAUTH_INPUT = False`(소스 상수 — 켜는 길 없음)로 입력을 막았다: 서비스(`add_entry`)와 명령줄(`keys add`)은 키를 묻기 전에 거절하고, 화면의 Blogger 카드에는 입력 칸·등록 단추 없이 '받지 않아요' 안내만 있다. 자격 증명 관리자에 저장하는 코드와 이미 저장된 항목의 지우기·시험은 그대로다. Blogger 초안 기능을 구현할 때 Scope·연결 해제·Token 삭제·재인증·초안 전용 정책과 함께 별도 검증을 거친 뒤 연다.
+
+### 본문 속 Secret 형태의 적용 위치(M3 — D-348)
+
+검사기(위 '본문 속 Secret 형태 검사' 절)를 `security/refuse.py` 가 부르기만 한다. ① 옛 명령줄 쓰기: 원고 제목·본문·출처·이미지(`new`·`edit`·`import-html`)·후보 주제·핵심 키워드·보조 키워드·추천 이유(`candidates add`)·네이버 프로필 글칸(`naver-profile set`)·검토 요청의 매개변수(`review` 의 분야·태그·한 줄 설명·대표 이미지 주소·출처 이름·주소·글 제목, 네이버 검토의 제목·본문 파일·태그·분야)·네이버 발행 주소(`naver-done --url`)는 쓰기 전에 `SECRET_SHAPE_FOUND` 로 멈추고 칸·줄·유형만 알린다. 후보 CSV 는 그 줄만 거절한다. ② 백업 전: `backup` 은 글·옛 판 기록·초안·후보를 훑어 있으면 백업을 만들지 않고, 주제 엔진 백업은 옛 정본 패턴과 검사기 여섯 유형을 **둘 다** 막으며 `TOPIC_BACKUP_BLOCKED` 의 이유에 위치(파일·줄 또는 표·행)와 유형을 말한다. 지우기·되돌리기 직전의 안전 사본은 막지 않는다 — 막으면 문제의 글을 지울 수도 되돌릴 수도 없다. ③ 화면 쓰기(블로그 프로필·Seed)는 같은 `scan_key_shape` 라 같은 종류를 막고, 초안 복사 관문은 검사기가 찾은 자리를 더하되 글자를 한 자도 되풀이하지 않는다. ④ 키 항목의 별칭(이름)·소속 프로젝트(평문 파일 `connections.json` 에 남는 칸): 가리기 규칙이 가릴 글(`client_secret=값`·`Cookie: …`·`Authorization: Bearer …`)이 있으면 `KEY_INVALID_SHAPE` 로 쓰기 전에 거절하고 칸 이름과 이유만 알린다(`keys add --name`·화면·이름 바꾸기가 같은 규칙, PCSEC1V). **'무시하고 저장'은 없다**(인자·명령줄 옵션·환경 변수·설정 없음 — 시험이 소스와 명령줄 파서에서 못박는다). 한계: 옛 명령줄 쓰기와 글 보관함 백업은 검사기의 여섯 유형만 본다(옛 패턴이 아는 OpenAI·Slack 등은 출력에서는 가려지지만 거기서는 막지 않는다), `edit` 는 바꾸지 않는 칸의 옛 비밀 모양을 막지 않고 백업 전 검사가 막는다.
+
+### 그 밖에 사실대로 적는다(M1·M2·M4·M7·M8 — D-349–D-353)
+
+- **데이터 폴더 위치(M1)**: 앱은 폴더 권한(NTFS ACL)을 설정하지도 확인하지도 않고 사용자 프로필 폴더의 상속에 기댄다. 데이터 폴더가 사용자 프로필 밖이면 `doctor` 가 '같은 PC 의 다른 사용자가 읽을 수 있어요' 라고 주의한다(문자열 경로 비교만 한다).
+- **시험용 가짜 보관소(M2)**: `CHANCEBLOG_KEYSTORE` 로 연 시험 전용 보관소를 쓰는 중이면 키 화면이 '시험용 보관소 — 실제 키를 넣지 마세요' 를 알린다.
+- **백업(M4)**: 주제 엔진 백업 목록에 `credential_excluded: true` 와 쉬운 문장이 있고 명령줄 백업 출력에 '키는 백업에 들어 있지 않아요' 한 줄이 있다. 무엇을 담는지는 바뀌지 않았다.
+- **폴더 이름(M7)**: 코드의 `ChanceblogDesktop`·자격 증명 대상 `ChanceBlogDesktop:`·운영자 문서의 `ChanceBlog` 철자가 다른 것을 알고 있으며 바꾸지 않았다(바꾸면 저장된 키·데이터를 옮겨야 한다).
+- **지운 글의 원문(M8)**: 글을 지우기 직전에 만드는 백업(`backups/before-delete`)에는 지운 글의 원문이 남고, 되돌리기 직전의 백업(`backups/before-restore`)에는 되돌리기 전의 글 전체가 남는다 — 소유자 권한 폴더 안에 두는 복구용 설계다(각 폴더에 최근 10개만 남기고 오래된 것은 앱이 지우므로 원문은 그동안만 남는다). 파이썬의 `.pyc` 캐시(`__pycache__`)는 소스 옆의 같은 사용자 폴더에 생기며 앱이 지우지 않는다.
+- **로그 파일·내보내기**: 아직 없다. 만든다면 공통 경계가 이미 가린 기록을 쓴다.

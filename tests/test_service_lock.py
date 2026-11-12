@@ -527,6 +527,7 @@ CHILD = textwrap.dedent('''
     sys.path.insert(0, sys.argv[1])
     sys.path.insert(0, sys.argv[2])
     import service_support as ss
+    ss.external_write_on()                         # 자식 프로세스도 시험이므로 외부 Write 관문을 임시로 연다(소스 상수는 False — PCSEC1 H3)
     from chanceblog_desktop.service import cli
     from chanceblog_desktop.service.backend import GitPagesBackend
     from chanceblog_desktop.service.context import make_context
@@ -618,6 +619,14 @@ class TwoRealProcessesTest(unittest.TestCase):
         self.assertEqual((record.stage, record.commit), (STAGE_PUSHED, ss.git(self.origin, "rev-parse", "main")), "올라간 글의 '올림' 기록이 남아 있어 공개 확인을 이어갈 수 있다")
         self.assertEqual(ss.status_of(self.ctx, project_id), st.PUSHED)
         self.assertEqual([path.name for path in self.ctx.workspace.journal_dir.iterdir()], [f"{project_id}.json"], "잠금 파일이 남지 않았다")
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":

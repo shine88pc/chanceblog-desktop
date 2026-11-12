@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
+from .. import capabilities
 from ..content import status as st
 from ..errors import UNEXPECTED, AppError
 from ..render.pages import PagesPost, post_path
@@ -223,6 +224,7 @@ def plan_pages_publish(ctx, text_id, *, now=None, deadline=DEFAULT_DEADLINE):
     올라간 글(PUSHED)은 공개 주소 계산까지만 한다. 이미 공개된 글(PUBLISHED)은 할 일이 없다. 그 밖의 상태(승인 전·실패·다른 플랫폼 상태)는 STATUS_TRANSITION_INVALID.
     승인된 글인데 이 글의 commit 이 기록 없이 남아 있으면(commit 직후에 프로그램이 멈춤) 새로 올리지 않고 그것을 이어받는 단계(adopt)가 된다.
     """
+    capabilities.require_external_write("GitHub Pages 올리기 점검(원격 받기 포함)")           # 외부 Write 관문 — 이 시험 버전은 꺼져 있어 하위 프로세스·네트워크 전에 거절한다
     now = ctx.now() if now is None else now
     journal = Journal(ctx.workspace.journal_dir)
     with ctx.store() as store:
@@ -295,6 +297,7 @@ def plan_pages_publish(ctx, text_id, *, now=None, deadline=DEFAULT_DEADLINE):
 
 def preview_publish(ctx, text_id, *, deadline=DEFAULT_DEADLINE):
     """미리 보기(dry run): 무엇을 만들고 어디에 올릴지 보여 줄 뿐 아무것도 하지 않는다."""
+    capabilities.require_external_write("GitHub Pages 올리기 미리 보기")
     plan = plan_pages_publish(ctx, text_id, deadline=deadline)
     hint = {STAGE_COMMIT: "실제로 올리려면 같은 명령에 --yes 를 붙입니다.", STAGE_PUSH: "이어서 올리려면 같은 명령에 --yes 를 붙입니다.",
             STAGE_ADOPT: "이어받아 올리려면 같은 명령에 --yes 를 붙입니다(올리지 않고 되돌리려면 --cancel --yes).",
@@ -427,6 +430,7 @@ def run_pages_publish(ctx, text_id, *, confirmed, wait=True, deadline=DEFAULT_DE
     """확인(`confirmed=True`)을 받아 실제로 올린다. 글의 잠금을 먼저 잡고(다른 작업이 같은 글을 올리는 중이면 PUBLISH_IN_PROGRESS — 아무것도 바꾸지 않는다) 점검(`plan_pages_publish`)을 다시 하고
     → commit(또는 commit 직후에 멈춘 것을 이어받기) → push → 공개 확인 순서로, 한 단계마다 상태를 저장한다. 멈춘 곳(COMMITTED·PUSHED)에서 이어서 하고, 이미 공개된 글은 아무것도 하지 않는다.
     공개 확인이 끝나지 않은 채 끝나면(wait=False 이거나 아직 안 열림) 올렸지만 확인 대기로 보고한다."""
+    capabilities.require_external_write("GitHub Pages 에 올리기")        # 외부 Write 관문 — 확인(`--yes`)보다 먼저: 꺼져 있으면 `--yes` 가 있어도 아무것도 하지 않는다
     require_confirmation(confirmed, "GitHub Pages 에 올리기")           # 이것이 commit·push 앞의 유일한 문 — 확인이 없으면 아무것도 하지 않는다
     with ctx.store() as store:
         project_id = resolve_id(store, text_id)
@@ -484,6 +488,7 @@ def _finish(ctx, repo, journal, plan, steps, now, deadline, interval, mine, lead
 def check_pages_deploy(ctx, text_id, *, deadline=DEFAULT_DEADLINE, interval=DEFAULT_INTERVAL):
     """올라간 글(PUSHED)의 공개 주소가 열리는지 확인하고 열리면 PUBLISHED 로 기록한다. 아직 안 열리면 상태는 그대로 두고 확인 대기로 보고한다(다시 실행하면 된다).
     올리는 명령과 같은 글의 잠금을 쓴다(다른 작업이 그 글을 올리는 중이면 PUBLISH_IN_PROGRESS)."""
+    capabilities.require_external_write("올린 글의 공개 주소 확인")
     with ctx.store() as store:
         project_id = resolve_id(store, text_id)
     with publish_lock(ctx, project_id, deadline=deadline) as lock:
@@ -536,6 +541,7 @@ def _cancel_unrecorded(ctx, project_id, variant, journal, lead):
 def cancel_pages_publish(ctx, text_id, *, confirmed):
     """올리지 않은 글 기록(COMMITTED)을 되돌리고 PUBLISH_FAILED(PUBLISH_CANCELLED)로 남긴다. 확인이 있어야 하고, `discard_commit` 이 허락할 때만 되돌린다 — 이미 올라간 글은 되돌리지 않는다.
     승인됨(APPROVED)인데 이 글의 commit 이 기록 없이 남아 있으면(commit 직후에 멈춤) 그것도 같은 조건으로 되돌린다. 올리는 명령과 같은 글의 잠금을 쓴다."""
+    capabilities.require_external_write("올리지 않은 글 기록 되돌리기")        # 저장소를 바꾸는 올리기 흐름의 일부 — 이 시험 버전에서는 올리기 자체가 꺼져 있다
     require_confirmation(confirmed, "올리지 않은 글 기록 되돌리기")
     journal = Journal(ctx.workspace.journal_dir)
     with ctx.store() as store:

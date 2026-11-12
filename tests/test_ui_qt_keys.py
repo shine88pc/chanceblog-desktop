@@ -247,7 +247,12 @@ class ScreenTest(Base):
         self.assertEqual(texts.count(T["keys_none"]), 4)                                 # 키를 받는 카드 넷(NAVER API HUB·이미지 공급자·AI 보조·Blogger) — 키 없는 GitHub 카드는 이 문장이 없다
         self.assertTrue(self.register_button(window, "ai_assist").isEnabled())
         self.assertFalse([widget for widget in window.screen_widget.findChildren(QAbstractButton) if widget.property("focus_key") == "key-register:github_repo"])
-        self.assertIn(T["nokey_note"], texts)
+        self.assertIn(T["nokey_note_off"], texts)                                        # 의도적 갱신(PCSEC1 H3): 이 빌드는 외부 게시가 꺼져 있어 'Git 로그인을 써요' 라고 말하지 않는다
+        self.assertNotIn(T["nokey_note"], texts)
+        from chanceblog_desktop import capabilities
+        with mock.patch.object(capabilities, "EXTERNAL_WRITE", True):                    # 켜진 모양(시험에서만)은 옛 문장 그대로
+            opened = self.make(keys.FakeKeysProvider("not_connected"))
+            self.assertIn(T["nokey_note"], [label.plain_text() for label in opened.screen_widget.findChildren(UI.Label)])
 
     def test_the_busy_state_is_a_notice_and_the_whole_screen_has_the_same_notice_line_as_the_last_result(self):
         provider = Gated()
@@ -1134,6 +1139,44 @@ class SourceRulesTest(unittest.TestCase):
         for needle in ("def _discard", "item.layout()", "run_cleanups", "self.cleanups"):
             self.assertIn(needle, dialog)
 
+
+def setUpModule():
+    import capability_support
+    capability_support.blogger_input_on()                    # 이 모듈의 시험은 blogger 카드를 '입력 칸 셋이 있는 대화상자' 의 예로 쓴다 — Blogger 입력을 임시로만 연다(소스 상수는 False — PCSEC1). 닫힌 모양은 아래 BloggerOffTest 가 따로 본다
+
+
+def tearDownModule():
+    import capability_support
+    capability_support.blogger_input_off()
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class BloggerOffTest(Base):
+    """PCSEC1(운영자 결정 2026-11-11 §4) — 이 빌드의 기본 모양: Blogger 카드에는 입력 칸·등록 단추·항목 줄이 없고 '받지 않아요' 안내만 있다. 다른 네 용도는 그대로다."""
+
+    def setUp(self):
+        super().setUp()
+        from chanceblog_desktop import capabilities
+        patcher = mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_blogger_card_has_no_register_button_no_key_rows_and_only_says_it_is_not_accepted(self):
+        window = self.make()
+        keyed = {str(widget.property("focus_key") or "") for widget in window.screen_widget.findChildren(QAbstractButton)}
+        self.assertNotIn("key-register:blogger", keyed)
+        self.assertEqual(self.rows(window, "blogger"), [])
+        texts = [label.plain_text() for label in window.screen_widget.findChildren(UI.Label)]
+        self.assertIn(T["blogger_off_note"], texts)
+        for purpose in ("naver_apihub", "naver_searchad", "image_provider", "ai_assist"):
+            self.assertIn(f"key-register:{purpose}", keyed, purpose)                        # 다른 용도의 등록 단추는 그대로
+
+    def test_nothing_on_the_screen_asks_for_a_blogger_login_value(self):
+        window = self.make()
+        shown = " ".join(self.everything(window))
+        for word in ("갱신용 인증 값", "클라이언트 시크릿", "refresh_token", "client_secret"):
+            self.assertNotIn(word, shown, word)
+        self.assertEqual([edit for edit in window.screen_widget.findChildren(QLineEdit) if "blogger" in str(edit.property("focus_key") or "")], [])
 
 if __name__ == "__main__":
     unittest.main()

@@ -436,12 +436,13 @@ class LegacyTest(OldWorldBase):
         self.assertFalse(self.ctx.workspace.quota_path.exists(), "읽기 명령은 사용량 파일을 만들지 않는다")
         self.assertFalse(self.path().with_name("connections.json.bak").exists())
 
-    def test_legacy_entries_show_as_needing_a_check_with_their_tail(self):
-        """옛 항목의 상태는 '연결 확인 필요'(호출 코드가 없다)이고 값이 16자 이상이면 끝 4자만 보인다."""
+    def test_legacy_entries_show_as_needing_a_check_without_any_part_of_the_key(self):
+        """옛 항목의 상태는 '연결 확인 필요'(호출 코드가 없다)이고 키의 일부(끝 4자 포함)는 보이지 않는다(PCSEC1 H2 — 예전에는 값이 16자 이상이면 끝 4자가 보였다)."""
         self.old_world(2)
         views = c.list_entries(self.ctx, keystore=self.store)
         self.assertEqual([(view.ordinal, view.entry.purpose, view.entry.name, view.status) for view in views], [(1, OLD, "옛 기본", c.NEEDS_CHECK), (2, OLD, "옛 예비", c.NEEDS_CHECK)])
-        self.assertEqual(views[0].tail, "****" + TAIL)
+        self.assertFalse(hasattr(views[0], "tail"))
+        self.assertNotIn(TAIL, repr(views[0]) + str(views[0].to_dict()))
 
     def test_keys_list_marks_legacy_entries_and_names_the_new_purpose(self):
         """`keys list` 는 옛 항목마다 '옛 항목 — 새 키는 …(naver_apihub)에 넣고 이 항목은 지웁니다(키는 지우지 않았습니다)' 를 붙이고 용도별 상태에 옛 용도를 한 줄 보인다. 키 원문은 없다."""

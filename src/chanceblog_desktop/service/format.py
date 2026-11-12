@@ -517,10 +517,11 @@ def _stage_lines(provider):
 
 
 def keys_purpose_dict(spec):
-    found = {"purpose": spec.key, "label": spec.label, "summary": spec.summary, "takes_keys": spec.takes_keys, "implemented": spec.implemented, "works_without_key": spec.works_without_key,
-             "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.fields],
+    accepts = connections.accepts_input(spec)                                  # 이 빌드가 새 키 입력을 받는 용도인가(Blogger 는 꺼져 있다 — 입력 칸을 알리지 않는다)
+    found = {"purpose": spec.key, "label": spec.label, "summary": spec.summary, "takes_keys": accepts, "implemented": spec.implemented, "works_without_key": spec.works_without_key,
+             "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.fields] if accepts else [],
              "providers": [{"provider": item.key, "label": item.label, "rotation": item.rotation, "limits": _limit_text(item), "default_tier": item.default_tier, "tiers": list(item.tier_names())} for item in spec.providers],
-             "fallback_providers": list(spec.fallback_providers), "note": spec.note}
+             "fallback_providers": list(spec.fallback_providers), "note": connections.purpose_note(spec) if spec.takes_keys is False or accepts else connections.BLOGGER_INPUT_OFF}
     if spec.max_entries != connections.MAX_ENTRIES_PER_PURPOSE:           # 키를 하나만 두는 용도만 이 칸이 더해진다(다른 용도의 출력은 그대로)
         found["max_entries"] = spec.max_entries
     for item, shown in zip(spec.providers, found["providers"]):
@@ -535,8 +536,8 @@ def keys_purposes_lines(registry):
     for spec in registry.values():
         lines.append(f"[{spec.key}] {spec.label}")
         lines.append(f"  쓰임: {spec.summary}")
-        if not spec.takes_keys:
-            lines.append(f"  안내: {spec.note}")
+        if not connections.accepts_input(spec):
+            lines.append(f"  안내: {connections.purpose_note(spec) if not spec.takes_keys else connections.BLOGGER_INPUT_OFF}")
             continue
         lines.append("  받는 칸: " + ", ".join(f"{item.name}({item.label}{' — 화면에 보이지 않음' if item.secret else ''}, {item.min_len}~{item.max_len}자, 예: {item.example})" for item in spec.fields))
         for provider in spec.providers:
@@ -561,10 +562,14 @@ def _entry_line(view):
     legacy = connections.PURPOSES[entry.purpose].legacy_to if entry.purpose in connections.PURPOSES else ""
     if legacy:
         parts.append(f"옛 항목 — 새 키는 {connections.PURPOSES[legacy].label}({legacy})에 넣고 이 항목은 지웁니다(키는 지우지 않았습니다)")
-    if view.tail:
-        parts.append(f"끝 4자 {view.tail}")
+    spec = connections.PURPOSES.get(entry.purpose)
+    provider = spec.provider(entry.provider) if spec is not None else None
+    provider_name = provider.label if provider is not None and provider.label else entry.provider
+    if provider_name:
+        parts.append(f"제공자 {provider_name}")
     if entry.project:
         parts.append(f"소속 {entry.project}")
+    parts.append("등록 " + (local_time(entry.created_at) if entry.created_at else "없음"))                  # 키에 대해 보이는 것은 제공자·항목 번호·등록 여부(상태)·마지막 연결 시험·등록 시각뿐이다(PCSEC1 H2)
     parts.append("마지막 확인 " + (local_time(entry.checked_at) if entry.checked_at else "없음"))
     return f"  [{view.ordinal}] {entry.name} — " + " · ".join(parts) + f" · 번호 {connections.short_id(entry.entry_id)}"
 

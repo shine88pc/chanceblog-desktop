@@ -494,6 +494,21 @@ class RejectionTest(Base):
         ctx, arguments = self.one(project="가" * 60)
         self.assertEqual(c.add_entry(ctx, "image_provider", **arguments).entry.project, "가" * 60)
 
+    def test_a_name_or_a_project_written_as_a_labelled_value_is_refused_before_anything_is_written(self):
+        """PCSEC1V: 이름·소속 프로젝트는 비밀이 아닌 칸이라 `connections.json` 에 평문으로 남는다 — `client_secret=값` 처럼 가리기 규칙이 가릴 글(운영자 이름 11개)은 쓰기 전에 거절한다. 위치(항목)만 알리고 값은 어디에도 없다."""
+        value = "CANARY_" + "ALIAS" + "k3x9"                                       # 모양이 없는 가짜 값(조립)
+        for label in ("Authorization: Bearer ", "api_key=", "apikey=", "serviceKey=", "access_token=", "refresh_token=", "client_secret=", "password=", "Cookie: sid=", "Set-Cookie: sid=", "X-API-Key: "):
+            for where, slot in (("name", "이름"), ("project", "소속 프로젝트")):
+                with self.subTest(label=label, where=where):
+                    error = self.reject("KEY_INVALID_SHAPE", **{where: label + value})            # 보관소·파일이 그대로임은 `assert_rejected` 가 본다
+                    self.assertEqual(error.slots["항목"], slot)
+                    self.assertIn("키나 토큰처럼 보이는", error.slots["이유"])
+                    self.assert_no_leak(error, value, label=label)
+        for fine in ("예비 키", "회사 계정", "My project 2", "naver-app", "token bucket", "api key 발급용", "secret santa"):                 # 평범한 이름은 그대로 저장된다
+            with self.subTest(fine=fine):
+                ctx, arguments = self.one(name=fine, project=fine)
+                self.assertEqual(c.add_entry(ctx, "image_provider", **arguments).entry.name, fine)
+
     def test_a_project_whose_folded_name_is_longer_than_the_project_still_saves_a_readable_file(self):
         """**알려진 빈틈(소스 수정 대기)** — `ß` 는 소문자로 접으면 `ss` 두 글자라 60자 프로젝트의 묶음 이름(`p-` + 접은 글)이 파일 검사 한도(`.{1,80}`)를 넘고,
         `add_entry` 가 성공한 바로 다음 `load` 가 CONNECTIONS_FILE_INVALID 로 멈춘다(스스로 깨뜨린 파일). 묶음 이름을 80자 안으로 줄이게(또는 해시로) 고치면 이 시험이
@@ -884,29 +899,32 @@ class ListAndStatusTest(Base):
         self.assertEqual(ss.tree_snapshot(ctx.workspace.root), before)
         self.assertFalse(any("connections.lock" in name for name in before if not name.startswith("locks")))
 
-    def test_the_tail_shows_the_last_four_characters_only_for_values_of_sixteen_or_more(self):
-        for length, tail in ((15, ""), (16, "****" + TAIL), (30, "****" + TAIL)):
+    def test_the_view_never_shows_any_part_of_the_value_whatever_its_length(self):
+        """의도적 강화(PCSEC1 H2, 운영자 결정 2026-11-11): 예전에는 값이 16자 이상이면 끝 4자(`****abcd`)를 목록에 보였다 — 이제 어느 길이에서도 값의 일부(끝·앞·접두어·길이)가 없다."""
+        for length in (8, 15, 16, 30, 64):
             with self.subTest(length=length):
                 ctx = self.new_ctx()
                 secret = ("s" * length)[: length - 4] + TAIL
                 c.add_entry(ctx, "naver_apihub", name="기본", fields={"client_id": "ClientId0001", "client_secret": secret})
                 view = c.list_entries(ctx, keystore=ctx.keystore)[0]
-                self.assertEqual(view.tail, tail)
-                self.assertEqual(view.to_dict()["tail"], tail)
-                self.assertNotIn(secret, json.dumps(view.to_dict(), ensure_ascii=False))
+                self.assertFalse(hasattr(view, "tail"))
+                self.assertNotIn("tail", view.to_dict())
+                shown = json.dumps(view.to_dict(), ensure_ascii=False) + repr(view)
+                self.assertNotIn(secret, shown)
+                self.assertNotIn(TAIL, shown)
+                self.assertNotIn("****", shown)
 
-    def test_a_missing_or_unreadable_value_gives_no_tail_and_needs_a_check(self):
+    def test_a_missing_or_unreadable_value_needs_a_check(self):
         first = self.add(new_id=key_ids(ID1))
         second = self.add(name="예비", seed="b", new_id=key_ids(ID2))
         self.store.delete(second.entry.ref)
         views = c.list_entries(self.ctx, keystore=self.store)
-        self.assertEqual([(view.entry.entry_id, view.status, bool(view.tail)) for view in views], [(ID1, "needs_check", True), (ID2, "needs_check", False)])
+        self.assertEqual([(view.entry.entry_id, view.status) for view in views], [(ID1, "needs_check"), (ID2, "needs_check")])
         self.assertEqual([view.status for view in c.list_entries(self.ctx, keystore=None)], ["needs_check", "needs_check"])
-        self.assertEqual([view.tail for view in c.list_entries(self.ctx, keystore=None)], ["", ""])
         flaky = FlakyStore()
         flaky.fail_read = True
         views = c.list_entries(self.ctx, keystore=flaky)
-        self.assertEqual([(view.status, view.tail) for view in views], [("needs_check", ""), ("needs_check", "")])
+        self.assertEqual([view.status for view in views], ["needs_check", "needs_check"])
         self.assertEqual(first.entry.entry_id, ID1)
 
     def test_filtering_and_the_global_ordinals_follow_the_purpose_order_then_the_item_order(self):
@@ -925,8 +943,9 @@ class ListAndStatusTest(Base):
         self.assertEqual((view["status"], view["status_text"], view["state"], view["state_text"]), ("needs_check", "연결 확인 필요", "standby", "예비"))
         self.assertEqual([key for key, value in view.items() if value == "needs_check"], ["status"])
         self.assertEqual([key for key, value in view.items() if value == "standby"], ["state"])
-        self.assertEqual(set(view), {"ordinal", "entry_id", "purpose", "provider", "name", "project", "order", "state", "state_text", "status", "status_text", "tail", "created_at",
-                                     "checked_at", "last_ok_at", "check_result", "bucket", "terms_ack_at"})
+        self.assertEqual(set(view), {"ordinal", "entry_id", "purpose", "provider", "name", "project", "order", "state", "state_text", "status", "status_text", "created_at",
+                                     "checked_at", "last_ok_at", "check_result", "terms_ack_at"})
+        self.assertNotIn("bucket", view, "묶음 이름(NAVER 고객 ID 같은 칸의 해시)은 명령줄 JSON 에 싣지 않는다 — 운영자의 '다섯 가지' 밖(PCSEC1V D14)")
         self.assertNotIn("fingerprint", view)                                      # 값에서 만든 표시는 목록에 싣지 않는다
 
     def entry_with(self, **changes):
@@ -1492,6 +1511,14 @@ class DiagnosticsTest(Base):
         flat = json.dumps(data, ensure_ascii=False)
         for word in ("access_key", "client_secret", "refresh_token", "secret_key", "access_license"):
             self.assertNotIn(word, flat)                                        # 칸 이름조차 파일에 없다(칸은 보관소의 값 묶음 안에만 있다)
+
+
+def setUpModule():
+    ss.blogger_input_on()                                    # 이 시험은 실제 레지스트리의 blogger 용도를 그릇으로 쓴다 — Blogger 입력을 임시로만 연다(소스 상수는 False — PCSEC1)
+
+
+def tearDownModule():
+    ss.blogger_input_off()
 
 
 if __name__ == "__main__":

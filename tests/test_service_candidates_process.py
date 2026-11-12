@@ -52,6 +52,16 @@ class Base(unittest.TestCase):
     def add(self, topic, keyword=None, blog="naver_a", *extra):
         return self.ok("candidates", "add", "--topic", topic, "--keyword", keyword or topic + " 키워드", "--blog", blog, *extra)
 
+    def add_keyed(self, topic, keyword):
+        """옛 버전이 저장한 것처럼 키 모양이 든 후보를 보관함에 **직접** 넣는다 — 명령줄 쓰기 길은 이제 Secret 형태를 거절한다(PCSEC1 M3). 진짜 출력의 가림을 보려고 쓴다."""
+        from chanceblog_desktop.content import candidates as cd
+        from chanceblog_desktop.content.store import Store
+        from chanceblog_desktop.service.context import Workspace
+        workspace = Workspace(self.data)
+        workspace.ensure()
+        with Store.open(workspace.store_path) as store:
+            store.add_candidates(lambda existing: [cd.Candidate.new(topic, keyword, ("naver_a",), now="2026-11-11T00:00:00Z")])
+
     def start(self, *argv):
         return subprocess.Popen(self.command(*argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, cwd=self.tmp)
 
@@ -130,7 +140,7 @@ class SessionTest(Base):
         self.assertEqual(sorted(payload["error"]), ["action", "code", "detail", "message", "retry"])
 
     def test_a_key_shaped_text_is_masked_in_the_real_output(self):
-        self.add("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
+        self.add_keyed("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
         for argv in (("candidates", "list"), ("candidates", "show", "1"), ("--json", "candidates", "list"), ("--verbose", "candidates", "list")):
             out = self.ok(*argv)
             self.assertNotIn(ss.KEY, out)

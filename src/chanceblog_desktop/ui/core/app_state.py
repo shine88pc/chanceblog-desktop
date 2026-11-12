@@ -24,7 +24,7 @@ from .jobs import JobFailure, JobRunner
 from .keys_view import KeysController
 from .notify import ToastPolicy
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
-from .text import NO_DATA, T, fmt_demand, fmt_docs
+from .text import NO_DATA, T, display_text, fmt_demand, fmt_docs
 
 # 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
 # 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
@@ -54,22 +54,19 @@ _PATH_END = {quote: re.compile((re.escape(quote) + "(?![A-Za-z0-9])|" if quote e
 
 def shown(value, limit=300):
     """화면에 나가는 외부 글(후보 제목·설명·키워드 …)에서 비밀 모양을 가리고 한 줄로 줄인다 — 명령줄 출력과 같은 규칙(`security/mask.py`)."""
-    from ...security.mask import safe_detail
-    return safe_detail(value, limit)
+    return display_text(value, limit)
 
 
 def clean_failure(failure):
     """실패의 문장·코드에서 비밀 모양을 가리고 길이를 줄인 사본 — 어떤 값이 와도 예외를 내지 않는다."""
-    from ...security.mask import safe_detail
-    return JobFailure(safe_detail(getattr(failure, "user_message", "") or T["job_failed"], 200), code=safe_detail(getattr(failure, "code", "") or "", 80),
+    return JobFailure(display_text(getattr(failure, "user_message", "") or T["job_failed"], 200), code=display_text(getattr(failure, "code", "") or "", 80),
                       retryable=bool(getattr(failure, "retryable", True)))
 
 
 def diagnostic_text(failure, when=None):
     """오류 상태의 '진단 정보'(기본 화면에는 안 보이고 펼칠 때만) — 오류 코드와 시각뿐이다. 입력한 글·키는 담지 않고 비밀 모양은 가린다."""
-    from ...security.mask import safe_detail
     stamp = (when or datetime.datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
-    code = safe_detail(getattr(failure, "code", "") or "UNKNOWN", 80)
+    code = display_text(getattr(failure, "code", "") or "UNKNOWN", 80)
     return f"{T['diag_code']}: {code}\n{T['diag_when']}: {stamp}"
 
 

@@ -15,6 +15,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+import secret_support as sec  # noqa: E402
 from chanceblog_desktop.ui import launcher  # noqa: E402
 from chanceblog_desktop.ui.adapters import ServiceHomeProvider  # noqa: E402
 from chanceblog_desktop.ui.core.services import FakeHomeProvider  # noqa: E402
@@ -35,6 +36,9 @@ NO_PYSIDE6 = "import sys; sys.modules['PySide6'] = None; sys.modules['shiboken6'
 
 
 class LauncherTest(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(sec.uninstall_boundary)                    # `launcher.main` 이 맨 앞에서 공통 출력 경계를 깐다(D2) — 같은 프로세스에서 부른 시험이 경계를 남기지 않게
+
     def test_without_pyside6_the_gui_command_explains_in_easy_korean_and_does_not_crash(self):
         code, out, err = run_child(NO_PYSIDE6 + "from chanceblog_desktop.ui import launcher\nsys.exit(launcher.main([]))")
         self.assertEqual(code, 1)
@@ -93,6 +97,9 @@ def fake_qt_app(result=0):
 class EntryTest(unittest.TestCase):
     """`launcher.main` 이 어떤 공급자로 화면을 여는지 — 기본은 내 데이터(읽기 전용 어댑터), `--sample` 은 예시 데이터, `--data-dir` 은 어댑터에 그대로 넘어간다. 화면은 열지 않는다(가짜 `run`)."""
 
+    def setUp(self):
+        self.addCleanup(sec.uninstall_boundary)                    # `launcher.main` 이 맨 앞에서 공통 출력 경계를 깐다(D2) — 같은 프로세스에서 부른 시험이 경계를 남기지 않게
+
     def open(self, *argv, result=0):
         module = fake_qt_app(result)
         with mock.patch.object(launcher, "has_pyside6", return_value=True), mock.patch.dict(sys.modules, {"chanceblog_desktop.ui.qt.app": module}):
@@ -133,6 +140,9 @@ class EntryTest(unittest.TestCase):
 
 class UsageErrorTest(unittest.TestCase):
     """`gui` 의 사용법 오류는 사용자가 친 값을 되풀이하지 않는다(키가 들어 있을 수도 있다) — 값 없는 고정 한국어 문장 + 사용법 한 줄, 종료 코드 2(명령줄의 사용법 오류와 같다)."""
+
+    def setUp(self):
+        self.addCleanup(sec.uninstall_boundary)                    # `launcher.main` 이 맨 앞에서 공통 출력 경계를 깐다(D2) — 같은 프로세스에서 부른 시험이 경계를 남기지 않게
 
     def gui(self, *args):
         code, out, err = run_child("", "-m", "chanceblog_desktop", "gui", *args)         # 진짜 프로세스(이 시험을 도는 파이썬 그대로 — 3.10 이든 3.12 이든)

@@ -183,7 +183,8 @@ class SuggestOutputTest(Base):
     def test_a_key_shaped_text_is_masked_everywhere_it_could_show_up(self):
         from chanceblog_desktop.content.profiles import NaverProfile
         self.ctx.settings.save_naver_profile(NaverProfile("naver_a", "이름 " + ss.KEY, "https://blog.naver.com/exampleaaa", topic="가계부, 절약"))       # 프로필의 표시명이 키 모양이어도
-        cands.add_candidate(self.ctx, topic="키 모양 " + ss.KEY + " 주제", keyword="가계부 키워드", blogs=("naver_a",))
+        with self.ctx.store() as store:                                  # 옛 버전이 저장한 것처럼 보관함에 직접 넣는다 — 서비스의 쓰기 길은 이제 키 모양을 거절한다(PCSEC1 M3)
+            store.add_candidates(lambda existing: [cd.Candidate.new("키 모양 " + ss.KEY + " 주제", "가계부 키워드", ("naver_a",), now=self.ctx.stamp())])
         for argv in (("candidates", "suggest"), ("--verbose", "candidates", "suggest"), ("--json", "candidates", "suggest"), ("candidates", "list", "--priority"), ("--json", "candidates", "list", "--priority"),
                      ("candidates", "show", "1"), ("--json", "candidates", "show", "1"), ("--verbose", "candidates", "show", "1"), ("candidates", "suggest", "--blog", "naver_a", "--add", "1")):
             out = self.ok(*argv)

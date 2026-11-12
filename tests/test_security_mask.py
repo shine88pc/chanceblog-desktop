@@ -268,7 +268,9 @@ class ThirdReviewShapesTest(unittest.TestCase):
                 self.assertNotIn(secret, masked)
                 self.assertIn("[가림: 값]", masked)
                 self.assertEqual(mask(masked), masked, "다시 가려도 같다")
-        self.assertIn("theme=dark", mask("Cookie: csrftoken=abcdef123456; theme=dark"), "다른 값은 그대로")
+        masked_cookie = mask("Cookie: csrftoken=abcdef123456; theme=dark")
+        self.assertNotIn("dark", masked_cookie, "쿠키는 이름 불문 모든 값을 가린다(운영자 결정 2026-11-11, PCSEC1 H1 — 전에는 로그인 쿠키 이름만 가렸다)")
+        self.assertIn("theme=", masked_cookie, "쿠키 이름은 남는다")
 
     def test_a_json_escaped_address_hides_its_login_too(self):
         self.assertEqual(mask(r"https:\/\/user:pw@github.com\/a\/b.git"), r"https:\/\/***@github.com\/a\/b.git")

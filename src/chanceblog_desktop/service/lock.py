@@ -25,7 +25,6 @@ import contextlib
 import errno
 import json
 import os
-import platform
 import re
 import secrets
 import time
@@ -34,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..errors import AppError
-from .liveness import process_alive
+from .liveness import host_name, process_alive
 
 LOCK_SUFFIX = ".lock"
 REPO_LOCK_NAME = "chanceblog-desktop-publish"      # 저장소 잠금 파일 이름(`.git/chanceblog-desktop-publish.lock`) — 연결한 저장소의 `.git` 안에 둔다
@@ -80,7 +79,7 @@ class PublishLock:
         self.now = now
         self.max_seconds = lock_seconds(deadline)
         self.run = secrets.token_hex(16)
-        self.host = platform.node()
+        self.host = host_name()                 # `platform.node()` 는 Windows 에서 하위 프로세스(`cmd /c ver`)를 띄울 수 있어 쓰지 않는다(PCSEC1 H3 'Network Write 0' 시험이 찾았다)
         self.alive = alive or (lambda holder: process_alive(holder.pid, holder.started))        # 잠금을 남긴 프로세스가 살아 있는가(True·False·None=모름) — 시험에서 바꿔 끼운다
         self.why_stale = ""          # 넘겨받을 때의 이유: old(시간이 지남)·gone(프로세스가 이미 끝남)
         self.taken_over = ""        # 낡은 잠금을 넘겨받았다면 그 사실(화면에 알린다)

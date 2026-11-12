@@ -17,7 +17,7 @@ from . import key_rules as rules
 from . import settings_view as sv
 from .jobs import JobFailure
 from .keys import KeyFailure, KeysWriter, SecretBox
-from .text import T
+from .text import T, display_text
 
 WRITE_KEY = "keys-write"                                    # 키 쓰기 작업의 이름 — 한 번에 하나(중복 클릭은 아무 일도 하지 않는다)
 ACTIONS = ("test", "state", "up", "down", "rename", "delete")
@@ -31,8 +31,7 @@ UNSURE_AFTER_REMOVE = ("io", "disk")                          # 삭제 도중의
 
 
 def _shown(value, limit=40):
-    from ...security.mask import safe_detail                                   # 화면에 나가는 사용자 글은 가린 뒤에 줄인다(키를 별칭에 잘못 붙인 파일을 읽었을 때도 앞부분이 남지 않게)
-    return safe_detail(value, limit)
+    return display_text(value, limit)                                          # 화면에 나가는 사용자 글은 가린 뒤에 줄인다(키를 별칭에 잘못 붙인 파일을 읽었을 때도 앞부분이 남지 않게) — 화면 글의 한 지점(`text.display_text`)
 
 
 def when_text(stamp):
@@ -116,6 +115,7 @@ class RegisterDraft:
         self.provider = rooms[0].key if rooms else (info.providers[0].key if info.providers else "")
         self.alias = rules.DEFAULT_ALIAS
         self.terms = False
+        self.fake_store = False                             # 시험 전용 가짜 보관소를 쓰는 중이면 컨트롤러가 켠다 — 대화상자 머리말이 '시험용 보관소 — 실제 키를 넣지 마세요' 를 알린다(PCSEC1 M2)
         self.step = "input"
         self.problems = {}                                  # {칸 이름: 문제 이름} — 별칭은 `name`
         self.submitted = False                              # 저장으로 넘어간 초안인가 — 대화상자가 닫혀도 컨트롤러가 들고 있어야 한다(저장이 끝나거나 못 시작하면 버려진다). 그냥 닫힌(Esc·X·취소) 초안은 버려진다
@@ -183,6 +183,7 @@ class RegisterDraft:
 
     def vm(self):
         info = self.info
+        fake = self.fake_store
         service = _shown(info.label, 60)
         provider = provider_of(info, self.provider)
         providers = [{"key": item.key, "label": _shown(item.label, 40), "selected": item.key == self.provider, "enabled": has_room(info, item),
@@ -193,7 +194,7 @@ class RegisterDraft:
         asks_terms = self.needs_terms()
         save_ok = self.can_save()
         return {
-            "title": T["keys_reg_title"].format(service=service), "intro": T["keys_reg_intro"], "step": self.step, "service": service,
+            "title": T["keys_reg_title"].format(service=service), "intro": T["keys_reg_intro"] + ((" " + T["keys_store_fake"] + ". " + T["keys_store_fake_why"]) if fake else ""), "step": self.step, "service": service,
             "a11y": T["keys_reg_a11y"].format(service=service, step=T["keys_reg_step_confirm" if self.step == "confirm" else "keys_reg_step_input"]),
             "alias": {"label": T["keys_alias_label"], "hint": T["keys_reg_alias_hint"], "value": self.alias, "error": alias_error, "a11y": T["keys_reg_alias_a11y"], "max": rules.ALIAS_MAX},
             "provider_label": T["keys_reg_provider"], "providers": providers, "provider_error": T["keys_reg_provider_full"] if "provider" in self.problems else "",
@@ -317,6 +318,11 @@ class KeysController:
                 "note": {"level": "info", "text": T["keys_testing"]} if busy_here else ({"level": note[0], "text": note[1]} if note else None),
                 "a11y": T["keys_row_a11y"].format(name=name, state=T["state_" + shown_state])}
 
+    def fake_store(self):
+        """시험 전용 가짜 보관소를 쓰는 중인가(읽은 데이터가 알려 준다) — 참이면 키 등록 카드·대화상자가 '시험용 보관소 — 실제 키를 넣지 마세요' 를 알린다(PCSEC1 M2)."""
+        data = self.data()
+        return bool(data is not None and getattr(data, "fake_store", False))
+
     def register_vm(self, info):
         """카드 아래 '키 등록' 단추 — `{text, enabled, reason, a11y}` 또는 None(키를 받지 않거나 옛 용도·제공자가 없는 카드)."""
         if not info.takes_keys or info.legacy or not info.providers:
@@ -339,7 +345,7 @@ class KeysController:
         ready = self.store_ready()
         return {"title": T["entries_title"], "none": T["keys_none"] if not entries and not info.legacy else "",
                 "rows": [self.row_vm(info, entry, index, len(entries), sample) for index, entry in enumerate(entries)], "register": self.register_vm(info),
-                "store_note": {"title": T["keys_store_missing"], "why": T["keys_store_missing_why"]} if not ready else None, "busy": self.busy}
+                "store_note": {"title": T["keys_store_missing"], "why": T["keys_store_missing_why"]} if not ready else ({"title": T["keys_store_fake"], "why": T["keys_store_fake_why"]} if self.fake_store() else None), "busy": self.busy}
 
     def delete_dialog(self, info, entry):
         """삭제 확인창의 글 — 무엇이 지워지는지·되돌릴 수 없다는 것(처음 포커스는 취소)."""
@@ -361,6 +367,7 @@ class KeysController:
             self.draft = RegisterDraft(info)
         else:
             self.draft.info = info
+        self.draft.fake_store = self.fake_store()
         return self.draft
 
     def close_register(self):

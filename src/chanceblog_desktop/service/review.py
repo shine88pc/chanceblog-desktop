@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from ..check import similarity
 from ..content import status as st
 from ..errors import AppError
+from ..security.refuse import refuse_secret_shapes, text_of
 from . import naver_flow
 from .gate import GateReport, require_gates
 from .previews import PLATFORM_PAGES, NaverItem, pages_preview_of, similarity_dict
@@ -64,8 +65,21 @@ def _back_to_review(project, platform, now):
         project.transition(platform, st.REVIEW_REQUIRED, now=now)
 
 
+def _review_fields(pages, naver_options):
+    """검토를 요청할 때 사람이 주는 글칸(Pages 매개변수·네이버 선택 항목) — 비밀 형태 검사 대상(PCSEC1 D3). 칸 이름은 명령줄 도움말의 이름이다."""
+    fields = {}
+    if pages is not None:
+        source = pages.source if isinstance(pages.source, dict) else {}
+        fields.update({"분야": pages.category, "대표 이미지 주소": pages.image_url, "태그": text_of(pages.tags), "한 줄 설명": text_of(pages.description),
+                       "출처 이름": source.get("name"), "출처 주소": source.get("url"), "출처 글 제목": source.get("title")})
+    if naver_options is not None:
+        fields.update({"제목": naver_options.title, "본문 파일": naver_options.body, "태그": text_of(naver_options.tags), "분야": naver_options.category})
+    return fields
+
+
 def request_review(ctx, text_id, platform, *, pages=None, naver_options=None):
     """글을 그 플랫폼용으로 만들어 검토 중으로 보낸다. Pages 는 `pages`(PagesParams), 네이버는 선택 `naver_options`(NaverOptions)."""
+    refuse_secret_shapes(_review_fields(pages, naver_options), "저장")                      # 저장소를 열기 전에 — 키 모양이 있으면 아무것도 쓰지 않고 위치·유형만 알린다(PCSEC1 D3)
     _check_platform(platform)
     with ctx.store() as store:
         project = store.load(resolve_id(store, text_id))
@@ -162,6 +176,7 @@ def issue_naver_package(ctx, text_id, blog, *, similarity_approved=False):
 
 def record_naver_published(ctx, text_id, blog, url):
     """사람이 네이버에 직접 발행한 뒤 그 글의 주소를 기록한다(복사 준비 → 복사함 → 직접 발행함). 주소가 blog.naver.com 의 https 주소가 아니면 NAVER_PUBLISH_URL_INVALID 이고 아무것도 바꾸지 않는다."""
+    refuse_secret_shapes({"발행 주소": url}, "저장")                                         # 주소 검사·저장보다 먼저(PCSEC1 D3)
     if blog not in ("naver_a", "naver_b"):
         raise AppError("CONTENT_INVALID", {"항목": "네이버 블로그 구분"})
     with ctx.store() as store:

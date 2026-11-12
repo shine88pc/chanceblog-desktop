@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import datetime
 
+from ... import capabilities
 from . import gauges as G
 from .services import CONN_PROBLEMS, CONN_STATUSES, GROUP_ORDER, PURPOSE_GROUPS
-from .text import T
+from .text import T, display_text
 
 STATUS_TONE = {"not_connected": "muted", "needs_check": "warning", "connected": "ok", "auth_error": "danger", "rate_limited": "warning"}
 READY_TONE = {"prep": "muted", "ok": "info", "nokey": "muted", "legacy": "muted"}
@@ -30,8 +31,7 @@ INFO_GROUP = "info"                                                           # 
 
 
 def _shown(value, limit=300):
-    from ...security.mask import safe_detail                                   # 명령줄 출력·홈 화면과 같은 가리기 규칙(가린 뒤에 줄인다)
-    return safe_detail(value, limit)
+    return display_text(value, limit)                                          # 명령줄 출력·홈 화면과 같은 가리기 규칙(가린 뒤에 줄인다) — 화면 글의 한 지점(`text.display_text`)
 
 
 def group_of(key):
@@ -130,13 +130,18 @@ def card_vm(info, sample, keys=None):
     ready = {"text": T["ready_" + kind], "tone": READY_TONE[kind]}
     conn = {"text": T["status_" + status], "tone": STATUS_TONE[status]} if status else None
     note = {"prep": T["prep_note"], "nokey": T["nokey_note"], "legacy": T["legacy_note"], "ok": ""}[kind]
+    desc = T.get("purpose_" + info.key, "")
+    if kind == "nokey" and info.key == "github_repo" and not capabilities.external_write_enabled():          # 외부 게시가 꺼진 빌드는 Git 로그인을 쓰지 않는다 — 그렇게 말하지 않는다
+        desc, note = T["purpose_github_repo_off"], T["nokey_note_off"]
+    elif kind == "nokey" and info.key == "blogger":                                                         # Blogger 입력이 꺼진 빌드 — 입력 칸·단추 없이 이유만 보인다
+        desc, note = T["purpose_blogger_off"], T["blogger_off_note"]
     choices = None if (not info.takes_keys or info.legacy) else {"label": T["choices_label"], "items": [T["state_" + state] for state in state_choices(info)]}
     entries = [entry_vm(info, entry) for entry in info.entries]
     name = _shown(info.label, 80)                                                # 화면 글과 접근 이름이 같은 가린 이름을 쓴다(키 모양 이름이 접근 이름에만 새지 않게)
     heard = [name, ready["text"]] + ([conn["text"]] if conn else []) + ([T["sample_tag"]] if sample else [])
     title = T.get("limit_" + info.key, "")                                       # 한도에 닿으면 어떻게 계속하는지(용도마다 문구표에 있을 때만)
     limit = {"title": title, "desc": T.get("limit_desc_" + info.key, "")} if title and info.takes_keys and not info.legacy else None
-    return {"key": info.key, "name": name, "desc": T.get("purpose_" + info.key, ""), "gray": kind in ("prep", "legacy"), "ready": ready, "conn": conn,
+    return {"key": info.key, "name": name, "desc": desc, "gray": kind in ("prep", "legacy"), "ready": ready, "conn": conn,
             "ready_caption": T["ready_caption"], "conn_caption": T["conn_caption"], "note": note, "policy": policy_text(info, keys.effective_cap(info) if keys is not None and keys.writable else None), "limit": limit, "choices": choices,
             "entries_title": T["entries_title"], "entries": entries, "usage": usage_vm(info, sample), "a11y": ", ".join(heard),
             "keys": keys.card_keys(info, sample) if keys is not None else None}      # 키 행동(P4f) — 쓰는 공급자일 때만 값이 있다(없으면 카드는 읽기 전용 그대로)

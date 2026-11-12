@@ -694,13 +694,18 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "keys_register_invalid")                                             # 빈 칸 — 문제는 칸 옆 문장
     audit(window, "keys_register_invalid")
     window.key_cancel()
-    click(register_button(window, "blogger"))                                          # 칸이 셋인 가장 큰 대화상자
-    for edit in window.key_form.secret_edits.values():
-        edit.setText(dots)
-    shoot(window, "keys_register_three")
-    audit(window, "keys_register_three")
-    window.key_cancel()
     window.close()
+    from unittest import mock
+    from chanceblog_desktop import capabilities
+    with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):                 # 칸이 셋인 가장 큰 대화상자 — 이 빌드는 Blogger 입력을 받지 않아(PCSEC1) 배율 점검(가장 큰 대화상자가 창 안에 들어가는가)을 위해 이 장면에서만 소스 상수를 임시로 연다(개발 도구 — 앱 코드에는 켜는 길이 없다)
+        window = make(key_core.FakeKeysProvider("not_connected"))
+        click(register_button(window, "blogger"))
+        for edit in window.key_form.secret_edits.values():
+            edit.setText(dots)
+        shoot(window, "keys_register_three")
+        audit(window, "keys_register_three")
+        window.key_cancel()
+        window.close()
     window = make(key_core.FakeKeysProvider("not_connected"))                          # 둘째 키 — AI 보조에 첫 키를 넣어 두면 둘째 키 등록이 약관 확인을 묻는다
     click(register_button(window, "ai_assist"))
     form = window.key_form

@@ -71,6 +71,12 @@ class Base(unittest.TestCase):
         self.ctx.clock.advance(seconds=1)
         return self.ok("candidates", "add", "--topic", topic, "--keyword", keyword or topic + " 키워드", "--blog", blog, *extra)
 
+    def add_keyed(self, topic, keyword):
+        """옛 버전이 저장한 것처럼 키 모양이 든 후보를 보관함에 **직접** 넣는다 — 명령줄 쓰기 길은 이제 Secret 형태를 거절한다(PCSEC1 M3). 화면 가림 시험이 이미 저장된 키 모양을 보려고 쓴다."""
+        self.ctx.clock.advance(seconds=1)
+        with self.ctx.store() as store:
+            store.add_candidates(lambda existing: [cd.Candidate.new(topic, keyword, ("naver_a",), now=self.ctx.stamp())])
+
     def stored(self):
         with self.ctx.store() as store:
             return svc.numbered(store.list_candidates())
@@ -497,7 +503,7 @@ class ImportCommandTest(Base):
 
 class MaskTest(Base):
     def test_a_key_shaped_text_in_a_candidate_never_reaches_the_screen(self):
-        self.add("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
+        self.add_keyed("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
         for argv in (("candidates", "list"), ("candidates", "show", "1"), ("--verbose", "candidates", "list"), ("--json", "candidates", "list"), ("--json", "candidates", "show", "1")):
             with self.subTest(argv=argv):
                 out = self.ok(*argv)
@@ -507,7 +513,7 @@ class MaskTest(Base):
         self.assertNotIn(ss.KEY, self.fails("candidates", "delete", "1"))
 
     def test_a_key_shaped_text_in_an_error_is_masked_in_the_json_output_too(self):
-        self.add("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
+        self.add_keyed("키 모양 " + ss.KEY + " 이 든 주제", "키워드 하나")
         payload = self.error_json("candidates", "delete", "1")        # 후보의 주제에 든 키 모양 글은 오류의 JSON 에서도 가려진다 — 종료 코드 1·표준 오류 비어 있음·`ok` false 도 함께 확인한다
         shown = json.dumps(payload, ensure_ascii=False)
         self.assertNotIn(ss.KEY, shown)

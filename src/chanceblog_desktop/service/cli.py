@@ -17,6 +17,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import capabilities
 from ..content import candidate_csv as csvmod
 from ..content import candidates as cd
 from ..content import status as st
@@ -25,7 +26,8 @@ from ..content.draft_options import DraftOptions
 from ..content.profiles import POST_TYPES
 from ..echo import shown_backup
 from ..errors import AppError
-from ..security.mask import MAX_MASK_INPUT, mask
+from ..security.boundary import mask_block, mask_deep
+from ..security.mask import mask
 from ..topics.score import BAND_KO, BANDS
 from . import candidates, connections, draft, draft_body, naver_flow, pages_flow, projects, quota, review, suggestions, topics
 from . import format as fmt
@@ -277,6 +279,8 @@ def references_and_images(args):
 
 # ---- 명령 ----------------------------------------------------------------------------------------------------------------------
 def cmd_doctor(ctx, args):
+    if args.online:
+        capabilities.require_external_write("올리기 권한 점검(doctor --online)")          # 네트워크를 쓰는 점검 — 이 시험 버전은 꺼져 있어 거절한다
     results = run_doctor(ctx, online=args.online)
     return Output(fmt.doctor_lines(results), {"checks": [item.to_dict() for item in results]}, 0 if doctor_ok(results) else 1)
 
@@ -286,7 +290,8 @@ def cmd_connect(ctx, args):
     info = ctx.backend.inspect(folder)                       # 올바른 chanceblog 저장소가 아니면 여기서 오류 코드로 멈춘다(설정을 바꾸지 않는다)
     ctx.settings.save_repo_path(folder)
     lines = [f"연결했습니다: {folder}", f"  origin: {info.origin}   브랜치: {info.branch}", "  이 폴더 위치는 사용자 데이터 폴더의 설정 파일에만 기억합니다(저장소에는 올라가지 않습니다).",
-             f"  올리기 권한은 `{PROG} doctor --online` 으로 점검합니다."]
+             (f"  올리기 권한은 `{PROG} doctor --online` 으로 점검합니다." if capabilities.external_write_enabled()
+              else "  이 시험 버전은 글을 올리지 않습니다(외부 게시가 꺼져 있습니다) — 연결한 폴더는 글의 공개 주소를 계산하고 미리 보는 데에만 읽습니다.")]
     return Output(lines, {"repo": str(folder), "origin": info.origin, "branch": info.branch})
 
 
@@ -360,6 +365,7 @@ def cmd_revoke(ctx, args):
 
 
 def cmd_publish_pages(ctx, args):
+    capabilities.require_external_write("GitHub Pages 올리기(publish-pages)")           # 외부 Write 관문 — `--yes`·승인이 있어도 꺼져 있으면 아무것도 하지 않는다
     if args.cancel:
         report = pages_flow.cancel_pages_publish(ctx, args.id, confirmed=args.yes)
         return Output(["올리지 않은 글 기록을 되돌렸습니다.", *[f"  - {step}" for step in report.steps]], report.to_dict())
@@ -371,6 +377,7 @@ def cmd_publish_pages(ctx, args):
 
 
 def cmd_check_deploy(ctx, args):
+    capabilities.require_external_write("공개 주소 확인(check-deploy)")
     report = pages_flow.check_pages_deploy(ctx, args.id, deadline=args.wait)
     return Output(fmt.publish_report_lines(report), report.to_dict())
 
@@ -428,7 +435,7 @@ def cmd_naver_profile(ctx, args):
 
 def cmd_backup(ctx, args):
     path = projects.backup_store(ctx)
-    return Output([f"백업을 만들었습니다: {path}", "  (최근 10개만 남기고 오래된 것은 지웁니다)"], {"backup": str(path)})
+    return Output([f"백업을 만들었습니다: {path}", "  (최근 10개만 남기고 오래된 것은 지웁니다)", f"  {tfmt.CREDENTIAL_LINE}"], {"backup": str(path), "credential_excluded": True})
 
 
 def cmd_restore(ctx, args):
@@ -699,13 +706,13 @@ def key_state_value(text):
 
 
 def _keys_reader(ctx, has_entries):
-    """목록·사용량을 보일 때 쓰는 보관소(읽기만) → (보관소 또는 None, 안내 줄들). 항목이 없으면 보관소를 열지 않는다. 못 열면 끝 4자 없이 보인다."""
+    """목록·사용량을 보일 때 쓰는 보관소(읽기만) → (보관소 또는 None, 안내 줄들). 항목이 없으면 보관소를 열지 않는다. 보관소에는 키가 **있는지만** 묻는다(값은 읽지 않는다)."""
     if not has_entries:
         return None, []
     try:
         store = ctx.get_keystore()
     except AppError as error:
-        return None, [f"주의: 키 보관소를 열 수 없어 끝 4자와 보관 여부를 확인하지 못했습니다(오류 코드 {error.code})"]
+        return None, [f"주의: 키 보관소를 열 수 없어 보관 여부를 확인하지 못했습니다(오류 코드 {error.code})"]
     return store, (["주의: 시험 전용 가짜 보관소를 쓰는 중입니다 — 실제 키를 넣지 마세요"] if getattr(store, "is_fake", False) else [])
 
 
@@ -759,6 +766,7 @@ def _secret_input(spec, args):
 def cmd_keys_add(ctx, args):
     spec = connections.PURPOSES[args.purpose]
     connections.refuse_legacy(spec)                                                                    # 옛 용도는 키를 묻기 전에 먼저 거절한다
+    connections.refuse_unavailable(spec)                                                               # 이 빌드가 입력을 받지 않는 용도(Blogger)도 키를 묻기 전에 거절한다
     existing = connections.load(ctx).of_purpose(args.purpose)
     chosen = spec.provider(args.provider or "")                                                        # 모르는 제공자면 아래 `add_entry` 가 같은 오류로 거절한다
     same = [item for item in existing if chosen is not None and item.provider == chosen.key]           # 둘째 키·약관 확인은 같은 서비스(제공자)의 항목만 센다(운영자 정책 표 — P4f)
@@ -834,7 +842,7 @@ def _add_keys_parser(add, common):
 
     order = tuple(connections.PURPOSES)
     leaf("purposes", cmd_keys_purposes, "용도 목록과 설명(어떤 키를 받는지·한도·준비 상태)을 보여 줍니다(읽기만 합니다)")
-    found = leaf("list", cmd_keys_list, "용도별 상태와 키 항목을 보여 줍니다 — 이름·상태·끝 4자(16자 이상일 때만)만 보이고 키 원문은 보이지 않습니다(읽기만 합니다)")
+    found = leaf("list", cmd_keys_list, "용도별 상태와 키 항목을 보여 줍니다 — 이름·상태·제공자·등록 시각·마지막 확인만 보이고 키 원문도 키의 일부 글자도 보이지 않습니다(읽기만 합니다)")
     found.add_argument("--purpose", choices=order, metavar="용도", help="이 용도만 보여 줍니다")
     found = leaf("add", cmd_keys_add, "키 항목을 더합니다 — 키는 인자로 받지 않고 숨김 입력이나 --stdin 으로 받아 보관소에만 둡니다")
     found.add_argument("purpose", choices=order, metavar="용도", help="어느 용도의 키인가(keys purposes 로 확인)")
@@ -983,7 +991,7 @@ def cmd_topics_review(ctx, args):
 
 def cmd_topics_backup(ctx, args):
     result = topics.backup_topics(ctx)
-    return Output(tfmt.backup_lines(result), {"backup": str(result.path), "files": list(result.files), "missing": list(result.missing)})
+    return Output(tfmt.backup_lines(result), {"backup": str(result.path), "files": list(result.files), "missing": list(result.missing), "credential_excluded": True})
 
 
 def cmd_topics_restore(ctx, args):
@@ -1086,7 +1094,7 @@ def _common():
     common.add_argument("--data-dir", metavar="폴더", help="원고·설정·백업을 둘 폴더(기본: 사용자 데이터 폴더). 저장소 폴더 안은 안 됩니다")
     common.add_argument("--repo", metavar="폴더", help="이번 한 번만 쓸 chanceblog 저장소 폴더(저장해 둔 연결보다 우선)")
     common.add_argument("--verbose", action="store_true", help="오류의 기록용 한 줄(키·토큰은 가려짐)도 보여 줍니다")
-    common.add_argument("--debug", action="store_true", help="예상하지 못한 오류에서 자세한 추적 정보를 그대로 보여 줍니다(개발용)")
+    common.add_argument("--debug", action="store_true", help="예상하지 못한 오류에서 자세한 추적 정보를 보여 줍니다(개발용 — 키·토큰 같은 비밀은 이 출력에서도 가려집니다)")
     return common
 
 
@@ -1219,37 +1227,9 @@ def build_parser():
 
 
 # ---- 실행 --------------------------------------------------------------------------------------------------------------------------
-def _mask_deep(value):
-    if isinstance(value, str):
-        return mask(value)
-    if isinstance(value, dict):
-        return {key: _mask_deep(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_mask_deep(item) for item in value]
-    return value
-
-
-def mask_block(text):
-    """여러 줄 글을 통째로 가린 글. 줄 단위로 가리면 개인 키 블록(-----BEGIN … PRIVATE KEY----- 부터 END 까지)의 본문 줄과 '다음 줄에 이어지는 값' 이 그대로 나간다.
-    글이 아주 길어 한 번에 가릴 수 없으면(`MAX_MASK_INPUT` 초과) 줄 경계에서 나눠 가리되 열린 개인 키 블록 안에서는 끊지 않는다(끝까지 가려진다)."""
-    text = str(text)
-    if len(text) <= MAX_MASK_INPUT:
-        return mask(text)
-    pieces, current, size, inside = [], [], 0, False
-    for line in text.split("\n"):
-        current.append(line)
-        size += len(line) + 1
-        if "PRIVATE KEY" in line:
-            if "-----BEGIN" in line:
-                inside = True
-            if "-----END" in line:
-                inside = False
-        if size >= MAX_MASK_INPUT // 2 and not inside:
-            pieces.append(mask("\n".join(current)))
-            current, size = [], 0
-    if current:
-        pieces.append(mask("\n".join(current)))
-    return "\n".join(pieces)
+# 가리기(여러 줄 글·JSON 값)는 공통 경계(`security/boundary.py`)에 있다 — 여기서는 같은 함수를 이름만 이어 쓴다(PCSEC1 H1: 가리기 규칙은 한 곳이다).
+# `mask_block` 은 이 모듈의 이름으로도 그대로 있다(시험이 `cli.mask_block` 을 부르고 바꿔 끼운다).
+_mask_deep = mask_deep
 
 
 def _error_payload(error):

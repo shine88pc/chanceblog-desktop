@@ -345,7 +345,7 @@ def usage_of(spec, view):
 class ServiceConnectionsProvider(ConnectionsProvider):
     """설정 화면(연결 관리)의 실제 공급자 — 서비스 층(`service/connections.py`·`quota.py`)을 **읽기만** 한다(파일을 만들거나 바꾸지 않고 네트워크·로그인을 쓰지 않는다).
 
-    **키 값을 꺼내지 않는다** — 보관소(윈도 자격 증명 관리자)에는 '이 항목의 키가 있나' 만 묻고(`secret_present` → `exists`), `keystore.get` 도 `list_entries` 의 끝 4자 읽기도 부르지 않는다. 항목 이름·상태·사용량 숫자만 화면 값(`PurposeInfo`)이 된다.
+    **키 값을 꺼내지 않는다** — 보관소(윈도 자격 증명 관리자)에는 '이 항목의 키가 있나' 만 묻고(`secret_present` → `exists`), `keystore.get` 도 부르지 않는다(키의 끝 4자 같은 일부 글자를 만들던 길은 PCSEC1 H2 에서 없앴다). 항목 이름·상태·사용량 숫자만 화면 값(`PurposeInfo`)이 된다.
     보관소 읽기는 작업 스레드에서 돈다(홈 불러오기처럼). 보관소를 못 열면 키가 있는지만 모르는 채로('연결 확인 필요') 나머지를 보이고(`partial`), 연결 설정 파일이 깨졌으면 숨기지 않고 오류로 알린다(`CONNECTIONS_FILE_INVALID` — 쉬운 문장 + 진단 정보의 코드)."""
     sample = False
 
@@ -394,10 +394,11 @@ class ServiceConnectionsProvider(ConnectionsProvider):
                     if found is None and store is not None and "keystore" not in partial:
                         partial.append("keystore")
                     entries.append(EntryInfo(entry.name, entry.state, found, entry.entry_id, entry.provider, entry.last_ok_at, entry.check_result, entry.order))        # 행동의 대상·표시용 값뿐(비밀 칸에서 만든 값 없음)
-                status = guard.purpose_status(key, keystore=store) if spec.takes_keys and not spec.legacy_to else ""
-                providers = tuple(ProviderInfo(item.key, item.label, spec.entry_cap(item.key), item.second_key_needs_terms) for item in spec.providers) if spec.takes_keys else ()
-                fields = tuple(FieldInfo(item.name, item.label, item.min_len) for item in spec.fields)
-                infos.append(PurposeInfo(key, spec.label, spec.implemented, spec.takes_keys, spec.max_entries, spec.providers[0].rotation, bool(spec.legacy_to), status, tuple(entries),
+                accepts = connection_service.accepts_input(spec)                         # 이 빌드가 새 키 입력을 받는 용도인가(Blogger 는 꺼져 있다 — 입력 칸·단추가 없다)
+                status = guard.purpose_status(key, keystore=store) if accepts and not spec.legacy_to else ""
+                providers = tuple(ProviderInfo(item.key, item.label, spec.entry_cap(item.key), item.second_key_needs_terms) for item in spec.providers) if accepts else ()
+                fields = tuple(FieldInfo(item.name, item.label, item.min_len) for item in spec.fields) if accepts else ()
+                infos.append(PurposeInfo(key, spec.label, spec.implemented, accepts, spec.max_entries, spec.providers[0].rotation, bool(spec.legacy_to), status, tuple(entries),
                                          usage_of(spec, usages.get(key)), key in ON_DEMAND, providers, fields, self._can_test(spec), "terms" if key in TERMS_PENDING else ""))
         except AppError as error:
             raise settings_failure(error) from None
@@ -405,4 +406,4 @@ class ServiceConnectionsProvider(ConnectionsProvider):
             raise JobCancelled()
         if "usage" not in partial and any(info.usage is not None and not info.usage.readable for info in infos):      # 사용량 기록을 못 읽은 용도가 있다 — 그 줄은 숫자 대신 '확인할 수 없어요' 이고 화면 위에 안내가 붙는다
             partial.append("usage")
-        return ConnectionsData(purposes=tuple(infos), sample=False, partial=tuple(partial), store_ready=store is not None)
+        return ConnectionsData(purposes=tuple(infos), sample=False, partial=tuple(partial), store_ready=store is not None, fake_store=bool(getattr(store, "is_fake", False)))

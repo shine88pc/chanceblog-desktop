@@ -19,7 +19,7 @@ from itertools import islice
 from . import gauges
 from . import settings_view as sv
 from .services import HOME_CHANNELS, HOME_LIMIT, INTERESTS, STAGES, Topic
-from .text import T
+from .text import T, display_text
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 _STAMP = re.compile(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z")
@@ -32,8 +32,7 @@ KPI_STATES = ("value", "before_connect", "before_count")
 
 
 def _shown(value, limit=300):
-    from ...security.mask import safe_detail                                   # 명령줄 출력·홈 화면과 같은 가리기 규칙(가린 뒤에 줄인다)
-    return safe_detail(value, limit)
+    return display_text(value, limit)                                          # 명령줄 출력·홈 화면과 같은 가리기 규칙(가린 뒤에 줄인다) — 화면 글의 한 지점(`text.display_text`)
 
 
 def _count(value):

@@ -52,6 +52,12 @@ class Base(unittest.TestCase):
     def new_post(self, title="에너지 절약 습관", text=None):
         return self.data("new", "--title", title, "--text", text or ss.ko_text())["project"]["project_id"]
 
+    def new_keyed_post(self, title="에너지 절약 습관", text=None):
+        """옛 버전이 저장한 것처럼 키 모양이 든 글 — 명령줄 쓰기 길은 이제 거절하므로 보관함에 직접 넣는다(PCSEC1 M3)."""
+        project_id = self.new_post()
+        ss.inject_text(self.ctx, project_id, title=title, text=text or ss.ko_text())
+        return project_id
+
     def approved(self):
         project_id = self.new_post()
         self.ok("review", project_id, "--platform", "pages", *PAGES)
@@ -661,7 +667,7 @@ class MaskingTest(Base):
         self.assertNotIn(ss.KEY, text)
 
     def test_a_key_in_the_manuscript_or_title_never_appears_in_any_output(self):
-        project_id = self.new_post(title=f"제목 {ss.KEY}", text=ss.ko_text(extra=f"실수로 {ss.KEY} 를 붙였습니다."))
+        project_id = self.new_keyed_post(title=f"제목 {ss.KEY}", text=ss.ko_text(extra=f"실수로 {ss.KEY} 를 붙였습니다."))
         shown = self.ok("show", project_id, "--full")
         self.assert_masked(shown)
         self.assertIn("[가림: Google API 키]", shown)
@@ -673,7 +679,7 @@ class MaskingTest(Base):
         self.assertIn("[가림:", self.ok("--json", "show", project_id, "--full"))
 
     def test_a_key_in_a_review_preview_and_in_the_gate_errors_is_hidden_too(self):
-        project_id = self.new_post(text=ss.ko_text(extra=f"실수로 {ss.KEY} 를 붙였습니다."))
+        project_id = self.new_keyed_post(text=ss.ko_text(extra=f"실수로 {ss.KEY} 를 붙였습니다."))
         self.assert_masked(self.ok("preview", project_id, "--platform", "pages", *PAGES, "--full"))
         self.assert_masked(self.ok("review", project_id, "--platform", "pages", *PAGES))
         out, err = self.fails("approve", project_id, "--platform", "pages")
@@ -777,7 +783,7 @@ class RealProcessTest(unittest.TestCase):
         self.assertEqual([row["title"] for row in json.loads(out)["data"]["projects"]], ["프로세스 글"])
         code, out, err = self.run_module("--data-dir", data, "publish-pages", "ffffffff")
         self.assertEqual((code, out), (1, ""))
-        self.assertIn("코드: CONTENT_NOT_FOUND", err)
+        self.assertIn("코드: EXTERNAL_WRITE_DISABLED", err)          # 의도적 갱신(PCSEC1 H3): 진짜 프로세스(소스 상수 False)에서는 글 번호를 보기 전에 외부 Write 관문이 거절한다(예전: CONTENT_NOT_FOUND)
         self.assertNotIn("Traceback", err)
 
     @unittest.skipUnless(ss.HAVE_GIT, "git 이 필요하다")
@@ -785,7 +791,7 @@ class RealProcessTest(unittest.TestCase):
         data = self.tmp / "d"
         code, out, err = self.run_module("--data-dir", str(data), "doctor")
         self.assertEqual((code, err), (0, ""), out + err)
-        for needle in ("[정상] 프로그램 버전", "[정상] git", "[정상] 핵심 코드(vendor/)", "[주의] 연결한 chanceblog 저장소"):
+        for needle in ("[정상] 프로그램 버전", "[정상] 외부 게시", "[건너뜀] git", "[정상] 핵심 코드(vendor/)", "[주의] 연결한 chanceblog 저장소"):         # 의도적 갱신(PCSEC1 H3): 외부 게시가 꺼진 진짜 프로세스는 git 을 부르지 않는다(예전: '[정상] git')
             self.assertIn(needle, out)
         self.assertFalse(data.exists(), "점검은 아무것도 만들지 않는다")
 
@@ -794,6 +800,14 @@ class RealProcessTest(unittest.TestCase):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("DATA_DIR_UNSAFE", err)
         self.assertFalse((ss.ROOT / "userdata_for_test").exists())
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":
