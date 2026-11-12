@@ -176,3 +176,37 @@ Candidate(주제 후보): candidate_id · topic · keyword · sub_keywords · bl
 ## 11. 버전
 
 Semantic Versioning. 앱·DB 스키마·핵심 코드(`vendor/` 커밋)·플랫폼 어댑터·템플릿 버전을 따로 기록하고 설정 화면과 GitHub Release 에서 같게 보인다. 개발 순서는 운영자 우선순위를 따른다([`DECISIONS.md`](DECISIONS.md) D-12).
+
+## 12. 전체 백업·복원(BACKUPUI) — 서비스와 설정 화면의 카드
+
+글 보관함·주제 엔진(보관함과 JSON 셋)·설정을 한 폴더에 담고 되돌리는 기능이다(결정 [`DECISIONS.md`](DECISIONS.md) D-380–D-399, 보안 [`SECURITY.md`](SECURITY.md) §9). 운영자가 명령줄을 쓰지 않으므로 **화면 카드 하나**가 입구이고(설정 화면 안의 `백업·복원` — 새 사이드바 메뉴가 아니다, D-380), 기존 `backup`·`topics backup` 명령은 바꾸지 않았다.
+
+| 모듈 | 하는 일 |
+|---|---|
+| `service/backup_flow.py` | 서비스 — `create_full_backup`(백업)·`list_full_backups`(목록, 읽기만)·`restore_full_backup`(복원, 확인 표시 필요). 폴더 하나에 점검한 사본과 `MANIFEST.json`(크기·SHA-256·개수·`credential_excluded`)을 담고, 만든 사본을 훑어 키·토큰 모양이 있으면 만들지 않는다. 복원은 읽기 검증 → 잠금 → 안전 사본 → 바꾸기 → 다시 읽어 확인, 실패하면 안전 사본으로 원복 |
+| `security/backup_note.py` | 고정 문장('Credential 제외됨'·'키는 백업에 없어요'·담지 않는 것 아홉 가지와 이유) — 목록 파일과 화면이 같은 글을 쓴다(서비스 소스에는 영어 비밀 낱말을 쓰지 않는 규칙이 있어 글만 밖에 둔다) |
+| `service/lock.py` | `PublishLock` 에 PC 이름을 읽지 않는 `host` 인자 하나를 더했다(백업·복원 잠금 `locks/full-backup.lock` 이 쓴다) |
+| `ui/core/backups.py`·`backup_view.py`·`backup_text.py` | 화면 코어(순수 파이썬) — 공급자 모양과 가짜 공급자, 읽기·쓰기를 가르는 컨트롤러와 뷰모델, 문구. Qt·서비스를 모른다 |
+| `ui/backups_adapter.py` | 실제 공급자 — 서비스 세 함수만 부르고 서비스 오류를 아홉 종류·정해진 문장으로만 바꾼다(키 글자·경로·예외 문구는 화면에 나가지 않는다) |
+| `ui/qt/backup_parts.py`·`shell.py`·`screens.py` | 카드 위젯(목록·배지·진행 줄·결과 띠)과 단추 처리(작업 스레드·확인창·창 닫을 때 기다림) |
+
+**데이터 흐름**: 단추 → `AppShell` → `BackupController`(순수 상태) → 짝 공급자(`FakeBackupsProvider` 또는 `ServiceBackupsProvider`) → 서비스. 카드는 짝 공급자가 있을 때만 그려진다(`ServiceHomeProvider` 와 `--sample` 이 짝을 둔다 — D-391). 쓰기는 사용자가 단추를 눌렀을 때만 작업 스레드에서 한 번에 하나만 돈다(D-392).
+
+**백업 폴더 모양**(납작하다 — 주제 백업 폴더를 안에 넣지 않는다, D-381):
+
+```
+backups/
+  full-20261111-120500/            백업 하나(같은 초에 또 만들면 -2 …)
+    chanceblog.db  topic_engine.db  channel_profiles.json  seeds.json  calendar.json  settings.json
+    MANIFEST.json                  크기·SHA-256·개수·credential_excluded true·담지 않는 것과 이유
+  before-restore/
+    before-20261111-130000/        복원 직전 안전 사본(같은 모양 — 같은 복원 길로 되돌린다)
+```
+
+**백업**: 임시 폴더(`.tmp`)에 점검한 사본을 만든다(보관함은 읽기 전용 연결로 SQLite 백업 API 로 복사한 뒤 정리하고, JSON 은 읽은 대로) → 만든 사본을 훑는다(키·토큰 모양) → 목록을 쓰고 다시 읽어 확인 → 폴더 이름을 바꿔 둔다. 어느 단계든 실패하거나 키 모양이 있으면 임시 폴더를 치우고 아무것도 남기지 않는다. **복원**: 확인 표시 → 백업 읽기 검증(해시·훑기·내용 점검) → 잠금 → 지금 파일 상태 → 안전 사본 → 깨진 지금 파일은 옆으로 → 바꾸기 → 다시 읽어 확인(실패하면 안전 사본으로 원복).
+
+**서비스 층 규칙**: 새 모듈이 파일을 만들고 옮기고 지우는 곳은 `tests/test_service_safety.py` 의 허용 목록에 등록한 함수뿐이고(이유 포함), 파일 내용은 컨텍스트의 내구 쓰기 함수 하나로만 쓴다. 새 코드는 하위 프로세스·네트워크·웹 열기·`os.startfile` 을 가져오지 않는다(시험 `tests/test_service_backup_rules.py`).
+
+**수정 라운드(D-460–D-466)에서 바뀐 흐름**: 백업은 보관함마다 메모리 연결에 사본을 만들어 `vacuum`(`_stage_sqlite`) → **메모리에서 훑기** → 이상 없을 때만 임시 폴더에 쓰기(`_write_sqlite`) → 쓴 파일 점검 순서이고 JSON·설정은 읽은 바이트를 먼저 훑은 뒤 쓴다. 임시 폴더의 이름 바꾸기(`_finish_folder`)와 제자리 바꿔 넣기(`_swap_in`)는 다른 프로그램이 잠깐 붙잡으면 `RETRY_WAIT` 초씩 `RETRY_TRIES` 번까지 다시 한다.
+다음 백업·복원은 잠금 안에서 낡은 임시 폴더를 먼저 치우고(`_sweep_locked`) 목록은 치울 흔적이 있을 때만 같은 일을 한다(`_sweep_if_stale`). 복원은 지금 데이터를 바꾸기 직전에 `backups/restore-in-progress.json` 표지를 쓰고 끝나면 지운다. 서비스 함수 둘이 더해졌다 — `interrupted_restore`(읽기)·`revert_interrupted_restore`(확인 표시 필요, 보통 복원으로 안전 사본을 되돌린다) — 그리고 목록에 `BackupList.interrupted` 가 생겼다.
+화면은 `InterruptedData`·`BackupsWriter.revert_interrupted`·`BackupController.interrupted_vm`·`start_revert`·카드 위쪽 안내 띠와 단추를 더했고 어댑터는 서비스 네 함수(`list_full_backups`·`create_full_backup`·`restore_full_backup`·`revert_interrupted_restore`)만 부른다. 시험 모듈 둘이 더해졌다 — `test_service_backup_interrupt`(곳곳에서 죽이기·낡은 것 치우기·복원 표지)·`test_service_backup_gaps`(이름 바꾸기 다시 하기·WAL·정리 못 한 저장·목록 모양·변이 여섯).

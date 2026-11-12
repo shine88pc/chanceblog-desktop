@@ -24,6 +24,7 @@ from typing import NamedTuple
 from ..content.store import _read_only_uri
 from ..echo import shown_topic_backup
 from ..errors import AppError
+from ..security.backup_note import CREDENTIAL_NOTE
 from ..security.mask import has_key_shape
 from ..security.refuse import kinds_of as secret_kinds, locate as secret_locate, table_label as secret_table_label
 from ..security.scan import has_secret, scan_secrets
@@ -37,7 +38,7 @@ from .store import TopicStore
 
 MANIFEST_NAME = "MANIFEST.json"
 MANIFEST_SCHEMA = 1
-CREDENTIAL_NOTE = "자격 증명(키·토큰·쿠키·세션)은 이 백업에 들어 있지 않아요 — 복원한 뒤 키는 다시 등록하세요"           # 새 백업 목록(MANIFEST.json)에 적는 쉬운 문장(PCSEC1 M4 — 무엇을 담는지는 바꾸지 않는다)
+# `CREDENTIAL_NOTE`(새 백업 목록 MANIFEST.json 에 적는 쉬운 문장 — PCSEC1 M4)는 `security/backup_note.py` 한 곳에 있고 위에서 가져온다(전체 백업의 목록과 한 상수 — BACKUPUI D-467)
 _MANIFEST_KEYS = frozenset({"schema", "created_at", "files", "missing"})                                          # 옛 백업의 목록 칸(이 칸들뿐인 백업도 읽는다)
 _MANIFEST_KEYS_NEW = _MANIFEST_KEYS | {"credential_excluded", "credential_excluded_note"}
 KEEP_BACKUPS = 10

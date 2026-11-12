@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+
 from PySide6.QtCore import QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QM
 from ..core import draft_rules, part_rules
 from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
+from ..core.backup_view import WRITE_KEY as BACKUPS_WRITE_KEY
 from ..core.blogs_view import WRITE_KEY as BLOGS_WRITE_KEY
 from ..core.candidates import MakePreview
 from ..core.candidates_view import WRITE_KEY as CANDIDATES_WRITE_KEY
@@ -26,6 +28,7 @@ from ..core.version import read_version
 from ..style_adapter import ServiceStyleProvider
 from . import components as UI
 from . import screens as S
+from .backup_parts import BackupSection
 from .key_parts import KeyDialog, RenameForm
 from .candidate_parts import DetailPane
 from .sidebar import Sidebar
@@ -75,14 +78,14 @@ def qt_file_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
         self._url_opener = url_opener or qt_open_url                                     # 네이버 글쓰기 주소를 여는 함수(시험·사진은 가짜 열기 함수를 주입한다 — 주소만 연다)
         self._copy_timers = {}                                                           # 복사 단추의 `✓ … 복사됨` 모양을 되돌리는 시간 재개(복사한 항목마다 하나)
@@ -154,6 +157,15 @@ class AppShell(QMainWindow):
         self.keys_bridge.loaded.connect(self._on_keys_written)
         self.keys_bridge.failed.connect(self._on_keys_failed)
         self.keys_bridge.cancelled.connect(self._on_keys_cancelled)
+        self.backups_bridge = JobBridge(self)                                           # 백업 목록을 읽는 작업의 다리(BACKUPUI) — 다른 화면의 읽기와 따로 돈다
+        self.backups_bridge.loaded.connect(self._on_backups_loaded)
+        self.backups_bridge.failed.connect(self._on_backups_failed)
+        self.backups_bridge.cancelled.connect(self._on_backups_cancelled)
+        self.backups_write_bridge = JobBridge(self)                                     # 지금 백업·복원(파일에 쓰는 일)의 다리 — 사용자가 단추를 눌렀을 때만 시작한다. 진행은 시그널로 화면 스레드에 온다
+        self.backups_write_bridge.progress.connect(self._on_backups_progress)
+        self.backups_write_bridge.loaded.connect(self._on_backups_written)
+        self.backups_write_bridge.failed.connect(self._on_backups_failed_write)
+        self.backups_write_bridge.cancelled.connect(self._on_backups_cancelled_write)
         self.cand_bridge = JobBridge(self)                                              # 주제 후보를 읽는 작업의 다리 — 홈·설정·블로그·Seed 읽기와 따로 돈다
         self.cand_bridge.loaded.connect(self._on_cand_loaded)
         self.cand_bridge.failed.connect(self._on_cand_failed)
@@ -456,8 +468,10 @@ class AppShell(QMainWindow):
             return
         if self.state.nav(key, force=force):
             self.close_drawer_silently()
-            if key == "settings":                                                     # 설정 화면은 열 때마다 읽는다(이미 읽는 중이면 그대로 둔다) — 읽기는 작업 스레드에서
+            if key == "settings":                                                     # 설정 화면은 열 때마다 읽는다(이미 읽는 중이면 그대로 둔다) — 읽기는 작업 스레드에서. 백업 목록도 따로 읽는다(읽기만 — 폴더를 만들지 않는다)
                 self.state.start_conn_load(**self.conn_bridge.callbacks())
+                if self.state.backups is not None:
+                    self.state.backups.start_load(**self.backups_bridge.callbacks())
             elif key == "blogs":                                                      # 블로그 관리 화면도 열 때마다 읽는다(읽기만 — 파일도 폴더도 만들지 않는다). 쓰는 중이면 읽지 않는다
                 self.state.blogs.start_load(**self.blogs_bridge.callbacks())
             elif key == "seed":                                                       # Seed 관리 화면도 열 때마다 읽는다(읽기만). 쓰는 중이면 읽지 않는다
@@ -1764,6 +1778,172 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    # ---- 설정 화면의 백업·복원 카드(BACKUPUI) — 읽기(목록)는 작업 스레드, 쓰기(지금 백업·복원)는 사용자가 단추를 눌렀을 때만 따로 시작하는 작업이다. 복원은 확인창이 먼저다 ----
+    def _backups(self):
+        return self.state.backups
+
+    def _backup_section(self):
+        """지금 그려진 백업·복원 카드(설정 화면이 아니거나 아직 안 그렸으면 None) — 진행 줄을 제자리에서 바꾸고 포커스를 돌려줄 때 찾는다."""
+        if self.state.page != "settings" or self.screen_widget is None:
+            return None
+        return self.screen_widget.findChild(BackupSection)
+
+    def _render_backups(self):
+        if self.state.page == "settings":
+            self.render()
+
+    def reload_backups(self, *_):
+        """백업 목록을 다시 읽는다(읽기만). 이미 읽는 중이거나 쓰는 중이면 안내만 한다."""
+        backups = self._backups()
+        if backups is None:
+            return False                                                              # 이 화면에는 백업 카드가 없다(짝 공급자 없음)
+        job = backups.start_load(**self.backups_bridge.callbacks())
+        if job is None:
+            self.notify(T["backup_busy"] if backups.busy else T["load_busy"])
+            return False
+        self._render_backups()
+        return True
+
+    def _after_backup_start(self, status):
+        """쓰기를 시작한 결과 — 시작했으면 쓰는 동안 단추가 꺼진 모습으로 다시 그린다. 이미 쓰는 중이면 안내만(두 번째 클릭은 아무 일도 하지 않는다)."""
+        if status == "started":
+            self._render_backups()
+        elif status == "busy":
+            self.notify(T["backup_busy"])
+        elif status in ("unavailable",):
+            self.notify(T["backup_fail_other"])
+        return status
+
+    def backup_now(self):
+        """`지금 백업` — 쓰는 일을 시작한다(작업 스레드). 화면은 멈추지 않고 진행 줄이 보인다."""
+        backups = self._backups()
+        if backups is None:
+            return "unavailable"
+        status, _job = backups.start_create(**self.backups_write_bridge.callbacks())
+        return self._after_backup_start(status)
+
+    def backup_restore(self, name):
+        """`복원` — **확인창이 먼저다**(무엇이 바뀌는지·안전 사본 위치·되돌리는 법, 처음 포커스는 취소 — Enter 를 잘못 눌러도 복원하지 않는다). `복원하기` 를 눌러야 쓰기가 시작된다."""
+        backups = self._backups()
+        if backups is None:
+            return None
+        dialog = backups.restore_dialog(name)
+        if dialog is None:
+            self.notify(T["backup_busy"] if backups.busy else T["backup_restore_broken"])
+            return None
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=lambda: self.backup_restore_confirmed(name), safe_focus=True)
+        return dialog
+
+    def backup_restore_confirmed(self, name):
+        backups = self._backups()
+        if backups is None:
+            return "unavailable"
+        status, _job = backups.start_restore(name, confirmed=True, **self.backups_write_bridge.callbacks())
+        return self._after_backup_start(status)
+
+    def backup_revert(self):
+        """`안전 사본으로 되돌리기`(복원이 중간에 멈췄을 때만 보이는 단추) — 복원처럼 **확인창이 먼저다**(처음 포커스는 취소). `되돌리기` 를 눌러야 쓰는 일이 시작된다."""
+        backups = self._backups()
+        if backups is None:
+            return None
+        dialog = backups.revert_dialog()
+        if dialog is None:
+            self.notify(T["backup_busy"] if backups.busy else T["backup_fail_other"])
+            return None
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self.backup_revert_confirmed, safe_focus=True)
+        return dialog
+
+    def backup_revert_confirmed(self):
+        backups = self._backups()
+        if backups is None:
+            return "unavailable"
+        status, _job = backups.start_revert(confirmed=True, **self.backups_write_bridge.callbacks())
+        return self._after_backup_start(status)
+
+    def _on_backups_loaded(self, data):
+        self._guarded(self._show_backups_loaded, data, recover=self._recover_backups)
+
+    def _on_backups_failed(self, failure):
+        self._guarded(self._show_backups_failed, failure, recover=self._recover_backups)
+
+    def _on_backups_cancelled(self):
+        self._guarded(self._show_backups_cancelled, recover=self._recover_backups)
+
+    def _show_backups_loaded(self, data):
+        self._backups().apply_loaded(data)
+        self._render_backups()
+
+    def _show_backups_failed(self, failure):
+        self._backups().apply_load_failed(failure, self.clock.now())
+        self._render_backups()
+
+    def _show_backups_cancelled(self):
+        self._backups().apply_load_cancelled()
+        self._render_backups()
+
+    def _on_backups_progress(self, fraction, text):
+        self._guarded(self._show_backups_progress, fraction, text, recover=self._recover_backups)
+
+    def _show_backups_progress(self, fraction, text):
+        """진행을 받았다 — 카드 전체를 다시 그리지 않고 진행 줄(글과 막대)만 제자리에서 바꾼다."""
+        backups = self._backups()
+        backups.apply_progress(fraction, text)
+        section = self._backup_section()
+        vm = backups.progress_vm()
+        if section is not None and section.progress is not None and vm is not None:
+            section.progress.set_progress(vm)
+
+    def _on_backups_written(self, result):
+        self._guarded(self._show_backups_written, result, recover=self._recover_backups)
+
+    def _on_backups_failed_write(self, failure):
+        self._guarded(self._show_backups_write_failed, failure, recover=self._recover_backups)
+
+    def _on_backups_cancelled_write(self):
+        self._guarded(self._show_backups_write_failed, None, recover=self._recover_backups)
+
+    def _reload_after_backups(self):
+        """쓰기가 끝났다 — 목록을 다시 읽는다(읽기 작업). 시작하지 못하면(이미 읽는 중) 그 읽기가 끝난 뒤의 값이 새 값이다."""
+        backups = self._backups()
+        if not backups.reload_wanted:
+            return
+        backups.reload_wanted = False
+        backups.start_load(**self.backups_bridge.callbacks())
+
+    def _give_backup_focus(self):
+        """쓰기가 끝나고 다시 그린 뒤 포커스를 `지금 백업` 단추로 돌려준다 — 다른 대화상자가 열려 있거나 설정 화면이 아니면 하지 않는다(다른 곳의 포커스를 뺏지 않는다)."""
+        backups = self._backups()
+        if not backups.focus_after:
+            return
+        backups.focus_after = False
+        if self.state.page == "settings" and not self.dialog.is_open:
+            self._restore_focus("backup-create")
+
+    def _show_backups_written(self, result):
+        backups = self._backups()
+        backups.apply_write_ok(result)
+        self._reload_after_backups()
+        if getattr(result, "action", "") == "restored":
+            self.reload()                                                             # 복원이 데이터를 바꿨다 — 홈이 읽어 둔 값을 새로 읽는다(다른 화면은 열 때마다 읽는다)
+        self._render_backups()
+        self._give_backup_focus()
+
+    def _show_backups_write_failed(self, failure):
+        backups = self._backups()
+        backups.apply_write_failed(failure)
+        self._reload_after_backups()
+        self._render_backups()
+        self._give_backup_focus()
+
+    def _recover_backups(self, error):
+        """백업·복원 슬롯에서 예외가 났다 — 쉬운 문장만 알리고(예외 이름·내용은 화면에 없다) 화면은 그대로 둔다. 표준 오류에도 **예외 이름만** 남긴다."""
+        report_unexpected(type(error), "")
+        self._backups().apply_unexpected(error)
+        try:
+            self._render_backups()
+        except Exception:
+            self.notify(T["job_failed"])
+
     def _close_after_confirm(self):
         self._close_confirmed = True
         self.close()
@@ -1779,6 +1959,10 @@ class AppShell(QMainWindow):
                 return
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
         self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)
+        if self.state.backups is not None and self.state.backups.busy:            # 백업·복원은 끝나기를 기다린다 — 복원은 중간에 끊으면 안전 사본으로 되돌리는 길을 타므로 마치게 두는 것이 가장 안전하다
+            job = self.state.runner.job(BACKUPS_WRITE_KEY)
+            if job is not None:
+                job.join(WRITE_CLOSE_WAIT)
         if self.state.keys.busy:                                                  # 키 쓰기도 중간에 끊을 수 없다 — 끝나기를 기다린다(보관소·파일 쓰기를 마치게)
             job = self.state.runner.job(KEYS_WRITE_KEY)
             if job is not None:

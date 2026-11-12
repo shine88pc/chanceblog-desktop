@@ -159,6 +159,10 @@ class HomeProvider:
         from .blogs import FakeBlogsProvider
         return FakeBlogsProvider()
 
+    def backups_provider(self):
+        """이 공급자와 짝인 설정 화면의 백업·복원 카드 공급자(BACKUPUI) — 실제 앱(`ServiceHomeProvider`)과 예시 화면(`--sample`)만 짝을 정한다. **따로 정하지 않은 공급자는 `None`** — 카드를 그리지 않는다(다른 화면 공급자와 달리 '메모리 예시'를 몰래 끼우지 않는다: 설정 화면에 카드가 하나 더 생기면 그 화면을 세는 기존 시험이 흔들리고, 쓰지도 않는 화면에 백업 단추가 보이게 된다 — D-391)."""
+        return None
+
     def candidates_provider(self):
         """이 공급자와 짝인 주제 후보 화면 공급자(P4d) — 홈 공급자를 고르면(`--sample`·`--data-dir`) 주제 후보도 같은 쪽을 쓴다. 따로 정하지 않은 공급자는 **메모리에서만 일하는 예시**를 돌려준다(후보를 만들어도 이 PC 에 아무것도 남지 않는다)."""
         from .candidates import FakeCandidatesProvider
@@ -243,11 +247,20 @@ class FakeHomeProvider(HomeProvider):
     `board` 는 새 홈 구역(UI-C1c)의 값 — 기본 `"auto"` 는 시나리오에 맞는 예시(`sample_board`), `None` 이면 새 구역을 읽지 않는 공급자('연결 전'), `BoardData` 면 그대로 쓴다."""
     sample = True
 
-    def __init__(self, scenario="normal", delay=0.0, count=None, board="auto"):
+    def __init__(self, scenario="normal", delay=0.0, count=None, board="auto", backups=None):
         if scenario not in SCENARIOS:
             raise ValueError(scenario)
         self.scenario, self.delay, self.count, self.board = scenario, delay, count, board
+        self.backups = backups                                           # 설정 화면의 백업·복원 카드 — `None` 이면 카드 없음(기본), `True` 면 메모리 예시 공급자, 공급자 객체면 그대로 쓴다
         self.calls = 0
+
+    def backups_provider(self):
+        if self.backups is None or self.backups is False:
+            return None
+        if self.backups is True:
+            from .backups import FakeBackupsProvider
+            return FakeBackupsProvider()
+        return self.backups
 
     def load_home(self, progress, cancelled):
         self.calls += 1

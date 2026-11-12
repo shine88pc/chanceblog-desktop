@@ -154,6 +154,11 @@ class ServiceHomeProvider(HomeProvider):
         from .blogs_adapter import ServiceBlogsProvider
         return ServiceBlogsProvider(self._data_dir, context_factory=self._factory)
 
+    def backups_provider(self):
+        """설정 화면의 백업·복원 카드(BACKUPUI)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 읽기(목록)는 읽기뿐이고, 백업 만들기·복원은 사용자가 단추를 눌렀을 때만 불린다(`ui/backups_adapter.py` — 이 파일은 쓰는 호출이 없다)."""
+        from .backups_adapter import ServiceBackupsProvider
+        return ServiceBackupsProvider(self._data_dir, context_factory=self._factory)
+
     def candidates_provider(self):
         """주제 후보 화면(P4d)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(후보 만들기)는 사용자가 확인창에서 `만들기` 를 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
         from .candidates_adapter import ServiceCandidatesProvider

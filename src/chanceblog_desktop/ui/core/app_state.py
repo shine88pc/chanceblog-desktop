@@ -12,6 +12,7 @@ import sys
 
 from . import board_view as bv
 from . import settings_view as sv
+from .backup_view import BackupController
 from .blogs import FakeBlogsProvider
 from .blogs_view import BlogsController
 from .candidates import FakeCandidatesProvider
@@ -122,7 +123,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -154,6 +155,10 @@ class AppState:
         self.seeds = SeedsController(self.seeds_provider, self.runner)
         # 키 연결(P4f) — 설정 화면의 연결 카드에 키 행동을 더한다. 쓰는 공급자(`KeysWriter`)일 때만 켜지고 아니면 카드는 읽기 전용 그대로다. 비밀이 아닌 상태만 들고 있다(키 글은 입력 칸에서 `SecretBox` 로만 간다)
         self.keys = KeysController(self.conn_provider, self.runner, lambda: self.conn_data)
+        # 설정 화면의 백업·복원 카드(BACKUPUI) — 읽기(목록)와 쓰기(지금 백업·복원)를 가르는 상태는 `BackupController`(순수)가 들고 있다. 쓰는 공급자(`BackupsWriter`)일 때만 단추가 켜지고, 쓰는 일은 단추를 눌렀을 때뿐이다
+        paired_backups = getattr(self.provider, "backups_provider", None)
+        self.backups_provider = backups if backups is not None else (paired_backups() if paired_backups else None)
+        self.backups = BackupController(self.backups_provider, self.runner) if self.backups_provider is not None else None     # 짝 공급자가 없으면 카드도 없다(D-391)
         # 주제 후보 화면(P4d) — 읽기와 쓰기를 가르는 상태는 `CandidatesController`(순수)가 들고 있다. 쓰는 일은 `후보 만들기` 확인창에서 `만들기` 를 눌렀을 때 하나뿐이다
         paired_candidates = getattr(self.provider, "candidates_provider", None)
         self.candidates_provider = candidates if candidates is not None else (paired_candidates() if paired_candidates else FakeCandidatesProvider())
@@ -358,7 +363,16 @@ class AppState:
     def settings_view(self):
         """설정 화면 뷰모델 — 만드는 일은 `settings_view.py`(순수)가 한다. 오류 상태의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         diag = diagnostic_text(self.conn_failure, self.conn_failed_at) if self.conn_failure else ""
-        return sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open, version=self.version, keys=self.keys)
+        view = sv.build_settings_view(self.conn_data, self.conn_state, failure=self.conn_failure, error_diag=diag, loaded_at=self.conn_loaded_at, open_groups=self.conn_open, version=self.version, keys=self.keys)
+        view["backup"] = self.backups_view()                                          # 백업·복원 카드 — 연결 정보와 따로 읽고 따로 상태를 가진다(연결 정보를 못 읽어도 백업은 할 수 있다)
+        return view
+
+    def backups_view(self):
+        """백업·복원 카드 뷰모델 — 만드는 일은 `BackupController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        if self.backups is None:
+            return None                                                               # 짝 공급자가 없다 — 설정 화면은 카드를 그리지 않는다
+        failure = self.backups.failure
+        return self.backups.view(diagnostic_text(failure, self.backups.failed_at) if failure else "")
 
     def seeds_view(self):
         """Seed 관리 화면 뷰모델 — 만드는 일은 `SeedsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""

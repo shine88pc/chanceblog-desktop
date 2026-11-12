@@ -208,3 +208,18 @@ ui/style_adapter.py → service/own_posts.py(읽기 전용) · content/style_sta
 ## 6. 아직 만들지 않은 부품 (UI-C1 이후)
 
 이번 묶음(UI-C0)은 아래를 **만들지 않았다**(운영자가 1단계 범위를 토큰·점수 링·구성 막대·사용량 막대·의미별 배지·탭·행동 줄로 정했다 — D-153): `TopicCard`(카드 격자의 한 칸 — 이미지 자리·배지 2개·제목 2줄·설명·키워드 칩 3개와 `+N`·채널·점수), `DetailPane`(오른쪽 상세 창 껍데기 — 탭 + 본문 스크롤 + 아래 고정 행동 줄, 좁으면 `Drawer`), 새 `FilterChip`·`TagChip`(지금의 칩·카드는 새 토큰 값만 따라간다), `StatusBanner`(안내·경고·오류·성공 + 제목·설명·행동), 검색 칸, 표(Data Grid). 새 틀(상단 앱 바·묶음 사이드바·오른쪽 고정 상세 창)과 화면 재구성도 UI-C1 이다. 위 부품들은 나중의 주제 조합·공공데이터·데이터 신호 화면에서도 그대로 쓸 수 있게 토큰과 부품만 준비했고, 그 화면과 공공데이터 배지 표·신호 표는 만들지 않았다.
+
+## 7. 백업·복원 카드 부품 (BACKUPUI — `ui/qt/backup_parts.py`, 설정 화면의 카드)
+
+새 토큰·새 공통 부품은 없다 — 기존 부품(`Badge`·`Button`·`Disclosure`·`StateCard`·`Skeleton`·`NoticeBar`·`Track`)을 조립하고 새 클래스 넷만 더했다. 인라인 스타일·직접 색·글자 크기 숫자 없이 속성(`card`·`kind`·`badge`·`role`)만 붙여 스타일시트가 입힌다.
+
+| 부품 | 하는 일 |
+|---|---|
+| `ProgressTrack` | 진행 막대 — `Track` 의 채움을 `set_fraction` 으로 **제자리에서** 바꾼다(0에서 1) |
+| `ProgressLine` | 진행 한 줄 — 글(`백업하는 중이에요… 40% — 파일을 담아요`)과 막대. 접근 이름은 글과 같다. `set_progress` 로 제자리 갱신(카드를 다시 그리지 않는다) |
+| `BackupRow` | 백업 한 줄 — 이름(시각 + 종류, 한 줄 `ElidedLabel`)·배지(종류·상태·`Credential 제외됨` — 글자가 늘 함께)·작은 글 줄(크기·담긴 것·담지 못한 것)·`복원` 단추(누르는 칸 36px) |
+| `BackupSection` | 카드 하나 — 머리(제목·`예시` 배지·`지금 백업`)·안내 글(백업 위치 — 글자로만, 마우스로 골라 복사·USB 복사 안내·남기는 수·Credential 안내)·결과 띠·진행 줄·접어 둔 '백업에 들어 있지 않은 것'·목록 또는 상태 카드. 위젯 참조(`create_button`·`rows`·`progress`·`notice`·`excluded`)를 들고 있어 시험과 포커스 복귀가 찾는다 |
+
+**하지 않는 것**: 폴더 열기 단추·탐색기 호출·파일 선택 창(백업 위치는 글자뿐 — D-394)·'무시하고 백업' 단추. 포커스 열쇠는 `backup-create`·`backup-excluded`·`backup-restore:<폴더 이름>` 이고 확인창은 공통 `dialog-cancel`·`dialog-ok` 를 쓴다. 모든 눌리는 부품은 접근 이름과 36px 이상의 누르는 칸을 가지며 꺼진 단추는 까닭을 툴팁·접근 설명에 둔다.
+
+**멈춘 복원 안내 부품(D-463)**: `BackupSection.interrupted`(`NoticeBar` 주의 수준)·`interrupted_lines`(시작한 때 줄)·`revert_button`(`secondary` 단추, 포커스 열쇠 `backup-revert`, 접근 이름 '멈춘 복원을 안전 사본으로 되돌리기', 누르는 칸 36px 이상, 꺼진 까닭은 툴팁·접근 설명). 눌림은 `shell.backup_revert()`(확인창) → `backup_revert_confirmed()` 로만 넘긴다. 새 외부 호출은 없다.
