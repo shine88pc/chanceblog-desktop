@@ -2,6 +2,10 @@
 
 버전은 [Semantic Versioning](https://semver.org/lang/ko/) 을 따른다. 앱 버전은 `VERSION` 파일이 기준이다. 설치 파일이 있는 릴리스는 `0.1.0` 부터다.
 
+## [0.1.0-preview.1] — 2026-11-11 (개인 PC 제한 시험용, 미서명 Package 준비)
+
+- 개인 PC 제한 시험용 Package 만들기(운영자 2026-11-11 결정 7·8·9항, 결정 D-400 이후, 변경 등급 T1 — 앱 동작은 바뀌지 않고 새 폴더 `packaging/`·문서·시험이 중심이다): ① `packaging/` — `build_package.py`(PyInstaller 한 폴더(`--onedir`)·창 없음·UTF-8 모드, 같은 커밋·같은 잠금 파일의 도구·같은 Python 이고 묶음의 DLL 이 같은 곳에서 오면 같은 바이트의 zip, 자가 점검이 통과해야 산출물을 만들고 관문 모듈이 없는 소스의 시험 빌드는 이름에 TESTBUILD 가 붙는다)·`make_manifest.py`(Version·Git Commit·SHA-256·Dependency 목록·Build 방법·Malware 검사 결과·서명 여부·SmartScreen 예상 동작을 `PACKAGE_INFO.md`·`PACKAGE_INFO.json`·`SHA256SUMS` 로)·`gui_entry.py`(화면 전용 시작 파일 — 명령줄 부명령과 `--yes` 계열을 열지 않고 숨은 `--selftest` 하나만)·`requirements-package.txt`(정확한 버전 잠금)·`LICENSES/`(LGPL-3.0·GPL-3.0 전문과 출처 기록); ② 버전 `0.1.0-preview.1` + 화면 '정보' 카드에 커밋 앞 7자리와 '개인 PC 제한 시험용, 미서명 Package' 한 줄(묶음 안 `PACKAGE_INFO.json` 이 있을 때만 — 개발 화면은 그대로, `ui/core/version.py`·`settings_view.py`·`screens.py` 의 작은 변경); ③ 운영자 개인 PC 시험지 `docs/PERSONAL_PC_TEST.md`·개발자용 `docs/PACKAGE.md`·시험 `tests/test_packaging_*.py`. 빌드 워크플로(`.github/workflows/package.yml`)는 T3 라 이 가지에 없다(별도 가지의 초안). 독립 검증 뒤 더한 것: 빌드 입력·출력 가장자리 방어(출력 폴더 이름·경로 점검, git 설정과 상관없는 깨끗함 검사 — D-440·D-441)와 시험지의 관리자 암호 안내(D-442).
+
 ## [0.0.0] — 2026-10-30 (설계 단계, 설치 파일 없음)
 
 - 저장소 뼈대: `AGENTS.md`·`CLAUDE.md`·`docs/`(구조·결정·플랫폼·오류 안내·릴리스·보안·이관)·CI·저장소 구조 시험.

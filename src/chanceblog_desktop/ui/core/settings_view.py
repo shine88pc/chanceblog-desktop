@@ -20,6 +20,7 @@ from ... import capabilities
 from . import gauges as G
 from .services import CONN_PROBLEMS, CONN_STATUSES, GROUP_ORDER, PURPOSE_GROUPS
 from .text import T, display_text
+from .version import COMMIT_LABEL
 
 STATUS_TONE = {"not_connected": "muted", "needs_check": "warning", "connected": "ok", "auth_error": "danger", "rate_limited": "warning"}
 READY_TONE = {"prep": "muted", "ok": "info", "nokey": "muted", "legacy": "muted"}
@@ -203,8 +204,13 @@ def info_vm(data, opened, loaded_at, version):
     title = T["conn_group_info"]
     state = T["conn_group_open"] if opened else T["conn_group_closed"]
     shown = version.text if version is not None else T["dev_version"]
+    shown_version = {"label": T["info_version"], "text": shown}
+    if version is not None and version.commit:                                   # 묶음(PACKAGE_INFO.json 이 있을 때)에서만 — 개발 화면의 두 칸은 그대로다
+        shown_version["text"] = f"{shown} · {COMMIT_LABEL} {version.commit}"
+    if version is not None and version.notice:
+        shown_version["notice"] = version.notice
     return {"key": INFO_GROUP, "title": title, "open": opened, "chips": [], "summary": "", "a11y": ", ".join((title, state)),
-            "version": {"label": T["info_version"], "text": shown},
+            "version": shown_version,
             "diag": {"show": T["diag_show"], "hide": T["diag_hide"], "note": T["diag_note"], "text": diag_text(data, loaded_at) if data else ""}}
 
 

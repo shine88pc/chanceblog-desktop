@@ -147,6 +147,7 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`docs/PLATFORM_POLICY.md`](docs/PLATFORM_POLICY.md) | 플랫폼별로 하는 것·하지 않는 것 |
 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | 오류 코드와 하실 일(규칙 기반) |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | 설치 파일·자동 업데이트·릴리스 절차 |
+| [`docs/PACKAGE.md`](docs/PACKAGE.md) · [`docs/PERSONAL_PC_TEST.md`](docs/PERSONAL_PC_TEST.md) | 개인 PC 제한 시험용 Package 만들기(개발자용)와 운영자가 개인 PC 에서 해 보는 시험지 |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | 키·로그·업데이트 보안 |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | 회사 PC → 개인 PC 이관과 새 PC 준비 |
 | [`docs/UI_DESIGN_SPEC.md`](docs/UI_DESIGN_SPEC.md) · [`UI_COMPONENTS.md`](docs/UI_COMPONENTS.md) · [`UI_STATES.md`](docs/UI_STATES.md) · [`UI_ICONS.md`](docs/UI_ICONS.md) · [`UI_IMAGES.md`](docs/UI_IMAGES.md) · [`UI_VISUAL_QA.md`](docs/UI_VISUAL_QA.md) | 화면(GUI) 설계 값·부품·상태·아이콘·사진 규칙·사진 검수 |
