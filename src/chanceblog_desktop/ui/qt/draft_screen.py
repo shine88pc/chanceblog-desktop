@@ -17,7 +17,7 @@ from . import components as UI
 from .bars import ActionBar
 from .blog_parts import NoticeBar
 from .candidate_parts import CardChip
-from .draft_parts import GarbageCard, InspectCard, TextArea, TitleInput, TitlePick, lines_box, set_copy_look
+from .draft_parts import GarbageCard, InspectCard, SavedRowCard, TextArea, TitleInput, TitlePick, lines_box, set_copy_look
 from .screens import page_head
 
 
@@ -34,6 +34,8 @@ class DraftsUi:
         self.back = self.apply = self.actions = self.action_bar = None
         self.side = False
         self.stops = []
+        self.saved_list = self.save_status = None                                 # 머리의 `저장한 초안` 단추 · 편집기 아래의 저장 상태 줄(D-361)
+        self.saved_rows = []                                                      # 저장한 초안 목록의 줄들(`SavedRowCard`)
         self.garbage = None                                                      # 글 모양 점검 카드(`draft_parts.GarbageCard`) — 항목별 무시 단추가 동적이라 Tab 순서를 다시 잇는다
         self.garbage_focus = False                                               # 검사 중 꺼 둔 `검사하기` 단추가 포커스를 쥐고 있었다 — 끝나면 돌려준다
 
@@ -56,6 +58,11 @@ def _head(shell, vm, ui, back=True):
         ui.back = UI.Button("ghost", vm["back"]["text"], accessible=vm["back"]["a11y"], focus_key="drf-back")
         ui.back.clicked.connect(lambda: shell.drf_to_topics())
         rights.append(ui.back)
+        if vm.get("saved_list"):                                                  # 저장 기능이 있으면 머리에서 저장한 초안 목록으로 갈 수 있다(고친 내용이 저장되지 않았으면 떠나기 확인창이 먼저)
+            ui.saved_list = UI.Button("ghost", vm["saved_list"]["text"], accessible=vm["saved_list"]["a11y"], focus_key="drf-saved-list")
+            ui.saved_list.setEnabled(vm["saved_list"]["enabled"])
+            ui.saved_list.clicked.connect(lambda: shell.drf_show_saved())
+            rights.append(ui.saved_list)
     return page_head(vm["title"], vm["sub"], rights)
 
 
@@ -71,6 +78,37 @@ def _copy_button(shell, ui, vm, size="sm"):
 
 
 # ---- 읽는 중·오류·거절·빈 화면 -----------------------------------------------------------------------------------------------------------------
+def _saved_card(shell, saved, ui):
+    """저장한 초안 목록 카드 — 읽는 중(자리 표시)·오류(다시 읽기)·비어 있음·줄들. 줄마다 `열기`·`지우기`(지우기는 확인창이 먼저). 위에 알림 한 줄(지웠다·열지 못했다)이 있을 수 있다. 목록은 읽기뿐이다."""
+    count = saved["count_text"]
+    card, inner = _section(f"{saved['title']} · {count}" if count else saved["title"])
+    card.setAccessibleName(saved["a11y"])
+    inner.addWidget(UI.label(saved["sub"], "caption", wrap=True))
+    if saved["notice"]:
+        inner.addWidget(NoticeBar(saved["notice"]["level"], saved["notice"]["text"]))
+    state = saved["state"]
+    if state == "loading":
+        inner.addWidget(UI.Skeleton(2, saved["loading_a11y"]))
+        inner.addWidget(UI.label(saved["loading"], "sub"))
+    elif state == "error":
+        inner.addWidget(UI.label(saved["error"]["text"], "body", wrap=True))
+        retry = UI.Button("secondary", saved["error"]["button"], "refresh", size="sm", accessible=saved["error"]["a11y"], focus_key="drf-saved-retry")
+        retry.clicked.connect(lambda: shell.drf_saved_retry())
+        inner.addWidget(retry, 0, Qt.AlignLeft)
+    elif not saved["rows"]:
+        inner.addWidget(UI.label(saved["empty"], "muted", wrap=True))
+    else:
+        if saved["unreadable_note"]:
+            inner.addWidget(UI.label(saved["unreadable_note"], "small", wrap=True))
+        for index, row in enumerate(saved["rows"]):
+            line = SavedRowCard(row, index)
+            line.opened.connect(shell.drf_saved_open)
+            line.deleted.connect(shell.drf_saved_delete)
+            ui.saved_rows.append(line)
+            inner.addWidget(line)
+    return card
+
+
 def _state_page(shell, vm):
     ui = DraftsUi()
     page = QWidget()
@@ -104,6 +142,8 @@ def _state_page(shell, vm):
         outer.addWidget(UI.StateCard("inbox", "slate", vm["notfound"]["title"], vm["notfound"]["desc"], vm["notfound"]["button"], lambda: shell.drf_to_topics()))
     else:
         outer.addWidget(UI.StateCard("draft", "blue", vm["empty"]["title"], "", vm["empty"]["button"], lambda: shell.drf_to_topics()))
+        if vm["empty"].get("saved"):
+            outer.addWidget(_saved_card(shell, vm["empty"]["saved"], ui))
     outer.addStretch(1)
     page.drf_ui = ui
     return page
@@ -147,6 +187,11 @@ def _body_card(shell, editor, ui):
     row.addWidget(ui.count, 1)
     row.addWidget(ui.edit)
     inner.addLayout(row)
+    if "save_text" in editor:                                                    # 저장 상태 — 글로 말한다(`● 저장 안 됨`·`✓ 저장됨 · 시각`·`● 저장한 뒤 고쳤어요`) 색만으로 전하지 않는다
+        ui.save_status = UI.label(editor["save_text"], "caption")
+        ui.save_status.set_tone(editor["save_tone"])
+        ui.save_status.setAccessibleName(editor["save_a11y"])
+        inner.addWidget(ui.save_status)
     return card
 
 
@@ -332,13 +377,15 @@ def _right(shell, side, ui):
 # ---- 아래 고정 행동 줄 --------------------------------------------------------------------------------------------------------------------------
 def _action_bar(shell, vm, ui):
     """공통 부품 `bars.ActionBar`(UI-C0 — 주요 1·보조 ≤3·폭이 모자라면 `더보기 ⋮` 로 접힘)를 쓴다. 단추를 누르면 `triggered(열쇠)` 가 셸의 `drf_action` 으로 간다."""
-    specs = [{"key": item["key"], "text": item["text"], "kind": {"title": "secondary", "body": "secondary", "all": "primary", "open": "tertiary"}[item["key"]]} for item in vm["buttons"]]
+    specs = [{"key": item["key"], "text": item["text"], "kind": {"save": "secondary", "title": "secondary", "body": "secondary", "all": "primary", "open": "tertiary"}[item["key"]]} for item in vm["buttons"]]
     bar = ActionBar(specs, accessible=vm["a11y"])
     bar.triggered.connect(shell.drf_action)
     ui.actions = {}
     for item, button in zip(vm["buttons"], bar.buttons, strict=True):
         bar.set_enabled(item["key"], item["enabled"], item["tip"])
-        if item["key"] != "open":
+        if item["key"] == "save":
+            button.setAccessibleName(item["a11y"])                               # 읽는 이름은 단축키까지(`초안 저장하기(Ctrl+S)`) — 보이는 글자는 `저장`
+        if item["key"] not in ("open", "save"):
             button.setProperty("base_text", item["a11y"])
             ui.copy[item["key"]] = button
             if item["copied"]:
@@ -401,11 +448,11 @@ def _normal_page(shell, vm):
 
 def _stops(ui):
     """Tab 정거장의 읽는 순서 — 뒤로 → 만드는 방법 → (펼쳤다면 그 안) → 제목 → 제목 후보 → 본문 → 오른쪽 칸(`검사하기` 다음에 글 모양 점검의 `무시` 단추들이 이어진다) → 아래 행동 줄."""
-    chain = [ui.back, ui.options_toggle]
+    chain = [ui.back, ui.saved_list, ui.options_toggle]
     chain += [ui.blog_chips.get(key) for key in ("naver_a", "naver_b")] + list(ui.type_chips.values()) + list(ui.fields.values()) + [ui.apply]
     chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, *(ui.garbage.stops() if ui.garbage is not None else []), ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button]
     chain += [ui.accordions[key].toggle for key in ("specific", "common")]
-    chain += [ui.actions[key] for key in ("title", "body", "all", "open")]
+    chain += [ui.actions[key] for key in ("save", "title", "body", "all", "open") if key in ui.actions]
     return [widget for widget in chain if widget is not None]
 
 
@@ -427,6 +474,23 @@ def refresh_editor_status(page, status):
     if ui is not None and ui.count is not None:
         ui.count.set_text(status["count_text"])
         ui.edit.set_text(status["edit_text"])
+        if ui.save_status is not None and "save_text" in status:
+            ui.save_status.set_text(status["save_text"])
+            ui.save_status.set_tone(status["save_tone"])
+            ui.save_status.setAccessibleName(status["save_a11y"])
+
+
+def refresh_save(page, vm):
+    """저장을 시작했거나 끝났을 때 — 저장 상태 줄과 `저장` 단추(켜짐·꺼짐·설명)만 그 자리에서 바꾼다(편집기를 다시 그리지 않는다 — 커서·한글 조합이 사라지지 않게)."""
+    ui = _ui(page)
+    if ui is None or vm is None:
+        return
+    if ui.save_status is not None:
+        ui.save_status.set_text(vm["text"])
+        ui.save_status.set_tone(vm["tone"])
+        ui.save_status.setAccessibleName(vm["a11y"])
+    if ui.action_bar is not None:
+        ui.action_bar.set_enabled("save", vm["button"]["enabled"], vm["button"]["tip"])
 
 
 def refresh_picks(page, picks):

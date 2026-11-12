@@ -171,7 +171,8 @@ class ListRow(QFrame):
 
 def draft_row(row):
     """작성 중 초안 한 줄 — 상태(`초안 생성됨`=정보 배지·`검토 필요`=경고 배지, 색과 글자)와 마지막으로 고친 때."""
-    badge = (("warning" if row["stage"] == "review" else "info"), row["stage_label"]) if row["stage_label"] else None
+    tone = "warning" if row["stage"] == "review" else "ok" if row["stage"] == "saved" else "info"          # 저장됨은 초록 배지 — 색과 함께 글자('저장됨')가 늘 있다
+    badge = (tone, row["stage_label"]) if row["stage_label"] else None
     return ListRow(row["title"], row["a11y"], badge, row["time"], row["sample_tag"])
 
 

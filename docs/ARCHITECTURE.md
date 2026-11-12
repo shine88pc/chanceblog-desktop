@@ -210,3 +210,21 @@ backups/
 **수정 라운드(D-460–D-466)에서 바뀐 흐름**: 백업은 보관함마다 메모리 연결에 사본을 만들어 `vacuum`(`_stage_sqlite`) → **메모리에서 훑기** → 이상 없을 때만 임시 폴더에 쓰기(`_write_sqlite`) → 쓴 파일 점검 순서이고 JSON·설정은 읽은 바이트를 먼저 훑은 뒤 쓴다. 임시 폴더의 이름 바꾸기(`_finish_folder`)와 제자리 바꿔 넣기(`_swap_in`)는 다른 프로그램이 잠깐 붙잡으면 `RETRY_WAIT` 초씩 `RETRY_TRIES` 번까지 다시 한다.
 다음 백업·복원은 잠금 안에서 낡은 임시 폴더를 먼저 치우고(`_sweep_locked`) 목록은 치울 흔적이 있을 때만 같은 일을 한다(`_sweep_if_stale`). 복원은 지금 데이터를 바꾸기 직전에 `backups/restore-in-progress.json` 표지를 쓰고 끝나면 지운다. 서비스 함수 둘이 더해졌다 — `interrupted_restore`(읽기)·`revert_interrupted_restore`(확인 표시 필요, 보통 복원으로 안전 사본을 되돌린다) — 그리고 목록에 `BackupList.interrupted` 가 생겼다.
 화면은 `InterruptedData`·`BackupsWriter.revert_interrupted`·`BackupController.interrupted_vm`·`start_revert`·카드 위쪽 안내 띠와 단추를 더했고 어댑터는 서비스 네 함수(`list_full_backups`·`create_full_backup`·`restore_full_backup`·`revert_interrupted_restore`)만 부른다. 시험 모듈 둘이 더해졌다 — `test_service_backup_interrupt`(곳곳에서 죽이기·낡은 것 치우기·복원 표지)·`test_service_backup_gaps`(이름 바꾸기 다시 하기·WAL·정리 못 한 저장·목록 모양·변이 여섯).
+
+## 13. 저장한 초안(LOCALSAVE, D-360 에서 D-374 까지)
+
+초안 작성 화면의 `저장`·`저장한 초안`(목록·열기·지우기)을 받치는 층 — **새 저장소·새 표·새 파일이 없다**(같은 `chanceblog.db` 의 `drafts` 표 재사용, 구조 판 2 그대로).
+
+| 모듈 | 하는 일 |
+|---|---|
+| `content/saved_draft.py` | 초안 한 편의 기록 모양(`SavedDraft`·`BaseDraft`) — 순수 파이썬(파일·시계·무작위·네트워크 없음). 글칸은 글자 그대로 `ensure_ascii` JSON 으로 오가고, 읽을 때는 모든 칸의 종류·길이를 엄격하게 본다(`DRAFT_CORRUPT`·`DRAFT_LIMIT`). 번호 `dd-` + 지문 20자 |
+| `content/store.py` | (더한 것) `Store.update_draft` — 한 행을 **한 쓰기 잠금 안에서** 읽고(그 행의 글·머리말로 시작하는 행의 수) 결정하고 쓴다(D-369). 원래 있던 `save_draft`·`load_draft`·`drafts`·`discard_draft` 는 그대로이고 구조 판 변경 없음 |
+| `service/draft_store.py` | `save_draft`(저장 직전 `security/scan.py` 검사 → `Store.update_draft` 한 트랜잭션 — 확인·한도·쓰기가 같은 잠금 안)·`list_drafts`·`load_draft`·`open_saved`(블로그 이름·글쓰기 주소·이어진 후보 상태까지)·`delete_draft`(확인 + `backups/before-delete` 사본). 쓰는 함수는 둘뿐(시험이 못박는다). 읽는 길은 읽기 전용으로 열되 쓰다 죽어 저널이 남은 보관함만 한 번 보통 열기로 정리한 뒤 읽는다(D-370) |
+| `service/draft_engine.py` | (더한 것) `naver_blog_url`·`channel_address`·`blog_context`·`EngineBody.address` — `네이버 글쓰기 열기` 주소를 옛 프로필에 없을 때만 채널 프로필의 `블로그 ID 또는 주소` 에서 얻는다(D-362) |
+| `security/refuse.py` | (더한 것 — 보안 수정 묶음 위에 합친 가지에서) `store_findings` 가 저장한 초안(`dd-` 번호)을 `SavedDraft.from_text` 로 풀어 `text_fields()`·`base_fields()` 를 칸별로 훑는다 — 백업 전 검사가 이스케이프된 JSON 을 날것으로 훑어 놓치던 자리를 막는다(D-373). 읽기뿐 |
+| `ui/core/drafts.py` | 공급자 모양에 저장 넷(`save_draft`·`list_saved`·`open_saved`·`delete_saved`, `saving` 이 참인 공급자만)과 값(`SaveRequest`·`SavedRow`·`SavedListing`·`OpenedResult`·`RestoredBody`)·`save_failure`·가짜 공급자의 메모리 저장소(기본은 꺼짐) |
+| `ui/core/drafts_view.py` | 컨트롤러: 저장 상태(`save_state`)·`has_unsaved` 기준(저장한 판이 있으면 그 판)·세 갈래 확인창·목록·열기·지우기(확인이 먼저)·저장 작업은 한 번에 하나(`STORE_KEY`) |
+| `ui/drafts_adapter.py` | 실제 공급자 — 서비스 네 함수를 화면이 아는 모양으로 맞춘다(읽기 둘·쓰기 둘, 직접 파일을 쓰지 않는다) |
+| `ui/qt/` | `draft_screen.py`(저장 상태 줄·목록 카드·머리 단추)·`draft_parts.py`(`SavedRowCard`)·`shell.py`(`drf_save`·`show_choice_dialog`·Ctrl+S·`closeEvent`) |
+
+의존 방향은 그대로다 — 화면 부품은 서비스를 모르고(컨트롤러·공급자가 부른다), 서비스는 화면을 모른다. 홈은 `ui/adapters.py` 가 저장한 초안의 목록만 읽어(읽기뿐) '작성 중인 초안' 구역의 앞에 두고 머리 개수를 낸다(D-363).

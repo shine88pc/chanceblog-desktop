@@ -8,6 +8,7 @@ from __future__ import annotations
 DRAFT_T = {
     # 화면 머리·빈 화면·거절·오류
     "drf_title": "초안 작성", "drf_sub": "후보 하나로 AI 없이 초안을 만들어요. 확인하고 고친 뒤 항목별로 복사해요. 저장은 하지 않아요.",
+    "drf_sub_save": "후보 하나로 AI 없이 초안을 만들어요. 확인하고 고친 뒤 항목별로 복사해요. ‘저장’ 을 누르면 이 PC 에 저장해 두고 나중에 이어서 고칠 수 있어요.",
     "drf_back": "← 주제 후보", "drf_back_a11y": "주제 후보로 돌아가기", "drf_to_topics": "주제 후보로 가기",
     "drf_sample_tip": "화면에 보이는 후보·블로그 이름·글은 모두 예시예요. 실제 후보가 아니에요.",
     "drf_sample_dialog_body": "지금 보이는 후보·블로그 이름·초안은 모두 화면을 확인하려고 만든 예시예요. 실제 후보나 실제 블로그가 아니에요. 실제 후보로 초안을 만들면 이 표시가 사라져요.",
@@ -71,7 +72,8 @@ DRAFT_T = {
     "drf_copy_title": "제목 복사", "drf_copy_body": "본문 복사", "drf_copy_all": "전체 복사", "drf_copied_title": "✓ 제목 복사됨", "drf_copied_body": "✓ 본문 복사됨", "drf_copied_all": "✓ 전체 복사됨",
     "drf_copy_tip_title": "제목을 복사해요. 고친 그대로 복사돼요.", "drf_copy_tip_body": "본문을 복사해요. 고친 그대로 복사돼요.", "drf_copy_tip_all": "제목과 본문을 이어서 복사해요.",
     "drf_open_naver": "네이버 글쓰기 열기", "drf_open_tip": "브라우저로 글쓰기 주소만 열어요. 로그인·입력·발행은 하지 않아요.",
-    "drf_open_why_profile": "블로그 관리에서 이 블로그의 주소를 정하면 열 수 있어요.", "drf_open_why_wait": "초안을 만든 뒤에 열 수 있어요.", "drf_actions_a11y": "복사와 열기 행동 줄",
+    "drf_open_why_profile": "블로그 관리에서 이 블로그의 ‘블로그 ID 또는 주소’ 를 적으면 열 수 있어요.",
+    "drf_open_why_unusable": "적어 둔 블로그 주소가 네이버 블로그 주소(blog.naver.com 의 블로그 아이디)가 아니라서 열지 않아요. 블로그 관리에서 확인해 주세요.", "drf_open_why_wait": "초안을 만든 뒤에 열 수 있어요.", "drf_actions_a11y": "복사와 열기 행동 줄",
     "drf_copy_failed": "복사하지 못했어요. 다시 시도해 주세요.", "drf_open_failed": "주소를 열지 못했어요.",
     # 확인창들
     "drf_cancel": "취소", "drf_gate_title": "확인 권장 {n}건을 읽었나요?", "drf_gate_checks": "이 글에만 해당하는 확인 권장 {n}건", "drf_gate_domain": "분야 확인 {n}건",
@@ -88,7 +90,7 @@ DRAFT_T = {
     "drf_regen_title": "고친 내용이 사라져요 — 다시 만들까요?", "drf_regen_body": "새 초안을 만들면 지금 고친 제목·본문이 사라져요. 적어 둔 선택 입력은 새 초안에 들어가요.", "drf_regen_ok": "다시 만들기",
     "drf_pick_title": "제목을 바꿀까요?", "drf_pick_body": "고친 제목이 사라지고 고른 제목 후보로 바뀌어요.", "drf_pick_ok": "제목 바꾸기",
     # 후보 상세의 아래 고정 행동 줄
-    "drf_make": "이 주제로 만들기", "drf_make_a11y": "이 주제로 초안 만들기", "drf_make_tip": "이 후보로 AI 없이 초안을 만들어요. 아무것도 저장하지 않아요.",
+    "drf_make": "이 주제로 만들기", "drf_make_a11y": "이 주제로 초안 만들기", "drf_make_tip": "이 후보로 AI 없이 초안을 만들어요. 만든 초안은 초안 화면에서 ‘저장’ 을 눌러야 저장돼요.",
     "drf_make_why_stop": "자동 초안 중지로 표시된 후보라 초안을 만들지 않아요.", "drf_make_why_channel": "지금은 네이버 블로그 후보만 초안을 만들 수 있어요.", "drf_make_why_wait": "후보를 만드는 중에는 쓸 수 없어요.",
     "drf_detail_actions_a11y": "후보 행동 줄",
     # 글 모양 점검 카드(N-2) — 경고만 한다: 글을 고치거나 지우지 않고 복사를 막지도 않아요. 위치와 이유만 알려 줘요(`ui/core/draft_garbage.py`)
@@ -124,4 +126,43 @@ DRAFT_T = {
     "drf_g_n_200b": "폭 없는 공백", "drf_g_n_200c": "폭 없는 비이음", "drf_g_n_200d": "폭 없는 이음", "drf_g_n_200e": "왼쪽에서 오른쪽 표시", "drf_g_n_200f": "오른쪽에서 왼쪽 표시", "drf_g_n_2060": "단어 이음",
     "drf_g_n_2061": "보이지 않는 연산 기호", "drf_g_n_206a": "쓰지 않는 서식 글자", "drf_g_n_3164": "한글 채움 글자", "drf_g_n_fe00": "변형 선택자", "drf_g_n_feff": "글머리 표시", "drf_g_n_ffa0": "반각 한글 채움",
     "drf_g_n_e0001": "태그 시작", "drf_g_n_e0020": "태그 글자", "drf_g_n_other": "보이지 않는 글자",
+    # ---- 저장한 초안(D-361) — `저장` 단추·저장 상태·목록·열기·지우기. 저장은 사용자가 눌렀을 때뿐이고 키·토큰처럼 보이는 글이 있으면 저장하지 않아요(위치와 종류만 알려요) ----
+    "drf_save": "저장", "drf_save_a11y": "초안 저장하기(Ctrl+S)", "drf_save_tip": "이 초안을 이 PC 에 저장해요. ‘저장한 초안’ 에서 다시 열어 이어서 고칠 수 있어요. Ctrl+S 로도 저장해요.",
+    "drf_save_why_making": "새 초안을 만드는 동안에는 저장할 수 없어요.", "drf_save_why_busy": "다른 저장 작업이 끝나면 저장할 수 있어요.",
+    "drf_state_unsaved": "● 저장 안 됨", "drf_state_saved": "✓ 저장됨 · {when}", "drf_state_changed": "● 저장한 뒤 고쳤어요", "drf_state_saving": "저장하는 중…",
+    "drf_state_a11y_unsaved": "아직 저장하지 않았어요", "drf_state_a11y_saved": "저장했어요, {when}", "drf_state_a11y_changed": "저장한 뒤 고친 곳이 있어요", "drf_state_a11y_saving": "저장하는 중이에요",
+    "drf_saved_notice": "초안을 저장했어요 · {when}",
+    # 저장하지 못했을 때 — 복사·편집은 그대로 쓸 수 있어요. 키·토큰 모양은 위치와 종류만 알려요
+    "drf_savefail_io": "초안을 저장하지 못했어요. 디스크 공간이나 파일 권한을 확인하고 다시 저장해 주세요. 복사와 편집은 그대로 쓸 수 있어요.",
+    "drf_savefail_corrupt": "글 보관함 파일이 깨져 있어서 저장하지 못했어요. 파일은 고치거나 지우지 않았어요. 복사와 편집은 그대로 쓸 수 있어요.",
+    "drf_savefail_locked": "글 보관함을 다른 곳에서 쓰고 있어서 저장하지 못했어요. 잠시 뒤에 다시 저장해 주세요. 복사와 편집은 그대로 쓸 수 있어요.",
+    "drf_savefail_record": "이 저장한 초안의 기록 하나가 깨져 있어서 저장하지 못했어요. 기록은 고치거나 지우지 않았어요 — ‘저장한 초안’ 에서 지울 수 있어요. 지금 글은 먼저 복사해 두세요. 복사와 편집은 그대로 쓸 수 있어요.",
+    "drf_savefail_newer": "더 새로운 프로그램이 만든 글 보관함이라 저장하지 못했어요. 복사와 편집은 그대로 쓸 수 있어요.",
+    "drf_savefail_limit": "저장 한도를 넘어서 저장하지 못했어요 — {reason}. 글을 줄이거나 쓰지 않는 저장한 초안을 지운 뒤 다시 저장해 주세요.",
+    "drf_savefail_conflict": "다른 곳에서 이 초안을 더 최근에 저장해서 덮어쓰지 않았어요. ‘저장한 초안’ 에서 최신 글을 열어 확인해 주세요. 지금 글이 필요하면 먼저 복사해 두세요.",
+    "drf_savefail_notfound": "저장한 초안을 찾지 못했어요. 이미 지웠을 수 있어요.", "drf_savefail_invalid": "이 초안의 글을 저장할 수 없어요 — 눈에 보이지 않는 이상한 글자가 섞여 있을 수 있어요.",
+    "drf_savefail_other": "초안을 저장하지 못했어요. 잠시 뒤에 다시 시도해 주세요. 복사와 편집은 그대로 쓸 수 있어요.",
+    "drf_savefail_secret_title": "저장하지 않았어요", "drf_savefail_secret_head": "키나 토큰처럼 보이는 글이 있어서 초안을 저장하지 않았어요. 찾은 글은 다시 보이지 않고 위치와 종류만 알려 드려요.", "drf_savefail_secret_ok": "확인",
+    # 저장한 초안 목록·열기·지우기
+    "drf_saved_list_btn": "저장한 초안", "drf_saved_list_btn_a11y": "저장한 초안 목록 보기",
+    "drf_saved_title": "저장한 초안", "drf_saved_count": "{n}편", "drf_saved_sub": "이 PC 에 저장한 초안이에요. 열어서 이어서 고칠 수 있어요.", "drf_saved_a11y": "저장한 초안 목록",
+    "drf_saved_loading": "저장한 초안을 읽는 중이에요…", "drf_saved_loading_a11y": "저장한 초안을 읽는 중", "drf_saved_empty": "저장한 초안이 아직 없어요. 초안을 만든 뒤 ‘저장’ 을 눌러 보세요.",
+    "drf_saved_error": "저장한 초안을 읽지 못했어요. 파일은 고치거나 지우지 않았어요. 잠시 뒤에 다시 읽어 주세요.", "drf_saved_retry": "다시 읽기", "drf_saved_retry_a11y": "저장한 초안 다시 읽기",
+    "drf_saved_open": "열기", "drf_saved_open_a11y": "‘{title}’ 초안 열기", "drf_saved_delete": "지우기", "drf_saved_delete_a11y": "‘{title}’ 저장한 초안 지우기",
+    "drf_saved_row_meta": "후보: {topic} · {blog} · {when} · 본문 {chars}자", "drf_saved_row_a11y": "{title}, {meta}", "drf_saved_no_title": "(제목 없음)", "drf_saved_no_topic": "이어진 후보 없음",
+    "drf_saved_blog_naver_a": "네이버 A", "drf_saved_blog_naver_b": "네이버 B", "drf_saved_blog_none": "블로그 미정",
+    "drf_saved_unreadable_row": "읽을 수 없는 초안 · {number}", "drf_saved_unreadable_a11y": "읽을 수 없는 저장한 초안 {number} 지우기", "drf_saved_unreadable_note": "읽을 수 없는 초안이 {n}개 있어요. 지울 수 있고, 지우기 전 상태는 백업해 둬요.",
+    "drf_saved_opening": "저장한 초안을 여는 중이에요…", "drf_open_nocandidate": "이 초안에 이어진 후보를 찾지 못했어요. 글은 그대로 열었고, 후보가 없어서 ‘다시 만들기’ 는 쓸 수 없어요.",
+    "drf_open_context_problem": "블로그 이름과 글쓰기 주소는 읽지 못했어요(설정 파일 문제). 글은 그대로 열었어요.",
+    "drf_openfail_notfound": "저장한 초안을 찾지 못했어요. 목록을 다시 읽었어요.", "drf_openfail_corrupt": "이 저장한 초안은 읽을 수 없어요. 파일은 고치거나 지우지 않았어요. 목록에서 지울 수 있어요.",
+    "drf_openfail_other": "저장한 초안을 열지 못했어요. 잠시 뒤에 다시 시도해 주세요.",
+    "drf_delete_title": "저장한 초안을 지울까요?", "drf_delete_body": "‘{title}’ 을 지워요. 지우기 직전 상태를 백업해 두지만, 되돌리려면 백업에서 복구해야 해요.", "drf_delete_ok": "지우기",
+    "drf_delete_unreadable_body": "읽을 수 없는 초안 {number} 을 지워요. 지우기 직전 상태를 백업해 둬요.", "drf_deleted_notice": "저장한 초안을 지웠어요. 지우기 직전 상태는 백업해 두었어요.",
+    "drf_deletefail": "저장한 초안을 지우지 못했어요. 아무것도 지우지 않았어요. 디스크 공간이나 파일 권한을 확인하고 다시 시도해 주세요.",
+    # 떠나기·후보 바꾸기·앱 닫기 앞의 세 갈래 확인창 — 저장 / 저장 안 하고 나가기 / 계속 고치기
+    "drf_leave3_title": "저장하지 않은 내용이 있어요", "drf_leave3_body": "이 초안에 고친 내용이 저장되지 않았어요. 저장하고 이동할까요?",
+    "drf_close3_body": "이 초안에 고친 내용이 저장되지 않았어요. 저장하고 앱을 닫을까요?",
+    "drf_choice_save": "저장", "drf_choice_stay": "계속 고치기",
+    "drf_choice_discard_leave": "저장 안 하고 나가기", "drf_choice_discard_close": "저장 안 하고 닫기",
+    "drf_savefail_leave_title": "저장하지 못했어요", "drf_savefail_leave_tail": "그래도 나가면 고친 내용이 사라져요. 계속 고치면서 다시 저장할 수도 있어요.",
 }

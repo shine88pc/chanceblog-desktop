@@ -57,6 +57,7 @@ HOME_LIMIT = 5                                 # 홈의 구역마다 최대 5개
 HOME_CHANNELS = ("A", "B")                     # 홈이 읽는 채널 — 네이버 A·B(코드 안의 채널 이름은 어댑터만 안다)
 INTERESTS = ("rising", "flat", "falling")      # 관심도(최근 상대값의 방향) — 영문 값은 내부 이름이고 화면은 문구표로만 말한다. 모르면 None(관심도 데이터 부족)
 STAGES = ("generated", "review")               # 작성 중 초안의 단계 — 초안 생성됨 · 검토 필요(둘 다 승인 전)
+SAVED_STAGE = "saved"                          # 저장됨 — 초안 작성 화면에서 `저장` 한 초안(D-363). 승인 전 단계 표(`STAGES`)와 따로 둔다(옛 글 목록의 단계가 아니다)
 NO_STORE = ("missing", "old")                  # 주제 엔진 보관함이 아직 없다 · 옛 구조라 읽지 않았다 — 읽기만 하는 화면이라 만들지도 올리지도 않는다
 
 
@@ -110,6 +111,7 @@ class ListRead:
     rows: tuple = ()                  # DraftRow 또는 RecentRow — 많아야 `HOME_LIMIT` 개
     skipped: int = 0                  # 읽지 못해 건너뛴 글 수
     failure: object = None            # failed 일 때 ServiceFailure
+    total: object = None              # 줄로 다 보이지 않아도 센 전체 수(작성 중 초안의 머리 개수 — 모르면 None = 개수를 보이지 않는다)
 
 
 @dataclass(frozen=True)

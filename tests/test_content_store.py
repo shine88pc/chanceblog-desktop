@@ -356,6 +356,8 @@ class SaveLoadTest(StoreCase):
                 self.refuses("CONTENT_INVALID", store.snapshot, bad, 1)
             with self.subTest(call="save_draft", bad=bad):
                 self.refuses("CONTENT_INVALID", store.save_draft, bad, "글")
+            with self.subTest(call="update_draft", bad=bad):
+                self.refuses("CONTENT_INVALID", store.update_draft, bad, lambda stored, count: "글")
         bad_project = make()
         bad_project.project_id = "../x"
         self.refuses("CONTENT_INVALID", store.save, bad_project)
@@ -491,6 +493,76 @@ class DraftTest(StoreCase):
         for bad in (None, 5, b"bytes", ["목록"]):
             self.refuses("CONTENT_INVALID", store.save_draft, "p1", bad)
         self.assertEqual(len(store.load_draft("p1").text), MAX_DRAFT_CHARS)
+
+    def test_update_draft_gives_the_decision_the_current_text_and_the_prefix_count_and_writes_what_it_returns(self):
+        """`update_draft` 는 한 쓰기 잠금 안에서 읽고(그 행의 글 또는 None·번호가 머리말로 시작하는 행의 수) 결정하고 쓴다(D-369)."""
+        store = self.open()
+        seen = []
+
+        def decide(stored, count):
+            seen.append((stored, count))
+            return f"글 {len(seen)}"
+
+        self.assertEqual(store.update_draft("dd-a", decide, prefix="dd-", now=NOW), "글 1")
+        store.save_draft("p1", "머리말이 다른 초안", now=NOW)
+        self.assertEqual(store.update_draft("dd-b", decide, prefix="dd-", now=T2), "글 2")
+        self.assertEqual(store.update_draft("dd-a", decide, prefix="dd-", now=T3), "글 3")
+        self.assertEqual(seen, [(None, 0), (None, 1), ("글 1", 2)])
+        self.assertEqual([(item.project_id, item.text, item.saved_at) for item in sorted(store.drafts(), key=lambda item: item.project_id)],
+                         [("dd-a", "글 3", T3), ("dd-b", "글 2", T2), ("p1", "머리말이 다른 초안", NOW)])
+
+    def test_update_draft_counts_by_the_literal_prefix_and_without_a_prefix_counts_every_row(self):
+        store = self.open()
+        for name in ("a_1", "a_2", "ab1", "axb", "dd-1"):
+            store.save_draft(name, "글", now=NOW)
+        counts = []
+        store.update_draft("zz", lambda stored, count: counts.append(count), prefix="a_")
+        store.update_draft("zz", lambda stored, count: counts.append(count))
+        store.update_draft("zz", lambda stored, count: counts.append(count), prefix="dd-")
+        self.assertEqual(counts, [2, 5, 1], "머리말은 글자 그대로 센다(밑줄이 아무 글자와 맞는 무늬가 아니다)")
+
+    def test_update_draft_writes_nothing_when_the_decision_is_none(self):
+        store = self.open()
+        store.save_draft("dd-a", "원래 글", now=NOW)
+        rows = self.raw().execute("SELECT project_id, text, saved_at FROM drafts").fetchall()
+        self.assertIsNone(store.update_draft("dd-a", lambda stored, count: None, prefix="dd-", now=T2))
+        self.assertIsNone(store.update_draft("dd-new", lambda stored, count: None, prefix="dd-", now=T2))
+        self.assertEqual(self.raw().execute("SELECT project_id, text, saved_at FROM drafts").fetchall(), rows)
+
+    def test_update_draft_rolls_back_when_the_decision_raises_and_the_store_stays_usable(self):
+        store = self.open()
+        store.save_draft("dd-a", "원래 글", now=NOW)
+        for error in (AppError("STORE_CONFLICT", {"항목": "초안"}), RuntimeError("결정 도중 실패")):
+            with self.subTest(error=type(error).__name__):
+                def decide(stored, count, error=error):
+                    raise error
+
+                with self.assertRaises(type(error)) as caught:
+                    store.update_draft("dd-a", decide, prefix="dd-", now=T2)
+                self.assertIs(caught.exception, error, "오류를 그대로 낸다")
+                self.assertEqual(store.load_draft("dd-a").text, "원래 글")
+        store.update_draft("dd-a", lambda stored, count: "그 뒤의 글", prefix="dd-", now=T3)
+        self.assertEqual(store.load_draft("dd-a").text, "그 뒤의 글", "되돌린 뒤에도 쓸 수 있다(잠금이 남지 않았다)")
+
+    def test_update_draft_refuses_a_result_that_is_not_text_or_too_big_before_writing(self):
+        store = self.open()
+        store.save_draft("dd-a", "원래 글", now=NOW)
+        for bad in (5, b"bytes", ["목록"], "가" * (MAX_DRAFT_CHARS + 1)):
+            with self.subTest(bad=type(bad).__name__):
+                self.refuses("CONTENT_INVALID", store.update_draft, "dd-a", lambda stored, count, bad=bad: bad, prefix="dd-")
+        self.assertEqual(store.load_draft("dd-a").text, "원래 글")
+        store.update_draft("dd-a", lambda stored, count: "가" * MAX_DRAFT_CHARS, prefix="dd-")
+        self.assertEqual(len(store.load_draft("dd-a").text), MAX_DRAFT_CHARS, "한도 바로 안은 받는다")
+
+    def test_update_draft_refuses_a_prefix_that_is_not_text_and_a_read_only_store(self):
+        store = self.open()
+        store.save_draft("dd-a", "글", now=NOW)
+        self.refuses("CONTENT_INVALID", store.update_draft, "dd-a", lambda stored, count: "x", prefix=5)
+        readonly = self.open(migrate=False)
+        with self.assertRaises(AppError) as caught:
+            readonly.update_draft("dd-a", lambda stored, count: "x", prefix="dd-")
+        self.assertEqual(caught.exception.code, "UNEXPECTED_ERROR")
+        self.assertEqual(store.load_draft("dd-a").text, "글")
 
     def test_the_draft_time_defaults_to_now(self):
         store = self.open()
@@ -634,6 +706,47 @@ class LockAndThreadTest(StoreCase):
         self.assertEqual([item.project_id for item in store.list()], ["p1"])
         store.save(make("p2"))
         self.assertEqual([item.project_id for item in store.list()], ["p1", "p2"])
+
+    def test_update_draft_keeps_the_write_lock_from_the_read_until_the_commit(self):
+        """결정하는 동안(읽은 뒤 쓰기 전) 다른 연결의 쓰기는 들어오지 못한다 — 읽고 따로 쓰던 틈이 있으면 같은 초안의 두 저장이 서로의 변경을 덮어쓴다(D-369)."""
+        store = self.open()
+        store.save_draft("dd-a", "처음", now=NOW)
+        other = self.open(busy_seconds=0.05)
+        inside = []
+
+        def decide(stored, count):
+            inside.append(stored)
+            self.refuses("STORE_LOCKED", other.save_draft, "dd-a", "끼어든 저장", now=T2)
+            self.refuses("STORE_LOCKED", other.update_draft, "dd-a", lambda s, c: "끼어든 저장 둘", prefix="dd-")
+            return "내 저장"
+
+        store.update_draft("dd-a", decide, prefix="dd-", now=T3)
+        self.assertEqual(inside, ["처음"])
+        self.assertEqual(store.load_draft("dd-a").text, "내 저장")
+        other.save_draft("dd-a", "그 뒤의 저장", now=T3)
+        self.assertEqual(store.load_draft("dd-a").text, "그 뒤의 저장", "끝난 뒤에는 다른 연결도 쓸 수 있다")
+
+    def test_update_draft_loses_no_update_when_several_connections_add_one_each_time(self):
+        """읽어서 하나 더하고 쓰는 일을 세 연결이 25번씩 — 한 트랜잭션이면 하나도 사라지지 않아 75 가 된다."""
+        first = self.open()
+        first.save_draft("dd-n", "0", now=NOW)
+        stores = [first, self.open(), self.open()]
+        errors = []
+
+        def work(store):
+            try:
+                for _ in range(25):
+                    store.update_draft("dd-n", lambda stored, count: str(int(stored) + 1), prefix="dd-")
+            except Exception as error:      # noqa: BLE001 — 시험이 실패를 모아서 본다
+                errors.append(error)
+
+        threads = [threading.Thread(target=work, args=(store,)) for store in stores]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(120)
+        self.assertEqual(errors, [])
+        self.assertEqual(first.load_draft("dd-n").text, "75")
 
     def test_several_threads_can_share_one_store(self):
         store = self.open()

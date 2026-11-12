@@ -19,6 +19,7 @@ from ..core.backup_view import WRITE_KEY as BACKUPS_WRITE_KEY
 from ..core.blogs_view import WRITE_KEY as BLOGS_WRITE_KEY
 from ..core.candidates import MakePreview
 from ..core.candidates_view import WRITE_KEY as CANDIDATES_WRITE_KEY
+from ..core.drafts_view import STORE_KEY
 from ..core.seeds_view import WRITE_KEY as SEEDS_WRITE_KEY
 from ..core.keys_view import WRITE_KEY as KEYS_WRITE_KEY
 from ..core.clock import SystemClock
@@ -39,6 +40,7 @@ from .workers import JobBridge
 
 
 RELAYOUT_AFTER_RESIZE_MS = 30                                                     # 창 크기가 바뀐 뒤 배치를 다시 계산하기까지 기다리는 시간 — 끌어 바꾸는 동안 계속 미루어진다
+CHOICE_DIALOG_WIDTH = 560                                                            # 세 갈래 확인창의 폭(논리 픽셀) — 단추 셋(`저장`·`저장 안 하고 나가기`·`계속 고치기`)이 한 줄에 들어간다
 WRITE_CLOSE_WAIT = 10.0                                                           # 창을 닫을 때 저장·복제·삭제가 돌고 있으면 끝나기를 기다리는 최대 시간(초) — 쓰기는 중간에 끊을 수 없다
 IMAGE_FILTER = "(*.png *.jpg *.jpeg *.webp)"                                       # 이미지 고르기 대화상자의 파일 종류(JPG·JPEG·PNG·WebP)
 
@@ -178,6 +180,11 @@ class AppShell(QMainWindow):
         self.drafts_bridge.loaded.connect(self._on_drafts_made)
         self.drafts_bridge.failed.connect(self._on_drafts_failed)
         self.drafts_bridge.cancelled.connect(self._on_drafts_cancelled)
+        self.store_bridge = JobBridge(self)                                             # 저장한 초안(D-361)의 저장·목록·열기·지우기 작업의 다리 — 사용자가 눌렀을 때만 시작하고 한 번에 하나만 돈다
+        self.store_bridge.loaded.connect(self._on_store_done)
+        self.store_bridge.failed.connect(self._on_store_failed)
+        self.store_bridge.cancelled.connect(self._on_store_cancelled)
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.drf_save_shortcut)
         self.garbage_bridge = JobBridge(self)                                           # 글 모양 점검(N-2)의 다리 — 작업 스레드가 돌려준 결과 값(걸린 글 없음)을 화면 스레드로 넘긴다. 초안 만들기와 따로 돈다
         self.garbage_bridge.loaded.connect(self._drf_garbage_arrived)
         self.garbage_bridge.failed.connect(self._drf_garbage_failed)
@@ -406,6 +413,36 @@ class AppShell(QMainWindow):
         first.setFocus(Qt.OtherFocusReason)
         self.dialog_default = first
 
+    def show_choice_dialog(self, title, body, choices, *, first="", on_cancel=None):
+        """여러 갈래 확인창(떠나기·앱 닫기 앞의 `저장 / 저장 안 하고 나가기 / 계속 고치기`) — `choices` 는 `(열쇠, 글, 종류, 함수)` 의 나열이고 종류는 `primary`·`secondary`·`danger` 다. 단추를 누르면 창이 닫히고 그 단추의 함수가 불린다
+        (함수가 None 인 단추 — `계속 고치기` — 는 취소·Esc 와 같아 `on_cancel` 이 불린다). 처음 포커스는 `first` 열쇠의 단추다. 열린 확인창을 바꿀 때 옛 `on_cancel` 을 먼저 부르는 규칙은 `show_dialog` 와 같다."""
+        previous, self._dialog_on_cancel = self._dialog_on_cancel, None
+        if previous is not None and previous != on_cancel:
+            previous()
+        self.dialog.clear()
+        self.dialog.setAccessibleName(title)
+        self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
+        self.dialog.layout_.addWidget(UI.label(body, "body", wrap=True))
+        row = QHBoxLayout()
+        row.addStretch(1)
+        buttons = {}
+        for key, label, kind, handler in choices:
+            button = UI.Button(kind, label, focus_key="dialog-" + key)
+            if handler is None:
+                button.clicked.connect(lambda _=False: self.close_dialog())
+            else:
+                button.clicked.connect(lambda _=False, handler=handler: (self.close_dialog(confirmed=True), handler()))
+            buttons[key] = button
+            row.addWidget(button)
+        self._dialog_on_cancel = on_cancel
+        self.dialog.layout_.addLayout(row)
+        self._dialog_return = QApplication.focusWidget()
+        self.dialog.present(width=CHOICE_DIALOG_WIDTH)
+        self._trap_focus(True, self.dialog)
+        target = buttons.get(first) or next(iter(buttons.values()))
+        target.setFocus(Qt.OtherFocusReason)
+        self.dialog_default = target
+
     def close_dialog(self, confirmed=False):
         if not self.dialog.is_open:
             return
@@ -464,7 +501,11 @@ class AppShell(QMainWindow):
         dialog = None if force else self.state.leave_guard(key)
         if dialog is not None:
             self._sync_nav_checks()
-            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=lambda: self.go(key, force=True), safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+            leave_now = lambda: self.go(key, force=True)                              # 두 갈래의 `그래도 이동` 과 세 갈래의 `저장 안 하고 나가기`·`저장` 뒤의 이동이 함께 쓰는 한 곳
+            if "choices" in dialog:                                                    # 저장 기능이 있으면 세 갈래(저장 / 저장 안 하고 나가기 / 계속 고치기)
+                self._show_leave_choices(dialog, ("leave", leave_now))
+            else:
+                self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=leave_now, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
             return
         if self.state.nav(key, force=force):
             self.close_drawer_silently()
@@ -478,6 +519,8 @@ class AppShell(QMainWindow):
                 self.state.seeds.start_load(**self.seeds_bridge.callbacks())
             elif key == "topics":                                                     # 주제 후보 화면도 열 때마다 읽는다(읽기만 — 열기만으로는 아무것도 만들지 않는다). 만드는 중이면 읽지 않는다
                 self.state.candidates.start_load(**self.cand_bridge.callbacks())
+            elif key == "drafts" and self.state.drafts.state == "empty":              # 초안 작성 화면을 후보 없이 열면 저장한 초안 목록을 읽는다(읽기만 — 저장 기능이 있는 공급자만)
+                self._start_saved_list(render=False)
             self.render()
 
     def close_drawer_silently(self):
@@ -1230,7 +1273,7 @@ class AppShell(QMainWindow):
         page = self.screen_widget
         return page if self.state.page == "drafts" and page is not None and hasattr(page, "drf_ui") else None
 
-    def _live_drafts(self, *, picks=False, status=False, inspect=False, options=False, garbage=False):
+    def _live_drafts(self, *, picks=False, status=False, inspect=False, options=False, garbage=False, save=False):
         """글을 고친 뒤 — 화면을 다시 그리지 않고 글자 수·고친 정도·제목 후보 표시·검사 카드·글 모양 점검 카드(`본문이 변경됨`)·만드는 방법 칸만 그 자리에서 바꾼다(입력 중이던 커서·한글 조합이 사라지지 않게)."""
         page = self._drafts_screen()
         if page is None:
@@ -1247,6 +1290,8 @@ class AppShell(QMainWindow):
             ds.refresh_garbage(page, controller.garbage_card())
         if options:
             ds.refresh_options(page, controller.options_vm())
+        if save:
+            ds.refresh_save(page, controller.save_vm())
 
     def drf_title_edited(self, text):
         self.state.drafts.set_title(text)
@@ -1389,6 +1434,8 @@ class AppShell(QMainWindow):
         """아래 고정 행동 줄의 단추(`더보기 ⋮` 로 접힌 것 포함) — `네이버 글쓰기 열기` 는 주소만 열고 나머지는 복사다."""
         if key == "open":
             self.drf_open()
+        elif key == "save":
+            self.drf_save()
         else:
             self.drf_copy(key)
 
@@ -1448,6 +1495,167 @@ class AppShell(QMainWindow):
             opened = False
         if not opened:
             self.notify(T["drf_open_failed"])
+
+    # ---- 저장한 초안(D-361) — 저장·목록·열기·지우기는 사용자가 눌렀을 때만 시작하는 작업이다(한 번에 하나, 작업 스레드). 서비스·보관함·파일은 컨트롤러와 공급자가 맡는다(이 함수들은 직접 부르지 않는다) ----
+    def drf_save_shortcut(self):
+        """Ctrl+S — 초안 작성 화면에 초안이 열려 있고 확인창이 없을 때만 저장한다(그 밖의 화면·상태에서는 아무 일도 하지 않는다)."""
+        if self.state.page == "drafts" and not self.dialog.is_open and self._drafts_screen() is not None:
+            self.drf_save()
+
+    def drf_save(self, after=None):
+        """`저장` — 지금 편집기의 글을 저장한다(작업 스레드). 키·토큰 모양이 있으면 저장하지 않고 위치·종류만 알린다. 저장이 안 돼도 복사·편집은 그대로 쓸 수 있다. `after` 는 저장이 끝난 뒤 이어서 할 일(확인창에서 `저장` 을 골랐을 때)이다."""
+        status, _job = self.state.drafts.start_save(**self.store_bridge.callbacks(), after=after)
+        if status == "started":
+            self._live_drafts(save=True)
+        elif status == "busy":
+            self.notify(T["drf_save_why_busy"])
+        elif status == "making":
+            self.notify(T["drf_save_why_making"])
+
+    def _on_store_done(self, result):
+        self._guarded(self._show_store_done, result, recover=self._recover_store)
+
+    def _on_store_failed(self, failure):
+        self._guarded(self._show_store_failed, failure, recover=self._recover_store)
+
+    def _on_store_cancelled(self):
+        self.state.drafts.store_pending = None
+
+    def _show_store_done(self, result):
+        controller = self.state.drafts
+        op = (controller.store_pending or {}).get("op")
+        if op == "save":
+            status, after = controller.apply_saved(result)
+            self._after_save(status, after)
+        elif op == "list":
+            if controller.apply_listing(result):
+                self._render_drafts()
+        elif op == "open":
+            if controller.apply_opened(result):
+                self._render_drafts()
+        elif op == "delete":
+            if controller.apply_deleted(result):
+                self._start_saved_list()
+
+    def _show_store_failed(self, failure):
+        controller = self.state.drafts
+        op = (controller.store_pending or {}).get("op")
+        if op == "save":
+            kind, after = controller.apply_save_failed(failure)
+            self._after_save_failed(controller.take_save_problem(), kind, after)
+        elif op == "list":
+            if controller.apply_list_failed(failure):
+                self._render_drafts()
+        elif op == "open":
+            kind = controller.apply_open_failed(failure)
+            self._render_drafts()
+            if kind == "notfound":
+                self._start_saved_list()
+        elif op == "delete":
+            if controller.apply_delete_failed(failure):
+                self._start_saved_list()
+
+    def _after_save(self, status, after):
+        """저장이 끝났다 — 저장 상태 줄·단추를 그 자리에서 바꾸고 알림(저장했어요 · 시각)을 띄운다. 확인창에서 `저장` 을 골랐다면 이어서 나가거나 닫는다."""
+        if status != "saved":
+            return
+        controller = self.state.drafts
+        self._live_drafts(save=True)
+        self.notify(controller.notice[1] if controller.notice else "")
+        if after is not None:
+            self._continue_after(after)
+
+    def _after_save_failed(self, problem, kind, after):
+        """저장하지 못했다 — 키·토큰 모양이면 위치·종류를 알리는 창(확인 하나), 그 밖은 알림 줄. 확인창에서 `저장` 을 골랐다면 **나가기를 막지 않되 경고**하는 창이다(저장 안 하고 나가기 / 계속 고치기, 처음 포커스는 계속 고치기)."""
+        controller = self.state.drafts
+        if kind == "left" or problem is None:
+            return
+        self._live_drafts(save=True)
+        dialog = controller.save_failure_dialog(problem, after)
+        if dialog is None:
+            self.notify(problem.user_message)
+        elif after is None:
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=None)
+        else:
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=lambda: self._continue_after(after), safe_focus=True, on_cancel=controller.discard_leave)
+
+    def _continue_after(self, after):
+        """저장한 뒤(또는 저장 안 하고) 하려던 일 — 화면 옮기기·저장한 초안 목록 보기·앱 닫기."""
+        kind, payload = after
+        if kind == "leave":
+            payload()                                                                  # `go` 가 만들어 둔 이동 함수(`go(key, force=True)`)
+        elif kind == "list":
+            self._drf_show_saved_now()
+        elif kind == "close":
+            self._close_after_confirm()
+
+    def _show_leave_choices(self, dialog, after):
+        """떠나기·앱 닫기 앞의 세 갈래 확인창 — `저장`(처음 포커스) / `저장 안 하고 나가기`(위험 단추) / `계속 고치기`(취소·Esc 와 같다)."""
+        controller = self.state.drafts
+        handlers = {"save": lambda: self.drf_save(after=after), "discard": lambda: self._continue_after(after), "stay": None}
+        self.show_choice_dialog(dialog["title"], dialog["body"], [(choice["key"], choice["text"], choice["kind"], handlers[choice["key"]]) for choice in dialog["choices"]], first=dialog["first"],
+                                on_cancel=controller.discard_leave)
+
+    def _recover_store(self, error):
+        """저장 작업의 답을 받다 예외가 났다 — 쉬운 안내만 하고 초안·편집은 그대로 둔다(저장 실패가 다른 기능을 막지 않는다). 예외 이름만 표준 오류에 남긴다."""
+        report_unexpected(type(error), "")
+        self.state.drafts.store_pending = None
+        self.notify(T["drf_savefail_other"])
+        try:
+            self._live_drafts(save=True)
+        except Exception:
+            self.notify(T["job_failed"])
+
+    def _start_saved_list(self, render=True):
+        """저장한 초안 목록을 읽는다(읽기만) — 저장 기능이 없는 공급자거나 다른 저장 작업이 도는 중이면 아무것도 하지 않는다."""
+        status, _job = self.state.drafts.start_list(**self.store_bridge.callbacks())
+        if status == "started" and render:
+            self._render_drafts()
+
+    def drf_show_saved(self):
+        """머리의 `저장한 초안` — 저장한 초안 목록으로 간다(열려 있던 초안은 떠난다: 고친 내용이 저장되지 않았으면 세 갈래 확인창이 먼저)."""
+        controller = self.state.drafts
+        dialog = controller.leave_dialog("leave")
+        if dialog is None:
+            self._drf_show_saved_now()
+        elif "choices" in dialog:
+            self._show_leave_choices(dialog, ("list", None))
+        else:
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._drf_show_saved_now, safe_focus=True, on_cancel=controller.discard_leave)
+
+    def _drf_show_saved_now(self):
+        self.state.drafts.leave()
+        self._start_saved_list(render=False)
+        self.render()
+
+    def home_saved_drafts(self):
+        """홈의 `저장한 초안 보기` — 초안 작성 화면의 저장한 초안 목록으로 간다(이미 있는 완성된 화면으로 가는 길 하나 — D-364). 초안이 열려 있지 않으면 `go` 가 목록을 읽는다."""
+        self.go("drafts")
+
+    def drf_saved_retry(self):
+        self._start_saved_list()
+
+    def drf_saved_open(self, draft_id):
+        """목록의 `열기` — 저장한 초안을 연다(읽기만). 열리는 동안은 읽는 중 모습이다."""
+        status, _job = self.state.drafts.start_open_saved(draft_id, **self.store_bridge.callbacks())
+        if status == "started":
+            self.render()
+        elif status == "busy":
+            self.notify(T["load_busy"])
+
+    def drf_saved_delete(self, draft_id):
+        """목록의 `지우기` — 확인창이 먼저다(처음 포커스는 취소). 지우기 직전 상태는 서비스가 백업해 둔다."""
+        controller = self.state.drafts
+        dialog = controller.delete_dialog(draft_id)
+        if dialog is not None:
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._drf_delete_confirmed, danger=True, safe_focus=True, on_cancel=controller.discard_delete)
+
+    def _drf_delete_confirmed(self):
+        status, _job = self.state.drafts.start_delete(**self.store_bridge.callbacks())
+        if status == "started":
+            self._render_drafts()
+        elif status == "busy":
+            self.notify(T["load_busy"])
 
     def _guarded(self, work, *args, recover=None):
         try:
@@ -1949,13 +2157,16 @@ class AppShell(QMainWindow):
         self.close()
 
     def closeEvent(self, event):
-        # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(고친 내용은 사라진다 — 저장하지 않는 화면이다, D-281). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
+        # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(저장하지 않은 고친 내용은 사라진다 — D-281, 저장해 둔 초안은 남는다: D-363). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
         # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
         if not self._close_confirmed and not QGuiApplication.instance().isSavingSession():
-            dialog = self.state.close_guard()                                     # 초안의 고친 내용은 저장하지 않아 앱을 닫으면 사라진다 — 확인창이 먼저다(처음 포커스는 취소)
+            dialog = self.state.close_guard()                                     # 초안의 고친 내용이 저장되지 않아 앱을 닫으면 사라진다 — 확인창이 먼저다(저장 기능이 있으면 세 갈래, 없으면 처음 포커스가 취소인 두 갈래)
             if dialog is not None:
                 event.ignore()
-                self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+                if "choices" in dialog:
+                    self._show_leave_choices(dialog, ("close", None))
+                else:
+                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
                 return
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
         self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)
@@ -1977,6 +2188,10 @@ class AppShell(QMainWindow):
                 job.join(WRITE_CLOSE_WAIT)
         if self.state.candidates.busy:                                            # 후보 만들기도 중간에 끊을 수 없다(한 트랜잭션) — 끝나기를 기다린다
             job = self.state.runner.job(CANDIDATES_WRITE_KEY)
+            if job is not None:
+                job.join(WRITE_CLOSE_WAIT)
+        if self.state.drafts.store_busy:                                          # 초안을 저장하는 중이면(저장·지우기는 한 트랜잭션이라 중간에 끊을 수 없다) 끝나기를 기다린다 — 닫는 순간에도 반쯤 쓴 저장이 없다
+            job = self.state.runner.job(STORE_KEY)
             if job is not None:
                 job.join(WRITE_CLOSE_WAIT)
         self.state.drafts.shutdown()                                              # 도는 글 모양 점검의 답은 버린다 — 작업자 종료를 기다리지 않는다(끝난 스레드의 답은 어디에도 보이지 않는다)

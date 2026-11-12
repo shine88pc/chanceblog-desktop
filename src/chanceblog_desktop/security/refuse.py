@@ -116,8 +116,29 @@ def _candidate_texts(ref, candidate):
     yield f"후보 {ref} 추천 이유", candidate.reason
 
 
+def _saved_draft_texts(draft):
+    """저장한 초안(`dd-` 번호 — 초안 저장 기능, LOCALSAVE D-373) 한 편을 풀어 `{칸 이름: 글}` 로 — 그 기록은 글칸을 ASCII 로 이스케이프한 JSON 한 줄로 두므로(`\\n`·`\\t`·`\\uXXXX`) 날것 그대로 훑으면
+    줄 맨 앞·탭 뒤·한글 바로 뒤의 키 모양이 앞 글자와 붙어 보여 놓친다(독립 검증 D6). `SavedDraft.from_text` 가 풀고, 풀 수 없는 기록(깨졌거나 더 새로운 판)은 None 이다."""
+    from ..content import saved_draft
+    try:
+        record = saved_draft.SavedDraft.from_text(draft.text, draft.project_id)
+    except AppError:
+        return None
+    return {**record.text_fields(), **record.base_fields()}
+
+
+def _scan_saved_draft(found, number, draft):
+    """저장한 초안 한 편을 칸별로 훑는다 — 위치는 '저장한 초안 N번째 · 칸 이름'(줄은 `place_of` 가 붙인다). 풀 수 없는 기록도 날것으로나마 훑는다(죽지 않는다)."""
+    fields = _saved_draft_texts(draft)
+    if fields is None:
+        _scan(found, f"저장한 초안 {number}번째 · 읽을 수 없는 기록", draft.text)
+        return
+    for name, text in fields.items():
+        _scan(found, f"저장한 초안 {number}번째 · {name}", text)
+
+
 def store_findings(store):
-    """글 보관함(`content.store.Store`)의 모든 사용자 글 — 글(제목·본문·출처·이미지·플랫폼별 렌더링·주소)·옛 판 기록·자동 저장 초안·주제 후보 — 을 훑은 발견 목록(없으면 빈 튜플). **읽기만 한다.**
+    """글 보관함(`content.store.Store`)의 모든 사용자 글 — 글(제목·본문·출처·이미지·플랫폼별 렌더링·주소)·옛 판 기록·자동 저장 초안·저장한 초안(풀어서 칸별로)·주제 후보 — 을 훑은 발견 목록(없으면 빈 튜플). **읽기만 한다.**
     읽을 수 없는 글(`STORE_CORRUPT` 등)은 건너뛴다 — 백업 자체의 점검(`Store.backup` 의 무결성 검사)이 따로 막는다. 칸 이름은 짧은 번호와 칸 이름뿐이다(글 내용 없음)."""
     found = []
     for position, summary in enumerate(store.list(), start=1):
@@ -137,7 +158,13 @@ def store_findings(store):
                 continue
             for name, text in _old_revision_texts(ref, revision, snapshot):
                 _scan(found, name, text)
+    from ..content import saved_draft
+    saved_number = 0
     for position, draft in enumerate(store.drafts(), start=1):
+        if saved_draft.is_draft_id(draft.project_id):                  # 저장한 초안은 풀어서 칸별로(위 `_scan_saved_draft`) — 번호는 저장한 초안끼리만 센다
+            saved_number += 1
+            _scan_saved_draft(found, saved_number, draft)
+            continue
         _scan(found, f"초안 {ref_label(draft.project_id, position)}", draft.text)
     for position, candidate in enumerate(store.list_candidates(), start=1):
         for name, text in _candidate_texts(ref_label(candidate.candidate_id, position), candidate):

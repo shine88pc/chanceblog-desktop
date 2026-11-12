@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPlainTextEdit, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLineEdit, QPlainTextEdit, QSizePolicy, QVBoxLayout, QWidget
 
 from ..core import tokens as K
 from ..core.text import T
@@ -193,6 +193,44 @@ class GarbageCard:
         return [*self.buttons, *(button for button in (self.ignore_all, self.restore) if not button.isHidden())]
 
 
+class SavedRowCard(QFrame):
+    """저장한 초안 목록의 한 줄 — 제목·메타(후보·블로그·시각·글자 수)와 `열기`·`지우기`(읽을 수 없는 초안은 `지우기` 만). 눌러도 이 줄은 아무것도 하지 않고 신호만 보낸다(`opened`·`deleted` — 번호는 열쇠일 뿐 글에 나가지 않는다).
+    단추는 접근 이름을 가지고 키보드(Tab·Enter·Space)로 쓴다. 색은 토큰(스타일시트)에서만 온다."""
+    opened = Signal(str)
+    deleted = Signal(str)
+
+    def __init__(self, vm, index):
+        super().__init__()
+        self.setProperty("card", "plain")
+        self.setMinimumHeight(K.SIZE["list_row_h"])
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setAccessibleName(vm["a11y"])
+        row = QHBoxLayout(self)
+        row.setContentsMargins(K.SPACE["3"], K.SPACE["2"], K.SPACE["3"], K.SPACE["2"])
+        row.setSpacing(K.SPACE["3"])
+        texts = QVBoxLayout()
+        texts.setSpacing(K.SPACE["1"])
+        self.title_label = UI.label(vm["title"], "body_lg", wrap=True)
+        texts.addWidget(self.title_label)
+        self.meta_label = UI.label(vm["meta"], "caption", wrap=True) if vm["meta"] else None
+        if self.meta_label is not None:
+            texts.addWidget(self.meta_label)
+        row.addLayout(texts, 1)
+        self.open_button = None
+        if vm["open"]:
+            self.open_button = UI.Button("secondary", vm["open"]["text"], size="sm", accessible=vm["open"]["a11y"], focus_key=f"drf-saved-open:{index}")
+            self.open_button.setEnabled(vm["open"]["enabled"])
+            self.open_button.clicked.connect(lambda _=False, key=vm["id"]: self.opened.emit(key))
+            row.addWidget(self.open_button, 0, Qt.AlignVCenter)
+        self.delete_button = UI.Button("danger_ghost", vm["delete"]["text"], size="sm", accessible=vm["delete"]["a11y"], focus_key=f"drf-saved-delete:{index}")
+        self.delete_button.setEnabled(vm["delete"]["enabled"])
+        self.delete_button.clicked.connect(lambda _=False, key=vm["id"]: self.deleted.emit(key))
+        row.addWidget(self.delete_button, 0, Qt.AlignVCenter)
+
+    def stops(self):
+        return [button for button in (self.open_button, self.delete_button) if button is not None]
+
+
 def lines_box():
     box = QWidget()
     layout = QVBoxLayout(box)
@@ -209,4 +247,4 @@ def set_copy_look(button, text, copied, a11y=None):
     UI.repolish(button)
 
 
-__all__ = ["GarbageCard", "InspectCard", "TextArea", "TitleInput", "TitlePick", "lines_box", "set_copy_look"]
+__all__ = ["GarbageCard", "InspectCard", "SavedRowCard", "TextArea", "TitleInput", "TitlePick", "lines_box", "set_copy_look"]

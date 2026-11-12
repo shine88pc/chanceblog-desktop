@@ -23,13 +23,14 @@ from ..errors.render import render
 from ..security.mask import mask
 from ..service import candidates as candidate_service
 from ..service import connections as connection_service
+from ..service import draft_store as draft_store_service
 from ..service import projects as project_service
 from ..service import quota as quota_service
 from ..service.context import make_context
 from .core.app_state import shown
 from .core.jobs import JobCancelled
 from .core.services import (HOME_CHANNELS, HOME_LIMIT, INTERESTS, ON_DEMAND, TERMS_PENDING, BlogInfo, BoardData, ChannelRead, ConnectionsData, ConnectionsProvider, DraftRow, EntryInfo, FieldInfo,
-                            HomeData, HomeProvider, ListRead, ProviderInfo, PurposeInfo, RecentRow, RecommendRow, ServiceFailure, Topic, UsageInfo)
+                            HomeData, HomeProvider, ListRead, ProviderInfo, PurposeInfo, RecentRow, RecommendRow, SAVED_STAGE, ServiceFailure, Topic, UsageInfo)
 from .core.text import T
 from .core.timed import call_within
 
@@ -244,9 +245,30 @@ class ServiceHomeProvider(HomeProvider):
             return ListRead("failed", (), 0, failure_from(counts.error))
         rows = counts.rows or ()
         readable = [row for row in rows if not row.error]
-        drafting = [(row, draft_stage(row.statuses)) for row in newest_first(readable)]
-        found = tuple(DraftRow(row.project_id, row.title, stage, str(row.updated_at)) for row, stage in islice((item for item in drafting if item[1]), HOME_LIMIT))
-        return ListRead("ok", found, len(rows) - len(readable))
+        drafting = [item for item in ((row, draft_stage(row.statuses)) for row in newest_first(readable)) if item[1]]
+        found = tuple(DraftRow(row.project_id, row.title, stage, str(row.updated_at)) for row, stage in islice(drafting, HOME_LIMIT))
+        return ListRead("ok", found, len(rows) - len(readable), None, len(drafting))
+
+    @staticmethod
+    def _saved_drafts(ctx):
+        """저장한 초안(초안 작성 화면의 `저장`, D-363) — 서비스의 목록 읽기(읽기만, 파일을 만들지 않는다)로 `(줄들, 전체 수)` 를 얻는다. 읽지 못하면 None — 이 구역은 글 목록의 결과 그대로이고 홈은 그대로다.
+        줄은 고친 때가 늦은 것부터 많아야 `HOME_LIMIT` 개이고 전체 수는 줄로 다 보이지 않아도 센 저장한 초안 수다."""
+        try:
+            listing = draft_store_service.list_drafts(ctx)
+        except AppError:
+            return None
+        rows = tuple(DraftRow(entry.draft_id, entry.title, SAVED_STAGE, entry.updated_at) for entry in islice(listing.entries, HOME_LIMIT))
+        return rows, len(listing.entries)
+
+    @staticmethod
+    def _with_saved(legacy, saved):
+        """작성 중 초안 구역 — 저장한 초안을 앞에, 옛 글 목록(`projects`)의 초안 생성됨·검토 필요 글을 뒤에 둔다(많아야 `HOME_LIMIT` 줄). 머리 개수는 둘의 전체 수의 합이라 옛 글이 없는 PC 에서는 저장한 초안 수와 같다.
+        글 목록을 못 읽었으면(구역 오류) 저장한 초안이 하나라도 있을 때만 저장한 초안으로 구역을 채우고, 저장한 초안이 없으면 그 오류를 숨기지 않고 그대로 둔다."""
+        rows, total = saved
+        if legacy.state != "ok":
+            return ListRead("ok", rows, 0, None, total) if rows else legacy
+        merged = tuple(islice(rows + tuple(legacy.rows), HOME_LIMIT))
+        return ListRead("ok", merged, legacy.skipped, None, total + (legacy.total if isinstance(legacy.total, int) else len(legacy.rows)))
 
     def _published_at(self, ctx, project_id, left):
         """글 하나의 발행한 때 — 글을 한 번 더 읽어(`show_project`) 발행된 플랫폼들의 `published_at` 중 가장 늦은 것. 제한 시간(`left` 초 안에서 `RECENT_TIMEOUT`) 안에 못 읽거나 읽다 실패하거나 값이 없으면 None('발행일 확인 불가').
@@ -285,6 +307,9 @@ class ServiceHomeProvider(HomeProvider):
         if cancelled():
             raise JobCancelled()
         drafts = self._drafts(counts)
+        saved = self._saved_drafts(ctx)
+        if saved is not None:
+            drafts = self._with_saved(drafts, saved)                                    # 저장한 초안을 읽었으면 앞에 둔다(못 읽었으면 글 목록의 결과 그대로)
         if cancelled():
             raise JobCancelled()
         recent = self._recent(ctx, counts, cancelled)

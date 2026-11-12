@@ -21,7 +21,9 @@ import service_support as ss  # noqa: E402
 from chanceblog_desktop.service import cli  # noqa: E402
 from chanceblog_desktop.service.context import make_context  # noqa: E402
 from chanceblog_desktop.ui.adapters import ServiceHomeProvider  # noqa: E402
+from chanceblog_desktop.ui.core.drafts import SaveRequest  # noqa: E402
 
+MISSING_DRAFT = "dd-" + "0" * 20
 REQUIRED_VALUES = {"--title": "시험 글", "--topic": "시험 주제", "--keyword": "시험 키워드", "--blog": "naver_a", "--name": "기본", "--url": "https://blog.naver.com/exampleaaa/1",
                    "--category": "경제·일", "--lang": "ko", "--image-url": "https://images.example.invalid/a.jpg", "--platform": "pages"}
 
@@ -132,6 +134,8 @@ class EveryScreenActionTest(unittest.TestCase):
         problems, called = [], []
         with tempfile.TemporaryDirectory() as tmp:
             data = str(Path(tmp) / "data")
+            saved = {}                                                                                 # 앞 동작이 저장한 초안의 번호 — 열기·지우기가 진짜 초안으로도 돈다(저장이 안 됐으면 없는 번호)
+            Path(data).mkdir(parents=True, exist_ok=True)                                              # 데이터 폴더를 먼저 만든다 — 저장한 초안 동작이 글 보관함 파일을 만들 때 폴더가 이미 있다
             home = ServiceHomeProvider(data)                                                           # 기본 부품(make_context)으로 만든 홈 공급자와 짝 공급자들
             blogs, candidates, drafts, seeds, keys = home.blogs_provider(), home.candidates_provider(), home.drafts_provider(), home.seeds_provider(), home.connections_provider()
             backups = home.backups_provider()                                                           # 설정 화면의 백업·복원 카드가 서비스로 가는 문(BACKUPUI — 목록·지금 백업·복원·멈춘 복원 되돌리기)
@@ -143,6 +147,9 @@ class EveryScreenActionTest(unittest.TestCase):
                 ("candidates.load_candidates", lambda: candidates.load_candidates(progress, cancelled)), ("candidates.preview_make", lambda: candidates.preview_make(progress, cancelled)),
                 ("candidates.make_candidates", lambda: candidates.make_candidates(None, progress, cancelled)),
                 ("drafts.make_draft", lambda: drafts.make_draft(None, progress, cancelled)),
+                ("drafts.save_draft", lambda: saved.update(id=drafts.save_draft(SaveRequest(title="시험 글", body="시험 본문", blog="naver_a", post_type="정보형"), progress, cancelled).draft_id)),       # 저장한 초안(LOCALSAVE) — 글 보관함 파일에만 쓴다
+                ("drafts.list_saved", lambda: drafts.list_saved(progress, cancelled)), ("drafts.open_saved", lambda: drafts.open_saved(saved.get("id", MISSING_DRAFT), progress, cancelled)),
+                ("drafts.delete_saved", lambda: drafts.delete_saved(saved.get("id", MISSING_DRAFT), progress, cancelled)),                                                                         # 지우기 직전 사본도 같은 폴더 안에만 만든다
                 ("seeds.load_seeds", lambda: seeds.load_seeds(progress, cancelled)), ("seeds.set_state", lambda: seeds.set_state("s1", "paused", "0", progress, cancelled)),
                 ("seeds.set_states", lambda: seeds.set_states(["s1"], "paused", "0", progress, cancelled)), ("seeds.edit_seed", lambda: seeds.edit_seed("s1", {"keyword": "시험"}, "0", progress, cancelled)),
                 ("seeds.create_seed", lambda: seeds.create_seed({"keyword": "시험"}, "0", progress, cancelled)),
@@ -180,7 +187,7 @@ class EveryScreenActionTest(unittest.TestCase):
                         if isinstance(item, ast.FunctionDef) and not item.name.startswith("_") and item.args.args[-2:] and [arg.arg for arg in item.args.args[-2:]] == ["progress", "cancelled"]:
                             found.add(f"{prefix}.{item.name}")
         expected = {"home.load_home", "home.load_connections", "blogs.load_blogs", "blogs.save_blog", "blogs.clone_blog", "blogs.clear_blog", "candidates.load_candidates", "candidates.preview_make",
-                    "candidates.make_candidates", "drafts.make_draft", "seeds.load_seeds", "seeds.set_state", "seeds.set_states", "seeds.edit_seed", "seeds.create_seed", "seeds.preview_import",
+                    "candidates.make_candidates", "drafts.make_draft", "drafts.save_draft", "drafts.list_saved", "drafts.open_saved", "drafts.delete_saved", "seeds.load_seeds", "seeds.set_state", "seeds.set_states", "seeds.edit_seed", "seeds.create_seed", "seeds.preview_import",
                     "seeds.apply_import", "keys.add_key", "keys.remove_key", "keys.set_key_state", "keys.rename_key", "keys.move_key", "keys.test_key",
                     "backups.load_backups", "backups.create_backup", "backups.restore_backup", "backups.revert_interrupted"}
         self.assertEqual(found, expected, "화면 어댑터의 공개 동작과 이 시험의 표가 달라졌다 — 새 동작을 표에 더한다")

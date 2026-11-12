@@ -1,7 +1,10 @@
 """초안 작성 화면의 상태·동작·뷰모델 — 순수 파이썬(화면 도구를 모른다). Qt 화면은 `view()` 가 만든 딕셔너리를 그리기만 한다: 어떤 칸을 보일지·어느 단추를 켤지·어떤 문장을 보일지·복사 전에 무엇을 물을지는 여기서 정한다.
 
 흐름과 규칙:
-  · **아무것도 저장하지 않는다.** 초안은 메모리에만 있고(`result`·`title`·`body`) 파일·보관함·엔진 DB·글 보관함·후보 상태에 쓰는 길이 없다. 공급자는 읽기 하나(`make_draft`)뿐이고 초안을 만드는 것은 후보 번호로 서비스가 다시 읽어 하는 일이다.
+  · **초안을 만들고 고치고 복사하는 것은 아무것도 저장하지 않는다.** 초안은 메모리에만 있고(`result`·`title`·`body`) 후보 상태·엔진 DB 에 쓰는 길이 없다. 초안을 만드는 것은 후보 번호로 서비스가 다시 읽어 하는 일이다.
+    **저장은 사용자가 `저장`(Ctrl+S)을 눌렀을 때뿐이다**(결정 D-361): 저장·목록·열기·지우기는 모두 작업 스레드에서 서비스(`service/draft_store.py`)가 하고, 한 번에 하나만 돈다(`STORE_KEY`). 저장한 초안은 글 보관함(`chanceblog.db`)의 `drafts` 표에 있다.
+    저장 직전에 서비스가 키·토큰 모양을 검사하고 찾으면 저장하지 않는다(위치와 종류만 알린다) — **'무시하고 저장' 은 없다.** 저장 기능이 없는 공급자(`saving` 이 거짓)에서는 저장 단추·상태·목록이 모두 없고 예전 그대로다.
+    **고친 내용**의 기준은 저장한 판이 있으면 그 판(저장한 뒤 고쳤나), 없으면 만든 초안(`has_unsaved`)이다. 떠나기·앱 닫기 앞의 확인창은 저장 기능이 있으면 세 갈래(저장 / 저장 안 하고 나가기 / 계속 고치기)다.
   · **자동 실행은 없다**: 후보 화면에서 `이 주제로 만들기` 를 눌렀을 때만 만든다(`open_target` → `start_make`). 복사도 단추를 눌렀을 때만 — 초안을 만들거나 창을 열거나 검사해도 클립보드는 그대로다(클립보드에 쓰는 것은 화면 틀이고 이 파일은 복사할 **글**만 돌려준다).
   · **안전 판정이 '자동 초안 중지' 로 표시한 후보는 본문이 화면에 나오지 않는다** — 단추도 꺼 있고(후보 화면), `start_make` 도 공급자를 부르지 않고 거절하며, 공급자가 돌려준 초안의 후보 번호가 고른 후보와 다르면 버린다.
   · **복사 전 관문**(`copy_decision`): 키·토큰 모양이 있거나 **건강 효과를 단정하는 문장**(주제 엔진 판정기가 중지 단계로 본 것 — 서비스가 만든 글·선택 입력·고친 글 모두, `review_health`)이 있으면 복사하지 않고(막음 — 어느 부분이 걸렸는지 앞부분만 짚는다),
@@ -16,11 +19,14 @@ from __future__ import annotations
 from ...content.profiles import POST_TYPES
 from . import draft_garbage as garbage
 from . import draft_rules as rules
-from .drafts import DraftFailure, DraftRequest, review_health
+from .board_view import time_text
+from .drafts import DraftFailure, DraftRequest, DraftTarget, SaveRequest, review_health
 from .jobs import Job, JobFailure
 from .text import T
 
 DRAFT_KEY = "drafts-make"                                    # 초안을 만드는 작업의 이름(후보·홈·설정 읽기와 따로 돈다)
+STORE_KEY = "drafts-store"                                   # 저장한 초안의 저장·목록·열기·지우기 작업의 이름 — 넷은 한 번에 하나만 돈다(서로 겹쳐 보관함을 두 번 쓰지 않는다)
+SAVE_STATES = ("none", "unsaved", "saved", "changed", "saving")
 STATES = ("empty", "loading", "normal", "refused", "notfound", "error")
 FAILURE_TEXT = {"io": "drf_fail_io", "newer": "drf_fail_newer", "corrupt": "drf_fail_corrupt", "invalid": "drf_fail_invalid", "notfound": "drf_fail_notfound", "stopped": "drf_refused_desc", "channel": "drf_channel_desc", "other": "drf_fail_other"}
 IMAGE_STATES = ("before", "skip")
@@ -35,6 +41,12 @@ class DraftsController:
         self.make_count = 0
         self.garbage = garbage.GarbageTracker()              # 글 모양 점검(N-2) — 복사 관문과 다른 결과 칸이다(경고만, `gate`·`copy_decision` 은 이 상태를 읽지 않는다)
         self._garbage_job = None
+        self.listing = None                                  # 저장한 초안 목록(`SavedListing` — 마지막으로 읽은 것)
+        self.list_state = "idle"                             # idle · loading · ok · error
+        self.list_failure = None
+        self.list_notice = None                              # 목록 위의 알림 한 줄 `(level, 글)` — 지웠다·열지 못했다
+        self.store_pending = None                            # 도는 저장 작업 하나 `{"op": save|list|open|delete, …}`
+        self.save_problem = None                             # 마지막 저장 실패(`DraftFailure`) — 화면이 한 번 알리고 거둔다
         self._clear_draft()
         self.state = "empty"
 
@@ -60,6 +72,12 @@ class DraftsController:
         self.pick_asked = None
         self.regen_asked = False
         self.leave_asked = None
+        self.saved_id = None                                 # 이 화면의 초안이 저장한 초안이면 그 번호(처음 저장하기 전·새로 만든 초안은 None)
+        self.saved_rev = None                                # 저장한 횟수(다른 곳에서 먼저 고친 초안을 덮어쓰지 않으려고 저장할 때 서비스에 돌려준다)
+        self.saved_at = ""
+        self.saved_snapshot = None                           # 저장한 (제목, 본문) — 저장한 뒤 고쳤나를 이것과 견준다
+        self.opening = None                                  # 여는 중인 저장한 초안의 번호
+        self.delete_asked = None                             # 지우기 확인창을 보인 저장한 초안의 번호
         self._cancel_garbage()                               # 새 초안·떠남 — 도는 글 모양 점검의 답은 받지 않고 결과·무시 기억을 지운다(저장하지 않는다)
 
     # ---- 읽기(파일·폴더를 만들지 않는다) ----
@@ -133,6 +151,8 @@ class DraftsController:
         self.result = result
         self.title, self.body = result.body.selected_title, result.body.body_text
         self.blog, self.post_type = result.blog, request.post_type
+        self.saved_id = self.saved_rev = self.saved_snapshot = None          # 새로 만든 초안은 새 초안이다 — 저장하면 이전에 저장한 초안을 덮어쓰지 않고 새 초안으로 저장된다(앞의 것은 목록에 그대로 있다)
+        self.saved_at = ""
         self.ack, self.copied, self.inspection, self.inspected_for = {}, set(), None, None
         self.copy_asked = self.pick_asked = self.leave_asked = None
         self.regen_asked = False
@@ -251,8 +271,13 @@ class DraftsController:
         return self.result is not None and rules.options_dict(self.fields) != dict(self.result.options)
 
     def has_unsaved(self):
-        """고친 내용이 있는가 — 제목·본문을 고쳤거나 선택 입력을 적고 아직 반영하지 않았다. 있으면 사라지는 일(다시 만들기·떠나기·닫기) 전에 확인창이 먼저다."""
-        return self.result is not None and (self.title_edited() or self.body_edited() or self.options_pending())
+        """고친 내용이 있는가 — 저장한 판이 있으면 **그 판과 다른 제목·본문**, 없으면 만든 초안에서 제목·본문을 고쳤거나, 선택 입력을 적고 아직 반영하지 않았다. 있으면 사라지는 일(다시 만들기·떠나기·닫기) 전에 확인창이 먼저다.
+        저장한 글은 저장해 둔 것이라 그대로 두고 나가도 사라지지 않는다(저장한 초안 목록에 있다)."""
+        if self.result is None:
+            return False
+        if self.saved_snapshot is not None:
+            return (self.title, self.body) != self.saved_snapshot or self.options_pending()
+        return self.title_edited() or self.body_edited() or self.options_pending()
 
     # ---- 제목 후보 고르기 ----
     def pick_title(self, index):
@@ -303,11 +328,17 @@ class DraftsController:
 
     # ---- 화면을 떠나거나 앱을 닫기 ----
     def leave_dialog(self, kind="leave"):
-        """고친 내용이 있으면 확인창의 글(`leave`: 다른 화면으로 · `close`: 앱 닫기), 없으면 None."""
+        """고친 내용이 있으면 확인창의 글(`leave`: 다른 화면으로 — 후보를 바꾸러 가는 것도 같다 · `close`: 앱 닫기), 없으면 None.
+        저장 기능이 있으면 **세 갈래**다(`choices`: `save` 저장 · `discard` 저장 안 하고 나가기/닫기 · `stay` 계속 고치기 — Esc 는 `stay`, 처음 포커스는 `save`). 없으면 예전의 두 갈래(그래도 이동·취소)다."""
         if not self.has_unsaved():
             return None
         self.leave_asked = kind
         closing = kind == "close"
+        if self.can_save:
+            discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
+            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"], "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
+                    "choices": [{"key": "save", "text": T["drf_choice_save"], "kind": "primary"}, {"key": "discard", "text": discard, "kind": "danger"}, {"key": "stay", "text": T["drf_choice_stay"], "kind": "secondary"}],
+                    "first": "save", "after": kind}
         return {"title": T["drf_leave_title"], "body": T["drf_close_body"] if closing else T["drf_leave_body"], "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
 
     def discard_leave(self):
@@ -318,6 +349,230 @@ class DraftsController:
         self.runner.cancel(DRAFT_KEY)
         self._clear_draft()
         self.target, self.pending, self.state = None, None, "empty"
+        if self.store_pending is not None and self.store_pending.get("op") == "open":
+            self.store_pending = None                         # 여는 중이던 저장한 초안의 답은 받지 않는다(그 사이 떠났다) — 저장·목록 같은 다른 작업의 답은 그대로 받는다
+
+    # ---- 저장한 초안(D-361) — 저장·목록·열기·지우기. 모두 작업 스레드에서 서비스가 하고 한 번에 하나만 돈다(`STORE_KEY`) ----
+    @property
+    def can_save(self):
+        """저장 기능이 있는 공급자인가 — 아니면 저장 단추·상태·목록이 없고 화면은 예전 그대로다."""
+        return bool(getattr(self.provider, "saving", False))
+
+    @property
+    def store_busy(self):
+        return self.runner.running(STORE_KEY)
+
+    def _saveable(self):
+        return self.can_save and self.result is not None and self.state == "normal"
+
+    def save_state(self):
+        """이 초안의 저장 상태 — `none`(초안이 없거나 저장 기능이 없다) · `saving`(저장하는 중) · `unsaved`(아직 저장하지 않았다) · `saved`(저장한 글과 같다) · `changed`(저장한 뒤 고쳤다)."""
+        if not self.can_save or self.result is None:
+            return "none"
+        if self.store_pending is not None and self.store_pending.get("op") == "save":
+            return "saving"
+        if self.saved_snapshot is None:
+            return "unsaved"
+        return "saved" if (self.title, self.body) == self.saved_snapshot else "changed"
+
+    def _start_store(self, op, work, callbacks, **fields):
+        """저장 작업 하나를 시작한다 — 진행 정보(`store_pending`)를 **먼저** 적고 시작한다(작업이 곧바로 끝나도 답이 받을 곳을 안다). 이미 도는 작업이 있으면 None."""
+        if self.store_busy:
+            return None
+        self.store_pending = {"op": op, **fields}
+        job = self.runner.start(STORE_KEY, work, **callbacks)
+        if job is None:
+            self.store_pending = None
+        return job
+
+    def _save_request(self):
+        body, result, target = self.draft_body(), self.result, self.target
+        replaced = getattr(body, "replaced", None)
+        base = {"title": body.selected_title, "titles": tuple(body.titles), "body": body.body_text, "checks": tuple(body.checks), "domain": getattr(body, "domain", "") or "",
+                "replaced": tuple(replaced) if replaced else None}
+        return SaveRequest(self.title, self.body, tuple(body.core_keywords), tuple(body.sub_keywords), tuple(body.tags), body.category or "", body.summary or "",
+                           getattr(result, "candidate_id", "") or (target.candidate_id if target is not None else ""), getattr(body, "topic", "") or "", self.blog or result.blog,
+                           self.post_type, result.post_type, dict(result.options or {}), base, self.saved_id, self.saved_rev)
+
+    def start_save(self, on_progress=None, on_done=None, on_error=None, on_cancel=None, *, after=None):
+        """`저장`(Ctrl+S) — 지금 편집기의 글을 작업 스레드에서 저장한다. `(상태, 작업)`: `unavailable`(저장 기능이 없다·초안이 없다) · `making`(새 초안을 만드는 중) · `busy`(다른 저장 작업이 도는 중) · `started`.
+        `after` 는 저장이 끝난 뒤 이어서 할 일(`("leave", 화면 열쇠)`·`("close", None)` — 확인창에서 `저장` 을 골랐을 때)이고 `apply_saved` 가 돌려준다. 키·토큰 모양이 있으면 서비스가 저장하지 않는다."""
+        if not self._saveable():
+            return "unavailable", None
+        if self.locked or self.busy:
+            return "making", None
+        if self.store_busy:
+            return "busy", None
+        request, provider = self._save_request(), self.provider
+        job = self._start_store("save", lambda progress, cancelled: provider.save_draft(request, progress, cancelled),
+                                {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel}, request=request, after=after)
+        return ("started", job) if job is not None else ("busy", None)
+
+    def apply_saved(self, outcome):
+        """저장이 끝났다 → `(상태, 이어서 할 일)`: `saved` 또는 `left`(그 사이 화면을 떠났다 — 저장은 됐고 이 화면에는 아무것도 하지 않는다). 저장한 글을 기억해 '저장됨' 이 된다(저장하는 동안 더 친 글은 '저장한 뒤 고쳤어요')."""
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "save" or self.result is None:
+            return "left", None
+        request = pending["request"]
+        self.saved_id, self.saved_rev, self.saved_at = outcome.draft_id, outcome.revision, outcome.updated_at
+        self.saved_snapshot = (request.title, request.body)
+        self.save_problem = None
+        self.notice = ("ok", T["drf_saved_notice"].format(when=time_text(outcome.updated_at)))
+        return "saved", pending.get("after")
+
+    def apply_save_failed(self, failure):
+        """저장하지 못했다 → `(종류, 이어서 하려던 일)`. 저장한 글·저장 상태는 그대로이고 복사·편집은 막지 않는다. 키·토큰 모양(`keyshape`)은 위치·종류 안내를 `save_problem` 에 두어 화면이 알림창으로 보이게 하고
+        나머지는 알림 줄이다(확인창에서 `저장` 을 골랐을 때의 실패는 알림 줄 대신 `save_failure_dialog` 가 나가기를 막지 않되 경고한다)."""
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "save" or self.result is None:
+            return "left", None
+        failure = failure if isinstance(failure, DraftFailure) else DraftFailure(T["drf_savefail_other"], code=getattr(failure, "code", ""), kind="other")
+        self.save_problem = failure
+        after = pending.get("after")
+        if after is None and failure.kind != "keyshape":
+            self.notice = ("error", failure.user_message)
+        return failure.kind, after
+
+    def take_save_problem(self):
+        """마지막 저장 실패를 한 번만 돌려주고 거둔다."""
+        problem, self.save_problem = self.save_problem, None
+        return problem
+
+    def save_failure_dialog(self, failure, after=None):
+        """저장 실패를 알리는 창의 글. `after` 가 없으면(`저장` 단추) 키·토큰 모양일 때만 창(확인 하나)이고 나머지는 알림 줄이라 None. `after` 가 있으면(확인창에서 `저장` 을 골랐다) **나가기를 막지 않되 경고**한다 —
+        `ok`(저장 안 하고 나가기/닫기)·`cancel`(계속 고치기, 처음 포커스)이고 위치·종류 안내(있다면)와 '그래도 나가면 사라져요' 가 본문이다. 찾은 글은 어디에도 없다."""
+        secret = failure.kind == "keyshape"
+        reason = "\n".join(line for line in (failure.user_message, failure.advice) if line)
+        if after is None:
+            if not secret:
+                return None
+            return {"title": T["drf_savefail_secret_title"], "body": reason, "ok": T["drf_savefail_secret_ok"], "cancel": None}
+        closing = after[0] == "close"
+        return {"title": T["drf_savefail_secret_title" if secret else "drf_savefail_leave_title"], "body": reason + "\n\n" + T["drf_savefail_leave_tail"],
+                "ok": T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"], "cancel": T["drf_choice_stay"], "after": after}
+
+    # ---- 저장한 초안 목록 ----
+    def start_list(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """저장한 초안 목록을 읽는다(읽기뿐). `(상태, 작업)`: `unavailable`(저장 기능이 없다) · `busy` · `started`."""
+        if not self.can_save:
+            return "unavailable", None
+        if self.store_busy:
+            return "busy", None
+        provider = self.provider
+        job = self._start_store("list", lambda progress, cancelled: provider.list_saved(progress, cancelled), {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel})
+        if job is None:
+            return "busy", None
+        if self.listing is None or self.list_state == "error":
+            self.list_state = "loading"
+        return "started", job
+
+    def apply_listing(self, listing):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "list":
+            return False
+        self.listing, self.list_state, self.list_failure = listing, "ok", None
+        return True
+
+    def apply_list_failed(self, failure):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "list":
+            return False
+        self.list_state, self.list_failure = "error", failure
+        return True
+
+    # ---- 저장한 초안 열기 ----
+    def start_open_saved(self, draft_id, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """저장한 초안을 연다(읽기뿐). 고친 내용이 있는 초안이 열려 있으면 열지 않는다(`unconfirmed` — 부른 쪽이 먼저 `leave_dialog` 를 거친다). `(상태, 작업)`: `unavailable` · `unconfirmed` · `busy` · `started`."""
+        if not self.can_save or not isinstance(draft_id, str):
+            return "unavailable", None
+        if self.result is not None and self.has_unsaved():
+            return "unconfirmed", None
+        if self.store_busy:
+            return "busy", None
+        provider = self.provider
+        job = self._start_store("open", lambda progress, cancelled: provider.open_saved(draft_id, progress, cancelled), {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel},
+                                draft_id=draft_id)
+        if job is None:
+            return "busy", None
+        self.opening, self.state = draft_id, "loading"
+        self.list_notice = None
+        return "started", job
+
+    def apply_opened(self, opened):
+        """저장한 초안을 열었다 — 편집기에는 **저장한 제목·본문이 글자 그대로** 들어가고, 이어진 후보가 있으면 `다시 만들기` 도 쓸 수 있다(없으면 안내만 하고 글은 그대로 연다)."""
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "open":
+            return False
+        result = opened.result
+        names = dict(result.blog_names)
+        self._clear_draft()
+        self.target = (DraftTarget(result.candidate_id, rules.shown(opened.topic, 80), result.blog, rules.shown(names.get(result.blog) or "", 30), False, bool(result.sample))
+                       if opened.candidate == "found" else None)
+        self.result = result
+        self.title, self.body = opened.title, opened.body
+        self.blog, self.post_type = result.blog, opened.post_type_choice
+        self.fields = {name: value for name, value in dict(result.options or {}).items() if name in dict(rules.OPTION_FIELDS) and isinstance(value, str)}
+        self.saved_id, self.saved_rev, self.saved_at = opened.draft_id, opened.revision, opened.updated_at
+        self.saved_snapshot = (opened.title, opened.body)
+        self.state, self.failure, self.pending = "normal", None, None
+        notes = ([T["drf_open_nocandidate"]] if opened.candidate != "found" else []) + ([T["drf_open_context_problem"]] if opened.context_problem else [])
+        self.notice = ("info", " ".join(notes)) if notes else None
+        return True
+
+    def apply_open_failed(self, failure):
+        """열지 못했다 → 종류(`notfound`·`corrupt` …) — 목록으로 돌아가 위에 알림 한 줄을 둔다(다른 저장한 초안은 그대로 열 수 있다). 파일은 고치거나 지우지 않았다."""
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "open":
+            return "left"
+        self.opening = None
+        self.state = "empty" if self.result is None else "normal"
+        kind = failure.kind if isinstance(failure, DraftFailure) else "other"
+        self.list_notice = ("error", T[{"notfound": "drf_openfail_notfound", "corrupt": "drf_openfail_corrupt", "record": "drf_openfail_corrupt"}.get(kind, "drf_openfail_other")])
+        return kind
+
+    # ---- 저장한 초안 지우기(확인창이 먼저) ----
+    def delete_dialog(self, draft_id):
+        """`지우기` 를 눌렀다 — 확인창의 글(처음 포커스는 취소). 목록에 없는 번호면 None."""
+        listing = self.listing
+        row = next((item for item in (listing.rows if listing else ()) if item.draft_id == draft_id), None)
+        unreadable = draft_id in (listing.unreadable if listing else ())
+        if row is None and not unreadable:
+            return None
+        self.delete_asked = draft_id
+        body = T["drf_delete_body"].format(title=rules.shown(row.title, 60) or T["drf_saved_no_title"]) if row is not None else T["drf_delete_unreadable_body"].format(number=draft_id[:11])
+        return {"title": T["drf_delete_title"], "body": body, "ok": T["drf_delete_ok"], "cancel": T["drf_cancel"]}
+
+    def discard_delete(self):
+        self.delete_asked = None
+
+    def start_delete(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """확인창에서 `지우기` 를 눌렀다 — 확인창을 보이지 않았으면 아무것도 하지 않는다(`unconfirmed`). 지우기 직전 상태는 서비스가 백업해 둔다. `(상태, 작업)`: `unconfirmed` · `busy` · `started`."""
+        draft_id = self.delete_asked
+        if draft_id is None or not self.can_save:
+            return "unconfirmed", None
+        if self.store_busy:
+            return "busy", None
+        provider = self.provider
+        job = self._start_store("delete", lambda progress, cancelled: provider.delete_saved(draft_id, progress, cancelled), {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel},
+                                draft_id=draft_id)
+        if job is None:
+            return "busy", None
+        self.delete_asked = None
+        return "started", job
+
+    def apply_deleted(self, outcome):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "delete":
+            return False
+        self.list_notice = ("ok", T["drf_deleted_notice"])
+        return True
+
+    def apply_delete_failed(self, failure):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "delete":
+            return False
+        self.list_notice = ("error", T["drf_deletefail"])
+        return True
 
     # ---- 점검 ----
     def inspect(self):
@@ -571,15 +826,22 @@ class DraftsController:
 
     # ---- 네이버 글쓰기 열기(주소만) ----
     def open_info(self):
-        """`네이버 글쓰기 열기` — `(주소, 못 켜는 까닭)`. 프로필의 블로그 주소가 `https://blog.naver.com/<아이디>` 모양이 아니면 주소는 빈 글이고 단추는 꺼진다."""
+        """`네이버 글쓰기 열기` — `(주소, 못 켜는 까닭)`. 블로그 주소(옛 네이버 프로필의 주소, 없으면 블로그 관리 화면의 `블로그 ID 또는 주소` — D-362)가 네이버 블로그 주소 모양(방식 https·호스트 blog.naver.com·경로 아이디 한 토막)이 아니면 주소는 빈 글이고
+        단추는 꺼진다. 까닭은 사실대로 둘로 가른다: 적어 둔 주소가 네이버 블로그 주소가 아니다(`drf_open_why_unusable`) / 어디에도 주소가 없다(`drf_open_why_profile`)."""
         if self.result is None or self.state != "normal":
             return "", T["drf_open_why_wait"]
         url = rules.naver_write_url(self.result.blog_url)
-        return (url, "") if url else ("", T["drf_open_why_profile"])
+        if url:
+            return url, ""
+        unusable = bool(self.result.blog_url) or getattr(self.result, "address", "none") == "unusable"
+        return "", T["drf_open_why_unusable" if unusable else "drf_open_why_profile"]
 
     # ---- 뷰모델 ----
     def _head(self):
-        return {"title": T["drf_title"], "sub": T["drf_sub"], "back": {"text": T["drf_back"], "a11y": T["drf_back_a11y"]}}
+        head = {"title": T["drf_title"], "sub": T["drf_sub_save" if self.can_save else "drf_sub"], "back": {"text": T["drf_back"], "a11y": T["drf_back_a11y"]}}
+        if self.can_save:
+            head["saved_list"] = {"text": T["drf_saved_list_btn"], "a11y": T["drf_saved_list_btn_a11y"], "enabled": not self.store_busy}
+        return head
 
     def _sample(self):
         sample = bool((self.result is not None and self.result.sample) or (self.target is not None and self.target.sample))
@@ -591,7 +853,34 @@ class DraftsController:
                 "candidate": T["drf_ctx_candidate"].format(title=rules.shown(self.target.title, 80)) if self.target is not None and self.target.title else ""}
 
     def _empty(self):
-        return {"title": T["drf_empty_title"], "button": T["drf_to_topics"]}
+        empty = {"title": T["drf_empty_title"], "button": T["drf_to_topics"]}
+        if self.can_save:
+            empty["saved"] = self._saved_section()
+        return empty
+
+    def _saved_section(self):
+        """저장한 초안 목록의 뷰모델 — 줄마다 제목·후보·블로그·고친 시각·본문 글자 수와 `열기`·`지우기`(읽을 수 없는 초안은 `지우기` 만). 내부 번호(`id`)는 눌렀을 때 넘기는 열쇠일 뿐 글에 나가지 않는다."""
+        listing, state = self.listing, self.list_state
+        rows = []
+        if state == "ok" and listing is not None:
+            for row in listing.rows:
+                title = rules.shown(row.title, 80) or T["drf_saved_no_title"]
+                meta = T["drf_saved_row_meta"].format(topic=rules.shown(row.topic, 40) or T["drf_saved_no_topic"], blog=T.get("drf_saved_blog_" + str(row.blog), T["drf_saved_blog_none"]), when=time_text(row.updated_at),
+                                                      chars=f"{row.chars:,}")
+                rows.append({"id": row.draft_id, "title": title, "meta": meta, "a11y": T["drf_saved_row_a11y"].format(title=title, meta=meta), "unreadable": False,
+                             "open": {"text": T["drf_saved_open"], "a11y": T["drf_saved_open_a11y"].format(title=title), "enabled": not self.store_busy},
+                             "delete": {"text": T["drf_saved_delete"], "a11y": T["drf_saved_delete_a11y"].format(title=title), "enabled": not self.store_busy}})
+            for number in listing.unreadable:
+                label = T["drf_saved_unreadable_row"].format(number=str(number)[:11])
+                rows.append({"id": number, "title": label, "meta": "", "a11y": label, "unreadable": True, "open": None,
+                             "delete": {"text": T["drf_saved_delete"], "a11y": T["drf_saved_unreadable_a11y"].format(number=str(number)[:11]), "enabled": not self.store_busy}})
+        count = len(listing.rows) if (state == "ok" and listing is not None) else 0
+        unreadable = len(listing.unreadable) if (state == "ok" and listing is not None) else 0
+        return {"visible": True, "state": "loading" if state in ("idle", "loading") else state, "title": T["drf_saved_title"], "sub": T["drf_saved_sub"], "a11y": T["drf_saved_a11y"],
+                "count": count, "count_text": T["drf_saved_count"].format(n=count) if state == "ok" else "", "rows": rows, "empty": T["drf_saved_empty"],
+                "unreadable_note": T["drf_saved_unreadable_note"].format(n=unreadable) if unreadable else "", "loading": T["drf_saved_loading"], "loading_a11y": T["drf_saved_loading_a11y"],
+                "error": {"text": T["drf_saved_error"], "button": T["drf_saved_retry"], "a11y": T["drf_saved_retry_a11y"]},
+                "notice": {"level": self.list_notice[0], "text": self.list_notice[1]} if self.list_notice else None, "busy": self.store_busy}
 
     def _fields(self):
         labels = rules.option_labels()
@@ -681,10 +970,28 @@ class DraftsController:
         done = key in self.copied
         return {"key": key, "text": self.copied_text(key) if done else text, "copied": done, "enabled": self.state == "normal" and not self.busy, "a11y": text}
 
+    def _save_vm(self):
+        """`저장` 단추와 저장 상태 — 상태는 글(`● 저장 안 됨`·`✓ 저장됨 · 시각`·`● 저장한 뒤 고쳤어요`)로 말하고 색만으로 전하지 않는다."""
+        state = self.save_state()
+        when = time_text(self.saved_at) if self.saved_at else ""
+        text = {"unsaved": T["drf_state_unsaved"], "saved": T["drf_state_saved"].format(when=when), "changed": T["drf_state_changed"], "saving": T["drf_state_saving"]}.get(state, "")
+        spoken = {"unsaved": T["drf_state_a11y_unsaved"], "saved": T["drf_state_a11y_saved"].format(when=when), "changed": T["drf_state_a11y_changed"], "saving": T["drf_state_a11y_saving"]}.get(state, "")
+        tone = {"saved": "green", "changed": "orange", "unsaved": "slate", "saving": "blue"}.get(state, "slate")
+        enabled = self.state == "normal" and not self.busy and not self.locked and not self.store_busy
+        tip = T["drf_save_tip"] if enabled else (T["drf_save_why_making"] if (self.busy or self.locked) else T["drf_save_why_busy"])
+        return {"state": state, "text": text, "a11y": spoken, "tone": tone, "button": {"key": "save", "text": T["drf_save"], "a11y": T["drf_save_a11y"], "enabled": enabled, "tip": tip}}
+
+    def save_vm(self):
+        """`저장` 단추·저장 상태만 — 글을 칠 때나 저장이 끝났을 때 화면 전체의 뷰모델을 다시 만들지 않고 이것만 읽는다(저장 기능이 없거나 초안이 없으면 None)."""
+        return self._save_vm() if self.can_save and self.result is not None else None
+
     def _actions(self):
         enabled = self.state == "normal" and not self.busy
         url, why = self.open_info()
         buttons = []
+        if self.can_save:
+            save = self._save_vm()["button"]
+            buttons.append({"key": "save", "text": save["text"], "kind": "secondary", "copied": False, "enabled": save["enabled"], "a11y": save["a11y"], "tip": save["tip"]})
         for key, text, kind in (("title", T["drf_copy_title"], "secondary"), ("body", T["drf_copy_body"], "secondary"), ("all", T["drf_copy_all"], "primary")):
             done = key in self.copied
             buttons.append({"key": key, "text": self.copied_text(key) if done else text, "kind": kind, "copied": done, "enabled": enabled, "a11y": text, "tip": T["drf_copy_tip_" + key]})
@@ -697,7 +1004,11 @@ class DraftsController:
         count = rules.count_text(self.body)
         edited = self.title_edited() or self.body_edited()
         changed = rules.changed_chars(body.selected_title, body.titles, self.title, body.body_text, self.body) if body is not None and edited else 0
-        return {"count_text": T["drf_count"].format(n=count[0], m=count[1]), "edit_text": T["drf_edit_some"].format(n=changed) if edited else T["drf_edit_none"], "edited": edited}
+        status = {"count_text": T["drf_count"].format(n=count[0], m=count[1]), "edit_text": T["drf_edit_some"].format(n=changed) if edited else T["drf_edit_none"], "edited": edited}
+        if self.can_save:
+            saved = self._save_vm()
+            status["save_text"], status["save_a11y"], status["save_tone"] = saved["text"], saved["a11y"], saved["tone"]
+        return status
 
     def _normal(self):
         result = self.result
@@ -711,12 +1022,13 @@ class DraftsController:
                           "editable": not self.locked, "locked_text": T["drf_edit_locked"] if self.locked else ""},
             "editor": {"label": T["drf_body_label"], "value": self.body, "a11y": T["drf_body_a11y"], "min_height": rules.EDITOR_MIN_HEIGHT, "editable": not self.locked, "locked_text": T["drf_edit_locked"] if self.locked else "", **self.editor_status()},
             "side": self._side(), "actions": self._actions(),
+            **({"save": self._save_vm()} if self.can_save else {}),
         }
 
     def view(self, diag_text=""):
         state = self.state
         vm = {"state": state, "busy": self.busy, **self._head(), **self._sample(), "notice": {"level": self.notice[0], "text": self.notice[1]} if self.notice else None,
-              "loading": {"text": T["drf_loading"], "a11y": T["drf_loading_a11y"]},
+              "loading": {"text": T["drf_saved_opening"] if self.opening else T["drf_loading"], "a11y": T["drf_loading_a11y"]},
               "error": {"title": T["drf_error_title"], "desc": T["drf_error_desc"], "button": T["drf_error_btn"], "diag": diag_text, "user": getattr(self.failure, "user_message", "") if self.failure else ""},
               "empty": self._empty(), "refused": self._refused(), "notfound": {"title": T["drf_notfound_title"], "desc": T["drf_notfound_desc"], "button": T["drf_to_topics"]},
               "normal": None}
