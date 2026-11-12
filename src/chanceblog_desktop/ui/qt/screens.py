@@ -13,6 +13,7 @@ from ..core import tokens as K
 from ..core.text import T
 from . import board
 from . import components as UI
+from .backup_parts import backup_section
 from .blog_parts import NoticeBar
 from .gauges import UsageBar
 from .key_parts import key_section
@@ -344,6 +345,8 @@ def settings_screen(shell, vm):
     outer.addWidget(section)
     if state in ("normal", "partial", "offline"):
         outer.addWidget(UI.label(vm["keys_note"], "sub", wrap=True))
+    if vm.get("backup"):                                                                    # 백업·복원 카드(BACKUPUI) — 연결 정보와 따로 읽고 그리므로 연결 정보를 못 읽은 상태에서도 보인다
+        outer.addWidget(backup_section(vm["backup"], shell))
     outer.addWidget(style_entry_card(shell))                                           # 맨 아래의 작은 카드 — 내 글 문체 참고값 보기(N-3a)를 여는 읽기 전용 대화상자의 진입점(연결 상태와 상관없이 늘 있다)
     outer.addStretch(1)
     return page

@@ -133,6 +133,10 @@ def child(args):
         style_shots(app, ui_offscreen, args, report, logical, tag, out)
         print(json.dumps(report, ensure_ascii=False))
         return 0
+    if getattr(args, "only", "") == "backup":                                            # 백업·복원 카드 장면만(다른 사진은 건드리지 않는다)
+        backup_shots(app, ui_offscreen, args, report, logical, tag, out)
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
     window = make("normal")
     shoot(window, "home")
     audit(window, "home")
@@ -199,6 +203,7 @@ def child(args):
     keys_shots(app, ui_offscreen, args, report, logical, tag, out)
     candidates_shots(app, ui_offscreen, args, report, logical, tag, out)
     drafts_shots(app, ui_offscreen, args, report, logical, tag, out)
+    backup_shots(app, ui_offscreen, args, report, logical, tag, out)
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
@@ -1401,13 +1406,249 @@ def style_shots(app, ui_offscreen, args, report, logical, tag, out):
     window.close()
 
 
+def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
+    """백업·복원 카드(BACKUPUI) 사진·점검 — 설정 화면의 카드(예시 목록·깨진 백업이 있는 목록·비어 있음·읽는 중·읽기 오류·펼친 '들어 있지 않은 것')·지금 백업(쓰는 중 진행·완료·부분 백업)·복원(확인창·쓰는 중·완료·복원 실패)·실패 안내(키 모양 발견·쓰기 실패)·최소 창(900×560)·실제 어댑터.
+    카드는 창을 길게 늘려 한 장으로 찍고 카드 둘레만 남긴다(`shoot_card`), 확인창은 창 전체를 찍는다. 이름·시각·개수는 모두 지어낸 예시이고 실제 어댑터 장면은 이 도구가 만든 임시 폴더에만 쓴다(키는 어디에도 없다 — 키 모양 발견 장면은 가짜 공급자가 위치 줄만 흉내 낸다).
+    점검은 글자 잘림·눌려 잘린 부품·가로 스크롤과 '확인창이 창 안에 들어오는가'(`fits_window`)다."""
+    import tempfile
+    import threading
+    from PySide6.QtCore import QRect, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget
+    from chanceblog_desktop.ui.core import backups as backup_core
+    from chanceblog_desktop.ui.core.clock import FixedClock
+    from chanceblog_desktop.ui.core.jobs import JobCancelled
+    from chanceblog_desktop.ui.core.services import FakeHomeProvider
+    from chanceblog_desktop.ui.core.text import T
+    from chanceblog_desktop.ui.qt import backup_parts
+    from chanceblog_desktop.ui.qt.shell import AppShell
+
+    class Held(backup_core.FakeBackupsProvider):
+        """사진용 가짜 공급자 — `hold_write` 면 쓰기가 진행을 한 번 알린 뒤 `go` 가 켜질 때까지 멈춰 있고, `hold_load` 면 목록 읽기가 멈춰 있다('쓰는 중'·'읽는 중' 사진). 장면이 끝나면 `go.set()` 으로 풀어 창이 바로 닫히게 한다."""
+
+        def __init__(self, *args, hold_load=False, hold_write=False, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.go = threading.Event()
+            self.hold_load, self.hold_write = hold_load, hold_write
+
+        def _hold(self, cancelled):
+            while not self.go.wait(0.02):
+                if cancelled():
+                    raise JobCancelled()
+
+        def load_backups(self, progress, cancelled):
+            if self.hold_load:
+                self._hold(cancelled)
+            return super().load_backups(progress, cancelled)
+
+        def create_backup(self, progress, cancelled):
+            if self.hold_write:
+                progress(0.4, T["backup_step_save"])
+                self._hold(cancelled)
+            return super().create_backup(progress, cancelled)
+
+        def restore_backup(self, name, progress, cancelled):
+            if self.hold_write:
+                progress(0.6, T["backup_step_change"])
+                self._hold(cancelled)
+            return super().restore_backup(name, progress, cancelled)
+
+    class Blocked(backup_core.FakeBackupsProvider):
+        """키 모양을 발견해 멈추는 가짜 공급자 — 위치 줄은 실제 서비스의 모양을 흉내 낸다(발견한 글은 어디에도 없다)."""
+
+        def create_backup(self, progress, cancelled):
+            progress(0.5, T["backup_step_save"])
+            raise backup_core.make_failure("blocked", "SAMPLE_BLOCKED", summary=("글 보관함 · 저장한 초안 · 글 1a2b3c4d에서 1건(Google API 키 1) — 3번째 줄", "채널 프로필 · 첫째 프로필에서 1건(GitHub 토큰 1) — 4번째 줄",
+                                                                               "해당 줄을 직접 지운 뒤 다시 백업해 주세요 — 앱은 자동으로 지우거나 바꾸지 않아요"))
+
+    def make(provider, size=None):
+        window = AppShell(FakeHomeProvider(), backups=provider, autoload=False, clock=FixedClock(CAPTURE_TIME))
+        window.resize(*(size or logical))
+        window.show()
+        window.go("settings")
+        ui_offscreen.wait_until(app, lambda: window.state.conn_state != "loading" and (window.state.backups.state != "loading" or getattr(provider, "hold_load", False)), 10)
+        ui_offscreen.settle(app)
+        return window
+
+    def settled(window):
+        """쓰기가 끝나고 새 목록을 읽어 다시 그릴 때까지 기다린다."""
+        controller = window.state.backups
+        ui_offscreen.wait_until(app, lambda: controller.pending is None and not controller.busy and not controller.loading and not controller.reload_wanted, 10)
+        ui_offscreen.settle(app, 6)
+
+    def card_of(window):
+        return window.screen_widget.findChild(backup_parts.BackupSection)
+
+    def audit(window, name):
+        dialog = window.dialog
+        inside = (not dialog.is_open) or window.rect().contains(dialog.geometry())
+        report["checks"][name] = {"clipped": ui_offscreen.find_clipping(window) + ui_offscreen.find_squeezed(window), "horizontal_scroll": window.scroll.horizontalScrollBar().maximum() > 0, "fits_window": bool(inside)}
+
+    def unfocus():
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            focus.clearFocus()                                                         # 앞 동작의 포커스 링이 사진에 남지 않게(포커스 링은 별도 시험)
+
+    def save(pixmap, name):
+        if not args.check:
+            pixmap.save(str(out / f"{tag}_{name}.png"))
+        report["shots"][name] = [pixmap.width(), pixmap.height(), round(pixmap.devicePixelRatio(), 2)]
+
+    def shoot_card(window, name):
+        """카드 한 장 — 창을 아주 길게 늘려 카드 전체를 찍고 카드 둘레만 남긴다(사이드바·다른 카드는 빼고 카드가 실제 크기로 보이게)."""
+        unfocus()
+        if args.check:                                                                 # 점검만 할 때는 큰 사진을 만들지 않는다(글자 잘림·가로 스크롤은 `audit` 이 본다) — `--check` 전체 실행의 시간 제한(시험 240초)을 지키려고
+            card = card_of(window)
+            report["shots"][name] = [card.width(), card.height(), 1.0]
+            return
+        window.resize(logical[0], 6000)
+        ui_offscreen.settle(app, 8)
+        card = card_of(window)
+        corner = card.mapTo(window, card.rect().topLeft())
+        pixmap = window.grab()
+        ratio = pixmap.devicePixelRatio()
+        pixmap = pixmap.copy(QRect(round(max(corner.x() - 16, 0) * ratio), round(max(corner.y() - 16, 0) * ratio), round((card.width() + 32) * ratio), round((card.height() + 32) * ratio)))
+        window.resize(*logical)
+        ui_offscreen.settle(app)
+        save(pixmap, name)
+
+    def shoot_window(window, name):
+        """창 전체 — 카드가 보이도록 스크롤한 뒤 찍는다(확인창·최소 창)."""
+        unfocus()
+        window.scroll.ensureWidgetVisible(card_of(window))
+        ui_offscreen.settle(app, 4)
+        save(window.grab(), name)
+
+    def click(button):
+        QTest.mouseClick(button, Qt.LeftButton)
+        ui_offscreen.settle(app, 4)
+
+    def confirm(window):
+        click(next(button for button in window.dialog.findChildren(QAbstractButton) if button.property("focus_key") == "dialog-ok"))
+
+    window = make(backup_core.FakeBackupsProvider("normal"))                           # 예시 목록 — 완료·복원 직전 사본·부분 백업
+    shoot_card(window, "backup_card")
+    audit(window, "backup_card")
+    card_of(window).excluded.flip()                                                    # '백업에 들어 있지 않은 것' 펼침
+    ui_offscreen.settle(app, 3)
+    shoot_card(window, "backup_excluded_open")
+    audit(window, "backup_excluded_open")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("broken"))                           # 깨진 백업이 하나 있는 목록 — 복원 단추가 꺼진다
+    shoot_card(window, "backup_broken")
+    audit(window, "backup_broken")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("empty"))
+    shoot_card(window, "backup_empty")
+    audit(window, "backup_empty")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("interrupted"))                      # 복원이 중간에 멈춘 흔적 — 쉬운 안내 띠와 '안전 사본으로 되돌리기'(D-463)
+    shoot_card(window, "backup_interrupted")
+    audit(window, "backup_interrupted")
+    window.close()
+    provider = Held(hold_load=True)                                                    # 목록을 읽는 중
+    window = make(provider)
+    shoot_card(window, "backup_loading")
+    audit(window, "backup_loading")
+    provider.go.set()
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("error"))                            # 읽기 오류 — 그래도 백업은 만들 수 있다
+    shoot_card(window, "backup_error")
+    audit(window, "backup_error")
+    window.close()
+    provider = Held(hold_write=True)                                                   # 지금 백업 — 쓰는 중(진행 줄·꺼진 단추)
+    window = make(provider)
+    click(card_of(window).create_button)
+    ui_offscreen.wait_until(app, lambda: window.state.backups.progress[0] > 0, 5)
+    ui_offscreen.settle(app, 4)
+    shoot_card(window, "backup_creating")
+    audit(window, "backup_creating")
+    provider.go.set()
+    settled(window)
+    shoot_card(window, "backup_created")                                               # 완료 — 결과 띠·새 줄
+    audit(window, "backup_created")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("normal", create_status="partial"))  # 일부만 담은 백업
+    click(card_of(window).create_button)
+    settled(window)
+    shoot_card(window, "backup_partial")
+    audit(window, "backup_partial")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("normal"))                           # 복원 — 확인창이 먼저(처음 포커스는 취소)
+    click(card_of(window).rows[0].restore)
+    shoot_window(window, "backup_restore_dialog")
+    audit(window, "backup_restore_dialog")
+    window.close_dialog()
+    click(card_of(window).rows[2].restore)                                             # 일부만 담긴 백업은 그 사실이 확인창에도 있다
+    shoot_window(window, "backup_restore_dialog_partial")
+    audit(window, "backup_restore_dialog_partial")
+    window.close_dialog()
+    window.close()
+    provider = Held(hold_write=True)                                                   # 복원 — 쓰는 중, 끝난 뒤(복원 직전 사본이 목록 맨 위에 생긴다)
+    window = make(provider)
+    click(card_of(window).rows[0].restore)
+    confirm(window)
+    ui_offscreen.wait_until(app, lambda: window.state.backups.progress[0] > 0, 5)
+    ui_offscreen.settle(app, 4)
+    shoot_card(window, "backup_restoring")
+    audit(window, "backup_restoring")
+    provider.go.set()
+    settled(window)
+    shoot_card(window, "backup_restored")
+    audit(window, "backup_restored")
+    window.close()
+    window = make(Blocked("normal"))                                                   # 키 모양을 발견해 멈춤 — 위치·유형 줄만, '무시하고 백업' 은 없다
+    click(card_of(window).create_button)
+    settled(window)
+    shoot_card(window, "backup_blocked")
+    audit(window, "backup_blocked")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("normal", create_failure="io"))      # 쓰기 실패 — 정해진 쉬운 문장
+    click(card_of(window).create_button)
+    settled(window)
+    shoot_card(window, "backup_failed")
+    audit(window, "backup_failed")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("normal", restore_failure="restore"))                # 복원 실패 — 돌리지 못한 것이 있으면 이름이 붙는다
+    click(card_of(window).rows[0].restore)
+    confirm(window)
+    settled(window)
+    shoot_card(window, "backup_restore_failed")
+    audit(window, "backup_restore_failed")
+    window.close()
+    window = make(backup_core.FakeBackupsProvider("normal"), size=(900, 560))          # 최소 창 크기 — 가로 스크롤·글자 잘림 없음
+    shoot_window(window, "backup_min_window")
+    audit(window, "backup_min_window")
+    click(card_of(window).rows[0].restore)
+    shoot_window(window, "backup_min_window_dialog")
+    audit(window, "backup_min_window_dialog")
+    window.close_dialog()
+    window.close()
+    base = str(out) if out.exists() else None
+    with tempfile.TemporaryDirectory(dir=base, prefix="_real") as tmp:                  # 실제 어댑터 — 임시 폴더·가짜 보관소의 예시 글 하나를 실제 서비스로 백업한 뒤의 모습(예시 표시 없음)
+        from chanceblog_desktop.security.keystore import MemoryStore
+        from chanceblog_desktop.service import projects
+        from chanceblog_desktop.service.context import Context, Settings, Workspace
+        from chanceblog_desktop.ui.backups_adapter import ServiceBackupsProvider
+        workspace = Workspace(Path(tmp) / "data")
+        ctx = Context(workspace, Settings(workspace.settings_path), backend=None, keystore=MemoryStore())
+        workspace.ensure()
+        projects.new_project(ctx, "예시 글", "예시 본문이에요.")
+        window = make(ServiceBackupsProvider(context_factory=lambda data_dir=None: ctx))
+        click(card_of(window).create_button)
+        settled(window)
+        shoot_card(window, "backup_real")
+        audit(window, "backup_real")
+        window.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("out", nargs="?", default="ui_shots")
     parser.add_argument("--env", action="append", default=None, help="가로x세로@배율% (여러 번 줄 수 있다)")
     parser.add_argument("--check", action="store_true", help="사진을 저장하지 않고 점검만")
     parser.add_argument("--gallery", action="store_true", help="앱 화면 대신 공통 부품 모음(개발용)을 찍고 점검한다")
-    parser.add_argument("--only", choices=("keys", "drafts", "style"), default="", help="키 연결 화면(P4f)·초안 작성 화면(P4e)·내 글 문체 참고값 보기(N-3a) 장면만 찍고 점검한다")
+    parser.add_argument("--only", choices=("keys", "drafts", "style", "backup"), default="", help="키 연결 화면(P4f)·초안 작성 화면(P4e)·내 글 문체 참고값 보기(N-3a)·백업·복원 카드(BACKUPUI) 장면만 찍고 점검한다")
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.child:

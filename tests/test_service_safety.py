@@ -37,6 +37,12 @@ OS_CALLS = {                                      # 낮은 수준 파일 호출�
     "os.link": {("lock.py", "_take_over")},
     "os.rename": set(), "os.remove": set(),
 }
+# 전체 백업·복원(BACKUPUI, 결정 D-380): `service/backup_flow.py` 가 파일을 만들고 옮기고 지우는 곳은 **아래 함수뿐**이다(그 밖의 함수에 새로 생긴 쓰기·`os.replace`·`os.rename` 은 그대로 걸린다 — `test_service_backup_rules.py` 가 합성 소스로 규칙을 시험한다).
+# 이유: 임시 폴더를 만들고(`_make_folder`) · 다 만든 폴더의 이름을 바꿔 자리에 두고(`_finish_folder`) · 실패·중단하면 앱이 만든 이름의 파일만 지우고(`_remove_file`·`_remove_known_folder`·`_remove_empty`) ·
+# 복원이 JSON 을 임시 이름에서 제자리로 바꾸고(`_swap_in`) · 깨진 지금 파일을 지우지 않고 옆으로 옮기고(`_move_aside`) 실패하면 제자리로 돌린다(`_put_back`). 파일 내용을 쓰는 일은 `context._write_durably` 가 한다.
+FILE_WRITERS.update({("backup_flow.py", "_make_folder"): {"mkdir"}, ("backup_flow.py", "_remove_file"): {"unlink"}, ("backup_flow.py", "_remove_known_folder"): {"unlink", "rmdir"}, ("backup_flow.py", "_remove_empty"): {"rmdir"}, ("backup_flow.py", "_finish_folder"): {"rename"}})
+OS_CALLS["os.replace"] = OS_CALLS["os.replace"] | {("backup_flow.py", "_swap_in"), ("backup_flow.py", "_move_aside"), ("backup_flow.py", "_put_back")}
+OS_CALLS["os.rename"] = {("backup_flow.py", "_finish_folder")}
 # 파일을 읽기 전용으로 여는 곳(내장 `open`)은 **(파일, 함수)** 하나뿐이다 — 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는 `own_posts.py` 의 `_read_prefix`.
 # 허용은 모드가 글자 `rb` 인 `open(경로, "rb")` 호출에만 걸린다 — 쓰기·덧붙이기·갱신 모드와 모드를 안 적은 호출·`.open` 속성 호출은 그대로 걸린다(합성 소스로 시험한다).
 READ_OPENS = {("own_posts.py", "_read_prefix")}

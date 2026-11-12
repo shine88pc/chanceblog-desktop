@@ -52,7 +52,7 @@ class GuiParser(argparse.ArgumentParser):
 
 
 def build_parser():
-    parser = GuiParser(prog=PROG, description="ChanceBlog Desktop 화면을 엽니다(홈은 읽기만 합니다 — 설정 화면도 열고 다시 읽는 것은 읽기뿐입니다. 블로그 관리 화면은 저장·복제·삭제를, Seed 관리 화면은 승인·바꾸기·저장·등록·불러오기를, 주제 후보 화면은 후보 만들기 확인창의 만들기를, 설정 화면은 키를 등록·삭제·고치는 단추를 눌렀을 때만 해당 파일·자격 증명 관리자에 씁니다).")
+    parser = GuiParser(prog=PROG, description="ChanceBlog Desktop 화면을 엽니다(홈은 읽기만 합니다 — 설정 화면도 열고 다시 읽는 것은 읽기뿐입니다. 블로그 관리 화면은 저장·복제·삭제를, Seed 관리 화면은 승인·바꾸기·저장·등록·불러오기를, 주제 후보 화면은 후보 만들기 확인창의 만들기를, 설정 화면은 키를 등록·삭제·고치는 단추와 백업·복원 카드의 지금 백업·복원하기(확인창 뒤)를 눌렀을 때만 해당 파일·자격 증명 관리자에 씁니다).")
     parser.add_argument("--data-dir", default=None, metavar="폴더", help="사용자 데이터 폴더(없으면 기본 위치 — 명령줄과 같은 폴더를 씁니다)")
     parser.add_argument("--sample", action="store_true", help="내 데이터 대신 예시 데이터로 화면을 보여 줍니다")
     return parser
@@ -75,5 +75,5 @@ def main(argv=None, *, out=None):
     from .adapters import ServiceHomeProvider
     from .core.services import FakeHomeProvider
     from .qt.app import run
-    provider = FakeHomeProvider(delay=0.3) if args.sample else ServiceHomeProvider(args.data_dir)
+    provider = FakeHomeProvider(delay=0.3, backups=True) if args.sample else ServiceHomeProvider(args.data_dir)          # 예시 화면은 백업·복원 카드도 메모리 예시로 짝을 둔다(D-391 — 아무것도 저장하지 않는다)
     return run(provider)

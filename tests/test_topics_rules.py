@@ -261,8 +261,10 @@ class HygieneTest(unittest.TestCase):
         # 파일·저장소는 모르고 읽기·계산뿐이다. 실제 공급자 `ui/drafts_adapter.py` 는 이 패키지를 가져오지 않고 서비스 함수 하나만 부른다.
         # 의도적 갱신(P4e 수정 라운드, D-297 ②): 같은 파일 `ui/core/drafts.py` 가 건강 효과 단정의 두 번째 방어선 `review_health` 로 판정기 `topics.safety.check_text` 를 복사할 글의 문장마다 한 번 더 부른다 —
         # 이 파일은 이미 아래 허용 목록에 있어 목록은 늘지 않았다(읽기·계산뿐이고 `topics/` 는 바꾸지 않았다).
+        # 의도적 갱신(전체 백업·복원, D-380): 서비스 `service/backup_flow.py` 가 **파일 이름 상수만** 가져온다(`topics.layout` 의 주제 보관함·채널 프로필·Seed·캘린더 파일 이름) — 이름을 따로 베끼면 백업이 담는 파일과 앱이 쓰는 파일이 어긋날 수 있어서다.
+        # 저장·계산은 쓰지 않고 `topics/` 는 바꾸지 않았다(백업은 파일을 통째로 복사할 뿐 주제 엔진의 규칙을 모른다).
         users = sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8")))
-        self.assertEqual(users, ["service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/draft_engine.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/candidates_adapter.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/candidate_rules.py", "ui/core/candidates.py", "ui/core/candidates_view.py", "ui/core/drafts.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
+        self.assertEqual(users, ["service/backup_flow.py", "service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/draft_engine.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/candidates_adapter.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/candidate_rules.py", "ui/core/candidates.py", "ui/core/candidates_view.py", "ui/core/drafts.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
                          "이 패키지를 쓰는 곳을 늘리는 것은 의식적인 변경이다 — 이 목록과 결정 기록을 함께 고친다")
 
     def test_the_pattern_that_looks_for_users_of_the_package_works(self):

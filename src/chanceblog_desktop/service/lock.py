@@ -70,7 +70,7 @@ class PublishLock:
     busy_code = "PUBLISH_IN_PROGRESS"          # 못 잡았을 때의 오류 코드 — 저장소 잠금은 PUBLISH_REPO_BUSY
     what = "같은 글을 올리다"                    # 낡은 잠금을 넘겨받았다고 알릴 때 쓰는 말('이전에 … 멈춘 흔적')
 
-    def __init__(self, folder, project_id, *, now, deadline=0, alive=None):
+    def __init__(self, folder, project_id, *, now, deadline=0, alive=None, host=None):
         if not isinstance(project_id, str) or not _ID.match(project_id):
             raise AppError("CONTENT_INVALID", {"항목": "프로젝트 번호"})
         self.path = os.path.join(os.fspath(folder), project_id + LOCK_SUFFIX)
@@ -79,7 +79,7 @@ class PublishLock:
         self.now = now
         self.max_seconds = lock_seconds(deadline)
         self.run = secrets.token_hex(16)
-        self.host = host_name()                 # `platform.node()` 는 Windows 에서 하위 프로세스(`cmd /c ver`)를 띄울 수 있어 쓰지 않는다(PCSEC1 H3 'Network Write 0' 시험이 찾았다)
+        self.host = host_name() if host is None else host        # 이름을 안 주면 이 PC 이름을 읽는다(`host_name()` — `platform.node()` 는 Windows 에서 하위 프로세스(`cmd /c ver`)를 띄울 수 있어 쓰지 않는다, PCSEC1 H3 'Network Write 0' 시험이 찾았다) — 백업·복원의 잠금은 빈 글을 줘 그 일도 하지 않는다(같은 PC 로 보고 프로세스 생존을 본다)
         self.alive = alive or (lambda holder: process_alive(holder.pid, holder.started))        # 잠금을 남긴 프로세스가 살아 있는가(True·False·None=모름) — 시험에서 바꿔 끼운다
         self.why_stale = ""          # 넘겨받을 때의 이유: old(시간이 지남)·gone(프로세스가 이미 끝남)
         self.taken_over = ""        # 낡은 잠금을 넘겨받았다면 그 사실(화면에 알린다)

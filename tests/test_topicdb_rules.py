@@ -25,9 +25,10 @@ FILES = sorted(TOPICDB.glob("*.py"))
 SERVICE_TOPIC_FILES = [SRC / "service" / name for name in ("topics.py", "topic_files.py", "topic_format.py")]
 FORBIDDEN_IMPORTS = {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "ftplib", "smtplib", "telnetlib", "xmlrpc", "asyncio", "shutil", "tempfile"}
 FORBIDDEN_LAYERS = {"service", "ui", "publish", "render", "jobs", "update", "assist", "check"}
-ALLOWED_INTERNAL = {"content.candidates", "content.store", "echo", "errors", "security.mask", "security.refuse", "security.scan"}        # `..` 로 가져오는 안쪽 모듈 — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
+ALLOWED_INTERNAL = {"content.candidates", "content.store", "echo", "errors", "security.backup_note", "security.mask", "security.refuse", "security.scan"}        # `..` 로 가져오는 안쪽 모듈 — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
 # 의도적 갱신(PCSEC1 M3, D-348): 백업 직전 검사(`backup.scan_key_shape`)가 본문 속 비밀 형태 검사기(`security/scan.py`)를 부르고 위치·유형 말을 `security/refuse.py` 에서 받는다 — 둘 다 표준 라이브러리와
 # `echo`·`errors` 만 가져오는 잎 모듈이라 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다(`security.mask` 와 같은 자리). 그 밖의 `security` 모듈·서비스 층은 여전히 허용하지 않는다.
+# 의도적 갱신(BACKUPUI D-467): 백업 목록의 자격 증명 문장(`CREDENTIAL_NOTE`)을 전체 백업의 목록과 **한 상수**로 쓰려고 `security/backup_note.py` 를 가져온다 — 글 상수만 있는 잎 모듈이라(`types` 말고는 아무것도 가져오지 않고 파일·네트워크·시계를 쓰지 않는다) 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다.
 # 파일을 쓰는 호출이 허용된 (파일, 함수) 와 그 호출의 전체 이름 — 이유를 함께 적는다. 목록을 늘리는 것은 시험 변경이므로 독립 검증에서 함께 본다.
 WRITERS = {
     ("file.py", "open"): {"path.parent.mkdir", "sqlite3.connect"},    # 보관함 폴더·파일을 만든다(없을 때) — 쓰기로 여는 `sqlite3.connect` 는 여기서만(읽기 전용 `mode=ro` 열기는 표 밖)
@@ -150,6 +151,7 @@ class ImportRulesTest(unittest.TestCase):
         # 의도적 갱신(P4b, D-218 ⑤): 서비스 층의 새 모듈 `service/blog_profiles.py` 가 저장 계층의 점검 도구(`topicdb.backup` 의 JSON·키 모양 검사)를 읽을 때와 쓰기 전에 그대로 쓴다 — 읽을 때의 판정과 쓰기 전 판정이 한 벌이게.
         # 규칙의 뜻(저장 계층은 서비스 층만 쓴다)은 그대로이고, 파일에 쓰는 일은 여전히 `context.write_json` 하나다(저장 계층의 '쓰는 (파일, 함수)' 표는 안 건드렸다).
         # 의도적 갱신(Seed 관리, D-231): 서비스 층의 또 하나의 새 모듈 `service/seed_manage.py` 가 같은 점검 도구(`topicdb.backup` 의 JSON·키 모양 검사)를 씨앗 파일을 읽을 때와 쓰기 전에 그대로 쓴다(세 모듈 → 네 모듈). 뜻은 그대로다.
+        # 의도적 갱신(전체 백업·복원, D-380): 서비스 층의 새 모듈 `service/backup_flow.py` 가 저장 계층의 점검 도구(`topicdb.backup` 의 JSON 모양 검사와 `topicdb.store` 의 읽기 전용 열기)를 백업·복원이 만든 사본을 확인할 때 그대로 쓴다(네 모듈 → 다섯 모듈). 뜻은 그대로다 — 파일을 쓰는 (파일, 함수) 표는 안 건드렸고 `backup_flow.py` 의 쓰기는 `test_service_safety` 가 (파일, 함수) 단위로 허용한다.
         users = []
         for path in SRC.rglob("*.py"):
             relative = path.relative_to(SRC)
@@ -158,7 +160,7 @@ class ImportRulesTest(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             if re.search(r"(?m)^\s*(?:from\s+(?:[.\w]*\.)?topicdb\b|import\s+(?:[\w.]*\.)?topicdb\b|from\s+\.+\s+import\s+[^#\n]*\btopicdb\b)", text):
                 users.append(relative.as_posix())
-        self.assertEqual(sorted(users), ["service/blog_profiles.py", "service/seed_manage.py", "service/topic_files.py", "service/topics.py"], "주제 엔진 저장 계층을 쓰는 곳은 서비스의 네 모듈뿐이다")
+        self.assertEqual(sorted(users), ["service/backup_flow.py", "service/blog_profiles.py", "service/seed_manage.py", "service/topic_files.py", "service/topics.py"], "주제 엔진 저장 계층을 쓰는 곳은 서비스의 다섯 모듈뿐이다")
 
 
 class WriteRulesTest(unittest.TestCase):

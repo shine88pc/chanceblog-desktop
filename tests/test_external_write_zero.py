@@ -134,6 +134,8 @@ class EveryScreenActionTest(unittest.TestCase):
             data = str(Path(tmp) / "data")
             home = ServiceHomeProvider(data)                                                           # 기본 부품(make_context)으로 만든 홈 공급자와 짝 공급자들
             blogs, candidates, drafts, seeds, keys = home.blogs_provider(), home.candidates_provider(), home.drafts_provider(), home.seeds_provider(), home.connections_provider()
+            backups = home.backups_provider()                                                           # 설정 화면의 백업·복원 카드가 서비스로 가는 문(BACKUPUI — 목록·지금 백업·복원·멈춘 복원 되돌리기)
+            Path(data).mkdir(parents=True, exist_ok=True)                                               # 데이터 폴더를 먼저 만든다 — 없으면 어댑터가 첫 줄에서 `DATA_DIR_NOT_FOUND` 로 끝나 실제 길이 돌지 않는다
             calls = [
                 ("home.load_home", lambda: home.load_home(progress, cancelled)), ("home.load_connections", lambda: home.load_connections(progress, cancelled)),
                 ("blogs.load_blogs", lambda: blogs.load_blogs(progress, cancelled)), ("blogs.save_blog", lambda: blogs.save_blog("naver_a", {"display_name": "시험"}, "0", progress, cancelled)),
@@ -150,6 +152,8 @@ class EveryScreenActionTest(unittest.TestCase):
                 ("keys.remove_key", lambda: keys.remove_key("ai_assist", "00000000", progress, cancelled)), ("keys.set_key_state", lambda: keys.set_key_state("ai_assist", "00000000", "off", progress, cancelled)),
                 ("keys.rename_key", lambda: keys.rename_key("ai_assist", "00000000", "새 이름", progress, cancelled)), ("keys.move_key", lambda: keys.move_key("ai_assist", "00000000", "up", progress, cancelled)),
                 ("keys.test_key", lambda: keys.test_key("ai_assist", "00000000", progress, cancelled)),
+                ("backups.load_backups", lambda: backups.load_backups(progress, cancelled)), ("backups.create_backup", lambda: backups.create_backup(progress, cancelled)),
+                ("backups.restore_backup", lambda: backups.restore_backup("full-20261111-120000", progress, cancelled)), ("backups.revert_interrupted", lambda: backups.revert_interrupted(progress, cancelled)),
             ]
             with og.Tripwire() as wire:
                 for label, call in calls:
@@ -168,7 +172,7 @@ class EveryScreenActionTest(unittest.TestCase):
         import ast
         ui = ss.ROOT / "src" / "chanceblog_desktop" / "ui"
         found = set()
-        for name, prefix in (("adapters.py", "home"), ("blogs_adapter.py", "blogs"), ("candidates_adapter.py", "candidates"), ("drafts_adapter.py", "drafts"), ("seeds_adapter.py", "seeds"), ("keys_adapter.py", "keys")):
+        for name, prefix in (("adapters.py", "home"), ("blogs_adapter.py", "blogs"), ("candidates_adapter.py", "candidates"), ("drafts_adapter.py", "drafts"), ("seeds_adapter.py", "seeds"), ("keys_adapter.py", "keys"), ("backups_adapter.py", "backups")):
             tree = ast.parse((ui / name).read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef) and node.name.startswith("Service") and node.name != "ServiceEngine":
@@ -177,7 +181,8 @@ class EveryScreenActionTest(unittest.TestCase):
                             found.add(f"{prefix}.{item.name}")
         expected = {"home.load_home", "home.load_connections", "blogs.load_blogs", "blogs.save_blog", "blogs.clone_blog", "blogs.clear_blog", "candidates.load_candidates", "candidates.preview_make",
                     "candidates.make_candidates", "drafts.make_draft", "seeds.load_seeds", "seeds.set_state", "seeds.set_states", "seeds.edit_seed", "seeds.create_seed", "seeds.preview_import",
-                    "seeds.apply_import", "keys.add_key", "keys.remove_key", "keys.set_key_state", "keys.rename_key", "keys.move_key", "keys.test_key"}
+                    "seeds.apply_import", "keys.add_key", "keys.remove_key", "keys.set_key_state", "keys.rename_key", "keys.move_key", "keys.test_key",
+                    "backups.load_backups", "backups.create_backup", "backups.restore_backup", "backups.revert_interrupted"}
         self.assertEqual(found, expected, "화면 어댑터의 공개 동작과 이 시험의 표가 달라졌다 — 새 동작을 표에 더한다")
 
 
