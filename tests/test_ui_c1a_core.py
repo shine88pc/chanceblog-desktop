@@ -21,6 +21,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+import secret_support as sec  # noqa: E402
 from chanceblog_desktop.ui import launcher  # noqa: E402
 from chanceblog_desktop.ui.core import app_state, clock, part_rules, services, text, tokens, version  # noqa: E402
 
@@ -329,6 +330,9 @@ class VersionTest(unittest.TestCase):
 
 class LauncherReleaseTest(unittest.TestCase):
     """앱 시작(`gui` 명령)의 Release 검사 — Release 인데 버전을 못 읽으면 쉬운 한국어 안내로 끝내고(종료 코드 1, 새 오류 코드 없음), 개발 화면은 `개발 버전` 으로 계속 간다."""
+
+    def setUp(self):
+        self.addCleanup(sec.uninstall_boundary)                    # `launcher.main` 이 맨 앞에서 공통 출력 경계를 깐다(D2) — 같은 프로세스에서 부른 시험이 경계를 남기지 않게
 
     def run_main(self, version_file, release, pyside6=False):
         out = io.StringIO()

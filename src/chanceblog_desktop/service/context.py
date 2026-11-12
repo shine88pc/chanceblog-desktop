@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import errno
 import json
+import ntpath
 import os
+import posixpath
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.profiles import NaverProfile
@@ -21,6 +23,7 @@ from ..content.store import Store
 from ..core import vendor_dir
 from ..errors import AppError
 from ..publish import gitrepo
+from . import external
 
 SHARING_VIOLATIONS = (5, 32)                      # 윈도 `winerror` 5(접근 거부)·32(공유 위반) — 같은 파일을 다른 읽기가 잡고 있어 이름을 못 바꿀 때(`PermissionError`)
 REPLACE_RETRY_WAITS = (0.03, 0.06, 0.09, 0.12, 0.15)     # 이름 바꾸기가 위 오류로 막히면 첫 시도 뒤 다섯 번까지만 다시 한다(30ms 씩 늘려 합쳐 0.45초 — 시도는 모두 여섯 번). 다른 오류는 다시 하지 않는다
@@ -43,6 +46,22 @@ def default_data_dir(env=None, *, windows=None, home=None):
     home = Path(home) if home else Path.home()
     base = (env.get("LOCALAPPDATA") or str(home / "AppData" / "Local")) if windows else (env.get("XDG_DATA_HOME") or str(home / ".local" / "share"))
     return Path(base) / APP_DIR_NAME
+
+
+def outside_user_profile(path, env=None, *, windows=None, home=None):
+    """데이터 폴더가 **사용자 프로필 밖**인가 — 같은 PC 의 다른 사용자가 읽을 수 있는 곳일 수 있다(PCSEC1 M1). **문자열 경로 비교만** 한다: 파일 시스템·`icacls`·하위 프로세스를 부르지 않고 권한도 바꾸지 않는다.
+    프로필 = Windows 는 `%LOCALAPPDATA%`·`%APPDATA%`·`%USERPROFILE%`, 그 밖은 `XDG_DATA_HOME`·`HOME`(그리고 `home` 을 주면 그것) 아래. `..` 은 접고 Windows 는 대소문자를 구분하지 않는다.
+    프로필 위치를 알 수 없으면(환경 변수가 비어 있는 시험 등) False 다 — 모르면 경고하지 않는다."""
+    env = os.environ if env is None else env
+    windows = (os.name == "nt") if windows is None else windows
+    pure, norm = (PureWindowsPath, ntpath.normpath) if windows else (PurePosixPath, posixpath.normpath)
+    names = ("LOCALAPPDATA", "APPDATA", "USERPROFILE") if windows else ("XDG_DATA_HOME", "HOME")
+    roots = [str(env.get(name) or "") for name in names] + ([str(home)] if home else [])
+    roots = [pure(norm(value)) for value in roots if value.strip()]
+    if not roots:
+        return False
+    target = pure(norm(str(path)))
+    return not any(root == target or root in target.parents for root in roots)
 
 
 def unsafe_reason(path):
@@ -225,7 +244,7 @@ class Context:
     workspace: Workspace
     settings: Settings
     backend: object
-    git: object = gitrepo.run_git
+    git: object = external.refusing_git     # 기본 git 실행기는 어떤 호출도 하위 프로세스를 띄우기 전에 거절한다(PCSEC1 H3 — 이 PC 에 Git 로그인이 있어도 앱은 쓰지 못한다)
     expected_origin: object = gitrepo.EXPECTED_ORIGIN
     clock: object = utc_now
     repo_override: str = ""
@@ -291,9 +310,8 @@ class Context:
 
 def make_context(*, data_dir=None, repo=None, env=None, git=None, expected_origin=None, clock=None, fetcher=None, sleep=None, monotonic=None, backend=None):
     """실제 실행용 Context 를 만든다. 시험은 git·시계·요청기·backend 를 바꿔 넣는다."""
-    from .backend import GitPagesBackend
     workspace = Workspace.resolve(data_dir, env=env)
-    git = git or gitrepo.run_git
+    git = git or external.refusing_git
     expected = expected_origin or gitrepo.EXPECTED_ORIGIN
-    backend = backend or GitPagesBackend(git=git, expected_origin=expected, fetcher=fetcher, sleep=sleep, monotonic=monotonic)
+    backend = backend or external.pages_backend(git=git, expected_origin=expected, fetcher=fetcher, sleep=sleep, monotonic=monotonic)       # 꽂힌 외부 어댑터가 없으면(이 빌드는 늘 없다) 파일만 읽는 backend
     return Context(workspace, Settings(workspace.settings_path), backend, git, expected, clock or utc_now, repo or "", env)

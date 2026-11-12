@@ -19,7 +19,7 @@ from ...content.profiles import find_markup
 from ...errors import AppError
 from ...topics import channels as ch
 from ...topics import wording
-from .text import T
+from .text import T, display_text
 
 SLOTS = ("github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b")                 # 서비스 슬롯과 같다(시험이 견준다)
 GENERATION_SLOTS = ("naver_a", "naver_b")                                                   # 후보 만들기를 켜고 끌 수 있는 슬롯
@@ -287,8 +287,7 @@ def options_of(spec):
 
 def shown(value, limit):
     """화면에 나가는 사용자 글 — 키·토큰 모양을 가린 뒤 줄인다(가리기가 먼저, 자르기가 나중이다)."""
-    from ...security.mask import safe_detail
-    return safe_detail(value, limit)
+    return display_text(value, limit)
 
 
 def slot_title(key):

@@ -725,6 +725,7 @@ CHILD = textwrap.dedent('''
     sys.path.insert(0, sys.argv[1])
     sys.path.insert(0, sys.argv[2])
     import service_support as ss
+    ss.external_write_on()                         # 자식 프로세스도 시험이므로 외부 Write 관문을 임시로 연다(소스 상수는 False — PCSEC1 H3)
     from chanceblog_desktop.service import cli
     from chanceblog_desktop.service.backend import GitPagesBackend
     from chanceblog_desktop.service.context import make_context
@@ -1010,6 +1011,14 @@ class TwoRealProcessesDifferentDataFoldersTest(RealProcessBase):
         self.assertEqual(code, 0, err)
         self.assertIn("이 저장소에 글을 올리다 멈춘 흔적(그 프로세스는 이미 끝나 있음)을 넘겨받았습니다", out)
         self.assertFalse(self.repo_lock_file.exists())
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":

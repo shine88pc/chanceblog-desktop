@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field, replace
 
+from ... import capabilities
 from .jobs import JobCancelled, JobFailure
 
 ServiceFailure = JobFailure                        # 서비스가 실패를 알리는 예외(쉬운 문장 + 진단 코드)
@@ -341,6 +342,7 @@ class ConnectionsData:
     fetched: str = ""                 # 마지막으로 읽은 때(사람이 읽는 글)
     offline: bool = False
     partial: tuple = field(default_factory=tuple)        # 못 읽은 것들: ("keystore",) · ("usage",)
+    fake_store: bool = False          # 시험 전용 가짜 보관소(`CHANCEBLOG_KEYSTORE`)를 쓰는 중인가 — 참이면 키 등록 화면이 '시험용 보관소 — 실제 키를 넣지 마세요' 를 눈에 띄게 알린다(PCSEC1 M2)
     store_ready: object = None        # 키 저장소(Windows 자격 증명 관리자)를 이 컴퓨터에서 쓸 수 있나(True·False, 모르면 None) — 거짓이면 키 등록·삭제·시험 단추가 꺼진다(P4f)
 
 
@@ -392,6 +394,7 @@ def sample_connections(scenario="normal"):
     (`connected` 는 호출 코드가 있는 용도에만 — 서비스가 그렇게 돌려준다). `not_connected` 는 키를 하나도 넣지 않은 처음 모습이다."""
     purposes = []
     for key, label, implemented, takes_keys, max_entries, rotation, legacy in _CONN_TABLE:
+        takes_keys = takes_keys and (key != "blogger" or capabilities.blogger_oauth_input_enabled())          # 예시 화면도 실제와 같다 — 이 빌드는 Blogger 입력 칸·단추를 보이지 않는다(PCSEC1)
         status, entries, usage = _CONN_BASE.get(key, ("not_connected", (), None))
         if legacy:
             continue                                                  # 옛 용도는 항목이 남아 있을 때만 보인다 — 예시에는 남은 항목이 없다

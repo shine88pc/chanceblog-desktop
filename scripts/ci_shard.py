@@ -122,6 +122,19 @@ def parse(argv, env):
     return shard, total, options
 
 
+def make_runner():
+    """시험 실패·오류 글에서 비밀 모양을 가리는 러너(`tests/secret_support.MaskingTextTestRunner` — PCSEC1 H1: 옛 시험의 `assertNotIn(비밀, 출력)` 이 실패해도 비밀을 찍지 않는다).
+    못 불러오면 보통 러너로 돌아가되 그 사실을 표준 오류로 알린다(시험 결과·종료 코드는 어느 쪽이든 같다)."""
+    try:
+        sys.path.insert(0, str(ROOT / "src"))
+        sys.path.insert(0, str(TESTS))
+        from secret_support import MaskingTextTestRunner
+    except Exception as error:
+        print(f"가리는 시험 러너를 불러오지 못해 보통 러너로 돌린다({type(error).__name__})", file=sys.stderr, flush=True)
+        return unittest.TextTestRunner(verbosity=2)
+    return MaskingTextTestRunner(verbosity=2)
+
+
 def main(argv=None, env=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     env = os.environ if env is None else env
@@ -146,7 +159,7 @@ def main(argv=None, env=None):
     tests = [test for name in mine for test in found[name]]
     everything = sum(len(items) for items in found.values())
     print(f"조각 {shard}/{total}: 시험 파일 {len(mine)}개·시험 {len(tests):,}개 (전체 {len(found)}개 파일·{everything:,}개 시험)", flush=True)
-    result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(tests))
+    result = make_runner().run(unittest.TestSuite(tests))
     return 0 if result.wasSuccessful() else 1
 
 

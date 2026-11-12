@@ -31,6 +31,9 @@ python -m chanceblog_desktop publish-pages 글번호 --yes        # 정말로 �
 python -m chanceblog_desktop check-deploy 글번호               # 공개 주소가 열리는지 확인(열리면 '공개됨')
 ```
 
+- **이 시험 버전은 외부 게시가 완전히 꺼져 있습니다.** `publish-pages`·`check-deploy`·`doctor --online` 은 아무것도 보내지 않고 `EXTERNAL_WRITE_DISABLED` 로 멈춥니다(PC 에 Git 로그인이 있어도 마찬가지이고 켜는 설정·옵션도 없습니다 — [`docs/SECURITY.md`](docs/SECURITY.md) 'PCSEC1' 절). 글은 이 PC 에서 쓰고 `preview`·`naver-package` 로 검토·복사해 직접 올립니다. `connect` 는 폴더 파일만 읽어 확인합니다.
+- **글에 붙여 넣은 키·토큰은 저장하지 않습니다.** 원고 제목·본문·후보·네이버 프로필을 저장하기 전과 `backup` 전에 Google API 키·GitHub 토큰·Bearer 토큰·OAuth 토큰·AWS 액세스 키·개인 키 모양을 검사해, 있으면 위치(칸·줄)와 유형만 알리고 멈춥니다(`SECRET_SHAPE_FOUND`). 앱은 글을 자동으로 지우거나 바꾸지 않고 '무시하고 저장'도 없습니다 — 그 줄을 직접 지운 뒤 다시 실행합니다.
+
 - **확인 없이는 올리지 않습니다.** `publish-pages` 는 `--yes` 가 없으면 무엇을 할지 보여 주기만 하고, 글 지우기(`delete`)도 `--yes` 가 있어야 합니다. 올리다 멈추면 같은 명령을 다시 실행하면 이어서 하고, 올리지 않고 되돌리려면 `publish-pages 글번호 --cancel --yes` 입니다. 다른 창에서 같은 글을 올리는 중이면 `PUBLISH_IN_PROGRESS` 로 멈추고 아무것도 바꾸지 않습니다(작업이 죽어 남은 잠금은 그 프로세스가 끝났으면 바로, 아니면 30분 뒤 넘겨받습니다). **다른 글**이 같은 저장소에 올라가는 중이면 끝나기를 기다렸다가(최대 2분) 이어서 올리고(이 잠금은 저장소의 `.git` 폴더 안에 있어서 `--data-dir` 을 다르게 준 다른 앱도 서로를 압니다 — `.git` 에 잠금 파일을 못 만들면 올리지 않고 멈춥니다), 끝내 안 끝나면 `PUBLISH_REPO_BUSY` 로 아무것도 바꾸지 않고 물러납니다 — 같은 명령을 다시 실행하면 됩니다. 올리지 않은 commit 이 이미 있으면(앱이 올리다 멈춘 글·직접 만든 commit) 새 글을 올리지 않고, 어느 글을 어떻게 하면 되는지(이어서 올리기·나중 글부터 `--cancel --yes`·직접 확인) 한 가지를 알려 줍니다. 올리고 나서 멈춘 글에 `--cancel` 을 쓰면 `PUBLISH_ALREADY_PUSHED` — `--cancel` 없이 같은 명령을 실행하면 마무리합니다. 기록(commit) 직후에 멈춘 경우에도 같은 명령이 이어받고 `--cancel --yes` 가 되돌립니다(`doctor` 가 알려 줍니다). 글에 HTML 태그·`javascript:` 주소·`{% %}`/`{{ }}`·광고 스크립트·눈에 안 보이는 글자가 있으면 검사가 막습니다(글자의 표시 방향을 바꾸는 제어 문자는 한 개만 있어도 막습니다) — 제목·분야·태그·이미지 주소·설명 같은 머리말 값도 같고, 제목은 글을 만들 때(`new`)·고칠 때(`edit`)부터 막습니다. `delete` 는 `--yes` 가 없으면 어느 글인지만 보여 주고, 지울 때는 먼저 백업합니다. 올렸지만 공개 확인이 끝나지 않은 글(`PUSHED`)은 먼저 `check-deploy` 로 마쳐야 지울 수 있습니다(지우면 발행 기록이 함께 지워져 공개 확인을 이어갈 수 없게 됩니다). `restore` 도 `--yes` 가 없으면 어느 백업인지만 보여 주고 아무것도 바꾸지 않으며(`restore --latest --yes`), 바꾸기 직전 상태를 따로 백업해 둡니다.
 - 네이버: `naver-profile set naver_a --name 표시명 --url https://blog.naver.com/아이디` 로 블로그 프로필을 정한 뒤 `review 글번호 --platform naver_a` → `naver-package 글번호 --blog naver_a`(복사용 제목·본문·태그·이미지 자리) → 직접 발행 → `naver-done 글번호 --blog naver_a --url 발행한_주소`. 네이버 A·B 글이 많이 비슷하면 `--similarity-approved` 로 직접 승인해야 합니다. 앱은 네이버에 로그인하거나 글을 대신 올리지 않습니다.
 - **주제 후보**(쓸 글감): 후보를 직접 적거나 CSV 로 가져오거나 **프로필로 먼저 제안받아** 목록에서 고르고, 고른 후보를 쓰고 있는 글과 잇습니다. 네이버 검색 데이터를 모으는 일(키가 필요합니다)과 초안을 쓰는 일은 아직 없습니다.
@@ -68,7 +71,7 @@ python -m chanceblog_desktop candidates list --priority                         
 ```text
 python -m chanceblog_desktop keys purposes                                        # 용도 목록과 받는 칸·한도(읽기만 합니다)
 python -m chanceblog_desktop keys add image_provider --name 기본 --project 데스크톱    # 키를 칸마다 숨김 입력으로 묻습니다(화면에 보이지 않고, 명령 인자로는 받지 않습니다)
-python -m chanceblog_desktop keys list                                            # 용도별 상태와 항목(이름·상태·끝 4자 — 키 원문은 없습니다)
+python -m chanceblog_desktop keys list                                            # 용도별 상태와 항목(제공자·번호·등록 여부·마지막 연결 시험·등록 시각 — 키 원문도 끝 4자 같은 일부도 없습니다)
 python -m chanceblog_desktop keys usage                                           # 사용량·한도·절약 모드·다음 초기화 시각(읽기만 합니다)
 python -m chanceblog_desktop keys usage naver_apihub                              # 이 용도만 — NAVER API HUB 는 오늘·이번 달 시도/성공·마지막 성공·오류·호출 중지 사유도 보입니다(읽기만 합니다)
 python -m chanceblog_desktop keys add image_provider --name 예비 --project 다른앱 --i-understand-terms --state 예비   # 같은 용도의 둘째 키는 약관 확인 표시가 필요합니다
@@ -76,6 +79,7 @@ python -m chanceblog_desktop keys policy image_provider --on-limit save         
 python -m chanceblog_desktop keys remove 1a2b3c4d --yes                           # 지우기 — 순번이 아니라 list 의 '번호'(앞 8자)로, 보관소의 키도 함께 지워집니다
 ```
 
+- **Blogger 로그인 정보(OAuth)는 이 시험 버전이 받지 않습니다**(`keys add blogger` 도 거절하고 화면에는 입력 칸이 없습니다 — Blogger 초안 기능을 만들 때 따로 검증한 뒤 엽니다).
 - 키를 **새로 더할 수 있는 수**는 서비스마다 다릅니다(NAVER API HUB·Unsplash·Pexels·Pixabay·네이버 검색광고는 **1개**, Blogger 는 **2개**, AI 보조(Gemini)는 **3개** — 이미 더 많이 들어 있는 옛 파일은 그대로 읽히고 지울 수만 있습니다). 같은 앱·프로젝트의 키는 한도를 함께 씁니다. 한도에 걸리면 먼저 저장해 둔 값을 쓰고 호출을 줄이며(절약 모드), 허용된 다음 키로 넘어가는 것은 429·기간 한도·일시 서버 오류·시간 초과일 때만입니다(인증 오류 같은 것은 숨기지 않고 조치 안내만 합니다). **Unsplash 와 NAVER API HUB 는 어떤 오류에도 다른 키로 자동 전환하지 않습니다.** 자세한 규칙은 [`docs/SECURITY.md`](docs/SECURITY.md) §7, 용도 표는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §5 `service/` 에 있습니다.
 - **NAVER API HUB 검색어 트렌드**(`naver_apihub`)는 안전 장치(틀)만 있고 아직 부르지 않습니다(`keys test` 는 '준비 중' 이라고만 합니다). 키(Client ID·Client Secret)는 하나만 받고 어떤 오류에도 다른 키로 넘어가지 않으며, 프로그램 안 기준은 하루 100회·이번 달 27,000회(한국 시간 달력 월)입니다. 서비스 콘솔의 월 한도 30,000회를 기준으로 70% 를 넘으면 안내하고, 80% 를 넘으면 자동 새로고침을 멈추고(직접 시작한 분석만 한 번에 5회까지), 90% 를 넘으면 새 조회를 모두 멈춥니다. 하루 100회 안에서는 우선순위별로 남겨 두는 몫이 없습니다(구현 쪽 기본값 — 결정 거리는 `docs/DECISIONS.md` D-35 에 적었습니다). 사용량·시계·인증 상태를 확인할 수 없으면 새 조회를 하지 않고 'NAVER API HUB의 새로운 데이터 조회를 사용할 수 없습니다. 저장된 정보와 기본 주제 선정 규칙으로 후보 생성을 계속합니다.' 라고만 알립니다. `keys usage naver_apihub` 로 오늘·이번 달 시도/성공, 마지막 성공·오류, 멈춘 사유를 봅니다. 예전 버전이 만든 옛 항목(`naver_openapi`)이 남아 있으면 `keys list` 에 '옛 항목' 으로 보이고 새 항목은 받지 않습니다 — 새 키는 `naver_apihub` 에 넣고 옛 항목은 `keys remove` 로 지웁니다(키를 자동으로 지우지는 않습니다). 규칙은 결정 `docs/DECISIONS.md` D-35 에 있습니다.
 - 키를 넣을 때는 터미널의 숨김 입력을 쓰세요. `--stdin`(JSON 한 줄)은 자동 시험용이고, 키를 명령줄에 직접 쳐서 넘기면 그 줄이 셸 기록에 남습니다.

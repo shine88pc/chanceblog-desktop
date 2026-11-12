@@ -6,7 +6,7 @@
   2) `label_problem`: 이름·소속 프로젝트 칸 — 앞뒤·연속 공백, 줄바꿈, 길이 경계, 키처럼 보이는 글을 거절하고 평범한 이름은 통과한다.
   3) `looks_secret`: 알려진 접두사(Google·GitHub·Slack·AWS·sk-·JWT·개인 키 블록·텔레그램 …) × 이웃 글자(한글·괄호·따옴표·줄바꿈 …) 전수 — 낱말 경계에 기대지 않고 어디에 붙어도 잡는다. 접두사만 있고 뒤가 짧으면 아니고,
      24자 이상 영문·숫자 덩어리(영문자와 숫자가 섞인 것)는 맞다. 긴 입력은 선형 시간으로 처리하고, 너무 긴 입력은 믿지 않고 참이다.
-  4) `short_digest`·`tail_hint`: 값이 해시·문구에 보이지 않고, 끝 4자는 16자 이상일 때만 나온다. 값 전체의 지문(`fingerprint`)은 없다 — 약한 값을 해시만으로 대입해 알아낼 수 있어서 만들지 않는다. 고정 시드의 무작위 입력 몇 백 개에도 예외가 없다.
+  4) `short_digest`: 값이 해시·문구에 보이지 않는다(끝 4자 표시 `tail_hint` 는 PCSEC1 H2 로 없앴다). 값 전체의 지문(`fingerprint`)은 없다 — 약한 값을 해시만으로 대입해 알아낼 수 있어서 만들지 않는다. 고정 시드의 무작위 입력 몇 백 개에도 예외가 없다.
 가짜 키 모양은 실행할 때 조각을 이어 붙여 만든다(저장소의 시험이 `.py` 안의 키 모양 문자열을 막는다). 네트워크·실제 비밀 없이 돈다.
 """
 import random
@@ -344,24 +344,21 @@ class DerivedValuesTest(unittest.TestCase):
         self.assertNotEqual(one, hashlib.sha256(b"abc").hexdigest()[:8], "구분 글자 없이 그냥 해시한 값과 달라야 한다(다른 용도의 해시와 섞이지 않게)")
         self.assertEqual(len(shape.short_digest("\ud800")), 8)
 
-    def test_the_tail_hint_shows_the_last_four_characters_only_from_sixteen_characters(self):
-        self.assertEqual(shape.tail_hint("a" * 15), "")
-        self.assertEqual(shape.tail_hint("a" * 12 + "wxyz"), "****wxyz")
-        self.assertEqual(shape.tail_hint("a" * 40 + "9876"), "****9876")
-        self.assertEqual(shape.tail_hint("가나다라마바사아자차카타파하갸냐"), "****파하갸냐")
-        self.assertEqual(shape.tail_hint(""), "")
-        self.assertEqual(shape.tail_hint("a" * 16), "****aaaa")
+    def test_no_function_shows_any_part_of_a_value_so_the_tail_hint_is_gone(self):
+        """의도적 강화(PCSEC1 H2): 예전에는 값이 16자 이상이면 끝 4자(`****abcd`)를 목록에 보였다 — 운영자 결정(2026-11-11)으로 마지막 네 글자 표시도 모두 없앴다.
+        이 모듈에는 값의 일부(끝·앞·접두어·길이)를 돌려주는 함수·상수가 없다."""
+        for name in ("tail_hint", "TAIL_MIN_LEN", "TAIL_SHOWN", "head_hint", "prefix_hint", "last4", "mask_tail"):
+            self.assertFalse(hasattr(shape, name), name)
+        public = sorted(name for name in dir(shape) if not name.startswith("_") and callable(getattr(shape, name)) and getattr(getattr(shape, name), "__module__", "") == shape.__name__)
+        self.assertEqual(public, ["has_hidden_char", "label_problem", "looks_secret", "short_digest", "value_problem"],
+                         "모양을 검사하는 함수와 비밀이 아닌 칸의 해시뿐이다 — 새 함수가 생기면 값의 일부를 내는 것이 아닌지 이 시험에서 확인한다")
+        secret = "Qx7Zk-Wm3Vp_" + "Ty8Rn2Hs+Jd6Lg4Bf9Nc1Mu"                      # 조립한 가짜 값(저장소 비밀 스캐너가 소스 글자를 훑는다)
+        for name in public:
+            function = getattr(shape, name)
+            if name == "short_digest":
+                self.assertNotIn(secret[-4:], function(secret))
+                self.assertEqual(len(function(secret)), 8)
 
-    def test_the_tail_hint_gives_nothing_for_a_value_that_is_not_text(self):
-        for value in (None, 12345678901234567890, b"x" * 20, ["x" * 20], object()):
-            with self.subTest(kind=type(value).__name__):
-                self.assertEqual(shape.tail_hint(value), "")
-
-    def test_the_tail_hint_never_shows_more_than_the_last_four_characters(self):
-        value = "ABCDEFGHIJKLMNOP"
-        shown = shape.tail_hint(value)
-        self.assertNotIn(value[:12], shown)
-        self.assertEqual(len(shown), len("****") + 4)
 
 
 class RandomInputsTest(unittest.TestCase):
@@ -394,7 +391,6 @@ class RandomInputsTest(unittest.TestCase):
                 self.assertIsInstance(shape.value_problem(text, min_len=3, max_len=50), str)
                 self.assertIsInstance(shape.label_problem(text, max_len=30), str)
                 self.assertEqual(len(shape.short_digest(text)), 8)
-                self.assertIsInstance(shape.tail_hint(text), str)
 
     def test_an_accepted_value_really_has_the_documented_properties(self):
         accepted = 0

@@ -288,7 +288,8 @@ class ContextTest(unittest.TestCase):
     def test_make_context_builds_the_real_parts_with_the_guarded_data_folder(self):
         ctx = context.make_context(data_dir=str(self.tmp / "d"), repo=str(self.tmp / "r"), env={})
         self.assertEqual((ctx.workspace.root, ctx.repo_override), (self.tmp / "d", str(self.tmp / "r")))
-        self.assertEqual(type(ctx.backend).__name__, "GitPagesBackend")
+        self.assertEqual(type(ctx.backend).__name__, "LocalOnlyBackend")          # 의도적 갱신(PCSEC1 H3): 꽂힌 외부 어댑터가 없으면(이 빌드는 늘 없다) 파일만 읽는 backend 가 기본이다(예전: GitPagesBackend)
+        self.assertEqual(ctx.git.__name__, "refusing_git")                        # 기본 git 실행기는 어떤 호출도 거절한다
         (self.tmp / "g" / ".git").mkdir(parents=True)
         self.assertEqual(ss.code_of(context.make_context, data_dir=str(self.tmp / "g" / "d"), env={}).code, "DATA_DIR_UNSAFE")
 

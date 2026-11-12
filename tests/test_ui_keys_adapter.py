@@ -703,5 +703,15 @@ class SourceRulesTest(unittest.TestCase):
                     self.assertIsNone(pattern.search(node.value), f"{name}: {node.value[:40]}")
 
 
+def setUpModule():
+    import capability_support
+    capability_support.blogger_input_on()                    # 이 시험은 blogger 카드를 키 입력 용도의 예로 쓴다 — Blogger 입력을 임시로만 연다(소스 상수는 False — PCSEC1)
+
+
+def tearDownModule():
+    import capability_support
+    capability_support.blogger_input_off()
+
+
 if __name__ == "__main__":
     unittest.main()

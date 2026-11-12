@@ -59,6 +59,8 @@ def build_parser():
 
 
 def main(argv=None, *, out=None):
+    from ..security import boundary
+    boundary.install()                                                                # 맨 앞 — 묶음 실행 파일의 진입점(`gui_entry`)은 `__main__` 을 거치지 않고 여기로 바로 들어온다. 공통 경계(표준 출력·오류·로그·예외 훅)가 두 진입점 모두에 깔리게 한다(멱등 — `__main__` 이 먼저 깔았으면 그대로). 사용법 오류·버전 오류의 글도 이미 가려져 나간다
     out = out or sys.stdout
     args = build_parser().parse_args(argv)
     from .core import version as app_version
@@ -69,6 +71,7 @@ def main(argv=None, *, out=None):
     if not has_pyside6():
         print(NEEDS_PYSIDE6, file=out)
         return 1
+    boundary.install_gui()                                                            # PySide6 가 있다고 확인된 뒤 — Qt 가 직접 찍는 메시지도 가려서 표준 오류로(멱등 — `__main__` 이 먼저 걸었으면 그대로). 화면을 만들기 전이다
     from .adapters import ServiceHomeProvider
     from .core.services import FakeHomeProvider
     from .qt.app import run

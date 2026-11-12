@@ -11,10 +11,12 @@ import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.core import load_vendored_script  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.publish import gitrepo  # noqa: E402
@@ -29,6 +31,7 @@ from chanceblog_desktop.service.previews import PagesParams  # noqa: E402
 VERIFY = load_vendored_script("verify_pages_deploy")
 KEY = "AI" + "za" + "A" * 35                                      # 구글 API 키 모양의 가짜 값(가림 시험용 — 저장소에는 키 문자열이 없다)
 HAVE_GIT = bool(shutil.which("git"))
+from capability_support import blogger_input_off, blogger_input_on, external_write_off, external_write_on  # noqa: E402,F401  (이 빌드의 소스 상수 관문을 시험에서만 임시로 여는 도우미 — tests/capability_support.py)
 KO_SENTENCE = "에너지 절약은 작은 습관에서 시작되며 매일 조금씩 실천하면 생활비와 환경 모두에 도움이 됩니다. "
 EN_SENTENCE = "Saving energy at home starts with small daily habits that add up over time and lower the monthly bill. "
 DIFFERENT = ("오늘 저녁에는 가족과 함께 동네 공원을 천천히 걸으며 계절이 바뀌는 풍경을 둘러보았고 아이들은 낙엽을 주우며 즐거워했습니다. "
@@ -377,3 +380,23 @@ class FakeWorld:
 
 def env_without_repo():
     return {key: value for key, value in os.environ.items() if key not in ("CHANCEBLOG_LOCAL_REPO", "CHANCEBLOG_DESKTOP_DATA")}
+
+
+def inject_candidate(ctx, *, topic, keyword, blogs, **fields):
+    """이미 저장된 후보를 **보관함에 직접** 넣는다 — 옛 버전이 저장한 것처럼. `candidates add`·`add_candidate` 는 이제 키·토큰 모양을 쓰기 전에 거절한다(PCSEC1 M3)."""
+    from chanceblog_desktop.content import candidates as cd
+    with ctx.store() as store:
+        store.add_candidates(lambda existing: [cd.Candidate.new(topic, keyword, tuple(blogs), now=ctx.stamp(), **fields)])
+
+
+def inject_text(ctx, project_id, *, title=None, text=None):
+    """이미 저장된 글의 제목·본문을 **보관함에 직접** 바꿔 넣는다 — 옛 버전이 저장한 것처럼. 명령줄·서비스의 쓰기 길은 이제 키·토큰 모양을 거절한다(PCSEC1 M3)라서,
+    '이미 저장된 비밀 모양이 출력에서 가려지고 승인 관문이 막는가' 를 보는 시험이 이 길로 그런 글을 만든다."""
+    with ctx.store() as store:
+        project = store.load(project_id)
+        if title is not None:
+            project.title = title
+        if text is not None:
+            project.source_content = text
+        project.revision += 1
+        store.save(project)

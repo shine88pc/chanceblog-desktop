@@ -16,6 +16,7 @@ from ..content.model import Asset, ContentProject
 from ..echo import shown_backup, shown_ref
 from ..errors import AppError
 from ..render.markdown import html_to_markdown
+from ..security.refuse import refuse_secret_shapes, refuse_store_secret_shapes, text_of
 from .gate import require_clean_title
 from .journal import Journal
 
@@ -132,10 +133,20 @@ def check_title(title):
         require_clean_title(title)
 
 
+def check_no_secret_shape(title=None, markdown=None, references=None, assets=None):
+    """제목·본문·출처·이미지 이름·설명에 비밀 형태(Google API 키·GitHub 토큰·Bearer 토큰·OAuth 토큰·AWS 액세스 키·개인 키)가 있으면 **저장하기 전에** `SECRET_SHAPE_FOUND` 로 멈춘다(PCSEC1 M3).
+    알리는 것은 위치(칸·줄)와 유형뿐이고 글은 되풀이하지 않는다 — 자동으로 지우거나 바꾸지 않고 '무시하고 저장' 도 없다. `None` 인 칸(바꾸지 않는 칸)은 훑지 않는다."""
+    refuse_secret_shapes({"제목": title, "본문": markdown,
+                          "출처": None if references is None else text_of(list(references)),
+                          "이미지": None if assets is None else text_of([[getattr(item, "filename", ""), getattr(item, "alt", "")] for item in assets])}, "저장")
+
+
 def new_project(ctx, title, markdown, *, references=(), assets=()):
-    """Markdown 글로 새 프로젝트를 만든다(제목·본문 검사는 모델이 한다 — CONTENT_INVALID). 원고는 NUL 글자가 없고 2MB 이하여야 하고, 제목은 머리말 값 검사(`check_title`)를 통과해야 한다."""
+    """Markdown 글로 새 프로젝트를 만든다(제목·본문 검사는 모델이 한다 — CONTENT_INVALID). 원고는 NUL 글자가 없고 2MB 이하여야 하고, 제목은 머리말 값 검사(`check_title`)를 통과해야 하며,
+    제목·본문·출처·이미지에 비밀 형태가 있으면 저장하지 않는다(`check_no_secret_shape` — SECRET_SHAPE_FOUND)."""
     check_manuscript(markdown)
     check_title(title)
+    check_no_secret_shape(title, markdown, references, assets)
     project = ContentProject.new(title, markdown, tuple(references), tuple(assets), now=ctx.stamp())
     with ctx.store() as store:
         store.save(project)
@@ -145,6 +156,7 @@ def new_project(ctx, title, markdown, *, references=(), assets=()):
 def import_html(ctx, title, html, *, references=(), assets=()):
     """기존 글(HTML)을 Markdown 으로 바꿔 새 프로젝트로 불러온다(허용 태그만 남는다 — 스크립트·속성은 사라진다)."""
     check_manuscript(html, "HTML 글")
+    check_no_secret_shape(title, html, references, assets)                                       # 바꾸기 전의 HTML 도 본다 — 마크다운으로 바뀌면 `_` 앞에 `\` 가 붙어 모양이 깨질 수 있다
     markdown = html_to_markdown(html)
     if not markdown.strip():
         raise AppError("CONTENT_INVALID", {"항목": "본문"}, detail="HTML 에서 글자를 찾지 못했다")
@@ -175,6 +187,7 @@ def edit_project(ctx, text_id, *, title=None, markdown=None, references=None, as
         check_manuscript(markdown)
     if title is not None:
         check_title(title)
+    check_no_secret_shape(title, markdown, references, assets)                                  # 바꾸려는 칸만 — 비밀 형태가 있으면 저장하지 않는다(SECRET_SHAPE_FOUND)
     with ctx.store() as store:
         project = store.load(resolve_id(store, text_id))
         before = {name: item.status for name, item in project.variants.items()}
@@ -224,8 +237,11 @@ def delete_project(ctx, text_id, *, confirmed):
 
 
 def backup_store(ctx):
-    """글 저장소의 점검한 사본을 백업 폴더에 만든다(오래된 것은 최근 10개만 남긴다). 만든 파일 경로를 돌려준다."""
+    """글 저장소의 점검한 사본을 백업 폴더에 만든다(오래된 것은 최근 10개만 남긴다). 만든 파일 경로를 돌려준다.
+    만들기 **전에** 보관함의 글·옛 판·초안·후보를 읽어 비밀 형태를 훑는다 — 있으면 백업을 만들지 않고 위치·유형만 알린다(SECRET_SHAPE_FOUND, PCSEC1 M3).
+    지우기·되돌리기 직전의 안전 사본(`before-delete`·`before-restore`)은 이 검사를 하지 않는다 — 막으면 그 글을 지울 수도 되돌릴 수도 없어 문제가 풀리지 않는다."""
     with ctx.store() as store:
+        refuse_store_secret_shapes(store, "백업")
         return store.backup(ctx.workspace.backups_dir, now=ctx.now())
 
 

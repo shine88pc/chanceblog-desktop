@@ -126,7 +126,7 @@ class NoKeyTest(unittest.TestCase):
             self.assertEqual(run("keys", "add", "image_provider", "--name", "기본", "--stdin", stdin=json.dumps({"access_key": "A1b2C3d4E5f6G7h8I9j0K1l2"}))[0], 0)
             opened.clear()
             self.assertEqual(run("keys", "list")[0], 0)
-            self.assertTrue(opened, "항목이 있으면 끝 4자를 만들려고 보관소를 연다")
+            self.assertTrue(opened, "항목이 있으면 키가 보관소에 있는지 보려고 보관소를 연다(값은 읽지 않는다)")
 
     def test_the_purpose_list_names_the_six_purposes_and_the_image_provider_takes_one_access_key_only(self):
         out, err = io.StringIO(), io.StringIO()
@@ -143,12 +143,31 @@ class NoKeyTest(unittest.TestCase):
 
 
 class AddTest(CliCase):
+    def test_the_json_list_and_usage_carry_no_field_derived_from_a_key_slot_value(self):
+        """PCSEC1V D14: `--json` 은 운영자의 다섯 가지(Provider 이름·Key Slot·등록 여부·마지막 연결 시험·등록 시각)와 그것을 다루는 데 필요한 칸만 낸다. NAVER 고객 ID 같은 비밀 아닌 칸에서 만든 묶음 이름(`bucket`, `id-` 해시)은 싣지 않는다."""
+        code, out, err = self.add("naver_apihub", "허브", {"client_id": "nid" + "A1b2C3d4E5f6", "client_secret": "S" + "ecretValue" + "0123456789"})
+        self.assertEqual(code, 0, err)
+        allowed = {"ordinal", "entry_id", "purpose", "provider", "name", "project", "order", "state", "state_text", "status", "status_text", "created_at", "checked_at", "last_ok_at", "check_result", "terms_ack_at"}
+        listed = [entry for group in json.loads(self.json_out("list"))["data"]["purposes"] for entry in group["entries"]]
+        used = json.loads(self.json_out("usage"))["data"]["usage"]
+        self.assertTrue(listed and used)
+        for entry in listed:
+            self.assertLessEqual(set(entry), allowed)
+            self.assertNotIn("bucket", entry)
+        for entry in used:
+            self.assertNotIn("bucket", entry)
+        self.assertNotIn("id-", json.dumps(listed + used, ensure_ascii=False), "묶음 이름의 해시(`id-…`)가 어디에도 없다")
+
     FIELDS = {"access_key": "A1b2C3d4E5f6G7h8I9j0K1l2"}
 
-    def test_adding_by_stdin_shows_only_a_masked_tail_and_stores_the_value_in_the_keystore(self):
+    def test_adding_by_stdin_shows_no_part_of_the_key_and_stores_the_value_in_the_keystore(self):
+        """의도적 강화(PCSEC1 H2, 운영자 결정 2026-11-11): 예전에는 '끝 4자 ****K1l2' 를 보였다 — 이제 키의 일부는 어디에도 없고 제공자·등록 시각·마지막 확인만 보인다."""
         code, out, err = self.add("image_provider", "기본", self.FIELDS, "--project", "데스크톱")
         self.assertEqual((code, err), (0, ""), out)
-        self.assertIn("끝 4자 ****K1l2", out)
+        for needle in ("끝 4자", "****", "K1l2"):
+            self.assertNotIn(needle, out, needle)
+        for needle in ("제공자", "등록 ", "마지막 확인 없음"):
+            self.assertIn(needle, out, needle)
         for window in windows(self.FIELDS["access_key"]):
             self.assertNotIn(window, out)
         self.assertEqual(self.store.get(self.store.list_refs()[0]).reveal("access_key"), self.FIELDS["access_key"])
@@ -251,7 +270,8 @@ class AddTest(CliCase):
     def test_the_git_purpose_takes_no_key(self):
         code, out, err, _ = self.run_keys("add", "github_repo", "--name", "기본", "--stdin", stdin="{}")
         self.assertEqual((code, out), (1, ""))
-        self.assertIn("Git 자격 증명 관리자", err)
+        self.assertIn("이 시험 버전은 글을 GitHub 에 올리지 않아요", err)          # 의도적 갱신(PCSEC1V D7): 꺼진 빌드는 'Git 로그인을 쓴다' 대신 올리지 않는다고 사실대로 말한다(켜진 빌드의 예전 문장은 test_external_write_gate 가 본다)
+        self.assertNotIn("git push", err)
         self.assertEqual(self.store.list_refs(), [])
 
 
@@ -397,6 +417,8 @@ class NoLeakTest(CliCase):
         self.assertLess(time.perf_counter() - started, 3.0, "긴 값에서 번역 규칙이 느려지면 안 된다(제곱 시간이던 것을 문구 맨 앞 고정으로 고쳤다)")
 
     def test_saved_keys_never_appear_in_any_command_output_or_file(self):
+        ss.blogger_input_on()                                             # 이 시험은 다섯 용도(blogger 포함)에 모양별 키를 저장해 본다 — 닫힌 기본 모양은 test_blogger_input_off 가 본다
+        self.addCleanup(ss.blogger_input_off)
         values = {}
         for number, (label, shape) in enumerate(key_shapes().items()):
             purpose = ("naver_apihub", "naver_searchad", "image_provider", "ai_assist", "blogger")[number % 5]
@@ -558,7 +580,9 @@ class ProcessTest(unittest.TestCase):
         self.assertNotIn(value, out + err)
         code, out, err = self.run_module("list")
         self.assertEqual(code, 0)
-        self.assertIn("끝 4자 ****AAAA", out)
+        self.assertIn("시험 전용 가짜 보관소를 쓰는 중입니다", out, "항목이 있는 목록은 가짜 보관소 주의 줄을 낸다(M2 — 화면의 안내와 같은 말)")
+        self.assertNotIn("끝 4자", out)                                  # 의도적 강화(PCSEC1 H2): 예전에는 '끝 4자 ****AAAA' 를 보였다
+        self.assertNotIn("AAAA", out)
         self.assertNotIn(value, out)
         code, out, err = self.run_module("--json", "usage")
         self.assertEqual(code, 0)

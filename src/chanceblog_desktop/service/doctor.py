@@ -14,12 +14,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import capabilities
 from ..content import candidates as cd
 from ..content import status as st
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.store import Store
 from ..errors import AppError, render
 from . import connections, unpushed
+from .context import outside_user_profile
 from .journal import Journal
 from .projects import list_backups, list_projects
 
@@ -99,19 +101,40 @@ def _check_python():
     return check("Python", "ok", "", f"Python {found}")
 
 
+def _check_external_write():
+    """외부 게시(원격에 쓰는 일)의 상태 한 줄 — 이 시험 버전은 소스 상수로 꺼져 있다(켜는 길이 없다)."""
+    if capabilities.external_write_enabled():
+        return check("외부 게시", "warn", "", "켜져 있습니다 — 개발·시험용 빌드입니다(소스 상수를 바꿨습니다). 개인 PC 제한 시험 버전에서는 꺼져 있어야 합니다.")
+    return check("외부 게시", "ok", "", "이 시험 버전에서는 꺼져 있어요 — GitHub 에 올리기·Blogger·네이버로 보내는 기능이 없습니다(글은 이 PC 에서 쓰고 검토한 뒤 복사해 직접 올립니다).")
+
+
 def _check_git(ctx):
-    done = ctx.git(os.getcwd(), ["--version"])
+    try:
+        done = ctx.git(os.getcwd(), ["--version"])
+    except AppError as error:
+        if error.code != "EXTERNAL_WRITE_DISABLED":
+            raise
+        return check("git", "skip", "", "이 시험 버전은 git 을 쓰지 않아요(외부 게시가 꺼져 있습니다) — 점검하지 않았습니다.")
     if done.returncode != 0:
         return check("git", "fail", "GIT_NOT_INSTALLED", "git 을 실행하지 못했습니다.")
     return check("git", "ok", "", done.stdout.strip() or "git 사용 가능")
 
 
+OUTSIDE_PROFILE_NOTE = "같은 PC 의 다른 사용자가 읽을 수 있어요(사용자 프로필 밖의 폴더입니다) — 기본 위치를 권해요"
+OUTSIDE_PROFILE_ACTION = "데이터 폴더를 따로 정하지 않으면 기본 위치(`%LOCALAPPDATA%` 아래)를 씁니다 — `--data-dir` 과 환경 변수 CHANCEBLOG_DESKTOP_DATA 를 빼면 기본 위치로 돌아갑니다(폴더 권한은 앱이 바꾸지 않습니다)"
+
+
 def _check_data_dir(ctx):
     root = ctx.workspace.root
+    outside = outside_user_profile(root, ctx.env)                    # 문자열 경로 비교만(PCSEC1 M1) — 프로필 위치를 모르면 경고하지 않는다
     if not root.exists():
+        if outside:
+            return check("데이터 폴더", "warn", "", f"아직 없습니다 — 처음 글을 만들 때 만들어집니다: {root} — {OUTSIDE_PROFILE_NOTE}", OUTSIDE_PROFILE_ACTION)
         return check("데이터 폴더", "ok", "", f"아직 없습니다 — 처음 글을 만들 때 만들어집니다: {root}")
     if not os.access(root, os.W_OK):
         return check("데이터 폴더", "fail", "FILE_WRITE_FAILED", f"쓸 수 없는 폴더입니다: {root}")
+    if outside:
+        return check("데이터 폴더", "warn", "", f"쓸 수 있습니다: {root} — {OUTSIDE_PROFILE_NOTE}", OUTSIDE_PROFILE_ACTION)
     return check("데이터 폴더", "ok", "", f"쓸 수 있습니다: {root}")
 
 
@@ -201,7 +224,11 @@ def _check_repo(ctx):
 
 
 def _check_push_access(ctx, online):
+    if online:
+        capabilities.require_external_write("올리기 권한 점검")
     if not online:
+        if not capabilities.external_write_enabled():                      # 이 빌드는 글을 올리지 않으므로 `doctor --online` 을 권하지 않는다(그 명령은 거절된다 — PCSEC1 D7)
+            return check("올리기 권한", "skip", "", "점검하지 않았습니다 — 이 시험 버전은 글을 GitHub 에 올리지 않아요(외부 게시가 꺼져 있습니다).")
         return check("올리기 권한", "skip", "", "점검하지 않았습니다 — 네트워크를 쓰므로 `doctor --online` 으로 합니다(실제로 올리지는 않습니다).")
     repo = ctx.repo_path_or_none()
     if repo is None:
@@ -279,7 +306,7 @@ def run_doctor(ctx, *, online=False):
     점검은 읽기만 한다 — 글 저장소도 읽기 전용으로 열어(`ctx.reading_only()`) 옛 구조의 파일을 올리거나 사본을 남기지 않고, 파일이 없으면 만들지 않는다."""
     ctx = ctx.reading_only()
     results = []
-    for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
+    for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("외부 게시", _check_external_write), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
                        ("설정 파일", lambda: _check_settings(ctx)), ("연결 설정(키 항목)", lambda: _check_connections(ctx)), ("글 저장소", lambda: _check_store(ctx)), ("백업", lambda: _check_backups(ctx)), ("핵심 코드(vendor/)", _check_core),
                        ("연결한 chanceblog 저장소", lambda: _check_repo(ctx)), ("올리기 권한", lambda: _check_push_access(ctx, online)), ("네이버 프로필", lambda: _check_naver(ctx)),
                        ("이어서 처리할 글", lambda: _check_pending(ctx))):

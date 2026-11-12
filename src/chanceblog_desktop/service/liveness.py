@@ -19,6 +19,25 @@ _REUSE_SLACK = timedelta(seconds=5)
 _EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 
 
+def host_name():
+    """이 PC 의 이름 — 잠금 파일에 적어 '같은 PC 에서 시작한 잠금' 인지 가린다(읽기만 한다). `platform.node()` 는 쓰지 않는다: Windows 에서 `platform` 모듈이 OS 버전을 읽으려고
+    하위 프로세스(`cmd /c ver`)를 띄울 수 있다(PCSEC1 H3 'Network Write 0' 시험이 찾았다 — 이 앱은 하위 프로세스를 띄우지 않는다). Windows 는 `GetComputerNameW`, 그 밖은 `os.uname`. 알 수 없으면 ''."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            buffer = ctypes.create_unicode_buffer(256)
+            size = ctypes.c_uint32(len(buffer))
+            if ctypes.WinDLL("kernel32").GetComputerNameW(buffer, ctypes.byref(size)):
+                return buffer.value
+        except (OSError, AttributeError, ValueError):
+            return ""
+        return ""
+    try:
+        return os.uname().nodename
+    except (AttributeError, OSError):
+        return ""
+
+
 def process_alive(pid, started):
     """그 번호의 프로세스가 같은 PC 에서 `started`(잠금을 잡은 시각) 이전부터 지금도 살아 있는가 →
     True · False(없거나 이미 끝났거나, 그 번호를 나중에 다른 프로세스가 받았다) · None(알 수 없다)."""

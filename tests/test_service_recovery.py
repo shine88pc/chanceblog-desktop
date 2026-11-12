@@ -30,6 +30,7 @@ CHILD = textwrap.dedent('''
     sys.path.insert(0, sys.argv[1])
     sys.path.insert(0, sys.argv[2])
     import service_support as ss
+    ss.external_write_on()                         # 자식 프로세스도 시험이므로 외부 Write 관문을 임시로 연다(소스 상수는 False — PCSEC1 H3)
     from chanceblog_desktop.service import cli
     from chanceblog_desktop.service.backend import GitPagesBackend
     from chanceblog_desktop.service.context import make_context
@@ -444,6 +445,14 @@ class RestoredPostTest(RealGit):
         ss.git(self.work, "reset", "-q", "--hard", "HEAD^")                       # 작업 폴더에서는 지우고 받아 둔 원격 main 에만 남긴다
         self.assertFalse((self.work / "_posts" / "원격에만").exists())
         self.assertEqual(self.backend.same_content(self.work, text), ["_posts/원격에만/2026-11-01-KR-090001.md"])
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":

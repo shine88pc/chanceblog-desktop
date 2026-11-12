@@ -246,5 +246,13 @@ class RealFlowTest(unittest.TestCase):
         self.assertEqual(ss.git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
 
 
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
+
+
 if __name__ == "__main__":
     unittest.main()

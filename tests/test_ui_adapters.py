@@ -184,8 +184,8 @@ class AdapterTest(unittest.TestCase):
     def test_candidate_text_is_handed_over_whole_so_that_only_the_view_model_masks_then_cuts(self):
         """어댑터는 후보의 글을 자르지 않는다(자르기는 뷰모델의 `shown` — 가리기 → 자르기). 키가 제목·키워드·보조 키워드·이유의 어느 자리에 있어도(저장소가 받는 길이 안에서 끝까지) 화면 글에 조각이 안 남는다."""
         for index, lead in enumerate((0, 3, 6, 10, 15)):
-            svc.add_candidate(self.ctx, topic="가" * (lead * 8) + f" 주제{index} " + GOOGLE_KEY, keyword="나" * lead + f" 키{index} " + GOOGLE_KEY, blogs=("naver_a",),
-                              sub_keywords=("다" * lead + f" 보조{index} " + GITHUB_KEY,), reason="라" * (lead * 12) + f" 이유{index} " + GOOGLE_KEY + " " + GITHUB_KEY)
+            support.inject_candidate(self.ctx, topic="가" * (lead * 8) + f" 주제{index} " + GOOGLE_KEY, keyword="나" * lead + f" 키{index} " + GOOGLE_KEY, blogs=("naver_a",),      # 옛 버전이 저장한 것처럼 보관함에 직접(M3)
+                                     sub_keywords=("다" * lead + f" 보조{index} " + GITHUB_KEY,), reason="라" * (lead * 12) + f" 이유{index} " + GOOGLE_KEY + " " + GITHUB_KEY)
         data = self.load()
         self.assertEqual(len(data.topics), 5)
         state = app_state.AppState(self.provider)

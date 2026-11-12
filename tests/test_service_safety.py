@@ -41,7 +41,7 @@ OS_CALLS = {                                      # 낮은 수준 파일 호출�
 # 허용은 모드가 글자 `rb` 인 `open(경로, "rb")` 호출에만 걸린다 — 쓰기·덧붙이기·갱신 모드와 모드를 안 적은 호출·`.open` 속성 호출은 그대로 걸린다(합성 소스로 시험한다).
 READ_OPENS = {("own_posts.py", "_read_prefix")}
 WRITE_CALLS = {"write_text", "write_bytes", "write", "unlink", "mkdir", "rmdir", "replace", "rename", "remove", "rmtree", "copy", "copy2", "copyfile", "copytree", "move", "touch", "open", "makedirs", "chmod"}
-ENV_NAMES = {"CHANCEBLOG_DESKTOP_DATA", "CHANCEBLOG_LOCAL_REPO", "LOCALAPPDATA", "XDG_DATA_HOME"}
+ENV_NAMES = {"CHANCEBLOG_DESKTOP_DATA", "CHANCEBLOG_LOCAL_REPO", "LOCALAPPDATA", "XDG_DATA_HOME", "APPDATA", "USERPROFILE"}      # 뒤의 둘은 PCSEC1 M1 — 데이터 폴더가 사용자 프로필 안인지 문자열로 견주려고 위치만 읽는다(값을 쓰지 않는다)
 OTHER_NAMES = {"VERSION", "O_BINARY"}           # 파일 이름(프로그램 버전을 적은 파일) · 잠금 파일을 만들 때 Windows 에서 쓰는 열기 표시(os.O_BINARY)
 
 
@@ -132,7 +132,8 @@ class SourceRulesTest(unittest.TestCase):
         self.assertIn("os.name == 'nt'", ast.unparse(main))
         words = {name.rsplit(".", 1)[-1] for name in calls}
         self.assertFalse(words & {"TerminateProcess", "TerminateJobObject", "DebugActiveProcess", "WriteProcessMemory", "CreateRemoteThread", "SetPriorityClass", "system", "popen", "Popen", "run"})
-        self.assertLessEqual({name for name in words if name[:1].isupper()} - {"WinDLL", "DWORD", "BOOL", "HANDLE", "POINTER", "FILETIME", "OpenProcess", "GetExitCodeProcess", "GetProcessTimes", "CloseHandle"}, set(),
+        self.assertLessEqual({name for name in words if name[:1].isupper()} - {"WinDLL", "DWORD", "BOOL", "HANDLE", "POINTER", "FILETIME", "OpenProcess", "GetExitCodeProcess", "GetProcessTimes", "CloseHandle",
+                                                                                                  "GetComputerNameW"}, set(),
                              "읽기 전용 Windows 호출만 쓴다")
         text = (SERVICE / "liveness.py").read_text(encoding="utf-8")
         self.assertIn("_QUERY_LIMITED = 0x1000", text, "상태를 읽는 권한(PROCESS_QUERY_LIMITED_INFORMATION)만 연다")
@@ -195,14 +196,16 @@ class SourceRulesTest(unittest.TestCase):
         check = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "check_pages_deploy")
         self.assertEqual(named(check, "_repo_section", ast.With), [], "공개 확인은 저장소 잠금이 필요 없다")
 
-    def test_the_confirmation_is_the_first_thing_the_publish_and_cancel_functions_do(self):
+    def test_the_external_write_gate_then_the_confirmation_are_the_first_two_things_the_publish_and_cancel_functions_do(self):
+        """PCSEC1 H3: 외부 Write 관문(`capabilities.require_external_write`)이 맨 앞이다 — 꺼져 있으면 확인(`--yes`)이 있어도 아무것도 하지 않는다. 확인은 그다음(commit·push 앞의 유일한 확인 문)."""
         tree = parse(SERVICE / "pages_flow.py")
         for name in ("run_pages_publish", "cancel_pages_publish"):
             function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
             body = [node for node in function.body if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]      # 설명 글(docstring) 제외
-            first = body[0]
+            first, second = body[0], body[1]
             with self.subTest(function=name):
-                self.assertTrue(isinstance(first, ast.Expr) and isinstance(first.value, ast.Call) and ast.unparse(first.value.func) == "require_confirmation", ast.unparse(first)[:80])
+                self.assertTrue(isinstance(first, ast.Expr) and isinstance(first.value, ast.Call) and ast.unparse(first.value.func) == "capabilities.require_external_write", ast.unparse(first)[:80])
+                self.assertTrue(isinstance(second, ast.Expr) and isinstance(second.value, ast.Call) and ast.unparse(second.value.func) == "require_confirmation", ast.unparse(second)[:80])
                 names = [arg.arg for arg in function.args.kwonlyargs]
                 self.assertIn("confirmed", names, "확인은 이름 붙은 인자다")
                 self.assertIsNone(function.args.kw_defaults[names.index("confirmed")], "확인에는 기본값이 없다(빠뜨리면 TypeError)")
@@ -304,6 +307,14 @@ class NoLocalPathLeakTest(unittest.TestCase):
                     self.assertEqual(ss.code_of(ss.review.grant_approval, ctx, view.project_id, "github_pages").code, "CHECK_FAILED")
                     self.assertEqual(ss.status_of(ctx, view.project_id), "REVIEW_REQUIRED")
             self.assertEqual(backend.count("commit"), 0)
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":

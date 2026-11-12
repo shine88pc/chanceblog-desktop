@@ -341,6 +341,18 @@ class RenameTest(Base):
                 self.assertNotIn(keyish, " ".join(surfaces(error)))
                 self.assertEqual(self.file_bytes(), before)
 
+    def test_a_name_written_as_a_labelled_value_is_refused_on_rename_and_the_file_stays(self):
+        """PCSEC1V: 바꾸는 이름도 더할 때와 같다 — `이름=값` 꼴은 평문 파일에 남기 전에 거절하고 값은 문구에 없다."""
+        before = self.file_bytes()
+        value = piece("CANARY_", "ALIAS", "k3x9")
+        for label in ("Authorization: Bearer ", "api_key=", "apikey=", "serviceKey=", "access_token=", "refresh_token=", "client_secret=", "password=", "Cookie: sid=", "Set-Cookie: sid=", "X-API-Key: "):
+            with self.subTest(label=label):
+                error = ss.code_of(c.rename_entry, self.ctx, ID1, label + value, keystore=self.store)
+                self.assertEqual((error.code, error.slots["항목"]), ("KEY_INVALID_SHAPE", "이름"))
+                self.assertNotIn(value, " ".join(surfaces(error)))
+                self.assertEqual(self.file_bytes(), before)
+        self.assertEqual(c.rename_entry(self.ctx, ID1, "token bucket", keystore=self.store)[0].name, "token bucket")          # 평범한 글은 바뀐다
+
     def test_a_stored_value_pasted_into_the_name_is_refused_without_repeating_it(self):
         before = self.file_bytes()
         value = self.store.get("ai_assist:" + ID1).reveal("key")
@@ -495,6 +507,19 @@ class CliTest(Base):
                 self.assertNotIn("KEY_FAILOVER_TERMS_REQUIRED", err)
         self.assertEqual((self.store.list_refs(), self.file_bytes()), (refs, before))
 
+    def test_a_labelled_value_as_the_name_is_refused_by_keys_add_with_the_place_only(self):
+        """PCSEC1V: 명령줄(`keys add --name`)도 같다 — 거절 문구에는 칸(이름)과 이유뿐이고 입력한 값은 없으며 보관소·파일이 그대로다."""
+        value = piece("CANARY_", "ALIAS", "k3x9")
+        refs, before = self.store.list_refs(), self.file_bytes()                     # 항목이 없는 첫 키 — 둘째 키의 약관 확인이 먼저 끼어들지 않는다(파일은 아직 없다)
+        self.assertEqual((refs, before), ([], None))
+        for label in ("client_secret=", "api_key=", "password=", "Authorization: Bearer ", "Cookie: sid="):
+            with self.subTest(label=label):
+                code, out, err, _ = self.run_keys("add", "ai_assist", "--name", label + value, "--stdin", stdin=json.dumps(fake_fields("ai_assist", "b")))
+                self.assertEqual((code, out), (1, ""))
+                self.assertIn("코드: KEY_INVALID_SHAPE", err)
+                self.assertNotIn(value, err)
+                self.assertEqual((self.store.list_refs(), self.file_bytes()), (refs, before))
+
     def test_another_provider_of_the_same_purpose_has_its_own_room_and_asks_no_terms(self):
         self.add("image_provider", provider="unsplash")
         code, out, err, source = self.run_keys("add", "image_provider", "--name", "펙셀스", "--provider", "pexels", "--stdin", stdin=json.dumps(fake_fields("image_provider", "b")))
@@ -508,6 +533,14 @@ class CliTest(Base):
         code, out, err, source = self.run_keys("add", "blogger", "--name", "셋째", "--stdin", "--i-understand-terms", stdin=json.dumps(fake_fields("blogger", "c")))
         self.assertEqual((code, out), (1, ""))
         self.assertIn("코드: KEY_ENTRY_LIMIT", err)
+
+
+def setUpModule():
+    ss.blogger_input_on()                                    # 이 시험은 실제 레지스트리의 blogger 용도를 그릇으로 쓴다 — Blogger 입력을 임시로만 연다(소스 상수는 False — PCSEC1)
+
+
+def tearDownModule():
+    ss.blogger_input_off()
 
 
 if __name__ == "__main__":

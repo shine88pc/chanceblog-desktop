@@ -915,5 +915,41 @@ class ThemeTest(Base):
         self.assertEqual([w for w in window.screen_widget.findChildren(UI.Pressable)], [])                # 눌러도 아무 일 없는 카드를 만들지 않았다
 
 
+def setUpModule():
+    import capability_support
+    capability_support.blogger_input_on()                    # 이 모듈의 시험은 예시 화면의 blogger 카드(인증 정보 오류 칩)를 쓴다 — Blogger 입력을 임시로만 연다(소스 상수는 False — PCSEC1). 닫힌 모양은 아래 두 클래스가 따로 본다
+
+
+def tearDownModule():
+    import capability_support
+    capability_support.blogger_input_off()
+
+
+class _ClosedBlogger:
+    """이 빌드의 기본 모양(Blogger 입력 꺼짐)으로 되돌리는 섞기 클래스 — 시험마다 소스 상수를 임시로만 닫는다(PCSEC1)."""
+
+    def setUp(self):
+        super().setUp()
+        from chanceblog_desktop import capabilities
+        patcher = mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class ClosedStateCardTextFitTest(_ClosedBlogger, CardTextFitTest):
+    """닫힌 Blogger 카드의 안내 글도 좁은 카드에서 꺾이지 않는다 — 위 두 시험(정책 두 문장만 꺾임)이 닫힌 모양에서도 그대로 통과한다."""
+
+
+class ClosedStateTest(_ClosedBlogger, Base):
+    def test_the_publish_group_has_no_state_chip_and_the_blogger_card_says_it_is_not_accepted(self):
+        window = self.make()
+        names = {key: accordion.toggle.accessibleName() for key, accordion in self.accordions(window).items()}
+        self.assertEqual(names["publish"], "발행·연결, 접혀 있어요")                           # 상태 칩이 없다 — 받지 않는 용도는 상태를 말하지 않는다
+        self.assertEqual([b.text() for b in self.accordions(window)["publish"].toggle.findChildren(QLabel)], [])
+        self.open_all(window)
+        texts = [label.text() for label in window.screen_widget.findChildren(QLabel)] + [label.plain_text() for label in window.screen_widget.findChildren(UI.Label)]
+        self.assertIn(text.T["blogger_off_note"], texts)
+        self.assertIn(text.T["purpose_blogger_off"], texts)
+
 if __name__ == "__main__":
     unittest.main()

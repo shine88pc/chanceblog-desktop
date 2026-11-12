@@ -98,14 +98,3 @@ def short_digest(text):
     """한도 묶음 이름에 쓰는 짧은 해시(SHA-256 앞 8자) — 클라이언트 ID 같은 **비밀이 아닌** 칸의 값을 파일에 그대로 적지 않으려고. 비밀 칸의 값에는 쓰지 않는다(약한 값은 해시만으로 대입해 알아낼 수 있다 —
     같은 값을 두 번 넣는 것은 지문이 아니라 보관소의 값을 직접 비교해 막는다)."""
     return hashlib.sha256(("chanceblog-desktop:bucket:1\0" + text).encode("utf-8", "surrogatepass")).hexdigest()[:8]
-
-
-TAIL_MIN_LEN = 16               # 이 길이 이상일 때만 끝 4자를 보인다(짧은 값은 끝 4자가 전체의 큰 부분이라 아무것도 보이지 않는다)
-TAIL_SHOWN = 4
-
-
-def tail_hint(value):
-    """목록에 보이는 `****끝4자` — 값이 16자 이상일 때만, 아니면 ''."""
-    if isinstance(value, str) and len(value) >= TAIL_MIN_LEN:
-        return "****" + value[-TAIL_SHOWN:]
-    return ""

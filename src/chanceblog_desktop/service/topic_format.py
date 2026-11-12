@@ -11,6 +11,8 @@ from ..topics.channels import FACTOR_LABELS, FACTOR_NAMES
 from ..topics.score import BAND_KO, BAND_UNRATED, TREND_STATUS_KO
 from .topics import short_ref
 
+CREDENTIAL_LINE = "키는 백업에 들어 있지 않아요 — 복원 뒤 다시 등록하세요"             # 명령줄 백업 출력에 한 줄로 알린다(PCSEC1 M4 — 글 보관함·주제 엔진 백업이 같은 줄을 쓴다. 저장 계층은 목록 문장만 갖는다)
+
 FILE_KO = {"channel_profiles.json": ("채널 프로필", "채널"), "seeds.json": ("씨앗", "개"), "calendar.json": ("캘린더", "개")}
 STORE_KO = {"missing": "아직 없음(`topics init --yes` 나 `topics generate --yes` 가 만듭니다)", "empty": "비어 있음(0바이트 — 만들다 멈춘 흔적일 수 있습니다. `topics init --yes` 나 `topics generate --yes` 가 새로 만듭니다)", "old_structure": "옛 구조라 아직 읽지 않았습니다(저장하는 명령이 새 구조로 올립니다)",
             "newer": "더 새로운 버전의 프로그램이 만든 것이라 열지 않았습니다(프로그램을 업데이트하세요)", "corrupt": "깨졌거나 이 프로그램의 주제 엔진 파일이 아닙니다(파일은 건드리지 않았습니다 — 백업에서 되돌리세요)",
@@ -322,7 +324,7 @@ def backup_lines(result):
     lines = [f"주제 엔진 백업을 만들었습니다: {result.path}", "  담은 파일: " + ", ".join(FILE_KO.get(name, ("후보 보관함",))[0] for name in result.files)]
     if result.missing:
         lines.append("  지금 없어서 담지 못한 파일: " + ", ".join(FILE_KO.get(name, ("후보 보관함",))[0] for name in result.missing))
-    lines += ["  (최근 10개만 남기고 오래된 것은 지웁니다. 키·토큰은 어떤 경우에도 담지 않습니다)"]
+    lines += ["  (최근 10개만 남기고 오래된 것은 지웁니다. 키·토큰은 어떤 경우에도 담지 않습니다)", f"  {CREDENTIAL_LINE}"]
     return lines
 
 

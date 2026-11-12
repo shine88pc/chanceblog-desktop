@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .. import capabilities
 from ..errors import AppError
 from ..publish import deploy, gitrepo, pages
 from ..render.pages import KST, post_path
@@ -47,6 +48,7 @@ class GitPagesBackend:
 
     def check_push_access(self, repo):
         """`git push --dry-run` — 실제로는 올리지 않는다(네트워크를 쓴다)."""
+        capabilities.require_external_write("올리기 권한 점검")
         return gitrepo.check_push_access(repo, self.git, self.expected_origin)
 
     def unpushed_count(self, repo):
@@ -151,12 +153,15 @@ class GitPagesBackend:
 
     # ---- 쓰는 일(모두 publish/pages.py 가 한다) ----------------------------------------------------------------------------
     def commit(self, repo, post, title):
+        capabilities.require_external_write("글 기록(commit)")
         return pages.commit_post(repo, post, title=title, git=self.git, expected_origin=self.expected_origin)
 
     def push(self, repo, post):
+        capabilities.require_external_write("원격 main 에 올리기")
         return pages.push_commit(repo, post, git=self.git, expected_origin=self.expected_origin)
 
     def discard(self, repo, info):
+        capabilities.require_external_write("올리지 않은 글 기록 되돌리기")
         return pages.discard_commit(repo, info, git=self.git, expected_origin=self.expected_origin)
 
     # ---- 배포 확인(네트워크) -------------------------------------------------------------------------------------------------
@@ -174,4 +179,5 @@ class GitPagesBackend:
         return sleeper
 
     def check_deployed(self, repo, post, now, deadline, interval):
+        capabilities.require_external_write("공개 주소 확인")
         return deploy.check_deployed(repo, post.path, post.text, deadline=deadline, interval=interval, fetcher=self.fetcher, sleep=self._sleeper(deadline), clock=self.monotonic, now=now)

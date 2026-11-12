@@ -136,7 +136,8 @@ class PagesApprovalTest(Base):
         self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED, "승인되지 않았다")
 
     def test_a_key_shaped_string_blocks_the_approval_with_its_own_code(self):
-        project_id = self.new(ss.ko_text(extra=f"실수로 {ss.KEY} 를 붙였습니다."))
+        project_id = self.new()
+        ss.inject_text(self.ctx, project_id, text=ss.ko_text(extra=f"실수로 {ss.KEY} 를 붙였습니다."))        # 옛 버전이 저장한 글 — 쓰기 길은 이제 거절한다(PCSEC1 M3). 승인 관문이 두 번째 방어선으로 남는다
         self.review_pages(project_id)
         error = ss.code_of(review.grant_approval, self.ctx, project_id, "github_pages")
         self.assertEqual(error.code, "SECRET_IN_TEXT_BLOCKED")
@@ -404,6 +405,14 @@ class NaverProfileSetTest(Base):
         self.assertEqual((renamed.display_name, renamed.tone), ("새 이름", "차분하게"), "준 값은 반영된다")
         self.assertEqual(ss.code_of(naver_flow.set_profile, settings, "naver_a", {"min_chars": 10 ** 7}).code, "CONTENT_INVALID")
         self.assertEqual(settings.naver_profile("naver_a").tone, "차분하게", "잘못된 값은 저장하지 않는다")
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":

@@ -1672,5 +1672,17 @@ class SyncFailureTest(unittest.TestCase):
         self.assertFalse(any(call[0] == "restore" for call in fake.calls))
 
 
+def setUpModule():
+    from unittest import mock
+    from chanceblog_desktop import capabilities
+    global _EXTERNAL_WRITE
+    _EXTERNAL_WRITE = mock.patch.object(capabilities, "EXTERNAL_WRITE", True)          # 이 시험은 게시 모듈을 직접 부른다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+    _EXTERNAL_WRITE.start()
+
+
+def tearDownModule():
+    _EXTERNAL_WRITE.stop()
+
+
 if __name__ == "__main__":
     unittest.main()

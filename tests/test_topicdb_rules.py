@@ -25,7 +25,9 @@ FILES = sorted(TOPICDB.glob("*.py"))
 SERVICE_TOPIC_FILES = [SRC / "service" / name for name in ("topics.py", "topic_files.py", "topic_format.py")]
 FORBIDDEN_IMPORTS = {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "ftplib", "smtplib", "telnetlib", "xmlrpc", "asyncio", "shutil", "tempfile"}
 FORBIDDEN_LAYERS = {"service", "ui", "publish", "render", "jobs", "update", "assist", "check"}
-ALLOWED_INTERNAL = {"content.candidates", "content.store", "echo", "errors", "security.mask"}        # `..` 로 가져오는 안쪽 모듈 — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
+ALLOWED_INTERNAL = {"content.candidates", "content.store", "echo", "errors", "security.mask", "security.refuse", "security.scan"}        # `..` 로 가져오는 안쪽 모듈 — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
+# 의도적 갱신(PCSEC1 M3, D-348): 백업 직전 검사(`backup.scan_key_shape`)가 본문 속 비밀 형태 검사기(`security/scan.py`)를 부르고 위치·유형 말을 `security/refuse.py` 에서 받는다 — 둘 다 표준 라이브러리와
+# `echo`·`errors` 만 가져오는 잎 모듈이라 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다(`security.mask` 와 같은 자리). 그 밖의 `security` 모듈·서비스 층은 여전히 허용하지 않는다.
 # 파일을 쓰는 호출이 허용된 (파일, 함수) 와 그 호출의 전체 이름 — 이유를 함께 적는다. 목록을 늘리는 것은 시험 변경이므로 독립 검증에서 함께 본다.
 WRITERS = {
     ("file.py", "open"): {"path.parent.mkdir", "sqlite3.connect"},    # 보관함 폴더·파일을 만든다(없을 때) — 쓰기로 여는 `sqlite3.connect` 는 여기서만(읽기 전용 `mode=ro` 열기는 표 밖)

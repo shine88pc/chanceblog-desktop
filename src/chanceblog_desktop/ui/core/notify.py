@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from .text import display_text
 from .tokens import TOAST_MS
 
 MAX_CHARS = 120
@@ -19,11 +20,9 @@ class ToastPolicy:
         self.shown = 0                 # 새로 보인 횟수(시험·진단용)
 
     def offer(self, text):
-        text = " ".join(str(text or "").split())
+        text = display_text(text or "", MAX_CHARS)              # 안내가 화면에 나가는 한 지점 — 비밀 모양을 가린 뒤 한 줄로 줄인다(`text.display_text`, 가리기가 먼저)
         if not text:
             return "ignore", ""
-        if len(text) > MAX_CHARS:
-            text = text[:MAX_CHARS - 1] + "…"
         if self.current == text:
             return "extend", text
         self.current = text

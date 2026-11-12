@@ -9,13 +9,12 @@
 from __future__ import annotations
 
 from ...content import candidates as legacy
-from ...security.mask import safe_detail
 from ...topics import channels as ch
 from ...topics import notice, safety, wording
 from ...topics import score as sc
 from . import gauges as G
 from .board_view import date_text, time_text
-from .text import T
+from .text import T, display_text
 
 PAGE = 24                                                  # 한 번에 그리는 카드 수 — 3열·2열 모두 나누어떨어진다. 더 보려면 '더 보기'
 SUMMARY_MAX = 120                                          # 카드의 추천 이유 요약 글자 수 상한(C-Type §7.4: 설명 80~120자 이내)
@@ -35,7 +34,7 @@ HOLD_DETAIL = "검토 기한"                                    # 엔진의 보
 
 def shown(value, limit=300):
     """화면에 나가는 외부 글(후보 제목·키워드·이유 …)에서 비밀 모양을 가리고 한 줄로 줄인다 — **가리기가 먼저, 자르기가 나중이다**(홈·Seed 관리와 같은 규칙)."""
-    return safe_detail(value, limit)
+    return display_text(value, limit)
 
 
 # ---- 점수·구간(홈과 같은 규칙) ---------------------------------------------------------------------------------------------------------
@@ -137,7 +136,7 @@ def reason_lines(candidate):
 
 def summary(candidate):
     """카드의 추천 이유 요약 — 안전 안내를 뺀 이유 줄을 ` · ` 로 이어 **120자 이내**로(가린 뒤 줄인다). 줄 하나가 120자보다 길면 그 줄을 줄이고, 이유가 없으면 빈 글이다."""
-    lines = [safe_detail(line, 10_000) for line in reason_lines(candidate)[0]]
+    lines = [display_text(line, 10_000) for line in reason_lines(candidate)[0]]
     lines = [line for line in lines if line]
     if not lines:
         return ""
@@ -147,7 +146,7 @@ def summary(candidate):
         if len(joined) > SUMMARY_MAX:
             break
         text = joined
-    return text or safe_detail(lines[0], SUMMARY_MAX)
+    return text or display_text(lines[0], SUMMARY_MAX)
 
 
 def keyword_chips(candidate):

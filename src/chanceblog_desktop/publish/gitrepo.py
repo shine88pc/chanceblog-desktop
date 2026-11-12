@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import capabilities
 from ..errors import UNEXPECTED, AppError
 from ..security.mask import mask
 
@@ -134,6 +135,7 @@ def run_command(command, *, env=None, timeout=DEFAULT_TIMEOUT, label="명령", i
     입력 장치는 막아 두고(대화창 입력을 기다리며 멈추지 않게, 창 없는 앱에서 입력 핸들이 없어 시작이 실패하지 않게), 꼭 넘겨야 하는 입력(`input_bytes`)은 임시 파일로 준다.
     임시 파일을 못 만들면(임시 폴더가 없거나 가득 참) FILE_WRITE_FAILED.
     """
+    capabilities.require_external_write(label)         # 하위 프로세스를 띄우는 **유일한 곳**의 관문 — 이 시험 버전은 꺼져 있어 프로세스를 한 번도 띄우지 않는다
     options = {"creationflags": _NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
     with contextlib.ExitStack() as stack:
         try:
@@ -183,6 +185,7 @@ def _with_ssh_default(cwd, env):
 
 def run_git(cwd, args, timeout=DEFAULT_TIMEOUT, input_bytes=None):
     """git 을 cwd 에서 실행한다(사용자의 훅·대화창·다른 저장소 설정에 휘둘리지 않게 환경을 고정한다)."""
+    capabilities.require_external_write(f"git {args[0] if args else ''}")
     # gc.auto·maintenance.auto: 받기 뒤 git 이 정리(gc)를 시작해 제한 시간 안에 끝나지 않거나 남는 일을 막는다(정리는 사용자가 쓰는 git 이 한다)
     # user.useConfigOnly: 이름·이메일이 설정에 없으면 호스트 이름으로 짐작한 주소를 공개 commit 에 넣지 않고 GIT_IDENTITY_MISSING 으로 멈춘다.
     # core.hooksPath·commit.gpgsign·push.gpgSign: 사용자의 훅(post-merge·reference-transaction·pre-rebase·prepare-commit-msg …)과 서명(gpg 대화창)이 이 앱의 git 호출에 끼어들지 않게 —
@@ -485,6 +488,7 @@ def sync_latest(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
     """연결을 확인한 뒤 원격 main 을 받아 빨리감기로 맞춘다. 로컬 main 이 앞서거나 갈라져 있으면 건드리지 않고 PAGES_LOCAL_REPO_DIVERGED,
     받을 파일과 이름이 같은 내 파일(새 파일·무시한 파일)이 있으면 건드리지 않고 PAGES_LOCAL_FILE_IN_THE_WAY. 병합이 중간에 멈추면 병합 전 상태로
     되돌린다. 맞춘 뒤 HEAD 가 원격 main 과 같은지 다시 확인한다."""
+    capabilities.require_external_write("원격 main 받기(fetch)")
     info = inspect_repo(path, git, expected_origin)
     _must(git, info.path, ["fetch", "--quiet", "origin", f"+refs/heads/{MAIN}:{_REMOTE_MAIN}"], "원격 main 받기")
     counts = _must(git, info.path, ["rev-list", "--left-right", "--count", f"HEAD...{_REMOTE_MAIN}"], "원격과 비교").split()
@@ -525,6 +529,7 @@ def sync_latest(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
 
 def check_push_access(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
     """실제로 올리지 않고 push 가 되는지만 본다(`git push --dry-run`, 사용자의 pre-push 훅은 돌리지 않는다). 인증·네트워크·거절은 각각의 오류 코드로."""
+    capabilities.require_external_write("올리기 점검(push --dry-run)")
     info = inspect_repo(path, git, expected_origin)
     _must(git, info.path, ["push", "--dry-run", "--porcelain", "--no-verify", "origin", f"HEAD:refs/heads/{MAIN}"], "올리기 점검")
     return info

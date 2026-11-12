@@ -26,6 +26,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import capabilities
 from ..core import use_vendored_core
 from ..errors import UNEXPECTED, AppError
 from ..render.pages import front_matter_problems
@@ -229,6 +230,7 @@ def _is_own_leftover(git, root, existing, target, post):
 
 def commit_post(repo_path, post, *, title="", git=run_git, expected_origin=EXPECTED_ORIGIN):
     """연결한 저장소를 최신으로 맞추고 글 파일을 써서 그 파일만 commit 한다(올리지는 않는다). 같은 글(주소)이 이미 있으면 DUPLICATE_SLUG."""
+    capabilities.require_external_write("글 파일 기록(commit)")      # 외부 Write 관문 — 이 시험 버전은 꺼져 있어 git 을 부르기 전에 거절한다
     check_post(post)
     if find_secrets(_strip_invisible(str(title or ""))):
         raise AppError("SECRET_IN_TEXT_BLOCKED", detail="commit 제목에 키 모양 문자열이 있다")           # 제목은 공개 저장소의 commit 기록에 그대로 남는다
@@ -371,6 +373,7 @@ def _rebase(git, root):
 def push_commit(repo_path, post, *, git=run_git, expected_origin=EXPECTED_ORIGIN, attempts=MAX_PUSH_ATTEMPTS):
     """commit_post 가 만든 커밋을 원격 main 에 올린다. 올리지 않은 것이 '이 글 하나'가 아니면 올리지 않고 PAGES_LOCAL_REPO_DIVERGED.
     봇이 먼저 올려 막히면 최신을 받아 그 커밋만 옮기고 다시 올린다(최대 attempts 번). 이미 올라가 있으면 할 일 없이 성공."""
+    capabilities.require_external_write("원격 main 에 올리기(push)")
     check_post(post)
     info = inspect_repo(repo_path, git, expected_origin)
     root = info.path
@@ -405,6 +408,7 @@ def discard_commit(repo_path, info, *, git=run_git, expected_origin=EXPECTED_ORI
     """끝내 올리지 못한 글 커밋(commit_post 가 돌려준 info)을 되돌린다: 커밋과 글 파일을 치워 저장소를 처음 상태로 돌린다 — 다른 변경은 건드리지 않는다.
     HEAD 가 info.commit 이고 그 부모가 info.base 이며 글 파일 하나만 더한 커밋(제목도 앱이 만든 것)일 때만 하고, 먼저 원격 main 을 받아 이미 올라간 커밋이면 거절한다
     (받지 못하면 낡은 기록으로 판단하지 않고 거절한다). 올리다 최신 위로 옮겨진 뒤에는 info.commit 이 낡아 거절된다 — 그때는 사람이 확인한다."""
+    capabilities.require_external_write("올리지 않은 글 기록 되돌리기")
     if not isinstance(info.path, str) or not POST_PATH.fullmatch(info.path):         # info 를 그대로 믿지 않는다: 글 경로 모양이 아니면 다른 파일을 지울 수 있다
         raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail="되돌릴 글 경로가 올바르지 않다")
     repo = inspect_repo(repo_path, git, expected_origin)
@@ -433,5 +437,6 @@ def discard_commit(repo_path, info, *, git=run_git, expected_origin=EXPECTED_ORI
 
 def publish_post(repo_path, post, *, title="", git=run_git, expected_origin=EXPECTED_ORIGIN):
     """commit_post 와 push_commit 을 이어서. 중간에 실패하면 CommitInfo 를 가진 채 이어 올릴 수 있도록 두 단계를 따로 부르는 쪽이 낫다."""
+    capabilities.require_external_write("글 기록(commit)과 원격 올리기(push)")
     commit_post(repo_path, post, title=title, git=git, expected_origin=expected_origin)
     return push_commit(repo_path, post, git=git, expected_origin=expected_origin)

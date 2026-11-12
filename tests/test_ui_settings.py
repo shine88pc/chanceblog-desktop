@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import service_support as support  # noqa: E402
+from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.security.keystore import MemoryStore  # noqa: E402
 from chanceblog_desktop.service import connections as cn  # noqa: E402
@@ -123,7 +124,7 @@ class GroupsTest(Base):
         self.assertEqual([group["title"] for group in view["groups"]], ["데이터 Provider", "이미지", "AI 보조", "발행·연결"])         # 의도적 갱신(UI-C1b): 새 기준 이름 — 운영자 2026-11-06 확인 요청 004 의 답 7 (옛 이름 '데이터'·'AI'). 마지막 묶음 이름은 그대로 '발행·연결'(통합 전달서 §34 — Blogger·GitHub)
         for key in cn.PURPOSES:
             self.assertTrue(text.T.get("purpose_" + key), f"{key} 의 한 줄 설명이 문구표에 없다")
-        self.assertEqual({key: card["desc"] for key, card in cards_of(view).items()}, {key: text.T["purpose_" + key] for key in cards_of(view)})
+        self.assertEqual({key: card["desc"] for key, card in cards_of(view).items()}, {**{key: text.T["purpose_" + key] for key in cards_of(view)}, "github_repo": text.T["purpose_github_repo_off"]})        # 의도적 갱신(PCSEC1 H3): 외부 게시가 꺼진 빌드의 GitHub 카드 설명
 
     def test_a_purpose_the_group_table_does_not_know_still_shows_instead_of_vanishing(self):
         new = services.PurposeInfo("some_new_purpose", "새 용도", status="not_connected")
@@ -410,7 +411,10 @@ class CardTextTest(unittest.TestCase):
     def test_github_takes_no_key_and_has_no_connection_badge(self):
         card = cards_of(view_of(info("github_repo")))["github_repo"]
         self.assertEqual((card["ready"]["text"], card["conn"], card["note"], card["choices"], card["policy"], card["gray"]),
-                         ("키 없음", None, "키를 받지 않고 컴퓨터의 Git 로그인을 써요. 로그인 확인은 아직 못 해요.", None, "", False))      # 연결 상태를 말하지 않는 대신 '확인은 아직 못 한다' 고 알린다(L5). 의도적 갱신(UI-C1b, D-183): 앞 두 문장을 하나로 줄였다 — 뜻은 같다
+                         ("키 없음", None, text.T["nokey_note_off"], None, "", False))                  # 의도적 갱신(PCSEC1 H3): 외부 게시가 꺼진 빌드는 'Git 로그인을 써요' 라고 말하지 않는다
+        with mock.patch.object(capabilities, "EXTERNAL_WRITE", True):                                  # 켜면(시험에서만) 예전 문장 그대로다
+            card = cards_of(view_of(info("github_repo")))["github_repo"]
+        self.assertEqual(card["note"], "키를 받지 않고 컴퓨터의 Git 로그인을 써요. 로그인 확인은 아직 못 해요.")      # 연결 상태를 말하지 않는 대신 '확인은 아직 못 한다' 고 알린다(L5). 의도적 갱신(UI-C1b, D-183): 앞 두 문장을 하나로 줄였다 — 뜻은 같다
         self.assertEqual(card["entries"], [])
 
     def test_no_card_says_the_core_features_stay_the_same_twice(self):
@@ -1148,6 +1152,16 @@ class NoRealNamesTest(unittest.TestCase):
         sample_names = {entry.name for item in services.sample_connections("normal") for entry in item.entries}
         self.assertEqual(sample_names, {"예시 키 1", "예시 키 A", "예시 키 B"})
         self.assertEqual(app_state.BLOG_NAMES, {"A": "블로그 A", "B": "블로그 B"})
+
+
+def setUpModule():
+    import capability_support
+    capability_support.blogger_input_on()                    # 이 시험은 blogger 카드를 키 입력 용도의 예로 쓴다 — Blogger 입력을 임시로만 연다(소스 상수는 False — PCSEC1)
+
+
+def tearDownModule():
+    import capability_support
+    capability_support.blogger_input_off()
 
 
 if __name__ == "__main__":

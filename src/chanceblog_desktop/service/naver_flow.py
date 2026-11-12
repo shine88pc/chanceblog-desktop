@@ -17,6 +17,7 @@ from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.profiles import NaverProfile
 from ..errors import AppError
 from ..render.naver import NaverImage, NaverPackage, build_package
+from ..security.refuse import refuse_secret_shapes, text_of
 
 KST = timezone(timedelta(hours=9))
 SCHEMA = 1
@@ -123,10 +124,17 @@ def copy_text(package):
     return "\n".join(lines) + "\n"
 
 
+PROFILE_TEXT_LABELS = {"display_name": "블로그 표시명", "blog_url": "블로그 주소", "topic": "주제", "audience": "대상 독자", "tone": "말투", "categories": "카테고리", "default_tags": "기본 태그",
+                       "forbidden_phrases": "금지 표현", "image_spec": "대표 이미지 규격", "disclosure": "AI 활용 고지문", "publish_cycle": "발행 주기", "intro_style": "도입부 스타일",
+                       "difficulty": "설명 난이도", "ending_style": "마무리 방식", "excluded_topics": "제외 주제"}          # 프로필의 글칸과 화면에 보이는 이름 — 비밀 형태 검사의 칸 이름이다(PCSEC1 M3)
+
+
 def set_profile(settings, key, fields):
-    """블로그 프로필을 만들거나 고쳐 저장한다(주어진 칸만 바꾼다). 처음 만들 때는 표시명(display_name)과 블로그 주소(blog_url)가 꼭 있어야 하고, 값은 `NaverProfile` 이 엄격히 검사한다(CONTENT_INVALID)."""
+    """블로그 프로필을 만들거나 고쳐 저장한다(주어진 칸만 바꾼다). 처음 만들 때는 표시명(display_name)과 블로그 주소(blog_url)가 꼭 있어야 하고, 값은 `NaverProfile` 이 엄격히 검사한다(CONTENT_INVALID).
+    주어진 글칸에 비밀 형태가 있으면 저장하지 않는다(SECRET_SHAPE_FOUND — 칸 이름·줄·유형만 알리고 글은 되풀이하지 않는다)."""
     if key not in NAVER_KEYS:
         raise AppError("CONTENT_INVALID", {"항목": "블로그 구분"})
+    refuse_secret_shapes({PROFILE_TEXT_LABELS[name]: text_of(value) for name, value in fields.items() if name in PROFILE_TEXT_LABELS}, "저장")
     try:
         current = settings.naver_profile(key).to_dict()
     except AppError as error:

@@ -55,7 +55,9 @@ class Base(unittest.TestCase):
 class MultiLineSecretTest(Base):
     def project_with_secrets(self):
         body = "서두 문장입니다. 아래는 실수로 붙여 넣은 것입니다.\n\n" + PEM + "\n\n" + SERVICE_JSON + "\n\n" + ss.ko_text(1500)
-        return projects.new_project(self.ctx, "비밀이 든 글", body).project_id
+        project_id = projects.new_project(self.ctx, "비밀이 든 글", "처음에는 평범한 글").project_id
+        ss.inject_text(self.ctx, project_id, text=body)                    # 옛 버전이 저장한 것처럼 보관함에 직접 — 쓰기 길은 이제 비밀 모양을 거절한다(PCSEC1 M3)
+        return project_id
 
     def assert_no_secret(self, label, *outputs):
         text = "\n".join(outputs)
@@ -485,6 +487,14 @@ class WaitAndProgressTest(Base):
         for mark in ("#", "`", "*", "|", ">"):
             self.assertNotIn(mark, note)
         self.assertIn("https://example.invalid/a", note)
+
+
+def setUpModule():
+    ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+
+
+def tearDownModule():
+    ss.external_write_off()
 
 
 if __name__ == "__main__":
