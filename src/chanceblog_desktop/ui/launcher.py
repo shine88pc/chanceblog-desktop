@@ -2,6 +2,8 @@
 
 `--data-dir 폴더` 는 명령줄과 같은 사용자 데이터 폴더를 가리키고(없으면 기본 위치), `--sample` 은 내 데이터 대신 **예시 데이터**로 화면을 보여 준다. 홈 화면은 읽기만 한다(보관함을 만들거나 바꾸지 않는다) — 설정 화면도 열고 다시 읽는 것은 읽기뿐이다. 파일에 쓰는 일은 화면마다 사용자가 단추를 눌렀을 때뿐이다: **블로그 관리·Seed 관리 화면**은 저장·복제·삭제(블로그 관리), 승인·바꾸기·저장·등록·불러오기(Seed 관리)를 눌렀을 때 사용자 데이터 폴더의 블로그 프로필 파일(`topic_engine/channel_profiles.json`)·Seed 파일(`topic_engine/seeds.json`)에 쓰고(`--sample` 은 아무 파일에도 쓰지 않는다), **설정 화면**은 키를 등록·삭제·고치는 단추를 눌렀을 때만 키 원문은 Windows 자격 증명 관리자에, 별칭·순서·사용 상태 같은 비밀이 아닌 값은 사용자 데이터 폴더의 `connections.json` 에 쓴다. **주제 후보 화면**은 열고 거르고 찾고 고르는 것까지 읽기만 하고(보관함이 없으면 만들지도 않는다), `후보 만들기` 를 눌러 확인창에서 `만들기` 를 골랐을 때만 후보 보관함(`topic_engine/topic_engine.db`)에 후보를 더한다.
 
+**같은 데이터 폴더로 이미 열려 있으면 새 창을 만들지 않는다**(SINGLEWIN, `ui/single_instance.py`) — 윈도에서 같은 로그온·같은 데이터 폴더로 한 번 더 열면 열려 있는 창을 앞으로 가져오고 조용히 끝난다(종료 코드 0). 다른 데이터 폴더(`--data-dir`)·`--sample` 은 따로 열 수 있다.
+
 **사용법 오류는 입력한 값을 되풀이하지 않는다** — 파이썬 `argparse` 의 기본 오류 문구(`ignored explicit argument '…'`·`unrecognized arguments: …`)는 사용자가 친 값을 그대로 보여 주므로,
 값(키가 들어 있을 수도 있다)이 화면·기록에 남지 않게 `GuiParser.error` 가 값 없는 고정 문장만 낸다. 종료 코드는 명령줄의 사용법 오류와 같은 2 이다.
 """
@@ -10,6 +12,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import sys
+
+from . import single_instance
 
 PROG = "python -m chanceblog_desktop gui"
 USAGE_LINE = f"사용법: {PROG} [--data-dir 폴더] [--sample]"
@@ -71,6 +75,8 @@ def main(argv=None, *, out=None):
     if not has_pyside6():
         print(NEEDS_PYSIDE6, file=out)
         return 1
+    if not single_instance.claim(args.data_dir, sample=args.sample):                  # 같은 데이터 폴더로 이미 열려 있으면 그 창을 앞으로 가져오고 새 창 없이 조용히 끝난다(종료 코드 0) — 묶음 실행 파일(`gui_entry`)도 이 함수를 지나므로 두 시작 길이 같은 장치다. `--sample` 은 따로 열 수 있고 `--selftest`·명령줄은 여기를 지나지 않는다. Qt 를 불러오기 전이라 둘째 실행은 빨리 끝난다
+        return 0
     boundary.install_gui()                                                            # PySide6 가 있다고 확인된 뒤 — Qt 가 직접 찍는 메시지도 가려서 표준 오류로(멱등 — `__main__` 이 먼저 걸었으면 그대로). 화면을 만들기 전이다
     from .adapters import ServiceHomeProvider
     from .core.services import FakeHomeProvider

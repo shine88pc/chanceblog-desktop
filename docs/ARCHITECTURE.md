@@ -238,3 +238,15 @@ backups/
 | `ui/qt/` | `draft_screen.py`(저장 상태 줄·목록 카드·머리 단추)·`draft_parts.py`(`SavedRowCard`)·`shell.py`(`drf_save`·`show_choice_dialog`·Ctrl+S·`closeEvent`) |
 
 의존 방향은 그대로다 — 화면 부품은 서비스를 모르고(컨트롤러·공급자가 부른다), 서비스는 화면을 모른다. 홈은 `ui/adapters.py` 가 저장한 초안의 목록만 읽어(읽기뿐) '작성 중인 초안' 구역의 앞에 두고 머리 개수를 낸다(D-363).
+
+## 단일 실행 — 같은 앱을 두 번 열어도 창은 하나 (SINGLEWIN, D-471 이후)
+
+화면 층의 새 모듈 `ui/single_instance.py` 가 같은 윈도 로그온·같은 데이터 폴더의 두 번째 실행을 막는다. Qt·네트워크 모듈·하위 프로세스를 쓰지 않고(표준 `hashlib`·`ntpath`·`os`·`sys`·`time` 과 윈도 길 안의 `ctypes` 뿐), 파일에 쓰지 않으며, 윈도가 아니면 아무것도 하지 않고 지나간다.
+
+| 파일 | 역할 |
+|---|---|
+| `ui/single_instance.py` | `claim(data_dir, sample=…)` — 참이면 창을 열어도 되고 거짓이면 이미 열려 있는 창을 앞으로 가져오는 일까지 끝났다는 뜻이다. 이름 만들기(`mutex_name`·`resolve_folder`, 순수 — `Local` 이름 공간 + 데이터 폴더 경로의 SHA-256 앞 16자리), 쥐고 있기(모듈 전역 `_HELD` — 프로세스가 끝날 때까지 핸들을 쥔다), 윈도 호출 층(`Win32Api` — 이 모듈에서 ctypes 를 가져오는 유일한 곳), 창 찾기(`find_window` — 제목은 `T["window_title"]`·같은 실행 파일 경로), 앞으로 가져오기(`bring_to_front` — 최소화일 때만 되살림·못 오면 깜박임) |
+| `ui/launcher.py` | `main` 이 `has_pyside6()` 확인 뒤·`boundary.install_gui()` 앞에서 `single_instance.claim(args.data_dir, sample=args.sample)` 을 한 번 부르고 거짓이면 0 으로 끝난다 — 이 장치를 부르는 곳은 이 한 곳뿐이다(시험이 못박는다) |
+| `packaging/gui_entry.py` | 코드를 더하지 않았다 — `start_gui` 가 `launcher.main` 을 부르므로 묶음 실행 파일도 같은 장치를 지난다. 따로 부르면 같은 프로세스가 뮤텍스를 두 번 잡아 스스로 '이미 있음' 이 된다. `--selftest` 는 `launcher.main` 을 지나지 않아 뮤텍스를 잡지 않는다 |
+
+흐름: 첫 실행은 뮤텍스를 만들고 쥔 채 화면을 연다. 같은 데이터 폴더로 한 번 더 열면 `CreateMutexW` 가 오류 183(이미 있음)을 알리고, 둘째 프로세스는 열려 있는 창(보이는 최상위 창·제목이 앱의 창 제목으로 시작·같은 실행 파일 경로)을 찾아 앞으로 가져온 뒤 새 창 없이 종료 코드 0 으로 끝난다(기다리는 사이 먼저 열려 있던 앱이 끝나면 뮤텍스를 넘겨받아 이 프로세스가 새 첫 실행이 된다). 다른 윈도 계정(다른 `Local` 이름 공간)·다른 `--data-dir`·`--sample` 은 막지 않는다. 판정이 서지 않으면(뮤텍스 생성 실패 등) 장치를 끄고 앱을 연다. 화면에 보이는 것은 `docs/UI_STATES.md`, 보안 경계는 `docs/SECURITY.md`, Package 쪽은 `docs/PACKAGE.md` 에 있다.

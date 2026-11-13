@@ -64,7 +64,7 @@ class PersonalPcTestDocTest(unittest.TestCase):
     def test_the_report_table_has_a_row_for_every_checked_item_and_the_three_columns(self):
         table = self.text.split("## 7단계. 결과 보고")[1].split("## 8단계")[0]
         rows = [line for line in table.splitlines() if re.match(r"^\| (\d)(-\d)? \|", line)]
-        self.assertEqual([row.split("|")[1].strip() for row in rows], ["0-1", "0-2", "0-3", "1-1", "1-2", "1-3", "2", "3", "4", "5", "6-1", "6-2", "6-3", "6-4"])
+        self.assertEqual([row.split("|")[1].strip() for row in rows], ["0-1", "0-2", "0-3", "1-1", "1-2", "1-3", "1-4", "2", "3", "4", "5", "6-1", "6-2", "6-3", "6-4"])
         for row in rows:
             self.assertEqual(row.count("|"), 5, row)
         self.assertIn("| 번호 | 확인한 것 | 결과 | 적어 둘 말 |", table)
