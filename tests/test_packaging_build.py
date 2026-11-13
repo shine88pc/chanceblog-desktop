@@ -173,16 +173,19 @@ class PyInstallerArgsTest(unittest.TestCase):
 
     def test_the_build_environment_is_deterministic_and_clean(self):
         before = {"PATH": "p", "PYTHONPATH": "x", "PYTHONHOME": "h", "PYTHONSTARTUP": "s", "PYTHONOPTIMIZE": "2", "PYTHONINSPECT": "1", "KEEP": "1"}
-        env = bp.pyinstaller_env(1794361921, before)
+        env = bp.pyinstaller_env(1794361921, before, prefix="C:/ccgui/v", base_prefix="C:/ccgui/base", isdir=lambda folder: True)
         self.assertEqual(env["PYTHONHASHSEED"], "0")
         self.assertEqual(env["PYTHONUTF8"], "1")
         self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
         self.assertEqual(env["SOURCE_DATE_EPOCH"], "1794361921")
         for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONOPTIMIZE", "PYTHONINSPECT"):
             self.assertNotIn(name, env)
-        self.assertEqual((env["PATH"], env["KEEP"]), ("p", "1"))
+        self.assertEqual(env["KEEP"], "1")
+        self.assertNotEqual(env["PATH"], "p")                                        # PATH 는 좁힌 것으로 바뀐다(D-468 — 자세한 시험은 test_packaging_path.py)
+        self.assertEqual(env["PATH"].split(";")[0], str(PureWindowsPath("C:/ccgui/v")))
+        self.assertEqual(before["PATH"], "p")
         self.assertIn("PYTHONPATH", before)                                          # 받은 사전은 바꾸지 않는다
-        self.assertEqual(bp.bundle_environment_record(5), {"PYTHONHASHSEED": "0", "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "SOURCE_DATE_EPOCH": "5"})
+        self.assertEqual(bp.bundle_environment_record(5), {"PYTHONHASHSEED": "0", "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "SOURCE_DATE_EPOCH": "5", "PATH_POLICY": "narrow-v1"})
 
 
 class OutDirTest(unittest.TestCase):
@@ -854,7 +857,7 @@ class RunFrozenSelftestTest(unittest.TestCase):
         def runner(command, **kwargs):
             seen.update(command=command, **kwargs)
             return subprocess.CompletedProcess(command, 0, stdout="[통과] utf8_mode: 정상\n".encode("utf-8"), stderr=b"")
-        with mock.patch.dict(os.environ, {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "QT_QPA_PLATFORM": "windows", "PYTHONPATH": "x", "KEEP_ME": "1"}):
+        with mock.patch.dict(os.environ, {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "QT_QPA_PLATFORM": "windows", "PYTHONPATH": "x", "KEEP_ME": "1", "PATH": "C:/a;C:/b"}):
             code, text = bp.run_frozen_selftest(Path("C:/b/ChanceBlogDesktop.exe"), runner=runner)
         self.assertEqual((code, text), (0, "[통과] utf8_mode: 정상\n"))
         self.assertEqual(seen["command"], [str(Path("C:/b/ChanceBlogDesktop.exe")), "--selftest"])
@@ -862,6 +865,7 @@ class RunFrozenSelftestTest(unittest.TestCase):
         for name in ("PYTHONUTF8", "PYTHONIOENCODING", "QT_QPA_PLATFORM", "PYTHONPATH"):
             self.assertNotIn(name, seen["env"])
         self.assertEqual(seen["env"]["KEEP_ME"], "1")
+        self.assertEqual(seen["env"]["PATH"], "C:/a;C:/b")                              # 자가 점검은 PATH 를 좁히지 않은 보통 환경에서 돈다(좁히는 것은 PyInstaller 를 부를 때뿐이다 — D-468)
 
     def test_output_that_is_not_utf8_is_refused(self):
         runner = lambda command, **k: subprocess.CompletedProcess(command, 1, stdout="[통과] x: 한글".encode("cp949"), stderr=b"")      # noqa: E731
