@@ -538,7 +538,12 @@ CHILD = textwrap.dedent('''
     class Slow(GitPagesBackend):
         def push(self, repo_path, post):
             if reached != "-":
-                open(reached, "w").close()                                  # 잠금을 쥔 채 올리는 중이다
+                # 잠금을 쥔 채 올리는 중이다 — 자기 진짜 프로세스 번호를 알린다(F036): 윈도 venv 파이썬은 시험이 띄운 Popen.pid 가 런처의 번호라 잠금에 적힌 번호와 다르다.
+                # 임시 이름에 쓴 뒤 같은 폴더에서 os.replace 로 올린다 — 시험은 이 파일이 생기기만 기다렸다가 읽으므로 빈 파일을 읽는 경주가 없어야 한다.
+                temp = reached + ".tmp"
+                with open(temp, "w") as handle:
+                    handle.write(str(os.getpid()))
+                os.replace(temp, reached)
                 end = time.time() + 120
                 while not os.path.exists(go) and time.time() < end:
                     time.sleep(0.05)
@@ -594,7 +599,9 @@ class TwoRealProcessesTest(unittest.TestCase):
             self.wait_for(self.reached, first)
             lock_path = self.ctx.workspace.journal_dir / f"{project_id}.lock"
             self.assertTrue(lock_path.exists(), "첫 작업이 올리는 동안 잠금 파일이 있다")
-            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8"))["pid"], first.pid)
+            child_pid = int(self.reached.read_text(encoding="utf-8").strip())              # 자식이 자기 os.getpid() 로 알려 준 값(Popen.pid 는 윈도 venv 에서 런처의 번호라 견주지 않는다 — F036)
+            self.assertNotEqual(child_pid, os.getpid(), "잠금을 쥔 것은 이 시험 프로세스가 아니라 자식이다")
+            self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8"))["pid"], child_pid, "잠금 파일의 pid 는 잠금을 쥔 자식 자신의 프로세스 번호다")
             journal = Journal(self.ctx.workspace.journal_dir)
             record_while_locked = journal.read(project_id)
             self.assertEqual(record_while_locked.stage, STAGE_COMMITTED)

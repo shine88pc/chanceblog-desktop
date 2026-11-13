@@ -2,7 +2,7 @@
 
 여러 블로그(GitHub Pages·Blogger·네이버)의 글을 **한 곳에서 쓰고·검수하고·플랫폼별로 내보내는 개인용 Windows 데스크톱 프로그램**입니다. 한국어 화면이 기본이고, **AI 없이도 모든 핵심 기능이 동작합니다**(무료 AI 는 선택 보조이고 기본은 꺼짐).
 
-> **상태: 설계 단계입니다. 아직 설치할 수 있는 버전이 없습니다.** 첫 설치 파일은 `0.1.0` 부터 [Releases](../../releases) 에 올라옵니다.
+> **상태: 미리보기 단계입니다.** 지금 있는 것은 개인 PC 제한 시험용 Package(미서명 — 공개 배포용이 아닙니다)뿐이고, 설치 파일과 자동 업데이트는 아직 없습니다. 시험용 Package 는 GitHub Actions 의 수동 빌드로 만들며([`docs/PACKAGE.md`](docs/PACKAGE.md)), 운영자가 개인 PC 에서 해 보는 순서는 [`docs/PERSONAL_PC_TEST.md`](docs/PERSONAL_PC_TEST.md) 에 있습니다. 첫 설치 파일은 `0.1.0` 부터 [Releases](../../releases) 에 올라올 예정입니다.
 
 ## 이 저장소와 `chanceblog` 의 관계
 
@@ -152,6 +152,8 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | 회사 PC → 개인 PC 이관과 새 PC 준비 |
 | [`docs/UI_DESIGN_SPEC.md`](docs/UI_DESIGN_SPEC.md) · [`UI_COMPONENTS.md`](docs/UI_COMPONENTS.md) · [`UI_STATES.md`](docs/UI_STATES.md) · [`UI_ICONS.md`](docs/UI_ICONS.md) · [`UI_IMAGES.md`](docs/UI_IMAGES.md) · [`UI_VISUAL_QA.md`](docs/UI_VISUAL_QA.md) | 화면(GUI) 설계 값·부품·상태·아이콘·사진 규칙·사진 검수 |
 | [`CHANGELOG.md`](CHANGELOG.md) · `VERSION` | 변경 이력과 현재 버전 |
+| [`docs/TOPIC_ENGINE_PLAN.md`](docs/TOPIC_ENGINE_PLAN.md) | 주제 엔진(5채널 주제 선정 전략)을 코드에 얹는 순서와 결정 A–H(계획 문서 — 만든 것과 날짜는 `DECISIONS.md`) |
+| [`docs/P4_REVIEW_ITEMS.md`](docs/P4_REVIEW_ITEMS.md) | 화면(P4) 작업 전에 다시 보고하기로 한 7가지 검토 항목의 기록 |
 
 ## 개발 방식
 

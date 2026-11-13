@@ -181,7 +181,7 @@ Candidate(주제 후보): candidate_id · topic · keyword · sub_keywords · bl
 - `packaging/build_package.py` — 작업 트리 확인 → PyInstaller(`--onedir --windowed`, `X utf8`, 앱이 쓰지 않는 `PySide6.QtNetwork` 제외·묶음 DLL 출처 확인) → 실행 파일 옆에 `vendor/`·`VERSION`·`LICENSES/` 배치 → 자가 점검(실패하면 산출물 없음) → 결정적 zip → 정보 파일.
 - `packaging/make_manifest.py` — `PACKAGE_INFO.md`·`PACKAGE_INFO.json`·`SHA256SUMS`(Version·Git Commit·SHA-256·Dependency 목록·Build 방법·Malware 검사 결과·서명 여부·SmartScreen 예상 동작). `packaging/pkgcommon.py` 는 공통 이름·문구, `packaging/requirements-package.txt` 는 정확한 버전 잠금, `packaging/LICENSES/` 는 LGPL-3.0·GPL-3.0 전문.
 - 경로 가정(`vendor/`·`VERSION` 이 **실행 파일 옆** — `core.py` 와 `ui/core/version.py` 가 모듈 위치에서 계산)은 코드로 고치지 않고 빌드가 정확히 배치하며 `--selftest` 가 확인한다.
-- 시험은 PyInstaller 없이 도는 `tests/test_packaging_*.py`(CI 에서 돈다)이고 진짜 빌드는 개발 PC 에서 돌려 결과를 보고서에 남긴다. 빌드 워크플로(`.github/workflows/package.yml`)는 T3 라 별도 가지의 초안이다. 자세한 내용은 [`PACKAGE.md`](PACKAGE.md), 운영자가 해 보는 순서는 [`PERSONAL_PC_TEST.md`](PERSONAL_PC_TEST.md).
+- 시험은 PyInstaller 없이 도는 `tests/test_packaging_*.py`(CI 에서 돈다)이고 진짜 빌드는 개발 PC 에서 돌려 결과를 보고서에 남긴다. 빌드 워크플로(`.github/workflows/package.yml`)는 T3 였고 운영자 승인으로 병합돼 있다(수동 실행만). 자세한 내용은 [`PACKAGE.md`](PACKAGE.md), 운영자가 해 보는 순서는 [`PERSONAL_PC_TEST.md`](PERSONAL_PC_TEST.md).
 
 ## 11. 버전
 

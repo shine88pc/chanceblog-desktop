@@ -132,7 +132,7 @@ class LocalPathTest(unittest.TestCase):
                 self.assertTrue(self.blocked(leak), leak)
 
     def test_short_eight_dot_three_names_are_blocked(self):
-        for leak in (r"C:\PROGRA~1\앱", "c:/progra~1/app", r"D:\Users2\SDI_US~1\Desktop", r"\SDI_US~1\Desktop", r"E:\DOCUME~1\x", r"위치 C:\Work\LONGFI~2.TXT 입니다"):
+        for leak in (r"C:\PROGRA~1\앱", "c:/progra~1/app", r"D:\Users2\FAKE_U~1\Desktop", r"\FAKE_U~1\Desktop", r"E:\DOCUME~1\x", r"위치 C:\Work\LONGFI~2.TXT 입니다"):
             with self.subTest(leak=leak):
                 self.assertTrue(self.blocked(leak), leak)
 

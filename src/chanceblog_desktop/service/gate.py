@@ -44,7 +44,7 @@ LEAK_PATTERNS = (
     r"AI\s*(?:로서|언어\s*모델|어시스턴트)", r"\bas an ai (?:language model|assistant|model)\b", r"lorem ipsum", r"\{topic\}", r"\[대상", r"(?m)^\s*(?:제목|라벨|내용)\s*:",
 )
 # 이 PC 의 경로 모양 — 드라이브 사용자 폴더(`C:\Users\`·`C:/users/`·`file:///C:/Users/`·`\\?\C:\Users\`) · WSL·Cygwin 의 같은 폴더 · UNC(`\\서버\공유`, JSON 이스케이프 `\\\\서버\\공유` 포함) ·
-# 8.3 짧은 이름(`C:\PROGRA~1`·`\SDI_US~1` — 글 속 `1~10` 같은 표기는 앞에 `\` 나 드라이브가 없어 걸리지 않는다) · `file:` 주소(어느 것이든)
+# 8.3 짧은 이름(`C:\PROGRA~1`·`\FAKE_U~1` — 글 속 `1~10` 같은 표기는 앞에 `\` 나 드라이브가 없어 걸리지 않는다) · `file:` 주소(어느 것이든)
 _LOCAL_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]+(?:Users|Documents and Settings)[\\/]", re.IGNORECASE)
 _WSL_PATH = re.compile(r"(?<![A-Za-z0-9])/(?:mnt|cygdrive)/[A-Za-z]/Users/", re.IGNORECASE)
 _UNC_PATH = re.compile(r"(?<![\\\w])\\{2,}[^\\/\s\"'<>|]{1,200}\\+[^\\/\s\"'<>|]{1,200}")

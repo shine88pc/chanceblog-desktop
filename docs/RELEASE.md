@@ -1,5 +1,8 @@
 # 설치 파일·자동 업데이트·릴리스
 
+> **장래 설계(미구현) — 이 문서의 설치 파일(Setup)·자동 업데이트·서명 매니페스트·롤백은 아직 코드로 만들어지지 않았다.**
+> 지금의 배포 경로는 [`PACKAGE.md`](PACKAGE.md) 의 개인 PC 제한 시험용 Package(미서명 압축 폴더 — 새 버전은 새로 풀어서 쓴다)와 시험지 [`PERSONAL_PC_TEST.md`](PERSONAL_PC_TEST.md) 뿐이다.
+
 > 2026-10-30 조사(조사 에이전트가 공식 문서·릴리스 API 를 읽은 보고, `chanceblog` 의 `docs/analysis/2026-10-30_desktop-release-update.md`)를 이 저장소에 맞춰 줄인 것이다. **세부 수치는 요약 도구를 거친 것이라 시행 전에 원문과 대조한다.** 결정은 [`DECISIONS.md`](DECISIONS.md) D-04·D-05.
 
 ## 방식

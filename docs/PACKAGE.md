@@ -113,7 +113,7 @@ python -m venv ..\chanceblog-package-venv
 - **아이콘이 없다**(PyInstaller 기본 아이콘). 윈도 버전 정보(속성 → 자세히)에는 제품 이름·버전·'개인 PC 제한 시험용, 미서명 Package' 가 들어 있다.
 - **묶음 점검의 한계**: DLL 출처 검사는 PyInstaller 가 적은 출처 글을 `..`·슬래시·대소문자를 풀어 견줄 뿐(D-443) 바로가기·정션을 따라가 실제 위치를 확인하지 않고, 금지 이름 점검은 정확한 이름(OpenSSL `-x64` 쌍은 이름 꼴)만 봐서 낯선 이름은 걸러 내지 못한다 — 넓은 그물은 출처 검사 몫이다. 깨끗함 검사(D-441)도 파일의 크기·수정 시각을 같게 맞춰 git 의 상태 캐시를 속이는 수정은 보지 않는다.
 - 업데이트·롤백·마이그레이션 코드가 없다(새 버전은 새로 풀어서 쓴다 — 데이터 폴더는 같고, 백업·복원 화면이 있는 Package 에서는 그 기능으로 옮긴다).
-- **빌드 워크플로**(`.github/workflows/package.yml`)는 T3 라 이 가지에 없다. 별도 가지에 초안만 있고 운영자 승인 뒤에 병합한다: 수동 실행만(`workflow_dispatch`)·`windows-latest`·Python 3.12·잠금 파일로 설치·위 스크립트 실행·**압축 파일·`SHA256SUMS`·`PACKAGE_INFO.*` 만** 14일 보존으로 올림·비밀 값 0·서명 단계 없음. 병합되면 이 문서의 §2 명령이 그 워크플로의 본문이 된다.
+- **빌드 워크플로**(`.github/workflows/package.yml`)는 `.github` 변경이라 T3 였고 운영자 승인으로 병합돼 지금 main 에 있다: **수동 실행만**(`workflow_dispatch` — 푸시·PR·예약으로는 돌지 않고 입력 칸도 없다)·`windows-latest`·Python 3.12·잠금 파일로 설치·위 스크립트 실행(시험 빌드 옵션 `--allow-missing-gate` 는 쓰지 않는다)·**압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json` 네 개만** `ChanceBlogDesktop-preview` 라는 이름으로 **14일** 보존해 올림·읽기 권한만·비밀 값 0·서명 단계 없음. 운영자는 Actions 의 실행 화면 맨 아래 `Artifacts` 에서 받는다(올린 것을 GitHub 가 한 겹 더 압축해 주므로 풀면 안쪽에 압축 파일이 또 있다 — 시험지 0-0). 빌드가 빨간 실행이면 아래 '실패 문장 읽는 법' 대로 한 줄을 복사해 알린다.
 - PySide6·PyInstaller 는 CI(Linux·Windows 시험 칸)에 없으므로(D-32) 이 도구의 시험은 PyInstaller 없이 도는 부분(`tests/test_packaging_*.py`)이고, 실제 빌드는 개발 PC 에서 돌려 결과를 보고서에 남긴다.
 
 ## 빌드는 PATH 를 좁힌다 (D-468)
@@ -137,7 +137,7 @@ python -m venv ..\chanceblog-package-venv
 - 좁히는 것은 PyInstaller 를 부르는 환경 하나다. 빌드 스크립트 자신의 `git` 찾기와 Defender 도구 찾기는 그 PC 의 PATH 를 쓴다. 가상환경·기본 Python·Windows 폴더의 이름에 세미콜론(;)이 있으면 PATH 에 넣을 수 없어 빌드가 출력 폴더를 지우기 전에 거절한다(조용히 빼면 묶음이 달라진다).
 - PATH 가 아닌 길(PyInstaller 훅이 더하는 DLL 폴더·설치된 패키지가 싣는 DLL)로 허용 뿌리 밖 DLL 이 들어오면 허용 뿌리 검사가 여전히 거절한다 — 그 검사가 마지막 그물이다.
 - Windows 폴더 안의 DLL 은 허용 뿌리 안이라 검사를 통과한다. 이 PC 의 묶음에는 Windows 폴더에서 온 DLL 이 하나도 없지만(바이너리류 58개 중 빌드 산출물인 시작 파일 하나를 뺀 57개가 모두 가상환경·기본 Python 폴더 것) 러너의 `System32` 에 `ucrtbase.dll` 같은 파일이 실제로 있으면 PyInstaller 가 묶을 수 있고, 제3자 고지문에는 UCRT 줄이 없다 — 러너에서 만든 묶음의 `_internal` 에 `ucrtbase.dll`·`api-ms-win-*.dll` 이 있는지 보면 안다.
-- 위 §10 의 '별도 가지에 초안만 있다' 문장은 병합 전 상태다 — 워크플로(`.github/workflows/package.yml`)는 이미 병합돼 있고 이 수정은 그 파일을 건드리지 않았다.
+- 위 §10 의 빌드 워크플로 항목은 한때 '이 가지에 없다·별도 가지에 초안만 있다'고 적혀 있었다 — 그것은 병합 전 상태였고 지금은 병합된 사실로 고쳐 적었다. 이 수정(D-468)은 워크플로 파일을 건드리지 않았다.
 
 ## 단일 실행 — 같은 앱을 두 번 열어도 창은 하나 (SINGLEWIN, D-471 이후)
 
