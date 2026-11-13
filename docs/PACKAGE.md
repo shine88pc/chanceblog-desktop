@@ -115,3 +115,26 @@ python -m venv ..\chanceblog-package-venv
 - 업데이트·롤백·마이그레이션 코드가 없다(새 버전은 새로 풀어서 쓴다 — 데이터 폴더는 같고, 백업·복원 화면이 있는 Package 에서는 그 기능으로 옮긴다).
 - **빌드 워크플로**(`.github/workflows/package.yml`)는 T3 라 이 가지에 없다. 별도 가지에 초안만 있고 운영자 승인 뒤에 병합한다: 수동 실행만(`workflow_dispatch`)·`windows-latest`·Python 3.12·잠금 파일로 설치·위 스크립트 실행·**압축 파일·`SHA256SUMS`·`PACKAGE_INFO.*` 만** 14일 보존으로 올림·비밀 값 0·서명 단계 없음. 병합되면 이 문서의 §2 명령이 그 워크플로의 본문이 된다.
 - PySide6·PyInstaller 는 CI(Linux·Windows 시험 칸)에 없으므로(D-32) 이 도구의 시험은 PyInstaller 없이 도는 부분(`tests/test_packaging_*.py`)이고, 실제 빌드는 개발 PC 에서 돌려 결과를 보고서에 남긴다.
+
+## 빌드는 PATH 를 좁힌다 (D-468)
+
+번호 없는 절이다(위 1에서 10 절과 번호가 겹치지 않게). 운영자가 GitHub Actions 의 'Package — 개인 PC 제한 시험용 빌드(수동)' 를 처음 돌렸을 때(2026-11-13 아침) 빌드가 **묶음 점검(허용 뿌리 밖 DLL 거절)에서 멈췄다**(운영자가 블로그 저장소 이슈 #186 에 붙인 로그). 로그 조각: `[3/8] 배치` 다음 줄에 `묶음 점검에서 문제가 나왔어요:` 와 `api-ms-win-core-console-l1-1-0.dll(출처 C:/hostedtoolcache/windows/Java_Temurin-Hotspot_jdk/17.0.21-9/x64/bin/…)` 꼴의 여섯 개(그때는 앞 여섯 건만 적는 문장이었다)가 있었다.
+
+**원인.** 허용 뿌리 검사(`allowed_roots` — 이 가상환경·기본 Python·Windows 폴더, D-415)는 설계대로 일했다. PyInstaller(6.22)는 묶을 DLL 이 부르는 DLL 을 ① 그 DLL 자신의 폴더 ② 가져오기를 흉내 내며 알아낸 추가 폴더 ③ **PATH 의 폴더들(앞에서부터)** 순서로 찾고, `ucrtbase.dll`·`vcruntime140.dll`·`msvcp140.dll`·`api-ms-win-core-*.dll`·`api-ms-win-crt-*.dll` 은 Windows 폴더 것이라도 일부러 묶도록 PyInstaller 의 허용 목록(`_win_includes`)에 들어 있다. 러너의 PATH 에서는 자바(Temurin JDK 17)의 bin 폴더가 Windows 폴더보다 앞에 있었고 그 폴더에는 UCRT 를 앱에 싣는 DLL 들이 있어서, 그 폴더 것이 묶음 목록에 들어갔다. 이 PC 의 PATH 에는 그런 폴더가 없고 System32 에 `api-ms-win-*.dll` 파일이 없어(이 PC 에서는 `System32/downlevel` 에만 있다) 같은 빌드가 통과했다. 같은 소스·같은 도구인데 빌드한 PC 의 PATH 에 따라 묶음이 달라지는 틈이었고, D-415 가 'PATH 를 좁히는 대신 QtNetwork 를 뺀다' 로 한 곳만 막고 남겨 둔 바로 그 틈이다.
+
+**재현(이 PC).** 이 PC 의 System32·downlevel 에 실제로 있는 같은 이름의 DLL 46개(`api-ms-win-core-*`·`api-ms-win-crt-*`·`ucrtbase.dll`·`vcruntime140.dll`·`vcruntime140_1.dll`·`msvcp140.dll`)를 임시 폴더에 복사해 가짜 자바 bin 으로 삼고, **하위 프로세스의 환경 변수로만** PATH 맨 앞에 넣어(이 PC 의 PATH·설정은 그대로) 수정 전 소스(기준 `270c7cc`)를 진짜로 빌드했다 → `[3/8]` 뒤 같은 실패. 묶음 목록은 198항목(보통 PATH 의 158항목보다 40개 많고 40개가 모두 가짜 폴더)이고 문제 글의 앞 다섯 이름(console·datetime·debug·errorhandling·fibers-l1-1-0)과 순서가 로그와 같았다. 여섯째 이름은 달랐다 — 이 PC 의 `ucrtbase.dll` 이 가져오는 `api-ms-win-core-*` 이름이 러너 자바 폴더의 것과 다르기 때문으로 보지만 확인하지는 못했다.
+
+**결정(D-468).** 빌드는 PyInstaller 를 부를 때 PATH 를 **결정적으로 좁힌다** — 정책 이름 `narrow-v1`: ① 이 가상환경 폴더와 그 `Scripts` ② 기본 Python 폴더와 그 `DLLs`·`Scripts` ③ `%SystemRoot%/System32`·`%SystemRoot%`·`%SystemRoot%/System32/Wbem`(이 순서, 존재하는 폴더만, 같은 폴더는 한 번만 — 가상환경이 없으면 ①과 ②가 한 곳으로 겹친다). 그 PC 의 PATH 는 이름(`Path`·`PATH` 어느 대소문자든)과 값을 모두 버린다. 덧붙는 효과: PyInstaller 6.22 는 PATH 에서 `upx -V` 가 불리면 윈도에서 UPX 로 바이너리를 압축하려 하는데(`PyInstaller/configure.py`, 스펙의 기본이 `upx=True` 이고 이 빌드는 `--noupx` 를 주지 않는다) 좁힌 PATH 에서는 PATH 의 UPX 도 보이지 않는다 — 소스로만 확인했고 이 PC 에는 UPX 가 없어 이 PC 의 결과는 달라지지 않았다. 허용 뿌리 검사는 **그대로**다(느슨하게 하지 않았다 — 다른 길로 들어오는 DLL 은 여전히 거절된다). 묶음의 자가 점검 같은 다른 하위 프로세스는 그 PC 의 보통 환경 그대로 돈다. 정보 파일의 `build.env` 에는 `PATH_POLICY=narrow-v1` 한 줄만 적는다(폴더 목록은 PC 마다 달라 적지 않는다 — 압축 파일이 빌드한 PC 의 PATH 에 달리지 않게).
+
+**측정(이 PC).** 같은 커밋(`c6bd62c`)을 ⓐ 가짜 자바 폴더를 PATH 맨 앞에 둔 환경 ⓑ 이 PC 의 보통 PATH ⓒ 가상환경이 없는 파이썬 사본(러너의 setup-python 처럼 `sys.prefix` 와 `sys.base_prefix` 가 같은 모양, `hostedtoolcache/windows/Python/3.12.10/x64` 아래)에 가짜 자바 PATH 로 빌드했다 → 셋 다 통과했고 압축 파일 SHA-256 이 **같았다**(`c898534a…77c7`, 40,132,624바이트), 묶음 목록도 158항목·바이너리류 58 로 같다. 수정 전 소스는 ⓐ 와 ⓒ 에서 모두 같은 실패(묶음 목록에 가짜 폴더 DLL 40개)였다. 코드가 마지막 모습이 된 뒤(`4c1b69b`)에도 ⓐ 와 ⓑ 를 다시 빌드해 압축 파일 SHA-256 이 같음을 확인했다(D-470). 수정 전 소스를 보통 PATH 로 빌드한 묶음과 견주면 파일 172개 중 168개가 한 바이트도 다르지 않고, 다른 넷(`ChanceBlogDesktop.exe`·`THIRD_PARTY_NOTICES.md`·`PACKAGE_INFO.json`·`PACKAGE_INFO.md`)은 커밋 시각·커밋 해시·새 `PATH_POLICY` 줄 때문이다 — 이 PC 에서는 PATH 를 좁혀도 묶음 안 DLL 이 바뀌지 않았다.
+
+**실패 문장 읽는 법.** 묶음 점검이 다시 걸리면 `묶음 점검에서 문제가 나왔어요(총 N건): 앞 6건 / …외 M건 — 출처 폴더별 건수: 폴더 N건 · … · 출처를 알 수 없는 문제 K건` 으로 나온다. 한 폴더가 대부분이면 그 폴더(PATH 의 다른 프로그램이거나 설치된 패키지가 싣는 DLL)를 찾으면 된다. 요약의 폴더는 사용자 폴더 이름을 가려 적는다(`C:/Users/<사용자>/…`) — 앞 문제 글은 예전 그대로다. `[2/8]` 줄에는 좁힌 PATH 의 폴더들이 적힌다. **GitHub 에서 빌드가 실패하면**: Actions 의 해당 단계 로그에서 `묶음 점검에서 문제가 나왔어요` 로 시작하는 한 줄(과 그 위의 `[2/8]` 줄)을 그대로 복사해 알려 주면 된다 — 키·비밀은 그 줄에 들어 있지 않다.
+
+**한계(사실대로).**
+
+- **러너에서 다시 돌려 확인해야 한다.** 위 재현과 측정은 이 PC 에서 가짜 자바 폴더로 한 것이다. 러너의 실제 PATH 순서·자바 폴더의 파일·System32 내용은 보지 못했다. 이 수정이 러너에서 [4/8] 이후까지 통과하는지는 운영자가 Actions 의 Run workflow 로 다시 돌려 봐야 안다(AI 는 누를 수 없다).
+- 첫 로그는 앞 여섯 건만 적었으므로 **여섯 개 너머에 다른 폴더의 문제가 더 있었는지 모른다.** 또 [4/8] 이후(정보 파일·자가 점검·압축·검사)는 러너에서 아직 돌아 본 적이 없어 다른 문제가 나올 수 있다. 그때는 위의 총 건수와 폴더별 요약이 한 번에 원인을 알려 준다.
+- 좁히는 것은 PyInstaller 를 부르는 환경 하나다. 빌드 스크립트 자신의 `git` 찾기와 Defender 도구 찾기는 그 PC 의 PATH 를 쓴다. 가상환경·기본 Python·Windows 폴더의 이름에 세미콜론(;)이 있으면 PATH 에 넣을 수 없어 빌드가 출력 폴더를 지우기 전에 거절한다(조용히 빼면 묶음이 달라진다).
+- PATH 가 아닌 길(PyInstaller 훅이 더하는 DLL 폴더·설치된 패키지가 싣는 DLL)로 허용 뿌리 밖 DLL 이 들어오면 허용 뿌리 검사가 여전히 거절한다 — 그 검사가 마지막 그물이다.
+- Windows 폴더 안의 DLL 은 허용 뿌리 안이라 검사를 통과한다. 이 PC 의 묶음에는 Windows 폴더에서 온 DLL 이 하나도 없지만(바이너리류 58개 중 빌드 산출물인 시작 파일 하나를 뺀 57개가 모두 가상환경·기본 Python 폴더 것) 러너의 `System32` 에 `ucrtbase.dll` 같은 파일이 실제로 있으면 PyInstaller 가 묶을 수 있고, 제3자 고지문에는 UCRT 줄이 없다 — 러너에서 만든 묶음의 `_internal` 에 `ucrtbase.dll`·`api-ms-win-*.dll` 이 있는지 보면 안다.
+- 위 §10 의 '별도 가지에 초안만 있다' 문장은 병합 전 상태다 — 워크플로(`.github/workflows/package.yml`)는 이미 병합돼 있고 이 수정은 그 파일을 건드리지 않았다.

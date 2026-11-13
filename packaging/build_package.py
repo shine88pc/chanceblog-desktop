@@ -5,6 +5,7 @@
 `--python-option "X utf8"`) → ③ 실행 파일 옆에 `vendor/`·`VERSION`·`LICENSES/` 를 배치(코드의 경로 가정을 고치지 않고 빌드가 정확히 놓는다) → ④ 묶음 안 `PACKAGE_INFO.*` →
 ⑤ 묶음 실행 파일의 `--selftest`(실패하면 산출물을 만들지 않는다) → ⑥ 결정적 zip(시각·순서·압축 수준 고정) → ⑦ 압축 파일 옆 `PACKAGE_INFO.*`·`SHA256SUMS`(+ 읽기 전용 악성코드 검사).
 결정적으로 만드는 방법: 환경 변수 `PYTHONHASHSEED=0`·`SOURCE_DATE_EPOCH=<커밋 시각>`, zip 의 항목 시각은 커밋 시각·순서는 경로 순·압축 수준 9 고정, 묶음 안 정보 파일에는 시계를 넣지 않는다.
+PyInstaller 는 묶을 DLL 이 부르는 DLL 을 PATH 순서대로 찾으므로(PATH 앞의 자바·Git·사내 프로그램 폴더 DLL 이 묶음에 들어온다) PyInstaller 를 부를 때 PATH 는 가상환경·기본 Python·Windows 폴더만으로 좁힌다(D-468).
 시스템·보안 설정을 바꾸지 않고, 네트워크를 쓰지 않으며, 지우는 곳은 이 도구가 만든 출력 폴더(표지 파일 `.chanceblog-package-out`) 안의 work·spec·dist·bundle·release 뿐이다. 표준 라이브러리만 쓴다(PyInstaller 는 하위 프로세스로 부른다).
 외부 쓰기 관문(`chanceblog_desktop.capabilities`) 모듈이 아직 없는 소스는 `--allow-missing-gate` 로 시험 빌드만 만들 수 있고, 시험 빌드는 압축 파일·묶음 폴더 이름에 `TESTBUILD` 가 붙고 정보 파일·화면에도 그렇게 적힌다(개인 PC 로 보내지 않는다).
 """
@@ -38,6 +39,12 @@ BINARY_SUFFIXES = (".exe", ".dll", ".pyd")
 TEXT_SUFFIXES = (".py", ".pyi", ".json", ".txt", ".md", ".xml", ".cfg", ".ini", ".toml", ".yml", ".yaml", ".html", ".js", ".css", ".csv")
 TEXT_SCAN_LIMIT = 5 * 1024 * 1024
 BUNDLE_ENV = {"PYTHONHASHSEED": "0", "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+PATH_POLICY = "narrow-v1"                              # PyInstaller 에 주는 PATH 의 정책 이름 — 어느 폴더를 넣는가가 바뀌면 올린다. 정보 파일의 결정적 빌드 환경 기록에 적는다(D-468)
+PATH_SEPARATOR = ";"                                   # 윈도의 PATH 구분자 — 시험이 어느 운영체제에서나 같은 글을 보도록 이 PC 의 구분자 상수 대신 고정한다(빌드는 윈도에서만 돈다)
+SHOWN_PROBLEMS = 6                                     # 묶음 점검 실패 문장에 그대로 적는 문제 수 — 나머지는 건수와 출처 폴더별 요약으로 알린다(D-468)
+SHOWN_FOLDERS = 8                                      # 출처 폴더별 요약에 이름을 적는 폴더 수 — 나머지는 곳 수와 건수만
+ORIGIN_MARKER = "(출처 "                               # `binary_origin_problems` 가 문제 글에 붙이는 표지(이름(출처 경로)) — 요약이 같은 표지로 읽는다
+UNKNOWN_FOLDER = "(폴더를 알 수 없음)"
 # 개발용 가상환경에 같이 깔린 것이 묶음에 새어 들어오지 않았는지 보는 이름(묶음 안에 있으면 거절)
 UNEXPECTED_BUNDLED = ("PIL", "webview", "clr_loader", "pythonnet", "bottle", "proxy_tools", "cffi", "pycparser", "_cffi_backend", "typing_extensions.py")
 QT_FILES = ("PySide6/plugins/platforms/qwindows.dll", "PySide6/plugins/imageformats/qjpeg.dll", "PySide6/plugins/imageformats/qwebp.dll", "PySide6/plugins/imageformats/qsvg.dll")
@@ -144,18 +151,74 @@ def recorded_command(args, repo, out):
     return ["python", "-m", "PyInstaller", *shown]
 
 
-def pyinstaller_env(epoch, environ=None):
-    """PyInstaller 를 부를 환경 — 결정적 빌드 값을 정하고 `PYTHONPATH` 처럼 묶음을 오염시킬 수 있는 값은 뺀다."""
+def env_value(environ, name):
+    """환경 사전에서 이름이 같은 값 — 윈도의 환경 변수 이름은 대소문자를 가리지 않으므로(`SystemRoot`·`SYSTEMROOT`·`systemroot` 가 같다. `dict(os.environ)` 의 이름은 윈도에서 모두 대문자다) 대소문자 없이 찾는다. 없으면 None."""
+    wanted = name.upper()
+    for key, value in environ.items():
+        if isinstance(key, str) and key.upper() == wanted:
+            return value
+    return None
+
+
+def shown_folder(folder, home=None):
+    """폴더 글을 알림 문장에 쓸 때의 모양 — 사용자 폴더 안이면 사용자 이름을 가린다(`C:/Users/<이름>/…` → `C:/Users/<사용자>/…`, 환경 변수 USERPROFILE 아래는 `%USERPROFILE%/…`). 러너 경로는 그대로다.
+    새로 덧붙이는 요약·진행 줄에만 쓴다 — 실패 문장의 앞 문제 글은 예전 그대로 적는다."""
+    path = PureWindowsPath(str(folder))
+    home_path = PureWindowsPath(str(home)) if home else None
+    if home_path is not None and len(home_path.parts) >= 2:                                    # 드라이브 맨 위(`C:/`)가 사용자 폴더일 리는 없다 — 그대로 두면 그 드라이브 전체가 가려진다
+        try:
+            return str(PureWindowsPath("%USERPROFILE%", *path.relative_to(home_path).parts))
+        except ValueError:
+            pass
+    parts = list(path.parts)
+    if path.drive and len(parts) >= 3 and parts[1].lower() == "users":
+        parts[2] = "<사용자>"
+        return str(PureWindowsPath(*parts))
+    return str(path)
+
+
+def narrowed_path_folders(environ, *, prefix=None, base_prefix=None, isdir=os.path.isdir):
+    """PyInstaller 에 줄 PATH 의 폴더들(이 순서 그대로) — 이 가상환경과 그 Scripts · 기본 Python 과 그 DLLs·Scripts · Windows 폴더의 System32·Windows 자신·System32/Wbem 뿐이다(D-468).
+    존재하는 폴더만, 같은 폴더(대소문자·슬래시·끝 구분자만 다른 것)는 한 번만. `environ` 에서는 SystemRoot(없으면 windir, 그것도 없으면 C:/Windows)만 읽고 입력의 PATH 는 읽지 않는다 —
+    PATH 에 있던 자바(JDK)·Git·사내 프로그램 폴더가 PyInstaller 의 DLL 찾기에 끼어들지 못하게 하는 것이 목적이다. 허용 뿌리 검사(`allowed_roots`)와 같은 세 뿌리(가상환경·기본 Python·Windows 폴더)에서만 고른다.
+    윈도의 PATH 는 세미콜론으로 나뉘므로 이름에 세미콜론이 든 폴더는 넣을 수 없어 거절한다(조용히 빼면 묶음이 달라진다)."""
+    windows = env_value(environ, "SystemRoot") or env_value(environ, "windir") or "C:/Windows"
+    prefix = str(sys.prefix if prefix is None else prefix)
+    base_prefix = str(sys.base_prefix if base_prefix is None else base_prefix)
+    wanted = [prefix, ntpath.join(prefix, "Scripts"), base_prefix, ntpath.join(base_prefix, "DLLs"), ntpath.join(base_prefix, "Scripts"),
+              ntpath.join(windows, "System32"), windows, ntpath.join(windows, "System32", "Wbem")]
+    folders, seen = [], set()
+    for folder in wanted:
+        folder = ntpath.normpath(folder)
+        key = ntpath.normcase(folder)
+        if key in seen or not isdir(folder):
+            continue
+        if PATH_SEPARATOR in folder:
+            raise mm.BuildRefused(f"PATH 에 넣을 폴더 {shown_folder(folder)} 의 이름에 세미콜론(;)이 있어요 — 윈도의 PATH 는 세미콜론으로 폴더를 나누므로 넣을 수 없어요. 세미콜론이 없는 폴더에 가상환경을 만들어 주세요.")
+        seen.add(key)
+        folders.append(folder)
+    return folders
+
+
+def pyinstaller_env(epoch, environ=None, *, prefix=None, base_prefix=None, isdir=os.path.isdir):
+    """PyInstaller 를 부를 환경 — 결정적 빌드 값을 정하고, `PYTHONPATH` 처럼 묶음을 오염시킬 수 있는 값은 빼고, **PATH 를 좁힌다**(D-468).
+    PyInstaller 는 묶을 DLL 이 부르는 DLL 을 PATH 순서대로 찾는다 — PATH 앞에 자바(JDK)·Git·사내 프로그램 폴더가 있으면 그 폴더의 UCRT·VC 런타임 DLL 이 묶음에 들어오고 허용 뿌리 검사가 거절한다(GitHub 러너에서 실제로 났다).
+    입력의 PATH 는 이름(`Path`·`PATH`·`path` 어느 대소문자든)과 값을 모두 버리고 `PATH` 하나만 `narrowed_path_folders` 의 폴더들로 쓴다 — 입력에 PATH 가 없어도 된다. 받은 사전은 바꾸지 않는다."""
     env = dict(os.environ if environ is None else environ)
+    narrowed = PATH_SEPARATOR.join(narrowed_path_folders(env, prefix=prefix, base_prefix=base_prefix, isdir=isdir))
+    for name in [name for name in env if isinstance(name, str) and name.upper() == "PATH"]:
+        del env[name]
     for name in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONINSPECT", "PYTHONOPTIMIZE"):
         env.pop(name, None)
     env.update(BUNDLE_ENV)
     env["SOURCE_DATE_EPOCH"] = str(int(epoch))
+    env["PATH"] = narrowed
     return env
 
 
 def bundle_environment_record(epoch):
-    return {**BUNDLE_ENV, "SOURCE_DATE_EPOCH": str(int(epoch))}
+    """정보 파일에 적는 결정적 빌드 환경 — 실제로 정한 환경 변수 넷과, PATH 를 어떤 정책으로 좁혔는지(`PATH_POLICY` — 환경 변수 이름이 아니라 정책 이름이다. 폴더 목록은 PC 마다 달라 적지 않는다)."""
+    return {**BUNDLE_ENV, "SOURCE_DATE_EPOCH": str(int(epoch)), "PATH_POLICY": PATH_POLICY}
 
 
 def out_path_problem(text):
@@ -330,6 +393,19 @@ def allowed_roots(environ=None):
     return [sys.prefix, sys.base_prefix, windows]
 
 
+def origin_problem(dest, source):
+    """출처 문제 글 — `이름(출처 경로)`. 이 모양을 `origin_of` 가 되읽는다(시험이 둘이 어긋나지 않음을 지킨다)."""
+    return f"{dest}{ORIGIN_MARKER}{source})"
+
+
+def origin_of(problem):
+    """`origin_problem` 이 만든 글에서 (이름, 출처 경로)를 읽는다. 그 모양이 아니면(묶음 점검의 다른 문제 글) None."""
+    name, marker, rest = problem.partition(ORIGIN_MARKER)
+    if not marker or not rest.endswith(")"):
+        return None
+    return name, rest[:-1]
+
+
 def binary_origin_problems(toc_text, roots):
     """PyInstaller 의 묶음 목록(`COLLECT-00.toc`) 안 DLL·확장 모듈(BINARY·EXTENSION, 종류가 DATA 라도 `.dll`·`.pyd`·`.exe`)이 허용된 뿌리 밖에서 왔으면 그 이름·출처 글들 — 목록을 못 읽어도 문제다(출처를 모르는 채 내보내지 않는다)."""
     try:
@@ -344,7 +420,7 @@ def binary_origin_problems(toc_text, roots):
             continue                                                                          # 시작 파일은 빌드 산출물이고, 그 밖의 종류도 PE 확장자가 아니면 DLL 이 아니다
         path = PureWindowsPath(ntpath.normpath(source))                                       # `..` 를 풀어서 견준다 — 가상환경 안인 척 밖을 가리키는 줄을 걸러 낸다
         if not any(root == path or root in path.parents for root in allowed):
-            problems.append(f"{dest}(출처 {source})")
+            problems.append(origin_problem(dest, source))
     return problems
 
 
@@ -355,6 +431,42 @@ def check_binary_origins(toc_path, roots=None):
     except (OSError, UnicodeError):
         return ["PyInstaller 의 묶음 목록 파일(COLLECT-00.toc)이 없어요"]
     return binary_origin_problems(text, allowed_roots() if roots is None else roots)
+
+
+def origin_folder_counts(problems):
+    """문제 글들을 출처 폴더별로 센다 → [(폴더, 건수), …](건수가 많은 폴더부터, 같으면 폴더 글자 순). 출처가 없는 문제 글(`origin_of` 가 None)은 세지 않는다. 폴더는 윈도 규칙으로 `..`·슬래시·대소문자를 풀어 같은 폴더끼리 합친다."""
+    counts = {}
+    for problem in problems:
+        found = origin_of(problem)
+        if found is None:
+            continue
+        folder = ntpath.dirname(ntpath.normpath(found[1])) or UNKNOWN_FOLDER
+        key = ntpath.normcase(folder)
+        shown, count = counts.get(key, (folder, 0))
+        counts[key] = (shown, count + 1)
+    return sorted(counts.values(), key=lambda item: (-item[1], ntpath.normcase(item[0])))
+
+
+def problem_message(problems, *, home=None):
+    """묶음 점검 실패 문장 — `묶음 점검에서 문제가 나왔어요(총 N건): 앞 6건(그대로) / …외 M건 — 출처 폴더별 건수: 폴더 N건 · …`. 6건 너머가 같은 폴더에서 왔는지 한 번에 알 수 있다(D-468).
+    요약의 폴더는 사용자 폴더 이름을 가려 적는다(`shown_folder`) — 앞 문제 글은 예전 그대로다."""
+    total = len(problems)
+    text = f"묶음 점검에서 문제가 나왔어요(총 {total}건): " + " / ".join(problems[:SHOWN_PROBLEMS])
+    if total > SHOWN_PROBLEMS:
+        text += f" / …외 {total - SHOWN_PROBLEMS}건"
+    home = env_value(os.environ, "USERPROFILE") if home is None else home
+    counts = origin_folder_counts(problems)
+    notes = []
+    if counts:
+        listed = " · ".join(f"{shown_folder(folder, home)} {count}건" for folder, count in counts[:SHOWN_FOLDERS])
+        rest = counts[SHOWN_FOLDERS:]
+        if rest:
+            listed += f" · 그 밖 {len(rest)}곳 {sum(count for _folder, count in rest)}건"
+        notes.append("출처 폴더별 건수: " + listed)
+    without = total - sum(count for _folder, count in counts)
+    if without:
+        notes.append(f"출처를 알 수 없는 문제 {without}건")
+    return text + (" — " + " · ".join(notes) if notes else "")
 
 
 def bundle_problems(bundle):
@@ -504,13 +616,17 @@ def build(options, *, steps=None, say=print):
     requirements = mm.parse_requirements(lock_text)
     mm.check_installed(requirements, lookup=steps.get("lookup", metadata.version))
     epoch = state["committed_epoch"]
+    # PyInstaller 에 줄 환경(PATH 를 좁힌다)은 출력 폴더를 비우기 전에 만든다 — PATH 에 넣을 수 없는 폴더 이름(세미콜론)이면 아무것도 지우지 않고 거절한다
+    env = pyinstaller_env(epoch)
     clean_out_dir(out)
     version_file = out / "version_info.txt"
     version_file.write_bytes(version_file_text(version, trial).encode("utf-8"))               # 줄 끝 LF 그대로(윈도의 write_text 는 CRLF 로 바꾼다)
     imports = hidden_imports(repo)
     args = pyinstaller_args(repo, out, version_file, imports)
-    say("[2/8] PyInstaller(--onedir --windowed, UTF-8 모드) — 보통 1분 안팎")
-    code = steps.get("pyinstaller", run_pyinstaller)(args, pyinstaller_env(epoch), out, out / "build.log")
+    folders = [folder for folder in env["PATH"].split(PATH_SEPARATOR) if folder]
+    home = env_value(os.environ, "USERPROFILE")
+    say(f"[2/8] PyInstaller(--onedir --windowed, UTF-8 모드) — 보통 1분 안팎 · PATH 는 {len(folders)}곳으로 좁혀서 부름(" + "; ".join(shown_folder(folder, home) for folder in folders) + ")")
+    code = steps.get("pyinstaller", run_pyinstaller)(args, env, out, out / "build.log")
     if code != 0:
         raise mm.BuildRefused(f"PyInstaller 가 실패했어요(종료 코드 {code}) — {out / 'build.log'} 를 보세요.")
     top = pc.top_folder(version, trial)
@@ -524,7 +640,7 @@ def build(options, *, steps=None, say=print):
     collect_licenses(repo, bundle, version, dependencies, state["commit"], distribution=steps.get("distribution", metadata.distribution), base_prefix=steps.get("base_prefix"))
     problems = steps.get("origin_check", check_binary_origins)(out / "work" / pc.EXE_NAME / "COLLECT-00.toc") + bundle_problems(bundle)
     if problems:
-        raise mm.BuildRefused("묶음 점검에서 문제가 나왔어요: " + " / ".join(problems[:6]))
+        raise mm.BuildRefused(problem_message(problems))
     say("[4/8] 묶음 안 PACKAGE_INFO 작성")
     record = mm.default_build_record(recorded_command(args, repo, out), tool=f"PyInstaller {steps.get('pyinstaller_version') or metadata.version('pyinstaller')}",
                                      env=bundle_environment_record(epoch), gate_override=trial)
