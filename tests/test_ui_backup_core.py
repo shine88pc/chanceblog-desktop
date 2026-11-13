@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 import scan_samples as S  # noqa: E402
+import secret_support as sec  # noqa: E402
 
 from chanceblog_desktop.security.backup_note import CREDENTIAL_NOTE, EXCLUDED, RESTORE_NOTE, SHORT_NOTE  # noqa: E402
 from chanceblog_desktop.ui.core import app_state, backup_view, backups, jobs, services  # noqa: E402
@@ -622,6 +623,7 @@ class AppStateTest(unittest.TestCase):
     def test_the_launcher_pairs_the_sample_screen_with_example_backups_and_the_real_screen_with_the_real_adapter(self):
         """`gui --sample` 은 메모리 예시 백업 카드를, 기본 `gui` 는 실제 어댑터 카드를 연다(D-391) — 짝이 없으면 두 길 모두 카드가 사라지므로 연결 한 줄을 못박는다."""
         from chanceblog_desktop.ui import backups_adapter, launcher
+        self.addCleanup(sec.uninstall_boundary)                    # `launcher.main` 이 이 프로세스에 까는 출력 경계와 윈도에서 쥐는 단일 실행 뮤텍스를 시험이 끝나면 놓는다(SINGLEWIN — 동시에 도는 다른 시험 프로세스에 남지 않게)
         seen = []
         module = types.ModuleType("chanceblog_desktop.ui.qt.app")
         module.run = lambda provider, argv=None: seen.append(provider) or 0

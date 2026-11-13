@@ -474,7 +474,9 @@ def selftest_main(*, main_function=None):
 # ---- 화면 시작 ----------------------------------------------------------
 
 def start_gui():
-    """화면을 연다(`ui/launcher.py`) — 인자 없이. 시작하지 못하면 고정 문장(오류 종류 이름만)으로 안내한다."""
+    """화면을 연다(`ui/launcher.py`) — 인자 없이. 시작하지 못하면 고정 문장(오류 종류 이름만)으로 안내한다.
+    같은 데이터 폴더로 이미 열려 있으면 `launcher.main` 안의 단일 실행 장치(`ui/single_instance.py`)가 열린 창을 앞으로 가져오고 새 창 없이 0 으로 끝낸다 — 이 파일이 그 장치를 따로 부르지 않는 것은
+    같은 프로세스가 뮤텍스를 두 번 잡아 스스로 '이미 있음' 이 되지 않게 하려는 것이다(`--selftest` 는 `launcher.main` 을 지나지 않아 뮤텍스를 잡지 않는다)."""
     if not is_frozen():
         src = Path(__file__).resolve().parents[1] / "src"
         if src.is_dir() and str(src) not in sys.path:

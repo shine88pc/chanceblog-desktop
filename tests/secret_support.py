@@ -60,11 +60,15 @@ def leak_count(secrets, output):
 
 def uninstall_boundary():
     """같은 프로세스에서 화면 진입점(`ui.launcher.main`)을 부르는 시험의 뒷정리 — `launcher.main` 은 맨 앞에서 공통 출력 경계를 깐다(PCKIT 독립 검증 D2).
-    깔린 채 두면 시험 러너의 `sys.stdout`·예외 훅·로깅 훅에 경계가 남는다. 깔려 있지 않으면 아무것도 안 한다(`self.addCleanup(sec.uninstall_boundary)` 로 건다)."""
+    깔린 채 두면 시험 러너의 `sys.stdout`·예외 훅·로깅 훅에 경계가 남는다. 깔려 있지 않으면 아무것도 안 한다(`self.addCleanup(sec.uninstall_boundary)` 로 건다).
+    또한 `launcher.main` 이 윈도에서 이 프로세스에 쥐게 하는 단일 실행 뮤텍스(SINGLEWIN)도 놓는다 — 놓지 않으면 시험 프로세스가 끝날 때까지 기본 데이터 폴더의 뮤텍스를 쥐고 있어, 같은 PC 에서 동시에 도는 다른 시험 프로세스의 같은 시험이 '이미 열려 있음' 으로 판정해
+    진짜 안내 상자에서 멈춘다. `launcher.main` 을 같은 프로세스에서 부르는 시험 파일은 모두 이것을 건다(`tests/test_single_instance.py` 의 소스 훑기 시험이 지킨다)."""
     from chanceblog_desktop.security import boundary                      # 늦게 불러온다 — 이 도우미 모듈은 앱 없이도 불러올 수 있다
     installed = boundary.active()
     if installed is not None:
         installed.uninstall()
+    from chanceblog_desktop.ui import single_instance
+    single_instance.release_all()                                         # `launcher.main` 은 윈도에서 이 프로세스가 끝날 때까지 쥐는 단일 실행 뮤텍스도 잡는다(SINGLEWIN) — 시험이 끝나면 놓아, 시험 사이·동시에 도는 다른 시험 프로세스에 남지 않게 한다(윈도가 아니면 아무것도 안 한다)
 
 
 def assert_no_secret(case, secret, output, what="출력"):
