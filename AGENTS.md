@@ -11,11 +11,12 @@
 - **`shine88pc/chanceblog`**(별도 저장소)가 **클라우드 자동 발행 파이프라인**과 **규칙의 정본**을 가진다: `AGENTS.md`·`docs/CHARTER.md`(변경 등급 T0~T3)·`docs/SECURITY_GUARDRAILS.md`·`docs/AGENT_RUNBOOK.md`(일 절차 J1~J12)·`docs/AGENT_DELEGATION.md`. **이 문서는 거기에 없는 것만 적고, 충돌하면 거기가 이긴다.**
 - 앱은 **기존 `chanceblog` 로컬 저장소를 연결**해 GitHub Pages 용 글·이미지를 만들고 push 하며, 배포는 `chanceblog` 의 기존 자동 흐름(`pages.yml`)이 한다. 클라우드 자동 발행·감시·알림(AI 없이 Actions 로 동작)은 그대로 둔다.
 - 이 저장소에는 **텔레그램 알림 워크플로·시크릿이 없다**(시크릿 중복 금지). 운영자에게 알리거나 승인을 구할 일은 **`chanceblog` 의 요청 채널**로 보낸다: `chanceblog` 에서 `인수인계/요청함/R-nnn_*.md` 요청 파일을 `ai/claude/**` 브랜치로 push → 운영자 텔레그램. 운영자는 **텔레그램 요청(R-번호)에 적힌 일만** 한다(GitHub 알림·배너·빨간 표시는 보지 않는다).
-- 변경 현황·진행 중인 일은 `chanceblog` 의 `인수인계/작업내용.md` 가 아니라 **이 저장소의 `docs/DECISIONS.md` 와 PR 본문**에 적는다(새 현황 문서를 만들지 않는다).
+- **결정과 변경 내용**(왜·무엇을·어떤 시험으로)은 이 저장소의 `docs/DECISIONS.md` 와 PR 본문에 적는다. **두 저장소를 통틀어 지금 무엇이 진행 중이고 다음 행동이 무엇인지**는 `chanceblog` 의 `인수인계/작업내용.md` 한 곳이 알려 준다(새 현황 문서를 만들지 않는다).
+- **지금 상태를 읽는 곳(순서대로)**: ① `chanceblog` 의 `인수인계/작업내용.md` §0-3 '진행 중인 일과 다음 행동' ② 이 저장소의 최근 커밋 15개 — `git log --oneline -15` ③ 결정 기록의 마지막 10행(한 행이 아주 길어 앞 160자만) — PowerShell 에서 `Select-String -Encoding utf8 -Path docs/DECISIONS.md -Pattern '^\| D-\d+ \|' | Select-Object -Last 10 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(160, $_.Line.Length)) }`. 한 결정의 전문이 필요하면 그 번호의 행만 찾아 읽는다. **`docs/DECISIONS.md` 는 행이 수백 개이고 한 행이 1천 자를 넘는 것도 많아(가장 긴 행은 만 자가 넘는다) 처음부터 끝까지 읽지 않는다.**
 
 ## 1. 시작 전 (순서 고정)
 
-1. 이 문서 → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) → [`docs/DECISIONS.md`](docs/DECISIONS.md). 코드를 만지면 [`docs/SECURITY.md`](docs/SECURITY.md), 오류·실패 처리를 만지면 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md), 배포를 만지면 [`docs/RELEASE.md`](docs/RELEASE.md), 플랫폼을 만지면 [`docs/PLATFORM_POLICY.md`](docs/PLATFORM_POLICY.md).
+1. 이 문서 → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) → [`docs/DECISIONS.md`](docs/DECISIONS.md)(**전체를 읽지 않는다** — 위 §0 '지금 상태를 읽는 곳' 대로 마지막 10행과 필요한 번호만). 코드를 만지면 [`docs/SECURITY.md`](docs/SECURITY.md), 오류·실패 처리를 만지면 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md), 배포를 만지면 [`docs/RELEASE.md`](docs/RELEASE.md), 플랫폼을 만지면 [`docs/PLATFORM_POLICY.md`](docs/PLATFORM_POLICY.md).
 2. `git fetch origin` 뒤 최신 `origin/main` 에서 시작한다. **낡은 사본에서 작업·push 하지 않는다.**
 3. 새 PC·새 세션이면 [`docs/MIGRATION.md`](docs/MIGRATION.md)(환경 만들기·push 가 되는지 `git push --dry-run` 으로 미리 점검).
 

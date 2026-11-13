@@ -8,8 +8,11 @@
   5) 운영자 결정(2026-10-30)이 문서에 남아 있다 — AI Router 제외·선택 보조 AI 기본 꺼짐·GitHub Models 후보 제외·티스토리 격리·AI 없이 되는 기능 목록·규칙 기반 오류 안내.
   6) 오류 안내 문서(TROUBLESHOOTING)의 오류 코드 표가 올바른 모양이고 코드가 겹치지 않는다.
   7) CI 워크플로가 읽기 전용이고 3.10 과 3.12 를 둘 다 돌린다.
+  8) 비밀 모양 검사가 위 여섯 가지(KEY_SHAPES)에 그치지 않는다 — 정본 `vendor/pipeline/secret_patterns.py` 의 패턴 전체로 src·docs·.github·packaging·scripts·최상위 파일을 훑어도 걸리는 것이 없다(F066).
 """
+import importlib.util
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,6 +27,13 @@ KEY_SHAPES = (
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----",                 # 비공개 키 블록
     r"sk-[A-Za-z0-9]{32,}|gsk_[A-Za-z0-9]{40,}",           # 기타 AI 서비스 키
 )
+# 정본 패턴 전체(vendor/pipeline/secret_patterns.py)로 훑는 곳(F066). 위 KEY_SHAPES 는 여섯 가지뿐이라 새 구글 키(`AQ.`)·구글 접근 토큰(`ya29.`)·Slack·AWS 키·키/토큰 할당 같은 것을 놓친다.
+# tests/ 는 일부러 넣은 가짜 값(`client_secret` 예시·AWS 문서의 예시 키 …)이 있어 이 훑기에서 빼고 위 여섯 가지로만 훑는다(아래 SecretHygieneTest 가 그대로 한다).
+# 예외는 파일 하나를 이름·이유와 함께 적는다 — 목록을 늘리려면 이유를 적고, 필요 없어지면 시험이 알려 주니 뺀다(실제 노출을 가리는 넓은 허용 규칙은 두지 않는다).
+CANONICAL_SCAN_DIRS = ("src", "docs", ".github", "packaging", "scripts")
+CANONICAL_SCAN_EXEMPT = {"scripts/ui_capture.py": "화면 사진용 가짜 연결 값(예시 비밀 문자열)이 든다"}
+# 훑는 글 파일의 확장자 — 문서·설정·코드에 더해 html·sh·bat·cfg·ini·csv·xml 까지(스크립트·설정·표 파일에도 키가 붙을 수 있다)
+TEXT_SUFFIXES = {".md", ".yml", ".yaml", ".py", ".txt", ".json", ".toml", ".example", ".html", ".sh", ".bat", ".cfg", ".ini", ".csv", ".xml"}
 # 운영자가 'AI 없이 반드시 동작해야 한다'고 정한 기능(2026-10-30) — ARCHITECTURE §8 에 모두 적혀 있어야 한다
 NO_AI_FEATURES = (
     "콘텐츠 직접 작성·수정", "기존 원고 불러오기", "Markdown·HTML 변환", "플랫폼별 미리보기", "GitHub Pages 게시물 생성·배포", "Blogger 초안 생성·수정",
@@ -48,11 +58,34 @@ def section(text, heading):
     return body if end == -1 else body[:end]
 
 
-def text_files():
+def text_files(root=ROOT):
     skip = {".git", "vendor", "__pycache__", ".venv"}
-    for path in ROOT.rglob("*"):
-        if path.is_file() and not (set(path.relative_to(ROOT).parts) & skip) and path.suffix in {".md", ".yml", ".yaml", ".py", ".txt", ".json", ".toml", ".example"}:
+    for path in root.rglob("*"):
+        if path.is_file() and not (set(path.relative_to(root).parts) & skip) and path.suffix in TEXT_SUFFIXES:
             yield path
+
+
+def canonical_secret_patterns():
+    """정본 SECRET_PATTERNS 의 [(이름, 패턴)] — vendor 파일은 읽기만 하고 파일 경로로 따로 불러온다(sys.path 와 다른 시험이 쓰는 `pipeline` 모듈을 건드리지 않는다)."""
+    spec = importlib.util.spec_from_file_location("_layout_secret_patterns", ROOT / "vendor" / "pipeline" / "secret_patterns.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return list(module.SECRET_PATTERNS)
+
+
+def canonical_hits(root, patterns, exempt=CANONICAL_SCAN_EXEMPT):
+    """정본 훑기 대상(최상위 파일과 CANONICAL_SCAN_DIRS 아래, 예외 제외)에서 패턴에 걸리는 곳의 `경로:줄 이름` 목록 — 걸린 값은 담지 않는다(실패 출력에도 비밀이 새지 않게)."""
+    found = []
+    for path in text_files(root):
+        rel = path.relative_to(root).as_posix()
+        if ("/" in rel and rel.split("/")[0] not in CANONICAL_SCAN_DIRS) or rel in exempt:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for label, pattern in patterns:
+            match = pattern.search(text)
+            if match:
+                found.append(f"{rel}:{text.count(chr(10), 0, match.start()) + 1} {label}")
+    return found
 
 
 class RequiredFilesTest(unittest.TestCase):
@@ -168,6 +201,66 @@ class SecretHygieneTest(unittest.TestCase):
         fake = "AI" + "za" + "A" * 35
         self.assertIsNotNone(pattern.search(f"key = {fake}"))
         self.assertIsNone(pattern.search("key = <여기에 키를 넣지 않는다>"))
+
+
+class CanonicalSecretScanTest(unittest.TestCase):
+    """정본 비밀 패턴(`vendor/pipeline/secret_patterns.py`) 전체로 훑는다(F066) — 위 여섯 가지가 놓치는 새 구글 키·구글 접근 토큰·Slack·AWS 키·키/토큰 할당까지.
+    가짜 값은 시험 안에서 조각을 이어 만든 `CANARY_` 로 시작하는 값이라 저장소에는 키 문자열이 없다."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.patterns = canonical_secret_patterns()
+
+    def test_the_canonical_patterns_were_loaded_and_are_not_fewer_than_when_this_scan_was_written(self):
+        self.assertGreaterEqual(len(self.patterns), 14, "정본의 패턴이 줄었거나 불러오기가 깨졌다 — 아무것도 못 잡는 훑기가 초록이 되면 안 된다")
+        for label, pattern in self.patterns:
+            self.assertTrue(label and hasattr(pattern, "search"), label)
+
+    def test_no_file_in_the_scanned_places_contains_a_canonical_secret_shape(self):
+        self.assertEqual(canonical_hits(ROOT, self.patterns), [], "정본 비밀 모양에 걸린 곳(값은 적지 않는다) — 지우거나, 예시라면 조각을 이어 만든다")
+
+    def test_the_canonical_patterns_catch_planted_values_of_the_kinds_the_six_shapes_miss(self):
+        planted = {
+            "Google API 키(새 형식)": "CANARY_" + "AQ" + "." + "x" * 45,
+            "Google access token": "CANARY_TOKEN=" + "ya" + "29." + "y" * 35,
+            "Google refresh token": "CANARY_TOKEN=" + "1/" + "/0" + "z" * 45,
+            "Slack 토큰": "CANARY_TOKEN=" + "xo" + "xb-" + "1234567890" * 2,
+            "AWS 액세스 키": "CANARY_KEY=" + "AK" + "IA" + "A" * 16,
+            "키/토큰 할당": 'CANARY_LINE: api_key = "' + "k" * 30 + '"',
+        }
+        for label, text in planted.items():
+            with self.subTest(kind=label):
+                caught = {name for name, pattern in self.patterns if pattern.search(text)}
+                self.assertIn(label, caught, f"{label} 모양을 정본 패턴이 못 잡았다(잡은 것: {sorted(caught)})")
+
+    def test_the_scan_reaches_top_level_files_the_listed_folders_and_the_wider_suffixes_but_not_tests_or_the_exempt_file(self):
+        fake = "CANARY_" + "AQ" + "." + "x" * 45
+        reached = ("README.md", "src/a/b.py", "docs/x.html", "docs/data.csv", "packaging/run.bat", ".github/workflows/w.yml", "scripts/tool.sh", "src/c.xml", "src/d.ini", "src/e.cfg")
+        quiet = ("tests/test_x.py", "vendor/pipeline/z.py", "other/x.py", "docs/pic.png", "scripts/ui_capture.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in reached + quiet:
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(f"key = {fake}\n", encoding="utf-8")
+            hits = canonical_hits(root, self.patterns)
+        self.assertEqual(sorted(hit.split(":")[0] for hit in hits), sorted(reached))
+
+    def test_the_hit_report_names_the_place_and_the_kind_but_never_the_value(self):
+        fake = "CANARY_" + "AQ" + "." + "x" * 45
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "docs").mkdir()
+            (Path(tmp) / "docs" / "a.md").write_text("첫 줄\n둘째 줄 " + fake + "\n", encoding="utf-8")
+            hits = canonical_hits(Path(tmp), self.patterns)
+        self.assertEqual(hits, ["docs/a.md:2 Google API 키(새 형식)"])
+        self.assertNotIn(fake, "".join(hits))
+
+    def test_the_exempt_file_exists_and_still_needs_its_exemption(self):
+        scanned = canonical_hits(ROOT, self.patterns, exempt={})
+        for rel, reason in CANONICAL_SCAN_EXEMPT.items():
+            with self.subTest(file=rel):
+                self.assertTrue(reason)
+                self.assertTrue((ROOT / rel).is_file(), "예외 파일이 없어졌다 — 목록에서 뺀다")
+                self.assertTrue([hit for hit in scanned if hit.startswith(rel + ":")], "예외가 더는 필요 없다(걸리는 값이 사라졌다) — 목록에서 뺀다")
 
 
 class OperatorDecisionsTest(unittest.TestCase):

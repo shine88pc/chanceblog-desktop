@@ -633,11 +633,11 @@ class BinaryOriginTest(unittest.TestCase):
     def test_a_dll_that_came_from_another_program_on_the_path_is_named_with_its_origin(self):
         text = self.toc(("python312.dll", "C:/Users/me/AppData/Local/Programs/Python/Python312/python312.dll", "BINARY"),
                         ("libcrypto-3-x64.dll", "C:\\Program Files\\Git\\mingw64\\bin\\libcrypto-3-x64.dll", "BINARY"),
-                        ("libssl-3-x64.dll", "C:\\Knox Drive\\libssl-3-x64.dll", "BINARY"),
+                        ("libssl-3-x64.dll", "C:\\Other App\\libssl-3-x64.dll", "BINARY"),
                         ("lookalike.pyd", "C:/ccgui/v2/lookalike.pyd", "EXTENSION"))
         problems = bp.binary_origin_problems(text, self.ROOTS)
         self.assertEqual(len(problems), 3)
-        for needle in ("libcrypto-3-x64.dll", "Program Files", "libssl-3-x64.dll", "Knox Drive", "lookalike.pyd"):
+        for needle in ("libcrypto-3-x64.dll", "Program Files", "libssl-3-x64.dll", "Other App", "lookalike.pyd"):
             self.assertTrue(any(needle in item for item in problems), needle)
 
     def test_dot_dot_is_resolved_so_a_line_that_only_looks_like_it_is_inside_the_root_is_refused(self):
@@ -648,7 +648,7 @@ class BinaryOriginTest(unittest.TestCase):
         self.assertEqual(bp.binary_origin_problems(self.toc(("a.dll", "C:/ccgui/v/Lib/x.dll", "BINARY")), ["C:/ccgui/v/Lib/../"]), [])        # 허용 뿌리도 풀어서 견준다
 
     def test_a_data_row_that_is_really_a_dll_is_checked_and_the_start_file_and_plain_data_are_not(self):
-        text = self.toc(("sneaky.dll", "C:/Program Files/Git/x/sneaky.dll", "DATA"), ("sneaky.PYD", "C:/Knox/sneaky.PYD", "DATA"), ("data.exe", "C:/elsewhere/data.exe", "DATA"),
+        text = self.toc(("sneaky.dll", "C:/Program Files/Git/x/sneaky.dll", "DATA"), ("sneaky.PYD", "C:/OtherApp/sneaky.PYD", "DATA"), ("data.exe", "C:/elsewhere/data.exe", "DATA"),
                         ("readme.txt", "C:/elsewhere/readme.txt", "DATA"), ("ChanceBlogDesktop.exe", "C:/out/work/ChanceBlogDesktop.exe", "EXECUTABLE"), ("base_library.zip", "C:/out/work/base_library.zip", "DATA"))
         problems = bp.binary_origin_problems(text, self.ROOTS)
         self.assertEqual(sorted(item.split("(")[0] for item in problems), ["data.exe", "sneaky.PYD", "sneaky.dll"])
