@@ -186,7 +186,7 @@ class CandidateCard(UI.Pressable):
         layout.addWidget(self.image)
         self.title_label = ClampedLabel(vm["title"], "h3", 2)
         layout.addWidget(self.title_label)
-        self.summary_label = ClampedLabel(vm["summary"], "muted" if vm["summary_missing"] else "small", 3)
+        self.summary_label = ClampedLabel(vm["summary"], "sub" if vm["summary_missing"] else "small", 3)        # 요약이 없을 때의 안내 문장은 보조 글(AP15, D-487)
         layout.addWidget(self.summary_label)
         self.chips = [CardChip(word) for word in vm["keywords"]]
         self.more_chip = CardChip(vm["more_text"], accessible=vm["more_text"]) if vm["more_text"] else None
