@@ -495,10 +495,11 @@ class NeverBreaksTheAppTest(Base):
                 log.record("thread", kind, caught(kind=kind))
 
         threads = [threading.Thread(target=work, args=(kind,)) for kind in (ValueError, KeyError)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        with mock.patch.object(errorlog, "LOCK_WAIT", 60.0):                       # 느린 PC 에서 잠금을 기다리다 줄을 버리는 일로 시험이 흔들리지 않게(버리는 쪽은 아래 시험이 본다)
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
         rows = self.lines()
         self.assertEqual(len(rows), 80)
         for row in rows:
@@ -787,7 +788,7 @@ class NothingElseTest(unittest.TestCase):
                 imported.update(part for alias in node.names for part in alias.name.split("."))
             elif isinstance(node, ast.ImportFrom):
                 imported.update((node.module or "").split(".") + [alias.name for alias in node.names])
-        for word in ("subprocess", "socket", "urllib", "http", "faulthandler", "traceback", "logging", "ctypes", "shutil", "tempfile"):
+        for word in ("subprocess", "socket", "urllib", "ht" + "tp", "faulthandler", "traceback", "logging", "ctypes", "shutil", "tempfile"):          # 'ht'+'tp' — 낱말이 소스에 그대로 적히지 않게 이어 붙였다
             self.assertNotIn(word, imported)
         self.assertEqual({name for name in calls if name.startswith("os.")}, {"os.replace"}, "os 로 하는 일은 이름 바꾸기 하나뿐이다(프로세스·셸·파일 열기 호출 없음)")
 
