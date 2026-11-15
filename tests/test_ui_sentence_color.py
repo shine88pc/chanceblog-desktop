@@ -415,6 +415,32 @@ class BypassGuardsTest(unittest.TestCase):
             self.assertFalse(value_role_ok(role, "row['missing']"), role)
         self.assertFalse(value_role_ok("'sub'", None))
 
+    def test_the_sub_and_muted_rules_of_the_built_stylesheet_differ_only_in_the_color(self):
+        """'배치가 안 움직인다'(UI_VISUAL_QA 14절)를 토큰이 아니라 **만들어진 규칙**에서 지킨다 — `tokens.type_style` 만 비교하면 스타일시트를 만드는 반복문이 sub 의 글자 크기·굵기를 슬쩍 바꿔도(굵기 +100·크기 +1px) 초록이었다
+        (4차 지시 — 검증자 2 3차의 M13·M14). `sub` 규칙은 `muted` 규칙과 글자 색만 다르고 크기·굵기는 토큰의 `type_style` 그대로다."""
+        rules = dict(qss_rules(qss_without_qt()))
+        sub, muted = rules['QLabel[role="sub"]'], rules['QLabel[role="muted"]']
+        self.assertEqual({name: value for name, value in sub.items() if name != "color"}, {name: value for name, value in muted.items() if name != "color"}, "sub 와 muted 의 규칙이 색 말고도 다르다 — 배치가 움직인다")
+        style = tokens.type_style("sub")
+        self.assertEqual((sub["font-size"], sub["font-weight"]), (f"{style.size}px", str(style.weight)), "만들어진 sub 규칙의 글자 크기·굵기가 토큰과 다르다")
+
+    def test_the_app_applies_the_built_stylesheet_unchanged(self):
+        """`qss_without_qt` 는 `build_qss(tokens.palette())` 만 읽는다. 앱에 거는 단계(`theme.apply`)가 걸기 직전에 글을 바꾸면(`replace` 로 색을 갈아 끼움) PySide6 없는 CI 는 몰랐다(4차 지시 — 검증자 2 3차의 M16;
+        Qt 가 있으면 팔레트 시험이 잡는다). `apply` 가 거는 글은 `build_qss(colors())` 이고, 같은 스타일시트를 한 번 더 거는 것(`app.styleSheet()` — FP3)은 막지 않는다.
+        구조가 바뀌어(지역 변수·덧붙이는 규칙) 빨개지면 바뀐 식이 색을 몰래 바꾸지 않는지 보고 이 시험의 식을 고친다."""
+        tree, _parents = parse(QT_DIR / "theme.py")
+        apply = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "apply")
+        applied = [ast.unparse(call.args[0]) for call in ast.walk(apply) if isinstance(call, ast.Call) and ast.unparse(call.func) == "app.setStyleSheet" and call.args]
+        self.assertIn("build_qss(colors())", applied, "`apply` 가 앱에 거는 글이 `build_qss(colors())` 가 아니다 — 걸기 직전에 색이 바뀌지 않는지 보고 이 시험의 식을 고친다")
+        self.assertEqual(sorted(set(applied) - {"build_qss(colors())", "app.styleSheet()"}), [], "`apply` 가 만든 스타일시트를 바꿔서 건다(걸기 직전에 색이 바뀔 수 있다)")
+
+    def test_the_color_dictionary_the_stylesheet_is_built_from_is_the_token_palette(self):
+        """`apply` 는 `colors()` 로 스타일시트를 만든다. `colors()` 가 토큰 팔레트가 아닌 사전을 주면(보조 글 자리에 흐린 글 색 — 검증자 2 3차의 M17) PySide6 없는 CI 는 몰랐다 — 반환식을 `K.palette(theme_name())` 로 못박는다.
+        구조가 바뀌어 빨개지면 바뀐 식이 색을 몰래 바꾸지 않는지 보고 이 시험의 식을 고친다."""
+        tree, _parents = parse(QT_DIR / "theme.py")
+        colors = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "colors")
+        self.assertEqual([ast.unparse(node.value) for node in ast.walk(colors) if isinstance(node, ast.Return)], ["K.palette(theme_name())"], "`colors()` 가 토큰 팔레트 그대로가 아니다 — 색이 바뀌지 않는지 보고 이 시험의 식을 고친다")
+
 
 # ---- 2) 소스 -------------------------------------------------------------------------------------------------------------------------------
 class SourceSitesTest(unittest.TestCase):
@@ -483,9 +509,10 @@ class SourceSitesTest(unittest.TestCase):
 
 # ---- 2b) AP13 기록(UI_DESIGN_SPEC 13절)이 코드 사실과 맞는다(3차 지시 — 검증자 2 의 권고 3·정보) ------------------------------------------------------------
 class DrawerRecordDocTest(unittest.TestCase):
-    """AP13 은 코드로 하지 않고 UI_DESIGN_SPEC 13절에 근거와 설계만 남겼다. 그 기록이 말하는 사실을 코드에 묶어 둔다: 13절 맨 위의 비개발자용 두 문장 요약, 그리고 '잠복 결함' — 코드에 아직 있고
-    (`close_drawer_silently` 가 `_drawer_return` 을 비우지 않는다) 사용자는 그 길에 닿지 못한다(서랍 막이가 창 전체를 덮고 Tab 이 서랍 안에 갇히며 앱의 단축키는 Esc 와 Ctrl+S 뿐).
-    누가 서랍이 열린 채 `go()` 로 가는 길을 열거나 결함을 고치면 이 시험이 빨개져 13절을 함께 고치게 한다."""
+    """AP13 은 코드로 하지 않고 UI_DESIGN_SPEC 13절에 근거와 설계만 남겼다. 그 기록이 말하는 사실을 코드에 묶어 둔다: 13절 맨 위의 비개발자용 두 문장 요약, 그리고 '잠복 결함' — 코드에 아직 있다
+    (`close_drawer_silently` 가 `_drawer_return` 을 비우지 않는다). **홈 서랍에서는** 사용자가 그 길에 닿지 못한다(서랍 막이가 창 전체를 덮고 Tab 이 서랍 안에 갇히며 앱의 단축키는 Esc 와 Ctrl+S 뿐이고 서랍 안 단추는 `go()` 를 부르지 않는다).
+    **후보 서랍에서는 이미 닿는다**(창 논리 폭 1366 미만에서 서랍 아래 고정 줄의 `이 주제로 만들기` 가 서랍이 열린 채 `go("drafts")` 를 부른다) — 그래도 거의 터지지 않는 것은 서랍을 여는 네 길이 돌아갈 자리를 새로 쓰기 때문이다
+    (4차 지시 — 검증자 2 3차의 권고 1). 누가 이 길을 열거나 막거나 결함을 고치면 이 시험이 빨개져 13절을 함께 고치게 한다."""
 
     def section(self):
         text = (ROOT / "docs" / "UI_DESIGN_SPEC.md").read_text(encoding="utf-8")
@@ -512,7 +539,7 @@ class DrawerRecordDocTest(unittest.TestCase):
 
         self.assertTrue(clears_the_return_target("close_drawer"), "`close_drawer` 는 돌아갈 자리를 비운다")
         self.assertFalse(clears_the_return_target("close_drawer_silently"), "`close_drawer_silently` 가 돌아갈 자리를 비우게 고쳐졌다 — 13절의 잠복 결함 문장을 고친다")
-        self.assertEqual(shell.count("QShortcut("), 2, "앱의 단축키가 늘었다 — 서랍이 열린 채 `go()` 로 가는 입력이 생겼는지 보고 13절을 고친다")
+        self.assertEqual(shell.count("QShortcut("), 2, "앱의 단축키가 늘었다 — 홈 서랍이 열린 채 `go()` 로 가는 입력이 생겼는지 보고 13절을 고친다(후보 서랍은 이미 닿는다)")
         self.assertIn("QShortcut(QKeySequence(Qt.Key_Escape)", shell)
         self.assertIn('QShortcut(QKeySequence("Ctrl+S")', shell)
         self.assertIn("self.drawer = UI.Drawer(root)", shell, "서랍은 창의 바탕(사이드바까지 든 곳)에 얹힌다")
@@ -521,6 +548,43 @@ class DrawerRecordDocTest(unittest.TestCase):
         drawer = components[components.index("class Drawer("):components.index("class Dialog(")]
         self.assertIn("self.scrim.setGeometry(0, 0, parent.width(), parent.height())", drawer, "서랍 막이가 창 전체를 덮는다")
         self.assertIn("self.scrim.mousePressEvent = lambda _e: self.close_requested()", drawer, "막을 누르면 서랍이 닫힌다")
+        screens = ast.parse((QT_DIR / "screens.py").read_text(encoding="utf-8"))
+        home_drawer = next(node for node in ast.walk(screens) if isinstance(node, ast.FunctionDef) and node.name == "drawer_content")
+        used = {node.attr for node in ast.walk(home_drawer) if isinstance(node, ast.Attribute) and ast.unparse(node.value) == "shell"}
+        self.assertEqual(used, {"close_drawer", "draft", "notify_soon"}, "홈 서랍 안 단추가 부르는 셸 함수가 바뀌었다 — `go()` 로 가게 됐다면 13절의 '홈 서랍에서는 닿지 못한다' 를 고친다")
+
+    def test_the_candidate_drawer_already_reaches_go_with_the_drawer_open_and_the_next_open_overwrites_the_return_target(self):
+        """13절 (b) 의 둘째 사실 — 후보 서랍(창 논리 폭 1366 미만)에서는 서랍 아래 고정 줄의 `이 주제로 만들기` 가 서랍이 열린 채 `go("drafts")` 를 부른다(4차 지시 — 검증자 2 3차의 권고 1: 옛 문장은 '서랍이 열려 있는 동안 사용자는
+        그 길에 닿지 못한다' 였고 후보 서랍에서는 거짓이었다). 그래도 거의 터지지 않는 것은 서랍을 여는 네 길(`open_drawer`·`seed_open`·`seed_open_new`·`cand_open`)이 모두 돌아갈 자리(`_drawer_return`)를 새로 쓰고, 옛 값을 꺼내 쓰는 곳이
+        `close_drawer` 하나(`_sync_overlays` 는 열기 길이 방금 쓴 값을 그대로 둘 뿐)이며 거기서도 초점이 비었을 때만 `setFocus` 를 부르기 때문이다. 덮이지 않은 채 읽히는 길은 돌아온 후보 화면에서 Esc 로 닫을 때 하나(조용히 닫으면 고른 후보가 남는다).
+        누가 이 길을 막거나 열면(고정 줄을 서랍에서 빼거나 새 길이 옛 값을 읽으면) 이 시험이 빨개져 13절을 함께 고치게 한다."""
+        section = self.section()
+        for word in ("**홈 서랍에서는 사용자가 그 길에 닿지 못한다**", "**후보 서랍에서는 이미 닿는다**", "1366", "서랍 아래 고정 줄의 `이 주제로 만들기`", '`go("drafts")`', "`open_drawer`·`seed_open`·`seed_open_new`·`cand_open`", "새로 쓰기 때문", "`close_drawer` 하나", "`_sync_overlays`", "돌아와 Esc 로 닫을 때"):
+            self.assertIn(word, section, word)
+        self.assertNotIn("지금 사용자는 그 길에 닿지 못한다", section, "후보 서랍에서는 이미 닿는다 — 모든 서랍이 닿지 못한다고 적지 않는다")
+        shell = (QT_DIR / "shell.py").read_text(encoding="utf-8")
+        functions = {node.name: node for node in ast.walk(ast.parse(shell)) if isinstance(node, ast.FunctionDef)}
+
+        def calls(name):
+            return [ast.unparse(node) for node in ast.walk(functions[name]) if isinstance(node, ast.Call)]
+
+        def writes_the_return_target(name):
+            return any(isinstance(node, ast.Assign) and ast.unparse(node.value) != "None" and any(ast.unparse(target) == "self._drawer_return" for target in node.targets) for node in ast.walk(functions[name]))
+
+        self.assertIn("self.drawer.set_content(content, detail_footer(self, cand_view))", shell, "후보 서랍에 고정 줄(`이 주제로 만들기`)이 붙는다")
+        screen = (QT_DIR / "candidate_screen.py").read_text(encoding="utf-8")
+        self.assertIn("bar.triggered.connect(lambda _key: shell.cand_make_draft())", screen[screen.index("def detail_footer("):screen.index("def pane_placeholder(")], "고정 줄의 단추가 `cand_make_draft` 를 부른다")
+        self.assertIn("self.go('drafts')", calls("cand_make_draft"), "`cand_make_draft` 가 서랍이 열린 채 `go(\"drafts\")` 를 부른다")
+        self.assertIn("self.close_drawer_silently()", calls("go"), "`go` 가 서랍을 조용히 닫는다")
+        from chanceblog_desktop.ui.core import part_rules
+        self.assertEqual((part_rules.detail_layout(1365).mode, part_rules.detail_layout(1366).mode), ("drawer", "fixed"), "논리 폭 1366 미만에서만 후보 상세가 서랍으로 뜬다")
+        for name in ("open_drawer", "seed_open", "seed_open_new", "cand_open"):
+            self.assertTrue(writes_the_return_target(name), f"`{name}` 이 돌아갈 자리를 새로 쓰지 않는다 — 옛 값이 남아 읽힐 수 있다")
+        readers = sorted(name for name, node in functions.items() if any(isinstance(part, ast.Attribute) and isinstance(part.ctx, ast.Load) and ast.unparse(part) == "self._drawer_return" for part in ast.walk(node)))
+        self.assertEqual(readers, ["_sync_overlays", "close_drawer"], "돌아갈 자리의 값을 읽는 함수가 늘었다 — 지워진 위젯을 건드릴 새 길인지 보고 13절을 고친다")
+        self.assertIn("if QApplication.focusWidget() is None and target is not None:", ast.get_source_segment(shell, functions["close_drawer"]), "옛 값으로 `setFocus` 를 부르는 것은 초점이 비었을 때뿐이다")
+        state_source = (ROOT / "src" / "chanceblog_desktop" / "ui" / "core" / "app_state.py").read_text(encoding="utf-8")
+        self.assertIn('picked = self.candidates.close_detail() if (self.page == "topics" and not silent) else None', state_source, "조용히 닫으면 고른 후보가 남고 닫기·Esc 가 그것을 돌려준다 — 13절의 '돌아온 화면에서 Esc' 길")
 
 
 # ---- 3) 실제 위젯 --------------------------------------------------------------------------------------------------------------------------
