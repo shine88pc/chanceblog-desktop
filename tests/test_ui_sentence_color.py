@@ -6,7 +6,11 @@
      `sub` 와 `muted` 는 글자 크기·굵기·줄 높이가 같고 글자 색 키만 다르다(역할을 바꿔도 화면 배치가 달라지지 않는다).
   2) (PySide6 없이 돈다) 소스: 화면 소스(`ui/qt/*.py`)의 라벨 호출 **열두 곳**(문장 일곱·빈 값 다섯)의 글자 역할 **식**(`ast.unparse` 글)을 표로 못박는다 — 낱말이 더해지거나 빠지거나 조건이 뒤집히면(`'sub' if missing else 'body'` ↔ 반대) 빨갛다.
      `muted` 라는 글자가 화면 소스 어디에 새로 나와도(변수·키워드·기본값·묶음 속 포함) 빈 값 다섯 밖이면 빨갛고, 역할을 글자가 아닌 변수로 넘기는 새 라벨 호출도 허용 목록(역할을 받아 라벨을 만드는 부품 넷) 밖이면 빨갛다.
-     스타일시트 소스(`theme.py`)는 입력 칸 선택자마다 규칙 하나이고(덧붙은 규칙이 뒤에서 테두리를 덮지 못한다) `sub`·`muted` 역할 규칙이 손으로 덧붙지 않았으며, 화면 소스에서 `setStyleSheet(` 는 `theme.py` 의 앱 전체 한 곳뿐이다.
+     스타일시트 소스(`theme.py`)는 입력 칸 선택자마다 규칙 하나이고(덧붙은 규칙이 뒤에서 테두리를 덮지 못한다) `sub`·`muted` 역할 규칙이 손으로 덧붙지 않았으며, 화면 소스에서 `setStyleSheet` 는 `theme.py` 가 앱 전체에만 건다.
+     (3차 지시) 빈 값 다섯의 값이 있을 때 글꼴 역할은 보통 글 색을 쓰는 어느 역할이든 된다(글꼴 손질을 막지 않는다). 손으로 쓴 역할 규칙은 `[role="낱말"]` 모양이고 낱말이 `sub`·`muted` 가 아닐 때만 허락한다(관계없는 역할의 손 규칙은 막지 않는다).
+     `setStyleSheet` 는 `theme.py` 가 앱(`app`)에만 건다(같은 스타일시트를 한 번 더 거는 것은 막지 않는다). PySide6 없이 **만들어진 스타일시트**를 읽어(`qss_without_qt`) 역할 규칙 색·흐린 글 색을 쓰는 규칙·입력 칸 규칙을 확인하고,
+     소스에서는 `QLineEdit`·`QPlainTextEdit`·`[role` 을 줄머리가 아니라 어디서든 센다. 화면 소스에 `setPalette`·`setProperty("styleSheet", …)`·글 속 HTML `color:`·`WindowText` 가 아닌 `setPen` 팔레트 색이 없고, 역할 표에 흐린 글 색을 가리키는
+     별칭이 없으며, `muted` 글자가 짝 표의 **값**으로 숨는 길도 막는다(`BypassGuardsTest`).
   3) (PySide6 가 있을 때만) 실제 위젯: 후보 상세의 빈 문장 셋·후보 카드의 요약 없음·초안 작성의 저장 목록 비었음·확인 권장 없음·카테고리 없음이 `sub` 역할이고, 만들어진 스타일시트에 그 역할 규칙은 하나이며 보조 글 색이다.
      위젯이 **실제로 쓰는** 글자 색(`palette()` 의 WindowText)도 보조 글 색이고 흰 바탕 대비 4.5 이상이다. 빈 값(`평가 전`·`데이터 부족`·`조회하지 못했어요`)은 그대로 `muted` 이고 실제 색도 흐린 글 색이다.
      입력 칸은 스타일시트 글이 아니라 **그려진 그림**의 테두리 픽셀이 `#B8C7DA` 다.
@@ -26,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from chanceblog_desktop.ui.core import tokens  # noqa: E402
+from chanceblog_desktop.ui.core import gauges, tokens  # noqa: E402
 from chanceblog_desktop.ui.core.text import T  # noqa: E402
 
 HAVE = importlib.util.find_spec("PySide6") is not None
@@ -47,13 +51,16 @@ QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
 LABEL_CALLS = {"UI.label", "UI.Label", "label", "Label", "ClampedLabel", "UI.ElidedLabel", "ElidedLabel"}
 BADGE_CALLS = {"UI.Badge", "Badge"}
 
-# 빈 값 — 값 칸에 '없음' 을 알리는 짧은 글이나 점선 하나. 흐린 글(Muted)의 본래 쓰임(`Text/Muted`: 힌트·빈 값)이라 그대로 둔다. (파일, 함수, 글 식) → (역할 식, 이유)
+# 빈 값 — 값 칸에 '없음' 을 알리는 짧은 글이나 점선 하나. 흐린 글(Muted)의 본래 쓰임(`Text/Muted`: 힌트·빈 값)이라 그대로 둔다. (파일, 함수, 글 식) → (없음 조건, 이유).
+# 조건이 있으면 역할 식은 `'muted' if <조건> else '<글꼴 역할>'` 이다 — 조건은 못박고(뒤집히면 빨강) 값이 있을 때의 글꼴 역할은 보통 글 색(`VALUE_PRESENT_COLORS`)을 쓰는 어느 역할이든 된다. 글꼴(크기·굵기) 손질까지 막지 않는다
+# (3차 지시, 검증자 2 의 FP8). 조건이 `None` 이면 역할 식은 정확히 `'muted'` 다.
+VALUE_PRESENT_COLORS = ("text_primary", "text_strong")
 VALUE_SITES = {
-    ("candidate_parts.py", "FactorRow.__init__", "vm['text']"): ("'muted' if vm['missing'] else 'h3'", "점수 구성 한 줄의 값 자리 — 평가하지 못한 항목의 `평가 전`"),
-    ("candidate_screen.py", "_rows", "row['value']"): ("'muted' if row['missing'] else 'body_lg'", "후보 상세의 이름·값 줄 — 값이 없을 때의 없음 표시(`데이터 부족`·`조회하지 못했어요` 포함)"),
-    ("draft_screen.py", "_chips_card", "'—'"): ("'muted'", "칩이 하나도 없는 줄의 점선 하나"),
-    ("screens.py", "drawer_content", "field['value']"): ("'muted' if field['missing'] else 'body_lg'", "홈 서랍의 이름·값 줄 — 값이 없을 때의 `데이터 없음`"),
-    ("seed_screen.py", "_info_card", "row['value']"): ("'muted' if row['missing'] else 'body_lg'", "Seed 정보의 이름·값 줄 — 값이 없을 때의 없음 표시"),
+    ("candidate_parts.py", "FactorRow.__init__", "vm['text']"): ("vm['missing']", "점수 구성 한 줄의 값 자리 — 평가하지 못한 항목의 `평가 전`"),
+    ("candidate_screen.py", "_rows", "row['value']"): ("row['missing']", "후보 상세의 이름·값 줄 — 값이 없을 때의 없음 표시(`데이터 부족`·`조회하지 못했어요` 포함)"),
+    ("draft_screen.py", "_chips_card", "'—'"): (None, "칩이 하나도 없는 줄의 점선 하나"),
+    ("screens.py", "drawer_content", "field['value']"): ("field['missing']", "홈 서랍의 이름·값 줄 — 값이 없을 때의 `데이터 없음`"),
+    ("seed_screen.py", "_info_card", "row['value']"): ("row['missing']", "Seed 정보의 이름·값 줄 — 값이 없을 때의 없음 표시"),
 }
 # 문장 — 흰 바탕에서 읽어야 하는 안내·결과 글(한 문장). 보조 글(`sub`, Secondary)이어야 한다. (파일, 함수, 글 식) → (역할 식, 이유)
 SENTENCE_SITES = {
@@ -129,14 +136,14 @@ def all_role_sites():
 
 
 def muted_strings(path):
-    """화면 소스에서 글자 `muted` 가 나오는 모든 곳 → [(파일, 함수, 어디, 둘러싼 식)]. 어디 = `dict`(톤 → 색 같은 짝 표의 열쇠) · `badge`(배지 종류) · `other`(그 밖 — 라벨의 역할 자리·변수·키워드·기본값·묶음 속 등)."""
+    """화면 소스에서 글자 `muted` 가 나오는 모든 곳 → [(파일, 함수, 어디, 둘러싼 식)]. 어디 = `dict`(톤 → 색 같은 짝 표의 **열쇠** — 값 자리의 글자는 `other`) · `badge`(배지 종류) · `other`(그 밖 — 라벨의 역할 자리·변수·키워드·기본값·묶음 속·짝 표의 값 등)."""
     tree, parents = parse(path)
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and node.value == "muted":
             parent = parents[node]
-            if isinstance(parent, ast.Dict):
-                where = "dict"
+            if isinstance(parent, ast.Dict) and any(node is key for key in parent.keys):
+                where = "dict"                                                  # 톤 → 색 같은 짝 표의 열쇠. 값 자리의 글자(`{'sub': 'muted'}` 같은 별칭 표·`**{'role': 'muted'}`)는 `other` 다(3차 지시 — 검증자 2 의 N01·N18·N22·N27)
             elif isinstance(parent, ast.Call) and ast.unparse(parent.func) in BADGE_CALLS and parent.args and parent.args[0] is node:
                 where = "badge"
             else:
@@ -156,6 +163,95 @@ def rule_color(qss, role):
     if not found:
         raise AssertionError(f"역할 {role} 의 글자 색 줄이 없다")
     return found[-1]
+
+
+def value_role_ok(role, condition):
+    """빈 값 자리의 역할 식 — 조건이 없으면(`condition is None`) 정확히 `'muted'`, 있으면 `'muted' if <조건> else '<글꼴 역할>'` 모양이다. 조건은 못박고(뒤집히면 빨강) 값이 있을 때의 글꼴 역할은 보통 글 색
+    (`VALUE_PRESENT_COLORS`)을 쓰는 어느 역할이든 된다 — 글자 크기·굵기를 바꾸는 글꼴 손질(`body_lg` → `body`)까지 막지 않는다(3차 지시, 검증자 2 의 FP8)."""
+    if condition is None:
+        return role == "'muted'"
+    found = re.fullmatch(r"'muted' if " + re.escape(condition) + r" else '([a-z0-9_]+)'", role)
+    return bool(found) and tokens.ROLE_TEXT.get(found.group(1)) in VALUE_PRESENT_COLORS
+
+
+def literal_role_names(node):
+    """글자 리터럴 역할 식(리터럴이거나 두 갈래가 모두 리터럴인 조건식)의 갈래 글자들 — 조건 식 속 글자(`vm['missing']` 의 `missing`)는 세지 않는다."""
+    if isinstance(node, ast.Constant):
+        return {node.value}
+    if isinstance(node, ast.IfExp):
+        return literal_role_names(node.body) | literal_role_names(node.orelse)
+    return set()
+
+
+def role_selectors(source):
+    """스타일시트 소스에서 `[role` 이 나오는 **모든 자리** → [(그 자리부터 40자, 따옴표 친 낱말 또는 None)] — 줄머리가 아니라 어디서든 센다(앞에 다른 선택자가 붙은 `QWidget[role=…]`·따옴표 없는 `[role=sub]`·값 없는 `[role]`·묶음 선택자도)."""
+    found = []
+    for match in re.finditer(r"\[role", source):
+        tail = source[match.start():match.start() + 40]
+        quoted = re.match(r'\[role="([A-Za-z0-9_{}]+)"\]', tail)
+        found.append((tail, quoted.group(1) if quoted else None))
+    return found
+
+
+@functools.lru_cache(maxsize=1)
+def qss_without_qt():
+    """`theme.build_qss` 가 만드는 앱 전체 스타일시트 — **PySide6 없이**. `theme.py` 는 PySide6 를 가져와 불러올 수 없으므로 소스(`ast`)에서 스타일시트를 만드는 함수들만 뽑아 토큰(`K`)과 `gauges` 로 돌린다(색은 모두 `K.palette()` 에서 온다).
+    소스 글을 정규식으로 읽는 시험은 선택자를 앞에 붙이거나 묶는 우회를 놓치지만 **만들어진 글**은 어떻게 만들었든 그대로 보인다. 스타일시트를 만드는 함수가 Qt 이름을 쓰기 시작하면 이 시험이 알려 준다."""
+    tree = ast.parse((QT_DIR / "theme.py").read_text(encoding="utf-8"))
+    wanted = ("_roles", "_tones", "_semantic", "_scores", "_card_states", "_presets", "build_qss")
+    found = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted}
+    if sorted(found) != sorted(wanted):
+        raise AssertionError(f"theme.py 에서 스타일시트를 만드는 함수를 찾지 못했다(없는 것: {sorted(set(wanted) - set(found))}) — 이 시험의 목록을 고친다")
+    module = ast.Module(body=[found[name] for name in wanted], type_ignores=[])
+    namespace = {"K": tokens, "gauges": gauges}
+    try:
+        exec(compile(ast.fix_missing_locations(module), "theme_without_qt", "exec"), namespace)
+        return namespace["build_qss"](tokens.palette())
+    except NameError as error:
+        raise AssertionError("스타일시트를 만드는 함수가 Qt 이름을 쓰기 시작했다 — 이 시험의 `qss_without_qt` 를 고쳐야 한다: " + str(error)) from None
+
+
+def qss_rules(qss):
+    """만들어진 스타일시트 → [(선택자, {속성: 값})] — 중첩 없는 `선택자 { 속성: 값; … }` 글만 읽는다."""
+    rules = []
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", qss):
+        declarations = {}
+        for part in body.split(";"):
+            name, _, value = part.partition(":")
+            if name.strip():
+                declarations[name.strip()] = value.strip()
+        rules.append((" ".join(selector.split()), declarations))
+    return rules
+
+
+def code_strings(tree):
+    """코드 속 글 상수(모듈·클래스·함수 설명 글은 뺀다) — f-string 의 글 조각도 들어 있다."""
+    docstrings = set()
+    for node in [tree] + [item for item in ast.walk(tree) if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]:
+        body = node.body
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            docstrings.add(id(body[0].value))
+    return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings]
+
+
+def color_route_findings(path):
+    """화면 소스 한 파일에서 글자 색을 스타일시트 밖으로 정하는 길 → [글]: `setStyleSheet`·`setPalette` 속성 참조(별칭으로 받아 쓰는 것도)·글 상수 `styleSheet`(`setProperty("styleSheet", …)` 길)·
+    글 상수 속 HTML·CSS 색(`color:`·`color=`)·**라벨 클래스**(이름이 `Label` 로 끝나는 것)가 그릴 때 `setPen` 에 쓰는 팔레트 색이 `QPalette.WindowText` 가 아닌 것(단추 같은 다른 부품의 그리기는 건드리지 않는다)."""
+    tree, parents = parse(path)
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in ("setStyleSheet", "setPalette"):
+            found.append(f"{node.attr}@{node.lineno}")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "setPen" and owner_of(node, parents).split(".")[0].endswith("Label"):
+            for part in ast.walk(node):
+                if isinstance(part, ast.Attribute) and ast.unparse(part.value) == "QPalette" and part.attr != "WindowText":
+                    found.append(f"setPen:{part.attr}@{node.lineno}")
+    for text in code_strings(tree):
+        if text.lower() in ("stylesheet", "setstylesheet", "setpalette"):
+            found.append(f"string:{text}")
+        if re.search(r"color\s*[:=]", text, re.I):
+            found.append(f"color-text:{text[:30]!r}")
+    return found
 
 
 # ---- 1) 값 ---------------------------------------------------------------------------------------------------------------------------------
@@ -200,21 +296,28 @@ class ValuesTest(unittest.TestCase):
         source = (QT_DIR / "theme.py").read_text(encoding="utf-8")
         self.assertEqual(re.findall(r"^(QLineEdit[^{\n]*|QPlainTextEdit[^{\n]*) \{\{", source, re.M), INPUT_SELECTORS)
 
-    def test_the_label_role_rules_come_only_from_the_generated_loop(self):
-        """`sub`·`muted` 의 글자 색 규칙은 역할 표(`ROLE_TEXT`)에서 만드는 반복문 한 곳에서만 나온다 — 손으로 덧붙인 `QLabel[role="sub"] { … }` 줄이 있으면(뒤 규칙이 이긴다) 빨갛다."""
+    def test_no_hand_written_rule_can_reach_the_sub_or_muted_roles(self):
+        """`sub`·`muted` 의 글자 색 규칙은 역할 표(`ROLE_TEXT`)에서 만드는 반복문 한 곳에서만 나온다. 스타일시트 소스에서 `[role` 이 나오는 **모든 자리**(줄머리가 아니라 어디서든 — `QWidget[role="sub"]`·따옴표 없는 `[role=sub]`·값 없는 `[role]`·
+        다른 연산자를 쓴 `[role^=…]`)를 보고, 손으로 쓴 규칙은 `[role="낱말"]` 모양이고 낱말이 `sub`·`muted` 가 아닐 때만 허락한다 — 관계없는 역할의 손 규칙까지 막지 않는다(3차 지시 — 검증자 2 의 FP1, 우회 N02·N03)."""
         source = (QT_DIR / "theme.py").read_text(encoding="utf-8")
-        self.assertEqual(re.findall(r'QLabel\[role="([a-z0-9_]+)"\]', source), ["ok"], "손으로 쓴 역할 규칙은 `ok` 하나뿐이다(나머지는 반복문이 만든다)")
+        found = role_selectors(source)
+        self.assertEqual([word for _tail, word in found].count("{role}"), 1, "역할 규칙을 만드는 반복문은 한 곳이다")
         self.assertIn("""f'QLabel[role="{role}"] {{""", source)
+        for tail, word in found:
+            self.assertIsNotNone(word, f"역할 선택자가 `[role='낱말']`(큰따옴표) 모양이 아니다 — 따옴표 없음·연산자·값 없음은 뒤에서 sub·muted 를 덮을 수 있다: {tail!r}")
+            self.assertNotIn(word, ("sub", "muted"), "손으로 쓴 규칙이 sub·muted 역할의 규칙을 건드린다")
+        self.assertIn("ok", [word for _tail, word in found], "손으로 쓴 `ok` 규칙이 이 눈에 보여야 한다(눈이 먼 것이 아닌지)")
 
-    def test_only_the_theme_sets_a_stylesheet_and_only_once(self):
-        """위젯마다 색을 따로 박는 길(`setStyleSheet`)이 화면 소스 어디에도 없다 — 박으면 역할 규칙과 다른 색이 보인다."""
-        calls = {}
+    def test_no_screen_source_but_the_theme_sets_a_stylesheet_and_the_theme_sets_it_on_the_app_only(self):
+        """위젯마다 색을 따로 박는 길(`setStyleSheet`)이 화면 소스 어디에도 없다(속성 참조를 세므로 별칭으로 받아 쓰는 것도 잡는다) — 박으면 역할 규칙과 다른 색이 보인다. `theme.py` 는 앱 전체(`app`)에만 건다:
+        같은 스타일시트를 한 번 더 거는 것까지는 막지 않는다(3차 지시 — 검증자 2 의 FP3)."""
+        receivers = {}
         for path in sorted(QT_DIR.glob("*.py")):
             tree, _ = parse(path)
-            count = sum(1 for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "setStyleSheet")
-            if count:
-                calls[path.name] = count
-        self.assertEqual(calls, {"theme.py": 1})
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr == "setStyleSheet":
+                    receivers.setdefault(path.name, set()).add(ast.unparse(node.value))
+        self.assertEqual(receivers, {"theme.py": {"app"}})
 
     def test_the_rule_reader_takes_the_last_rule_and_counts_every_rule_even_a_nested_one(self):
         qss = 'QLabel[role="sub"] { color: #111111; }\nQFrame QLabel[role="sub"] { font-size: 1px; color: #222222; }\nQLabel[role="muted"] { color: #333333; }\n'
@@ -225,6 +328,94 @@ class ValuesTest(unittest.TestCase):
             rule_color(qss, "small")
 
 
+# ---- 1b) PySide6 없는 CI 에서도 문장 색을 몰래 바꾸는 길을 막는다(3차 지시 — 검증자 2 의 권고 1) ---------------------------------------------------------------
+class BypassGuardsTest(unittest.TestCase):
+    """2차 지시의 시험은 PySide6 가 없는 CI 에서 소스 글만 읽었다 — 위젯에 따로 박은 색·역할 표의 별칭·스타일시트에 덧붙인 규칙처럼 그 눈이 놓치는 길이 남았다. 여기서는 **만들어진 스타일시트**를
+    PySide6 없이 만들어 읽고, 소스에서는 줄머리가 아니라 어디서든 센다. 별칭을 거치거나 `**{…}` 로 숨긴 호출처럼 정적으로 막기 어려운 것은 아래 '그려진 그림' 시험(PySide6 가 있을 때)이 맡는다."""
+
+    def test_the_role_color_function_returns_the_documented_tokens_of_the_two_roles(self):
+        """스타일시트의 역할 규칙은 `role_color` 로 만든다 — 표(`ROLE_TEXT`)가 맞아도 이 함수가 틀리면 만들어진 색이 틀린다(검증자 2 의 N25)."""
+        colors = tokens.palette()
+        self.assertEqual(tokens.role_color(colors, "sub"), colors["text_secondary"])
+        self.assertEqual(tokens.role_color(colors, "muted"), colors["text_muted"])
+
+    def test_the_muted_color_has_exactly_one_role_so_no_alias_can_hide_a_muted_sentence(self):
+        """흐린 글 색을 가리키는 역할이 하나 더 생기면(`hint` → `text_muted`) 화면 소스에 `muted` 라는 글자가 없이도 흐린 문장을 쓸 수 있다(검증자 2 의 N28)."""
+        self.assertEqual([role for role, key in tokens.ROLE_TEXT.items() if key == "text_muted"], ["muted"], "흐린 글 색을 가리키는 역할이 하나 더 생겼다")
+        self.assertEqual(sorted(tokens.ROLE_STYLE), ["muted", "sub"], "크기·굵기를 빌려 쓰는 역할 표가 바뀌었다")
+
+    def test_every_literal_role_a_screen_uses_has_a_definition(self):
+        """화면이 글자 리터럴로 쓰는 역할은 모두 역할 표에 있다 — 표에 없는 역할은 색도 크기도 앱 기본값으로 그려진다."""
+        used = set()
+        for site in all_role_sites():
+            if site.literal:
+                used |= literal_role_names(ast.parse(site.role, mode="eval").body)
+        self.assertEqual(sorted(used - set(tokens.ROLE_TEXT)), [], "역할 표에 없는 글자 역할을 쓴 곳이 있다")
+
+    def test_the_built_stylesheet_has_one_color_rule_for_each_of_the_two_roles_even_without_qt(self):
+        """PySide6 가 없어도 만들어진 스타일시트에서 `sub`·`muted` 역할 규칙이 하나씩이고 토큰의 색이다(역할 규칙을 만드는 반복문이 틀리면 — 검증자 2 의 N25 와 구현자의 R11)."""
+        colors, qss = tokens.palette(), qss_without_qt()
+        for role, key in (("sub", "text_secondary"), ("muted", "text_muted")):
+            self.assertEqual(rule_colors(qss, role), [colors[key]], role)
+
+    def test_the_muted_color_is_used_in_the_built_stylesheet_only_by_the_muted_role_and_the_invisible_trend_rule(self):
+        """만들어진 스타일시트에서 흐린 글 색을 쓰는 규칙은 `muted` 역할과 보이는 글이 없는 `QLabel[trend="none"]` 뿐이다 — 문장이 아닌 곳(배지 등)에 흐린 글 색이 새로 쓰이는 길을 막는다(검증자 2 의 N11).
+        새 쓰임이 정말 필요하면 이 시험의 허용 목록에 이유와 함께 더한다."""
+        muted = tokens.palette()["text_muted"].upper()
+        users = sorted({selector for selector, declarations in qss_rules(qss_without_qt()) if any(muted in value.upper() for value in declarations.values())})
+        self.assertEqual(users, ['QLabel[role="muted"]', 'QLabel[trend="none"]'])
+
+    def test_the_built_stylesheet_has_exactly_the_pinned_input_rules_with_the_approved_border_even_without_qt(self):
+        """만들어진 스타일시트에서 입력 칸(한 줄·편집기)을 건드리는 선택자는 정해진 목록 그대로이고, 두 주 규칙의 테두리는 승인한 `1px solid #B8C7DA` 하나뿐이다(`border-color` 덧붙임도 없다)."""
+        rules = qss_rules(qss_without_qt())
+        self.assertEqual([selector for selector, _ in rules if "QLineEdit" in selector or "QPlainTextEdit" in selector], INPUT_SELECTORS)
+        for selector in ("QLineEdit", 'QPlainTextEdit[editor="true"]'):
+            (declarations,) = [declarations for name, declarations in rules if name == selector]
+            self.assertEqual({name: value for name, value in declarations.items() if name.startswith("border") and name != "border-radius"}, {"border": "1px solid " + tokens.palette()["border_strong"]}, selector)
+
+    def test_every_mention_of_an_input_box_class_in_the_stylesheet_source_is_one_of_the_pinned_rules(self):
+        """소스에서 `QLineEdit`·`QPlainTextEdit` 가 나오는 **모든 자리**를 센다(줄머리가 아니라 어디서든 — `QWidget QLineEdit {…}`·`QPushButton, QLineEdit {…}` 도 센다, 검증자 2 의 N04·N06)."""
+        source = (QT_DIR / "theme.py").read_text(encoding="utf-8")
+        for word in ("QLineEdit", "QPlainTextEdit"):
+            self.assertEqual(source.count(word), sum(selector.count(word) for selector in INPUT_SELECTORS), f"{word} 가 정해진 규칙 밖에도 나온다")
+
+    def test_the_two_main_input_rules_have_no_border_declaration_but_the_approved_one(self):
+        """두 주 규칙의 본문에는 `border` 선언이 하나뿐이다 — 같은 줄에 `border-color: …` 를 덧붙이면 앞의 `border: … border_strong` 글은 그대로여도 테두리 색이 바뀐다(검증자 2 의 N05)."""
+        source = (QT_DIR / "theme.py").read_text(encoding="utf-8")
+        for selector in ("QLineEdit", 'QPlainTextEdit[editor="true"]'):
+            found = re.search(r"^" + re.escape(selector) + r" \{\{([^\n]*)\}\}$", source, re.M)
+            self.assertIsNotNone(found, selector)
+            names = [part.partition(":")[0].strip() for part in found.group(1).split(";") if part.strip()]
+            self.assertEqual([name for name in names if name.startswith("border") and name != "border-radius"], ["border"], f"{selector}: 테두리 선언이 `border` 하나가 아니다")
+
+    def test_no_screen_source_sets_a_color_through_the_property_the_palette_html_or_the_painter(self):
+        """화면 소스(`theme.py` 밖)에는 글자 색을 스타일시트 밖으로 정하는 길이 없다: `setStyleSheet`·`setPalette`(별칭으로 받아 쓰는 것도)·`setProperty("styleSheet", …)`·글 속 HTML `color:`·
+        라벨이 그릴 때 쓰는 `setPen` 의 팔레트 색이 `WindowText` 가 아닌 것(검증자 2 의 N07·N09·N10). 별칭·`**{…}` 로 숨긴 것은 정적으로 막기 어려워 그려진 그림 시험의 몫이다."""
+        findings = {path.name: color_route_findings(path) for path in sorted(QT_DIR.glob("*.py")) if path.name != "theme.py"}
+        self.assertEqual({name: found for name, found in findings.items() if found}, {}, "글자 색을 스타일시트 밖으로 정하는 길이 새로 생겼다")
+
+    def test_the_new_scanners_see_the_bypasses_and_leave_harmless_code_alone(self):
+        """이 시험들의 눈이 정말 우회를 잡고 멀쩡한 코드는 건드리지 않는지 합성 소스로 확인한다(눈이 먼 시험은 늘 초록이다)."""
+        bypass = ("class L:\n    def a(self):\n        self.setProperty('styleSheet', 'x')\n    def b(self):\n        ss = self.setStyleSheet\n    def c(self):\n        self.setPalette(p)\n"
+                  "    def d(self):\n        self.setText(f'<b style=\"color:{c}\">x</b>')\n\n\nclass SummaryLabel:\n    def e(self, painter):\n        painter.setPen(self.palette().color(QPalette.Mid))\n")
+        harmless = ("class M:\n    '''설명 글에 color: 와 setStyleSheet 가 있어도 된다.'''\n    def a(self, painter):\n        painter.setPen(self.palette().color(QPalette.WindowText))\n"
+                    "        self.setProperty('role', 'body')\n        return 'colorful words and a stylesheet-free text'\n\n\nclass ShinyButton:\n    def paintEvent(self, painter):\n        painter.setPen(self.palette().color(QPalette.ButtonText))\n")
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "bypass.py").write_text(bypass, encoding="utf-8")
+            (Path(folder) / "harmless.py").write_text(harmless, encoding="utf-8")
+            found, quiet = color_route_findings(Path(folder) / "bypass.py"), color_route_findings(Path(folder) / "harmless.py")
+        self.assertEqual(sorted(item.split("@")[0].split(":")[0] for item in found), ["color-text", "setPalette", "setPen", "setStyleSheet", "string"])
+        self.assertEqual(quiet, [])
+        selectors = ('QLabel[role="{role}"] {{ }}\nQWidget[role="sub"] {{ }}\nQLabel[role=sub] {{ }}\nQLabel[role] {{ }}\nQLabel[role^="sub"] {{ }}\nQLabel[role="note"] {{ }}\n')
+        self.assertEqual([word for _tail, word in role_selectors(selectors)], ["{role}", "sub", None, None, None, "note"])
+        self.assertEqual(qss_rules("A, B { color: #111; margin: 1px }\nC { x: y(1, 2) }"), [("A, B", {"color": "#111", "margin": "1px"}), ("C", {"x": "y(1, 2)"})])
+        self.assertTrue(value_role_ok("'muted' if row['missing'] else 'body'", "row['missing']"), "글꼴 손질은 허락한다(FP8)")
+        self.assertTrue(value_role_ok("'muted'", None))
+        for role in ("'muted' if not row['missing'] else 'body'", "'sub' if row['missing'] else 'body'", "'muted' if row['missing'] else 'sub'", "'muted' if row['missing'] else 'caption'", "'muted' if row['missing'] else 'muted'", "'body'"):
+            self.assertFalse(value_role_ok(role, "row['missing']"), role)
+        self.assertFalse(value_role_ok("'sub'", None))
+
+
 # ---- 2) 소스 -------------------------------------------------------------------------------------------------------------------------------
 class SourceSitesTest(unittest.TestCase):
     def test_the_twelve_places_use_exactly_the_pinned_role_expressions(self):
@@ -232,9 +423,13 @@ class SourceSitesTest(unittest.TestCase):
         sites = all_role_sites()
         counts = collections.Counter(site.key for site in sites)
         for table in (SENTENCE_SITES, VALUE_SITES):
-            for key, (role, _reason) in table.items():
+            for key in table:
                 self.assertEqual(counts[key], 1, f"{key}: 이 라벨 호출이 정확히 하나여야 한다(코드가 옮겨졌거나 같은 글 식이 둘이다)")
-                self.assertEqual([site.role for site in sites if site.key == key], [role], key)
+        for key, (role, _reason) in SENTENCE_SITES.items():
+            self.assertEqual([site.role for site in sites if site.key == key], [role], key)
+        for key, (condition, _reason) in VALUE_SITES.items():
+            (role,) = [site.role for site in sites if site.key == key]
+            self.assertTrue(value_role_ok(role, condition), f"{key}: 빈 값 자리의 역할 식 `{role}` 이 `'muted' if {condition} else <보통 글 색 역할>` 이 아니다")
 
     def test_the_muted_role_is_used_for_exactly_the_five_empty_value_places(self):
         muted = {site.key for site in all_role_sites() if "muted" in site.words}
@@ -261,9 +456,12 @@ class SourceSitesTest(unittest.TestCase):
 
     def test_every_listed_place_has_a_real_reason(self):
         for table in (VALUE_SITES, SENTENCE_SITES):
-            for place, (role, reason) in table.items():
+            for place, (_role, reason) in table.items():
                 self.assertGreaterEqual(len(reason), 12, place)
-                self.assertTrue(role.startswith("'"), place)
+        for place, (role, _reason) in SENTENCE_SITES.items():
+            self.assertTrue(role.startswith("'"), place)
+        for place, (condition, _reason) in VALUE_SITES.items():
+            self.assertTrue(condition is None or condition.endswith("['missing']"), place)
         self.assertFalse(set(VALUE_SITES) & set(SENTENCE_SITES))
         self.assertEqual((len(VALUE_SITES), len(SENTENCE_SITES)), (5, 7))
 
@@ -271,6 +469,7 @@ class SourceSitesTest(unittest.TestCase):
         """이 시험들의 눈이 정말 muted 라벨·변수 역할·`role=` 키워드를 잡고 배지(`UI.Badge("muted", …)` — 다른 부품)·톤 표의 열쇠는 따로 세는지 합성 소스로 확인한다."""
         source = ("def f(UI, row, page_head):\n    UI.label(row['x'], 'muted', wrap=True)\n    UI.label(row['y'], 'small' if row['z'] else 'muted')\n    UI.Badge('muted', 'a')\n"
                   "    ClampedLabel(row['w'], role='muted')\n    UI.label(row['v'], 'sub')\n    r = 'muted'\n    UI.label(row['u'], r)\n    page_head('t', 's', role='muted')\n"
+                  "    x = {'sub': 'muted'}.get(r, r)\n    UI.label(row['t'], **{'role': 'muted'})\n"
                   "\n\ndef g(text, role='muted'):\n    return {'muted': 1}\n")
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "synthetic.py"
@@ -279,7 +478,49 @@ class SourceSitesTest(unittest.TestCase):
             census = muted_strings(path)
         self.assertEqual(sorted((site.text, "muted" in site.words, site.literal) for site in sites),
                          sorted([("row['x']", True, True), ("row['y']", True, True), ("row['w']", True, True), ("row['v']", False, True), ("row['u']", False, False), ("'t'", True, True)]))
-        self.assertEqual(sorted(found[2] for found in census), ["badge", "dict"] + ["other"] * 6, "변수·키워드·기본값·조건식·라벨 인자 둘이 모두 `other` 다")
+        self.assertEqual(sorted(found[2] for found in census), ["badge", "dict"] + ["other"] * 8, "변수·키워드·기본값·조건식·라벨 인자 둘·짝 표의 값(`{'sub': 'muted'}`·`**{'role': 'muted'}`)이 모두 `other` 다 — 짝 표의 열쇠만 `dict` 다")
+
+
+# ---- 2b) AP13 기록(UI_DESIGN_SPEC 13절)이 코드 사실과 맞는다(3차 지시 — 검증자 2 의 권고 3·정보) ------------------------------------------------------------
+class DrawerRecordDocTest(unittest.TestCase):
+    """AP13 은 코드로 하지 않고 UI_DESIGN_SPEC 13절에 근거와 설계만 남겼다. 그 기록이 말하는 사실을 코드에 묶어 둔다: 13절 맨 위의 비개발자용 두 문장 요약, 그리고 '잠복 결함' — 코드에 아직 있고
+    (`close_drawer_silently` 가 `_drawer_return` 을 비우지 않는다) 사용자는 그 길에 닿지 못한다(서랍 막이가 창 전체를 덮고 Tab 이 서랍 안에 갇히며 앱의 단축키는 Esc 와 Ctrl+S 뿐).
+    누가 서랍이 열린 채 `go()` 로 가는 길을 열거나 결함을 고치면 이 시험이 빨개져 13절을 함께 고치게 한다."""
+
+    def section(self):
+        text = (ROOT / "docs" / "UI_DESIGN_SPEC.md").read_text(encoding="utf-8")
+        return text[text.index("## 13. 홈 추천 줄 서랍의 막다른 길"):]
+
+    def test_the_section_starts_with_a_two_sentence_summary_a_non_developer_can_read(self):
+        summary = [part.strip() for part in self.section().split("\n\n") if part.strip()][1]                  # 0 은 제목
+        self.assertTrue(summary.startswith("**쉬운 요약**:"), summary[:30])
+        self.assertEqual(summary.count("습니다."), 2, "두 문장이다")
+        self.assertNotIn("`", summary, "쉬운 요약에는 코드 이름이 없다")
+        self.assertIn("고치지 않았", summary)
+
+    def test_the_drawer_defect_is_recorded_as_latent_and_the_code_facts_behind_that_still_hold(self):
+        section = self.section()
+        self.assertIn("**잠복 결함**", section)
+        self.assertNotIn("지금도 있는 오류", section, "사용자가 닿지 못하는 결함을 '지금도 있는 오류' 라고 적지 않는다")
+        for word in ("서랍 막이", "Tab", "Esc 와 Ctrl+S", "`_drawer_return = None`"):
+            self.assertIn(word, section, word)
+        shell = (QT_DIR / "shell.py").read_text(encoding="utf-8")
+        functions = {node.name: node for node in ast.walk(ast.parse(shell)) if isinstance(node, ast.FunctionDef)}
+
+        def clears_the_return_target(name):
+            return any(isinstance(node, ast.Assign) and ast.unparse(node.value) == "None" and any(ast.unparse(target) == "self._drawer_return" for target in node.targets) for node in ast.walk(functions[name]))
+
+        self.assertTrue(clears_the_return_target("close_drawer"), "`close_drawer` 는 돌아갈 자리를 비운다")
+        self.assertFalse(clears_the_return_target("close_drawer_silently"), "`close_drawer_silently` 가 돌아갈 자리를 비우게 고쳐졌다 — 13절의 잠복 결함 문장을 고친다")
+        self.assertEqual(shell.count("QShortcut("), 2, "앱의 단축키가 늘었다 — 서랍이 열린 채 `go()` 로 가는 입력이 생겼는지 보고 13절을 고친다")
+        self.assertIn("QShortcut(QKeySequence(Qt.Key_Escape)", shell)
+        self.assertIn('QShortcut(QKeySequence("Ctrl+S")', shell)
+        self.assertIn("self.drawer = UI.Drawer(root)", shell, "서랍은 창의 바탕(사이드바까지 든 곳)에 얹힌다")
+        self.assertIn("self.centralWidget().findChildren(QWidget)", shell[shell.index("def _trap_focus"):], "서랍·대화상자가 열리면 바깥 위젯에 Tab 이 가지 않는다")
+        components = (QT_DIR / "components.py").read_text(encoding="utf-8")
+        drawer = components[components.index("class Drawer("):components.index("class Dialog(")]
+        self.assertIn("self.scrim.setGeometry(0, 0, parent.width(), parent.height())", drawer, "서랍 막이가 창 전체를 덮는다")
+        self.assertIn("self.scrim.mousePressEvent = lambda _e: self.close_requested()", drawer, "막을 누르면 서랍이 닫힌다")
 
 
 # ---- 3) 실제 위젯 --------------------------------------------------------------------------------------------------------------------------
