@@ -196,19 +196,19 @@ def role_selectors(source):
 @functools.lru_cache(maxsize=1)
 def qss_without_qt():
     """`theme.build_qss` 가 만드는 앱 전체 스타일시트 — **PySide6 없이**. `theme.py` 는 PySide6 를 가져와 불러올 수 없으므로 소스(`ast`)에서 스타일시트를 만드는 함수들만 뽑아 토큰(`K`)과 `gauges` 로 돌린다(색은 모두 `K.palette()` 에서 온다).
-    소스 글을 정규식으로 읽는 시험은 선택자를 앞에 붙이거나 묶는 우회를 놓치지만 **만들어진 글**은 어떻게 만들었든 그대로 보인다. 스타일시트를 만드는 함수가 Qt 이름을 쓰기 시작하면 이 시험이 알려 준다."""
+    소스 글을 정규식으로 읽는 시험은 선택자를 앞에 붙이거나 묶는 우회를 놓치지만 **만들어진 글**은 어떻게 만들었든 그대로 보인다. 뽑는 것은 `theme.py` 맨 위 단계의 함수 중 PySide6 에서 가져온 이름을 쓰지 않는 것 전부라서(스타일시트를 만드는 도우미가 새로 생겨도
+    따라간다), 스타일시트를 만드는 함수가 Qt 이름을 쓰기 시작하면 그 함수가 빠져 `build_qss` 가 못 돌고 이 시험이 알려 준다."""
     tree = ast.parse((QT_DIR / "theme.py").read_text(encoding="utf-8"))
-    wanted = ("_roles", "_tones", "_semantic", "_scores", "_card_states", "_presets", "build_qss")
-    found = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in wanted}
-    if sorted(found) != sorted(wanted):
-        raise AssertionError(f"theme.py 에서 스타일시트를 만드는 함수를 찾지 못했다(없는 것: {sorted(set(wanted) - set(found))}) — 이 시험의 목록을 고친다")
-    module = ast.Module(body=[found[name] for name in wanted], type_ignores=[])
+    qt_names = {alias.asname or alias.name for node in tree.body if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("PySide6") for alias in node.names}
+    plain = [node for node in tree.body if isinstance(node, ast.FunctionDef) and not ({part.id for part in ast.walk(node) if isinstance(part, ast.Name)} & qt_names)]
+    if "build_qss" not in [node.name for node in plain]:
+        raise AssertionError("스타일시트를 만드는 `build_qss` 가 Qt 이름을 쓰기 시작했거나 없어졌다 — 이 시험의 `qss_without_qt` 를 고쳐야 한다")
     namespace = {"K": tokens, "gauges": gauges}
     try:
-        exec(compile(ast.fix_missing_locations(module), "theme_without_qt", "exec"), namespace)
+        exec(compile(ast.fix_missing_locations(ast.Module(body=plain, type_ignores=[])), "theme_without_qt", "exec"), namespace)
         return namespace["build_qss"](tokens.palette())
     except NameError as error:
-        raise AssertionError("스타일시트를 만드는 함수가 Qt 이름을 쓰기 시작했다 — 이 시험의 `qss_without_qt` 를 고쳐야 한다: " + str(error)) from None
+        raise AssertionError("스타일시트를 만드는 함수가 Qt 이름이나 이 시험이 모르는 이름을 쓰기 시작했다 — 이 시험의 `qss_without_qt` 를 고쳐야 한다: " + str(error)) from None
 
 
 def qss_rules(qss):
