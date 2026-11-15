@@ -567,27 +567,35 @@ class DeepTraceTest(Base):
             self.assertEqual(errorlog._frames(synthetic_trace(count)), [f"test_security_errorlog.py:{number}" for number in range(1, min(count, 6) + 1)], count)
 
     def test_a_fake_trace_that_loops_or_never_ends_is_cut_by_the_safety_limit_instead_of_hanging_the_app(self):
-        frame, seen = sys._getframe(), [0]
+        """진짜 추적은 고리를 만들 수 없지만(파이썬이 막는다) 가짜 객체는 만들 수 있다. 안전 상한이 없으면 끝없이 돌 모양이므로 시험은 비상 장치(너무 많이 따라가면 스스로 예외)를 달아 멈추지 않고 빨개지게 한다."""
+        frame, looped, made = sys._getframe(), [0], [0]
 
         class Looping:
             tb_frame, tb_lineno = frame, 7
 
-        looping = Looping()
-        looping.tb_next = looping                               # 진짜 추적은 고리를 만들 수 없지만(파이썬이 막는다) 가짜 객체는 만들 수 있다
+            @property
+            def tb_next(self):
+                looped[0] += 1
+                if looped[0] > 100_000:
+                    raise RuntimeError("끝없이 돈다 — 안전 상한이 없다")
+                return self
 
         class Endless:
             def __init__(self):
-                seen[0] += 1
-                self.tb_frame, self.tb_lineno = frame, seen[0]
+                made[0] += 1
+                self.tb_frame, self.tb_lineno = frame, made[0]
 
             @property
             def tb_next(self):
-                return Endless() if seen[0] < 50_000 else None
+                if made[0] > 100_000:
+                    raise RuntimeError("끝없이 이어진다 — 안전 상한이 없다")
+                return Endless()
 
         with mock.patch.object(errorlog, "_MAX_WALK", 1000):
-            self.assertEqual(errorlog._frames(looping), ["test_security_errorlog.py:7"] * errorlog.MAX_FRAMES)
+            self.assertEqual(errorlog._frames(Looping()), ["test_security_errorlog.py:7"] * errorlog.MAX_FRAMES)
             self.assertEqual(len(errorlog._frames(Endless())), errorlog.MAX_FRAMES)
-        self.assertLessEqual(seen[0], 1002, "안전 상한에서 멈춘다(상한이 없으면 가짜 추적 끝까지 5만 단계를 걷는다)")
+        self.assertLessEqual(looped[0], 1002, "안전 상한(여기서는 1000단계)에서 멈춘다")
+        self.assertLessEqual(made[0], 1002, "안전 상한(여기서는 1000단계)에서 멈춘다")
 
 
 # ---- 3) 공통 가림 경로 ---------------------------------------------------------------------------------------------------------------------
@@ -1365,6 +1373,7 @@ class DocsTest(unittest.TestCase):
         """한계 — 묶음 실행 파일의 시작 실패·작업 스레드가 삼키는 오류·네이티브 충돌·데이터 폴더를 풀지 못함은 기록되지 않는다고 문서가 말한다(모든 오류가 남는다는 인상을 주지 않게)."""
         security = self.doc("SECURITY.md")
         section = security[security.index("## 오류 기록("):]
+        self.assertIn("- **한계(기록이 닿지 않는 길)**:", section, "한계 줄의 제목이 있어야 한다(시험 줄의 낱말로는 대신할 수 없다)")
         for word in ("기록이 닿지 않는 길", "start_gui", "ui/core/jobs.py", "네이티브 충돌", "데이터 폴더를 풀지 못하면", "후속 항목"):
             self.assertIn(word, section, word)
         trouble = self.doc("TROUBLESHOOTING.md")
