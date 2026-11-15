@@ -309,6 +309,20 @@ class DeleteTest(unittest.TestCase):
         self.assertEqual((library.current, library.mode, library.delete_step), (None, "new", 0))
         self.assertEqual(library.view()["notice"], T["ref_done_deleted"])
 
+    def test_after_a_delete_the_editor_returns_to_new_even_if_reading_the_list_fails(self):
+        """지운 뒤 목록을 다시 읽다 실패해도 열린 글·저장 안 한 변경 표시가 남지 않는다(목록 갱신이 아니라 지우기 자신이 정리한다)."""
+        library, provider = self.open_one()
+        library.edited("고친 제목", "고친 본문")
+        self.assertTrue(library.dirty)
+        library.ask_delete()
+        library.advance_delete()
+        provider.refuse = ("list",)
+        self.assertEqual(library.advance_delete(), "deleted")
+        self.assertEqual((library.current, library.mode, library.dirty, library.delete_step), (None, "new", False, 0))
+        self.assertEqual(library.baseline, rv.digest("", ""))
+        self.assertEqual(library.view()["editor"]["state"], "")
+        self.assertNotIn("aaaaaaaa", provider.items)
+
     def test_cancelling_at_any_step_deletes_nothing(self):
         for steps in (0, 1):
             library, provider = self.open_one()

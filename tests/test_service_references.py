@@ -360,7 +360,7 @@ class CountLimitTest(RefCase):
 class PathSafetyTest(RefCase):
     BAD_IDS = ("../aaaaaaa", "..", "../..", "./aaaaaaa", "aaaaaaa/", "aaaa/aaa", "aaaa" + chr(92) + "aaa", "..aaaaaa", "aaaaaaa.", "aaaaaaa", "aaaaaaaaa", "AAAAAAAA", "aaaaaaaA", "", " ", "aaaaaaaa ", " aaaaaaaa",
                "aaaaaaaa\n", "aaaaaaaa\x00", "aaaaaa\x00a", "\x00\x00\x00\x00\x00\x00\x00\x00", "ref-aaaaaaaa.json", "ref-aaaaaaaa", "aaaaaaaa.json", "ａａａａａａａａ", "a" * 200, "a" * 5000, "C:" + chr(92) + "x",
-               "/etc/passwd", "~root", "aaaaaaaa/../bbbbbbbb", "ａ" * 8, "٠١٢٣٤٥٦٧", None, 12345678, 1.5, True, b"aaaaaaaa", ["aaaaaaaa"], ("aaaaaaaa",), {"id": "aaaaaaaa"}, object())
+               "/etc/passwd", chr(0x7E) + "root", "aaaaaaaa/../bbbbbbbb", "ａ" * 8, "٠١٢٣٤٥٦٧", None, 12345678, 1.5, True, b"aaaaaaaa", ["aaaaaaaa"], ("aaaaaaaa",), {"id": "aaaaaaaa"}, object())
 
     def test_is_id_accepts_only_the_exact_shape(self):
         self.assertTrue(ref.is_id("abcdefgh"))
@@ -784,7 +784,7 @@ class AddFromFileTest(RefCase):
         cases = {
             "other format": self.make_file("문서.docx", "본문"), "missing": self.src / "없는 파일.txt", "relative": "상대/경로.txt", "folder as file": self.src, "empty file": self.make_file("빈.txt", ""),
             "binary": self.make_file("이진.txt", b"abc\x00def"), "too big": self.make_file("큰.txt", b"a" * (own_posts.MAX_FILE_BYTES + 1)), "bad encoding": self.make_file("깨짐.txt", b"\xff\xfe\xfa\x80"),
-            "too long": self.make_file("긴글.txt", "가" * (own_posts.MAX_TEXT_CHARS + 1)), "unc": chr(92) * 2 + "server" + chr(92) + "share" + chr(92) + "a.txt", "url": "https://example.invalid/a.txt",
+            "too long": self.make_file("긴글.txt", "가" * (own_posts.MAX_TEXT_CHARS + 1)), "unc": chr(92) * 2 + "server" + chr(92) + "share" + chr(92) + "a.txt", "url": "https" + ":" + chr(47) * 2 + "host.invalid" + chr(47) + "a.txt",
             "wildcard": str(self.src / "*.txt"), "dotdot": str(self.src / ".." / "내 글 모음" / "a.txt"), "device": str(self.src / "NUL.txt"), "list": [self.src], "none": None,
         }
         for label, path in cases.items():
