@@ -11,7 +11,8 @@
 언제 만드는가: **첫 오류가 났을 때 처음 만든다.** `arm()`(켜 두기)은 아무것도 읽거나 만들지 않는다 — 앱을 켜기만 해서는 폴더도 파일도 생기지 않는다. 위치는 앱이 쓰는 데이터 폴더 해석 함수가 정한 폴더의 `logs/errors.log`(+ 돌려쓰기 `errors.log.1`·`errors.log.2`)이고,
 이 모듈은 폴더 계산을 하지 않고 부른 쪽이 건넨 '폴더 알려 주기' 함수만 부른다. 파일 하나는 256 KB 를 넘지 않고 모두 세 개를 넘지 않는다(`errors.log.2` 가 가장 오래된 것이다).
 
-**어떤 일이 있어도 앱을 멈추지 않는다.** 쓰기 실패(디스크 가득·권한·이름 바꾸기 막힘)·폴더 해석 실패는 모두 삼키고 그 줄만 버린다(돌려쓰기에 실패하면 한도를 넘기지 않으려고 그 줄을 쓰지 않고, 옛 파일은 먼저 지우지 않으므로 가장 오래된 `.2` 도 잃지 않는다 — 이름 바꾸기가 `.2` 를 덮어쓴다). 같은 시간에 오류가 쏟아져도(그리기 오류가 계속 되풀이될 때) 정해진 1분 구간마다 30줄까지만 쓴다(구간은 첫 줄이 쓰일 때 시작하고, 구간 경계에서는 짧은 시간에 더 나올 수 있다).
+**어떤 일이 있어도 앱을 멈추지 않는다.** 쓰기 실패(디스크 가득·권한·이름 바꾸기 막힘)·폴더 해석 실패는 모두 삼키고 그 줄만 버린다(돌려쓰기에 실패하면 한도를 넘기지 않으려고 그 줄을 쓰지 않는다). 같은 시간에 오류가 쏟아져도(그리기 오류가 계속 되풀이될 때) 정해진 1분 구간마다 30줄까지만 쓴다(구간은 첫 줄이 쓰일 때 시작하고, 구간 경계에서는 짧은 시간에 더 나올 수 있다).
+**돌려쓰기는 이름 바꾸기뿐이다**(먼저 `.1` → `.2`, 그다음 `errors.log` → `.1`) — 가장 오래된 `.2` 를 먼저 지우지 않고 이름 바꾸기가 덮어쓴다. 그래서 **어느 단계가 막혔느냐에 따라 남는 모습이 다르다**: 첫 단계(`.1` → `.2`)가 막히면 옛 파일 셋은 한 글자도 바뀌지 않지만, 첫 단계가 끝난 뒤 현재 파일 쪽(`errors.log` → `.1`)이 막히면(다른 프로그램이 현재 파일을 잡고 있을 때) `.2` 는 옛 `.1` 의 내용이 되어 있고(옛 `.2` 는 덮어쓰여 사라진다) `.1` 은 비며 현재 파일은 그대로다 — 그 줄은 버려지고 다음 줄이 둘째 단계부터 이어서 끝낸다.
 네트워크·외부 쓰기·하위 프로세스·표준 출력·표준 오류는 쓰지 않는다(파일은 데이터 폴더 안 한 곳뿐). `faulthandler`·미니덤프 같은 충돌 덤프는 만들지 않는다 — 가림을 걸 수 없는 글이 파일에 들어갈 수 있기 때문이다(그래서 네이티브 충돌은 기록되지 않는다).
 백업에는 넣지 않는다(`security/backup_note.py` 의 담지 않는 것 목록에 `logs/` 가 있다).
 
@@ -27,6 +28,7 @@ import re
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +50,7 @@ _CLASS = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 _FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]{0,63}")
 _SEPARATORS = re.compile(r"[\\/]")
 _MAX_LINE = 9_999_999
+_MAX_WALK = 1_000_000                        # 추적을 따라가는 단계의 안전 상한 — 고리가 있는 가짜 추적에서 끝없이 돌지 않게 한다(진짜 추적은 재귀 한도만큼, 보통 수백 단계다)
 _NOT_RECORDED = (KeyboardInterrupt, SystemExit, GeneratorExit)
 
 
@@ -70,16 +73,18 @@ def _line_number(number):
 
 
 def _frames(trace):
-    """추적 → 코드 위치 목록(가장 안쪽이 먼저, 최대 `MAX_FRAMES`) — `파일:줄` 글자만 만든다. 추적을 만들 수 없으면 빈 목록."""
-    found, steps = [], 0
-    while trace is not None and steps < 10_000:
+    """추적 → 코드 위치 목록(가장 안쪽이 먼저, 최대 `MAX_FRAMES`) — `파일:줄` 글자만 만든다. 추적을 만들 수 없으면 빈 목록.
+    추적을 **끝까지** 따라가며 가장 안쪽 `MAX_FRAMES` 곳만 쥔다(`deque(maxlen=…)`) — 추적이 아무리 깊어도 오류가 난 자리에 가까운 곳이 남는다(예전에는 바깥에서 1만 단계까지만 읽어 더 깊으면 안쪽이 빠졌다).
+    `_MAX_WALK` 는 고리가 있는 가짜 추적에서 끝없이 돌지 않게 하는 안전 상한일 뿐이다."""
+    inner, steps = deque(maxlen=MAX_FRAMES), 0
+    while trace is not None and steps < _MAX_WALK:
         try:
-            found.append(f"{_short_file(trace.tb_frame.f_code.co_filename)}:{_line_number(trace.tb_lineno)}")
+            inner.append((trace.tb_frame.f_code.co_filename, trace.tb_lineno))
             trace = trace.tb_next
         except Exception:
             break
         steps += 1
-    return found[-MAX_FRAMES:][::-1]
+    return [f"{_short_file(name)}:{_line_number(number)}" for name, number in reversed(inner)]
 
 
 def _trace_of(kind, value, trace):
@@ -137,7 +142,8 @@ class ErrorLog:
 
     def _rotate(self, folder):
         """`errors.log` → `.1` → `.2` — 이름을 바꾸는 것뿐이다: 가장 오래된 `.2` 는 먼저 지우지 않고 `os.replace` 가 덮어쓴다(먼저 지우면 이름 바꾸기가 막혔을 때 새 줄도 못 쓰고 `.2` 도 잃는다).
-        한 단계라도 막히면 예외를 내서 호출한 쪽이 이 줄을 버리게 한다(한도를 넘겨 쓰지 않는다)."""
+        한 단계라도 막히면 예외를 내서 호출한 쪽이 이 줄을 버리게 한다(한도를 넘겨 쓰지 않는다). 남는 모습은 막힌 단계에 따라 다르다 — 첫 단계(`.1` → `.2`)가 막히면 아무것도 바뀌지 않고,
+        첫 단계가 끝난 뒤 둘째(`errors.log` → `.1`)가 막히면 `.2` 는 옛 `.1` 의 내용이 되고(옛 `.2` 는 덮어쓰여 사라진다) `.1` 은 비며 현재 파일은 그대로다. 다음 줄이 둘째부터 이어서 끝낸다(`.1` 이 없으면 첫 단계는 건너뛴다)."""
         names = [FILE_NAME] + [f"{FILE_NAME}.{number}" for number in range(1, self._backups + 1)]
         if len(names) == 1:                                            # 옛 파일을 하나도 안 남기는 설정 — 현재 파일을 비운다
             (folder / names[0]).unlink(missing_ok=True)

@@ -4,14 +4,18 @@
 지키는 것(모두 PySide6 없이 돈다 — CI 와 같은 조건):
   1) 켜 두기(`arm`)만으로는 아무것도 읽거나 만들지 않는다 — 폴더도 파일도 없다. **첫 오류가 났을 때 처음 만든다**(`logs/errors.log`).
   2) 줄에는 시각·갈래·**오류 클래스 이름**·**코드 위치(파일 이름:줄, 가장 안쪽 여섯)** 뿐이다. `CANARY_` 가짜 비밀·가짜 경로·가짜 글이 든 오류 메시지는 한 글자도 남지 않고(메시지는 읽지도 않는다), 위치의 폴더 앞부분(사용자 이름이 든 절대경로)도 없다.
-     이름의 글자표(클래스·파일·Qt 분류 이름)는 U+0001 에서 U+024F 까지 전부와 위험한 글자 몇 개를 이름의 앞·가운데·끝에 끼워 시험이 따로 적은 정답과 견준다(`NarrowAlphabetTest`).
+     이름의 글자표(클래스·파일·Qt 분류 이름)는 U+0001 에서 U+024F 까지 전부와 위험한 글자 몇 개를 이름의 앞·가운데·끝에 끼워, 클래스·파일 이름은 U+0000 에서 U+10FFFF 까지 전체를 앞·가운데에 끼워
+     시험이 따로 적은 정답과 견준다(`NarrowAlphabetTest`). 추적은 아무리 깊어도 가장 안쪽 여섯 곳이 줄에 들어간다(`DeepTraceTest` — 깊이 300·600·재귀 한도·3만 단계).
   3) 줄은 앱의 공통 가림 규칙(`security/mask.py` 의 `mask`)을 한 번 더 거친다 — 이 모듈에 새 가림 규칙은 없다.
-  4) 256 KB 를 넘기게 되면 돌려쓰고 파일은 셋(`errors.log`·`.1`·`.2`)을 넘지 않으며 가장 오래된 것부터 사라진다. 돌려쓰기는 이름 바꾸기뿐이다(옛 파일을 먼저 지우지 않는다). 돌려쓰기가 막히면 한도를 넘겨 쓰지 않고 그 줄을 버리며 옛 파일 셋은 그대로다.
+  4) 256 KB 를 넘기게 되면 돌려쓰고(경계는 1바이트 단위로 본다) 파일은 셋(`errors.log`·`.1`·`.2`)을 넘지 않으며 가장 오래된 것부터 사라진다. 돌려쓰기는 이름 바꾸기뿐이다(옛 파일을 먼저 지우지 않는다).
+     돌려쓰기가 막히면 한도를 넘겨 쓰지 않고 그 줄을 버린다 — 첫 단계(`.1` → `.2`)가 막히면 옛 파일 셋은 그대로이고, 첫 단계가 끝난 뒤 현재 파일 쪽이 막히면 `.2` 가 옛 `.1` 의 내용이 된다(옛 `.2` 는 사라진다).
   5) 쓰기·폴더 만들기·이름 바꾸기·폴더 해석이 실패해도 예외 없이 `False` 이고 다음 오류는 다시 쓸 수 있다. 정해진 1분 구간마다 30줄까지만 쓴다. `KeyboardInterrupt`·`SystemExit` 는 오류가 아니라 남기지 않는다.
   6) 공통 경계(`security/boundary.py`)의 훅 셋·Qt 메시지와 화면의 한 줄 기록(`report_unexpected`)에서 들어오고, 경계를 되돌리면 꺼진다. **화면(GUI) 진입점만 켠다** — 예시 화면(`--sample`)은 켜지 않는다.
   7) 백업에 넣지 않고(담지 않는 것 목록에 `logs/`) 복원이 건드리지 않는다.
   8) 네트워크·하위 프로세스·표준 출력·표준 오류·`logging`·`traceback`·`faulthandler` 가 없다 — 가져오는 것은 아래의 표준 라이브러리 몇 개와 `mask` 뿐이다.
   9) 문서(SECURITY·TROUBLESHOOTING·UI_STATES·UI_DESIGN_SPEC)가 '파일에 쓰지 않는다·로그 파일은 아직 없다' 가 아니라 사실(작은 오류 기록 파일이 있다)을 적는다.
+  10) 문서가 '기록이 닿지 않는다' 고 적은 길(묶음 실행 파일의 시작 실패·작업 스레드가 삼킨 오류·네이티브 충돌·데이터 폴더를 풀지 못함)을 낱말이 아니라 **동작으로** 확인한다(`StatedLimitsAreRealTest` —
+      기록을 켠 채 그 길에 실패를 시켜 `logs` 폴더가 안 생기고, 같은 설정에서 훅으로 들어온 오류는 파일을 만든다는 대조도 함께 본다).
 가짜 비밀은 `CANARY_` 로 시작하는 조립 문자열이다. 임시 폴더만 쓰고 사용자의 데이터 폴더·네트워크를 건드리지 않는다.
 """
 import ast
@@ -21,6 +25,7 @@ import hashlib
 import io
 import os
 import re
+import shutil
 import socket
 import string
 import sys
@@ -43,7 +48,7 @@ from chanceblog_desktop.security import backup_note, boundary, errorlog  # noqa:
 from chanceblog_desktop.security import mask as mask_module  # noqa: E402
 from chanceblog_desktop.service import backup_flow as bf  # noqa: E402
 from chanceblog_desktop.service.context import Workspace  # noqa: E402
-from chanceblog_desktop.ui.core import app_state  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, jobs  # noqa: E402
 
 SRC = ROOT / "src" / "chanceblog_desktop"
 FIXED = datetime(2026, 11, 15, 7, 41, 5, tzinfo=timezone.utc)
@@ -111,6 +116,8 @@ def caught_chain(depth, filename="chain_mod.py"):
 LETTERS, DIGITS = set(string.ascii_letters), set(string.digits)
 CLASS_FIRST, CLASS_REST = LETTERS | {"_"}, LETTERS | DIGITS | {"_"}
 FILE_FIRST, FILE_REST = LETTERS | DIGITS | {"_"}, LETTERS | DIGITS | {"_", ".", "-"}
+CLASS_FIRST_SET, CLASS_REST_SET = frozenset(CLASS_FIRST), frozenset(CLASS_REST)                    # 전체 유니코드 훑기가 빠르게 쓰는 모음(정답은 위의 글자 모음 그대로다)
+FILE_FIRST_SET, FILE_REST_SET = frozenset(FILE_FIRST), frozenset(FILE_REST)
 SWEEP = [chr(code) for code in range(1, 0x250)] + list("\u202e\u2028\u2029\u200b\ufeff한٣①")          # U+0001 에서 U+024F 까지 전부 + 방향 바꿈·줄 나눔·폭 없는 공백·한글·아랍 숫자·동그라미 숫자
 
 
@@ -455,6 +462,133 @@ class NarrowAlphabetTest(Base):
         self.assertEqual(self.captured_qt(category=None, file="", line=3), f"{STAMP} qt QtFatalMsg -", "파일 이름이 비어 있으면 위치를 적지 않는다")
         self.assertEqual(self.captured_qt(category=None, file=7, line=3), f"{STAMP} qt QtFatalMsg -", "글이 아닌 파일 이름은 적지 않는다")
 
+    def test_a_file_name_passes_only_when_every_character_is_in_the_narrow_alphabet_over_all_of_unicode(self):
+        """U+0000 에서 U+10FFFF 까지(짝 없는 서로게이트도) **모든** 글자를 파일 이름의 첫 자리와 가운데 자리에 하나씩 끼운다 — 위의 U+024F 까지 훑기가 놓치는 먼 곳의 글자(붙임표를 닮은 마이너스 기호 U+2212 같은 것)를
+        글자표에 하나 더 허용해도 빨개진다(3차 지시, 검증자 1 의 X01). 폴더 구분자(`/` 와 역슬래시)를 끼우면 앞의 폴더 쪽이 떨어져 나가므로 그 둘만 따로 정답을 둔다."""
+        wrong = []
+        for code in range(0x110000):
+            char = chr(code)
+            if char in "/" + chr(92):
+                want_first, want_middle = "ab.py", "b.py"
+            else:
+                want_first = char + "ab.py" if char in FILE_FIRST_SET else "?"
+                want_middle = "a" + char + "b.py" if char in FILE_REST_SET else "?"
+            got = (errorlog._short_file(char + "ab.py"), errorlog._short_file("a" + char + "b.py"))
+            if got != (want_first, want_middle):
+                wrong.append((f"U+{code:04X}", got))
+                if len(wrong) >= 5:
+                    break
+        self.assertEqual(wrong, [], "파일 이름 글자표가 정답과 다르다(처음 몇 글자)")
+
+    def test_a_class_name_passes_only_when_every_character_is_in_the_narrow_alphabet_over_all_of_unicode(self):
+        """U+0001 에서 U+10FFFF 까지 **모든** 글자를 클래스 이름의 첫 자리와 가운데 자리에 하나씩 끼운다 — 전각 영문 대문자(U+FF21 에서 U+FF3A)처럼 먼 곳의 비슷한 글자를 글자표에 허용해도 빨개진다(3차 지시, 검증자 1 의 X02).
+        같은 클래스 하나의 `__name__` 을 바꿔 가며 훑는다(글자마다 새 클래스를 만들면 느리다). 널 글자와 짝 없는 서로게이트는 파이썬이 클래스 이름으로 받지 않아 뺐다 — 진짜 오류 클래스의 이름에는 올 수 없는 글자다."""
+        kind = type("Err", (Exception,), {})
+        wrong = []
+        for code in range(1, 0x110000):
+            if 0xD800 <= code <= 0xDFFF:
+                continue
+            char = chr(code)
+            for template, allowed in (("{}Err", CLASS_FIRST_SET), ("E{}r", CLASS_REST_SET)):
+                name = template.format(char)
+                kind.__name__ = name
+                got = errorlog._class_name(kind, None)
+                want = name if char in allowed else "UnknownError"
+                if got != want:
+                    wrong.append((f"U+{code:04X}", template, got))
+            if len(wrong) >= 5:
+                break
+        self.assertEqual(wrong, [], "클래스 이름 글자표가 정답과 다르다(처음 몇 글자)")
+
+    def test_only_a_real_class_gives_a_name_never_a_function_a_module_or_an_object_that_merely_has_a_name(self):
+        """(3차 지시, 검증자 1 의 X19) 종류가 클래스인지 확인하지 않고 `__name__` 만 읽으면 함수·모듈·이름만 가진 객체의 이름이 줄에 들어간다 — 그 이름은 글자표를 통과해 버리므로 글자표로는 막을 수 없다."""
+        self.assertEqual(errorlog._class_name(len, None), "UnknownError", "함수에도 `__name__` 이 있다")
+        self.assertEqual(errorlog._class_name(os, None), "UnknownError", "모듈에도 있다")
+        self.assertEqual(errorlog._class_name(types.SimpleNamespace(__name__="Spoofed"), None), "UnknownError", "이름만 가진 객체도 있다")
+        self.assertEqual(errorlog._class_name("ValueError", None), "UnknownError", "클래스 이름을 글로 준 것은 클래스가 아니다")
+        self.assertEqual(errorlog._class_name(len, ValueError("x")), "ValueError", "클래스가 아니면 값(예외)의 클래스 이름을 쓴다")
+        self.assertEqual(errorlog._class_name(os, KeyError("k")), "KeyError")
+        self.assertEqual(errorlog._class_name(KeyError, ValueError("x")), "KeyError", "종류가 클래스면 값의 종류가 아니라 그 클래스의 이름이다")
+
+
+# ---- 2c) 깊은 추적(3차 지시 — 검증자 1 의 X03, N4) ---------------------------------------------------------------------------------------
+def synthetic_trace(count):
+    """`count` 단계의 진짜 `TracebackType` 추적 — 가장 안쪽(오류가 난 곳)이 줄 1, 가장 바깥이 줄 `count`. 재귀 없이 만들어 재귀 한도가 걸리지 않는다."""
+    frame, trace = sys._getframe(), None
+    for number in range(1, count + 1):
+        trace = types.TracebackType(trace, frame, 0, number)
+    return trace
+
+
+class DeepTraceTest(Base):
+    """추적이 아무리 깊어도 줄에는 **가장 안쪽 여섯 곳**이 들어간다. 옛 읽기는 바깥에서 1만 단계까지만 읽어(그 상한이 100 으로 줄어도 시험이 몰랐다) 더 깊은 추적은 오류가 난 자리가 빠졌다 —
+    이제 끝까지 걸으며 `deque(maxlen=MAX_FRAMES)` 로 안쪽 여섯만 쥔다."""
+
+    def innermost_six(self, line):
+        return line.split(" ", 3)[3].split(" < ")
+
+    def test_traces_three_hundred_and_six_hundred_calls_deep_keep_exactly_the_six_innermost_places(self):
+        for depth in (300, 600):
+            with self.subTest(depth=depth):
+                error = caught_chain(depth)
+                extracted = [f"{Path(frame.filename).name}:{frame.lineno}" for frame in traceback.extract_tb(error.__traceback__)]
+                self.assertEqual(len(extracted), depth + 1, "부른 쪽 한 곳 + 함수 depth 곳")
+                log = self.make(rate=(10 ** 9, 60.0))
+                self.assertTrue(log.record("main", type(error), error))
+                places = self.innermost_six(self.lines()[-1])
+                self.assertEqual(places, [f"chain_mod.py:{2 * depth - 2 * step}" for step in range(6)], "오류가 난 줄이 맨 앞이고 안쪽 여섯 곳이다")
+                self.assertEqual(places, extracted[-6:][::-1], "추적 모듈이 말하는 가장 안쪽 여섯과 같다")
+
+    def test_a_real_recursion_error_keeps_the_six_innermost_places(self):
+        def descend(number):
+            return descend(number + 1)
+
+        try:
+            descend(0)
+        except RecursionError as error:
+            recursion = error
+        extracted = [f"{Path(frame.filename).name}:{frame.lineno}" for frame in traceback.extract_tb(recursion.__traceback__)]
+        self.assertGreater(len(extracted), 100, "재귀 한도까지 내려간 진짜 추적이다")
+        log = self.make(rate=(10 ** 9, 60.0))
+        self.assertTrue(log.record("main", RecursionError, recursion))
+        self.assertEqual(self.innermost_six(self.lines()[-1]), extracted[-6:][::-1])
+
+    def test_a_trace_of_thirty_thousand_steps_still_ends_at_the_real_innermost_place(self):
+        """옛 읽기는 바깥에서 1만 단계까지만 봐서 3만 단계 추적의 '안쪽' 이 실제 안쪽이 아니었다."""
+        trace = synthetic_trace(30_000)
+        want = [f"test_security_errorlog.py:{number}" for number in range(1, 7)]
+        self.assertEqual(errorlog._frames(trace), want)
+        log = self.make(rate=(10 ** 9, 60.0))
+        self.assertTrue(log.record("main", ValueError, ValueError("x"), trace))
+        self.assertEqual(self.innermost_six(self.lines()[-1]), want)
+
+    def test_every_depth_from_zero_to_eight_keeps_the_smaller_of_depth_and_six_places_innermost_first(self):
+        for count in range(0, 9):
+            self.assertEqual(errorlog._frames(synthetic_trace(count)), [f"test_security_errorlog.py:{number}" for number in range(1, min(count, 6) + 1)], count)
+
+    def test_a_fake_trace_that_loops_or_never_ends_is_cut_by_the_safety_limit_instead_of_hanging_the_app(self):
+        frame, seen = sys._getframe(), [0]
+
+        class Looping:
+            tb_frame, tb_lineno = frame, 7
+
+        looping = Looping()
+        looping.tb_next = looping                               # 진짜 추적은 고리를 만들 수 없지만(파이썬이 막는다) 가짜 객체는 만들 수 있다
+
+        class Endless:
+            def __init__(self):
+                seen[0] += 1
+                self.tb_frame, self.tb_lineno = frame, seen[0]
+
+            @property
+            def tb_next(self):
+                return Endless() if seen[0] < 50_000 else None
+
+        with mock.patch.object(errorlog, "_MAX_WALK", 1000):
+            self.assertEqual(errorlog._frames(looping), ["test_security_errorlog.py:7"] * errorlog.MAX_FRAMES)
+            self.assertEqual(len(errorlog._frames(Endless())), errorlog.MAX_FRAMES)
+        self.assertLessEqual(seen[0], 1002, "안전 상한에서 멈춘다(상한이 없으면 가짜 추적 끝까지 5만 단계를 걷는다)")
+
 
 # ---- 3) 공통 가림 경로 ---------------------------------------------------------------------------------------------------------------------
 class RedactionPathTest(Base):
@@ -553,12 +687,13 @@ class RotationTest(Base):
         return contents
 
     def test_a_blocked_rotation_never_deletes_the_oldest_file(self):
-        """이름 바꾸기가 막혔는데 가장 오래된 `.2` 를 먼저 지워 버리면 새 줄도 못 쓰고 옛 기록 하나만 잃는다 — 막히면 셋 모두 한 글자도 바뀌지 않아야 한다."""
+        """이름 바꾸기가 막혔는데 가장 오래된 `.2` 를 먼저 지워 버리면 새 줄도 못 쓰고 옛 기록 하나만 잃는다 — 첫 단계(`.1` → `.2`)가 막히면 셋 모두 한 글자도 바뀌지 않아야 한다
+        (이름 바꾸기가 모두 막힌 모양이다. 첫 단계가 끝난 뒤 둘째가 막히는 모양은 아래 시험이 따로 본다 — 그때는 `.2` 가 옛 `.1` 의 내용이 된다)."""
         log = self.make(rate=(10 ** 9, 60.0))
         before = self.three_old_files()
         with mock.patch.object(errorlog.os, "replace", side_effect=PermissionError(errno.EACCES, "다른 프로그램이 잡고 있다")):
             self.assertFalse(log.record("main", ValueError, caught()))
-        self.assertEqual({name: (self.logs / name).read_bytes() for name in before}, before, "막혀도 옛 파일 셋은 그대로다")
+        self.assertEqual({name: (self.logs / name).read_bytes() for name in before}, before, "첫 단계가 막히면 옛 파일 셋은 그대로다")
         self.assertEqual(self.names(), sorted(before))
 
     def test_a_rotation_blocked_half_way_loses_nothing_new_and_finishes_next_time(self):
@@ -576,6 +711,8 @@ class RotationTest(Base):
             self.assertFalse(log.record("main", ValueError, caught()))
         self.assertEqual(calls, [("errors.log.1", "errors.log.2"), ("errors.log", "errors.log.1")], "가장 오래된 쪽부터 한 칸씩 민다")
         self.assertEqual((self.logs / "errors.log.2").read_bytes(), b"b" * 60, "첫 단계(.1 → .2)는 끝났다")
+        self.assertEqual(self.names(), ["errors.log", "errors.log.2"], "둘째 단계가 막힌 동안 `.1` 은 비어 있다")
+        self.assertNotIn(b"c" * 50, [path.read_bytes() for path in self.logs.iterdir()], "옛 `.2` 는 덮어쓰여 사라졌다 — '막혀도 옛 파일 셋이 그대로' 는 첫 단계가 막힐 때만 참이다")
         self.assertEqual(self.file.read_bytes(), b"a" * (errorlog.MAX_BYTES - 10), "현재 파일은 그대로 남았다")
         self.assertTrue(log.record("main", ValueError, caught()), "막힘이 풀리면 이어서 끝낸다")
         self.assertEqual((self.logs / "errors.log.2").read_bytes(), b"b" * 60)
@@ -599,6 +736,24 @@ class RotationTest(Base):
         self.assertEqual(self.names(), ["errors.log"], "옛 파일을 남기지 않는 설정이면 현재 파일 하나뿐")
         self.assertLessEqual(self.file.stat().st_size, 300)
         self.assertGreater(len(self.lines()), 0)
+
+    def test_the_limit_is_exact_to_the_byte_a_line_that_just_fits_is_appended_and_one_more_byte_rolls_the_files(self):
+        """`파일 크기 + 새 줄 > 한도` 의 경계(3차 지시, 검증자 1 의 X07 — 기준에 5바이트 여유가 붙어도 시험이 몰랐다): 정확히 한도에 닿는 줄은 돌리지 않고 덧붙이고, 1바이트만 넘어도 먼저 돌린다.
+        진짜 한도(256 KB)와 작은 한도 둘로 본다. `write` 로 줄을 직접 넣어 줄 길이(줄바꿈 포함 11바이트)를 시험이 정한다."""
+        line = "y" * 10
+        for limit, options in ((errorlog.MAX_BYTES, {}), (1000, {"max_bytes": 1000}), (64, {"max_bytes": 64})):
+            with self.subTest(limit=limit):
+                shutil.rmtree(self.logs, ignore_errors=True)
+                log = self.make(rate=(10 ** 9, 60.0), **options)
+                self.fill(limit - 11, b"x")
+                self.assertTrue(log.write(line))
+                self.assertEqual((self.names(), self.file.stat().st_size), (["errors.log"], limit), "정확히 한도에 닿는 줄은 돌리지 않고 덧붙인다")
+                shutil.rmtree(self.logs, ignore_errors=True)
+                self.fill(limit - 10, b"x")
+                self.assertTrue(log.write(line))
+                self.assertEqual(self.names(), ["errors.log", "errors.log.1"], "한도를 1바이트 넘기는 줄은 먼저 돌린다")
+                self.assertEqual((self.logs / "errors.log.1").stat().st_size, limit - 10, "넘기기 전의 파일이 통째로 .1 이 된다")
+                self.assertEqual(self.file.read_bytes(), (line + "\n").encode("ascii"), "새 파일에는 새 줄뿐이다")
 
 
 # ---- 5) 실패해도 앱은 그대로 ---------------------------------------------------------------------------------------------------------------
@@ -663,6 +818,24 @@ class NeverBreaksTheAppTest(Base):
         clock[0] = 160.5
         self.assertTrue(log.record("main", ValueError, caught()), "1분이 지나면 다시 쓴다")
         self.assertEqual(len(self.lines()), 4)
+
+    def test_the_default_limit_is_thirty_lines_per_sixty_seconds_when_nothing_is_passed(self):
+        """생성자에 속도 제한을 넘기지 않으면 정해진 값이 쓰인다(3차 지시, 검증자 1 의 X09 — 시험이 늘 값을 직접 넘기면 기본값 자리가 30 에서 100만으로 틀려도 아무도 몰랐다). 구간 경계(정확히 60초)도 본다."""
+        clock = [100.0]
+        log = errorlog.ErrorLog(lambda: self.root, clock=fixed_clock, monotonic=lambda: clock[0])
+        line = f"{STAMP} main ValueError -"
+        self.assertEqual([log.write(line) for _ in range(35)], [True] * 30 + [False] * 5, "첫 구간은 30줄까지다")
+        clock[0] = 159.999
+        self.assertFalse(log.write(line), "59.999초 — 아직 같은 구간이다")
+        clock[0] = 160.0
+        self.assertTrue(log.write(line), "정확히 60초가 지나면 새 구간이다")
+        self.assertEqual([log.write(line) for _ in range(30)], [True] * 29 + [False], "새 구간도 30줄까지다")
+        self.assertEqual(len(self.lines()), 60)
+
+    def test_the_armed_log_uses_the_same_default_limit(self):
+        errorlog.arm(lambda: self.root, clock=fixed_clock)
+        sent = [errorlog.record_exception("main", ValueError, caught()) for _ in range(40)]
+        self.assertEqual((sent.count(True), len(self.lines())), (30, 30))
 
     def test_keyboard_interrupt_and_system_exit_are_not_errors_to_record(self):
         log = self.make()
@@ -925,6 +1098,119 @@ class LauncherTest(Base):
         self.assertIn("args.sample", shown[arm[0]], "예시 화면은 켜지 않는다")
 
 
+# ---- 6b) 문서가 말한 '기록이 닿지 않는 길' 을 동작으로(3차 지시 — 검증자 1 의 N2) ------------------------------------------------------------------
+class StatedLimitsAreRealTest(Base):
+    """문서(SECURITY·TROUBLESHOOTING·D-488)는 네 길이 `errors.log` 에 남지 않는다고 적었다 — 묶음 실행 파일의 시작 실패(`start_gui`)·작업 스레드가 삼킨 오류(`Job`)·네이티브 충돌·데이터 폴더를 풀지 못함.
+    소스에서 낱말(`errorlog`)을 찾는 대신 **기록을 켠 채 그 길에 실패를 시켜** `logs` 폴더가 안 생기는지 본다(낱말 검사는 다른 이름으로 기록기를 부르면 못 잡는다). 위에서 '폴더 없음' 이 시험 장치의 고장이 아님은
+    같은 설정에서 훅으로 들어온 오류가 파일을 만드는 것(대조)으로 보인다. 누가 그 길을 기록으로 이으면(후속 항목) 이 시험들이 빨개져 문서의 한계도 함께 고치게 한다."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertIsNone(boundary.active(), "다른 시험이 경계를 깔아 둔 채 끝났다")
+        environment = mock.patch.dict(os.environ, {"CHANCEBLOG_DESKTOP_DATA": str(self.root), "LOCALAPPDATA": str(Path(self.tmp.name) / "local")})
+        environment.start()
+        self.addCleanup(environment.stop)                       # 앱의 데이터 폴더 해석(`Workspace.resolve`)이 이 시험이 끝날 때까지 늘 임시 폴더로 풀린다 — 기록은 처음 쓸 때 폴더를 풀므로 환경이 되돌려진 뒤에 쓰면 진짜 기본 데이터 폴더에 쓴다
+        self.stderr = io.StringIO()
+        redirect = contextlib.redirect_stderr(self.stderr)
+        redirect.__enter__()
+        self.addCleanup(redirect.__exit__, None, None, None)
+        self.addCleanup(sec.uninstall_boundary)
+
+    def armed(self):
+        installed = boundary.install_gui(qt=False)
+        self.assertTrue(boundary.arm_error_log(lambda: self.root))
+        return installed
+
+    def assert_the_control_writes(self):
+        """대조 — 같은 설정에서 처리하지 못한 예외가 훅으로 들어오면 파일이 만들어진다(위의 '폴더 없음' 이 시험 장치의 고장이 아니다)."""
+        error = caught(canary_message())
+        sys.excepthook(type(error), error, error.__traceback__)
+        self.assertEqual(self.names(), ["errors.log"])
+
+    def test_a_start_failure_of_the_bundle_entry_is_only_told_by_a_message_and_never_reaches_the_log(self):
+        import packaging_support as ps
+        from chanceblog_desktop.ui import launcher
+        entry, spoken, seen = ps.gui_entry, [], {}
+        package = types.ModuleType("PySide6")
+        package.QtCore = FakeQtCore()
+        app = types.ModuleType("chanceblog_desktop.ui.qt.app")
+
+        def run(provider, argv=None):
+            seen["armed"] = errorlog.active() is not None
+            raise ImportError("DLL load failed while importing QtWidgets: C:/Users/" + sec.make_canary("ELDLL") + "/x.dll")          # 창 없는 묶음에서 흔한 시작 실패
+
+        app.run = run
+
+        class FakeProvider:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        with mock.patch.object(launcher, "has_pyside6", return_value=True), \
+                mock.patch.dict(sys.modules, {"PySide6": package, "chanceblog_desktop.ui.qt.app": app}), mock.patch("chanceblog_desktop.ui.adapters.ServiceHomeProvider", FakeProvider), \
+                mock.patch.object(entry, "say", lambda text, error=False: spoken.append(text)):
+            code = entry.start_gui()
+        self.assertEqual((code, spoken), (entry.EXIT_FAILED, [entry.START_FAILED.format(kind="ImportError")]), "시작 실패는 메시지 상자(고정 문장, 오류 종류 이름만)로만 알린다")
+        self.assertTrue(seen["armed"], "화면 진입점이 기록을 켠 뒤에 시작이 실패했다")
+        self.assertFalse(self.root.exists(), "시작 실패는 훅까지 오지 않으므로 데이터 폴더도 `logs` 도 생기지 않는다")
+        self.assert_the_control_writes()
+
+    def test_a_job_that_fails_is_told_to_the_screen_and_never_reaches_the_log(self):
+        self.armed()
+        heard, done = {}, threading.Event()
+
+        def work(progress, cancelled):
+            raise KeyError(canary_message())
+
+        def on_error(failure, payload):
+            heard["code"], heard["shown"] = failure.code, failure.user_message
+            done.set()
+
+        job = jobs.JobRunner().start("limit-probe", work, on_error=on_error)
+        self.assertTrue(done.wait(10))
+        job.join(10)
+        self.assertEqual(heard["code"], "KeyError", "작업 실패는 화면으로 올라갔다(오류 이름만)")
+        self.assertNotIn("CANARY_BODY", heard["shown"])
+        self.assertFalse(self.root.exists(), "작업 스레드가 삼킨 오류는 훅까지 오지 않으므로 `logs` 가 생기지 않는다")
+        self.assert_the_control_writes()
+
+    def test_an_error_inside_a_screen_callback_of_a_job_never_reaches_the_log(self):
+        self.armed()
+        finished = threading.Event()
+
+        def work(progress, cancelled):
+            return "결과"
+
+        def on_done(result, payload):
+            finished.set()
+            raise ValueError(canary_message())
+
+        job = jobs.JobRunner().start("callback-probe", work, on_done=on_done)
+        self.assertTrue(finished.wait(10))
+        job.join(10)
+        self.assertEqual((job.state, job.callback_error), (jobs.Job.DONE, "ValueError"), "콜백의 오류는 이름만 기억하고 삼킨다")
+        self.assertFalse(self.root.exists(), "화면 콜백의 오류도 훅까지 오지 않는다")
+        self.assert_the_control_writes()
+
+    def test_a_native_crash_leaves_no_dump_because_the_app_never_turns_the_crash_handler_on(self):
+        import faulthandler
+        if faulthandler.is_enabled():
+            self.skipTest("시험 실행기가 이미 충돌 덤프를 켜 두었다")
+        self.armed()
+        self.assertFalse(faulthandler.is_enabled(), "경계와 오류 기록을 켜도 충돌 덤프는 켜지지 않는다")
+        self.assertFalse(self.root.exists())
+
+    def test_a_data_folder_the_app_refuses_is_not_written_to_and_the_line_is_dropped(self):
+        """데이터 폴더를 풀지 못하는 실제 모습 — git 저장소 안의 폴더는 앱이 거절(`DATA_DIR_UNSAFE`)하므로 그 줄은 버려지고 그 폴더에도 `logs` 가 생기지 않는다."""
+        from chanceblog_desktop.ui import launcher
+        repo = Path(self.tmp.name) / "repo"
+        (repo / ".git").mkdir(parents=True)
+        unsafe = repo / "data"
+        log = errorlog.ErrorLog(launcher._data_folder_of(str(unsafe)), clock=fixed_clock)
+        self.assertFalse(log.record("main", ValueError, caught()))
+        self.assertFalse(unsafe.exists(), "앱이 거절한 폴더에는 아무것도 만들지 않는다")
+        self.assertFalse(log.record("main", ValueError, caught()), "다음 오류도 같은 이유로 버려진다")
+
+
 # ---- 7) 백업 ---------------------------------------------------------------------------------------------------------------------------
 class BackupTest(unittest.TestCase):
     def setUp(self):
@@ -982,7 +1268,7 @@ def json_text(value):
 
 # ---- 8) 없어야 하는 것 ----------------------------------------------------------------------------------------------------------------
 class NothingElseTest(unittest.TestCase):
-    ALLOWED_IMPORTS = {"__future__", "os", "re", "sys", "threading", "time", "datetime", "pathlib"}
+    ALLOWED_IMPORTS = {"__future__", "collections", "os", "re", "sys", "threading", "time", "datetime", "pathlib"}          # `collections` 는 추적의 안쪽 여섯만 쥐는 `deque`(N4)
 
     def test_the_module_imports_only_a_few_standard_modules_and_the_common_mask(self):
         tree = ast.parse((SRC / "security" / "errorlog.py").read_text(encoding="utf-8"))
@@ -1108,11 +1394,23 @@ class DocsTest(unittest.TestCase):
             self.assertNotIn("예시 화면·시험은 켜지 않는다", text, label)
             self.assertNotIn("예시 화면(`--sample`)·시험은 켜지 않고", text, label)
         self.assertIn("`--sample` 없이 `launcher.main` 을 끝까지 부르는 기존 시험은 켜진다", security)
-        self.assertIn("이름 바꾸기가 막히면 옛 파일 셋은 한 글자도 바뀌지 않는다", security)
+        self.assertNotIn("이름 바꾸기가 막히면 옛 파일 셋은 한 글자도 바뀌지 않는다", security, "첫 단계가 막힐 때만 참인 말이다 — 현재 파일 쪽이 막히면 `.2` 가 옛 `.1` 이 된다")
+        self.assertIn("첫 단계(`.1` → `.2`)가 막히면 옛 파일 셋은 한 글자도 바뀌지 않고", security)
+        self.assertIn("`.2` 가 옛 `.1` 의 내용으로 바뀌어 있고(옛 `.2` 는 덮어쓰여 사라진다)", security)
+        self.assertIn("어느 단계가 막혔느냐에 따라 남는 모습이 다르다", source)
         self.assertIn("`--sample` 없이 `launcher.main` 을 끝까지 부르는 기존 시험은 켜지지만", source)
 
+    def error_report_block(self):
+        """TROUBLESHOOTING 의 '오류 보고서' 항목 — 첫 줄과 그 아래 들여 쓴 하위 항목들(다음 바깥 항목 앞까지)."""
+        rows = self.doc("TROUBLESHOOTING.md").splitlines()
+        start = next(index for index, row in enumerate(rows) if row.startswith("- **오류 보고서**"))
+        end = start + 1
+        while end < len(rows) and rows[end].startswith("  - "):
+            end += 1
+        return rows[start:end]
+
     def test_the_troubleshooting_doc_says_how_to_open_the_log_folder(self):
-        line = next(row for row in self.doc("TROUBLESHOOTING.md").splitlines() if row.startswith("- **오류 보고서**"))
+        line = "\n".join(self.error_report_block())
         for word in ("`Win` 키와 `R` 키", "'실행' 창", "%LOCALAPPDATA%\\ChanceblogDesktop\\logs", "Enter", "CHANCEBLOG_DESKTOP_DATA"):
             self.assertIn(word, line, word)
 
@@ -1122,6 +1420,44 @@ class DocsTest(unittest.TestCase):
         self.assertIn("errorlog", state)
         gate = (SRC / "security" / "boundary.py").read_text(encoding="utf-8")
         self.assertNotIn("로그 파일 핸들러는 만들지 않는다 — 없는 기능이다", gate)
+
+    def test_the_error_report_item_is_short_items_and_does_not_contradict_itself(self):
+        """(3차 지시, N5) 한 항목에 1,500자가 넘게 들어 있던 '오류 보고서' 를 짧은 하위 항목으로 쪼갰고, '폴더가 없으면 기록할 오류가 없었던 것' 이라는 말이 '이 파일에 남지 않는 경우' 와 어긋나던 것을 고쳤다.
+        '로그 파일·내보내기 기능은 아직 없습니다' 라는 UNEXPECTED_ERROR 안내도 로그 파일이 생긴 지금은 거짓이라 '내보내는 기능' 만 없다고 고쳤다."""
+        block = self.error_report_block()
+        self.assertGreaterEqual(len(block), 7, "첫 줄 하나와 하위 항목 여섯 이상")
+        for row in block:
+            self.assertLessEqual(len(row), 380, "항목이 다시 길어졌다: " + row[:30])
+        text = "\n".join(block)
+        self.assertNotIn("기록할 오류가 없었던 것입니다", text, "남지 않는 경우가 있으므로 '폴더가 없으면 오류가 없었다' 고 말할 수 없다")
+        self.assertIn("오류가 있어도 폴더가 없을 수 있습니다", text)
+        self.assertIn("오류가 없었다는 뜻이 아니니", text)
+        row = next(row for row in self.doc("TROUBLESHOOTING.md").splitlines() if row.startswith("| `UNEXPECTED_ERROR` |"))
+        self.assertNotIn("로그 파일·내보내기 기능은 아직 없습니다", row, "로그 파일은 있다 — 없는 것은 내보내기 기능이다")
+        self.assertIn("로그를 내보내는 기능은 아직 없습니다", row)
+        self.assertIn("로그를 내보내는 기능은 아직 없습니다", (SRC / "errors" / "catalog.py").read_text(encoding="utf-8"), "화면에 나오는 안내(오류 카탈로그)도 같다")
+
+    def test_no_living_document_keeps_a_sentence_the_log_file_made_false_and_no_text_over_claims_the_rotation(self):
+        """(3차 지시) 로그 파일이 생겨 거짓이 된 문장('로그 파일이 없다·설치 파일 묶음에서 정한다')이 지금 쓰는 문서와 코드 설명 어디에도 없고, 돌려쓰기를 과장하는 문장('막혀도 옛 파일이 그대로·잃지 않는다')이
+        변경 이력·결정 기록(D-488)을 포함해 어디에도 없다. 결정 기록과 변경 이력은 옛 결정·옛 변경의 원문을 그대로 두는 곳이라 '거짓이 된 문장' 은 훑지 않는다."""
+        stale = ("로그 파일은 설치 파일 묶음", "로그 파일과 내보내기 기능은 아직 없다", "로그 파일·내보내기 기능은 아직 없", "로그 파일 핸들러는 만들지 않았다(없는 기능)", "이 묶음은 파일을 쓰지 않는다")
+        over_claims = ("막혀도 옛 파일을 잃지 않는다", "옛 파일 셋도 그대로 둔다", "막혀도 옛 파일 셋이 그대로", "가장 오래된 `.2` 도 잃지 않는다", "이름 바꾸기가 막히면 옛 파일 셋은 한 글자도 바뀌지 않는다", "돌려쓰기가 막혔을 때 옛 파일 보존")
+        living = {name: self.doc(name) for name in ("SECURITY.md", "TROUBLESHOOTING.md", "ARCHITECTURE.md", "UI_STATES.md", "UI_DESIGN_SPEC.md", "PACKAGE.md", "PERSONAL_PC_TEST.md")}
+        living["README.md"] = (ROOT / "README.md").read_text(encoding="utf-8")
+        living["errorlog.py"] = (SRC / "security" / "errorlog.py").read_text(encoding="utf-8")
+        living["errors/catalog.py"] = (SRC / "errors" / "catalog.py").read_text(encoding="utf-8")
+        for name, text in living.items():
+            for phrase in stale:
+                self.assertNotIn(phrase, text, f"{name}: 로그 파일이 생겨 거짓이 된 문장이 남았다")
+        history = dict(living, **{"CHANGELOG.md": (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"), "D-488": self.decision_row("D-488")})
+        for name, text in history.items():
+            for phrase in over_claims:
+                self.assertNotIn(phrase, text, f"{name}: 돌려쓰기를 과장하는 문장이 남았다")
+        self.assertIn("`.2` 가 옛 `.1` 의 내용이 된다", self.decision_row("D-488"), "결정 기록이 막힌 단계에 따라 다른 모습을 적는다")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        line = next(row for row in changelog.splitlines() if row.startswith("- 앱이 처리하지 못한 오류의 이름과 코드 위치만"))
+        self.assertIn("첫 단계가 막히면 옛 파일 셋이 그대로이고", line)
+        self.assertIn("현재 파일 쪽이 막히면 `.2` 가 옛 `.1` 이 되며", line)
 
 
 if __name__ == "__main__":
