@@ -1103,7 +1103,8 @@ class DocsStayHonestTest(unittest.TestCase):
         for where in (self.doc("UI_STATES.md"), self.decision("D-32"), self.doc("UI_DESIGN_SPEC.md")):
             self.assertIn("콘솔 실행 기준", where)
         self.assertIn("표준 오류가 없는", self.doc("UI_STATES.md"))
-        self.assertIn("로그 파일은 설치 파일 묶음", self.doc("UI_STATES.md"))
+        self.assertIn("작은 오류 기록 파일", self.doc("UI_STATES.md"), "로그 파일을 설치 파일 묶음에 미루던 문장은 AP14(D-488)가 사실로 바꿨다 — 표준 오류가 없을 때는 작은 오류 기록 파일에 남는다")
+        self.assertIn("errors.log", self.doc("UI_STATES.md"))
 
     def test_the_docs_say_the_tooltip_holds_the_cut_text_not_the_whole_name(self):
         """툴팁은 '전체' 가 아니라 어댑터가 가린 뒤 30자로 줄인 글이다(독립 검증 N-5)."""

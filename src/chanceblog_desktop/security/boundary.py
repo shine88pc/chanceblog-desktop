@@ -7,9 +7,9 @@
   · `RedactingStream` — `sys.stdout`·`sys.stderr` 를 감싸 **줄 단위**로 가려서 쓴다. 여러 번의 `write()` 에 쪼개진 비밀도 줄이 끝날 때 한 덩어리로 가려지고, 개인 키 블록(여러 줄)은 끝줄까지 모아 통째로
     가리며, 값이 다음 줄에 오는 모양(`password:` 줄바꿈 값)도 한 줄을 쥐고 기다렸다 같이 가린다. 줄바꿈 없는 조각은 `flush()` 때 마지막 공백(비밀에는 공백이 없다) 앞까지만 내보내고 나머지는 줄 끝·`close()`·
     프로세스 종료까지 쥔다. 어떤 속성(`encoding`·`isatty`·`reconfigure`·`buffer` …)이든 원래 스트림으로 넘기므로 기존 코드가 그대로 돈다.
-  · 처리하지 못한 예외(`sys.excepthook`·`threading.excepthook`·`sys.unraisablehook`)는 추적 전체를 **가린 글**로 표준 오류에 남긴다(`--debug` 의 되던지기도 여기서 가려진다).
-  · `logging` — 기록이 만들어지는 순간(`LogRecord` 공장)에 문장·인자·추적을 가린 글로 굳히고, 루트 로거와 `logging.lastResort` 에도 같은 필터를 단다(로그 파일 핸들러는 만들지 않는다 — 없는 기능이다).
-  · Qt 가 C++ 쪽에서 직접 찍는 메시지는 `install_qt_message_handler` 가 가린 뒤 표준 오류로 보낸다(PySide6 는 그 함수 안에서만 불러온다 — 이 모듈을 불러온다고 Qt 가 필요하지 않다).
+  · 처리하지 못한 예외(`sys.excepthook`·`threading.excepthook`·`sys.unraisablehook`)는 추적 전체를 **가린 글**로 표준 오류에 남긴다(`--debug` 의 되던지기도 여기서 가려진다). 화면(GUI) 진입점이 오류 기록(`security/errorlog.py`, `arm_error_log`)을 켰다면 **오류 이름과 코드 위치만** 데이터 폴더의 작은 파일에도 남긴다(AP14 — 메시지 글은 읽지도 않는다).
+  · `logging` — 기록이 만들어지는 순간(`LogRecord` 공장)에 문장·인자·추적을 가린 글로 굳히고, 루트 로거와 `logging.lastResort` 에도 같은 필터를 단다(`logging` 에 파일 핸들러를 달지 않는다 — 오류 기록 파일은 `logging` 을 쓰지 않는 `security/errorlog.py` 가 따로 쓴다).
+  · Qt 가 C++ 쪽에서 직접 찍는 메시지는 `install_qt_message_handler` 가 가린 뒤 표준 오류로 보낸다(PySide6 는 그 함수 안에서만 불러온다 — 이 모듈을 불러온다고 Qt 가 필요하지 않다). 치명적(Critical·Fatal) 메시지는 종류·분류 이름만 오류 기록에도 남긴다(메시지 글은 읽지 않는다).
   · `mask_block`·`mask_deep` — 명령줄이 쓰는 여러 줄 글·JSON 값 가리기(예전에 `service/cli.py` 에 있던 것을 옮겼다 — 이름은 cli 에도 그대로 있다).
 
 `install()` 은 **멱등**이고 `uninstall()`(또는 `with install():`)로 원래대로 돌린다(시험이 설치한 뒤 반드시 되돌린다). 설치는 진입점(`__main__`·GUI)에서 한 번만 한다 — `service/cli.main(...)` 는 시험이
@@ -27,6 +27,7 @@ import sys
 import threading
 import traceback
 
+from . import errorlog
 from .mask import MAX_MASK_INPUT, mask
 
 PENDING_LIMIT = 4096                   # 줄바꿈 없이 쌓아 두는 조각의 상한(글자) — 넘으면 마지막 공백 앞까지 가려 내보낸다
@@ -301,18 +302,36 @@ class RedactingStream:
 
 
 # ---- 처리하지 못한 예외 ---------------------------------------------------------------------------------------------------------------------
+def _record(source, kind, value, trace):
+    """처리하지 못한 오류를 오류 기록 파일에도 남긴다(`arm_error_log` 로 켜졌을 때만 — 꺼져 있으면 아무 일도 없다). 오류를 처리하는 중에 불리므로 어떤 오류도 다시 내지 않는다."""
+    try:
+        return errorlog.record_exception(source, kind, value, trace)
+    except Exception:
+        return False
+
+
+def _record_qt(message_type, context):
+    try:
+        return errorlog.record_qt(message_type, context)
+    except Exception:
+        return False
+
+
 def _excepthook(kind, value, trace):
+    _record("main", kind, value, trace)
     report_exception(kind, value, trace)
 
 
 def _thread_excepthook(args):
     if args.exc_type is SystemExit:                       # 기본 훅도 스레드의 SystemExit 는 조용히 넘긴다
         return
+    _record("thread", args.exc_type, args.exc_value, getattr(args, "exc_traceback", None))
     name = getattr(args.thread, "name", None) or "(이름 없는 스레드)"
     _write_error(f"Exception in thread {name}:\n" + format_exception_masked(args.exc_type, args.exc_value, args.exc_traceback))
 
 
 def _unraisablehook(unraisable):
+    _record("unraisable", getattr(unraisable, "exc_type", None), getattr(unraisable, "exc_value", None), getattr(unraisable, "exc_traceback", None))
     try:
         head = f"{unraisable.err_msg or 'Exception ignored in'}: {mask(repr(unraisable.object))}"
     except Exception:
@@ -350,6 +369,7 @@ class _MaskingFilter(logging.Filter):
 
 # ---- Qt ------------------------------------------------------------------------------------------------------------------------------------
 def _qt_handler(message_type, context, message):
+    _record_qt(message_type, context)                      # 종류·분류 이름·C++ 쪽 파일:줄만 — 메시지 글은 기록 쪽으로 넘기지 않는다
     try:
         shown = mask_block(message)
     except Exception:
@@ -527,5 +547,17 @@ def install_gui(*, qt=True):
     return installed
 
 
-__all__ = ["BLOCK_LIMIT", "HOLD_LINE_LIMIT", "Installed", "PENDING_HARD_LIMIT", "PENDING_LIMIT", "QtHandle", "RedactingStream", "active", "format_exception_masked", "install", "install_gui", "install_qt_message_handler",
+def arm_error_log(resolve_folder):
+    """화면(GUI) 진입점이 부른다 — 지금 깔린 경계에 오류 기록(`security/errorlog.py`)을 이어 붙인다(AP14, D-488). `resolve_folder` 는 처음 쓸 때 부를 '데이터 폴더 알려 주기' 함수다 — 켜는 것만으로는 아무것도 읽거나 만들지 않는다.
+    경계가 깔려 있지 않으면 아무것도 하지 않고 False. 경계를 되돌리면(`uninstall`) 오류 기록도 함께 꺼진다. 명령줄 진입점과 예시 화면은 부르지 않는다."""
+    with _LOCK:
+        installed = _ACTIVE
+        if installed is None:
+            return False
+        log = errorlog.arm(resolve_folder)
+        installed._undo.append(lambda: errorlog.disarm(log))
+        return True
+
+
+__all__ = ["BLOCK_LIMIT", "HOLD_LINE_LIMIT", "Installed", "PENDING_HARD_LIMIT", "PENDING_LIMIT", "QtHandle", "RedactingStream", "active", "arm_error_log", "format_exception_masked", "install", "install_gui", "install_qt_message_handler",
            "mask_block", "mask_deep", "report_exception"]

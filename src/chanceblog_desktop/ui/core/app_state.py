@@ -104,8 +104,13 @@ def unexpected_line(kind, value):
 
 def report_unexpected(kind, value, stream=None):
     """처리하지 못한 예외를 `unexpected_line` 한 줄로 표준 오류에 남긴다(조용한 실패 금지 — 원인이 어디에도 안 남지 않게). 남겼으면 True. 표준 오류를 쓸 수 없어도 예외를 내지 않는다(이 함수는 오류를 처리하는 중에 불린다).
-    **표준 오류가 없는 실행**(`pythonw`·창 없는 exe — `sys.stderr` 가 None)에서는 남길 곳이 없어 False 를 돌려준다(`print(file=None)` 은 표준 출력으로 가므로 그대로 두면 아무것도 안 남았는데 True 가 된다) — 이 묶음은 파일을 쓰지 않는다(읽기 전용);
-    로그 파일은 설치 파일 묶음에서 정한다."""
+    **표준 오류가 없는 실행**(`pythonw`·창 없는 exe — `sys.stderr` 가 None)에서는 표준 오류에 남길 곳이 없어 False 를 돌려준다(`print(file=None)` 은 표준 출력으로 가므로 그대로 두면 아무것도 안 남았는데 True 가 된다) — 대신 **작은 오류 기록 파일**(`security/errorlog.py` — 화면 진입점이 켰을 때만,
+    오류 이름과 코드 위치뿐, AP14·D-488)에 한 줄이 남는다. 그 파일을 쓰지 못해도 이 함수의 한 줄 출력과 앱은 그대로다."""
+    try:
+        from ...security import errorlog                                                   # 늦게 — 오류를 처리하는 중에만 필요하다. 표준 오류가 없어도 파일에는 남긴다
+        errorlog.record_exception("slot", kind, value)
+    except Exception:                                                                       # 기록이 안 돼도 아래 한 줄 출력과 앱은 그대로다(이 함수는 오류를 처리하는 중에 불린다)
+        pass
     target = stream if stream is not None else sys.stderr
     if target is None:
         return False

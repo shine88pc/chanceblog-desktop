@@ -6,6 +6,8 @@
 
 **사용법 오류는 입력한 값을 되풀이하지 않는다** — 파이썬 `argparse` 의 기본 오류 문구(`ignored explicit argument '…'`·`unrecognized arguments: …`)는 사용자가 친 값을 그대로 보여 주므로,
 값(키가 들어 있을 수도 있다)이 화면·기록에 남지 않게 `GuiParser.error` 가 값 없는 고정 문장만 낸다. 종료 코드는 명령줄의 사용법 오류와 같은 2 이다.
+
+**처리하지 못한 오류는 작은 기록 파일에도 남는다**(AP14, `security/errorlog.py`) — 내 데이터 화면만(`--sample` 은 아무것도 저장하지 않으므로 켜지 않는다) 켜고, 앱을 켜기만 해서는 파일을 만들지 않으며 첫 오류가 날 때 데이터 폴더의 `logs/errors.log` 를 처음 만든다.
 """
 from __future__ import annotations
 
@@ -62,6 +64,14 @@ def build_parser():
     return parser
 
 
+def _data_folder_of(data_dir):
+    """오류 기록이 **처음 쓸 때** 부를 '데이터 폴더 알려 주기' — 앱이 쓰는 해석 함수(`Workspace.resolve`) 그대로다(새 경로 계산이 없다). 부르기 전에는 아무것도 읽거나 만들지 않고, 안쪽에서 서비스를 늦게 가져온다."""
+    def resolve():
+        from ..service.context import Workspace
+        return Workspace.resolve(data_dir).root
+    return resolve
+
+
 def main(argv=None, *, out=None):
     from ..security import boundary
     boundary.install()                                                                # 맨 앞 — 묶음 실행 파일의 진입점(`gui_entry`)은 `__main__` 을 거치지 않고 여기로 바로 들어온다. 공통 경계(표준 출력·오류·로그·예외 훅)가 두 진입점 모두에 깔리게 한다(멱등 — `__main__` 이 먼저 깔았으면 그대로). 사용법 오류·버전 오류의 글도 이미 가려져 나간다
@@ -78,6 +88,8 @@ def main(argv=None, *, out=None):
     if not single_instance.claim(args.data_dir, sample=args.sample):                  # 같은 데이터 폴더로 이미 열려 있으면 그 창을 앞으로 가져오고 새 창 없이 조용히 끝난다(종료 코드 0) — 묶음 실행 파일(`gui_entry`)도 이 함수를 지나므로 두 시작 길이 같은 장치다. `--sample` 은 따로 열 수 있고 `--selftest`·명령줄은 여기를 지나지 않는다. Qt 를 불러오기 전이라 둘째 실행은 빨리 끝난다
         return 0
     boundary.install_gui()                                                            # PySide6 가 있다고 확인된 뒤 — Qt 가 직접 찍는 메시지도 가려서 표준 오류로(멱등 — `__main__` 이 먼저 걸었으면 그대로). 화면을 만들기 전이다
+    if not args.sample:                                                               # 예시 화면은 아무것도 저장하지 않는다 — 오류 기록 파일도 만들지 않는다
+        boundary.arm_error_log(_data_folder_of(args.data_dir))                        # 처리하지 못한 오류의 이름·코드 위치를 데이터 폴더의 작은 파일에 남긴다(AP14, D-488) — 켜기만으로는 아무것도 만들지 않고 첫 오류 때 처음 만든다. 경계를 되돌리면 함께 꺼진다
     from .adapters import ServiceHomeProvider
     from .core.services import FakeHomeProvider
     from .qt.app import run
