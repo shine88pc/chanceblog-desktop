@@ -96,7 +96,7 @@ def _saved_card(shell, saved, ui):
         retry.clicked.connect(lambda: shell.drf_saved_retry())
         inner.addWidget(retry, 0, Qt.AlignLeft)
     elif not saved["rows"]:
-        inner.addWidget(UI.label(saved["empty"], "muted", wrap=True))
+        inner.addWidget(UI.label(saved["empty"], "sub", wrap=True))                  # 안내 문장 — 흐린 글(Muted, 대비 3.2)이 아니라 보조 글(Secondary, 5.4)로 읽힌다(AP15, D-487)
     else:
         if saved["unreadable_note"]:
             inner.addWidget(UI.label(saved["unreadable_note"], "small", wrap=True))
@@ -323,7 +323,7 @@ def _chips_card(shell, ui, title, parts, copy_vm):
 
 def _text_card(title, text, missing=False, copy=None):
     card, inner = _section(title)
-    inner.addWidget(UI.label(text, "muted" if missing else "body", wrap=True))
+    inner.addWidget(UI.label(text, "sub" if missing else "body", wrap=True))        # 값이 없을 때의 안내 문장(`정하지 못했어요 — …`)은 보조 글(AP15, D-487)
     if copy is not None:
         inner.addWidget(copy, 0, Qt.AlignLeft)
     return card
@@ -350,7 +350,7 @@ def _checks_card(shell, vm, ui):
         layout.setContentsMargins(K.SPACE["2"], 0, 0, K.SPACE["2"])
         layout.setSpacing(K.SPACE["2"])
         for line in (group["lines"] or ([group["empty"]] if group.get("empty") else [])):
-            layout.addWidget(UI.label("· " + line if group["lines"] else line, "small" if group["lines"] else "muted", wrap=True))
+            layout.addWidget(UI.label("· " + line if group["lines"] else line, "small" if group["lines"] else "sub", wrap=True))        # 확인 권장이 없다는 결과 문장은 보조 글(AP15, D-487)
         accordion = UI.Accordion(group["key"], group["title"], [{"tone": group["tone"], "text": group["chip"]}], body, group["open"], vm["open_text"], vm["closed_text"], group["chip"], focus_key="drf-checks:" + group["key"])
         accordion.toggled.connect(shell.drf_checks_toggled)
         ui.accordions[group["key"]] = accordion

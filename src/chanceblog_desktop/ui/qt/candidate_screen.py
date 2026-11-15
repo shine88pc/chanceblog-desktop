@@ -276,7 +276,7 @@ def detail_content(shell, vm):
         if factors["note"]:
             inner.addWidget(UI.label(factors["note"], "caption", wrap=True))
     else:
-        inner.addWidget(UI.label(factors["empty"], "muted", wrap=True))
+        inner.addWidget(UI.label(factors["empty"], "sub", wrap=True))               # 결과 문장 — 흐린 글이 아니라 보조 글(AP15, D-487)
     layout.addWidget(card)
     reason = vm["reason"]
     card, inner = _section(reason["title"])
@@ -284,7 +284,7 @@ def detail_content(shell, vm):
         for line in reason["lines"]:
             inner.addWidget(UI.label("· " + line, "body", wrap=True))
     else:
-        inner.addWidget(UI.label(reason["empty"], "muted", wrap=True))
+        inner.addWidget(UI.label(reason["empty"], "sub", wrap=True))                # 결과 문장 — 보조 글(AP15, D-487)
     layout.addWidget(card)
     trend = vm["trend"]
     card, inner = _section(trend["title"])
@@ -302,7 +302,7 @@ def detail_content(shell, vm):
     if safety["stop"]:
         inner.addWidget(UI.label(safety["stop"], "small", wrap=True))
     if safety["none"]:
-        inner.addWidget(UI.label(safety["none"], "muted", wrap=True))
+        inner.addWidget(UI.label(safety["none"], "sub", wrap=True))                 # 결과 문장 — 보조 글(AP15, D-487)
     layout.addWidget(card)
     if vm["hold"] is not None:
         card, inner = _section(vm["hold"]["label"])
