@@ -40,6 +40,6 @@ REF_T = {
     "ref_done_added": "보관했어요.", "ref_done_saved": "저장했어요.", "ref_done_deleted": "지웠어요.", "ref_done_file": "파일에서 올렸어요.",
     "ref_note_cp949": "옛 메모장 글자 모양(CP949)으로 읽었어요. 글자가 깨져 보이면 UTF-8 로 저장해 다시 올려 주세요.",
     "ref_fail_load": "보관한 글을 읽지 못했어요. 파일은 고치거나 지우지 않았어요.", "ref_fail_open": "글을 열지 못했어요. 다시 목록을 불러와 주세요.",
-    "ref_fail_other": "처리하지 못했어요. 잠시 뒤 다시 해 주세요.", "ref_none_selected": "먼저 목록에서 글을 열어 주세요.",
+    "ref_fail_other": "처리하지 못했어요. 잠시 뒤 다시 해 주세요.", "ref_fail_folder": "참고 글을 보관할 폴더를 쓸 수 없어요. 데이터 폴더 설정을 확인해 주세요.", "ref_none_selected": "먼저 목록에서 글을 열어 주세요.",
     "ref_running": "처리하는 중이에요…",
 }

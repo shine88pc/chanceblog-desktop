@@ -115,6 +115,9 @@ class StyleDialog(QWidget):
         outer.addWidget(self.scroll, 1)
         row = QHBoxLayout()
         row.setSpacing(K.SPACE["2"])
+        self.refs_button = UI.Button("ghost", T["ref_entry_open"], accessible=T["ref_entry_open_a11y"], focus_key="style:refs")      # 참고 글 보관함(결정 D-490)의 진입점 — 이 대화상자는 그대로 두고 단추 하나만 더했다
+        self.refs_button.clicked.connect(lambda _=False: self.shell.references_open())
+        row.addWidget(self.refs_button)
         row.addStretch(1)
         self.again_button = UI.Button("ghost", T["style_again"], accessible=T["style_again_a11y"], focus_key="style:again")
         self.again_button.clicked.connect(lambda _=False: self.shell.style_again())
@@ -288,7 +291,7 @@ class StyleDialog(QWidget):
 
     def _tab_order(self):
         """Tab 순서 — 몸(스크롤) → 파일 고르기 → 빼기들 → 붙여 넣기 칸 → (결과 모습의) 다시 하기 → 닫기 → 계산하기. 안 보이거나 꺼진 부품은 Qt 가 건너뛴다."""
-        chain = [self.scroll, self.pick_button, *self.slot_buttons, self.paste, self.again_button, self.close_button, self.compute_button]
+        chain = [self.scroll, self.pick_button, *self.slot_buttons, self.paste, self.refs_button, self.again_button, self.close_button, self.compute_button]
         for first, second in zip(chain, chain[1:]):
             QWidget.setTabOrder(first, second)
 
