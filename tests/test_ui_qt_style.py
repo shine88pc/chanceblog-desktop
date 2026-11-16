@@ -45,7 +45,7 @@ P_MD = "# 제목\n\n## 하나\n\n## 둘\n\n저는 갑니다. 정말요? 좋아�
 Q_TXT = "갑니다. 정말요? 좋아요. 끝났다."
 Q_TWO = "저는 갑니다.\n\n정말요?"
 LONG = " ".join(["가나다라마바사아자차카타파하" * 4 + "입니다." for _ in range(12)])
-BUTTON_NAMES = {text.T["style_entry_open_a11y"], text.T["style_pick_a11y"], text.T["style_compute_a11y"], text.T["style_close_a11y"], text.T["style_again_a11y"]}
+BUTTON_NAMES = {text.T["style_entry_open_a11y"], text.T["style_pick_a11y"], text.T["style_compute_a11y"], text.T["style_close_a11y"], text.T["style_again_a11y"], text.T["ref_entry_open_a11y"]}      # 마지막은 참고 글 보관함(D-490)의 진입 단추 — 이 대화상자가 가진 단 하나의 새 단추다
 
 
 class Picker:
@@ -280,7 +280,10 @@ class DialogShapeTest(Base):
         QTest.keyClick(form.paste, Qt.Key_Tab)
         self.settle(2)
         self.assertEqual(form.paste.toPlainText(), "", "Tab 은 글자가 아니라 다음 칸으로 가는 키다")
-        self.assertIs(QApplication.focusWidget(), form.close_button, "붙여 넣기 칸 다음은 `닫기`(다시 하기는 결과 모습에만 있다)")
+        self.assertIs(QApplication.focusWidget(), form.refs_button, "붙여 넣기 칸 다음은 단추 줄의 맨 왼쪽 `참고 글 보관함 열기`(D-490 — 화면에 보이는 순서대로)")
+        QTest.keyClick(form.refs_button, Qt.Key_Tab)
+        self.settle(2)
+        self.assertIs(QApplication.focusWidget(), form.close_button, "그다음은 `닫기`(다시 하기는 결과 모습에만 있다)")
         form.paste.setFocus(Qt.OtherFocusReason)
         self.settle(2)
         QTest.keyClick(form.paste, Qt.Key_Backtab)
@@ -331,7 +334,7 @@ class DialogShapeTest(Base):
         self.settle(2)
         self.assertEqual(states(), (True, True, False), "모두 비우면 처음과 같다")
 
-    def test_there_is_no_save_check_box_or_confirmation_and_only_the_five_known_buttons(self):
+    def test_there_is_no_save_check_box_or_confirmation_and_only_the_six_known_buttons(self):
         window, form = self.with_two_files()
         names = {button.accessibleName() for button in form.findChildren(QAbstractButton)}
         self.assertEqual(names - {text.T["style_remove_a11y"].format(n=1), text.T["style_remove_a11y"].format(n=2)}, BUTTON_NAMES - {text.T["style_entry_open_a11y"]})
@@ -366,18 +369,18 @@ class DialogShapeTest(Base):
                     seen.append(focus)
                     QTest.keyClick(focus, Qt.Key_Tab)
                     self.settle(2)
-                expected = [form.scroll, *form.slot_buttons, form.close_button, form.compute_button] if phase == "select" else [form.scroll, form.again_button, form.close_button]
+                expected = [form.scroll, *form.slot_buttons, form.refs_button, form.close_button, form.compute_button] if phase == "select" else [form.scroll, form.refs_button, form.again_button, form.close_button]
                 start = seen.index(form.scroll)
-                self.assertEqual(seen[start:start + len(expected)], expected, "Tab 순서: 몸 → (파일 고르기) → 빼기들 → (붙여 넣기 칸) → (다시 하기) → 닫기 → (계산하기)")
+                self.assertEqual(seen[start:start + len(expected)], expected, "Tab 순서: 몸 → (파일 고르기) → 빼기들 → (붙여 넣기 칸) → 참고 글 보관함 열기(D-490) → (다시 하기) → 닫기 → (계산하기)")
                 if phase == "select":
-                    for widget in (form.scroll, form.close_button, form.compute_button, *form.slot_buttons):                     # 둘을 골랐으니 파일 고르기와 붙여 넣기 칸은 꺼져 있다(Tab 이 건너뛴다)
+                    for widget in (form.scroll, form.refs_button, form.close_button, form.compute_button, *form.slot_buttons):                     # 둘을 골랐으니 파일 고르기와 붙여 넣기 칸은 꺼져 있다(Tab 이 건너뛴다)
                         self.assertIn(widget, seen, widget.accessibleName())
                     for widget in (form.pick_button, form.paste):
                         self.assertNotIn(widget, seen, "꺼진 칸에는 Tab 이 가지 않는다")
                     window.style_compute()
                     self.wait_phase(window, "result")
                 else:
-                    for widget in (form.scroll, form.again_button, form.close_button):
+                    for widget in (form.scroll, form.refs_button, form.again_button, form.close_button):
                         self.assertIn(widget, seen, widget.accessibleName())
                     self.assertNotIn(form.compute_button, seen, "결과 모습에는 계산하기가 없다")
 

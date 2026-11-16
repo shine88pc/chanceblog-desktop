@@ -197,6 +197,20 @@ ui/style_adapter.py → service/own_posts.py(읽기 전용) · content/style_sta
 
 **Tab 순서**: 몸(스크롤) → `파일 고르기` → `빼기`들 → 붙여 넣기 칸 → `다른 글로 다시 하기`(결과 모습만) → `닫기` → `계산하기`(고르기 모습만). 안 보이거나 꺼진 부품은 Qt 가 건너뛴다. 열면 `파일 고르기`, 결과가 나오면 몸(스크롤), 고른 뒤에는 `파일 고르기`(꺼졌으면 `계산하기`, 그것도 꺼졌으면 `닫기`)에 포커스가 간다.
 
+## 3-8. 참고 글 보관함 부품 (D-489·D-490 — `ui/qt/references_dialog.py`, 파일에 쓰는 대화상자)
+
+화면은 컨트롤러(`ui/core/references_view.py` 의 `ReferenceLibrary`)의 뷰모델을 공통 부품으로 조립하기만 하고 **이 화면 코드에는 파일을 쓰거나 지우는 호출이 없다** — 서비스 호출은 공급자(`ui/references_adapter.py` 의 `ServiceReferencesProvider`)가 **화면 스레드에서 곧바로** 하고(작업 스레드가 아니다 — 50편이 모두 10만 자일 때 열기 0.7초·저장 0.39초 안팎이라 스레드를 두지 않았다, `UI_STATES.md` 5-6d), 파일을 바꾸는 일은 `service/references.py` 한 곳이 한다. 진입은 `ui/qt/style_dialog.py` 의 문체 보기 대화상자 안의 `참고 글 보관함 열기` 단추 하나다(다른 화면은 바뀌지 않는다).
+
+```text
+core/references_view.py(ReferenceLibrary — 상태·세대 번호·뷰모델, ReferencesProvider 틀·FakeReferencesProvider)
+  → qt/references_dialog.py(ReferencesDialog) ← qt/style_dialog.py 안의 `참고 글 보관함 열기`
+ui/references_adapter.py(ServiceReferencesProvider) → service/references.py(저장·읽기·지우기 — 화면 없음)
+```
+
+**Tab 순서**: 몸(스크롤) → 목록의 `열기`들 → `다시 읽기`(목록을 못 읽었을 때만 보인다) → 제목 칸 → 본문 칸 → 확인 줄 단추 → `지우기` → `파일에서 올리기` → `새 글` → `닫기` → `저장`. 안 보이거나 꺼진 부품은 Qt 가 건너뛰고, 실제로 Tab·Shift+Tab 을 눌러 이 순서와 대화상자 밖으로 새지 않음을 시험이 본다. 글을 열면 편집 칸(제목 칸)이 보이는 곳으로 스크롤되고 포커스가 제목 칸에 간다. 열린 글 줄은 파랑과 '지금 편집 중' 글자·접근 이름 둘 다로 표시한다.
+
+문구는 `ui/core/text.py` 의 `T` 가 정본이다. 상태별 동작은 `UI_STATES.md` 5-6d, 화면 규칙은 `UI_DESIGN_SPEC.md` 4-9 에 있다. **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 16절).
+
 ## 4. 새 부품을 더할 때
 
 ① 색·크기는 `tokens.py` 에 키를 더하고 `theme.py` 스타일시트에서만 쓴다 ② 접근 이름·키보드·포커스 링 ③ `components.py` 에 한 곳으로(그리는 부품은 `gauges.py`, 줄 모양 부품은 `bars.py` — 새 파일도 직접 색·인라인 스타일 시험이 훑는다. 계산은 PySide6 없이 시험하도록 `ui/core/` 의 순수 모듈에 둔다) ④ 시험(접근 이름·36px·직접 색 없음은 자동으로 훑는다) ⑤ 이 표에 한 줄.

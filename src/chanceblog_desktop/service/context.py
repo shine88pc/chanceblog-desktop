@@ -12,6 +12,7 @@ import json
 import ntpath
 import os
 import posixpath
+import secrets
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -93,11 +94,13 @@ def _write_durably(temp, payload):
         os.close(fd)
 
 
-def write_json(path, data):
+def write_json(path, data, *, unique_temp=False):
     """JSON 파일을 임시 파일에 쓰고 디스크에 내려보낸 뒤(`fsync`) 이름을 바꿔 넣는다 — 쓰다 멈추거나 전원이 나가도 옛 파일이 그대로 남고, 새 파일은 내용이 다 쓰인 것만 자리를 차지한다.
-    이름 바꾸기가 윈도 공유 위반(`PermissionError` 의 `winerror` 5·32)으로 막히면 짧게(합쳐 0.45초 안, 여섯 번 시도) 다시 하고, 그래도 안 되면 기존 오류를 그대로 낸다(다른 오류는 다시 하지 않는다)."""
+    이름 바꾸기가 윈도 공유 위반(`PermissionError` 의 `winerror` 5·32)으로 막히면 짧게(합쳐 0.45초 안, 여섯 번 시도) 다시 하고, 그래도 안 되면 기존 오류를 그대로 낸다(다른 오류는 다시 하지 않는다).
+    `unique_temp=True` 면 임시 파일 이름이 쓸 때마다 다르다(`<이름>.<프로세스 번호>-<무작위 8자>.tmp`) — 같은 파일을 두 프로세스가 동시에 고쳐도 서로의 임시 파일을 덮거나 가져가 글 파일이 깨지거나 사라지지 않고 마지막 쓰기가 이긴다
+    (참고 글 보관함이 쓴다, D-492). 기본(`False`)은 고정 이름 `<이름>.tmp` 그대로다 — 설정 파일 같은 기존 쓰기는 앱이 한 번에 하나만 열려 바꾸지 않았다. 쓰다 실패하면 어느 이름이든 임시 파일을 지운다."""
     path = Path(path)
-    temp = path.with_name(path.name + ".tmp")
+    temp = path.with_name(f"{path.name}.{os.getpid()}-{secrets.token_hex(4)}.tmp") if unique_temp else path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         _write_durably(temp, (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))

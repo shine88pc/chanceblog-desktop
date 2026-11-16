@@ -1,7 +1,7 @@
 """'내 글 문체 참고값 보기'(N-3a)의 Qt 부품 — 설정 화면 맨 아래의 작은 진입 카드(`style_entry_card`)와 읽기 전용 대화상자의 안쪽(`StyleDialog`). 결정 D-330–D-339.
 화면은 뷰모델(`ui/core/style_view.py` 의 `StyleStudy.view` 가 만든 딕셔너리)을 공통 부품(`components.py`)으로 조립하기만 한다. 색·글꼴·크기·간격은 토큰(`K`·스타일시트)에서만 오고 여기서 인라인으로 정하지 않는다.
 
-**저장도 AI 도 네트워크도 없다.** 저장 단추·체크 칸·확인창이 없고(있는 단추는 `파일 고르기`·`빼기`·`계산하기`·`다른 글로 다시 하기`·`닫기` 뿐이다) 프로필·설정·보관함은 읽지도 쓰지도 않는다. 이 화면에서 글이 있는 곳은 **붙여 넣기 칸 하나뿐**이고
+**저장도 AI 도 네트워크도 없다.** 저장 단추·체크 칸·확인창이 없고(있는 단추는 `파일 고르기`·`빼기`·`계산하기`·`다른 글로 다시 하기`·`닫기` 와, 다른 대화상자('참고 글 보관함', D-490)를 여는 `참고 글 보관함 열기` 하나뿐이다 — 이 대화상자 자신은 여전히 아무것도 저장하지 않는다) 프로필·설정·보관함은 읽지도 쓰지도 않는다. 이 화면에서 글이 있는 곳은 **붙여 넣기 칸 하나뿐**이고
 (`PasteBox`) 계산이 끝나면 칸을 비우며(되돌리기 기록까지) 어느 길로든 대화상자가 닫히면 칸·고른 글·결과 표를 모두 버린다(`Dialog.cleanups` 의 정리 훅). 결과 표에는 숫자와 고정 문장뿐이고 글의 문장은 없다.
 모든 눌리는 부품은 키보드(Tab·Enter·Space)로 쓸 수 있고 접근 이름을 가지며 누르는 칸은 36px 이상이다. 색만으로 상태를 알리지 않는다(안내는 글이 늘 함께 있고 거절 문장만 빨강 계열이다).
 몸(안내·고르기·표)은 창이 낮을 때 스크롤되고(`DialogScroll`, 키보드로 스크롤할 수 있게 Tab 정거장이다) 단추 줄은 늘 아래에 보인다. 최소 창(900×560)에서도 가로 스크롤이나 잘림이 없다.
@@ -115,6 +115,9 @@ class StyleDialog(QWidget):
         outer.addWidget(self.scroll, 1)
         row = QHBoxLayout()
         row.setSpacing(K.SPACE["2"])
+        self.refs_button = UI.Button("ghost", T["ref_entry_open"], accessible=T["ref_entry_open_a11y"], focus_key="style:refs")      # 참고 글 보관함(결정 D-490)의 진입점 — 이 대화상자는 그대로 두고 단추 하나만 더했다
+        self.refs_button.clicked.connect(lambda _=False: self.shell.references_open())
+        row.addWidget(self.refs_button)
         row.addStretch(1)
         self.again_button = UI.Button("ghost", T["style_again"], accessible=T["style_again_a11y"], focus_key="style:again")
         self.again_button.clicked.connect(lambda _=False: self.shell.style_again())
@@ -288,7 +291,7 @@ class StyleDialog(QWidget):
 
     def _tab_order(self):
         """Tab 순서 — 몸(스크롤) → 파일 고르기 → 빼기들 → 붙여 넣기 칸 → (결과 모습의) 다시 하기 → 닫기 → 계산하기. 안 보이거나 꺼진 부품은 Qt 가 건너뛴다."""
-        chain = [self.scroll, self.pick_button, *self.slot_buttons, self.paste, self.again_button, self.close_button, self.compute_button]
+        chain = [self.scroll, self.pick_button, *self.slot_buttons, self.paste, self.refs_button, self.again_button, self.close_button, self.compute_button]
         for first, second in zip(chain, chain[1:]):
             QWidget.setTabOrder(first, second)
 
