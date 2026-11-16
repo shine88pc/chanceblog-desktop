@@ -38,6 +38,7 @@ class BlogsController:
         self.selected = DEFAULT_SELECTED                     # 폼에 열린 슬롯 — 카드로 보이는 슬롯이 하나도 없으면 None(종류 고르기가 열린다)
         self.adding = set()                                  # 새 블로그로 열어 둔 빈 슬롯들 — 저장하기 전까지 카드에 '등록 전' 으로 보인다
         self.picking = False                                 # '블로그 추가' 의 종류 고르기가 열려 있나
+        self.return_to = None                                # 새 블로그 폼을 열기 전에 폼에 열려 있던 카드 — 새 블로그 '취소' 뒤에 돌아가는 자리(없거나 사라졌으면 첫 카드)
         self.custom_open = set()                             # (슬롯, 칸 이름) — '직접 입력' 을 눌러 입력 칸을 연 보기 칸들
         self.drafts = {}                                     # 슬롯 → {고친 칸 이름: 입력값}(고친 칸만 — 안 고친 칸은 늘 저장된 최신 값을 따른다)
         self.touched = {}                                    # 슬롯 → 사용자가 고친 칸 이름들
@@ -70,12 +71,15 @@ class BlogsController:
         return job
 
     def apply_loaded(self, data):
-        self.data, self.failure = data, None
+        stale = self._adopt(data)
+        self.failure = None
         self.state = "normal"
         self._normalize_selection()
         if self.reload_after_conflict:
             self.reload_after_conflict = False
-            self.notice = ("warning", T["blogs_stale_reloaded"])
+            self.notice = stale or ("warning", T["blogs_stale_reloaded"])              # 입력을 옮겼거나 버렸다면 '입력한 내용은 그대로 두었어요' 가 사실이 아니라 그 이유를 알린다
+        elif stale:
+            self.notice = stale
         return True
 
     def apply_load_failed(self, failure, when=None):
@@ -122,11 +126,92 @@ class BlogsController:
             return ()
         return tuple(slot.key for slot in self.data.slots if bf.is_listed(slot.key, slot.raw(), slot.key in self.adding))
 
-    def _normalize_selection(self):
-        """폼에 열린 슬롯이 카드로 보이는 슬롯이 아니면 첫 카드로 옮기고(없으면 None — 종류 고르기가 열린다)."""
+    def _normalize_selection(self, prefer=None):
+        """폼에 열린 슬롯이 카드로 보이는 슬롯이 아니면 `prefer`(새 블로그 폼을 열기 전의 카드 — 아직 카드면)로, 아니면 첫 카드로 옮기고(없으면 None — 종류 고르기가 열린다)."""
         keys = self.listed_keys()
         if self.selected not in keys:
-            self.selected = keys[0] if keys else None
+            self.selected = prefer if prefer in keys else (keys[0] if keys else None)
+
+    def picker_shown(self):
+        """종류 고르기가 보이나 — 사용자가 '블로그 추가' 로 열었거나, 폼에 열린 카드가 없어(카드가 하나도 없는 처음) 처음부터 열려 있다."""
+        return self.data is not None and self.state == "normal" and (self.picking or self.selected not in self.listed_keys())
+
+    def has_unsaved(self):
+        """저장하지 않은 입력이 있나 — 고쳐서 저장 전인 카드가 있거나, 새 블로그 폼에 미리 넣은 제안 별명 말고 입력한 것이 있다. 쓰는 중이면 없다(앱을 닫아도 쓰기를 마칠 때까지 기다린다)."""
+        if self.data is None or self.state != "normal" or self.busy:
+            return False
+        for key in self.listed_keys():
+            names = set(self.dirty_names(key))
+            if self._is_fresh(key) and bf.clean_line(self.values(key).get("alias")) == bf.suggest_alias(key):
+                names.discard("alias")
+            if names:
+                return True
+        return False
+
+    def close_dialog(self):
+        """앱 닫기 확인창의 글(없으면 None) — 저장하지 않은 입력이 있을 때만이다. 처음 포커스는 취소(삭제 확인창과 같은 원칙)."""
+        if not self.has_unsaved():
+            return None
+        return {"title": T["blogs_close_title"], "body": T["blogs_close_body"], "ok": T["blogs_close_ok"], "cancel": T["blogs_close_cancel"]}
+
+    def _pop_input(self, key):
+        """그 슬롯에 대한 입력 상태(초안·고친 칸·저장 시도·직접 입력 칸·서비스가 알린 문제)를 꺼내 지운다 → 꺼낸 것(옮길 때 쓴다)."""
+        taken = {"touched": self.touched.pop(key, None), "problems": self.service_problems.pop(key, None), "submitted": key in self.submitted,
+                 "custom": {name for slot, name in self.custom_open if slot == key}}
+        self.drafts.pop(key, None)
+        self.submitted.discard(key)
+        self.custom_open = {item for item in self.custom_open if item[0] != key}
+        return taken
+
+    def _carry_input(self, old, target, effective, taken):
+        """새 블로그 폼의 입력을 `old` 슬롯에서 같은 종류의 `target` 슬롯으로 옮긴다 — 사용자가 본 값 그대로(`effective`)이고, 그 슬롯의 바탕값과 같은 칸은 초안에서 뺀다. 제안 별명을 그대로 두었다면 새 슬롯의 번호로 다시 제안한다."""
+        effective = dict(effective)
+        if bf.clean_line(effective.get("alias")) == bf.suggest_alias(old):
+            effective["alias"] = bf.suggest_alias(target)
+        base = self.form_base(target)
+        self.adding.add(target)
+        self.drafts[target] = {name: effective[name] for name in bf.dirty_names(target, base, {**base, **effective})}
+        if taken["touched"]:
+            self.touched[target] = taken["touched"]
+        if taken["problems"]:
+            self.service_problems[target] = taken["problems"]
+        if taken["submitted"]:
+            self.submitted.add(target)
+        self.custom_open |= {(target, name) for name in taken["custom"]}
+        if self.selected == old:
+            self.selected = target
+
+    def _adopt(self, data):
+        """새로 읽은(또는 쓴 뒤 받은) 자료로 바꾸고, 화면이 들고 있던 입력을 그 자료에 맞게 다시 정리한다 → 알릴 말 `(수준, 글)` 또는 None.
+        ① 새 블로그로 열어 둔 슬롯이 그 사이 다른 곳에서 채워졌으면(`_is_fresh` 가 아니다) 그 입력을 남의 블로그에 얹지 않는다 — 같은 종류의 다른 빈 슬롯이 있으면 입력을 그대로 옮겨 그 슬롯으로 폼을 다시 열고, 없으면 버린다(둘 다 이유를 알린다).
+        ② 카드로 보이지도 않고 새 블로그로 열어 둔 것도 아닌 슬롯의 낡은 입력은 지운다 — 그 슬롯이 다른 곳에서 비워졌다면 다음 '블로그 추가' 에서 되살아나지 않게(고치던 입력을 버렸으면 알린다)."""
+        before = {key: self.values(key) if self.data is not None else {**bf.form_base(key, bf.default_values(key)), **self.drafts.get(key, {})} for key in self.adding}     # 읽기 오류로 자료를 비운 뒤에도 입력은 남아 있다
+        self.data = data
+        moved, dropped = False, []
+        for key in [slot for slot in bf.SLOTS if slot in self.adding]:
+            if self._is_fresh(key):
+                continue
+            taken = self._pop_input(key)
+            self.adding.discard(key)
+            target = bf.free_slot(bf.KIND_KEY[key], self.slot_raws(), self.adding)
+            if target is None:
+                dropped.append(key)
+            else:
+                self._carry_input(key, target, before[key], taken)
+                moved = True
+        if self.selected in dropped:
+            self.selected = None
+            self._normalize_selection(self.return_to)
+        listed = set(self.listed_keys())
+        gone = {key for key in (*self.drafts, *self.touched, *self.service_problems, *self.submitted, *(slot for slot, _ in self.custom_open)) if key not in listed}
+        lost = any(self.drafts.get(key) for key in gone)
+        for key in gone:
+            self._pop_input(key)
+        if dropped:
+            return "warning", T["blogs_taken_dropped"]
+        if moved:
+            return "warning", T["blogs_taken_moved"]
+        return ("warning", T["blogs_edit_gone"]) if lost else None
 
     def _is_fresh(self, key):
         """새로 연결하는 중이고 저장된 것이 아직 없는 슬롯."""
@@ -156,13 +241,15 @@ class BlogsController:
 
     def start_adding(self, kind):
         """종류를 골랐다 → 같은 종류의 빈 슬롯을 새 블로그로 열고 그 슬롯 열쇠를 돌려준다(없으면 None). 슬롯 이름은 사용자에게 보이지 않고, 별명은 종류 + 번호로 제안해 미리 넣는다."""
-        if self.data is None or self.busy or kind not in bf.KINDS:
+        if self.data is None or self.busy or kind not in bf.KINDS or not self.picker_shown():                  # 종류 고르기가 열려 있을 때만 — 신호가 겹쳐 두 번 와도 슬롯 둘이 잡히지 않는다
             return None
         key = bf.free_slot(kind, self.slot_raws(), self.adding)
         if key is None:
             return None
+        self.return_to = self.selected if self.selected in self.listed_keys() else None                       # 새 블로그 '취소' 뒤에 돌아갈 카드
+        self._pop_input(key)                                                                                  # 이 자리에 낡은 입력이 남아 있어도 되살리지 않는다
         self.adding.add(key)
-        self.drafts.setdefault(key, {"alias": bf.suggest_alias(key)})
+        self.drafts[key] = {"alias": bf.suggest_alias(key)}
         self.selected, self.picking, self.notice = key, False, None
         return key
 
@@ -180,6 +267,8 @@ class BlogsController:
             return False
         if self.data is not None and key in self.slot_map() and key not in self.listed_keys():
             self.adding.add(key)
+        if key in self.adding and key != self.selected and self.selected in self.listed_keys():
+            self.return_to = self.selected                                                                    # 입력 중인 새 블로그 카드로 옮겨 오면, 취소할 때 돌아갈 곳은 방금 있던 카드다
         self.selected, self.notice, self.picking = key, None, False
         return True
 
@@ -268,13 +357,11 @@ class BlogsController:
         if self.busy or key is None:
             return False
         fresh = self._is_fresh(key)
-        for table in (self.drafts, self.touched, self.service_problems):
-            table.pop(key, None)
-        self.submitted.discard(key)
-        self.custom_open = {item for item in self.custom_open if item[0] != key}
+        self._pop_input(key)
         if fresh:
             self.adding.discard(key)
-            self._normalize_selection()
+            self._normalize_selection(self.return_to)                                                         # 취소하면 새 블로그를 열기 전의 카드로 돌아간다(없거나 사라졌으면 첫 카드)
+            self.return_to = None
         self.notice = None
         return True
 
@@ -330,9 +417,8 @@ class BlogsController:
     def delete_dialog(self):
         """삭제 확인창의 글 — 무엇이 지워지는지·되돌릴 수 없다는 것·후보·초안·발행 기록은 지워지지 않는다는 것(저장된 파일은 이 일이 건드리지 않는다)."""
         slot = self.slot_map().get(self.selected)
-        name = bf.shown(slot.display_name, 30) if slot is not None and slot.display_name else T["blogs_del_unnamed"]       # 새 블로그의 이름은 사용자가 정한 것만 보인다(기본 프로필의 이름은 슬롯 이름이라 이 글에 나가지 않는다)
-        if slot is not None and not slot.registered and bf.is_empty_values(slot.key, slot.raw()):
-            name = T["blogs_del_unnamed"]
+        named = bf.user_name(slot.key, slot.display_name) if slot is not None else ""                    # 사용자가 정한 이름만 보인다 — 기본 프로필의 이름(슬롯 이름 `네이버 A`)이 저장돼 있어도 이 글에 나가지 않는다
+        name = bf.shown(named, 30) if named else T["blogs_del_unnamed"]
         return {"title": T["blogs_del_title"], "body": T["blogs_del_body"].format(name=name), "ok": T["blogs_del_ok"], "cancel": T["blogs_del_cancel"]}
 
     def start_clear(self, **callbacks):
@@ -354,14 +440,11 @@ class BlogsController:
     def apply_write_ok(self, outcome):
         """쓰기가 끝났다 — 쓴 뒤의 상태를 받고 그 슬롯의 초안만 비운다."""
         work, self.pending = self.pending or {"kind": "save", "key": self.selected, "target": None}, None
-        self.data = outcome.data
         for key in (work["key"], work["target"]):
             if key is not None:
-                for table in (self.drafts, self.touched, self.service_problems):
-                    table.pop(key, None)
-                self.submitted.discard(key)
+                self._pop_input(key)
                 self.adding.discard(key)
-                self.custom_open = {item for item in self.custom_open if item[0] != key}
+        stale = self._adopt(outcome.data)                                                           # 쓴 뒤 받은 자료에 다른 곳의 바뀐 내용이 있으면 다른 입력도 그에 맞게 정리한다
         if outcome.kind == "unchanged":
             self.notice = ("info", T["blogs_unchanged"])
         elif work["kind"] == "clone":
@@ -369,6 +452,8 @@ class BlogsController:
             self.notice = ("ok", T["blogs_cloned"])
         else:
             self.notice = ("ok", T["blogs_cleared"] if work["kind"] == "clear" else T["blogs_saved"])
+        if stale:
+            self.notice = ("warning", f"{self.notice[1]} {stale[1]}")
         self.picking = False
         self._normalize_selection()                                                                 # 지운 슬롯은 더 카드가 아니다 — 다른 카드로 옮겨 가고(없으면 종류 고르기)
 
@@ -491,12 +576,14 @@ class BlogsController:
         unsaved = self.is_dirty(key) and not fresh                                              # 새로 연결하는 카드는 늘 저장 전이라 따로 '저장 전 변경' 을 붙이지 않는다(상태가 '등록 전' 이다)
         title = bf.card_title(key, slot.alias)                                                  # 별명(없으면 종류 + 번호) — 슬롯 이름은 사용자에게 보이지 않는다
         kind = T["blogs_kind_" + bf.KIND_KEY[key]]
+        named = bf.user_name(key, slot.display_name)                                            # 저장된 이름이 그 슬롯의 기본 이름(슬롯 이름)이면 카드에는 종류 이름을 보인다 — 저장된 값은 그대로다
+        name = bf.shown(named, 30) if named else kind
         if registered:
-            headline, sub = bf.shown(slot.display_name, 30), T["blogs_card_ref"].format(ref=bf.shown(slot.blog_ref, 40))
+            headline, sub = name, T["blogs_card_ref"].format(ref=bf.shown(slot.blog_ref, 40))
         elif fresh:
             headline, sub = T["blogs_card_new_title"], T["blogs_card_new_desc"]
         else:                                                                                   # 주소 없이 내용만 있는 슬롯(손으로 고친 파일) — 숨기지 않고 주소를 넣으라고 알린다
-            headline, sub = bf.shown(slot.display_name, 30), T["blogs_card_unfinished_desc"]
+            headline, sub = name, T["blogs_card_unfinished_desc"]
         role = bf.shown(slot.channel_role, 60) if slot.channel_role else bf.shown(" · ".join(slot.main_topics[:3]), 60) if slot.main_topics else ""
         chips = [{"tone": "muted", "text": T["blogs_lang_" + slot.language]}] if registered else []
         if key in bf.GENERATION_SLOTS:
@@ -535,7 +622,7 @@ class BlogsController:
             banners.append(("info", T["blogs_missing_note"]))
         normal = state == "normal" and data is not None
         listed = self.listed_keys() if normal else ()
-        picker_open = normal and (self.picking or self.selected not in listed)                  # 카드가 하나도 없으면(처음) 종류 고르기가 폼 자리에 열려 있다
+        picker_open = self.picker_shown()                                                        # 카드가 하나도 없으면(처음) 종류 고르기가 폼 자리에 열려 있다
         by_key = data.by_key() if normal else {}
         return {
             "title": T["blogs_title"], "sub": T["blogs_sub"], "refresh": T["blogs_refresh"], "sample": bool(data and data.sample), "sample_tag": T["sample_tag"], "sample_tip": T["blogs_sample_tip"],

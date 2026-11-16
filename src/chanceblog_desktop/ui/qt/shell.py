@@ -700,10 +700,23 @@ class AppShell(QMainWindow):
             self._restore_focus("slot:" + str(self.state.blogs.selected))
 
     def blog_add_kind(self, kind):
-        """종류를 골랐다 — 같은 종류의 빈 슬롯을 새 블로그 폼으로 연다(파일에 닿지 않는다). 처음 포커스는 이름 칸이다."""
+        """종류를 골랐다 — 같은 종류의 빈 슬롯을 새 블로그 폼으로 연다(파일에 닿지 않는다). 처음 포커스는 이름 칸이고, 좁은 창에서 폼이 목록 아래에 걸려 있어도 그 칸이 보이게 페이지를 내린다."""
         if self.state.blogs.start_adding(kind) is not None:
             self.render()
             self._restore_focus("blogs:field:display_name")
+            self._reveal_focus_in_page()
+
+    def _reveal_focus_in_page(self):
+        """포커스를 받은 칸이 보이는 영역 안에 오게 페이지(바깥 스크롤)를 내린다 — 배치가 끝난 다음 차례에(최소 창에서는 폼이 목록 아래라 포커스만 가면 칸이 화면 밖이다)."""
+        def reveal():
+            widget = QApplication.focusWidget()
+            page = self.scroll.widget()
+            try:
+                if widget is not None and page is not None and page.isAncestorOf(widget):
+                    self.scroll.ensureWidgetVisible(widget, 0, K.SPACE["5"])
+            except RuntimeError:                                                     # 그 사이 화면이 다시 그려져 부품이 사라졌다
+                pass
+        QTimer.singleShot(0, reveal)
 
     def blog_edit(self, name, value):
         if self.state.blogs.edit(name, value):
@@ -772,8 +785,11 @@ class AppShell(QMainWindow):
             self.notify(T["load_busy"])
 
     def blog_revert(self):
+        """되돌리기(새 블로그 폼이면 `취소`) — 키보드로 눌러도 포커스가 맨 위 메뉴로 튀지 않게 선택 카드로(카드가 없으면 `블로그 추가` 카드로) 돌려 준다."""
         if self.state.blogs.revert():
             self.render()
+            selected = self.state.blogs.selected
+            self._restore_focus("slot:" + selected if selected else "slot:add")
 
     def blog_clone(self):
         status, _detail = self.state.blogs.start_clone(**self.blogs_write_bridge.callbacks())

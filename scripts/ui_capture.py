@@ -32,6 +32,12 @@ ENVS = ("1366x768@100", "1920x1080@100", "1920x1080@125", "1920x1080@150")
 CAPTURE_TIME = datetime.datetime(2026, 11, 6, 20, 10)                    # 사진용 고정 시각(금요일 20:10) — 상단 앱 바·진단 시각에 쓴다
 
 
+def close_scene(window):
+    """장면이 끝난 창을 닫는다 — 저장하지 않은 입력이 남은 창(블로그 관리의 고치는 중·새 블로그 폼)도 닫기 확인창에 멈추지 않게 확인을 건너뛴다(사진·점검 도구라 입력을 지킬 필요가 없다)."""
+    window._close_confirmed = True
+    window.close()
+
+
 def parse_env(text):
     size, _, percent = text.partition("@")
     width, _, height = size.partition("x")
@@ -145,7 +151,7 @@ def child(args):
     window.render()
     shoot(window, "loading")
     audit(window, "loading")
-    window.close()
+    close_scene(window)
     for scenario in ("empty", "error", "partial", "offline"):
         window = make(scenario)
         if scenario == "error":
@@ -155,12 +161,12 @@ def child(args):
             ui_offscreen.settle(app)
         shoot(window, scenario)
         audit(window, scenario)
-        window.close()
+        close_scene(window)
     for name, options in (("home_before_connect", {"board": None}), ("home_sections", {"board": mixed_board()})):             # 새 구역을 안 읽는 공급자(연결 전·집계 전) · 구역마다 다른 상태(한 구역의 문제가 다른 구역을 막지 않는다)
         window = make("normal", **options)
         shoot(window, name, whole=True)
         audit(window, name)
-        window.close()
+        close_scene(window)
     window = make("normal")
     window.open_drawer(window.state.home_view()["board"]["recommend"][0]["rows"][1]["id"])                          # 추천 줄을 눌러 여는 기존 상세 서랍
     ui_offscreen.wait_until(app, lambda: window.drawer.x() <= window.width() - window.drawer.width() + 2, 3)
@@ -197,7 +203,7 @@ def child(args):
     ui_offscreen.settle(app)
     shoot(window, "toast")
     report["checks"]["toast"] = {"clipped": ui_offscreen.find_clipping(window)}
-    window.close()
+    close_scene(window)
     settings_shots(app, ui_offscreen, args, report, logical, tag, out)
     blogs_shots(app, ui_offscreen, args, report, logical, tag, out)
     seeds_shots(app, ui_offscreen, args, report, logical, tag, out)
@@ -307,11 +313,11 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
     open_all(window)                                                                   # 네 묶음을 모두 펼친 페이지 전체 — 연결 상태 다섯 가지·준비 중·한도 줄·예시 꼬리표가 한 장에 보인다
     shoot(window, "settings_all", whole=True)
     audit(window, "settings_all")
-    window.close()
+    close_scene(window)
     window = make(FakeConnectionsProvider("normal", delay=30), wait=False)               # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
     shoot(window, "settings_loading")
     audit(window, "settings_loading")
-    window.close()
+    close_scene(window)
     for scenario in ("empty", "error", "partial", "offline"):
         window = make(FakeConnectionsProvider(scenario))
         if scenario == "error":
@@ -319,18 +325,18 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
             ui_offscreen.settle(app)
         shoot(window, f"settings_{scenario}")
         audit(window, f"settings_{scenario}")
-        window.close()
+        close_scene(window)
     with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 예시 표시·꼬리표가 없고 '연결됨' 이 없으며 사용량은 실제 값(0)이다
         window = make(real_settings_provider(tmp))
         open_all(window)
         shoot(window, "settings_real", whole=True)
         audit(window, "settings_real")
-        window.close()
+        close_scene(window)
     window = make(usage_states_provider())                                              # 사용량 막대의 모든 상태(파랑·노랑·빨강·한도 넘음·못 읽음) — 예시 숫자
     open_all(window)
     shoot(window, "settings_usage", whole=True)
     audit(window, "settings_usage")
-    window.close()
+    close_scene(window)
 
 
 def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -406,11 +412,11 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "blogs_delete")
     report["checks"]["blogs_delete"] = {"clipped": ui_offscreen.find_clipping(window.dialog), "fits_window": window.dialog.height() <= window.height() and window.dialog.width() <= window.width()}
     window.close_dialog()
-    window.close()
+    close_scene(window)
     window = make(blogs.FakeBlogsProvider("empty"))                                    # 등록한 블로그가 없다 — 카드는 '블로그 추가' 뿐이고 폼 자리에 종류 고르기(네이버·Blogger·GitHub Pages)가 열려 있다(blogsel)
     shoot(window, "blogs_empty")
     audit(window, "blogs_empty")
-    window.close()
+    close_scene(window)
     window = make(blogs.FakeBlogsProvider())                                           # 블로그 추가(blogsel) — 카드 셋 + '블로그 추가' 카드(선택) + 종류 고르기(네이버는 자리 없음·Blogger·GitHub Pages 는 남은 자리)
     window.blog_add_open()
     ui_offscreen.settle(app)
@@ -430,21 +436,21 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 4)
     shoot(window, "blogs_new_chips")
     audit(window, "blogs_new_chips")
-    window.close()
+    close_scene(window)
     window = make(blogs.FakeBlogsProvider(delay=30), wait=False)                       # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
     shoot(window, "blogs_loading")
     audit(window, "blogs_loading")
-    window.close()
+    close_scene(window)
     window = make(blogs.FakeBlogsProvider("error"))                                    # 읽기 오류 — 폼 없이 다시 읽기·진단 정보(펼침)
     window.screen_widget.findChild(UI.Disclosure).flip()
     ui_offscreen.settle(app)
     shoot(window, "blogs_error")
     audit(window, "blogs_error")
-    window.close()
+    close_scene(window)
     window = make(blogs.FakeBlogsProvider(), size=(900, 560))                          # 최소 창 — 슬롯 목록이 폼 위로 올라가고 페이지가 세로로 스크롤된다(가로 스크롤은 없다)
     shoot(window, "blogs_narrow")
     audit(window, "blogs_narrow", narrow=True)
-    window.close()
+    close_scene(window)
     window = make(blogs.FakeBlogsProvider())                                           # 주제 설정(P4c) — 폼 안쪽 스크롤을 새 구역으로 옮겨 우선·제외 키워드 칸과 선호 글 유형 칩을 보인다(가짜 낱말만)
     scroll_to_topic(window)
     shoot(window, "blogs_topic")
@@ -454,7 +460,7 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app)                                                           # 저장 시도가 첫 오류 칸을 문장까지 보이게 스크롤한다(그 위치 그대로 찍는다 — 작은 창에서도 오류 문장이 보여야 하는 장면)
     shoot(window, "blogs_topic_invalid")
     audit(window, "blogs_topic_invalid")
-    window.close()
+    close_scene(window)
     with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 파일이 아직 없다는 안내·예시 표시 없음·가짜 이름을 넣고 저장한 결과(임시 폴더에만 쓴다)
         from chanceblog_desktop.security.keystore import MemoryStore
         from chanceblog_desktop.service.context import Context, Settings, Workspace
@@ -472,7 +478,7 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
         wait_write(window)
         shoot(window, "blogs_real")
         audit(window, "blogs_real")
-        window.close()
+        close_scene(window)
 
 
 def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -569,7 +575,7 @@ def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app)
     shoot(window, "seed_new_invalid")
     audit(window, "seed_new_invalid")
-    window.close()
+    close_scene(window)
     window = make(seeds.FakeSeedsProvider())                                           # 일괄 변경 확인창 — 처음 포커스는 취소, 개수·처음 몇 개 이름·바뀐 뒤 채널별 수
     for seed_id in ("EX001", "EX002", "EX003", "EX004", "EX005", "EX006"):
         window.seed_check(seed_id)
@@ -579,7 +585,7 @@ def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "seed_bulk")
     audit_dialog(window, "seed_bulk")
     window.close_dialog()
-    window.close()
+    close_scene(window)
     window = make(seeds.FakeSeedsProvider(), picked="C:/예시 폴더/예시 제안.json")        # 제안 파일 확인창 — 읽어 본 개수·모두 승인 전으로 등록(파일은 읽지 않고 가짜 공급자가 예시를 돌려준다)
     window.seed_import()
     ui_offscreen.wait_until(app, lambda: window.dialog.is_open, 10)
@@ -587,28 +593,28 @@ def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "seed_import")
     audit_dialog(window, "seed_import")
     window.close_dialog()
-    window.close()
+    close_scene(window)
     window = make(seeds.FakeSeedsProvider("empty"))                                    # 아직 Seed 가 없다 — 빈 목록 안내
     shoot(window, "seed_empty")
     audit(window, "seed_empty")
-    window.close()
+    close_scene(window)
     window = make(seeds.FakeSeedsProvider(delay=30), wait=False)                       # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
     shoot(window, "seed_loading")
     audit(window, "seed_loading")
-    window.close()
+    close_scene(window)
     window = make(seeds.FakeSeedsProvider("error"))                                    # 읽기 오류 — 쓰는 길 없이 다시 읽기·진단 정보(펼침)
     window.screen_widget.findChild(UI.Disclosure).flip()
     ui_offscreen.settle(app)
     shoot(window, "seed_error")
     audit(window, "seed_error")
-    window.close()
+    close_scene(window)
     window = make(seeds.FakeSeedsProvider(), size=(900, 560))                          # 최소 창 — 개수·거르기·일괄 변경 줄이 다음 줄로 넘어가고 가로 스크롤은 없다
     shoot(window, "seed_narrow")
     audit(window, "seed_narrow")
     open_detail(window, "EX001")                                                       # 최소 창의 서랍 — 아래 고정 행동 줄이 창 안에 보인다
     shoot(window, "seed_narrow_detail")
     audit(window, "seed_narrow_detail")
-    window.close()
+    close_scene(window)
     with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 파일이 아직 없다는 안내·예시 표시 없음·가짜 Seed 를 넣고 승인한 결과(임시 폴더에만 쓴다)
         from chanceblog_desktop.security.keystore import MemoryStore
         from chanceblog_desktop.service import topic_files
@@ -621,7 +627,7 @@ def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
         window = make(provider)
         shoot(window, "seed_real_first")
         audit(window, "seed_real_first")
-        window.close()
+        close_scene(window)
         paths = topic_files.topic_paths(ctx.workspace)
         paths.folder.mkdir(parents=True, exist_ok=True)
         paths.seeds.write_bytes((json_module.dumps(seed_rules.seeds_to_dict(seeds.FakeSeedsProvider().seeds), ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"))
@@ -631,7 +637,7 @@ def seeds_shots(app, ui_offscreen, args, report, logical, tag, out):
         wait_write(window)
         shoot(window, "seed_real")
         audit(window, "seed_real")
-        window.close()
+        close_scene(window)
 
 
 def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -706,7 +712,7 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
     window = make(key_core.FakeKeysProvider("normal"))                                 # 예시 카드 — 행·배지·단추·꺼진 이유·'키 등록'
     shoot(window, "keys_cards", whole=True)
     audit(window, "keys_cards")
-    window.close()
+    close_scene(window)
     window = make(key_core.FakeKeysProvider("not_connected"))                          # 키가 하나도 없는 처음 모습에서 등록 대화상자
     click(register_button(window, "image_provider"))
     form = window.key_form
@@ -722,7 +728,7 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "keys_register_invalid")                                             # 빈 칸 — 문제는 칸 옆 문장
     audit(window, "keys_register_invalid")
     window.key_cancel()
-    window.close()
+    close_scene(window)
     from unittest import mock
     from chanceblog_desktop import capabilities
     with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):                 # 칸이 셋인 가장 큰 대화상자 — 이 빌드는 Blogger 입력을 받지 않아(PCSEC1) 배율 점검(가장 큰 대화상자가 창 안에 들어가는가)을 위해 이 장면에서만 소스 상수를 임시로 연다(개발 도구 — 앱 코드에는 켜는 길이 없다)
@@ -733,7 +739,7 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
         shoot(window, "keys_register_three")
         audit(window, "keys_register_three")
         window.key_cancel()
-        window.close()
+        close_scene(window)
     window = make(key_core.FakeKeysProvider("not_connected"))                          # 둘째 키 — AI 보조에 첫 키를 넣어 두면 둘째 키 등록이 약관 확인을 묻는다
     click(register_button(window, "ai_assist"))
     form = window.key_form
@@ -749,7 +755,7 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "keys_register_terms")                                               # 약관 안내와 확인 칸(확인하기 전에는 저장이 꺼져 있다)
     audit(window, "keys_register_terms")
     window.key_cancel()
-    window.close()
+    close_scene(window)
     window = make(key_core.FakeKeysProvider("normal"))
     click(row_of(window, "image_provider").buttons["delete"])
     shoot(window, "keys_delete")                                                       # 삭제 확인창 — 처음 포커스는 취소
@@ -759,18 +765,18 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "keys_rename")
     audit(window, "keys_rename")
     window.close_dialog()
-    window.close()
+    close_scene(window)
     provider = key_core.FakeKeysProvider("normal")                                     # 쓰는 중 — 단추가 모두 꺼지고 안내 띠가 보인다(창을 닫으면 일도 취소된다)
     window = make(provider)
     provider.delay = 30
     click(row_of(window, "image_provider").buttons["state:off"])
     shoot(window, "keys_busy")
     audit(window, "keys_busy")
-    window.close()
+    close_scene(window)
     window = make(key_core.FakeKeysProvider("normal", store_ready=False))              # 키 저장소를 못 쓰는 환경 — 오류가 아니라 상태
     shoot(window, "keys_nostore", whole=True)
     audit(window, "keys_nostore")
-    window.close()
+    close_scene(window)
     provider = key_core.FakeKeysProvider("normal")                                     # 실패 안내 — 쉬운 문장
     window = make(provider)
 
@@ -781,7 +787,7 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
     settled(window)
     shoot(window, "keys_failed")
     audit(window, "keys_failed")
-    window.close()
+    close_scene(window)
     with tempfile.TemporaryDirectory() as tmp:                                         # 실제 어댑터 — 임시 폴더·가짜 보관소에 가짜 이름·값으로 저장한 뒤의 모습(예시 표시 없음)
         from chanceblog_desktop.security.keystore import MemoryStore
         from chanceblog_desktop.service.context import Context, Settings, Workspace
@@ -798,7 +804,7 @@ def keys_shots(app, ui_offscreen, args, report, logical, tag, out):
         settled(window)
         shoot(window, "keys_real", whole=True)
         audit(window, "keys_real")
-        window.close()
+        close_scene(window)
 
 
 def candidates_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -915,34 +921,34 @@ def candidates_shots(app, ui_offscreen, args, report, logical, tag, out):
     open_card(window, find_id(window, "점수 계산 전인 예"))                             # 점수 계산 전 — 링 없이 `점수 계산 전`(0점 링이 아니다)
     shoot(window, "cand_none")
     audit(window, "cand_none")
-    window.close()
+    close_scene(window)
     for scenario, name in (("no_store", "cand_empty_nostore"), ("empty", "cand_empty_none"), ("old_structure", "cand_old")):    # 서로 다른 빈 안내 — 보관함 없음·후보 없음·옛 구조
         window = make(cd.FakeCandidatesProvider(scenario))
         shoot(window, name)
         audit(window, name)
-        window.close()
+        close_scene(window)
     window = make(cd.FakeCandidatesProvider())                                         # 거른 결과 없음 — 거르기 풀기 단추가 있는 안내
     search_box(window).setText("없는낱말")
     window.cand_query("없는낱말")
     ui_offscreen.settle(app, 8)
     shoot(window, "cand_empty_filtered")
     audit(window, "cand_empty_filtered")
-    window.close()
+    close_scene(window)
     window = make(cd.FakeCandidatesProvider(delay=30), wait=False)                     # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
     shoot(window, "cand_loading")
     audit(window, "cand_loading")
-    window.close()
+    close_scene(window)
     window = make(cd.FakeCandidatesProvider("error"))                                  # 읽기 오류 — 쓰는 길 없이 다시 읽기·진단 정보(펼침)
     window.screen_widget.findChild(UI.Disclosure).flip()
     ui_offscreen.settle(app)
     shoot(window, "cand_error")
     audit(window, "cand_error")
-    window.close()
+    close_scene(window)
     window = make(cd.FakeCandidatesProvider("lacking"))                                # 만들 수 없을 때의 준비 안내 — 무엇이 모자란지와 이미 있는 화면으로 가는 단추(쓰기 단추 없음)
     press_make_and_wait(window, want_dialog=False)
     shoot(window, "cand_prep")
     audit(window, "cand_prep")
-    window.close()
+    close_scene(window)
     window = make(cd.FakeCandidatesProvider())                                         # 후보 만들기 확인창 — 처음 포커스는 취소, 개수·Seed·지워지지 않는다·키·네트워크를 쓰지 않는다
     press_make_and_wait(window, want_dialog=True)
     shoot(window, "cand_dialog")
@@ -952,14 +958,14 @@ def candidates_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 8)
     shoot(window, "cand_made")
     audit(window, "cand_made")
-    window.close()
+    close_scene(window)
     window = make(cd.FakeCandidatesProvider(), size=(900, 560))                        # 최소 창 — 서랍 방식·2열·가로 스크롤 없음
     shoot(window, "cand_narrow")
     audit(window, "cand_narrow")
     open_card(window, find_id(window, "예시 후보 가 —"))                               # 최소 창의 서랍 — 같은 내용
     shoot(window, "cand_narrow_detail")
     audit(window, "cand_narrow_detail")
-    window.close()
+    close_scene(window)
     with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 보관함이 아직 없다는 안내·예시 표시 없음·가짜 Seed 를 승인해 두고 후보 만들기를 한 결과(임시 폴더에만 쓴다)
         import json as json_module
         from chanceblog_desktop.security.keystore import MemoryStore
@@ -974,7 +980,7 @@ def candidates_shots(app, ui_offscreen, args, report, logical, tag, out):
         window = make(provider)
         shoot(window, "cand_real_first")
         audit(window, "cand_real_first")
-        window.close()
+        close_scene(window)
         paths = topic_files.topic_paths(ctx.workspace)
         paths.folder.mkdir(parents=True, exist_ok=True)
         paths.seeds.write_bytes(json_module.dumps(seed_rules.seeds_to_dict(seeds.FakeSeedsProvider().seeds), ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8") + bytes([10]))
@@ -989,7 +995,7 @@ def candidates_shots(app, ui_offscreen, args, report, logical, tag, out):
         shoot(window, "cand_real")
         audit(window, "cand_real")
         report["checks"]["cand_real"]["made"] = len(window.state.candidates.rows())
-        window.close()
+        close_scene(window)
 
 
 def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -1153,7 +1159,7 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
         ui_offscreen.settle(app, 4)
         shoot(window, "drafts_save_list")
         audit(window, "drafts_save_list")
-        window.close()
+        close_scene(window)
 
     if getattr(args, "only", "") == "drafts_save":
         save_scenes()
@@ -1199,7 +1205,7 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
     audit_dialog(window, "drafts_gate_claims")
     window.close_dialog()
     window.state.drafts.leave()
-    window.close()
+    close_scene(window)
     window = make()                                                                     # 거의 안 고친 초안 — 분야가 읽히고 이 글에만 해당하는 줄이 없는 초안의 본문 복사는 막지 않는 안내
     draft_of(window, software)
     window.drf_copy("body")
@@ -1208,7 +1214,7 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
     audit_dialog(window, "drafts_soft")
     window.close_dialog()
     window.state.drafts.leave()
-    window.close()
+    close_scene(window)
     window = make()                                                                     # 거절 — 안전 판정 '자동 초안 중지' 후보를 코드로 불러도 공급자를 부르지 않는다(단추는 꺼져 있다)
     window.cand_open(candidate_id(window, stopped))
     ui_offscreen.settle(app, 8)
@@ -1218,25 +1224,25 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 8)
     shoot(window, "drafts_refused")
     audit(window, "drafts_refused")
-    window.close()
+    close_scene(window)
     window = make()                                                                     # 후보 없음 — 메뉴로 열었을 때
     window.go("drafts")
     ui_offscreen.settle(app, 8)
     shoot(window, "drafts_empty")
     audit(window, "drafts_empty")
-    window.close()
+    close_scene(window)
     provider = candidates_with(generic, software, appliance, stopped, other)
     slow = drafts.FakeDraftsProvider(lambda: tuple(provider.candidates), delay=30)      # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 작업도 취소된다)
     window = make(provider, slow)
     draft_of(window, software, wait=False)
     shoot(window, "drafts_loading")
     audit(window, "drafts_loading")
-    window.close()
+    close_scene(window)
     window = make(provider, drafts.FakeDraftsProvider(lambda: ()))                      # 찾지 못함 — 보관함에서 그 후보가 없어졌을 때
     draft_of(window, software)
     shoot(window, "drafts_notfound")
     audit(window, "drafts_notfound")
-    window.close()
+    close_scene(window)
     broken = drafts.FakeDraftsProvider(lambda: tuple(provider.candidates), fail=drafts.DraftFailure("예시 오류", code="SAMPLE_DRAFT_FAILED", kind="other"))
     window = make(provider, broken)                                                     # 오류 — 종류별 고정 문장·다시 만들기·진단 정보(펼침)
     draft_of(window, software)
@@ -1245,7 +1251,7 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 6)
     shoot(window, "drafts_error")
     audit(window, "drafts_error")
-    window.close()
+    close_scene(window)
     sample = "첫 문단이에요.\n\n안녕" + chr(0x200B) + "하세요 {{이름}} 님 가격&nbsp;12 좋아요 좋아요 좋아요\n\n" + chr(0x60) * 3 + "\n코드 줄\n" + chr(0x60) * 3             # 글 모양 점검 사진용 가짜 글 — 보이지 않는 글자·자리표시·HTML 표시·같은 낱말 반복·코드 블록 표시
 
     def garbage_checked(size=None):
@@ -1278,19 +1284,19 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot(window, "drafts_garbage_stale")
     audit(window, "drafts_garbage_stale")
     window.state.drafts.leave()
-    window.close()
+    close_scene(window)
     window = garbage_checked((900, 560))                                                # 최소 창 — 한 칸으로 쌓인 카드
     scroll_garbage(window)
     shoot(window, "drafts_garbage_narrow")
     audit(window, "drafts_garbage_narrow")
     window.state.drafts.leave()
-    window.close()
+    close_scene(window)
     window = make(size=(900, 560))                                                      # 최소 창 — 한 칸으로 쌓인다·아래 고정 줄이 창 안에 있다
     draft_of(window, appliance)
     shoot(window, "drafts_narrow")
     audit(window, "drafts_narrow")
     window.state.drafts.leave()
-    window.close()
+    close_scene(window)
     with tempfile.TemporaryDirectory() as tmp:                                          # 실제 어댑터 — 임시 폴더에 가짜 Seed 를 승인해 두고 후보를 만든 뒤 그 후보로 초안을 만든다(프로필 파일은 없다 → 기본값으로 만들고 `네이버 글쓰기 열기` 는 꺼진다). 실제 블로그 이름·후보 제목·본문은 없다
         import json as json_module
         from chanceblog_desktop.security.keystore import MemoryStore
@@ -1323,13 +1329,13 @@ def drafts_shots(app, ui_offscreen, args, report, logical, tag, out):
         audit(window, "drafts_real")
         report["checks"]["drafts_real"]["state"] = window.state.drafts.state
         window.state.drafts.leave()
-        window.close()
+        close_scene(window)
         window = make(ServiceCandidatesProvider(context_factory=lambda data_dir=None: ctx), ServiceDraftsProvider(context_factory=lambda data_dir=None: ctx))
         window.go("drafts")                                                             # 메뉴로 열면 후보를 고르지 않았다는 안내 한 줄
         ui_offscreen.settle(app, 8)
         shoot(window, "drafts_real_empty")
         audit(window, "drafts_real_empty")
-        window.close()
+        close_scene(window)
 
 
 def style_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -1436,7 +1442,7 @@ def style_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 6)
     shoot(window, "style_refused")
     audit(window, "style_refused")
-    window.close()
+    close_scene(window)
     gated = Gated(texts)
     gated.gate.clear()
     window = make(gated)
@@ -1452,27 +1458,27 @@ def style_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 8)
     shoot(window, "style_result_one")
     audit(window, "style_result_one")
-    window.close()
+    close_scene(window)
     window = make()
     opened(window)
     finish(window, "예시-글-1.md", "예시-글-2.txt")
     shoot(window, "style_result_two")
     audit(window, "style_result_two")
     report["checks"]["style_result_two"]["range_only"] = bool(window.style.outcome.summary.range_only)
-    window.close()
+    close_scene(window)
     window = make()
     opened(window)
     finish(window, "예시-글-1.md", "예시-글-3.txt")
     shoot(window, "style_result_range")
     audit(window, "style_result_range")
     report["checks"]["style_result_range"]["range_only"] = bool(window.style.outcome.summary.range_only)
-    window.close()
+    close_scene(window)
     window = make(size=(900, 560))
     opened(window)
     finish(window, "예시-글-1.md", "예시-글-3.txt")
     shoot(window, "style_result_min")
     audit(window, "style_result_min")
-    window.close()
+    close_scene(window)
 
     def pasted_result(window, form, name):
         """파일 하나와 붙여 넣은 글 하나의 결과 — 어느 열이 붙여 넣은 글인지 열 머리가 말한다(D-434). 붙여 넣은 글은 가짜 공급자의 예시 글과 같은 문단들이다."""
@@ -1496,10 +1502,10 @@ def style_shots(app, ui_offscreen, args, report, logical, tag, out):
 
     window = make()
     pasted_result(window, opened(window), "style_result_pasted")
-    window.close()
+    close_scene(window)
     window = make(size=(900, 560))
     pasted_result(window, opened(window), "style_result_pasted_min")
-    window.close()
+    close_scene(window)
 
 
 def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
@@ -1629,29 +1635,29 @@ def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
     ui_offscreen.settle(app, 3)
     shoot_card(window, "backup_excluded_open")
     audit(window, "backup_excluded_open")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("broken"))                           # 깨진 백업이 하나 있는 목록 — 복원 단추가 꺼진다
     shoot_card(window, "backup_broken")
     audit(window, "backup_broken")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("empty"))
     shoot_card(window, "backup_empty")
     audit(window, "backup_empty")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("interrupted"))                      # 복원이 중간에 멈춘 흔적 — 쉬운 안내 띠와 '안전 사본으로 되돌리기'(D-463)
     shoot_card(window, "backup_interrupted")
     audit(window, "backup_interrupted")
-    window.close()
+    close_scene(window)
     provider = Held(hold_load=True)                                                    # 목록을 읽는 중
     window = make(provider)
     shoot_card(window, "backup_loading")
     audit(window, "backup_loading")
     provider.go.set()
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("error"))                            # 읽기 오류 — 그래도 백업은 만들 수 있다
     shoot_card(window, "backup_error")
     audit(window, "backup_error")
-    window.close()
+    close_scene(window)
     provider = Held(hold_write=True)                                                   # 지금 백업 — 쓰는 중(진행 줄·꺼진 단추)
     window = make(provider)
     click(card_of(window).create_button)
@@ -1663,13 +1669,13 @@ def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
     settled(window)
     shoot_card(window, "backup_created")                                               # 완료 — 결과 띠·새 줄
     audit(window, "backup_created")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("normal", create_status="partial"))  # 일부만 담은 백업
     click(card_of(window).create_button)
     settled(window)
     shoot_card(window, "backup_partial")
     audit(window, "backup_partial")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("normal"))                           # 복원 — 확인창이 먼저(처음 포커스는 취소)
     click(card_of(window).rows[0].restore)
     shoot_window(window, "backup_restore_dialog")
@@ -1679,7 +1685,7 @@ def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot_window(window, "backup_restore_dialog_partial")
     audit(window, "backup_restore_dialog_partial")
     window.close_dialog()
-    window.close()
+    close_scene(window)
     provider = Held(hold_write=True)                                                   # 복원 — 쓰는 중, 끝난 뒤(복원 직전 사본이 목록 맨 위에 생긴다)
     window = make(provider)
     click(card_of(window).rows[0].restore)
@@ -1692,26 +1698,26 @@ def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
     settled(window)
     shoot_card(window, "backup_restored")
     audit(window, "backup_restored")
-    window.close()
+    close_scene(window)
     window = make(Blocked("normal"))                                                   # 키 모양을 발견해 멈춤 — 위치·유형 줄만, '무시하고 백업' 은 없다
     click(card_of(window).create_button)
     settled(window)
     shoot_card(window, "backup_blocked")
     audit(window, "backup_blocked")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("normal", create_failure="io"))      # 쓰기 실패 — 정해진 쉬운 문장
     click(card_of(window).create_button)
     settled(window)
     shoot_card(window, "backup_failed")
     audit(window, "backup_failed")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("normal", restore_failure="restore"))                # 복원 실패 — 돌리지 못한 것이 있으면 이름이 붙는다
     click(card_of(window).rows[0].restore)
     confirm(window)
     settled(window)
     shoot_card(window, "backup_restore_failed")
     audit(window, "backup_restore_failed")
-    window.close()
+    close_scene(window)
     window = make(backup_core.FakeBackupsProvider("normal"), size=(900, 560))          # 최소 창 크기 — 가로 스크롤·글자 잘림 없음
     shoot_window(window, "backup_min_window")
     audit(window, "backup_min_window")
@@ -1719,7 +1725,7 @@ def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
     shoot_window(window, "backup_min_window_dialog")
     audit(window, "backup_min_window_dialog")
     window.close_dialog()
-    window.close()
+    close_scene(window)
     base = str(out) if out.exists() else None
     with tempfile.TemporaryDirectory(dir=base, prefix="_real") as tmp:                  # 실제 어댑터 — 임시 폴더·가짜 보관소의 예시 글 하나를 실제 서비스로 백업한 뒤의 모습(예시 표시 없음)
         from chanceblog_desktop.security.keystore import MemoryStore
@@ -1735,7 +1741,7 @@ def backup_shots(app, ui_offscreen, args, report, logical, tag, out):
         settled(window)
         shoot_card(window, "backup_real")
         audit(window, "backup_real")
-        window.close()
+        close_scene(window)
 
 
 def main(argv=None):

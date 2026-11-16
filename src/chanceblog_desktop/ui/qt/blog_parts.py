@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QIconEngine, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
@@ -126,6 +126,14 @@ class SlotCard(UI.Pressable):
             self._layout.insertWidget(index, part)
         self._parts = parts
         UI.repolish(self)
+
+
+class IgnoreDoubleClick(QObject):
+    """더블클릭의 두 번째 눌림을 받지 않는 필터 — 새 블로그 `취소`·`되돌리기`·`삭제` 처럼 입력을 버리거나 지우는 단추 위에서 쓴다. 첫 클릭으로 화면이 다시 그려지면 같은 자리에 다른 카드의 `되돌리기` 가 생기는데,
+    더블클릭의 두 번째 눌림(`MouseButtonDblClick`)이 그 단추에 닿아 다른 카드의 저장 전 입력이 확인 없이 사라지지 않게 한다(눌림과 떼기가 한 번씩인 보통 클릭은 그대로다)."""
+
+    def eventFilter(self, watched, event):
+        return event.type() == QEvent.MouseButtonDblClick
 
 
 class AddCard(UI.Pressable):

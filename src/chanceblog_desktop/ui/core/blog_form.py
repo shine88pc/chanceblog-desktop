@@ -307,6 +307,13 @@ def form_base(key, stored_raw):
     return {**stored_raw, "display_name": ""} if is_empty_values(key, stored_raw) else stored_raw
 
 
+def user_name(key, name):
+    """사용자가 정한 이름 — 비었거나 그 슬롯의 기본 이름(슬롯 이름 `네이버 A` — 옛 화면에서 이름 칸을 안 고치고 등록한 파일에 그대로 남아 있다)과 같으면 빈 글. 그런 이름은 사용자가 정한 말이 아니라 카드·접근 이름·삭제 확인창에는 쓰지 않는다
+    (저장된 값은 건드리지 않는다 — 이름 입력 칸에는 저장된 값이 그대로 보이고, 사용자가 고치거나 지울 수 있다)."""
+    name = clean_line(name)
+    return "" if not name or name == clean_line(default_values(key)["display_name"]) else name
+
+
 def suggest_alias(key):
     """별명 제안 — 블로그 종류 + 그 종류 안의 번호(`네이버 블로그 1`). 슬롯 이름(`네이버 A`)이 아니라 사용자가 알아볼 말이다."""
     return f"{T['blogs_kind_' + KIND_KEY[key]]} {KIND_SLOTS[KIND_KEY[key]].index(key) + 1}"

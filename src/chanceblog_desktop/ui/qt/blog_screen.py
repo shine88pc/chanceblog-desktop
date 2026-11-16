@@ -14,7 +14,7 @@ from ..core import tokens as K
 from ..core.text import T
 from . import components as UI
 from .bars import ActionBar
-from .blog_parts import AddCard, FieldView, FormScroll, KindCard, NoticeBar, SlotCard
+from .blog_parts import AddCard, FieldView, FormScroll, IgnoreDoubleClick, KindCard, NoticeBar, SlotCard
 from .screens import FlowGrid, page_head
 
 
@@ -175,6 +175,10 @@ def _form(shell, vm, ui):
     outer.addWidget(ui.form_scroll, 1)
     bar = ActionBar([{"key": action["key"], "text": action["text"], "kind": action["kind"]} for action in form["actions"]], accessible=form["actions_a11y"])
     bar.triggered.connect(shell.blog_action)
+    guard = IgnoreDoubleClick(bar)                                                          # 입력을 버리거나 지우는 단추(취소·되돌리기·삭제)는 더블클릭의 두 번째 눌림을 받지 않는다
+    for button, spec in zip(bar.buttons, bar.specs, strict=True):
+        if spec["key"] in ("revert", "delete"):
+            button.installEventFilter(guard)
     ui.bar = bar
     outer.addWidget(bar)
     update_blogs_live_parts(ui, vm)

@@ -109,7 +109,7 @@ class Base(unittest.TestCase):
         window = shell_module.AppShell(services.FakeHomeProvider(), blogs=provider, file_picker=picker or (lambda parent, title, filters: PICKED), autoload=False)
         window.resize(*size)
         window.show()
-        self.addCleanup(window.close)
+        self.addCleanup(self.close_window, window)
         self.settle()
         self.activate(window)
         if page == "blogs":
@@ -118,6 +118,11 @@ class Base(unittest.TestCase):
                 ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state != "loading" and not window.state.blogs.loading, 10)
             self.settle()
         return window
+
+    def close_window(self, window):
+        """시험이 끝났거나 닫으려는 창 — 저장하지 않은 블로그 입력이 남아 있어도 닫기 확인창에서 멈추지 않게 확인을 건너뛰고 닫는다(닫기 확인 자체는 `test_ui_qt_blogs_add.CloseGuardTest` 가 본다). 의도적 갱신(blogsel 수정 1, D-493 ⑤·검증 Q-5)."""
+        window._close_confirmed = True
+        window.close()
 
     def ui(self, window):
         return window.screen_widget.blogs_ui

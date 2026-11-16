@@ -60,6 +60,8 @@ def new_controller(scenario="normal", **kwargs):
 
 def start_new(controller, kind="naver"):
     """'블로그 추가' 로 새 블로그를 연결하려고 폼을 연다 → 열린 슬롯 열쇠(그 종류의 첫 빈 슬롯). 의도적 갱신(blogsel, D-493): 등록한 블로그만 카드로 보이므로 빈 슬롯의 폼은 이 길로만 열린다."""
+    if not controller.picker_shown():
+        controller.open_picker()                                                                 # 실제 순서 그대로 — 카드가 있으면 '블로그 추가' 카드를 눌러 종류 고르기를 연 다음 종류를 고른다(카드가 없으면 처음부터 열려 있다)
     key = controller.start_adding(kind)
     assert key is not None, kind
     return key

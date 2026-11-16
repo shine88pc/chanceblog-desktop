@@ -14,6 +14,7 @@ import json
 import re
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from chanceblog_desktop.service import topic_files as tf  # noqa: E402
 from chanceblog_desktop.ui import blogs_adapter  # noqa: E402
 from chanceblog_desktop.ui.core import blog_form as bf  # noqa: E402
 from chanceblog_desktop.ui.core import blog_options as bo  # noqa: E402
-from chanceblog_desktop.ui.core import blogs, blogs_view, jobs, text  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, blogs, blogs_view, jobs, services, text  # noqa: E402
 from test_ui_blogs_core import NEVER, SAFE, drive, load, new_controller, start_new  # noqa: E402,I001
 
 T = text.T
@@ -237,7 +238,7 @@ class AddFlowTest(unittest.TestCase):
         self.assertEqual(controller.listed_keys(), ("github_pages", "blogger_ko", "naver_a", "naver_b"))
         self.assertTrue(controller.revert())
         self.assertNotIn(key, controller.drafts)
-        self.assertEqual((controller.selected, controller.listed_keys()), ("blogger_ko", ("blogger_ko", "naver_a", "naver_b")), "첫 카드로 옮겨 간다")
+        self.assertEqual((controller.selected, controller.listed_keys()), ("naver_a", ("blogger_ko", "naver_a", "naver_b")), "의도적 갱신(blogsel 수정 1, D-493 ⑤·검증 Q-2): 취소하면 슬롯 순서의 첫 카드가 아니라 새 블로그를 열기 전에 폼에 열려 있던 카드(naver_a)로 돌아간다")
         self.assertEqual(controller.provider.calls, ["load"], "취소는 파일에 닿지 않는다")
         empty = new_controller("empty")
         start_new(empty)
@@ -274,6 +275,127 @@ class AddFlowTest(unittest.TestCase):
         start_new(empty, "blogger")
         for item in view_strings(empty.view()):
             self.assertNotRegex(item, SLOT_NAME, item)
+
+
+# ---- 2-2) 수정 1(검증 S·Q 1차) — 낡은 자료에 얹힌 입력·취소 뒤 돌아가는 자리·종류 고르기 가드 ------------------------------------------------------
+def fill_elsewhere(controller, key, **changes):
+    """다른 곳(손으로 고친 파일·두 번째 프로세스·백업 복원)이 그 슬롯을 먼저 바꾼다 — 화면이 들고 있는 자료는 낡은 판이 된다."""
+    provider = controller.provider
+    provider.slots[key] = dataclasses.replace(provider.slots[key], **changes)
+    provider.revision += 1
+
+
+class StaleInputTest(unittest.TestCase):
+    """새 블로그로 열어 둔 슬롯이 그 사이 다른 곳에서 채워지면(검증 S-1) 입력이 남의 블로그에 얹히지 않고, 비워진 슬롯의 낡은 입력은 되살아나지 않는다(검증 Q-9)."""
+
+    def conflict_then_reload(self, controller):
+        self.assertEqual(drive(controller, controller.start_save), ("started", "failed", True), "낡은 판이라 서비스가 첫 저장을 거절한다")
+        load(controller)                                                                           # 셸이 하듯 최신 내용을 다시 읽는다
+
+    def test_a_slot_filled_elsewhere_never_takes_the_input_of_a_new_blog_the_input_moves_to_the_next_free_slot_of_the_kind(self):
+        controller = new_controller("empty")
+        first = start_new(controller, "naver")
+        controller.edit("display_name", "내 새 블로그")
+        controller.edit("blog_ref", "example-new-blog")
+        controller.toggle_choice("main_topics", "소형가전")
+        fill_elsewhere(controller, first, display_name="다른 쪽 블로그", blog_ref="example-other-blog", alias="다른 쪽 별명", intro="다른 쪽 소개")
+        self.conflict_then_reload(controller)
+        self.assertEqual((controller.selected, sorted(controller.adding)), ("naver_b", ["naver_b"]), "입력은 같은 종류의 다른 빈 자리로 옮겨져 그 자리의 새 블로그 폼이 다시 열린다")
+        other = controller.values(first)
+        self.assertEqual((other["display_name"], other["blog_ref"], other["alias"], other["intro"]), ("다른 쪽 블로그", "example-other-blog", "다른 쪽 별명", "다른 쪽 소개"), "남의 블로그에는 아무것도 얹히지 않는다")
+        self.assertNotIn(first, controller.drafts)
+        form = fields_of(controller)
+        self.assertEqual((form["display_name"]["value"], form["blog_ref"]["value"], form["alias"]["value"], form["main_topics"]["value"]), ("내 새 블로그", "example-new-blog", "네이버 블로그 2", "소형가전"),
+                         "입력은 그대로이고, 제안 그대로였던 별명만 새 자리의 번호로 다시 제안한다")
+        self.assertTrue(controller.view()["form"]["fresh"])
+        self.assertEqual(controller.notice, ("warning", T["blogs_taken_moved"]), "이유를 쉬운 말로 알린다 — 조용히 바뀌지 않는다")
+        self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
+        slots = controller.provider.slots
+        self.assertEqual((slots["naver_a"].blog_ref, slots["naver_a"].display_name, slots["naver_b"].blog_ref, slots["naver_b"].display_name), ("example-other-blog", "다른 쪽 블로그", "example-new-blog", "내 새 블로그"))
+
+    def test_when_the_kind_has_no_other_free_slot_the_input_is_dropped_and_the_reason_is_told(self):
+        controller = new_controller("empty")
+        fill_elsewhere(controller, "naver_b", display_name="이미 있던 블로그", blog_ref="example-b-blog")
+        load(controller)
+        first = start_new(controller, "naver")
+        self.assertEqual(first, "naver_a")
+        controller.edit("display_name", "내 새 블로그")
+        controller.edit("blog_ref", "example-new-blog")
+        fill_elsewhere(controller, first, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        self.conflict_then_reload(controller)
+        self.assertEqual((controller.adding, controller.selected), (set(), "naver_b"), "자리가 없으면 입력을 버리고 열어 두기 전의 카드로 돌아간다")
+        self.assertNotIn(first, controller.drafts)
+        self.assertEqual(controller.values(first)["display_name"], "다른 쪽 블로그", "남의 블로그 값이 그대로다")
+        self.assertEqual(controller.notice, ("warning", T["blogs_taken_dropped"]), "버렸다면 이유를 알린다 — 확인 없이 조용히 사라지지 않는다")
+
+    def test_a_moved_blogger_form_keeps_the_values_the_user_saw_even_where_the_other_slot_has_another_default(self):
+        controller = new_controller("empty")
+        first = start_new(controller, "blogger")
+        self.assertEqual((first, fields_of(controller)["language"]["value"]), ("blogger_ko", "ko"))
+        controller.edit("display_name", "내 Blogger")
+        controller.edit("blog_ref", "example-blogger")
+        fill_elsewhere(controller, first, display_name="다른 쪽", blog_ref="example-other")
+        self.conflict_then_reload(controller)
+        self.assertEqual(controller.selected, "blogger_en")
+        self.assertEqual(fields_of(controller)["language"]["value"], "ko", "사용자가 본 값 그대로 — 새 슬롯의 기본 언어(en)로 슬며시 바뀌지 않는다")
+        self.assertEqual(controller.drafts["blogger_en"]["language"], "ko")
+
+    def test_the_input_of_a_blog_emptied_elsewhere_does_not_come_back_in_the_next_new_blog_form(self):
+        controller = new_controller()
+        controller.select("naver_b")
+        controller.edit("display_name", "고치던 이름")
+        controller.edit("alias", "고치던 별명")
+        controller.toggle_choice("main_topics", "소형가전")
+        self.assertTrue(controller.is_dirty("naver_b"))
+        controller.provider.clear_blog("naver_b", str(controller.provider.revision), SAFE, NEVER)                 # 다른 곳이 그 블로그를 지웠다
+        load(controller)
+        self.assertNotIn("naver_b", controller.listed_keys())
+        for table in (controller.drafts, controller.touched, controller.service_problems):
+            self.assertNotIn("naver_b", table)
+        self.assertEqual(controller.notice, ("warning", T["blogs_edit_gone"]), "고치던 입력을 버렸다면 알린다")
+        controller.open_picker()
+        self.assertEqual(start_new(controller, "naver"), "naver_b")
+        self.assertEqual(controller.drafts["naver_b"], {"alias": "네이버 블로그 2"}, "낡은 입력이 되살아나지 않는다 — 제안 별명만 들어 있다")
+        form = fields_of(controller)
+        self.assertEqual((form["display_name"]["value"], form["main_topics"]["value"]), ("", ""))
+        self.assertEqual(controller.touched.get("naver_b"), None)
+
+    def test_opening_a_new_blog_never_revives_leftover_input_of_that_slot(self):
+        """방어선 — 어떤 길로든 그 자리에 낡은 입력 상태가 남아 있어도 새 블로그 폼은 깨끗하게 시작한다."""
+        controller = new_controller("empty")
+        controller.drafts["naver_a"] = {"display_name": "낡은 이름", "alias": "낡은 별명"}
+        controller.touched["naver_a"] = {"display_name"}
+        controller.submitted.add("naver_a")
+        controller.custom_open.add(("naver_a", "tone"))
+        controller.service_problems["naver_a"] = {"blog_ref": "invalid"}
+        self.assertEqual(start_new(controller, "naver"), "naver_a")
+        self.assertEqual(controller.drafts["naver_a"], {"alias": "네이버 블로그 1"})
+        self.assertEqual((controller.touched.get("naver_a"), "naver_a" in controller.submitted, ("naver_a", "tone") in controller.custom_open, controller.service_problems.get("naver_a")), (None, False, False, None))
+        self.assertEqual(fields_of(controller)["display_name"]["value"], "")
+
+    def test_a_vanished_card_without_input_is_cleaned_without_a_notice(self):
+        controller = new_controller()
+        controller.select("naver_b")                                                                      # 고친 것은 없다
+        controller.provider.clear_blog("naver_b", str(controller.provider.revision), SAFE, NEVER)
+        load(controller)
+        self.assertIsNone(controller.notice, "버릴 입력이 없으면 알릴 것도 없다")
+        self.assertNotIn("naver_b", controller.listed_keys())
+
+    def test_two_open_new_blog_forms_are_checked_one_by_one_the_stale_one_is_dropped_and_the_other_stays(self):
+        controller = new_controller("empty")
+        first = start_new(controller, "naver")
+        controller.edit("display_name", "첫 입력")
+        controller.open_picker()
+        second = start_new(controller, "naver")
+        controller.edit("display_name", "둘째 입력")
+        controller.edit("blog_ref", "example-second")
+        self.assertEqual((first, second), ("naver_a", "naver_b"))
+        fill_elsewhere(controller, first, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        self.conflict_then_reload(controller)
+        self.assertEqual((controller.adding, controller.selected), ({"naver_b"}, "naver_b"), "채워진 첫 자리의 입력만 버려지고(남은 빈 자리가 없다) 둘째 폼은 그대로다")
+        self.assertEqual(fields_of(controller)["display_name"]["value"], "둘째 입력")
+        self.assertNotIn(first, controller.drafts)
+        self.assertEqual(controller.notice, ("warning", T["blogs_taken_dropped"]))
 
 
 # ---- 3) 복제·삭제와 새 카드 ---------------------------------------------------------------------------------------------------------------
@@ -316,6 +438,164 @@ class CloneAndClearTest(unittest.TestCase):
         self.assertEqual(view["list"]["cards"], [])
         self.assertEqual(controller.notice, ("ok", T["blogs_cleared"]))
         self.assertEqual(controller.start_adding("naver"), key, "지운 자리는 다시 쓰인다")
+
+
+class DefaultNameTest(unittest.TestCase):
+    """저장된 이름 칸이 그 슬롯의 기본 이름(슬롯 이름)이면 카드·접근 이름·삭제 확인창에는 쓰지 않는다(검증 S-2·Q-8). 저장된 값은 건드리지 않고, 이름 입력 칸에는 저장된 값이 그대로 보인다(사용자 자료)."""
+
+    def test_user_name_is_empty_for_a_blank_or_the_slots_default_name_only(self):
+        for key in bf.SLOTS:
+            default = bf.default_values(key)["display_name"]
+            self.assertEqual((bf.user_name(key, default), bf.user_name(key, f"  {default} "), bf.user_name(key, ""), bf.user_name(key, None)), ("", "", "", ""), key)
+            self.assertEqual(bf.user_name(key, "내가 정한 이름"), "내가 정한 이름")
+        self.assertEqual(bf.user_name("naver_b", bf.default_values("naver_a")["display_name"]), bf.default_values("naver_a")["display_name"], "다른 슬롯의 기본 이름은 사용자가 쓴 글이다")
+
+    def test_a_slot_with_only_an_alias_and_the_default_name_shows_the_kind_name_and_never_the_slot_name(self):
+        """손으로 고친 파일의 '주소 없이 별명만 있는 슬롯'(검증 S 의 R2) — 이름 칸은 기본 이름 그대로다."""
+        controller = new_controller("empty")
+        fill_elsewhere(controller, "naver_b", alias="손으로 쓴 별명")
+        load(controller)
+        view = controller.view()
+        card = view["list"]["cards"][0]
+        self.assertEqual((card["key"], card["registered"], card["title"], card["headline"]), ("naver_b", False, "손으로 쓴 별명", T["blogs_kind_naver"]))
+        self.assertIn(T["blogs_kind_naver"], card["a11y"], "접근 이름의 이름 자리도 종류 이름이다")
+        for item in view_strings(view) + [controller.delete_dialog()["body"]]:
+            self.assertNotRegex(item, SLOT_NAME, item)
+        self.assertIn(T["blogs_del_unnamed"], controller.delete_dialog()["body"])
+        self.assertEqual(fields_of(controller)["display_name"]["value"], bf.default_values("naver_b")["display_name"], "이름 입력 칸에는 저장된 값이 그대로 보인다 — 사용자 자료이고 화면 글이 아니다")
+
+    def test_the_delete_dialog_of_a_selected_empty_slot_names_no_one(self):
+        controller = new_controller("empty")
+        controller.select("naver_b")
+        dialog = controller.delete_dialog()
+        self.assertIn(T["blogs_del_unnamed"], dialog["body"])
+        self.assertNotRegex(dialog["body"], SLOT_NAME)
+
+
+class CancelReturnTest(unittest.TestCase):
+    """새 블로그 `취소` 뒤에는 열기 전에 폼에 열려 있던 카드로 돌아간다(검증 Q-2) — 첫 카드의 `되돌리기` 가 같은 자리에 나타나 연타가 그 카드의 입력을 버리는 일을 없앤다."""
+
+    def test_cancel_goes_back_to_the_card_that_was_open_before_adding_and_keeps_its_input(self):
+        controller = new_controller()
+        controller.select("naver_b")
+        controller.edit("alias", "고치던 별명")
+        controller.open_picker()
+        key = start_new(controller, "github")
+        self.assertEqual(controller.selected, key)
+        self.assertTrue(controller.revert())
+        self.assertEqual(controller.selected, "naver_b", "슬롯 순서의 첫 카드(blogger_ko)가 아니라 열기 전의 카드다")
+        self.assertEqual(controller.drafts["naver_b"], {"alias": "고치던 별명"}, "그 카드의 저장 전 입력은 그대로다")
+        self.assertIsNone(controller.return_to)
+
+    def test_cancel_goes_to_the_first_card_when_the_card_before_adding_is_gone(self):
+        controller = new_controller()
+        controller.select("naver_b")
+        controller.open_picker()
+        start_new(controller, "github")
+        controller.provider.clear_blog("naver_b", str(controller.provider.revision), SAFE, NEVER)                 # 그 사이 다른 곳이 그 블로그를 지웠다
+        load(controller)
+        self.assertEqual(controller.selected, "github_pages", "열어 둔 새 블로그 폼은 그대로다")
+        self.assertTrue(controller.revert())
+        self.assertEqual(controller.selected, "blogger_ko", "돌아갈 카드가 사라졌으면 첫 카드다")
+
+    def test_after_hopping_between_cards_cancel_returns_to_the_card_left_last_before_the_new_form(self):
+        controller = new_controller()
+        controller.select("naver_b")
+        controller.open_picker()
+        key = start_new(controller, "github")
+        controller.select("blogger_ko")
+        controller.select(key)
+        self.assertEqual(controller.return_to, "blogger_ko", "입력 중인 새 블로그 카드로 옮겨 올 때 있던 카드")
+        controller.revert()
+        self.assertEqual(controller.selected, "blogger_ko")
+
+    def test_cancel_with_no_card_before_goes_to_the_picker(self):
+        controller = new_controller("empty")
+        start_new(controller, "naver")
+        controller.revert()
+        self.assertEqual((controller.selected, controller.picker_shown()), (None, True))
+
+
+class PickerGuardTest(unittest.TestCase):
+    """종류 고르기가 열려 있을 때만 종류 고르기 신호를 받는다(검증 Q-13) — 신호가 겹쳐 두 번 와도 슬롯 둘이 잡히지 않는다."""
+
+    def test_a_kind_is_taken_only_while_the_kind_picker_is_shown(self):
+        controller = new_controller()
+        self.assertFalse(controller.picker_shown())
+        self.assertIsNone(controller.start_adding("github"), "종류 고르기가 닫혀 있으면 아무 일도 없다")
+        self.assertEqual((controller.adding, controller.selected, controller.drafts), (set(), "naver_a", {}))
+        controller.open_picker()
+        self.assertEqual(controller.start_adding("github"), "github_pages")
+        self.assertFalse(controller.picker_shown())
+        self.assertIsNone(controller.start_adding("blogger"), "이미 폼이 열렸다 — 같은 신호가 한 번 더 와도 슬롯이 둘 잡히지 않는다")
+        self.assertEqual(controller.adding, {"github_pages"})
+
+    def test_with_no_card_the_picker_is_shown_from_the_start_and_a_second_signal_is_ignored(self):
+        controller = new_controller("empty")
+        self.assertTrue(controller.picker_shown())
+        self.assertEqual(controller.start_adding("naver"), "naver_a")
+        self.assertIsNone(controller.start_adding("naver"))
+        self.assertEqual(controller.adding, {"naver_a"})
+
+
+class AfterSaveCleanupTest(unittest.TestCase):
+    """저장이 끝나면 그 슬롯의 입력 상태가 비워지고, 이후 다른 곳이 바꾼 칸은 최신 값으로 보인다(검증 S-5 의 N01)."""
+
+    def test_a_saved_blogs_input_state_is_cleared_and_an_outside_change_of_the_same_field_shows_up_afterwards(self):
+        controller = new_controller()
+        controller.edit("intro", "내가 쓴 소개")
+        controller.open_custom("tone")
+        self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
+        for table in (controller.drafts, controller.touched, controller.service_problems):
+            self.assertNotIn("naver_a", table)
+        self.assertNotIn("naver_a", controller.submitted)
+        self.assertFalse(any(slot == "naver_a" for slot, _name in controller.custom_open))
+        fill_elsewhere(controller, "naver_a", intro="다른 곳에서 바꾼 소개")
+        load(controller)
+        self.assertEqual(controller.values("naver_a")["intro"], "다른 곳에서 바꾼 소개", "낡은 초안이 남아 있으면 남의 변경을 되돌려 쓰게 된다")
+        self.assertFalse(controller.is_dirty("naver_a"))
+
+
+class CloseDialogTest(unittest.TestCase):
+    """저장하지 않은 블로그 입력이 있으면 앱 닫기 확인창의 글이 있다(검증 Q-5) — 입력이 없으면 없다."""
+
+    def test_the_close_dialog_exists_only_for_unsaved_input_and_new_forms_count_only_what_the_user_typed(self):
+        controller = new_controller()
+        self.assertIsNone(controller.close_dialog())
+        controller.edit("intro", "저장 전 소개")
+        dialog = controller.close_dialog()
+        self.assertEqual((dialog["title"], dialog["ok"], dialog["cancel"]), (T["blogs_close_title"], T["blogs_close_ok"], T["blogs_close_cancel"]))
+        for item in dialog.values():
+            self.assertNotRegex(item, SLOT_NAME, item)
+        controller.revert()
+        self.assertIsNone(controller.close_dialog(), "되돌리면 없다")
+        controller.open_picker()
+        start_new(controller, "github")
+        self.assertFalse(controller.has_unsaved(), "새 블로그 폼에 미리 넣은 제안 별명만 있으면 사용자가 친 것이 아니다")
+        controller.edit("display_name", "새 블로그 이름")
+        self.assertTrue(controller.has_unsaved())
+        controller.revert()
+        self.assertFalse(controller.has_unsaved(), "취소하면 없다")
+
+    def test_a_write_in_progress_or_an_unread_list_never_asks(self):
+        controller = new_controller()
+        controller.edit("intro", "저장 전 소개")
+        controller.pending = {"kind": "save", "key": "naver_a", "target": None}
+        gate = threading.Event()                                                                          # 시험이 열어 주기 전에는 끝나지 않는 쓰기 — 시간에 기대지 않는다
+        job = controller.runner.start(blogs_view.WRITE_KEY, lambda progress, cancelled: gate.wait(30))
+        self.addCleanup(job.join, 10)
+        self.addCleanup(gate.set)
+        self.assertTrue(controller.busy)
+        self.assertFalse(controller.has_unsaved(), "쓰는 중에는 앱을 닫아도 쓰기를 마칠 때까지 기다린다")
+        blank = blogs_view.BlogsController(blogs.FakeBlogsProvider(), jobs.JobRunner())
+        self.assertIsNone(blank.close_dialog(), "아직 읽지 않았다")
+
+    def test_the_app_state_asks_for_blog_input_only_after_the_drafts_screen_has_nothing_to_ask(self):
+        state = app_state.AppState(services.FakeHomeProvider())
+        load(state.blogs)
+        self.assertIsNone(state.close_guard())
+        state.blogs.edit("intro", "저장 전 소개")
+        self.assertEqual(state.close_guard()["title"], T["blogs_close_title"])
 
 
 # ---- 4) 낱말 제안 칩 -----------------------------------------------------------------------------------------------------------------------
@@ -601,6 +881,49 @@ class RealServiceTest(unittest.TestCase):
         self.assertEqual(len(bp.read_snapshot(self.ctx).profiles), 5, "저장 형식의 슬롯은 다섯 그대로다")
         controller.open_picker()
         self.assertEqual(start_new(controller, "naver"), "naver_a", "지운 자리는 다시 쓰인다")
+
+    def test_a_blog_saved_by_the_old_screen_with_the_default_name_shows_no_slot_name_on_the_card_the_access_name_or_the_delete_dialog(self):
+        """옛 화면에서는 이름 칸에 기본값(슬롯 이름)이 미리 들어 있었다 — 안 고치고 주소만 넣어 저장한 파일을 서비스로 똑같이 만든다(검증 S-2). 저장된 값은 그대로이고 카드·접근 이름·삭제 확인창만 슬롯 이름을 쓰지 않는다."""
+        for key, kind in (("naver_a", "naver"), ("blogger_ko", "blogger"), ("blogger_en", "blogger"), ("github_pages", "github"), ("naver_b", "naver")):
+            default = bf.default_values(key)["display_name"]
+            bp.save_slot(self.ctx, key, {"display_name": default, "blog_ref": "example-old-blog"}, expected_version=bp.read_snapshot(self.ctx).version)
+            self.assertEqual(self.stored()[key].display_name, default, "저장된 값은 슬롯 이름 그대로다(바꾸지 않는다)")
+        controller = self.controller()
+        view = controller.view()
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b"])
+        for card in view["list"]["cards"]:
+            self.assertEqual(card["headline"], T["blogs_kind_" + bf.KIND_KEY[card["key"]]], card["key"])
+            self.assertEqual(card["a11y"].split(", ")[2], card["headline"], "접근 이름의 이름 자리도 같다")
+        for key in bf.SLOTS:
+            controller.select(key)
+            body = controller.delete_dialog()["body"]
+            self.assertIn(T["blogs_del_unnamed"], body, key)
+            for item in view_strings(controller.view()) + [body]:
+                self.assertNotRegex(item, SLOT_NAME, f"{key}: {item}")
+            self.assertEqual(fields_of(controller)["display_name"]["value"], bf.default_values(key)["display_name"], f"{key}: 이름 입력 칸에는 저장된 값이 그대로 보인다(사용자 자료)")
+        controller.select("naver_a")
+        controller.edit("display_name", "내가 정한 이름")
+        self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
+        card = next(item for item in controller.view()["list"]["cards"] if item["key"] == "naver_a")
+        self.assertEqual(card["headline"], "내가 정한 이름", "사용자가 이름을 정하면 그 이름이 보인다")
+
+    def test_the_real_service_refuses_the_first_save_of_a_slot_filled_elsewhere_and_the_reload_puts_no_input_on_the_other_blog(self):
+        """검증 S 의 R1 — 새 블로그를 열어 둔 사이 다른 곳이 같은 슬롯에 다른 블로그를 저장했다."""
+        controller = self.controller()
+        first = start_new(controller, "naver")
+        controller.edit("display_name", "내 새 블로그")
+        controller.edit("blog_ref", "example-new-blog")
+        bp.save_slot(self.ctx, first, {"display_name": "다른 쪽 블로그", "blog_ref": "example-other-blog", "alias": "다른 쪽 별명", "intro": "다른 쪽 소개"}, expected_version=bp.read_snapshot(self.ctx).version)
+        raw = self.paths.profiles.read_bytes()
+        self.assertEqual(drive(controller, controller.start_save), ("started", "failed", True))
+        self.assertEqual(self.paths.profiles.read_bytes(), raw, "거절된 저장은 파일을 바꾸지 않는다")
+        load(controller)
+        self.assertEqual((controller.selected, sorted(controller.adding), controller.notice), ("naver_b", ["naver_b"], ("warning", T["blogs_taken_moved"])))
+        self.assertEqual((controller.values("naver_a")["display_name"], controller.values("naver_a")["intro"]), ("다른 쪽 블로그", "다른 쪽 소개"))
+        self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
+        stored = self.stored()
+        self.assertEqual((stored["naver_a"].display_name, stored["naver_a"].blog_ref, stored["naver_a"].alias, stored["naver_a"].intro), ("다른 쪽 블로그", "example-other-blog", "다른 쪽 별명", "다른 쪽 소개"), "남의 블로그는 그대로다")
+        self.assertEqual((stored["naver_b"].display_name, stored["naver_b"].blog_ref, stored["naver_b"].alias), ("내 새 블로그", "example-new-blog", "네이버 블로그 2"))
 
     def test_the_saved_file_is_exactly_what_the_service_writes_for_the_same_values_so_the_engine_sees_no_difference(self):
         """저장하는 값은 기존과 같은 글이다 — 화면으로 보기를 골라 저장한 파일이, 같은 값을 서비스 함수로 직접 저장한 파일과 **바이트까지 같다**(엔진 칸·다른 슬롯·판은 그대로)."""

@@ -210,7 +210,7 @@ class RealServiceTest(Base):
             for key, item in data.items():
                 if key != "naver_a":
                     self.assertEqual([item[name] for name in THREE], [[], [], []], f"{key}: 다른 슬롯은 그대로")
-            window.close()
+            self.close_window(window)
             again = self.make(provider)                                                                     # 다시 열면 저장한 값이 보인다
             fields = self.ui(again).fields
             self.assertEqual((fields["priority_keywords"].edit.text(), fields["exclude_keywords"].edit.text()), ("예시 우선 하나, 예시 우선 둘", "예시 제외어"))
@@ -319,7 +319,7 @@ class LayoutTest(Base):
                 if size != (900, 560):
                     self.assertLessEqual(button.mapTo(window, button.rect().bottomLeft()).y(), window.height(), f"{size}: 저장 단추가 창 안에 보인다")
                     self.assertEqual(window.scroll.verticalScrollBar().maximum(), 0, f"{size}: 페이지가 창보다 길지 않다 — 칸이 늘어도 폼 안쪽 스크롤이 받는다")
-                window.close()
+                self.close_window(window)
 
     def test_the_longest_allowed_values_never_clip_or_squeeze_and_are_saved(self):
         priority = ", ".join(f"{'가' * 28}{index:02d}" for index in range(20))
@@ -344,7 +344,7 @@ class LayoutTest(Base):
                 saved = window.state.blogs.provider.slots["naver_a"]
                 self.assertEqual((len(saved.priority_keywords), len(saved.exclude_keywords), saved.preferred_post_types), (20, 20, POST_TYPES))
                 self.assertEqual(window.scroll.horizontalScrollBar().maximum(), 0, f"{size}: 긴 값이 가로 스크롤을 만들지 않는다")
-                window.close()
+                self.close_window(window)
 
     def test_an_overlap_error_keeps_the_save_row_in_the_window_and_scrolls_the_first_error_whole_into_view_at_the_small_laptop_size(self):
         for size in ((1093, 614), (1366, 768), (1280, 720)):
@@ -361,6 +361,8 @@ class LayoutTest(Base):
                 self.assertEqual(window.scroll.verticalScrollBar().maximum(), 0, f"{size}: 페이지가 창보다 길지 않다")
                 view, viewport = ui.fields["priority_keywords"], ui.form_scroll.viewport()
                 edit = view.edit                                                                      # 의도적 갱신(blogsel, D-493): 제안 칩 줄이 생겨 이 칸 전체가 작은 창의 보이는 영역보다 높다 — 칸 이름까지는 못 보이므로 **고칠 입력 칸과 오류 문장이 한 덩어리로 보이는지** 본다(칸 이름이 위로 밀려도 오류 문장은 행동 줄 뒤로 숨지 않는다)
+                if view.height() <= viewport.height():                                                 # 수정 1(검증 S-4·Q-17): 칸 전체가 보이는 영역에 들어가는 크기에서는 옛 엄격한 단언 그대로 — 칸 이름(맨 위)까지 보인다(1366×768: 칸 311px ≤ 영역 336px)
+                    self.assertGreaterEqual(view.mapTo(viewport, view.rect().topLeft()).y(), 0, f"{size}: 칸 이름까지 한 덩어리로 보인다(칸 {view.height()}px ≤ 영역 {viewport.height()}px)")
                 self.assertGreaterEqual(edit.mapTo(viewport, edit.rect().topLeft()).y(), 0, "입력 칸이 잘리지 않는다")
                 self.assertLessEqual(view.error_row.mapTo(viewport, view.error_row.rect().bottomLeft()).y(), viewport.height() + 1, "오류 문장까지 한 덩어리로 보인다(행동 줄 뒤로 숨지 않는다)")
                 self.assertTrue(view.error_row.isVisibleTo(window))
@@ -368,7 +370,7 @@ class LayoutTest(Base):
                 self.assertTrue(other.error_row.isVisibleTo(window))
                 self.assertLessEqual(other.error_row.mapTo(viewport, other.error_row.rect().bottomLeft()).y(), viewport.height() + 1, "둘째 오류 칸도 문장까지 보인다")
                 self.assertEqual(ui_offscreen.find_squeezed(window), [], size)
-                window.close()
+                self.close_window(window)
 
 
 if __name__ == "__main__":

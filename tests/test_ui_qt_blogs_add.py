@@ -9,6 +9,7 @@
   5) 이미지 칸은 쓰는 칸이 아니라 읽기 전용이고 고르기·지우기 단추로만 바뀐다. 6) 새 부품도 키보드(Tab·Enter·Space)·접근 이름·36px 이상 누르는 칸을 지키고, 여섯 크기에서 글자 잘림·눌림·가로 스크롤이 없으며 아래 고정 행동 줄이 창 안에 있다.
   7) 종류 고르기·칩·보기·제안·취소는 **파일에 닿지 않는다**(임시 폴더 전체 바이트).
 """
+import dataclasses
 import re
 import sys
 import tempfile
@@ -21,6 +22,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 from chanceblog_desktop.service import blog_profiles as bp  # noqa: E402
 from chanceblog_desktop.ui import blogs_adapter  # noqa: E402
+from chanceblog_desktop.ui.core import blog_form as bf  # noqa: E402
 from chanceblog_desktop.ui.core import blog_options as bo  # noqa: E402
 from chanceblog_desktop.ui.core import blogs, text, tokens  # noqa: E402
 
@@ -29,7 +31,8 @@ from test_ui_qt_blogs import HAVE, PICKED, SIZES, Base  # noqa: E402,I001
 
 if HAVE:
     import ui_offscreen
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QWidget
     from chanceblog_desktop.ui.qt import blog_parts, blog_screen
@@ -216,7 +219,7 @@ class NewBlogFormTest(Base):
         self.action(window2, "revert").click()
         self.settle()
         self.assertEqual(sorted(self.ui(window2).cards), ["blogger_ko", "naver_a", "naver_b"])
-        self.assertEqual(window2.state.blogs.selected, "blogger_ko")
+        self.assertEqual(window2.state.blogs.selected, "naver_a", "의도적 갱신(blogsel 수정 1, D-493 ④ — 검증 Q-2): 취소하면 슬롯 순서의 첫 카드(blogger_ko)가 아니라 새 블로그를 열기 전에 폼에 열려 있던 카드로 돌아간다")
 
     def test_saving_a_new_blog_needs_the_name_and_the_address_then_the_card_becomes_a_registered_one(self):
         provider = blogs.FakeBlogsProvider("empty")
@@ -263,6 +266,42 @@ class NewBlogFormTest(Base):
             self.assertNotRegex(item, SLOT_NAME, item)
         empty = self.make(blogs.FakeBlogsProvider("empty"))
         for item in screen_texts(empty.screen_widget):
+            self.assertNotRegex(item, SLOT_NAME, item)
+
+    def test_no_text_names_a_slot_for_a_blog_saved_by_the_old_screen_with_the_default_name_nor_for_a_slot_with_only_an_alias(self):
+        """의도적 넓힘(blogsel 수정 1, 검증 S-2·Q-8): ① 옛 화면에서 이름 칸을 안 고치고(기본값이 미리 들어 있었다) 등록한 파일 — 서비스로 같은 상태를 만든다 ② 손으로 고친 파일의 주소 없이 별명만 있는 슬롯.
+        두 상태 모두 카드·접근 이름·툴팁·삭제 확인창 어디에도 슬롯 이름이 없다(이름 입력 칸의 저장된 값은 사용자 자료라 훑는 글이 아니다)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = support.make_ctx(tmp)
+            for key in bf.SLOTS:
+                bp.save_slot(ctx, key, {"display_name": bf.default_values(key)["display_name"], "blog_ref": "example-old-blog"}, expected_version=bp.read_snapshot(ctx).version)
+            window = self.make(blogs_adapter.ServiceBlogsProvider(context_factory=lambda data_dir=None: ctx))
+            self.assertEqual(sorted(self.ui(window).cards), sorted(bf.SLOTS))
+            every = list(screen_texts(window.screen_widget))
+            for key in self.ui(window).cards:
+                window.blog_select(key)
+                self.settle()
+                self.action(window, "delete").click()
+                self.settle()
+                every += screen_texts(window.dialog)
+                window.escape()
+                self.settle()
+            kinds = {card.property("slot") for card in self.ui(window).cards.values()}
+            self.assertEqual(kinds, {"true"})
+            self.assertGreater(len(every), 200)
+            for item in every:
+                self.assertNotRegex(item, SLOT_NAME, item)
+        provider = blogs.FakeBlogsProvider("empty")
+        provider.slots["naver_b"] = dataclasses.replace(provider.slots["naver_b"], alias="손으로 쓴 별명")
+        window = self.make(provider)
+        every = list(screen_texts(window.screen_widget))
+        self.action(window, "delete").click()
+        self.settle()
+        every += screen_texts(window.dialog)
+        window.escape()
+        self.settle()
+        self.assertEqual(list(self.ui(window).cards), ["naver_b"])
+        for item in every:
             self.assertNotRegex(item, SLOT_NAME, item)
 
     def test_opening_choosing_picking_and_cancelling_write_nothing_with_the_real_adapter(self):
@@ -571,6 +610,147 @@ class LayoutTest(Base):
         self.assertEqual(window.scroll.horizontalScrollBar().maximum(), 0)
         ui = self.ui(window)
         self.assertTrue(ui.add_card.isVisibleTo(window))
+
+
+def mouse(kind, widget, position):
+    """위젯 안 `position` 에 보내는 마우스 이벤트(왼쪽 단추) — `QTest.mouseDClick` 은 오프스크린에서 단추를 못 눌러, 더블클릭의 두 번째 눌림을 이벤트로 직접 보낸다."""
+    buttons = Qt.NoButton if kind == QEvent.MouseButtonRelease else Qt.LeftButton
+    return QMouseEvent(kind, position, widget.mapToGlobal(position.toPoint()), Qt.LeftButton, buttons, Qt.NoModifier)
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class FocusAndGuardTest(Base):
+    """수정 1(검증 S·Q 1차) — 취소·되돌리기·삭제 뒤 포커스, 더블클릭의 두 번째 눌림, 최소 창의 이름 칸, 앱 창 닫기 확인."""
+
+    def focus_key(self):
+        widget = QApplication.focusWidget()
+        while widget is not None and not widget.property("focus_key"):
+            widget = widget.parentWidget()
+        return widget.property("focus_key") if widget is not None else None
+
+    def press(self, button, space=True):
+        self.focus(button)
+        QTest.keyClick(button, Qt.Key_Space if space else Qt.Key_Return)
+        self.settle()
+
+    def click_event(self, button, kinds):
+        position = QPointF(button.rect().center())
+        for kind in kinds:
+            QApplication.sendEvent(button, mouse(kind, button, position))
+        self.settle()
+
+    def test_cancelling_a_new_blog_and_reverting_a_card_with_the_keyboard_keep_the_focus_on_the_card_not_the_top_menu(self):
+        window = self.make()
+        self.add_blog(window, "github")
+        self.press(self.action(window, "revert"))
+        self.assertEqual((window.state.blogs.selected, self.focus_key()), ("naver_a", "slot:naver_a"), "취소 뒤 포커스는 돌아간 카드에 있다 — 맨 위 홈 메뉴로 튀지 않는다")
+        self.type_into(window, "alias", "고치는 별명")
+        self.assertTrue(window.state.blogs.is_dirty("naver_a"))
+        self.press(self.action(window, "revert"))
+        self.assertEqual((window.state.blogs.is_dirty("naver_a"), self.focus_key()), (False, "slot:naver_a"), "되돌리기 뒤에도 같다")
+
+    def test_cancelling_the_only_new_form_with_no_card_puts_the_focus_on_the_add_card(self):
+        window = self.make(blogs.FakeBlogsProvider("empty"))
+        window.blog_add_kind("naver")
+        self.settle()
+        self.press(self.action(window, "revert"))
+        self.assertEqual((window.state.blogs.selected, self.focus_key()), (None, "slot:add"))
+
+    def test_after_deleting_the_last_blog_the_focus_is_on_the_add_card(self):
+        window = self.make()
+        for _ in range(3):
+            self.action(window, "delete").click()
+            self.settle()
+            next(button for button in window.dialog.findChildren(QAbstractButton) if button.text() == "지우기").click()
+            self.wait_write(window)
+        self.assertEqual(window.state.blogs.listed_keys(), ())
+        self.assertEqual(self.focus_key(), "slot:add", "마지막 블로그를 지우면 카드가 없다 — 포커스는 '블로그 추가' 카드로 간다")
+
+    def test_a_double_click_second_press_never_reaches_the_revert_or_delete_buttons_while_a_normal_click_still_does(self):
+        window = self.make()
+        window.blog_select("blogger_ko")
+        self.settle()
+        self.type_into(window, "alias", "고치는 별명")
+        self.add_blog(window, "github")
+        self.assertEqual(self.action(window, "revert").text(), T["blogs_cancel"])
+        self.action(window, "revert").click()                                                      # 더블클릭의 첫 클릭 — 새 블로그가 취소된다
+        self.settle()
+        self.assertEqual(window.state.blogs.selected, "blogger_ko", "취소하면 열기 전의 카드로 돌아간다")
+        revert = self.action(window, "revert")
+        self.assertEqual((revert.text(), revert.isEnabled()), (T["blogs_revert"], True), "같은 자리에 그 카드의 '되돌리기' 가 켜져 있다")
+        self.click_event(revert, (QEvent.MouseButtonDblClick, QEvent.MouseButtonRelease))        # 더블클릭의 두 번째 눌림과 뗌
+        self.assertEqual(window.state.blogs.drafts.get("blogger_ko"), {"alias": "고치는 별명"}, "더블클릭의 두 번째 눌림은 되돌리기를 누르지 않는다 — 그 카드의 입력이 그대로다")
+        delete = self.action(window, "delete")
+        self.click_event(delete, (QEvent.MouseButtonDblClick, QEvent.MouseButtonRelease))
+        self.assertFalse(window.dialog.is_open, "삭제도 더블클릭의 두 번째 눌림으로는 확인창이 열리지 않는다")
+        self.click_event(revert, (QEvent.MouseButtonPress, QEvent.MouseButtonRelease))            # 보통 클릭(눌림 + 뗌)은 그대로 된다 — 시험 도구가 단추에 닿는다는 증거
+        self.assertEqual(window.state.blogs.drafts.get("blogger_ko"), None, "보통 클릭은 되돌리기를 누른다")
+        self.click_event(self.action(window, "delete"), (QEvent.MouseButtonPress, QEvent.MouseButtonRelease))
+        self.assertTrue(window.dialog.is_open, "보통 클릭은 삭제 확인창을 연다")
+
+    def test_at_the_smallest_window_the_name_field_of_a_new_blog_is_inside_the_visible_area_right_after_choosing_the_kind(self):
+        window = self.make(size=(900, 560))
+        window.blog_add_open()
+        self.settle()
+        window.blog_add_kind("github")
+        self.settle(8)
+        name = self.ui(window).fields["display_name"].edit
+        self.assertIs(QApplication.focusWidget(), name, "처음 포커스는 이름 칸이다")
+        viewport = window.scroll.viewport()
+        top, bottom = name.mapTo(viewport, name.rect().topLeft()).y(), name.mapTo(viewport, name.rect().bottomLeft()).y()
+        self.assertGreaterEqual(top, 0, "이름 칸이 보이는 영역 위로 밀려나지 않는다")
+        self.assertLessEqual(bottom, viewport.height(), f"최소 창에서도 이름 칸이 보이는 영역 안이다(칸 아래 {bottom}, 영역 높이 {viewport.height()})")
+
+    def test_closing_the_window_with_an_unsaved_new_blog_form_asks_first_cancel_keeps_the_input_and_close_closes(self):
+        window = self.make()
+        self.add_blog(window, "github")
+        self.type_into(window, "display_name", "입력 중인 이름")
+        window.close()
+        self.settle()
+        self.assertTrue(window.isVisible(), "저장하지 않은 입력이 있으면 닫지 않고 먼저 묻는다")
+        self.assertTrue(window.dialog.is_open)
+        labels = {label.plain_text() for label in window.dialog.findChildren(UI.Label)}
+        self.assertEqual((T["blogs_close_title"] in labels, T["blogs_close_body"] in labels), (True, True))
+        buttons = {button.text(): button for button in window.dialog.findChildren(QAbstractButton)}
+        self.assertEqual(sorted(buttons), sorted([T["blogs_close_ok"], T["blogs_close_cancel"]]))
+        self.assertIs(QApplication.focusWidget(), buttons[T["blogs_close_cancel"]], "처음 포커스는 취소(삭제 확인창과 같은 원칙)")
+        for item in screen_texts(window.dialog):
+            self.assertNotRegex(item, SLOT_NAME, item)
+        buttons[T["blogs_close_cancel"]].click()
+        self.settle()
+        self.assertEqual((window.isVisible(), window.dialog.is_open), (True, False))
+        self.assertEqual(self.ui(window).fields["display_name"].edit.text(), "입력 중인 이름", "취소하면 입력이 그대로다")
+        window.close()
+        self.settle()
+        buttons = {button.text(): button for button in window.dialog.findChildren(QAbstractButton)}
+        buttons[T["blogs_close_ok"]].click()
+        self.settle()
+        self.assertFalse(window.isVisible(), "'닫기' 를 누르면 닫힌다")
+
+    def test_closing_with_no_unsaved_blog_input_never_asks(self):
+        window = self.make()
+        self.add_blog(window, "github")                                                            # 제안 별명만 들어 있는 새 폼 — 사용자가 친 것이 없다
+        window.close()
+        self.settle()
+        self.assertEqual((window.isVisible(), window.dialog.is_open), (False, False))
+        other = self.make()
+        other.close()
+        self.settle()
+        self.assertFalse(other.isVisible(), "고친 것이 없는 창도 바로 닫힌다")
+
+    def test_an_edited_registered_blog_asks_too_and_a_saved_one_does_not(self):
+        window = self.make()
+        self.type_into(window, "alias", "저장 전 별명")
+        window.close()
+        self.settle()
+        self.assertTrue(window.dialog.is_open)
+        window.close_dialog()
+        self.settle()
+        self.action(window, "save").click()
+        self.wait_write(window)
+        window.close()
+        self.settle()
+        self.assertFalse(window.isVisible(), "저장한 뒤에는 묻지 않는다")
 
 
 if __name__ == "__main__":
