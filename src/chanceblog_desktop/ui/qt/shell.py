@@ -687,13 +687,50 @@ class AppShell(QMainWindow):
             self.render()
             self._restore_focus("slot:" + key)
 
+    def blog_add_open(self):
+        """'블로그 추가' 카드 — 연결할 사이트(종류) 고르기를 연다. 고치던 내용은 그대로 남고 파일에 닿지 않는다."""
+        if self.state.blogs.open_picker():
+            self.render()
+            self._restore_focus("slot:add")
+
+    def blog_add_close(self):
+        """종류 고르기를 닫고 카드로 돌아간다."""
+        if self.state.blogs.close_picker():
+            self.render()
+            self._restore_focus("slot:" + str(self.state.blogs.selected))
+
+    def blog_add_kind(self, kind):
+        """종류를 골랐다 — 같은 종류의 빈 슬롯을 새 블로그 폼으로 연다(파일에 닿지 않는다). 처음 포커스는 이름 칸이다."""
+        if self.state.blogs.start_adding(kind) is not None:
+            self.render()
+            self._restore_focus("blogs:field:display_name")
+
     def blog_edit(self, name, value):
         if self.state.blogs.edit(name, value):
             self._live_blogs()
 
     def blog_toggle_choice(self, name, value):
-        """여럿 고르는 칩(협찬 가능 분야·선호 글 유형) 하나를 켜고 끈다 — 고치는 것뿐이라 파일에 닿지 않는다."""
-        if self.state.blogs.toggle_choice(name, value):
+        """여럿 고르는 칩(협찬 가능 분야·선호 글 유형·낱말 제안) 하나를 켜고 끈다 — 고치는 것뿐이라 파일에 닿지 않는다. 못 켜는 경우(한도·겹침)에도 칩 표시를 뷰모델에 다시 맞춘다."""
+        self.state.blogs.toggle_choice(name, value)
+        self._live_blogs()
+
+    def blog_pick_option(self, name, value):
+        """보기 하나를 고른다(채널 역할·대상 독자·문체) — 이미 고른 보기를 다시 누르면 비운다. 고치는 것뿐이라 파일에 닿지 않는다."""
+        self.state.blogs.choose_option(name, value)
+        self._live_blogs()
+
+    def blog_open_custom(self, name):
+        """'직접 입력' — 그 칸의 입력 칸을 열고 포커스를 준다."""
+        if self.state.blogs.open_custom(name):
+            self._live_blogs()
+            ui = getattr(self.screen_widget, "blogs_ui", None)
+            view = ui.fields.get(name) if ui is not None else None
+            if view is not None and view.edit is not None:
+                view.edit.setFocus(Qt.OtherFocusReason)
+
+    def blog_use_suggestion(self, name):
+        """제안 문장을 입력 칸에 넣는다(저장은 따로 — 사용자가 고쳐서 저장한다)."""
+        if self.state.blogs.apply_suggestion(name):
             self._live_blogs()
 
     def blog_pick_image(self, name):
@@ -716,7 +753,8 @@ class AppShell(QMainWindow):
     @staticmethod
     def _reveal_blog_field(scroll, view):
         try:
-            scroll.ensureWidgetVisible(view, 0, 12)
+            for part in view.reveal_parts(scroll.viewport().height()):               # 칸 전체가 들어가면 칸 전체, 칩 줄 때문에 보이는 영역보다 높은 칸은 입력 칸과 오류 문장을 함께 보인다
+                scroll.ensureWidgetVisible(part, 0, 12)
         except RuntimeError:                                                         # 그 사이 화면이 다시 그려져 부품이 사라졌다
             pass
 
@@ -793,7 +831,8 @@ class AppShell(QMainWindow):
     def _show_blogs_written(self, outcome):
         self.state.blogs.apply_write_ok(outcome)
         self._render_blogs()
-        self._restore_focus("slot:" + self.state.blogs.selected)
+        selected = self.state.blogs.selected
+        self._restore_focus("slot:" + selected if selected else "slot:add")                  # 마지막 블로그를 지우면 카드가 없다 — 포커스는 '블로그 추가' 카드로
 
     def _show_blogs_write_failed(self, failure):
         reload = self.state.blogs.apply_write_failed(failure)

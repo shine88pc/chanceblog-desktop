@@ -68,7 +68,9 @@ class TopicSectionTest(Base):
         fields = self.ui(window).fields
         for name, label in (("priority_keywords", "우선 키워드"), ("exclude_keywords", "제외 키워드")):
             view = fields[name]
-            self.assertEqual((view.kind, view.edit.accessibleName(), len(view.controls)), ("words", label, 1), name)
+            self.assertEqual((view.kind, view.edit.accessibleName(), view.controls[0] is view.edit), ("words", label, True), name)      # 의도적 갱신(blogsel, D-493): 낱말 칸에 제안 칩이 생겨 조작 부품이 입력 칸 하나에서 입력 칸 + 칩들이 되었다(입력 칸이 첫째라는 것은 그대로 — 첫 문제 칸 포커스)
+            self.assertEqual(len(view.controls), 1 + len(view.chips), name)
+            self.assertGreater(len(view.chips), 20, f"{name}: 제안 칩이 있다")
             self.assertGreaterEqual(view.edit.height(), tokens.SIZE["hit"], name)
             hint = view.hint.plain_text()
             self.assertIn("20개", hint)
@@ -131,7 +133,7 @@ class TopicSectionTest(Base):
         start = window.nav_buttons["blogs"]
         self.focus(start)
         seen, current = [], start
-        for _ in range(150):
+        for _ in range(450):                                                                          # 의도적 갱신(blogsel, D-493): 낱말 칸 넷의 제안 칩이 정거장에 더해져 한 바퀴가 길어졌다
             seen.append(current)
             current.focusNextChild()
             self.settle(1)
@@ -144,7 +146,8 @@ class TopicSectionTest(Base):
         stops = {id(widget) for widget in seen}
         for name in THREE:
             for control in self.ui(window).fields[name].controls:
-                self.assertIn(id(control), stops, f"{name}: {control.accessibleName()} 가 Tab 한 바퀴에 있다")
+                if control.isEnabled() and control.isVisibleTo(window):                              # 한도·겹침으로 꺼진 칩과 숨은 입력 칸은 정거장이 아니다
+                    self.assertIn(id(control), stops, f"{name}: {control.accessibleName()} 가 Tab 한 바퀴에 있다")
 
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
@@ -191,6 +194,7 @@ class RealServiceTest(Base):
             ctx = support.make_ctx(tmp)
             provider = blogs_adapter.ServiceBlogsProvider(context_factory=lambda data_dir=None: ctx)
             window = self.make(provider)
+            self.add_blog(window)                                                                     # 의도적 갱신(blogsel, D-493): 빈 폴더에서는 폼이 아니라 종류 고르기가 열려 있다 — '블로그 추가' 로 새 블로그 폼을 연다
             self.type_into(window, "display_name", "예시 블로그 가")
             self.type_into(window, "blog_ref", "example-blog-a")
             self.type_into(window, "priority_keywords", "예시 우선 하나, 예시 우선 둘")
@@ -218,6 +222,9 @@ class RealServiceTest(Base):
             self.wait_write(again)
             cleared = read_profiles(ctx)["naver_a"]
             self.assertEqual([cleared[name] for name in THREE], [[], [], []])
+            self.assertEqual(self.ui(again).fields, {}, "의도적 갱신(blogsel, D-493): 마지막 블로그를 지우면 폼이 아니라 종류 고르기가 열려 있다")
+            again.blog_add_kind("naver")                                                                    # 다시 연결하면 세 칸이 비어 있다(같은 사실을 새 흐름으로)
+            self.settle()
             fields = self.ui(again).fields
             self.assertEqual((fields["priority_keywords"].edit.text(), fields["exclude_keywords"].edit.text()), ("", ""))
             self.assertFalse([chip for chip in fields["preferred_post_types"].chips.values() if chip.isChecked()])
@@ -228,6 +235,8 @@ class RealServiceTest(Base):
             ctx = support.make_ctx(tmp)
             provider = blogs_adapter.ServiceBlogsProvider(context_factory=lambda data_dir=None: ctx)
             window = self.make(provider)
+            self.add_blog(window)                                                                     # 의도적 갱신(blogsel, D-493): 새 블로그 폼은 '블로그 추가' 로 연다 — 이름이 비면 화면이 먼저 막으므로 이름도 넣는다
+            self.type_into(window, "display_name", "예시 블로그 가")
             self.type_into(window, "blog_ref", "example-blog-a")
             self.type_into(window, "exclude_keywords", shape)
             before = support.tree_snapshot(Path(ctx.workspace.root))
@@ -246,6 +255,7 @@ class RealServiceTest(Base):
             before = support.tree_snapshot(Path(ctx.workspace.root))
             listing = sorted(str(path) for path in Path(tmp).rglob("*"))
             window = self.make(provider)
+            self.add_blog(window)                                                                     # 의도적 갱신(blogsel, D-493): 빈 폴더에서는 '블로그 추가' 로 폼을 연다
             self.type_into(window, "priority_keywords", "예시 우선")
             self.type_into(window, "exclude_keywords", "예시 우선")                                           # 겹침 — 오류 표시만 한다
             chips = self.ui(window).fields["preferred_post_types"].chips
@@ -287,7 +297,8 @@ class RealServiceTest(Base):
 class LayoutTest(Base):
     def reveal(self, window, name):
         ui = self.ui(window)
-        ui.form_scroll.ensureWidgetVisible(ui.fields[name], 0, 12)
+        for part in ui.fields[name].reveal_parts(ui.form_scroll.viewport().height()):                  # 의도적 갱신(blogsel, D-493): 셸이 첫 문제 칸을 보일 때와 같은 부품들(칸 전체가 들어가면 칸 전체, 칩 줄 때문에 보이는 영역보다 높은 칸은 입력 칸과 오류 문장)
+            ui.form_scroll.ensureWidgetVisible(part, 0, 12)
         self.settle(2)
         return ui.fields[name], ui.form_scroll.viewport()
 
@@ -349,12 +360,13 @@ class LayoutTest(Base):
                 self.assertLessEqual(bar.mapTo(window, bar.rect().bottomLeft()).y(), window.height(), f"{size}: 알림 줄이 붙어도 행동 줄이 창 안에 있다")
                 self.assertEqual(window.scroll.verticalScrollBar().maximum(), 0, f"{size}: 페이지가 창보다 길지 않다")
                 view, viewport = ui.fields["priority_keywords"], ui.form_scroll.viewport()
-                self.assertGreaterEqual(view.mapTo(viewport, view.rect().topLeft()).y(), 0, "칸 이름이 잘리지 않는다")
-                self.assertLessEqual(view.mapTo(viewport, view.rect().bottomLeft()).y(), viewport.height() + 1, "오류 문장까지 한 덩어리로 보인다(행동 줄 뒤로 숨지 않는다)")
+                edit = view.edit                                                                      # 의도적 갱신(blogsel, D-493): 제안 칩 줄이 생겨 이 칸 전체가 작은 창의 보이는 영역보다 높다 — 칸 이름까지는 못 보이므로 **고칠 입력 칸과 오류 문장이 한 덩어리로 보이는지** 본다(칸 이름이 위로 밀려도 오류 문장은 행동 줄 뒤로 숨지 않는다)
+                self.assertGreaterEqual(edit.mapTo(viewport, edit.rect().topLeft()).y(), 0, "입력 칸이 잘리지 않는다")
+                self.assertLessEqual(view.error_row.mapTo(viewport, view.error_row.rect().bottomLeft()).y(), viewport.height() + 1, "오류 문장까지 한 덩어리로 보인다(행동 줄 뒤로 숨지 않는다)")
                 self.assertTrue(view.error_row.isVisibleTo(window))
                 other, viewport = self.reveal(window, "exclude_keywords")
                 self.assertTrue(other.error_row.isVisibleTo(window))
-                self.assertLessEqual(other.mapTo(viewport, other.rect().bottomLeft()).y(), viewport.height() + 1, "둘째 오류 칸도 문장까지 보인다")
+                self.assertLessEqual(other.error_row.mapTo(viewport, other.error_row.rect().bottomLeft()).y(), viewport.height() + 1, "둘째 오류 칸도 문장까지 보인다")
                 self.assertEqual(ui_offscreen.find_squeezed(window), [], size)
                 window.close()
 

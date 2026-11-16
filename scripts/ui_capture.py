@@ -334,7 +334,7 @@ def settings_shots(app, ui_offscreen, args, report, logical, tag, out):
 
 
 def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
-    """블로그 관리 화면(P4b) 사진·점검 — 기본·저장 시도 뒤 칸 오류·저장 결과·빈 슬롯(등록 카드)·읽는 중·읽기 오류·삭제 확인창·좁은 창(900×560)·실제 어댑터(임시 폴더 — 저장 결과까지)·주제 설정 구역(P4c — 폼 안쪽 스크롤을 구역으로 옮긴 장면과 우선·제외에 같은 낱말을 넣은 겹침 오류 장면).
+    """블로그 관리 화면(P4b) 사진·점검 — 기본·저장 시도 뒤 칸 오류·저장 결과·등록한 블로그 없음(종류 고르기)·블로그 추가(종류 고르기·새 블로그 폼·제안 칩 — blogsel)·읽는 중·읽기 오류·삭제 확인창·좁은 창(900×560)·실제 어댑터(임시 폴더 — 저장 결과까지)·주제 설정 구역(P4c — 폼 안쪽 스크롤을 구역으로 옮긴 장면과 우선·제외에 같은 낱말을 넣은 겹침 오류 장면).
     **이름은 모두 가짜**(`예시 블로그 가` …)이고 실제 어댑터도 이 도구가 만든 임시 폴더만 읽고 쓴다(사용자 데이터 폴더·보관소는 건드리지 않는다). 점검은 글자 잘림·가로 스크롤과 '아래 고정 행동 줄이 창 안에 보이는가'(`fits_window`)다."""
     import tempfile
     from PySide6.QtWidgets import QApplication
@@ -407,9 +407,29 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
     report["checks"]["blogs_delete"] = {"clipped": ui_offscreen.find_clipping(window.dialog), "fits_window": window.dialog.height() <= window.height() and window.dialog.width() <= window.width()}
     window.close_dialog()
     window.close()
-    window = make(blogs.FakeBlogsProvider("empty"))                                    # 모든 슬롯이 비었다 — 등록 카드 다섯과 '등록' 폼
+    window = make(blogs.FakeBlogsProvider("empty"))                                    # 등록한 블로그가 없다 — 카드는 '블로그 추가' 뿐이고 폼 자리에 종류 고르기(네이버·Blogger·GitHub Pages)가 열려 있다(blogsel)
     shoot(window, "blogs_empty")
     audit(window, "blogs_empty")
+    window.close()
+    window = make(blogs.FakeBlogsProvider())                                           # 블로그 추가(blogsel) — 카드 셋 + '블로그 추가' 카드(선택) + 종류 고르기(네이버는 자리 없음·Blogger·GitHub Pages 는 남은 자리)
+    window.blog_add_open()
+    ui_offscreen.settle(app)
+    shoot(window, "blogs_picker")
+    audit(window, "blogs_picker")
+    window.blog_add_kind("github")                                                     # 새 블로그 폼 — 이름 칸 비어 있음·별명 제안·'등록 전' 카드·저장과 취소뿐인 행동 줄
+    ui_offscreen.settle(app)
+    shoot(window, "blogs_new")
+    audit(window, "blogs_new")
+    ui = window.screen_widget.blogs_ui
+    ui.form_scroll.ensureWidgetVisible(ui.fields["main_topics"], 0, 12)               # 보기 칩·제안 칩을 고른 모습 — 제안 칩 줄과 보기 칩 줄(한도·겹침으로 꺼지는 칩 포함)
+    for word in ("소형가전", "PC 주변기기", "숙박"):
+        window.blog_toggle_choice("main_topics", word)
+    window.blog_pick_option("channel_role", "정보 공유")
+    window.blog_pick_option("audience", "대학생")
+    window.blog_open_custom("tone")
+    ui_offscreen.settle(app, 4)
+    shoot(window, "blogs_new_chips")
+    audit(window, "blogs_new_chips")
     window.close()
     window = make(blogs.FakeBlogsProvider(delay=30), wait=False)                       # 읽는 중 — 일이 끝나기 전에 찍는다(창을 닫으면 읽기도 취소된다)
     shoot(window, "blogs_loading")
@@ -444,6 +464,8 @@ def blogs_shots(app, ui_offscreen, args, report, logical, tag, out):
         window = make(ServiceBlogsProvider(context_factory=lambda data_dir=None: ctx))
         shoot(window, "blogs_real_first")
         audit(window, "blogs_real_first")
+        window.blog_add_kind("naver")                                                   # 등록한 블로그가 없으면 종류 고르기가 열려 있다 — 네이버를 골라 새 블로그 폼을 연다(blogsel)
+        ui_offscreen.settle(app)
         for name, value in (("display_name", "예시 블로그 가"), ("blog_ref", "example-blog-a"), ("main_topics", "예시 주제 하나, 예시 주제 둘"), ("color_preset", "warm_lifestyle")):
             window.blog_edit(name, value)
         window.blog_save()

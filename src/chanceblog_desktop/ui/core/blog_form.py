@@ -19,12 +19,15 @@ from ...content.profiles import find_markup
 from ...errors import AppError
 from ...topics import channels as ch
 from ...topics import wording
+from . import blog_options as bo
 from .text import T, display_text
 
 SLOTS = ("github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b")                 # 서비스 슬롯과 같다(시험이 견준다)
 GENERATION_SLOTS = ("naver_a", "naver_b")                                                   # 후보 만들기를 켜고 끌 수 있는 슬롯
 SLOT_KINDS = (("naver_a", "naver_b"), ("blogger_ko", "blogger_en"), ("github_pages",))      # 복제는 같은 종류끼리만
 KIND_KEY = {"naver_a": "naver", "naver_b": "naver", "blogger_ko": "blogger", "blogger_en": "blogger", "github_pages": "github"}
+KINDS = tuple(KIND_KEY[slots[0]] for slots in SLOT_KINDS)                                  # 블로그 종류(사용자가 '블로그 추가' 에서 고르는 것) — 화면에 보이는 순서: 네이버·Blogger·GitHub Pages
+KIND_SLOTS = {KIND_KEY[slots[0]]: slots for slots in SLOT_KINDS}                            # 종류 → 그 종류가 속에서 쓰는 슬롯들(채우는 순서 — 네이버 2·Blogger 2·GitHub 1)
 SECTIONS = ("basic", "more", "topic", "look")                                               # 기본 정보 → 자세한 정보 → 주제 설정(P4c) → 모양
 KEYWORD_FIELDS = ("priority_keywords", "exclude_keywords")                                  # 서로 같은 낱말이 없어야 하는 두 칸(서비스의 `KEYWORD_FIELDS` 와 같다 — 시험이 견준다)
 TAG_ORDER = tuple(wording.TAG_KO)                                                           # 협찬 가능 분야 여섯(서비스의 이름표가 있는 것) — 고르는 순서
@@ -44,6 +47,9 @@ class FieldSpec:
     options: tuple = ()             # multi 의 고를 수 있는 값들(보여 줄 순서) — 칸마다 다르다
     keep_extra: bool = False        # multi: 목록에 없는 저장된 값(손으로 고친 파일의 것)을 그대로 보존한다 — 협찬 분야만(글 유형은 서비스가 목록 밖 값을 거절한다)
     texts: str = ""                 # multi: 칩 이름을 `T` 에서 찾는 열쇠의 앞머리(예: `bf_tag_`) — 없으면 값이 곧 한글 이름이다(글 유형)
+    choices: tuple = ()             # line: 하나만 고르는 보기(대상 독자·문체·채널 역할) — 보기 밖의 글은 '직접 입력' 이고 지우지 않는다
+    suggest: tuple = ()             # words: 프로그램이 제안하는 낱말(여러 개 고르는 칩) — 직접 추가는 보조로 남는다
+    assist: str = ""                # line: 제안 문장을 보이는 칸(`alias` 종류+번호 · `intro` 고른 값으로 만든 소개글)
 
     @property
     def label(self):
@@ -59,16 +65,16 @@ FIELDS = (
     FieldSpec("blog_ref", "ref", "basic", ch.MAX_BLOG_REF, required=True),
     FieldSpec("language", "choice", "basic", required=True),
     FieldSpec("generation_enabled", "flag", "basic", required=True),                              # 필수 넷의 넷째(사용 여부) — 스위치라 늘 값이 있어 '비었다' 는 문제는 없고 '필수' 표시만 붙는다
-    FieldSpec("alias", "line", "more", ch.MAX_ALIAS),
-    FieldSpec("channel_role", "line", "more", ch.MAX_ROLE),
-    FieldSpec("main_topics", "words", "more", ch.MAX_TOPIC_WORD, ch.MAX_MAIN_TOPICS),
-    FieldSpec("audience", "line", "more", ch.MAX_AUDIENCE),
-    FieldSpec("tone", "line", "more", ch.MAX_TONE),
-    FieldSpec("categories", "words", "more", ch.MAX_CATEGORY_WORD, ch.MAX_CATEGORIES),
-    FieldSpec("intro", "line", "more", ch.MAX_INTRO),
+    FieldSpec("alias", "line", "more", ch.MAX_ALIAS, assist="alias"),
+    FieldSpec("channel_role", "line", "more", ch.MAX_ROLE, choices=bo.ROLE_CHOICES),
+    FieldSpec("main_topics", "words", "more", ch.MAX_TOPIC_WORD, ch.MAX_MAIN_TOPICS, suggest=bo.WORD_SUGGESTIONS["main_topics"]),
+    FieldSpec("audience", "line", "more", ch.MAX_AUDIENCE, choices=bo.AUDIENCE_CHOICES),
+    FieldSpec("tone", "line", "more", ch.MAX_TONE, choices=bo.TONE_CHOICES),
+    FieldSpec("categories", "words", "more", ch.MAX_CATEGORY_WORD, ch.MAX_CATEGORIES, suggest=bo.WORD_SUGGESTIONS["categories"]),
+    FieldSpec("intro", "line", "more", ch.MAX_INTRO, assist="intro"),
     FieldSpec("monetization_focus", "multi", "more", count=ch.MAX_FOCUS, options=TAG_ORDER, keep_extra=True, texts="bf_tag_"),
-    FieldSpec("priority_keywords", "words", "topic", ch.MAX_KEYWORD_WORD, ch.MAX_KEYWORDS),
-    FieldSpec("exclude_keywords", "words", "topic", ch.MAX_KEYWORD_WORD, ch.MAX_KEYWORDS),
+    FieldSpec("priority_keywords", "words", "topic", ch.MAX_KEYWORD_WORD, ch.MAX_KEYWORDS, suggest=bo.WORD_SUGGESTIONS["priority_keywords"]),
+    FieldSpec("exclude_keywords", "words", "topic", ch.MAX_KEYWORD_WORD, ch.MAX_KEYWORDS, suggest=bo.WORD_SUGGESTIONS["exclude_keywords"]),
     FieldSpec("preferred_post_types", "multi", "topic", count=len(POST_TYPES), options=POST_TYPES),
     FieldSpec("color_preset", "choice", "look"),
     FieldSpec("profile_image", "path", "look", ch.MAX_IMAGE_PATH),
@@ -265,14 +271,79 @@ def is_empty_values(key, raw_values):
     return not dirty_names(key, default_values(key), raw_values)
 
 
-def clone_state(slots, key):
-    """`key` 를 복제할 수 있나 → `(가능한가, 안 되는 이유 글, 복제해 넣을 슬롯 열쇠 또는 None)`. `slots` 는 `{열쇠: 입력값}`."""
+def clone_state(slots, key, reserved=()):
+    """`key` 를 복제할 수 있나 → `(가능한가, 안 되는 이유 글, 복제해 넣을 슬롯 열쇠 또는 None)`. `slots` 는 `{열쇠: 입력값}`. `reserved` 는 지금 새 블로그로 열어 둔 슬롯들 — 비어 있어도 복제해 넣지 않는다(입력 중인 것을 덮지 않는다)."""
     if not slots[key].get("blog_ref"):
         return False, T["blogs_clone_no_source"], None
     for other in kind_of(key):
-        if other != key and other in slots and is_empty_values(other, slots[other]):
+        if other != key and other in slots and other not in reserved and is_empty_values(other, slots[other]):
             return True, "", other
     return False, T["blogs_clone_no_target"], None
+
+
+# ---- 등록한 블로그만 카드로 · 종류로 빈 슬롯 찾기(P4b 의 다섯 슬롯은 그대로 — 사용자 눈에서만 숨는다) ----------------------------------------------------
+def is_registered(raw_values):
+    """등록된 블로그 — 블로그 ID 또는 주소가 있다(서비스 `blog_profiles.is_registered` 와 같다 — 시험이 견준다)."""
+    return bool(raw_values.get("blog_ref"))
+
+
+def is_listed(key, raw_values, adding=False):
+    """카드로 보이는 슬롯 — ① 등록됐거나 ② (손으로 고친 파일처럼) 주소 없이 내용이 있거나 ③ 지금 새 블로그로 열어 둔 것. 안 보이는 슬롯은 폼 칸이 모두 기본값인 빈 슬롯이라 '블로그 추가' 에서만 쓰인다 — 내용이 있는 슬롯이 숨어 덮어써지는 일이 없다."""
+    return bool(adding) or is_registered(raw_values) or not is_empty_values(key, raw_values)
+
+
+def free_slot(kind, slots, adding=()):
+    """그 종류에서 새 블로그를 넣을 빈 슬롯 — 카드로 보이지 않는 첫 슬롯(`KIND_SLOTS` 의 채우는 순서). 없으면 None. `slots` 는 `{열쇠: 입력값}`, `adding` 은 지금 새 블로그로 열어 둔 슬롯들."""
+    return next((key for key in KIND_SLOTS[kind] if key in slots and not is_listed(key, slots[key], key in adding)), None)
+
+
+def free_count(kind, slots, adding=()):
+    """그 종류에 남은 빈 슬롯의 수(네이버 2·Blogger 2·GitHub Pages 1 이 끝이다)."""
+    return sum(1 for key in KIND_SLOTS[kind] if key in slots and not is_listed(key, slots[key], key in adding))
+
+
+def form_base(key, stored_raw):
+    """폼의 바탕값 — 저장된 값이다. 단 폼 칸이 모두 기본값인 빈 슬롯은 이름 칸이 빈 글이다(기본 프로필의 이름은 슬롯 이름이라 사용자에게 보이지 않는 말이고, 새 블로그의 이름은 사용자만 안다)."""
+    return {**stored_raw, "display_name": ""} if is_empty_values(key, stored_raw) else stored_raw
+
+
+def suggest_alias(key):
+    """별명 제안 — 블로그 종류 + 그 종류 안의 번호(`네이버 블로그 1`). 슬롯 이름(`네이버 A`)이 아니라 사용자가 알아볼 말이다."""
+    return f"{T['blogs_kind_' + KIND_KEY[key]]} {KIND_SLOTS[KIND_KEY[key]].index(key) + 1}"
+
+
+def card_title(key, alias=""):
+    """카드·폼 머리의 이름 — 별명이 있으면 별명(키·토큰 모양은 가린다), 없으면 종류 + 번호 제안."""
+    alias = clean_line(alias)
+    return shown(alias, ch.MAX_ALIAS) if alias else suggest_alias(key)
+
+
+def suggest_intro(raw_values):
+    """소개글 제안 — 폼의 지금 입력값(채널 역할·대상 독자·문체·주요 주제, 주요 주제가 없으면 카테고리)으로 만든 문장. 만들 재료가 없으면 빈 글."""
+    topics = split_words(raw_values.get("main_topics")) or split_words(raw_values.get("categories"))
+    return bo.suggest_intro(clean_line(raw_values.get("channel_role")), clean_line(raw_values.get("audience")), clean_line(raw_values.get("tone")), topics)
+
+
+def picked_words(text):
+    """낱말 칸의 글에서 고른 낱말들 — 대소문자 구분 없는 비교 열쇠(서비스의 중복·겹침 규칙과 같은 `casefold`)."""
+    return frozenset(word.casefold() for word in split_words(text))
+
+
+def toggle_word(text, word):
+    """낱말 칸의 글에서 낱말 하나를 켜고 끈 새 글 — 있으면(대소문자 구분 없이) 모두 빼고 없으면 맨 뒤에 붙인다. 나머지 낱말과 순서는 그대로라 켰다 끄면 같은 낱말 목록으로 돌아온다."""
+    words = split_words(text)
+    if word.casefold() in {item.casefold() for item in words}:
+        words = tuple(item for item in words if item.casefold() != word.casefold())
+    else:
+        words += (word,)
+    return ", ".join(words)
+
+
+def line_choice_state(spec, raw, custom_opened=False):
+    """보기가 있는 한 줄 칸의 모습 → `(직접 입력인가, 고른 보기 또는 빈 글)`. 직접 입력 = '직접 입력' 을 눌렀거나 입력한 글이 보기에 없다(손으로 쓴 값은 지우지 않고 입력 칸에 그대로 보인다)."""
+    typed = clean_line(raw)
+    custom = bool(custom_opened) or (bool(typed) and typed not in spec.choices)
+    return custom, "" if custom else typed
 
 
 def option_label(spec, value):
@@ -288,10 +359,6 @@ def options_of(spec):
 def shown(value, limit):
     """화면에 나가는 사용자 글 — 키·토큰 모양을 가린 뒤 줄인다(가리기가 먼저, 자르기가 나중이다)."""
     return display_text(value, limit)
-
-
-def slot_title(key):
-    return T["blogs_slot_" + key]
 
 
 def preset_name(preset):

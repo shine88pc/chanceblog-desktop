@@ -7,6 +7,8 @@
   3) 저장·복제·삭제는 작업 스레드에서 돌고 끝나면 결과를 알린다. 실패해도 입력은 그대로이고, 낡은 판이면 최신 내용을 다시 읽는다. 삭제는 확인창(위험 단추·처음 포커스는 취소)이 먼저이고 취소하면 아무것도 쓰지 않는다.
   4) 이미지는 위치만 정한다(선택기를 주입 — 파일을 읽거나 복사하지 않는다). 색은 프리셋 둘과 '정하지 않음' 뿐이고 색만으로 구분하지 않는다(이름 글자가 늘 함께 있다).
   5) Tab 한 바퀴에 새 부품이 들어 있고 모든 눌리는 부품은 접근 이름과 36px 이상의 누르는 칸을 가지며, 가로 스크롤·글자 잘림이 없고 아래 고정 행동 줄이 1366×768 에서도 보인다.
+  (blogsel, D-493) 카드는 등록한 블로그만이고 맨 끝에 '블로그 추가' 카드가 있다 — 빈 슬롯의 폼은 '블로그 추가' → 종류 고르기로만 열린다. 그 흐름과 보기 고르기·제안 칩·제안 문장은 `test_ui_qt_blogs_add` 가 지키고, 이 파일은 옛 흐름(저장·복제·삭제·입력 유지·읽기 전용 증명·키보드·배치)이
+  새 구조에서도 그대로인지 지킨다(바뀐 시험마다 '의도적 갱신(blogsel, D-493)' 이유를 적었다).
 """
 import ast
 import importlib.util
@@ -120,6 +122,14 @@ class Base(unittest.TestCase):
     def ui(self, window):
         return window.screen_widget.blogs_ui
 
+    def add_blog(self, window, kind="naver"):
+        """'블로그 추가' 카드 → 종류 고르기 → 새 블로그 폼(셸의 길 그대로). 의도적 갱신(blogsel, D-493): 빈 슬롯의 폼은 이 길로만 열린다."""
+        window.blog_add_open()
+        self.settle()
+        window.blog_add_kind(kind)
+        self.settle()
+        return self.ui(window)
+
     def type_into(self, window, name, value):
         edit = self.ui(window).fields[name].edit
         edit.setFocus(Qt.OtherFocusReason)
@@ -155,27 +165,34 @@ class MenuAndLayoutTest(Base):
         ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state != "loading", 10)
         self.settle()
         self.assertEqual((window.state.page, window.nav_buttons["blogs"].isChecked(), window.nav_buttons["home"].isChecked()), ("blogs", True, False))
-        self.assertEqual(len(self.ui(window).cards), 5)
+        self.assertEqual(len(self.ui(window).cards), 3, "의도적 갱신(blogsel, D-493): 슬롯 카드 다섯이 아니라 등록한 블로그(예시 데이터는 셋)만 카드다 — 끝에 '블로그 추가' 카드가 하나 더 있다")
+        self.assertIsNotNone(self.ui(window).add_card)
         self.assertEqual(len(self.ui(window).fields), 18, "의도적 갱신(P4c, D-240): 주제 설정 칸 셋(우선 키워드·제외 키워드·선호 글 유형)이 더해져 폼 칸이 열다섯에서 열여덟이 되었다")
         self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])       # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): 화면 표에 Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
         self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["발행 기록"])        # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 '다음 단계' 목록에서 빠졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리는 완성돼 '다음 단계' 목록에서 빠졌다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 빠졌다
 
-    def test_the_five_slot_cards_show_registered_and_empty_slots_as_cards(self):
+    def test_the_cards_show_only_the_registered_blogs_with_their_alias_and_never_a_slot_name(self):
+        """의도적 갱신(blogsel, D-493): 옛 시험은 다섯 슬롯 카드(빈 슬롯은 '등록' 카드)를 못박았다. 이제 카드는 **등록한 블로그만**이고 윗줄 이름은 슬롯 이름이 아니라 별명(없으면 종류 + 번호)이다 — 같은 사실(카드마다 이름·색·선택·접근 이름·누르는 칸)을 새 구조에서 더 정확히 못박는다."""
         window = self.make()
         cards = self.ui(window).cards
-        self.assertEqual(list(cards), list(bf.SLOTS))
-        self.assertEqual({key: card.property("preset") for key, card in cards.items()}, {"github_pages": "", "blogger_en": "", "blogger_ko": "", "naver_a": "warm_lifestyle", "naver_b": "cool_technology"})
+        self.assertEqual(list(cards), ["blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual({key: card.property("preset") for key, card in cards.items()}, {"blogger_ko": "", "naver_a": "warm_lifestyle", "naver_b": "cool_technology"})
         self.assertEqual([key for key, card in cards.items() if card.property("selected")], ["naver_a"])
-        self.assertIn("눌러서 등록", cards["github_pages"].accessibleName())
         self.assertIn("선택됨", cards["naver_a"].accessibleName())
+        self.assertNotIn("선택됨", cards["naver_b"].accessibleName())
         texts = lambda card: {label.text() for label in card.findChildren(UI.ElidedLabel)}  # noqa: E731
-        self.assertIn("블로그를 등록해 보세요", texts(cards["github_pages"]))
         self.assertIn("예시 블로그 가", texts(cards["naver_a"]))
         self.assertIn("예시 역할 — 생활 정보", texts(cards["naver_a"]), "카드에 채널 역할(또는 주요 주제) 한 줄이 있다")
         self.assertIn("예시 역할 — 기술 기록", texts(cards["naver_b"]))
+        captions = {key: {label.text() for label in card.findChildren(QLabel)} for key, card in cards.items()}
+        self.assertIn("예시 별명", captions["naver_a"])
+        self.assertIn("네이버 블로그 2", captions["naver_b"], "별명이 없으면 종류 + 번호")
+        self.assertIn("Blogger 1", captions["blogger_ko"])
+        self.assertIn("네이버 블로그 · 한국어 · 후보 만들기 켜짐", texts(cards["naver_a"]))
         for card in cards.values():
             self.assertEqual(card.focusPolicy(), Qt.StrongFocus)
             self.assertGreaterEqual(card.height(), tokens.SIZE["hit"])
+            self.assertNotRegex(card.accessibleName(), r"네이버 [AB]\b|Blogger (?:한글|영문)")
 
     def test_the_channel_colors_come_from_the_tokens_and_the_names_are_always_written(self):
         qss = theme.build_qss(tokens.palette())
@@ -191,7 +208,7 @@ class MenuAndLayoutTest(Base):
     def test_the_form_has_three_sections_and_the_action_bar_is_the_fixed_row_at_the_bottom(self):
         window = self.make()
         labels = {label.plain_text() for label in window.screen_widget.findChildren(UI.Label)}
-        for title in ("기본 정보", "자세한 정보(선택)", "주제 설정(선택)", "모양(선택)", "네이버 A 정보", "내 블로그"):      # 의도적 갱신(P4c, D-240): 구역이 넷이 되었다(이름 '세 구역' 은 P4b 때의 것 — 이름은 그대로 둔다)
+        for title in ("기본 정보", "자세한 정보(선택)", "주제 설정(선택)", "모양(선택)", "예시 별명 정보", "내 블로그"):      # 의도적 갱신(P4c, D-240): 구역이 넷이 되었다(이름 '세 구역' 은 P4b 때의 것 — 이름은 그대로 둔다) / 의도적 갱신(blogsel, D-493): 폼 머리는 슬롯 이름('네이버 A 정보')이 아니라 별명('예시 별명 정보')이다
             self.assertIn(title, labels)
         bar = self.ui(window).bar
         self.assertEqual([spec["key"] for spec in bar.specs], ["save", "revert", "clone", "delete"])
@@ -404,7 +421,8 @@ class EditingTest(Base):
             self.assertTrue(view.controls, name)
             for control in view.controls:
                 self.assertTrue(control.accessibleName(), name)
-                self.assertGreaterEqual(control.height(), tokens.SIZE["hit"], f"{name}: 누르는 칸 36px")
+                if control.isVisibleTo(window):                                                       # 의도적 갱신(blogsel, D-493): '직접 입력' 이 아니면 입력 칸이 숨어 있다 — 숨은 칸은 누를 수 없으니 보이는 칸만 36px 을 본다
+                    self.assertGreaterEqual(control.height(), tokens.SIZE["hit"], f"{name}: 누르는 칸 36px")
             self.assertTrue(view.hint.plain_text() or view.name == "color_preset", name)
 
     def test_the_language_and_color_choices_and_the_sponsor_chips_work_by_click_and_by_keyboard(self):
@@ -448,6 +466,7 @@ class EditingTest(Base):
         picked = []
         window = self.make(picker=lambda parent, title, filters: (picked.append((title, filters)), PICKED)[1])
         view = self.ui(window).fields["profile_image"]
+        self.assertTrue(view.edit.isReadOnly(), "의도적 갱신(blogsel, D-493): 위치를 적는 칸이 아니라 고른 위치를 보이는 읽기 전용 칸이다 — 고르기·지우기 단추로만 바뀐다")
         with mock.patch("builtins.open", side_effect=AssertionError("파일을 열면 안 된다")):
             view.pick.click()
             self.settle()
@@ -548,12 +567,12 @@ class WritingTest(Base):
         window = self.make()
         clone = self.action(window, "clone")
         self.assertFalse(clone.isEnabled())
-        self.assertIn("같은 종류의 비어 있는 슬롯이 없어요", clone.toolTip())
+        self.assertIn("같은 사이트의 블로그를 더 연결할 자리가 없어요", clone.toolTip())      # 의도적 갱신(blogsel, D-493): 슬롯 이야기('비어 있는 슬롯') 대신 쉬운 문장
         window.blog_select("blogger_ko")
         self.settle()
         clone = self.action(window, "clone")
         self.assertTrue(clone.isEnabled())
-        self.assertIn("Blogger 영문", clone.toolTip(), "복제해 넣을 슬롯을 알려 준다")
+        self.assertIn("같은 사이트(Blogger)의 새 블로그로 값을 복사해요", clone.toolTip(), "복제해 넣을 종류를 알려 준다 — 슬롯 이름이 아니다")
         clone.click()
         self.wait_write(window)
         self.assertEqual(window.state.blogs.selected, "blogger_en")
@@ -571,8 +590,8 @@ class WritingTest(Base):
         self.assertTrue(window.dialog.is_open)
         names = {label.plain_text() for label in window.dialog.findChildren(UI.Label)}
         self.assertIn("이 프로필을 지울까요?", names)
-        body = next(name for name in names if "비워져요" in name)
-        for part in ("예시 블로그 가", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요", "슬롯은 사라지지 않고"):
+        body = next(name for name in names if "모두 비워지고" in name)                                  # 의도적 갱신(blogsel, D-493): '모두 비워져요' → '모두 비워지고, 내 블로그 목록에서도 사라져요' 
+        for part in ("예시 블로그 가", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요", "내 블로그 목록에서도 사라져요"):      # 의도적 갱신(blogsel, D-493): '슬롯은 사라지지 않고' 는 '내 블로그 목록에서도 사라져요' 로 바뀌었다
             self.assertIn(part, body)
         buttons = {button.text(): button for button in window.dialog.findChildren(QAbstractButton)}
         self.assertEqual(sorted(buttons), ["지우기", "취소"])
@@ -590,7 +609,8 @@ class WritingTest(Base):
         self.settle()
         self.assertEqual(provider.calls, calls, "Esc 로 닫아도 마찬가지")
 
-    def test_confirming_the_delete_empties_the_slot_but_the_card_stays(self):
+    def test_confirming_the_delete_empties_the_stored_slot_and_the_card_goes_and_the_screen_moves_to_the_next_card(self):
+        """의도적 갱신(blogsel, D-493): 옛 시험은 지운 슬롯이 '등록' 카드로 남는 것(다섯 카드)을 못박았다. 이제 지운 블로그의 카드는 사라지고 폼은 다음 카드로 옮겨 간다 — 저장된 슬롯은 다섯 그대로(비워졌을 뿐)다."""
         provider = blogs.FakeBlogsProvider()
         window = self.make(provider)
         self.action(window, "delete").click()
@@ -599,11 +619,12 @@ class WritingTest(Base):
         self.wait_write(window)
         self.assertEqual(provider.calls[-1], "clear")
         self.assertFalse(provider.slots["naver_a"].registered)
-        self.assertEqual(len(self.ui(window).cards), 5, "슬롯 카드는 사라지지 않는다")
+        self.assertEqual(len(provider.slots), 5, "저장 형식의 슬롯은 다섯 그대로다")
+        self.assertEqual(list(self.ui(window).cards), ["blogger_ko", "naver_b"], "지운 블로그의 카드는 사라진다")
         self.assertEqual(window.state.blogs.notice, ("ok", T["blogs_cleared"]))
-        self.assertEqual(self.ui(window).fields["blog_ref"].edit.text(), "")
-        self.assertFalse(self.action(window, "delete").isEnabled(), "이미 비었다")
-        self.assertIn("블로그를 등록해 보세요", {label.text() for label in self.ui(window).cards["naver_a"].findChildren(UI.ElidedLabel)})
+        self.assertEqual(window.state.blogs.selected, "blogger_ko")
+        self.assertEqual(self.ui(window).fields["blog_ref"].edit.text(), "example-blog-c", "다음 카드의 폼이 열린다")
+        self.assertTrue(self.action(window, "delete").isEnabled())
 
     def test_closing_the_window_waits_for_a_write_in_progress(self):
         provider = GatedWrites()
@@ -633,6 +654,8 @@ class RealServiceFlowTest(Base):
             self.assertEqual(window.screen_widget.findChildren(blog_parts.NoticeBar)[0].level, "info", "처음에는 파일이 아직 없다는 안내")
             self.assertEqual(window.sidebar.findChild(QWidget, "brandcard") is not None, True)
             self.assertFalse([widget for widget in window.screen_widget.findChildren(QWidget) if widget.accessibleName() == "예시 데이터"], "실제 어댑터에는 '예시 데이터' 표시가 없다")
+            self.assertEqual(self.ui(window).fields, {}, "의도적 갱신(blogsel, D-493): 등록한 블로그가 없으면 폼이 아니라 종류 고르기가 열려 있다")
+            self.add_blog(window, "naver")
             self.type_into(window, "display_name", "예시 블로그 가")
             self.type_into(window, "blog_ref", "example-blog-a")
             self.type_into(window, "main_topics", "예시 주제 하나, 예시 주제 둘")
@@ -654,6 +677,9 @@ class RealServiceFlowTest(Base):
             self.wait_write(window)
             self.assertTrue(bp.is_empty({profile.key: profile for profile in bp.read_snapshot(ctx).profiles}["naver_a"]))
             self.assertEqual(len(bp.read_snapshot(ctx).profiles), 5)
+            self.assertEqual(window.state.blogs.notice, ("ok", T["blogs_cleared"]), "지운 뒤 화면 슬롯에서 예외가 나지 않았다(마지막 블로그를 지워 선택이 없어도 포커스 복원이 멈추지 않는다)")
+            self.assertEqual(self.ui(window).cards, {}, "마지막 블로그를 지우면 카드가 없고 종류 고르기가 다시 열린다")
+            self.assertEqual(list(self.ui(window).kind_cards), ["naver", "blogger", "github"])
 
     def test_a_broken_profile_file_shows_a_read_error_with_a_retry_and_changes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -674,7 +700,7 @@ class RealServiceFlowTest(Base):
             retry.click()
             ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state == "normal", 10)
             self.settle()
-            self.assertEqual(len(self.ui(window).cards), 5)
+            self.assertEqual((len(self.ui(window).cards), list(self.ui(window).kind_cards)), (0, ["naver", "blogger", "github"]), "의도적 갱신(blogsel, D-493): 빈 프로필은 슬롯 카드 다섯이 아니라 카드 없음 + 종류 고르기다")
 
 
 class StatesTest(Base):
@@ -707,7 +733,7 @@ class KeyboardTest(Base):
         start = window.nav_buttons["blogs"]
         self.focus(start)
         seen, current = [], start
-        for _ in range(150):
+        for _ in range(450):                                                                      # 의도적 갱신(blogsel, D-493): 낱말 칸 넷에 제안 칩(26·11·27·27)이 생겨 한 바퀴가 150곳에서 늘었다 — 칩마다 Tab 정거장이라는 규칙은 그대로다
             seen.append(current)
             current.focusNextChild()
             self.settle(1)
@@ -719,6 +745,7 @@ class KeyboardTest(Base):
             self.fail("Tab 이 한 바퀴를 돌지 못했다")
         self.assertEqual(len(seen), len(set(map(id, seen))), "같은 곳을 두 번 지나지 않는다(갇히지 않는다)")
         ui = self.ui(window)
+        self.assertIn(id(ui.add_card), {id(widget) for widget in seen}, "'블로그 추가' 카드도 Tab 정거장이다")
         stops = {id(widget) for widget in seen}
         for card in ui.cards.values():
             self.assertIn(id(card), stops, card.accessibleName())
@@ -728,7 +755,7 @@ class KeyboardTest(Base):
                 group = control.group() if hasattr(control, "group") and control.group() is not None and control.group().exclusive() else None
                 groups.setdefault(id(group) if group is not None else id(control), []).append(control)
             for members in groups.values():
-                enabled = [control for control in members if control.isEnabled()]
+                enabled = [control for control in members if control.isEnabled() and control.isVisibleTo(window)]      # 의도적 갱신(blogsel, D-493): 숨은 입력 칸('직접 입력' 이 아닐 때)은 정거장이 아니다
                 if enabled:
                     self.assertTrue(any(id(control) in stops for control in enabled), f"Tab 한 바퀴에 {name} 칸이 있다")
             if view.kind == "choice":                                                             # 하나만 고르는 칩 묶음은 **고른 칩만** 정거장이고 나머지는 화살표 키로 옮긴다(Tab 으로 들어가 Space 를 눌러도 값이 안 바뀐다)
