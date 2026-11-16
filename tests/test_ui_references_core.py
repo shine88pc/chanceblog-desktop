@@ -87,10 +87,14 @@ class OpenListTest(unittest.TestCase):
         library.is_open = True
         self.assertEqual(library.view()["list"]["loading"], T["ref_list_loading"])
 
-    def test_a_failed_list_shows_the_fixed_sentence_and_nothing_else(self):
+    def test_a_failed_list_shows_the_fixed_sentence_and_stops_saying_loading(self):
+        """이름의 '그것뿐' 을 거두었다(검증자 Q) — 거절 문장만 보는 시험이었다. 실패하면 '읽는 중' 이 같이 뜨지 않아야 하고(Q-06), 비어 있다고도 말하지 않는다(읽지 못한 것이다)."""
         library, _ = make(refuse=("list",))
         self.assertEqual(library.open(), "failed")
-        self.assertEqual(library.view()["message"], "가짜 공급자의 고정 거절 문장이에요")
+        view = library.view()
+        self.assertEqual(view["message"], "가짜 공급자의 고정 거절 문장이에요")
+        self.assertEqual((view["list"]["loading"], view["list"]["empty"], view["list"]["rows"]), ("", "", []))
+        self.assertEqual(view["list"]["failed"], T["ref_fail_load"])
 
     def test_closed_library_does_nothing(self):
         library, provider = make()
@@ -342,6 +346,16 @@ class DeleteTest(unittest.TestCase):
         library.advance_delete()
         self.assertEqual(sorted(provider.items), ["aaaaaaaa"], "지워진 것은 지금 열린 글 하나뿐이다")
 
+    def test_an_open_result_that_arrives_late_clears_the_delete_question_on_its_own(self):
+        """`select` 가 지우기 확인을 먼저 그만두게 된 뒤(Q-03)에도 `apply_opened` 자신이 확인을 비워야 한다 — 늦게 도착한 '열린 글' 결과가 앞 글의 지우기 확인을 살려 두면 안 된다(변이 U03 을 이 길로도 지킨다)."""
+        library, provider = self.open_one()
+        library.ask_delete()
+        ticket = library.begin()
+        self.assertTrue(library.apply_opened(ticket, rv.OpenedRef("bbbbbbbb", "둘째 글", "둘째 본문 입니다")))
+        self.assertEqual((library.delete_step, library.delete_target, library.pending, library.current), (0, None, None, "bbbbbbbb"))
+        self.assertEqual(library.advance_delete(), "idle")
+        self.assertNotIn("delete", provider.calls)
+
     def test_cancelling_at_any_step_deletes_nothing(self):
         for steps in (0, 1):
             library, provider = self.open_one()
@@ -490,15 +504,234 @@ class LeaveEscapeTest(unittest.TestCase):
         self.assertIn("100,000자", limits)
 
 
+class OneQuestionTest(unittest.TestCase):
+    """독립 검증 Q-03 — 지우기 확인이 열린 채 다른 길(열기·새 글·닫기·창 닫기)이 오면 질문이 둘 쌓여 화면에는 하나만 보였고 닫기·창 X 가 먹통처럼 보였다. 이제 그런 요청이 오면 먼저 지우기 확인을 그만두고 그 요청의 질문 하나만 남는다."""
+
+    def dirty_with_delete_open(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        library.ask_delete()
+        library.edited("고친 제목", "고친 본문")                                    # 지우기 확인이 떠 있어도 편집 칸은 꺼지지 않는다
+        return library, provider
+
+    def test_every_other_way_cancels_the_delete_question_first_and_leaves_exactly_one_question(self):
+        ways = (("열기", lambda lib: lib.select("bbbbbbbb")[0], "dirty", "select"), ("새 글", lambda lib: lib.new_post(), "dirty", "new"),
+                ("닫기", lambda lib: lib.leave("close"), "ask", "close"), ("창 닫기", lambda lib: lib.leave("quit"), "ask", "quit"))
+        for label, act, expected, kind in ways:
+            with self.subTest(label):
+                library, provider = self.dirty_with_delete_open()
+                self.assertEqual((library.delete_step, library.delete_target), (1, "aaaaaaaa"))
+                self.assertEqual(act(library), expected)
+                self.assertEqual((library.delete_step, library.delete_target), (0, None), "지우기 확인은 그만둔다")
+                self.assertEqual(library.pending[0], kind, "그 길의 질문 하나가 남는다")
+                view = library.view()
+                self.assertEqual(view["delete"]["step"], 0)
+                self.assertEqual((view["discard"]["open"], view["discard"]["kind"]), (True, kind))
+                self.assertNotIn("delete", provider.calls, "지우기는 일어나지 않았다")
+                self.assertEqual(library.advance_delete(), "idle", "그만둔 지우기에 '계속' 을 눌러도 아무 일이 없다")
+
+    def test_when_nothing_is_unsaved_the_other_way_just_goes_and_the_delete_question_is_gone(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        library.ask_delete()
+        self.assertEqual(library.leave("close"), "go")
+        self.assertEqual((library.delete_step, library.delete_target, library.pending), (0, None, None))
+        library.ask_delete()
+        self.assertEqual(library.new_post(), "ready")
+        self.assertEqual((library.delete_step, library.pending), (0, None))
+        library.select("aaaaaaaa")
+        library.ask_delete()
+        self.assertEqual(library.select("bbbbbbbb")[0], "opened")
+        self.assertEqual((library.delete_step, library.pending, library.current), (0, None, "bbbbbbbb"))
+        self.assertNotIn("delete", provider.calls)
+
+    def test_starting_a_delete_replaces_a_waiting_discard_question(self):
+        library, _ = make()
+        library.open()
+        library.select("aaaaaaaa")
+        library.edited("고침", "고친 본문")
+        library.select("bbbbbbbb")
+        self.assertEqual(library.pending, ("select", "bbbbbbbb"))
+        self.assertEqual(library.ask_delete(), "step1")
+        self.assertIsNone(library.pending, "질문은 늘 하나")
+        self.assertEqual(library.delete_step, 1)
+
+    def test_after_any_action_the_two_questions_are_never_open_together(self):
+        """무작위 걷기(씨앗 고정) — 화면 규칙의 모든 동작을 아무 순서로 불러도(눌릴 수 없는 단추까지) 기다리는 질문이 둘이 되지 않는다. 검증자 Q 의 걷기 도구(`walk_core.py` I2)와 같은 불변 조건이다."""
+        import random
+        calls = ["select_a", "select_b", "select_nope", "select_discard", "new", "new_discard", "leave_close", "leave_quit", "escape", "keep", "take", "ask_delete", "delete_next", "cancel_delete",
+                 "edit", "revert", "save", "pick", "refresh", "reload", "toggle_refuse"]
+        for seed in range(150):
+            rng = random.Random(20261116 + seed)
+            library, provider = make()
+            library.open()
+            for step in range(60):
+                name = rng.choice(calls)
+                if name.startswith("select_"):
+                    library.select({"a": "aaaaaaaa", "b": "bbbbbbbb", "nope": "nope9999", "discard": "bbbbbbbb"}[name[7:]], discard=name == "select_discard")
+                elif name.startswith("new"):
+                    library.new_post(discard=name == "new_discard")
+                elif name.startswith("leave_"):
+                    library.leave(name[6:])
+                elif name == "escape":
+                    action = library.escape()
+                    if action == "cancel_delete":
+                        library.cancel_delete()
+                    elif action == "keep_editing":
+                        library.keep_editing()
+                elif name == "keep":
+                    library.keep_editing()
+                elif name == "take":
+                    library.take_pending()
+                elif name == "ask_delete":
+                    library.ask_delete()
+                elif name == "delete_next":
+                    library.advance_delete()
+                elif name == "cancel_delete":
+                    library.cancel_delete()
+                elif name == "edit":
+                    library.edited(rng.choice(["", "제목", "다른 제목"]), rng.choice(["", "본문", "다른 본문"]))
+                elif name == "revert":
+                    library.rebase("", "")
+                elif name == "save":
+                    library.save(rng.choice(["", "제목"]), rng.choice(["", "본문"]))
+                elif name == "pick":
+                    library.add_file(rng.choice(["", "C:/x/a.txt"]))
+                elif name == "refresh":
+                    library.refresh()
+                elif name == "reload":
+                    library.reload()
+                else:
+                    provider.refuse = tuple(rng.sample(["list", "open", "save", "add", "add_file", "delete"], rng.choice([0, 0, 1, 2])))
+                self.assertFalse(library.pending is not None and library.delete_step, f"씨앗 {seed} 걸음 {step} {name}: pending={library.pending} delete_step={library.delete_step}")
+
+
+class RebaseTest(unittest.TestCase):
+    """독립 검증 Q-01 의 화면 쪽 방어 — 편집 칸이 글을 되읽으며 글자(줄 끝 같은 것)를 바꿔도, 칸에서 되읽은 글을 기준으로 다시 잡으면 열자마자 '저장하지 않은 변경' 이 켜지지 않는다."""
+
+    def test_a_box_that_reads_the_text_back_differently_would_look_edited_until_the_baseline_is_taken_from_the_box(self):
+        raw = "첫 줄\r\n둘째 줄\u2028셋째 줄\u00a0끝"
+        back = "첫 줄\n둘째 줄\n셋째 줄 끝"
+        library, _ = make(items={"aaaaaaaa": ["제목", raw, "2026-11-15T01:00:00Z"]})
+        library.open()
+        status, opened = library.select("aaaaaaaa")
+        self.assertEqual((status, opened.body), ("opened", raw))
+        self.assertTrue(library.edited(opened.title, back), "기준이 칸에 채운 글(원문)이면 되읽은 글은 달라 보인다 — 거짓 변경 표시")
+        self.assertTrue(library.rebase(opened.title, back))
+        self.assertFalse(library.dirty, "되읽은 글을 기준으로 다시 잡으면 깨끗하다")
+        self.assertFalse(library.edited(opened.title, back))
+        self.assertEqual(library.view()["editor"]["state"], T["ref_clean"])
+        self.assertTrue(library.edited(opened.title, back + "x"), "그 뒤 정말 고치면 변경 표시가 켜진다")
+        self.assertTrue(library.edited(opened.title + "x", back))
+        self.assertFalse(library.edited(opened.title, back), "되돌리면 다시 꺼진다")
+
+    def test_rebase_holds_only_a_fingerprint_and_does_nothing_when_closed(self):
+        library, _ = make()
+        self.assertFalse(library.rebase(TITLE_MARK, BODY_MARK), "열려 있지 않으면 아무 일도 하지 않는다")
+        library.open()
+        library.new_post()
+        self.assertTrue(library.rebase(TITLE_MARK, BODY_MARK))
+        self.assertNotIn(BODY_MARK, state_text(library) + repr(library.view()))
+        self.assertNotIn(TITLE_MARK, state_text(library) + repr(library.view()))
+        self.assertTrue(library.rebase(None, 5) and not library.dirty, "글이 아닌 값은 빈 글로 본다")
+
+    def test_a_clean_dialog_does_not_ask_to_discard_after_the_box_changed_the_text(self):
+        library, _ = make(items={"aaaaaaaa": ["제목", "가\r\n나", "2026-11-15T01:00:00Z"]})
+        library.open()
+        library.select("aaaaaaaa")
+        library.rebase("제목", "가\n나")
+        library.edited("제목", "가\n나")
+        self.assertEqual(library.leave("close"), "go", "안 고쳤으면 묻지 않는다")
+        self.assertEqual(library.select("aaaaaaaa")[0], "opened")
+        self.assertEqual(library.new_post(), "ready")
+
+
+class LoadFailedTest(unittest.TestCase):
+    """독립 검증 Q-06 — 목록 읽기가 실패하면 '읽는 중이에요…' 가 계속 남고 다시 읽을 길이 없었다."""
+
+    def test_a_failed_list_offers_to_read_again_and_says_it_could_not_read(self):
+        library, _ = make(refuse=("list",))
+        self.assertEqual(library.open(), "failed")
+        view = library.view()
+        self.assertEqual(view["list"]["failed"], T["ref_fail_load"])
+        self.assertEqual(view["list"]["loading"], "")
+        self.assertTrue(view["list"]["reload"]["visible"])
+        self.assertEqual((view["list"]["reload"]["text"], view["list"]["reload"]["a11y"]), (T["ref_reload"], T["ref_reload_a11y"]))
+        self.assertFalse(library.loaded)
+
+    def test_reading_again_clears_the_failure_and_the_old_refusal_sentence(self):
+        library, provider = make(refuse=("list",))
+        library.open()
+        self.assertNotEqual(library.view()["message"], "")
+        provider.refuse = ()
+        self.assertEqual(library.reload(), "loaded")
+        view = library.view()
+        self.assertEqual((view["list"]["failed"], view["list"]["loading"], view["message"]), ("", "", ""))
+        self.assertFalse(view["list"]["reload"]["visible"])
+        self.assertEqual(len(view["list"]["rows"]), 2)
+
+    def test_reading_again_that_fails_again_keeps_the_offer_and_shows_the_sentence_again(self):
+        library, _ = make(refuse=("list",))
+        library.open()
+        self.assertEqual(library.reload(), "failed")
+        view = library.view()
+        self.assertTrue(view["list"]["reload"]["visible"])
+        self.assertEqual(view["message"], "가짜 공급자의 고정 거절 문장이에요")
+
+    def test_a_list_that_failed_after_an_earlier_success_keeps_the_rows_and_offers_again(self):
+        library, provider = make()
+        library.open()
+        provider.refuse = ("list",)
+        self.assertEqual(library.refresh(), "failed")
+        view = library.view()
+        self.assertEqual(len(view["list"]["rows"]), 2, "앞서 읽은 줄은 남는다")
+        self.assertTrue(view["list"]["reload"]["visible"])
+        provider.refuse = ()
+        self.assertEqual(library.reload(), "loaded")
+        self.assertFalse(library.view()["list"]["reload"]["visible"])
+
+    def test_opening_again_starts_without_the_failure_and_a_closed_library_does_nothing(self):
+        library, provider = make(refuse=("list",))
+        self.assertEqual(library.reload(), "closed")
+        self.assertEqual(provider.calls, [])
+        library.open()
+        library.close()
+        provider.refuse = ()
+        library.open()
+        self.assertFalse(library.view()["list"]["reload"]["visible"])
+        self.assertEqual(library.view()["list"]["failed"], "")
+
+    def test_a_late_failure_from_an_old_generation_does_not_turn_the_offer_on(self):
+        class Racing(rv.FakeReferencesProvider):
+            """목록을 읽는 사이에 더 새로운 일이 시작되는 공급자(늦게 온 실패가 된다)."""
+            library = None
+
+            def list_rows(self):
+                self.library.begin()
+                raise rv.ReferencesRefusal("늦은 실패")
+
+        provider = Racing(ITEMS)
+        library = rv.ReferenceLibrary(provider)
+        provider.library = library
+        library.is_open = True
+        self.assertEqual(library.refresh(), "stale")
+        self.assertFalse(library.load_failed)
+        self.assertEqual((library.message, library.view()["list"]["failed"]), ("", ""))
+
+
 class NoTextInStateTest(unittest.TestCase):
     def test_no_title_or_body_stays_in_the_state_after_a_full_session(self):
         library, provider = make(items={})
         library.open()
         library.new_post()
+        library.rebase(TITLE_MARK, BODY_MARK)
         library.edited(TITLE_MARK, BODY_MARK)
         library.save(TITLE_MARK, BODY_MARK)
         ref_id = library.current
         library.select(ref_id, discard=True)
+        library.rebase(TITLE_MARK, BODY_MARK)
         library.edited(TITLE_MARK + "2", BODY_MARK + "2")
         library.save(TITLE_MARK + "2", BODY_MARK + "2")
         library.ask_delete()

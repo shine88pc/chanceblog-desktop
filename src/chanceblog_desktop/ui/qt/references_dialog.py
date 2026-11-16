@@ -86,10 +86,13 @@ class ReferencesDialog(QWidget):
         self.rows_layout.setContentsMargins(0, 0, 0, 0)
         self.rows_layout.setSpacing(K.SPACE["1"])
         self.rows_host.setAccessibleName(T["ref_list_a11y"])
-        self.list_note = UI.label("", "small", wrap=True)                             # 읽는 중·비어 있음 안내
+        self.list_note = UI.label("", "small", wrap=True)                             # 읽는 중·읽지 못함·비어 있음 안내
+        self.reload_button = UI.Button("secondary", T["ref_reload"], accessible=T["ref_reload_a11y"], focus_key="ref:reload")   # 목록을 못 읽었을 때만 보인다
+        self.reload_button.clicked.connect(lambda _=False: self.shell.references_reload())
+        self.reload_button.setVisible(False)
         self.skipped = UI.label("", "small", wrap=True)
         self.skipped.set_tone("blue")
-        for widget in (self.list_title, self.list_count, self.rows_host, self.list_note, self.skipped):
+        for widget in (self.list_title, self.list_count, self.rows_host, self.list_note, self.reload_button, self.skipped):
             column.addWidget(widget)
 
     def _build_editor(self, column):
@@ -202,7 +205,24 @@ class ReferencesDialog(QWidget):
         self.body.document().clearUndoRedoStacks()
         for box in (self.title_input, self.body):
             box.blockSignals(False)
+        if self.library is not None:
+            self.library.rebase(self.title_input.text(), self.body.toPlainText())     # 칸이 글을 되읽으며 바꾼 글자가 있어도 기준은 칸에서 되읽은 글이다 — 열자마자 변경 표시가 켜지지 않는다
         self._edited()
+
+    def reveal_editor(self):
+        """글을 열었을 때 — 편집 칸(제목 칸)이 몸의 보이는 곳에 오게 스크롤하고 포커스를 제목 칸에 둔다(목록이 길면 편집 칸이 화면 밖이었다)."""
+        try:
+            self._reveal()
+            QTimer.singleShot(0, self._reveal)                                            # 새로 그린 목록의 키가 정해진 다음 한 번 더
+        except RuntimeError:                                                              # 그 사이 대화상자가 닫혀 부품이 지워졌다
+            pass
+
+    def _reveal(self):
+        try:
+            self.scroll.ensureWidgetVisible(self.title_input, 0, K.SPACE["3"])
+            self.title_input.setFocus(Qt.OtherFocusReason)
+        except RuntimeError:
+            pass
 
     def _edited(self):
         """글을 치면 글자 수와 '저장 안 한 변경' 표시만 바꾼다(화면 전체를 다시 그리지 않는다) — 글은 어디에도 옮겨 쥐지 않는다."""
@@ -225,9 +245,10 @@ class ReferencesDialog(QWidget):
         self.limits.set_text(vm["limits"])
         self.list_count.set_text(vm["list"]["count"] if library.loaded else "")
         self._rebuild_rows(vm["list"]["rows"])
-        note = vm["list"]["loading"] or vm["list"]["empty"]
+        note = vm["list"]["failed"] or vm["list"]["loading"] or vm["list"]["empty"]
         self.list_note.set_text(note)
         self.list_note.setVisible(bool(note))
+        self.reload_button.setVisible(vm["list"]["reload"]["visible"])
         self.skipped.set_text(vm["list"]["skipped"])
         self.skipped.setVisible(bool(vm["list"]["skipped"]))
         self.heading.set_text(vm["editor"]["heading"])
@@ -255,8 +276,8 @@ class ReferencesDialog(QWidget):
         return vm
 
     def _tab_order(self):
-        """Tab 순서 — 몸(스크롤) → 목록의 `열기`들 → 제목 → 본문 → 확인 줄 → 지우기 → 파일에서 올리기 → 새 글 → 닫기 → 저장. 안 보이거나 꺼진 부품은 Qt 가 건너뛴다."""
-        chain = [self.scroll, *self.open_buttons, self.title_input, self.body, *self.confirm_buttons, self.delete_button, self.pick_button, self.new_button, self.close_button, self.save_button]
+        """Tab 순서 — 몸(스크롤) → 목록의 `열기`들 → `다시 읽기`(목록을 못 읽었을 때만 보인다) → 제목 → 본문 → 확인 줄 → 지우기 → 파일에서 올리기 → 새 글 → 닫기 → 저장. 안 보이거나 꺼진 부품은 Qt 가 건너뛴다."""
+        chain = [self.scroll, *self.open_buttons, self.reload_button, self.title_input, self.body, *self.confirm_buttons, self.delete_button, self.pick_button, self.new_button, self.close_button, self.save_button]
         for first, second in zip(chain, chain[1:]):
             QWidget.setTabOrder(first, second)
 

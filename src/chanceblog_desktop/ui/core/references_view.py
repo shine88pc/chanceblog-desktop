@@ -185,6 +185,7 @@ class ReferenceLibrary:
         self.delete_step, self.delete_target = 0, None
         self.pending = None                         # 저장 안 한 변경 확인이 기다리는 일 — `("select", 번호)`·`("new",)`·`("close",)`·`("quit",)`(없으면 None)
         self.loaded = False
+        self.load_failed = False                    # 목록을 읽다 실패했다 — '읽는 중' 안내 대신 읽지 못했다는 문장과 `다시 읽기` 를 보인다
         self.message, self.notice = "", ""          # 마지막 안내(거절·실패)의 고정 문장 / 덧붙임(CP949 안내 등)
         self.folder = ""
 
@@ -233,14 +234,24 @@ class ReferenceLibrary:
         except ReferencesRefusal as refusal:
             message = refusal.message
         if message is not None:                     # `except` 밖에서 처리 — 거절 예외를 붙들지 않는다
-            return "failed" if self.apply_failed(ticket, message) else "stale"
+            if not self.apply_failed(ticket, message):
+                return "stale"
+            self.load_failed = True                 # 읽지 못했다 — 화면이 '읽는 중' 에 멈추지 않고 `다시 읽기` 를 보인다
+            return "failed"
         return "loaded" if self.apply_list(ticket, listing) else "stale"
+
+    def reload(self):
+        """`다시 읽기` — 앞의 거절 문장을 거두고 목록을 다시 읽는다 → `closed`·`loaded`·`failed`·`stale`(`refresh` 와 같다)."""
+        if not self.is_open:
+            return "closed"
+        self.message = ""
+        return self.refresh()
 
     def apply_list(self, ticket, listing):
         """목록이 왔다 → 받았으면 True. 세대가 다르면(닫음·다시 읽음) 버린다."""
         if not self.is_open or ticket != self.generation:
             return False
-        self.rows, self.skipped, self.loaded = tuple(listing.rows), int(listing.skipped), True
+        self.rows, self.skipped, self.loaded, self.load_failed = tuple(listing.rows), int(listing.skipped), True, False
         if self.current is not None and all(row.ref_id != self.current for row in self.rows):
             self.current, self.mode, self.dirty = None, "new", False        # 열려 있던 글이 사라졌다(다른 곳에서 지움) — 새 글 모습으로
             self.baseline = digest("", "")
@@ -258,6 +269,7 @@ class ReferenceLibrary:
         """목록의 글 하나를 연다 → `(상태, OpenedRef 또는 None)`: `closed`·`dirty`(저장 안 한 변경이 있고 `discard` 가 아니다 — 아무것도 바꾸지 않는다)·`failed`(`message`)·`opened`. 열린 글은 화면이 편집 칸에 채우고 버린다."""
         if not self.is_open:
             return "closed", None
+        self.cancel_delete()                        # 지우기 확인이 열려 있었다면 먼저 그만둔다 — 기다리는 질문은 늘 하나(두 질문이 쌓여 하나만 보이지 않게)
         if self.dirty and not discard:
             self.pending, self.message, self.notice = ("select", str(ref_id)), "", ""      # 버릴지 묻는 중 — 화면이 확인 줄을 보인다(번호만 쥔다). 앞 일의 안내는 거둔다
             return "dirty", None
@@ -287,6 +299,7 @@ class ReferenceLibrary:
         """`새 글` — 편집 칸을 비우고 새 글 모습으로 → `closed`·`dirty`(저장 안 한 변경이 있고 `discard` 가 아니다)·`ready`."""
         if not self.is_open:
             return "closed"
+        self.cancel_delete()                        # 질문은 늘 하나 — 지우기 확인이 열려 있었다면 먼저 그만둔다
         if self.dirty and not discard:
             self.pending, self.message, self.notice = ("new",), "", ""
             return "dirty"
@@ -303,6 +316,7 @@ class ReferenceLibrary:
         `kind` 는 `close`(닫기 단추·Esc)나 `quit`(창 닫기·Alt+F4 — 프로그램을 닫는 길). 어느 길이든 같은 확인을 거친다."""
         if not self.is_open:
             return "closed"
+        self.cancel_delete()                        # 질문은 늘 하나 — 지우기 확인이 열려 있었다면 먼저 그만두고 이 닫기의 질문 하나만 보인다
         if self.dirty:
             self.pending, self.message, self.notice = (kind,), "", ""
             return "ask"
@@ -331,6 +345,15 @@ class ReferenceLibrary:
         return "ask_close" if self.leave("close") == "ask" else "close"
 
     # ---- 편집 ----
+    def rebase(self, title, body):
+        """편집 칸을 앱이 방금 채웠다(글 열기·새 글·지운 뒤) — 칸에서 **되읽은** 글의 지문을 기준으로 다시 잡고 변경 표시를 끈다.
+        칸이 글을 되읽으며 글자(줄 끝 같은 것)를 바꿔도 열자마자 '저장하지 않은 변경이 있어요' 가 켜지지 않는다(사용자가 아직 아무것도 안 쳤으므로). 글은 쥐지 않고 지문만 쥔다."""
+        if not self.is_open:
+            return False
+        self.baseline = digest(title if isinstance(title, str) else "", body if isinstance(body, str) else "")
+        self.dirty = False
+        return True
+
     def edited(self, title, body):
         """편집 칸이 바뀌었다 — 지문만 견주어 저장 안 한 변경 표시를 정한다(글은 쥐지 않는다) → `dirty`."""
         if not self.is_open:
@@ -390,6 +413,7 @@ class ReferenceLibrary:
             self.message = T["ref_none_selected"]
             return "none"
         self.delete_step, self.delete_target, self.message, self.notice = 1, self.current, "", ""
+        self.pending = None                         # 질문은 늘 하나 — 버릴지 묻던 중이었다면 이 지우기 확인이 대신한다(화면은 그동안 지우기 단추를 꺼 둔다)
         return "step1"
 
     def advance_delete(self):
@@ -441,7 +465,8 @@ class ReferenceLibrary:
         return {
             "title": T["ref_title"], "intro": T["ref_intro"], "limits": T["ref_limits"].format(n=MAX_REFERENCES, title=TITLE_MAX, body=f"{BODY_MAX:,}"),
             "list": {"title": T["ref_list_title"], "a11y": T["ref_list_a11y"], "rows": rows, "count": T["ref_count"].format(n=len(self.rows)),
-                     "empty": T["ref_list_empty"] if self.loaded and not rows else "", "loading": T["ref_list_loading"] if not self.loaded else "",
+                     "empty": T["ref_list_empty"] if self.loaded and not rows else "", "loading": T["ref_list_loading"] if not self.loaded and not self.load_failed else "",
+                     "failed": T["ref_fail_load"] if self.load_failed else "", "reload": {"text": T["ref_reload"], "a11y": T["ref_reload_a11y"], "visible": self.load_failed},
                      "skipped": T["ref_skipped"].format(n=self.skipped) if self.skipped else ""},
             "editor": {"mode": self.mode, "heading": T["ref_editor_edit" if editing else "ref_editor_new"], "title_label": T["ref_title_label"], "title_a11y": T["ref_title_a11y"], "title_hint": T["ref_title_hint"],
                        "body_label": T["ref_body_label"], "body_a11y": T["ref_body_a11y"], "body_hint": T["ref_body_hint"], "count": T["ref_body_count"].format(n=body_chars),

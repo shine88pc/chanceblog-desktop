@@ -38,7 +38,7 @@ if HAVE:
     sys.path.insert(0, str(ROOT / "scripts"))
     import ui_offscreen
     ui_offscreen.prepare_environment()
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QPoint, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QLineEdit, QPlainTextEdit, QWidget
     from chanceblog_desktop.ui.qt import app as qapp
@@ -563,6 +563,35 @@ class ListEditTest(Base):
         self.save(window)
         self.assertEqual(self.message(form), "")
 
+    def in_view(self, form, widget):
+        """위젯이 스크롤 몸의 보이는 영역 안에 통째로 들어 있는가(보이는 영역의 위·아래 끝 기준)."""
+        viewport = form.scroll.viewport()
+        top = widget.mapTo(viewport, QPoint(0, 0)).y()
+        return top >= 0 and top + widget.height() <= viewport.height()
+
+    def test_opening_a_post_far_down_a_long_list_scrolls_the_title_field_into_view_in_the_smallest_window(self):
+        """독립 검증 Q-05 — 글이 12편이고 창이 가장 작을 때(900×560) 8번째 `열기` 를 눌러도 편집 칸이 화면 밖에 있고 포커스는 안 보이는 칸에 있었다."""
+        for number in range(12):
+            self.add_post(f"글 {number}", f"본문 {number}")
+        window, form = self.vault_window(size=(900, 560))
+        self.assertEqual(len(form.open_buttons), 12)
+        self.assertFalse(self.in_view(form, form.title_input), "처음에는 편집 칸이 목록 아래에 있다(스크롤 전)")
+        self.assertEqual(form.scroll.verticalScrollBar().value(), 0)
+        self.click(form.open_buttons[7])
+        self.settle(4)
+        self.assertGreater(form.scroll.verticalScrollBar().value(), 0, "편집 칸이 보이도록 몸이 스크롤됐다")
+        self.assertTrue(self.in_view(form, form.title_input), "제목 칸이 몸의 보이는 영역 안에 있다")
+        self.assertIs(QApplication.focusWidget(), form.title_input)
+        self.assertEqual(form.title_input.text(), "글 4", "목록은 새 것 먼저 — 8번째가 5번째로 만든 글이다")
+
+    def test_opening_a_post_in_the_default_window_with_a_long_list_also_shows_the_editor(self):
+        for number in range(30):
+            self.add_post(f"글 {number}", f"본문 {number}")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[20])
+        self.settle(4)
+        self.assertTrue(self.in_view(form, form.title_input))
+
 
 # ---- 5-2) 본문 통일(독립 검증 S-2) — 저장한 글이 곧 편집 칸의 글이다 -------------------------------------------------------------------------
 class NormalizeTest(Base):
@@ -651,6 +680,28 @@ class NormalizeTest(Base):
         self.assertEqual(stored.body, "가" + self.LF + "나" + self.LF + "다")
         self.assertEqual(self.lt(form.body_count), f"{len(stored.body)}자")
         self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+
+    def test_even_a_provider_that_hands_over_raw_line_ends_opens_clean_because_the_baseline_is_the_text_read_back_from_the_box(self):
+        """독립 검증 Q-01 의 화면 쪽 방어 — 서비스의 통일을 거치지 않은 글(가짜 공급자가 날것을 그대로 준다)도 열자마자 '저장하지 않은 변경' 이 켜지지 않는다. 기준이 칸에서 되읽은 글이기 때문이다."""
+        cr, lf, ls, ps, nbsp, bom = self.CR, self.LF, self.LS, self.PS, self.NBSP, self.BOM
+        raws = ("가" + cr + lf + "나", "가" + cr + "나", "가" + ls + "나", "가" + ps + "나", "가" + nbsp + "나", bom + "가나", bom + bom + "가" + cr + lf, "가" + chr(0x0B) + chr(0x85) + "나", "가나다")
+        items = {f"fake{number:04d}": [f"글 {number}", raw, f"2026-11-15T01:0{number}:00Z"] for number, raw in enumerate(raws)}
+        provider = FakeReferencesProvider(items)
+        window, form = self.vault_window(provider=provider)
+        for number, raw in enumerate(raws):
+            with self.subTest(raw=ascii(raw)):
+                window.references_select(f"fake{number:04d}", discard=True)
+                self.settle(2)
+                self.assertEqual(window.references.current, f"fake{number:04d}")
+                self.assertFalse(window.references.dirty, "열자마자 변경 표시가 켜지면 안 된다")
+                self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+                self.assertFalse(form.confirm_buttons)
+                self.assertEqual(window.references.leave("close"), "go", "안 고쳤는데 닫기가 묻는다")
+                window.references.keep_editing()
+                form.body.insertPlainText("x")                                                  # 정말 고치면 표시가 켜진다
+                self.settle(2)
+                self.assertTrue(window.references.dirty)
+                self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
 
 
 # ---- 6) 저장 안 한 변경 확인 ---------------------------------------------------------------------------------------------------------
@@ -798,6 +849,43 @@ class UnsavedTest(Base):
         self.assertEqual(self.message(form), "")
         self.assertFalse(form.notice.isVisibleTo(form))
 
+    def delete_gives_way(self, label):
+        window, form, first, second = self.dirty()
+        self.click(form.delete_button)
+        self.assertIn(T["ref_delete_q1"], self.texts(form))
+        self.assertEqual(window.references.delete_step, 1)
+        kind = {"열기": "select", "닫기": "close", "창 닫기": "quit"}[label]
+        if label == "열기":
+            self.click(form.open_buttons[1])
+        elif label == "닫기":
+            self.click(form.close_button)
+        else:
+            window.close()
+            self.settle()
+            self.assertTrue(window.isVisible(), "창이 확인 없이 닫혔다")
+        self.assert_asking(window, form, kind)
+        self.assertNotIn(T["ref_delete_q1"], self.texts(form), "지우기 확인은 그만두었다 — 질문은 하나")
+        self.assertEqual(window.references.delete_step, 0)
+        self.assertFalse(any(button.accessibleName() == T["ref_delete_no_a11y"] for button in self.buttons(form)))
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        self.assertEqual(self.vault_files(), sorted([f"ref-{first.ref_id}.json", f"ref-{second.ref_id}.json"]), "아무것도 지워지지 않았다")
+        self.click(form.confirm_buttons[-1])                                                  # 계속 고치기 — 다시 평소 모습이고 글은 그대로
+        self.assertIsNone(window.references.pending)
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        self.assertTrue(form.delete_button.isEnabled())
+
+    def test_a_delete_question_that_is_open_gives_way_to_opening_another_post_and_only_that_question_is_shown(self):
+        """독립 검증 Q-03 — 지우기 확인이 열린 채 `열기`를 누르면 질문이 둘 쌓여 화면에는 지우기 확인 하나만 보였다."""
+        self.delete_gives_way("열기")
+
+    def test_a_delete_question_that_is_open_gives_way_to_the_close_button(self):
+        """독립 검증 Q-03 — 지우기 확인이 열린 채 `닫기` 를 눌러도 아무 변화가 없어 보였다(`그만두기` 를 눌러야 두 번째 질문이 나타났다)."""
+        self.delete_gives_way("닫기")
+
+    def test_a_delete_question_that_is_open_gives_way_to_the_window_close_x(self):
+        """독립 검증 Q-03 — 지우기 확인이 열린 채 창 X·Alt+F4 를 눌러도 창이 안 닫히는 이유가 안 보였다."""
+        self.delete_gives_way("창 닫기")
+
 
 # ---- 7) 지우기 --------------------------------------------------------------------------------------------------------------------
 class DeleteTest(Base):
@@ -923,6 +1011,42 @@ class ErrorTextTest(Base):
             self.save(window)
         self.assertEqual(self.message(form), "저장 공간이 부족합니다.")
         self.assertEqual(self.outside_editors(window, [BODY_MARK, NAME_MARK, "꽉 참"]), [])
+
+    def test_a_list_that_cannot_be_read_stops_saying_loading_and_the_read_again_button_brings_it_back(self):
+        """독립 검증 Q-06 — 목록을 못 읽으면 '읽는 중이에요…' 가 계속 남고 다시 읽을 길이 없었다. 진짜 서비스로: 보관함 자리에 폴더가 아닌 파일이 있으면 서비스가 목록을 거절한다."""
+        self.vault.parent.mkdir(parents=True, exist_ok=True)
+        self.vault.write_text("not a folder", encoding="utf-8")
+        window, form = self.vault_window()
+        shown = self.texts(form)
+        self.assertNotIn(T["ref_list_loading"], shown, "읽는 중에 멈춰 있으면 안 된다")
+        self.assertIn(T["ref_fail_load"], shown)
+        self.assertNotIn(T["ref_list_empty"], shown, "읽지 못한 것을 '비어 있다' 고 말하지 않는다")
+        self.assertTrue(self.message(form), "서비스의 고정 거절 문장도 상태 줄에 보인다")
+        self.assertTrue(form.reload_button.isVisibleTo(form))
+        self.assertTrue(form.reload_button.isEnabled())
+        self.assertEqual((form.reload_button.text(), form.reload_button.accessibleName()), (T["ref_reload"], T["ref_reload_a11y"]))
+        self.assertGreaterEqual(form.reload_button.height(), tokens.SIZE["hit"])
+        self.assertNotEqual(form.reload_button.focusPolicy(), Qt.NoFocus)
+        self.assertNotIn(str(self.root), self.message(form), "거절 문장에는 경로가 되풀이되지 않는다(폴더 위치 안내는 따로 있다)")
+        self.vault.unlink()                                                                    # 문제를 풀고 다시 읽는다
+        self.click(form.reload_button)
+        self.assertIn(T["ref_list_empty"], self.texts(form))
+        self.assertNotIn(T["ref_fail_load"], self.texts(form))
+        self.assertEqual(self.message(form), "", "앞의 거절 문장이 남지 않는다")
+        self.assertFalse(form.reload_button.isVisibleTo(form))
+        self.assertIs(QApplication.focusWidget(), form.title_input)
+
+    def test_reading_again_that_fails_again_keeps_the_button_and_the_focus_on_it(self):
+        self.vault.parent.mkdir(parents=True, exist_ok=True)
+        self.vault.write_text("not a folder", encoding="utf-8")
+        window, form = self.vault_window()
+        form.reload_button.setFocus(Qt.TabFocusReason)
+        self.click(form.reload_button)
+        self.assertTrue(form.reload_button.isVisibleTo(form))
+        self.assertIn(T["ref_fail_load"], self.texts(form))
+        self.assertTrue(self.message(form))
+        self.assertTrue(form.reload_button.hasFocus() or QApplication.focusWidget() is form.reload_button)
+        self.assertEqual(self.vault.read_text(encoding="utf-8"), "not a folder", "읽기는 아무것도 바꾸지 않는다")
 
     def test_no_text_stays_in_the_screen_rules_state_or_the_adapter_after_a_whole_session(self):
         window, form = self.vault_window()

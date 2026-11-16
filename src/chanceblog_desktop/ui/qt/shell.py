@@ -2080,6 +2080,19 @@ class AppShell(QMainWindow):
         form.refresh()
         if status == "dirty":
             form.focus_confirm()
+        elif status == "opened":
+            form.reveal_editor()                                                         # 목록이 길어도 편집 칸이 보이게
+        return status
+
+    def references_reload(self):
+        """`다시 읽기` — 목록을 못 읽었을 때만 보이는 단추. 앞 거절 문장을 거두고 목록을 다시 읽는다(성공하면 포커스는 제목 칸, 또 실패하면 이 단추에 남는다)."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status = self.references.reload()
+        form.refresh()
+        if status == "loaded":
+            form.focus_start()
         return status
 
     def references_new(self, discard=False):
