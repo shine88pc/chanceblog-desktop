@@ -159,35 +159,40 @@ def main(argv=None, env=None):
     tests = [test for name in mine for test in found[name]]
     everything = sum(len(items) for items in found.values())
     print(f"조각 {shard}/{total}: 시험 파일 {len(mine)}개·시험 {len(tests):,}개 (전체 {len(found)}개 파일·{everything:,}개 시험)", flush=True)
-    import re as _re
-
-    def _esc(text):
-        text = _re.sub(r"[0-9]{10,}", "#", text)[:700]
-        return text.replace("%", "%25").replace("", "%0D").replace("
-", "%0A").replace(":", "%3A").replace(",", "%2C")
-
-    def _note(level, title, text):
-        print(f"::{level} title={_esc(title)[:90]}::{_esc(text)}", flush=True)
-    try:                                                   # 진단용(병합하지 않는 가지): 러너가 예외로 끝나면 그 이유를, 아니면 결과 요약과 실패한 시험 이름을 주석으로 남긴다
-        result = make_runner().run(unittest.TestSuite(tests))
-    except BaseException as error:
-        import traceback
-        _note("error", "RUN-EXC " + type(error).__name__, " | ".join(traceback.format_exc().strip().splitlines()[-8:]))
-        import io
-        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(unittest.TestSuite(tests))
-        _note("warning", "FALLBACK-SUMMARY", f"run={result.testsRun} fail={len(result.failures)} err={len(result.errors)}")
-    try:
-        _note("warning", "SUMMARY", f"run={result.testsRun} fail={len(result.failures)} err={len(result.errors)} skip={len(result.skipped)} xfail={len(result.expectedFailures)} xpass={len(result.unexpectedSuccesses)} ok={result.wasSuccessful()} type={type(result).__name__}")
-        for kind, items in (("FAIL", result.failures), ("ERROR", result.errors)):
-            for test, tb in list(items)[:8]:
-                lines = [line for line in str(tb).strip().splitlines() if line.strip()]
-                _note("error", f"{kind} {test.id()[-80:]}", " | ".join(lines[-4:]))
-        for test in list(result.unexpectedSuccesses)[:8]:
-            _note("error", f"XPASS {test.id()[-80:]}", "unexpected success")
-    except Exception as error:
-        _note("error", "DIAG-EXC", repr(error))
+    result = make_runner().run(unittest.TestSuite(tests))
     return 0 if result.wasSuccessful() else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    if "--diag-child" in sys.argv:                         # 진단용(병합하지 않는 가지): 자식 프로세스가 진짜 조각 실행을 하고, 부모가 그 출력 끝을 주석으로 남긴다
+        sys.argv.remove("--diag-child")
+        sys.exit(main())
+    import re as _re
+    import subprocess as _sp
+
+    def _esc(text):
+        text = _re.sub(r"[0-9]{10,}", "#", text)
+        return text.replace("%", "%25").replace("", "%0D").replace("
+", "%0A").replace(":", "%3A").replace(",", "%2C")
+    done = _sp.run([sys.executable, "-X", "utf8", str(Path(__file__).resolve()), "--diag-child", *sys.argv[1:]], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    merged = (done.stdout or "") + "
+" + (done.stderr or "")
+    print(merged, flush=True)
+    lines = [line.rstrip() for line in merged.splitlines() if line.strip()]
+    head = f"exit={done.returncode} lines={len(lines)}"
+    marks = [line for line in lines if _re.match(r"^(FAIL|ERROR|FAILED|Ran |OK|Traceback)", line) or "Error" in line][:25]
+    print(f"::warning title=DIAG-HEAD::{_esc(head)}", flush=True)
+    tail = lines[-40:]
+    chunk, size, index = [], 0, 0
+    for line in marks + ["--- tail ---"] + tail:
+        piece = line[:300]
+        if size + len(piece) > 1800 and chunk:
+            index += 1
+            print(f"::error title=DIAG-OUT-{index}::{_esc(chr(10).join(chunk))}", flush=True)
+            chunk, size = [], 0
+        chunk.append(piece)
+        size += len(piece) + 1
+    if chunk:
+        index += 1
+        print(f"::error title=DIAG-OUT-{index}::{_esc(chr(10).join(chunk))}", flush=True)
+    sys.exit(done.returncode)
