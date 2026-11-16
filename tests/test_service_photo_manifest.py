@@ -300,19 +300,83 @@ class BrokenFileTest(Base):
         for name, content in self.broken_cases().items():
             self.assertNotEqual(content, self.good_text(), name)
 
-    def test_a_read_that_fails_is_broken_never_none_and_the_file_is_left_alone(self):
-        """검증 Q-3 — 열기 오류가 아닌 읽기 실패(검사와 열기 사이에 파일이 바뀜)는 '없음' 이 아니라 '깨짐' 이다(없음으로 알리면 저장이 그 위에 덮어쓴다). 읽기를 실패하게 바꿔 본다."""
+    def test_a_read_that_keeps_failing_because_the_file_keeps_changing_is_unreadable_never_none_or_broken_and_the_file_is_left_alone(self):
+        """검증 Q-3·S T-4 — 검사와 열기 사이에 같은 이름이 새 파일로 바뀌는 읽기 실패는 '없음' 도 '깨짐' 도 아니다(없음이면 저장이 그 위에 덮어쓰고, 깨짐이면 `replace_broken` 이 그 위에 쓴다).
+        짧게 두 번 더 해 보고(`READ_RETRY_WAITS`) 그래도 열 때마다 바뀌어 있으면 `unreadable` 이고 그 파일은 건드리지 않는다. 읽기를 늘 '바뀜' 으로 만들어 본다."""
         path = self.write_raw(self.good_text())
         before = path.read_bytes()
-        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", return_value=(None, own_posts._R_CHANGED)):
+        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", return_value=(None, own_posts._R_CHANGED)) as read:
             loaded = svc.load_manifest(self.ctx, DRAFT_A)
-            self.assertEqual((loaded.state, loaded.manifest.photos), ("broken", ()))
+            self.assertEqual((loaded.state, loaded.manifest.photos), ("unreadable", ()))
+            self.assertEqual([call.args for call in pause.call_args_list], [(0.03,), (0.06,)], "정해진 두 번까지만 다시 해 본다")
+            self.assertEqual(read.call_count, 3, "처음 한 번 + 다시 두 번")
             self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(1))
+            self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(1), replace_broken=True)
             self.assertEqual(svc.list_manifests(self.ctx), svc.Listing((), 1))
         self.assertEqual(path.read_bytes(), before)
-        pause.assert_not_called()                                                         # 열기 오류가 아니면 다시 해 보지 않는다
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()), [path.name], "읽기 실패가 새 파일·옮긴 파일을 만들지 않는다")
         self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "ok")
+
+    def test_a_file_replaced_by_another_save_between_the_check_and_the_open_is_read_again_and_loads(self):
+        """검증 S T-4 — 저장이 파일을 `os.replace` 로 바꿔 놓는 순간에 읽으면 검사 때의 파일과 연 파일이 달라 '바뀜' 이었고 '깨짐' 으로 알렸다(스트레스 시험에서 0.3~0.4%). 새 파일을 처음부터 다시 보고 읽는다."""
+        svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        real = own_posts._read_prefix
+        seen = {"calls": 0, "newer": None, "infos": []}
+
+        def raced(path, limit, expected):
+            seen["calls"] += 1
+            seen["infos"].append(expected)
+            if seen["calls"] == 1:
+                seen["newer"] = svc.save_manifest(self.ctx, DRAFT_A, sample(2))           # 다른 저장이 검사와 열기 사이에 파일을 새 것으로 바꿔 놓았다(이 안의 읽기는 그냥 지나간다)
+            return real(path, limit, expected)
+
+        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", raced):
+            loaded = svc.load_manifest(self.ctx, DRAFT_A)
+        self.assertEqual(loaded, svc.Loaded(seen["newer"], "ok"), "새 파일의 내용을 멀쩡히 읽었다")
+        self.assertEqual(len(loaded.manifest.photos), 2)
+        self.assertEqual([call.args for call in pause.call_args_list], [(0.03,)], "한 번 쉬고 다시 읽었다")
+        outer = [seen["infos"][0], seen["infos"][2]]                                         # 바깥 읽기의 첫 시도(옛 파일의 상태)와 다시 읽기(새 파일의 상태)
+        if outer[0].st_ino and outer[1].st_ino:
+            self.assertNotEqual(outer[0].st_ino, outer[1].st_ino, "다시 읽을 때는 바뀐 새 파일의 상태로 읽었다(옛 상태로 다시 읽지 않았다)")
+        self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A), svc.Loaded(seen["newer"], "ok"))
+
+    def test_a_file_swapped_for_a_huge_one_while_reading_is_judged_by_the_same_checks_and_not_read_again(self):
+        svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        path = self.file()
+        real = own_posts._read_prefix
+        reads = []
+
+        def swap_for_huge(target, limit, expected):
+            reads.append("read")
+            if len(reads) == 1:
+                swap = path.with_name("swap.tmp")
+                swap.write_bytes(b"x" * (svc.MAX_FILE_BYTES + 10))
+                os.replace(swap, path)                                                       # 읽는 사이 같은 이름이 너무 큰 새 파일로 바뀐다
+            return real(target, limit, expected)
+
+        with mock.patch.object(svc, "_pause"), mock.patch.object(own_posts, "_read_prefix", swap_for_huge):
+            loaded = svc.load_manifest(self.ctx, DRAFT_A)
+        self.assertEqual((loaded.state, loaded.manifest.photos), ("broken", ()))
+        self.assertEqual(reads, ["read"], "바뀐 새 파일은 읽기 전에 같은 검사(너무 큼)로 걸러 다시 읽지 않았다")
+
+    def test_a_file_that_is_gone_when_the_changed_read_is_retried_is_none(self):
+        svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        path = self.file()
+
+        def vanish_after_swap(*args, **kwargs):
+            path.unlink(missing_ok=True)
+            return None, own_posts._R_CHANGED
+
+        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", vanish_after_swap):
+            self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "none")
+        self.assertEqual([call.args for call in pause.call_args_list], [(0.03,)])
+
+    def test_a_content_error_is_never_retried_and_only_the_two_read_failures_are(self):
+        self.write_raw("{abc")
+        with mock.patch.object(svc, "_pause") as pause:
+            self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "broken")
+        pause.assert_not_called()                                                             # 내용이 깨진 파일은 다시 읽어도 같다
+        self.assertEqual(svc._RETRY_REASONS, (own_posts._R_MISSING, own_posts._R_CHANGED))
 
     def test_an_open_error_is_retried_and_a_lasting_one_is_unreadable_never_broken(self):
         """검증 S-2 — '지금 못 엶(윈도의 공유 위반)' 과 '내용이 깨짐' 을 갈라 알린다. 앞의 것은 짧게 두 번 더 해 보고, 계속되면 `unreadable` 이고 `replace_broken` 으로도 그 위에 쓰지 않는다."""

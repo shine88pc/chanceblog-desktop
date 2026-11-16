@@ -45,7 +45,7 @@ FOLDER = "photo-manifests"                               # 사용자 데이터 �
 FILE_SUFFIX = ".json"
 MAX_FILE_BYTES = pm.MAX_TEXT_BYTES
 STATES = ("none", "ok", "broken", "unreadable")
-READ_RETRY_WAITS = (0.03, 0.06)                          # 파일을 못 열었을 때(윈도의 공유 위반 …) 이만큼씩 쉬고 두 번까지 다시 해 본다(합쳐 0.09초)
+READ_RETRY_WAITS = (0.03, 0.06)                          # 파일을 못 열었을 때(윈도의 공유 위반 …)와 검사 뒤 열기 전에 같은 이름이 새 파일로 바뀌었을 때(다른 저장이 끼어듦) 이만큼씩 쉬고 두 번까지 다시 해 본다(합쳐 0.09초)
 OK, MISSING, LINK, NOT_FILE, CLOUD = "ok", "missing", "link", "not_file", "cloud"
 
 _NAME = re.compile(r"(dd-[0-9a-f]{20})\.json")
@@ -162,22 +162,40 @@ def _pause(seconds):
     time.sleep(seconds)
 
 
-def _read_file(path, draft_id):
-    """파일 하나를 읽는다 → `(PhotoManifest, "ok")` · `(None, "none")`(없다) · `(None, "broken")`(내용이 올바르지 않다 — 모양·크기·링크·글자·칸·이름과 초안 번호가 다름 어느 것이든) ·
-    `(None, "unreadable")`(지금은 열지 못했다 — 윈도의 공유 위반 같은 열기 오류가 짧은 재시도(`READ_RETRY_WAITS`) 뒤에도 이어졌다. 파일은 멀쩡할 수 있다 — 검증 S-2)."""
+_RETRY_REASONS = (own_posts._R_MISSING, own_posts._R_CHANGED)       # 다시 해 볼 읽기 실패 둘 — 그 밖의 실패(내용 오류)는 그대로 깨짐이다
+
+
+def _regular(path):
+    """읽기 전에 파일을 `lstat` 으로만 본다 → `(상태 정보, None)` · `(None, "none")`(없다) · `(None, "broken")`(일반 파일이 아니거나 링크이거나 너무 크다). 처음 읽을 때와 바뀐 파일을 다시 볼 때 같은 이 검사를 쓴다."""
     info = _lstat(path)
     if info is None:
         return None, "none"
     if not stat.S_ISREG(info.st_mode) or own_posts._link_like(info) or info.st_size > MAX_FILE_BYTES:
         return None, "broken"
+    return info, None
+
+
+def _read_file(path, draft_id):
+    """파일 하나를 읽는다 → `(PhotoManifest, "ok")` · `(None, "none")`(없다) · `(None, "broken")`(내용이 올바르지 않다 — 모양·크기·링크·글자·칸·이름과 초안 번호가 다름 어느 것이든) ·
+    `(None, "unreadable")`(지금은 열지 못했다 — 윈도의 공유 위반 같은 열기 오류, 또는 열 때마다 같은 이름이 새 파일로 바뀌어 있었다(다른 저장이 끼어듦)가 짧은 재시도(`READ_RETRY_WAITS`) 뒤에도 이어졌다. 파일은 멀쩡할 수 있다 — 검증 S-2·S T-4).
+    검사와 열기 사이에 같은 이름이 새 파일로 바뀌면(저장이 `os.replace` 로 파일을 바꿔 놓는 순간) 새 파일을 처음부터 다시 보고 읽는다 — 멀쩡한 파일을 깨졌다고 알리지 않으려는 것이다(스트레스 시험에서 0.3~0.4%)."""
+    info, state = _regular(path)
+    if info is None:
+        return None, state
     data, reason = own_posts._read_prefix(path, MAX_FILE_BYTES + 1, info)       # 읽기 전용 `rb` 로 상한 + 1 바이트까지만(`own_posts` 의 읽기 규칙 그대로)
     for wait in READ_RETRY_WAITS:
-        if reason != own_posts._R_MISSING:                 # 열기 오류만 다시 해 본다(검사와 열기 사이에 바뀐 파일·내용 오류는 그대로)
+        if reason not in _RETRY_REASONS:                   # 열기 오류와 '검사 뒤 열기 전에 새 파일로 바뀜'만 다시 해 본다(내용 오류는 그대로)
             break
         _pause(wait)
+        if reason == own_posts._R_CHANGED:
+            info, state = _regular(path)                   # 바뀐 새 파일을 처음부터 다시 본다(그 사이 링크·너무 큰 파일·없음이 되었을 수 있다)
+            if info is None:
+                return None, state
         data, reason = own_posts._read_prefix(path, MAX_FILE_BYTES + 1, info)
     if reason == own_posts._R_MISSING:
         return (None, "none") if _lstat(path) is None else (None, "unreadable")      # 그 사이 지워졌으면 없는 것이다
+    if reason == own_posts._R_CHANGED:
+        return None, "unreadable"                          # 다시 해 봐도 열 때마다 같은 이름이 새 파일로 바뀌어 있었다 — 깨진 것이 아니라 지금은 못 읽는 것이다(`replace_broken` 으로도 덮어쓰지 않는다)
     if reason is not None or len(data) > MAX_FILE_BYTES:
         return None, "broken"
     manifest = None
