@@ -782,8 +782,9 @@ class AddFromFileTest(RefCase):
         self.assertEqual((added.encoding, added.reference.body), ("cp949", "옛 메모장으로 저장한 글입니다."))
 
     def test_a_title_made_from_an_awkward_file_name_is_cut_or_replaced(self):
-        long_name = self.make_file("긴" * 120 + ".txt", "본문")
-        self.assertEqual(ref.add_from_file(self.ctx, long_name).reference.title, "긴" * 80)
+        name = "긴" * 60 + "x" * 60                                    # 120자 — 제목 한도 80자보다 길다. 파일 이름 한 칸은 리눅스에서 255바이트까지라 한글만 120자(360바이트)는 만들 수 없다(CI 의 리눅스 칸이 이 시험에서 빨갰다)
+        long_name = self.make_file(name + ".txt", "본문")
+        self.assertEqual(ref.add_from_file(self.ctx, long_name).reference.title, name[:80])
         blank = self.make_file("." + "txt", "본문")                                    # 이름이 없는 `.txt` 파일 — 확장자 없는 이름으로 읽히거나 제목이 비어도 기본 제목이다
         added = ref.add_from_file(self.ctx, blank) if blank.suffix.lower() == ".txt" else None
         if added is not None:
