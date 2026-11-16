@@ -701,13 +701,63 @@ class AppShell(QMainWindow):
             self.render()
             self._restore_focus("slot:" + key)
 
+    def blog_add_open(self):
+        """'블로그 추가' 카드 — 연결할 사이트(종류) 고르기를 연다. 고치던 내용은 그대로 남고 파일에 닿지 않는다."""
+        if self.state.blogs.open_picker():
+            self.render()
+            self._restore_focus("slot:add")
+
+    def blog_add_close(self):
+        """종류 고르기를 닫고 카드로 돌아간다."""
+        if self.state.blogs.close_picker():
+            self.render()
+            self._restore_focus("slot:" + str(self.state.blogs.selected))
+
+    def blog_add_kind(self, kind):
+        """종류를 골랐다 — 같은 종류의 빈 슬롯을 새 블로그 폼으로 연다(파일에 닿지 않는다). 처음 포커스는 이름 칸이고, 좁은 창에서 폼이 목록 아래에 걸려 있어도 그 칸이 보이게 페이지를 내린다."""
+        if self.state.blogs.start_adding(kind) is not None:
+            self.render()
+            self._restore_focus("blogs:field:display_name")
+            self._reveal_focus_in_page()
+
+    def _reveal_focus_in_page(self):
+        """포커스를 받은 칸이 보이는 영역 안에 오게 페이지(바깥 스크롤)를 내린다 — 배치가 끝난 다음 차례에(최소 창에서는 폼이 목록 아래라 포커스만 가면 칸이 화면 밖이다)."""
+        def reveal():
+            widget = QApplication.focusWidget()
+            page = self.scroll.widget()
+            try:
+                if widget is not None and page is not None and page.isAncestorOf(widget):
+                    self.scroll.ensureWidgetVisible(widget, 0, K.SPACE["5"])
+            except RuntimeError:                                                     # 그 사이 화면이 다시 그려져 부품이 사라졌다
+                pass
+        QTimer.singleShot(0, reveal)
+
     def blog_edit(self, name, value):
         if self.state.blogs.edit(name, value):
             self._live_blogs()
 
     def blog_toggle_choice(self, name, value):
-        """여럿 고르는 칩(협찬 가능 분야·선호 글 유형) 하나를 켜고 끈다 — 고치는 것뿐이라 파일에 닿지 않는다."""
-        if self.state.blogs.toggle_choice(name, value):
+        """여럿 고르는 칩(협찬 가능 분야·선호 글 유형·낱말 제안) 하나를 켜고 끈다 — 고치는 것뿐이라 파일에 닿지 않는다. 못 켜는 경우(한도·겹침)에도 칩 표시를 뷰모델에 다시 맞춘다."""
+        self.state.blogs.toggle_choice(name, value)
+        self._live_blogs()
+
+    def blog_pick_option(self, name, value):
+        """보기 하나를 고른다(채널 역할·대상 독자·문체) — 이미 고른 보기를 다시 누르면 비운다. 고치는 것뿐이라 파일에 닿지 않는다."""
+        self.state.blogs.choose_option(name, value)
+        self._live_blogs()
+
+    def blog_open_custom(self, name):
+        """'직접 입력' — 그 칸의 입력 칸을 열고 포커스를 준다."""
+        if self.state.blogs.open_custom(name):
+            self._live_blogs()
+            ui = getattr(self.screen_widget, "blogs_ui", None)
+            view = ui.fields.get(name) if ui is not None else None
+            if view is not None and view.edit is not None:
+                view.edit.setFocus(Qt.OtherFocusReason)
+
+    def blog_use_suggestion(self, name):
+        """제안 문장을 입력 칸에 넣는다(저장은 따로 — 사용자가 고쳐서 저장한다)."""
+        if self.state.blogs.apply_suggestion(name):
             self._live_blogs()
 
     def blog_pick_image(self, name):
@@ -730,7 +780,8 @@ class AppShell(QMainWindow):
     @staticmethod
     def _reveal_blog_field(scroll, view):
         try:
-            scroll.ensureWidgetVisible(view, 0, 12)
+            for part in view.reveal_parts(scroll.viewport().height()):               # 칸 전체가 들어가면 칸 전체, 칩 줄 때문에 보이는 영역보다 높은 칸은 입력 칸과 오류 문장을 함께 보인다
+                scroll.ensureWidgetVisible(part, 0, 12)
         except RuntimeError:                                                         # 그 사이 화면이 다시 그려져 부품이 사라졌다
             pass
 
@@ -748,8 +799,11 @@ class AppShell(QMainWindow):
             self.notify(T["load_busy"])
 
     def blog_revert(self):
+        """되돌리기(새 블로그 폼이면 `취소`) — 키보드로 눌러도 포커스가 맨 위 메뉴로 튀지 않게 선택 카드로(카드가 없으면 `블로그 추가` 카드로) 돌려 준다."""
         if self.state.blogs.revert():
             self.render()
+            selected = self.state.blogs.selected
+            self._restore_focus("slot:" + selected if selected else "slot:add")
 
     def blog_clone(self):
         status, _detail = self.state.blogs.start_clone(**self.blogs_write_bridge.callbacks())
@@ -807,7 +861,8 @@ class AppShell(QMainWindow):
     def _show_blogs_written(self, outcome):
         self.state.blogs.apply_write_ok(outcome)
         self._render_blogs()
-        self._restore_focus("slot:" + self.state.blogs.selected)
+        selected = self.state.blogs.selected
+        self._restore_focus("slot:" + selected if selected else "slot:add")                  # 마지막 블로그를 지우면 카드가 없다 — 포커스는 '블로그 추가' 카드로
 
     def _show_blogs_write_failed(self, failure):
         reload = self.state.blogs.apply_write_failed(failure)
@@ -1610,7 +1665,7 @@ class AppShell(QMainWindow):
         elif kind == "list":
             self._drf_show_saved_now()
         elif kind == "close":
-            self._close_after_confirm()
+            self._close_after_drafts()
 
     def _show_leave_choices(self, dialog, after):
         """떠나기·앱 닫기 앞의 세 갈래 확인창 — `저장`(처음 포커스) / `저장 안 하고 나가기`(위험 단추) / `계속 고치기`(취소·Esc 와 같다)."""
@@ -2456,6 +2511,14 @@ class AppShell(QMainWindow):
         self._close_confirmed = True
         self.close()
 
+    def _close_after_drafts(self):
+        """초안 확인(저장·저장 안 하고 닫기·그래도 닫기)이 끝난 뒤의 닫기 — 저장하지 않은 블로그 입력이 같이 있으면 블로그 확인창이 이어서 뜬다(없으면 바로 닫는다). 초안 확인 하나가 블로그 입력을 알림 없이 버리지 않게(검증 T-1)."""
+        dialog = self.state.blogs.close_dialog()
+        if dialog is None:
+            self._close_after_confirm()
+            return
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True)
+
     def closeEvent(self, event):
         # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(저장하지 않은 고친 내용은 사라진다 — D-281, 저장해 둔 초안은 남는다: D-363). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
         # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
@@ -2469,7 +2532,7 @@ class AppShell(QMainWindow):
                 if "choices" in dialog:
                     self._show_leave_choices(dialog, ("close", None))
                 else:
-                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm if dialog.get("blogs") else self._close_after_drafts, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
                 return
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
         self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)

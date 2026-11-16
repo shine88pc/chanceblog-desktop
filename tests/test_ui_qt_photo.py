@@ -900,6 +900,27 @@ class KeyboardTest(PhotoBase):
         self.settle(2)
         self.assertIs(QApplication.focusWidget(), first.caption.edit, "설명 글 칸의 Enter 는 칸을 옮기지 않는다")
 
+    def test_enter_scrolls_a_photo_that_was_off_screen_into_view(self):
+        """프로그램으로 옮긴 포커스는 스크롤이 따라가지 않는다(Tab 은 Qt 가 따라간다) — 최소 창에서 사진이 화면 밖일 때 Enter 가 그 사진의 대상 칸을 보이는 곳으로 가져온다."""
+        window, form = self.sheet(size=(900, 560))
+        self.add_photos(form, *[fake_path(number) for number in range(1, 7)])
+        viewport = form.scroll.viewport()
+        form.rows["p001"].note.edit.setFocus(Qt.TabFocusReason)
+        QTest.keyClick(form.rows["p001"].note.edit, Qt.Key_Return)
+        self.settle(3)
+        for number in range(2, 7):
+            photo_id = f"p{number:03d}"
+            box = form.rows[photo_id].subject
+            subject = box.edit
+            self.assertIs(QApplication.focusWidget(), subject, photo_id)
+            top = box.mapTo(viewport, box.rect().topLeft()).y()
+            bottom = box.mapTo(viewport, box.rect().bottomLeft()).y()
+            self.assertTrue(0 <= top and bottom <= viewport.height(), (photo_id, top, bottom, viewport.height()))     # 이름표·입력 칸·글자 수 칸 전체가 보인다(입력 칸만 맞추면 Qt 는 글자 커서 줄만 맞춘다)
+            QTest.keyClick(subject, Qt.Key_Return)                                       # 대상 → 같은 사진의 메모
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key_Return)                    # 메모 → 다음 사진의 대상
+            self.settle(3)
+        self.assertGreater(form.scroll.verticalScrollBar().value(), 0, "몸이 스크롤됐다")
+
     def test_focus_returns_to_the_card_button_that_opened_the_sheet(self):
         window = self.drafted()
         ui = self.ui(window)
