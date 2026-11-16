@@ -171,6 +171,7 @@ class PhotoSheet(QWidget):
         board = self.board
         if board is None:
             return None
+        self.flush()                                                              # 칸에 쳐 둔 글(Enter 도 다른 칸으로 가기도 안 한 글)을 먼저 규칙에 넘긴다 — 어떤 길로 눌러도 '글 → 행동' 순서가 같다
         status = getattr(board, name)(*args)
         self.refresh()
         if name == "ask_confirm_all" and status == "ask":
