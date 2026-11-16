@@ -215,6 +215,7 @@ class TrashTest(Base):
         self.assertEqual((controller.photos.count, controller.photos_trash, controller.photos_unsaved()), (2, False, False))
         self.assertEqual(controller.notice, ("ok", T["pho_restored_notice"]))
         self.assertTrue(window.toast.isVisible())
+        self.assertEqual(window.toast.text(), T["pho_restored_notice"], "결과 알림이 토스트로 뜬다 — 앞의 안내가 남은 것이 아니다")
         self.assertFalse(box.isVisibleTo(window.screen_widget), "사본을 쓰고 났으니 줄이 사라진다")
         self.assertEqual(self.lt(ui.photos_count), "사진 2장 · 확인 0/2")
         self.assertEqual(ui.photos_button.text(), "사진 정리 열기")
@@ -272,6 +273,7 @@ class TrashTest(Base):
         self.assertFalse(box.isVisibleTo(window.screen_widget))
         self.assertTrue(ui.photos_button.hasFocus())
         self.assertTrue(window.toast.isVisible())
+        self.assertEqual(window.toast.text(), T["pho_trash_cleared_notice"], "사본을 비운 결과도 토스트로 알린다")
 
     def test_a_failed_restore_or_clear_says_it_in_a_fixed_sentence_and_keeps_the_buttons(self):
         fake = FailingTrash(lambda: CATALOG, saving=True)
@@ -282,6 +284,7 @@ class TrashTest(Base):
         self.assertTrue(self.wait_store(window))
         self.settle(3)
         self.assertEqual(controller.notice, ("error", T["pho_restore_fail"]))
+        self.assertEqual(window.toast.text(), T["pho_restore_fail"], "실패도 고정 문장으로 토스트에 알린다")
         self.assertTrue(box.isVisibleTo(window.screen_widget) and restore.isEnabled(), "다시 눌러 볼 수 있다")
         self.assertEqual(controller.photos.count, 0)
         clear.click()
@@ -290,6 +293,7 @@ class TrashTest(Base):
         self.assertTrue(self.wait_store(window))
         self.settle(3)
         self.assertEqual(controller.notice, ("error", T["pho_trash_clear_fail"]))
+        self.assertEqual(window.toast.text(), T["pho_trash_clear_fail"])
         self.assertTrue(box.isVisibleTo(window.screen_widget))
         self.assertIn(draft_id, fake.photo_trash)
 
