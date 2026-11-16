@@ -86,6 +86,13 @@ class PlacedTest(unittest.TestCase):
         self.assertEqual(body.checks[:len(body_of().checks)], body_of().checks, "원래 확인 권장은 그대로 앞에 있다")
         self.assertEqual(len(body.checks), len(set(body.checks)))
 
+    def test_a_three_hundred_char_memo_goes_through_the_whole_build_though_the_must_include_limit_is_two_hundred(self):
+        """검증 Q-13 — 사진 메모의 한도는 사진 규칙의 300자이고 `DraftOptions` 의 문장 한도(200자)와 다르다 — 메모는 `place_photos` 로만 들어가므로 거절되지 않는다."""
+        memo = "가" * 300
+        body = body_of(photos=(photo(1, note=memo),))
+        self.assertIn(memo, body.body_text)
+        self.assertIn(memo, body.user_paragraphs())
+
     def test_the_same_input_gives_the_same_draft_twice(self):
         self.assertEqual(body_of(photos=PHOTOS), body_of(photos=PHOTOS))
         self.assertEqual(body_of(photos=PHOTOS).to_dict(), body_of(photos=tuple(reversed(PHOTOS))).to_dict(), "사진을 넘기는 순서는 상관없다(display_order 로 정한다)")

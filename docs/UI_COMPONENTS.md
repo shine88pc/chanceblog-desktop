@@ -232,6 +232,9 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 
 **Tab 순서**와 접근 이름·크기는 `UI_DESIGN_SPEC.md` 4-10 에 있고, 실제로 Tab·Shift+Tab 을 눌러 이 순서와 대화상자 밖으로 새지 않음을 시험이 본다(`tests/test_ui_qt_photo.py`). 상태별 동작은 `UI_STATES.md` 5-6e, **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 18절).
 
+**3단계(D-501)**: 초안 작성 화면의 사진 카드(`draft_screen.py`)에 `_photos_trash`(되돌릴 사본 줄 — `UI.label` 셋·`UI.Button("secondary", size="sm")` 둘을 세로로 쌓은 한 덩어리)와 `_apply_trash`(뷰모델에 맞춰 글·꺼짐·보임을 바꾸고 사라지는 단추에 포커스가 있었으면 `사진 정리 열기` 로 옮긴다)가 있다. `refresh_photos` 가 사진 수·고쳤어요·다시 만들기·되돌릴 사본을 같은 자리에서 바꾼다(화면 전체를 다시 그리지 않는다). 새 공통 부품은 없다.
+
+
 ## 4. 새 부품을 더할 때
 
 ① 색·크기는 `tokens.py` 에 키를 더하고 `theme.py` 스타일시트에서만 쓴다 ② 접근 이름·키보드·포커스 링 ③ `components.py` 에 한 곳으로(그리는 부품은 `gauges.py`, 줄 모양 부품은 `bars.py` — 새 파일도 직접 색·인라인 스타일 시험이 훑는다. 계산은 PySide6 없이 시험하도록 `ui/core/` 의 순수 모듈에 둔다) ④ 시험(접근 이름·36px·직접 색 없음은 자동으로 훑는다) ⑤ 이 표에 한 줄.

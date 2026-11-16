@@ -11,6 +11,7 @@
 """
 import ast
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,6 +32,22 @@ from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.ui.core import drafts, text, tokens  # noqa: E402
 
 T = text.T
+
+
+class HoldingRestore(drafts.FakeDraftsProvider):
+    """사진 정보 되돌리기가 시험이 문을 열어 줄 때까지 기다리는 가짜 공급자 — 시간에 기대지 않고 '도는 중' 을 확실히 본다."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gate, self.entered, self.holding, self.restore_calls = threading.Event(), threading.Event(), False, 0
+
+    def restore_photos(self, draft_id, progress, cancelled):
+        self.restore_calls += 1
+        if self.holding:
+            self.entered.set()
+            if not self.gate.wait(30):
+                raise AssertionError("시험이 문을 열어 주지 않았다")
+        return super().restore_photos(draft_id, progress, cancelled)
 
 
 class FailingTrash(drafts.FakeDraftsProvider):
@@ -145,7 +162,7 @@ class SaveTest(Base):
         self.add_photos(form, fake_path(1))
         window.photos_close()
         self.settle(3)
-        fake.photo_fail = drafts.DraftFailure(T["pho_save_fail"], code="FILE_WRITE_FAILED", kind="io")
+        fake.photo_fail = T["pho_save_fail"]                                          # 가짜 공급자는 사진 정보 저장 실패를 고정 문장으로 돌려준다
         self.press_save(window)
         self.assertEqual(len(fake.saved), 1, "글은 저장됐다")
         self.assertEqual(controller.notice[0], "error")
@@ -277,22 +294,19 @@ class TrashTest(Base):
         self.assertIn(draft_id, fake.photo_trash)
 
     def test_while_a_job_runs_both_buttons_are_off_and_a_second_press_does_nothing(self):
-        window, fake, draft_id = self.deleted_and_back()
+        window, fake, draft_id = self.deleted_and_back(fake=HoldingRestore(lambda: CATALOG, saving=True))
         ui, box, restore, clear = self.trash_ui(window)
         controller = window.state.drafts
-        calls = []
-        original = fake.restore_photos
-
-        def counted(draft_id, progress, cancelled):
-            calls.append(draft_id)
-            return original(draft_id, progress, cancelled)
-
-        fake.restore_photos = counted
+        fake.holding = True
         restore.click()
+        self.assertTrue(fake.entered.wait(10), "되돌리기 작업이 시작됐다")
+        self.settle(3)
+        self.assertEqual((restore.isEnabled(), clear.isEnabled()), (False, False), "작업이 도는 동안 두 단추가 꺼진다")
         self.assertEqual(window.photos_restore(), "busy", "작업이 도는 동안의 두 번째 누름")
+        fake.gate.set()
         self.assertTrue(self.wait_store(window))
         self.settle(3)
-        self.assertEqual(calls, [draft_id])
+        self.assertEqual(fake.restore_calls, 1)
         self.assertEqual(controller.photos.count, 2)
 
     def test_the_trash_block_fits_every_size_without_clipping_or_sideways_scroll(self):
