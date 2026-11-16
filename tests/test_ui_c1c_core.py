@@ -169,10 +169,11 @@ class RowViewTest(unittest.TestCase):
 
     def test_a_row_has_exactly_these_keys_no_volume_no_document_count_no_internal_number(self):
         """의도적 갱신(UI-C1d, D-201): 줄에 `id` 칸이 **하나** 늘었다 — 줄을 눌러 상세 서랍을 열려면 줄을 가리킬 열쇠가 필요하다(옛 시험은 '내부 번호가 뷰모델에 없다' 였다). 그 번호는 글이 아니라 열쇠이고
-        어떤 글(제목·접근 이름·꼬리표 …)에도 나가지 않으며(아래·`texts_of` 시험이 지킨다) 그 칸 하나뿐이다. 월 검색량·문서 수 칸은 그대로 없다."""
+        어떤 글(제목·접근 이름·꼬리표 …)에도 나가지 않으며(아래·`texts_of` 시험이 지킨다) 그 칸 하나뿐이다. 월 검색량·문서 수 칸은 그대로 없다.
+        의도적 갱신(blogsel-2, D-510): 줄에 `badge` 칸이 **하나** 늘었다 — 채널 배지 안의 글자(이름의 끝 숫자 또는 첫 글자)이다. 색은 `channel` 열쇠가 그대로 정하므로 글자를 따로 실었고, 어디에도 번호·내부 열쇠가 아니다."""
         number = "tc-naver_a-seed-aaaa000000000001"
         row = board_view.row_vm(rec(id_=number), 3)
-        self.assertEqual(set(row), {"id", "rank", "channel", "title", "score", "score_text", "ring", "band", "band_label", "delta", "interest", "sample", "sample_tag", "a11y"})
+        self.assertEqual(set(row), {"id", "rank", "channel", "badge", "title", "score", "score_text", "ring", "band", "band_label", "delta", "interest", "sample", "sample_tag", "a11y"})
         self.assertEqual((row["id"], row["rank"], row["channel"]), (number, 3, ""))                         # 채널은 `channel_vm` 이 열쇠(A·B)를 넘긴다 — 직접 부르면 비어 있다
         self.assertEqual(repr(row).count(number), 1)                                                        # 번호는 `id` 칸 하나뿐이다
         self.assertNotIn("tc-naver_a", texts_of(row))                                                       # 글에는 없다

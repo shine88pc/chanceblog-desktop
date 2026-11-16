@@ -24,7 +24,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
-from chanceblog_desktop.ui.core import attribution, part_rules, services, text, tokens  # noqa: E402  (PySide6 를 모르는 부분 — PySide6 가 없어도 불러온다)
+from chanceblog_desktop.ui.core import attribution, channel_names, part_rules, services, text, tokens  # noqa: E402  (PySide6 를 모르는 부분 — PySide6 가 없어도 불러온다)
 from chanceblog_desktop.ui.core.jobs import JobFailure  # noqa: E402
 
 HAVE = importlib.util.find_spec("PySide6") is not None
@@ -211,10 +211,14 @@ class ShellTest(QtBase):
         provider = Custom([], board=board)
         for size in ((1920, 1080), (1440, 900), (1366, 768), (1100, 700)):
             window = self.make(provider, size=size)
+            channel_names.use(channel_names.labels({"naver_a": (long_name, True), "naver_b": ("블로그 비", True)}))        # 의도적 갱신(blogsel-2, D-510): 구역 머리의 이름은 블로그 관리의 별명이다(공급자의 블로그 이름이 아니다)
+            window.render()
+            self.settle()
             labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text().startswith("가나다라")]
             self.assertEqual(len(labels), 1, size)
             label = labels[0]
-            self.assertEqual(label.text(), f"{long_name} 추천")                              # 부품이 받은 글(뷰모델이 가린 뒤 40자까지 두는 이름 — 30자라 그대로 + 추천)
+            self.assertEqual(label.text(), f"{channel_names.label('naver_a')} 추천")        # 부품이 받은 글(이름 규칙이 30자까지 줄인 별명 + 추천)
+            self.assertEqual(len(label.text()), channel_names.LIMIT + len(" 추천"), size)
             self.assertEqual(label.toolTip(), label.text())                                  # 툴팁은 부품이 받은 글
             card = label.parentWidget()
             while card is not None and card.property("card") != "true":
@@ -1028,6 +1032,9 @@ class SafetyTest(QtBase):
         board = services.BoardData((services.ChannelRead("A", "<i>이름</i>", True, "ok", "", (services.RecommendRow("e1", evil_title, 85, None, "rising"),)), services.ChannelRead("B", "비", True, "ok", "", ())),
                                    services.ListRead("ok", (services.DraftRow("d1", "<u>초안</u>", "review", ""),)), services.ListRead("ok", (services.RecentRow("p1", "<h1>발행</h1>", None),)))
         window = self.make(Custom([old], board=board))
+        channel_names.use(channel_names.labels({"naver_a": ("<i>이름</i>", True)}))                  # 의도적 갱신(blogsel-2, D-510): 구역 머리의 이름은 블로그 관리의 별명이다 — 서식 글자가 든 별명도 평문으로 그려진다
+        window.render()
+        self.settle()
         row = window.screen_widget.findChild(board_module.BoardRow)
         self.assertEqual(row.title_label.plain_text(), evil_title)
         self.assertNotIn("<script", row.title_label.text())                               # 화면에는 이스케이프된 글자로 들어간다
@@ -1083,6 +1090,9 @@ class SafetyTest(QtBase):
                                                        ts.rated(80, channel="naver_b", candidate_id="tc-naver_b-seed-bbbb000000000002", topic="제목 비 " + github)], now="2026-11-10T01:00:00Z")
             for size in ((1920, 1080), (1366, 768)):
                 window = self.make(adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx), size=size)
+                channel_names.use(channel_names.labels({"naver_a": ("별명 " + key, True)}))             # 의도적 갱신(blogsel-2, D-510): 구역 머리의 이름은 블로그 관리의 별명이다 — 키 모양 별명은 이름 규칙이 가린다(프로필의 블로그 이름은 이제 홈에 나가지 않는다)
+                window.render()
+                self.settle()
                 rows = window.screen_widget.findChildren(board_module.BoardRow)
                 self.assertEqual(len(rows), 2, size)
                 self.assertNotIn("sample", repr(window.state.home_view()["board"]["state"]))
@@ -1092,13 +1102,14 @@ class SafetyTest(QtBase):
                 everything += repr(window.state.home_view()) + repr(window.state.drawer_view())
                 self.assertEqual(leaked(everything), [], size)
                 self.assertIn("가림", everything)
-                self.assertIn("블로그 [가림", " ".join(w.text() for w in window.findChildren(QLabel)))        # 구역 머리의 블로그 이름: 앞부분은 보이고 키는 가려졌다
+                self.assertIn("별명 [가림", " ".join(w.text() for w in window.findChildren(QLabel)))          # 구역 머리의 이름(별명): 앞부분은 보이고 키는 가려졌다
                 self.assertNotIn("옛 제목", everything)                                                      # 옛 후보 저장소의 글은 홈에도 서랍에도 나오지 않는다
                 window.close()
 
-    def test_a_forty_character_blog_name_shows_and_tooltips_the_thirty_character_text_the_adapter_made(self):
-        """툴팁은 '전체' 가 아니라 받은 글이다 — 어댑터가 가린 뒤 30자로 줄인 글(독립 검증 N-5). 40자 이름은 라벨도 툴팁도 29자 + …
-        의도적 갱신(UI-C1d, D-201): 이름이 보이는 자리가 오른쪽 패널에서 추천 구역 머리(`이름 추천`)로 옮겨 글에 ` 추천` 이 붙는다."""
+    def test_a_forty_character_alias_shows_and_tooltips_the_thirty_character_text_the_name_rule_made(self):
+        """툴팁은 '전체' 가 아니라 받은 글이다 — 이름 규칙이 가린 뒤 30자로 줄인 글(독립 검증 N-5). 40자 별명은 라벨도 툴팁도 29자 + …
+        의도적 갱신(UI-C1d, D-201): 이름이 보이는 자리가 오른쪽 패널에서 추천 구역 머리(`이름 추천`)로 옮겨 글에 ` 추천` 이 붙는다.
+        의도적 갱신(blogsel-2, D-510): 그 이름은 이제 블로그 관리의 별명이고 줄이는 것은 `channel_names`(30자)다 — 옛 시험은 어댑터가 프로필의 블로그 이름을 줄인 글을 봤다."""
         sys.path.insert(0, str(ROOT / "tests"))
         import service_support as support
         from chanceblog_desktop.content.profiles import NaverProfile
@@ -1108,6 +1119,9 @@ class SafetyTest(QtBase):
             ctx = support.make_ctx(tmp)
             ctx.settings.save_naver_profile(NaverProfile("naver_a", name, "https://blog.naver.com/exampleaaa", default_tags=("생활",), min_chars=10, max_chars=20000))
             window = self.make(adapters.ServiceHomeProvider(context_factory=lambda data_dir=None: ctx))
+            channel_names.use(channel_names.labels({"naver_a": (name, True)}))
+            window.render()
+            self.settle()
             labels = [w for w in window.screen_widget.findChildren(UI.ElidedLabel) if w.text().startswith("가나다라")]
             self.assertEqual(len(labels), 1)
             expected = name[:adapters.NAME_LIMIT - 1] + "…"
