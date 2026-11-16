@@ -630,6 +630,43 @@ class ManyFilesTest(unittest.TestCase):
         self.assertEqual((board.rejected, board.rejected_more), gone)
 
 
+class RelinkAndUndoGapsTest(unittest.TestCase):
+    """검증 S T-3 — 변이 시험이 찾은 시험의 틈 둘(PV21·PV20)을 메운다."""
+
+    def test_relinking_to_a_file_the_reader_refuses_is_refused_with_its_reason_and_changes_nothing(self):
+        verdicts = {"not_image": R.Verdict(R.NOT_IMAGE, T["img_local_not_image"]), "too_big": R.Verdict(R.TOO_BIG, T["img_local_too_big"]), "unsupported": R.Verdict(R.UNSUPPORTED, T["img_local_unsupported"]),
+                    "missing": R.Verdict(R.MISSING, T["img_local_missing"]), "silent": R.Verdict(R.UNREADABLE, "")}
+        for label, verdict in verdicts.items():
+            with self.subTest(label=label):
+                board = new_board(1, verdicts={path_of(9): verdict})
+                before = (board.manifest, dict(board.states))
+                self.assertEqual(board.relink("p001", path_of(9)), "refused")
+                self.assertEqual(board.view()["notice"], {"level": "error", "text": verdict.message or T["img_local_unreadable"]}, "읽기 도구의 판정 문장이 그대로 보이고 말이 없으면 고정 안내문")
+                self.assertEqual((board.manifest, board.states), before, "아무것도 바뀌지 않았다")
+                self.assertEqual(board.photo("p001").local_path, path_of(1))
+        good = new_board(1, verdicts={path_of(9): R.Verdict(R.OK, "", "", 1200, 800, "png")})
+        self.assertEqual(good.relink("p001", path_of(9)), "ok")
+        state = good.states["p001"]
+        self.assertEqual((good.photo("p001").local_path, state.width, state.height, state.format, state.verified), (path_of(9), 1200, 800, "png", True), "읽어 본 크기·형식이 상태에 담긴다")
+
+    def test_undoing_a_removal_reads_the_file_again_so_the_returned_row_shows_what_is_true_now(self):
+        board = new_board(3)
+        self.assertEqual(board.remove("p002"), "ok")
+        self.assertNotIn("p002", board.states, "지우면 그 사진의 파일 상태도 버린다")
+        board.provider.states[path_of(2)] = "missing"                                   # 지운 사이에 파일이 없어졌다
+        board.provider.calls.clear()
+        self.assertEqual(board.undo_remove(), "ok")
+        self.assertEqual(board.provider.calls, ["check"], "되돌리면 파일 상태를 다시 읽는다")
+        self.assertEqual(board.states["p002"].state, "missing")
+        file_view = row_of(board, "p002")["file"]
+        self.assertEqual((file_view["state"], file_view["badge"]), ("missing", "파일 없음"))
+        again = new_board(2)
+        again.remove("p002")
+        again.undo_remove()
+        self.assertTrue(again.states["p002"].ok and again.states["p002"].verified, "그대로면 '파일 있음'으로 돌아온다")
+        self.assertEqual(row_of(again, "p002")["file"]["state"], "ok")
+
+
 class FilesAndRelinkTest(unittest.TestCase):
     def test_the_file_state_badges_in_the_row(self):
         board = new_board(4, states={path_of(2): "missing", path_of(3): "link", path_of(4): "cloud"})

@@ -41,7 +41,7 @@ if HAVE:
     sys.path.insert(0, str(ROOT / "scripts"))
     import ui_offscreen
     ui_offscreen.prepare_environment()
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QTimer, Qt
     from PySide6.QtGui import QColor, QImage, QPixmap
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QLineEdit, QWidget
@@ -130,7 +130,7 @@ class SourceRulesTest(unittest.TestCase):
             source = "\n".join(ast.unparse(statement) for statement in methods[name].body)
             for forbidden in ("provider.", "service.", "sqlite3", "subprocess", "socket", "urllib", "shutil", "os.", "pathlib"):
                 self.assertIsNone(re.search(r"\b" + re.escape(forbidden), source), f"{name}: {forbidden}")
-            self.assertFalse(called_names(methods[name]) & {"write", "write_text", "write_bytes", "mkdir", "unlink", "rename", "replace"}, name)
+            self.assertFalse(called_names(methods[name]) & {"write", "write_text", "write_bytes", "mkdir", "unlink", "rename", "replace", "clipboard", "setText", "setMimeData", "setImage", "setPixmap"}, name)
             self.assertFalse(builtin_calls(methods[name]) & {"open", "print", "exec", "eval"}, name)
         self.assertEqual(ast.unparse(methods["photos_pick"]).count("add_paths"), 1)
         self.assertIn("paths = None", ast.unparse(methods["photos_pick"]), "고른 위치 목록은 쓰고 나서 바로 놓는다")
@@ -401,6 +401,19 @@ class SheetTest(PhotoBase):
         self.assertEqual(sum(1 for line in shown if line.startswith(FILE_MARK)), 10)
         self.add_photos(form, fake_path(1))                                                # 다음 선택이 목록과 개수 줄을 바꾼다
         self.assertEqual((list(form.rows), form.rejected_host.isVisibleTo(form), form.rejected_rows.count()), (["p001"], False, 0))
+
+    def test_picking_and_relinking_files_never_copy_their_locations_to_the_clipboard(self):
+        """검증 S T-3(SH1) — 고른 파일의 위치는 사진 정보에만 가고 시스템 클립보드로 새지 않는다."""
+        sentinel = "UNIQ-SENTINEL-clip-5d2f"
+        QApplication.clipboard().setText(sentinel)
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1), fake_path(2), fake_path(3, "gif"))
+        self.assertEqual((QApplication.clipboard().text(), self.copied), (sentinel, []))
+        self.relinks.append(fake_path(7))
+        window.photos_relink("p001")
+        self.settle(4)
+        self.assertEqual(window.state.drafts.photos.photo("p001").local_path, fake_path(7))
+        self.assertEqual((QApplication.clipboard().text(), self.copied), (sentinel, []))
 
     def test_the_two_input_fields_are_always_visible_and_the_example_follows_the_type(self):
         window, form = self.sheet()
@@ -730,6 +743,23 @@ class PreviewTest(PhotoBase):
         form.refresh()
         self.settle(6)
         self.assertEqual(len(self.maker_calls), calls, "같은 사진의 미리보기는 다시 만들지 않는다")
+
+    def test_each_preview_is_made_in_its_own_turn_of_the_event_loop_so_the_window_never_freezes(self):
+        """검증 S T-3(PS4) — 미리보기를 한 번에 몰아 만들면(30장이면 한참) 창이 멈춘다. 한 장을 만들 때마다 이벤트 루프로 한 번 돌아간다."""
+        events = []
+
+        def maker(path):
+            events.append("make")
+            QTimer.singleShot(0, lambda: events.append("turn"))                           # 이 장을 만든 뒤 이벤트 루프가 한 바퀴 돌았다는 표시
+            return self.make_preview(path)
+        window = self.drafted(maker=maker)
+        window, form = self.sheet(window)
+        self.add_photos(form, *[fake_path(number) for number in range(1, 7)])
+        ui_offscreen.wait_until(self.app, lambda: events.count("make") >= 6, 8)
+        self.settle(4)
+        self.assertEqual(events.count("make"), 6)
+        self.assertFalse(any(first == second == "make" for first, second in zip(events, events[1:])), f"두 장 이상이 이벤트 루프를 한 번도 돌지 않고 이어서 만들어졌다: {events}")
+        self.assertTrue(all(not card.preview.pixmap().isNull() for card in form.rows.values()))
 
     def test_a_big_png_and_a_missing_file_get_no_preview_and_a_sentence_instead(self):
         provider = pv.FakePhotoProvider(verdicts={fake_path(1, "png"): R.Verdict(R.OK, "", "", 12_000, 12_000, "png"), fake_path(2): R.Verdict(R.OK, "", "", 12_000, 12_000, "jpeg")}, states={fake_path(3): "missing"})
@@ -1079,6 +1109,26 @@ class RealFilesTest(PhotoBase):
 
     def snapshot(self):
         return {item.name: item.read_bytes() for item in sorted(self.tmp.iterdir()) if item.is_file()}
+
+    def test_the_preview_is_made_from_a_reduced_read_and_never_from_the_full_size_picture(self):
+        """검증 S T-3(PS1) — 큰 사진을 통째로 읽어 줄이면 메모리가 크게 든다. 미리보기는 읽는 도중에 줄여 읽는다(긴 변 `PREVIEW_PIXELS`)."""
+        big = self.make_image("큰사진.jpg", "JPG", 3000, 2000)
+        seen = []
+        real = photo_screen.imagecheck.make_thumbnail
+
+        def spy(path, max_side=None):
+            image = real(path) if max_side is None else real(path, max_side=max_side)
+            seen.append((max_side, None if image is None else (image.width(), image.height())))
+            return image
+        photo_screen.imagecheck.make_thumbnail = spy
+        self.addCleanup(setattr, photo_screen.imagecheck, "make_thumbnail", real)
+        pixmap = photo_screen.make_preview(big)
+        self.assertFalse(pixmap.isNull())
+        self.assertEqual(photo_screen.PREVIEW_PIXELS, rules.THUMB_SIDE * 2)
+        self.assertEqual([item[0] for item in seen], [photo_screen.PREVIEW_PIXELS], "줄여 읽는 한도를 정해서 불렀다")
+        self.assertLessEqual(max(seen[0][1]), photo_screen.PREVIEW_PIXELS, "읽어 온 그림이 이미 작다 — 3000×2000 을 통째로 읽지 않았다")
+        self.assertLessEqual(max(pixmap.width(), pixmap.height()), rules.THUMB_SIDE)
+        self.assertEqual(sorted(item.name for item in self.tmp.iterdir()), ["큰사진.jpg"], "미리보기가 파일을 만들지 않는다")
 
     def test_real_photos_get_previews_and_nothing_is_written_read_or_sent_anywhere_else(self):
         png, jpg = self.make_image("메뉴판.png", "PNG"), self.make_image("간판.jpg", "JPG", 64, 48)
