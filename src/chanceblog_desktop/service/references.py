@@ -7,11 +7,17 @@
   · **번호는 앱이 만든다** — 영문 소문자·숫자 8자(`new_id`, 운영체제의 무작위 값). **사용자가 준 글자는 어떤 경우에도 파일 이름이나 경로가 되지 않는다.** 열기·고치기·지우기가 받은 번호도 `[a-z0-9]{8}` 모양일 때만
     쓰고 아니면 파일을 만지지 않고 거절한다(`../`·경로 구분자·빈 글·긴 글·글자 아닌 값 모두). 파일 이름에서 번호를 읽는 것은 정확한 이름 모양(`ref-` + 번호 + `.json`)일 때뿐이고 그 밖의 파일은 없는 것으로 본다.
   · **한도** — 보관 개수 최대 `MAX_REFERENCES`(50, 모양이 맞는 파일은 깨진 것도 센다), 제목 1–80자(앞뒤 공백은 걷고, 공백이나 눈에 안 보이는 글자뿐이거나 줄 바꿈 같은 제어 문자가 있으면 거절),
-    본문 1–100,000자(`own_posts.MAX_TEXT_CHARS` 와 같은 값 — 넘으면 잘라 쓰지 않고 거절). 본문은 글자 하나도 바꾸지 않고 그대로 둔다(줄 끝·공백·정규화 없음).
+    본문 1–100,000자(`own_posts.MAX_TEXT_CHARS` 와 같은 값 — 넘으면 잘라 쓰지 않고 거절; 센 것은 아래 통일을 거친 글이다).
+  · **본문은 편집 칸이 어차피 바꾸는 것만 통일해 저장한다**(`normalize_body`) — 줄 끝 CRLF·낱개 CR·U+2028·U+2029 는 LF 하나로, 맨 앞의 BOM(U+FEFF)은 모두 떼고, NBSP(U+00A0) 는 보통 공백으로. 그 밖의 글자(끝 공백·탭·빈 줄·
+    보이지 않는 글자·NFC/NFD·이모지·제어 문자)는 하나도 바꾸지 않는다. 실제 Qt 편집 칸이 정확히 이 목록만 바꾸므로(시험이 견준다) 저장한 글이 곧 화면의 글이고, 열자마자 '저장하지 않은 변경' 이 켜지지 않으며, 목록의 글자 수가
+    편집 칸의 글자 수와 같다. 읽을 때(목록·열기)도 같은 통일을 거친다(파일은 저장할 때만 바뀐다).
   · **파일에서 올리기** 는 `own_posts.read_own_files` 를 그대로 쓴다 — 경로 안전·크기(2MB)·링크·글자표(UTF-8 → CP949)·빈 글 규칙을 새로 만들지 않았다. 거절 문장도 같다. 제목을 안 주면 파일 이름(확장자 뺀 것)에서 만든다.
-  · **저장은 원자적이다** — `context.write_json`(임시 파일에 다 쓰고 디스크에 내려보낸 뒤 이름을 바꿔 넣는다)이 한다. 쓰다 멈추거나 전원이 나가도 옛 파일이 그대로 남고 반쯤 쓴 파일이 자리를 차지하지 않는다. 쓰기 실패(`FILE_WRITE_FAILED`·`DISK_FULL`)의 문장에는
+  · **저장은 원자적이다** — `context.write_json`(임시 파일에 다 쓰고 디스크에 내려보낸 뒤 이름을 바꿔 넣는다)이 한다. 쓰다 멈추거나 전원이 나가도 옛 파일이 그대로 남고 반쯤 쓴 파일이 글 자리를 차지하지 않는다. 임시 파일 이름은 쓸 때마다 다르다
+    (`ref-<번호>.json.<프로세스 번호>-<무작위 8자>.tmp`, `unique_temp=True`) — 두 프로세스가 같은 글을 동시에 고쳐도 서로의 임시 파일을 덮거나 가져가지 않아 글 파일이 깨지거나 사라지지 않고 마지막 쓰기가 이긴다. 쓰다 **실패**하면(OSError) 임시 파일을 지운다.
+    쓰다 **프로세스가 죽거나 전원이 나가면** 그 임시 파일이 남을 수 있다(새 본문이 평문으로 든다) — 목록·개수에는 안 잡히고, 그 글을 지울 때 함께 지운다. 앱이 시작할 때 오래된 임시 파일을 치우지는 않는다. 쓰기 실패(`FILE_WRITE_FAILED`·`DISK_FULL`)의 문장에는
     실제 경로 대신 고정 이름 `참고 글 보관함 폴더` 를 쓴다.
-  · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 아무것도 하지 않고 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나의 `unlink` 뿐이다(폴더·다른 글·다른 파일은 그대로, 링크나 폴더는 거절).
+  · **보관함 폴더가 링크(윈도의 정션 포함)이거나 폴더가 아니면** 목록·추가·열기·고치기·지우기 **모두** 거절한다(`_folder_problem` — 링크 너머로는 읽지도 쓰지도 지우지도 않는다).
+  · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 아무것도 하지 않고 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나와 그 번호의 임시 파일(위)의 `unlink` 뿐이다(폴더·다른 글·다른 파일은 그대로, 링크나 폴더는 거절).
     지운 글은 되돌릴 수 없다(보관함은 백업에 들지 않는다).
   · **깨진 파일은 건너뛴다** — 목록은 읽을 수 없는 파일(JSON 불량·칸 모양 틀림·한도 초과·1MB 초과·파일 이름과 `id` 가 다름·링크·폴더)을 빼고 건너뛴 개수(`skipped`)만 알린다. 앱을 멈추지 않고 깨진 파일을 고치거나 지우거나 덮어쓰지 않는다.
   · **글·제목·경로는 오류·로그·예외에 되풀이하지 않는다** — 오류는 기존 오류 체계의 `CONTENT_INVALID`·`CONTENT_NOT_FOUND`·`CONFIRMATION_REQUIRED`·`FILE_WRITE_FAILED`·`DISK_FULL` 이고 문장은 고정이다(`Reference`·`Entry` 의 `repr` 에도 글·제목이 없다).
@@ -19,7 +25,7 @@
   · **저장 직전에 키·토큰 모양을 검사한다**(`security/scan.py` — 초안 저장·백업과 같은 검사기, 제목·본문). 찾으면 **아무것도 쓰지 않고** `CONTENT_INVALID` 로 멈춘다 — 위치(칸·줄)와 종류만 알리고 찾은 글은 다시 보이지 않으며
     앱은 글을 자동으로 지우거나 바꾸지 않는다. 이 검사를 건너뛰는 인자는 없다. 읽기(목록·열기)는 검사하지 않는다.
   · 표준 라이브러리와 기존 서비스 함수만 쓴다: 네트워크·하위 프로세스·AI·표준 출력·로그 0. 새 시계를 읽지 않는다(`ctx.stamp()`).
-알려 둔 한계: 키·토큰 모양 검사는 여섯 가지 모양뿐이라 다른 모양의 비밀은 못 찾는다. 보관함은 글을 암호화하지 않는다(이 PC 의 사용자 데이터 폴더에 평문 JSON 이다 — 다른 사용자가 읽을 수 있는 폴더를 데이터 폴더로 고르면 그 사용자도 읽는다). 같은 번호의 동시 저장을 막는 잠금은 없다(앱은 한 번에 하나만 열린다).
+알려 둔 한계: 키·토큰 모양 검사는 여섯 가지 모양뿐이라 다른 모양의 비밀은 못 찾는다. 보관함은 글을 암호화하지 않는다(이 PC 의 사용자 데이터 폴더에 평문 JSON 이다 — 다른 사용자가 읽을 수 있는 폴더를 데이터 폴더로 고르면 그 사용자도 읽는다). 같은 번호의 동시 저장을 막는 잠금은 없다(앱은 한 번에 하나만 열린다) — 두 프로세스가 동시에 고치면 마지막 쓰기가 이기고 먼저 쓴 것은 사라진다(파일이 깨지지는 않는다).
 """
 from __future__ import annotations
 
@@ -54,7 +60,11 @@ ID_TRIES = 50                                            # 번호가 겹칠 때 
 _KEYS = frozenset({"schema", "id", "title", "body", "created_at", "updated_at"})
 _ID = re.compile(r"[a-z0-9]{8}")
 _NAME = re.compile(r"ref-([a-z0-9]{8})\.json")
+_TEMP = re.compile(r"ref-([a-z0-9]{8})\.json\.(?:\d+-[0-9a-f]{8}\.)?tmp")     # 쓰다 프로세스가 죽어 남을 수 있는 임시 파일 — 옛 고정 이름(`.json.tmp`)과 쓸 때마다 다른 이름(`.json.<pid>-<무작위>.tmp`)
 _STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+_LINE_BREAKS = re.compile("\r\n|\r|\u2028|\u2029")      # 줄 끝 — CRLF·낱개 CR·줄 구분(U+2028)·문단 구분(U+2029). 편집 칸이 LF 하나로 바꾸는 것들이다(시험이 실제 Qt 로 견준다)
+_NBSP = {0x00A0: " "}                                    # 줄 바꿈 없는 공백(NBSP) → 보통 공백(편집 칸이 바꾸는 것)
+BOM = "\ufeff"                                           # 맨 앞에 있으면 편집 칸이 (하나) 떼므로 통일에서는 맨 앞의 것을 모두 뗀다
 _BAD_TITLE_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})      # 제어 문자·짝 없는 대리 문자·줄·문단 구분 문자
 _WHERE = "참고 글 보관함 폴더"                            # 쓰기 실패 문장에 실제 경로 대신 쓰는 고정 이름
 
@@ -152,14 +162,22 @@ def _lstat(path):
         return None
 
 
+def _folder_problem(folder):
+    """보관함 폴더가 링크(윈도의 정션 포함)이거나 폴더가 아니면 **아직 내지 않은** 오류 객체, 아니면 None(폴더가 아직 없어도 None). 목록·추가·열기·고치기·지우기 **모두** 같은 이 검사를 먼저 한다 — 폴더 링크 너머로는 읽지도 쓰지도 지우지도 않는다."""
+    info = _lstat(folder)
+    if info is not None and (not stat.S_ISDIR(info.st_mode) or own_posts._link_like(info)):
+        return _refuse(_R_FOLDER)
+    return None
+
+
 def _scan(folder):
     """보관함 폴더 안에서 정확한 이름 모양(`ref-` + 번호 + `.json`)인 파일들의 번호(정렬) → `(번호들, None)` 또는 `(None, 오류 객체)` — 폴더가 없으면 빈 목록이고 아무것도 만들지 않는다.
     폴더가 링크이거나 폴더가 아니거나 읽을 수 없으면 **아직 내지 않은** 오류 객체를 돌려준다(부른 쪽이 글을 비운 뒤에 낸다 — 호출 흔적이 글을 붙들지 않게)."""
-    info = _lstat(folder)
-    if info is None:
+    problem = _folder_problem(folder)
+    if problem is not None:
+        return None, problem
+    if _lstat(folder) is None:
         return [], None
-    if not stat.S_ISDIR(info.st_mode) or own_posts._link_like(info):
-        return None, _refuse(_R_FOLDER)
     names = None
     try:
         with os.scandir(folder) as entries:
@@ -192,17 +210,26 @@ def _title_reason(title):
     return None
 
 
+def normalize_body(text):
+    """본문을 **편집 칸이 어차피 바꾸는 것만** 표준형으로 통일한다 — 줄 끝 CRLF·낱개 CR·줄 구분(U+2028)·문단 구분(U+2029) 은 LF 하나로, 맨 앞의 BOM(U+FEFF)은 모두 떼고(편집 칸은 하나만 떼지만, 통일한 글이 편집 칸을 지나도 그대로이려면 모두 떼야 한다), NBSP(U+00A0) 는 보통 공백으로.
+    그 밖의 글자(끝 공백·탭·빈 줄·보이지 않는 글자·NFC/NFD·이모지·제어 문자)는 그대로다. 보관함의 편집 칸(Qt 의 평문 칸)이 열 때 정확히 이것만 바꾸므로(시험이 실제 Qt 로 견준다) 저장한 글이 곧 화면의 글이 되고,
+    열자마자 '저장하지 않은 변경' 이 켜지거나 저장하면 본문이 달라지는 일이 없으며 목록의 글자 수가 편집 칸의 글자 수와 같다. 되풀이해도 같다(통일한 글을 또 통일해도 그대로)."""
+    return _LINE_BREAKS.sub("\n", text).translate(_NBSP).lstrip(BOM)
+
+
 def _check(title, body):
-    """제목·본문 검사 → `(정리한 제목, 본문, None)` 또는 `(None, None, 사유)`. 본문은 하나도 바꾸지 않고 한도(10만 자·NUL·빈 글)는 파일 읽기와 같은 검사(`own_posts._check_text`)다."""
+    """제목·본문 검사 → `(정리한 제목, 통일한 본문, None)` 또는 `(None, None, 사유)`. 본문은 `normalize_body` 로 통일한 뒤 한도(10만 자·NUL·빈 글)를 **저장되는 글로** 본다(파일 읽기와 같은 검사 `own_posts._check_text`)."""
     clean = title.strip() if isinstance(title, str) else title
     reason = _title_reason(clean)
     if reason is None:
         if not isinstance(body, str):
             reason = own_posts._R_EMPTY
-        elif len(body) > MAX_BODY_CHARS:                   # 이 모듈의 한도도 직접 지킨다(파일 읽기 쪽 한도와 같은 값 — 시험이 견준다)
-            reason = own_posts._R_LONG
         else:
-            reason = own_posts._check_text(body)
+            body = normalize_body(body)
+            if len(body) > MAX_BODY_CHARS:                 # 이 모듈의 한도도 직접 지킨다(파일 읽기 쪽 한도와 같은 값 — 시험이 견준다)
+                reason = own_posts._R_LONG
+            else:
+                reason = own_posts._check_text(body)
     if reason is None and not (_encodable(clean) and _encodable(body)):
         reason = _R_FORM
     if reason is None:                                     # 저장 직전 키·토큰 모양 검사 — 초안 저장·백업과 같은 검사기다(찾으면 아무것도 쓰지 않고, 위치와 유형만 알린다)
@@ -225,7 +252,7 @@ def _from_raw(raw, ref_id):
         return None
     if _STAMP.fullmatch(created) is None or _STAMP.fullmatch(updated) is None:
         return None
-    return Reference(ref_id, title, body, created, updated)
+    return Reference(ref_id, title, normalize_body(body), created, updated)        # 읽을 때도 같은 통일을 거친다(파일은 저장할 때만 바뀐다) — 손으로 만든 CRLF 파일도 목록의 글자 수와 편집 칸이 같다
 
 
 def _read_file(path, ref_id):
@@ -252,7 +279,7 @@ def _save(ctx, ref):
     data = {"schema": SCHEMA, "id": ref.ref_id, "title": ref.title, "body": ref.body, "created_at": ref.created_at, "updated_at": ref.updated_at}
     failure = None
     try:
-        write_json(_file_of(ctx, ref.ref_id), data)
+        write_json(_file_of(ctx, ref.ref_id), data, unique_temp=True)       # 임시 파일 이름이 쓸 때마다 달라 두 프로세스가 같은 글을 동시에 고쳐도 서로 깨뜨리지 않는다
     except AppError as error:
         failure = error.code
         error.__traceback__ = None                         # 호출 흔적이 붙드는 글·경로를 놓는다
@@ -261,6 +288,13 @@ def _save(ctx, ref):
     if failure is None:
         return None
     return AppError("DISK_FULL" if failure == "DISK_FULL" else "FILE_WRITE_FAILED", {"경로": _WHERE}, detail="참고 글 파일을 쓰지 못했다")      # 앞 오류(경로가 든 글)는 따라붙지 않는다 — `except` 밖에서 새로 만든다
+
+
+def _leftovers(folder, ref_id):
+    """이 번호의 임시 파일들(쓰다 프로세스가 죽어 남은 것) — 정확한 이름 모양(`ref-<번호>.json.tmp` 또는 `ref-<번호>.json.<프로세스 번호>-<무작위 8자>.tmp`)이고 링크가 아닌 보통 파일인 것만 → 위치 목록.
+    목록·개수에는 잡히지 않는다(이름이 보관 글의 정확한 이름이 아니다). 폴더를 못 읽으면 OSError 가 그대로 올라간다(지우기가 '지우지 못했다' 로 처리한다)."""
+    with os.scandir(folder) as entries:
+        return [Path(entry.path) for entry in entries if (found := _TEMP.fullmatch(entry.name)) and found.group(1) == ref_id and entry.is_file(follow_symlinks=False)]
 
 
 def _free_id(ctx, taken):
@@ -351,6 +385,9 @@ def open_reference(ctx, ref_id):
     if not is_id(ref_id):
         ref_id = None
         raise _refuse(_R_ID)
+    problem = _folder_problem(folder_path(ctx))
+    if problem is not None:
+        raise problem
     ref, problem = _read_file(_file_of(ctx, ref_id), ref_id)
     if problem == "missing":
         raise _not_found()
@@ -364,6 +401,9 @@ def _change(ctx, ref_id, title, body):
     title, body, reason = _check(title, body)
     if reason is not None:
         return None, _refuse(reason)
+    problem = _folder_problem(folder_path(ctx))
+    if problem is not None:
+        return None, problem
     old, problem = _read_file(_file_of(ctx, ref_id), ref_id)
     if problem == "missing":
         return None, _not_found()
@@ -396,6 +436,10 @@ def delete_reference(ctx, ref_id, *, confirmed):
     if not is_id(ref_id):
         ref_id = None
         raise _refuse(_R_ID)
+    folder = folder_path(ctx)
+    problem = _folder_problem(folder)
+    if problem is not None:
+        raise problem
     path = _file_of(ctx, ref_id)
     info = _lstat(path)
     if info is None:
@@ -404,6 +448,8 @@ def delete_reference(ctx, ref_id, *, confirmed):
         raise _refuse(_R_BROKEN)
     state = "gone"
     try:
+        for temp in _leftovers(folder, ref_id):            # 쓰다 프로세스가 죽어 남은 이 글의 임시 파일(새 본문이 든다)도 함께 지운다 — 글만 지우고 사본이 남지 않게
+            temp.unlink(missing_ok=True)
         path.unlink()
         state = "done"
     except FileNotFoundError:
@@ -416,4 +462,4 @@ def delete_reference(ctx, ref_id, *, confirmed):
         raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="참고 글 파일을 지우지 못했다")
 
 
-__all__ = ["Entry", "FileAdded", "Listing", "Reference", "add_from_file", "add_reference", "delete_reference", "folder_path", "is_id", "list_references", "new_id", "open_reference", "update_reference"]
+__all__ = ["Entry", "FileAdded", "Listing", "Reference", "add_from_file", "add_reference", "delete_reference", "folder_path", "is_id", "list_references", "new_id", "normalize_body", "open_reference", "update_reference"]

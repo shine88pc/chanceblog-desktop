@@ -323,6 +323,25 @@ class DeleteTest(unittest.TestCase):
         self.assertEqual(library.view()["editor"]["state"], "")
         self.assertNotIn("aaaaaaaa", provider.items)
 
+    def test_opening_another_post_while_a_delete_question_is_open_clears_the_question_so_a_wrong_post_is_never_deleted(self):
+        """독립 검증 S-R6(변이 U03) — 목록의 `열기` 는 지우기 확인이 떠 있는 동안에도 눌린다. 다른 글을 열면 지우기 확인(단계·대상)이 비워져야 한다 — 안 비우면 '계속' 두 번이 **앞에 열었던 다른 글**을 지운다."""
+        library, provider = self.open_one()
+        self.assertEqual(library.ask_delete(), "step1")
+        self.assertEqual((library.delete_step, library.delete_target), (1, "aaaaaaaa"))
+        status, opened = library.select("bbbbbbbb")
+        self.assertEqual((status, opened.ref_id, library.current), ("opened", "bbbbbbbb", "bbbbbbbb"))
+        self.assertEqual((library.delete_step, library.delete_target), (0, None), "다른 글을 열면 지우기 확인이 비워진다")
+        self.assertEqual(library.view()["delete"]["step"], 0)
+        self.assertEqual(library.advance_delete(), "idle", "비워진 확인에서 '계속' 은 아무 일도 하지 않는다")
+        self.assertEqual(library.advance_delete(), "idle")
+        self.assertNotIn("delete", provider.calls)
+        self.assertEqual(sorted(provider.items), ["aaaaaaaa", "bbbbbbbb"], "두 글 모두 남아 있다")
+        library.ask_delete()
+        self.assertEqual(library.delete_target, "bbbbbbbb", "새로 묻는 대상은 지금 열린 글이다")
+        library.advance_delete()
+        library.advance_delete()
+        self.assertEqual(sorted(provider.items), ["aaaaaaaa"], "지워진 것은 지금 열린 글 하나뿐이다")
+
     def test_cancelling_at_any_step_deletes_nothing(self):
         for steps in (0, 1):
             library, provider = self.open_one()

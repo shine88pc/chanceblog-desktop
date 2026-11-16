@@ -18,6 +18,7 @@ import functools
 import io
 import os
 import re
+import secrets
 import stat
 import sys
 import tempfile
@@ -166,7 +167,7 @@ class RoundTripTest(RefCase):
         added = ref.add_reference(self.ctx, title="  내 첫 글  ", body="안녕하세요.\r\n두 번째 줄입니다.  \n")
         self.assertRegex(added.ref_id, r"\A[a-z0-9]{8}\Z")
         self.assertEqual(added.title, "내 첫 글", "제목은 앞뒤 공백을 걷는다")
-        self.assertEqual(added.body, "안녕하세요.\r\n두 번째 줄입니다.  \n", "본문은 글자 하나도 바꾸지 않는다")
+        self.assertEqual(added.body, "안녕하세요.\n두 번째 줄입니다.  \n", "줄 끝만 LF 로 통일하고(CRLF → LF) 끝 공백·마지막 줄 바꿈은 그대로다")
         self.assertEqual(added.created_at, "2026-11-02T01:30:12Z")
         self.assertEqual(added.updated_at, added.created_at)
         files = sorted(path.name for path in self.folder.iterdir())
@@ -242,10 +243,12 @@ class RoundTripTest(RefCase):
             self.refused(lambda: ref.add_reference(self.ctx, title="둘", body="본문"))
         self.assertEqual(snapshot(self.tmp), before)
 
-    def test_the_stored_text_is_never_normalised_or_trimmed(self):
-        body = "  앞 공백 과 끝 공백  \r\n\r\n\t탭​제로폭\n\n"
+    def test_the_stored_text_keeps_everything_except_what_the_edit_box_unifies(self):
+        """D-489 의 옛 문장('글자 하나도 바꾸지 않는다')은 화면 경로에서 거짓이어서(독립 검증 S-2) 고쳤다 — 통일하는 것은 CRLF·CR·U+2028·U+2029·맨 앞 BOM·NBSP 뿐이고 나머지는 그대로다."""
+        body = "  앞 공백 과 끝 공백  " + chr(13) + chr(10) + chr(13) + chr(10) + chr(9) + "탭" + chr(0x200B) + "제로폭" + chr(10) + chr(10)
         added = ref.add_reference(self.ctx, title="모양 그대로", body=body)
-        self.assertEqual(ref.open_reference(self.ctx, added.ref_id).body, body)
+        expected = "  앞 공백 과 끝 공백  " + chr(10) + chr(10) + chr(9) + "탭" + chr(0x200B) + "제로폭" + chr(10) + chr(10)
+        self.assertEqual(ref.open_reference(self.ctx, added.ref_id).body, expected)
 
     def test_a_record_and_an_entry_do_not_show_the_title_or_the_text_in_their_repr(self):
         added = ref.add_reference(self.ctx, title=UNIQ_TITLE, body=UNIQ_BODY)
@@ -396,7 +399,7 @@ class PathSafetyTest(RefCase):
         self.assertEqual(ref.folder_path(self.ctx), self.ctx.workspace.root / "references")
         seen = []
         real = ref.write_json
-        with mock.patch.object(ref, "write_json", side_effect=lambda path, data: (seen.append(Path(path)), real(path, data))[1]):
+        with mock.patch.object(ref, "write_json", side_effect=lambda path, data, **kw: (seen.append(Path(path)), real(path, data, **kw))[1]):
             ref.add_reference(self.ctx, title="또 하나", body="본문")
             ref.update_reference(self.ctx, added.ref_id, title="고침", body="고친 본문")
         self.assertEqual(len(seen), 2)
@@ -495,17 +498,25 @@ class AtomicWriteTest(RefCase):
             ref.update_reference(self.ctx, self.added.ref_id, title="새 제목", body="새 본문")
         self.assertEqual(len(renames), 1)
         source, target, data = renames[0]
-        self.assertEqual((source, target), (self.path.name + ".tmp", self.path.name))
+        found = ref._TEMP.fullmatch(source)
+        self.assertTrue(found is not None and found.group(1) == self.added.ref_id, f"임시 파일 이름이 `ref-번호.json.프로세스번호-무작위.tmp` 모양이다: {source}")
+        self.assertIn(f".{os.getpid()}-", source)
+        self.assertEqual(target, self.path.name)
         self.assertIn("새 본문".encode("utf-8"), data, "이름을 바꾸는 순간 임시 파일에는 새 글이 다 쓰여 있다")
         self.assertEqual(ref.open_reference(self.ctx, self.added.ref_id).body, "새 본문")
 
     def test_write_failures_never_repeat_the_text_title_or_path(self):
+        """오류가 되풀이하면 안 되는 표식은 **무작위 토큰**이다 — 임시 데이터 폴더 이름과 OS 오류 글에 심은 토큰이 오류 문장·추적 글에 없어야 한다. (예전에는 'Users' 글자를 표식으로 썼는데 저장소가
+        `C:/Users/…` 아래에 있으면 추적 글에 소스 파일 자신의 경로가 들어가 환경에 따라 빨강이었다 — 독립 검증 S-4.)"""
         body = UNIQ_BODY * 3
-        with mock.patch.object(context_module.os, "replace", side_effect=OSError(errno.EIO, "C:" + chr(92) + "Users" + chr(92) + UNIQ_DIR + chr(92) + "x")):
+        token = "tok" + secrets.token_hex(6)                                                     # 이 실행에만 있는 표식 — 어떤 소스 경로·문장에도 우연히 들어 있지 않다
+        folder_token = Path(self.tmp).name                                                       # 임시 데이터 폴더 이름(무작위) — 데이터 폴더 경로에 들어 있다
+        os_message = "C:" + chr(92) + token + chr(92) + UNIQ_DIR + chr(92) + "x"
+        with mock.patch.object(context_module.os, "replace", side_effect=OSError(errno.EIO, os_message)):
             error = self.refuse_keeping_frames(functools.partial(ref.update_reference, self.ctx, self.added.ref_id, title=UNIQ_TITLE, body=body))
         shown = channels(error)
         for name, text in shown.items():
-            for marker in (UNIQ_TITLE, UNIQ_BODY, UNIQ_DIR, str(self.tmp), "Users"):
+            for marker in (UNIQ_TITLE, UNIQ_BODY, UNIQ_DIR, token, folder_token, str(self.ctx.workspace.root)):
                 self.assertNotIn(marker, text, f"{name} 에 {marker} 가 있다")
         self.assertIsNone(error.__cause__)
         self.assertIsNone(error.__context__)
@@ -577,7 +588,7 @@ class DeleteTest(RefCase):
 
     def test_a_link_like_file_is_refused_by_the_rule_itself(self):
         added = ref.add_reference(self.ctx, title="링크 모양", body="본문")
-        with mock.patch.object(own_posts, "_link_like", return_value=True):
+        with mock.patch.object(own_posts, "_link_like", side_effect=lambda info: not stat.S_ISDIR(info.st_mode)):      # 파일만 링크처럼 보이게(폴더는 보통 폴더 — 폴더 링크는 FolderLinkTest 가 본다)
             self.refused(lambda: ref.delete_reference(self.ctx, added.ref_id, confirmed=True), "broken")
             self.refused(lambda: ref.open_reference(self.ctx, added.ref_id), "broken")
         self.assertTrue((self.folder / f"ref-{added.ref_id}.json").exists())
@@ -755,7 +766,7 @@ class AddFromFileTest(RefCase):
     def test_a_utf8_text_file_is_added_with_a_title_made_from_its_name(self):
         path = self.make_file("여름 휴가 후기.txt", "여름 휴가를 다녀왔어요.\r\n정말 좋았어요.")
         added = ref.add_from_file(self.ctx, path)
-        self.assertEqual((added.reference.title, added.reference.body, added.encoding), ("여름 휴가 후기", "여름 휴가를 다녀왔어요.\r\n정말 좋았어요.", "utf-8"))
+        self.assertEqual((added.reference.title, added.reference.body, added.encoding), ("여름 휴가 후기", "여름 휴가를 다녀왔어요.\n정말 좋았어요.", "utf-8"), "윈도 메모장의 CRLF 는 LF 로 통일되어 보관된다")
         self.assertEqual(ref.open_reference(self.ctx, added.reference.ref_id), added.reference)
         self.assertEqual(path.read_bytes(), "여름 휴가를 다녀왔어요.\r\n정말 좋았어요.".encode("utf-8"), "원본 파일은 그대로다")
 
@@ -962,6 +973,386 @@ class SecretShapeTest(RefCase):
         self.assertLess(time.perf_counter() - started, 2.0, "10만 자 글 한 편을 보관하는 데 걸린 시간")
 
 
+# ---- 9-3) 본문 통일(S-2)·임시 파일(S-R1·S-R2)·폴더 링크(S-R3)·파일 크기 경계(S-R6)·백업 목록 문장(S-R4) — 독립 검증 S 1차의 고침 ---------------------------------------
+def reference_normalize(text):
+    """`normalize_body` 와 따로 짠 느린 기준 구현(한 글자씩) — 규칙 문장 그대로: CRLF·낱개 CR·U+2028·U+2029 → LF, NBSP → 보통 공백, 맨 앞 BOM 하나 제거."""
+    out, index = [], 0
+    while index < len(text):
+        char = text[index]
+        if char == chr(13):
+            out.append(chr(10))
+            index += 2 if text[index + 1:index + 2] == chr(10) else 1
+            continue
+        out.append(chr(10) if char in (chr(0x2028), chr(0x2029)) else " " if char == chr(0xA0) else char)
+        index += 1
+    return "".join(out).lstrip(chr(0xFEFF))                                                # 맨 앞의 BOM 은 모두(편집 칸은 하나만 떼지만 통일한 글이 편집 칸을 지나도 그대로이려면 모두 뗀다)
+
+
+class BodyNormalizeTest(RefCase):
+    CR, LF, LS, PS, NBSP, BOM = chr(13), chr(10), chr(0x2028), chr(0x2029), chr(0xA0), chr(0xFEFF)
+
+    def table(self):
+        cr, lf, ls, ps, nbsp, bom = self.CR, self.LF, self.LS, self.PS, self.NBSP, self.BOM
+        return (
+            ("가" + cr + lf + "나", "가" + lf + "나"), ("가" + cr + "나", "가" + lf + "나"), ("가" + lf + cr + "나", "가" + lf + lf + "나"), ("가" + cr + cr + lf + "나", "가" + lf + lf + "나"),
+            ("가" + ls + "나", "가" + lf + "나"), ("가" + ps + "나", "가" + lf + "나"), ("가" + ls + cr + lf + "나", "가" + lf + lf + "나"), ("가나" + cr + lf, "가나" + lf),
+            (bom + "가", "가"), (bom + bom + "가", "가"), (bom * 3, ""), ("가" + bom, "가" + bom), (lf + bom + "가", lf + bom + "가"), (" " + bom + "가", " " + bom + "가"), (nbsp + bom + "가", " " + bom + "가"), (bom + nbsp + "가", " 가"),
+            ("가" + nbsp + "나", "가 나"), (nbsp * 3 + "가", "   가"),
+        )
+
+    def kept(self):
+        """통일하지 않고 그대로 두는 글들 — 끝 공백·탭·빈 줄·보이지 않는 글자·다른 줄 구분 글자·NFD·이모지·제어 문자."""
+        import unicodedata
+        return ("가  " + chr(9) + "나 " + chr(10), "가" + chr(0x200B) + "나", "가" + chr(0x0B) + chr(0x0C) + chr(0x85) + "나", "가" + chr(0x1F600) + "나", unicodedata.normalize("NFD", "한글 글자"), unicodedata.normalize("NFC", "한글 글자"),
+                "끝 공백  ", chr(10) * 3 + "가" + chr(10) * 3, "가" + chr(7) + "나", "가" + chr(0x3000) + "나", "가" + chr(0x2003) + "나", "가" + chr(0x202E) + "나")
+
+    def test_the_table_of_what_is_unified(self):
+        for original, expected in self.table():
+            with self.subTest(original=ascii(original)):
+                self.assertEqual(ref.normalize_body(original), expected)
+                self.assertEqual(ref.normalize_body(expected), expected, "통일한 글을 또 통일해도 그대로다")
+
+    def test_everything_else_is_kept_exactly(self):
+        for text in self.kept():
+            with self.subTest(text=ascii(text)):
+                self.assertEqual(ref.normalize_body(text), text)
+
+    def test_it_agrees_with_a_slow_reference_on_random_strings(self):
+        import random
+        alphabet = ["가", "나", " ", chr(9), self.CR, self.LF, self.LS, self.PS, self.NBSP, self.BOM, chr(0x200B), "a"]
+        rng = random.Random(20261116)
+        for _ in range(3000):
+            text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 14)))
+            self.assertEqual(ref.normalize_body(text), reference_normalize(text), ascii(text))
+            self.assertEqual(ref.normalize_body(ref.normalize_body(text)), ref.normalize_body(text))
+
+    def test_what_is_stored_is_the_unified_text_and_the_file_has_no_carriage_return(self):
+        original = "첫 줄" + self.CR + self.LF + "둘째" + self.NBSP + "줄" + self.LS + "셋째 줄" + self.PS + "끝 " + self.CR
+        added = ref.add_reference(self.ctx, title="통일", body=original)
+        expected = "첫 줄" + self.LF + "둘째 줄" + self.LF + "셋째 줄" + self.LF + "끝 " + self.LF
+        self.assertEqual(added.body, expected)
+        raw = (self.folder / f"ref-{added.ref_id}.json").read_text(encoding="utf-8")
+        import json
+        self.assertEqual(json.loads(raw)["body"], expected)
+        self.assertNotIn(self.CR, json.loads(raw)["body"])
+        self.assertEqual(ref.open_reference(self.ctx, added.ref_id).body, expected, "저장 뒤 다시 열어도 같다")
+        self.assertEqual(ref.list_references(self.ctx).entries[0].chars, len(expected), "목록의 글자 수 = 저장한 글(= 편집 칸에 보이는 글)의 글자 수")
+
+    def test_the_limits_count_the_stored_text_after_the_unifying(self):
+        ok = "가" * 99_999 + self.CR + self.LF                                             # 날 글자 100,001 → 통일하면 100,000
+        self.assertEqual(ref.add_reference(self.ctx, title="경계", body=ok).chars, 100_000)
+        self.refused(lambda: ref.add_reference(self.ctx, title="넘음", body="가" * 100_000 + self.CR + self.LF), "long")   # 날 글자 100,002 → 통일해도 100,001
+        self.refused(lambda: ref.add_reference(self.ctx, title="넘음", body="가" * 100_001), "long")
+
+    def test_a_body_that_is_empty_after_the_unifying_is_refused(self):
+        for body in (self.BOM, self.BOM + self.NBSP, self.NBSP * 4, self.LS + self.PS + self.CR):
+            with self.subTest(body=ascii(body)):
+                self.refused(lambda: ref.add_reference(self.ctx, title="빈 글", body=body), "empty")
+        self.assertFalse(self.folder.exists())
+
+    def test_a_crlf_file_is_kept_unified_and_opens_with_the_same_length_as_the_list_says(self):
+        source = self.tmp / "메모장 글.txt"
+        source.write_bytes(("첫 줄입니다." + self.CR + self.LF + "둘째 줄입니다." + self.CR + self.LF + self.CR + self.LF + "셋째 줄입니다." + self.CR + self.LF).encode("utf-8"))
+        added = ref.add_from_file(self.ctx, source)
+        expected = "첫 줄입니다." + self.LF + "둘째 줄입니다." + self.LF + self.LF + "셋째 줄입니다." + self.LF
+        self.assertEqual(added.reference.body, expected)
+        opened = ref.open_reference(self.ctx, added.reference.ref_id)
+        self.assertEqual((opened.body, opened.chars), (expected, len(expected)))
+        self.assertEqual(ref.list_references(self.ctx).entries[0].chars, len(expected))
+        self.assertEqual(source.read_bytes().count(self.CR.encode()), 4, "원본 파일은 그대로다")
+
+    def test_saving_the_same_text_again_with_other_line_ends_writes_nothing(self):
+        added = ref.add_reference(self.ctx, title="그대로", body="가" + self.LF + "나")
+        path = self.folder / f"ref-{added.ref_id}.json"
+        before = (path.read_bytes(), path.stat().st_mtime_ns)
+        self.clock.advance(hours=1)
+        with mock.patch.object(ref, "write_json", side_effect=AssertionError("쓰면 안 된다")):
+            same = ref.update_reference(self.ctx, added.ref_id, title="그대로", body="가" + self.CR + self.LF + "나")
+        self.assertEqual(same, added)
+        self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
+
+    def test_a_hand_made_file_with_the_old_line_ends_reads_unified_and_is_not_rewritten_until_saved_with_a_change(self):
+        path = self.put_valid("legacy01", body="가" + self.CR + self.LF + "나" + self.NBSP + "다")
+        before = path.read_bytes()
+        listing = ref.list_references(self.ctx)
+        opened = ref.open_reference(self.ctx, "legacy01")
+        self.assertEqual((opened.body, listing.entries[0].chars), ("가" + self.LF + "나 다", 5))
+        self.assertEqual(path.read_bytes(), before, "읽기는 파일을 바꾸지 않는다")
+        with mock.patch.object(ref, "write_json", side_effect=AssertionError("쓰면 안 된다")):
+            ref.update_reference(self.ctx, "legacy01", title=opened.title, body=opened.body)
+        self.assertEqual(path.read_bytes(), before, "통일한 글 그대로 저장하면 바뀐 것이 없어 쓰지 않는다")
+        ref.update_reference(self.ctx, "legacy01", title=opened.title, body=opened.body + "!")
+        self.assertNotEqual(path.read_bytes(), before)
+        import json
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["body"], "가" + self.LF + "나 다!")
+
+
+class TempFileTest(RefCase):
+    def test_every_save_uses_a_new_temp_name_with_the_process_number_and_never_the_fixed_one(self):
+        names = []
+        real = os.replace
+
+        def spy(source, target):
+            names.append(Path(source).name)
+            return real(source, target)
+
+        added = None
+        with mock.patch.object(context_module.os, "replace", side_effect=spy):
+            added = ref.add_reference(self.ctx, title="하나", body="본문")
+            for number in range(6):
+                self.clock.advance(minutes=1)
+                ref.update_reference(self.ctx, added.ref_id, title="하나", body=f"본문 {number}")
+        self.assertEqual(len(names), 7)
+        self.assertEqual(len(set(names)), 7, "쓸 때마다 이름이 다르다")
+        for name in names:
+            found = ref._TEMP.fullmatch(name)
+            self.assertTrue(found is not None and found.group(1) == added.ref_id, name)
+            self.assertIn(f".{os.getpid()}-", name)
+            self.assertNotEqual(name, f"ref-{added.ref_id}.json.tmp")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [f"ref-{added.ref_id}.json"], "다 쓴 뒤 임시 파일은 없다")
+
+    def test_a_failed_write_removes_its_own_unique_temp_file(self):
+        added = ref.add_reference(self.ctx, title="하나", body="본문")
+        with mock.patch.object(context_module.os, "replace", side_effect=OSError(errno.EIO, "I/O 오류")):
+            self.refused(lambda: ref.update_reference(self.ctx, added.ref_id, title="하나", body="고친 본문"), code="FILE_WRITE_FAILED")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [f"ref-{added.ref_id}.json"])
+
+    def test_other_json_writes_keep_the_fixed_temp_name(self):
+        """`unique_temp` 는 보관함만 쓴다 — 설정 같은 기존 쓰기의 임시 파일 이름은 그대로 `<이름>.tmp` 다."""
+        names = []
+        real = os.replace
+        with mock.patch.object(context_module.os, "replace", side_effect=lambda source, target: (names.append(Path(source).name), real(source, target))[1]):
+            context_module.write_json(self.tmp / "other.json", {"a": 1})
+        self.assertEqual(names, ["other.json.tmp"])
+
+    def test_two_real_processes_editing_the_same_post_never_break_or_lose_it(self):
+        """독립 검증 S-R1 의 실험을 시험으로 — 고정 임시 파일 이름이면 두 프로세스가 같은 글을 150번씩 고칠 때 대부분 글 파일이 깨졌다. 지금은 쓸 때마다 다른 임시 이름이라 마지막 쓰기가 이긴다."""
+        import json
+        import subprocess
+        added = ref.add_reference(self.ctx, title="경쟁 글", body="처음 본문")
+        child = HERE / "references_race_child.py"
+        for round_number in range(3):
+            go = self.tmp / f"go-{round_number}"
+            children = [subprocess.Popen([sys.executable, "-B", "-X", "utf8", str(child), str(ROOT / "src"), str(self.ctx.workspace.root), added.ref_id, label, "150", str(go)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         encoding="utf-8", errors="replace") for label in ("가", "나")]
+            for each in children:
+                self.assertEqual(each.stdout.readline().strip(), "READY", "자식이 시작하지 못했다")
+            go.write_text("go", encoding="utf-8")
+            reports = []
+            for each in children:
+                out, err = each.communicate(timeout=240)
+                self.assertEqual(each.returncode, 0, err[-600:])
+                reports.append(json.loads(out.strip().splitlines()[-1]))
+            for report in reports:
+                self.assertEqual(report["other"], [], "AppError 가 아닌 실패는 없다")
+                self.assertGreater(report["ok"], 0)
+            listing = ref.list_references(self.ctx)
+            self.assertEqual((len(listing.entries), listing.skipped), (1, 0), f"{round_number + 1}번째 판: 글 파일이 깨지거나 사라졌다")
+            final = ref.open_reference(self.ctx, added.ref_id)
+            self.assertRegex(final.body, r"\A[가나]-\d+\Z")
+            self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [f"ref-{added.ref_id}.json"], "임시 파일이 남지 않았다")
+
+
+class LeftoverTempTest(RefCase):
+    def make_leftovers(self, ref_id):
+        """쓰다 프로세스가 죽어 남은 임시 파일들(새 본문이 평문으로 든다) — 옛 고정 이름과 새 이름."""
+        names = (f"ref-{ref_id}.json.tmp", f"ref-{ref_id}.json.4242-abcdef12.tmp", f"ref-{ref_id}.json.7-00000000.tmp")
+        for name in names:
+            self.put_raw(name, "새 본문 " + UNIQ_BODY)
+        return names
+
+    def test_a_killed_write_leaves_the_old_file_and_a_temp_that_is_not_listed_and_the_delete_removes(self):
+        added = ref.add_reference(self.ctx, title="죽는 글", body="옛 본문")
+        path = self.folder / f"ref-{added.ref_id}.json"
+        before = path.read_bytes()
+        with mock.patch.object(context_module.os, "replace", side_effect=KeyboardInterrupt("프로세스가 죽는 순간을 흉내")):
+            with self.assertRaises(KeyboardInterrupt):
+                ref.update_reference(self.ctx, added.ref_id, title="죽는 글", body="새 본문 " + UNIQ_BODY)
+        self.assertEqual(path.read_bytes(), before, "옛 파일은 그대로다")
+        temps = [item for item in self.folder.iterdir() if item.name != path.name]
+        self.assertEqual(len(temps), 1, "임시 파일에 새 본문이 남는다 — 문서가 이 한계를 적는다")
+        self.assertIn(UNIQ_BODY.encode("utf-8"), temps[0].read_bytes())
+        listing = ref.list_references(self.ctx)
+        self.assertEqual((len(listing.entries), listing.skipped), (1, 0), "임시 파일은 목록·건너뜀 어디에도 안 잡힌다")
+        ref.delete_reference(self.ctx, added.ref_id, confirmed=True)
+        self.assertEqual(list(self.folder.iterdir()), [], "글을 지우면 그 번호의 임시 파일(평문 사본)도 함께 사라진다")
+
+    def test_deleting_removes_exactly_the_temp_files_of_that_post_and_nothing_else(self):
+        first = ref.add_reference(self.ctx, title="첫째", body="첫째 본문")
+        second = ref.add_reference(self.ctx, title="둘째", body="둘째 본문")
+        mine = self.make_leftovers(first.ref_id)
+        others = self.make_leftovers(second.ref_id)
+        decoys = (f"ref-{first.ref_id}.json.4242-zzzzzzzz.tmp",f"ref-{first.ref_id}.json.tmp.bak", f"ref-{first.ref_id}x.json.tmp", f"xref-{first.ref_id}.json.tmp", f"ref-{first.ref_id}.json.4242-abcdef1.tmp",
+                  f"ref-{first.ref_id}.json.abc-abcdef12.tmp", "note.txt")
+        for name in decoys:
+            self.put_raw(name, "상관없는 파일 " + name)
+        (self.folder / f"ref-{first.ref_id}.json.5-abcdef12.tmp").mkdir()                       # 폴더는 임시 파일이 아니다
+        (self.folder / f"ref-{first.ref_id}.json.5-abcdef12.tmp" / "keep.txt").write_text("남아야 함", encoding="utf-8")
+        before = {path.relative_to(self.folder).as_posix(): (path.read_bytes() if path.is_file() else None) for path in self.folder.rglob("*")}
+        ref.delete_reference(self.ctx, first.ref_id, confirmed=True)
+        after = {path.relative_to(self.folder).as_posix(): (path.read_bytes() if path.is_file() else None) for path in self.folder.rglob("*")}
+        gone = sorted(set(before) - set(after))
+        self.assertEqual(gone, sorted([f"ref-{first.ref_id}.json", *mine]), "사라진 것은 그 글 파일과 그 번호의 임시 파일 셋뿐")
+        self.assertEqual({key: after[key] for key in after}, {key: before[key] for key in before if key in after}, "남은 것의 내용은 그대로")
+        for name in (*others, *decoys, f"ref-{second.ref_id}.json", f"ref-{first.ref_id}.json.5-abcdef12.tmp/keep.txt"):
+            self.assertIn(name, after, name)
+
+    def test_leftover_temp_files_are_not_counted_toward_the_limit_and_do_not_break_the_list(self):
+        for number in range(49):
+            ref.add_reference(self.ctx, title=f"글 {number}", body="본문")
+        self.make_leftovers("zzzzzzzz")
+        listing = ref.list_references(self.ctx)
+        self.assertEqual((len(listing.entries), listing.skipped), (49, 0))
+        self.assertEqual(ref.add_reference(self.ctx, title="쉰째", body="본문").title, "쉰째")
+
+    def test_a_temp_file_that_cannot_be_removed_stops_the_delete_before_the_post_file_and_says_so_without_the_path(self):
+        added = ref.add_reference(self.ctx, title="지울 글", body="본문")
+        leftovers = self.make_leftovers(added.ref_id)
+        real = Path.unlink
+
+        def refuse_temps(path, *args, **kwargs):
+            if path.name.endswith(".tmp"):
+                raise PermissionError(errno.EACCES, "접근 거부 " + UNIQ_DIR, str(path))
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", autospec=True, side_effect=refuse_temps):
+            error = self.refused(lambda: ref.delete_reference(self.ctx, added.ref_id, confirmed=True), code="FILE_WRITE_FAILED")
+        self.assertEqual(error.slots, {"경로": "참고 글 보관함 폴더"})
+        self.assertNotIn(UNIQ_DIR, repr(channels(error)))
+        self.assertTrue((self.folder / f"ref-{added.ref_id}.json").exists(), "임시 파일을 못 지웠으면 글 파일도 지우지 않는다(다시 할 수 있다)")
+        for name in leftovers:
+            self.assertTrue((self.folder / name).exists())
+        ref.delete_reference(self.ctx, added.ref_id, confirmed=True)                           # 막힘이 풀리면 그대로 다시 지울 수 있다
+        self.assertEqual(list(self.folder.iterdir()), [])
+
+
+class FolderLinkTest(RefCase):
+    """독립 검증 S-R3 — 보관함 폴더가 링크(정션 포함)이면 목록·추가뿐 아니라 열기·고치기·지우기도 거절한다."""
+
+    def calls(self):
+        return (("list", lambda: ref.list_references(self.ctx)), ("add", lambda: ref.add_reference(self.ctx, title="제목", body="본문")), ("open", lambda: ref.open_reference(self.ctx, "aaaaaaaa")),
+                ("update", lambda: ref.update_reference(self.ctx, "aaaaaaaa", title="새 제목", body="새 본문")), ("delete", lambda: ref.delete_reference(self.ctx, "aaaaaaaa", confirmed=True)))
+
+    def test_a_folder_that_looks_like_a_link_is_refused_by_all_five_and_nothing_is_touched(self):
+        path = self.put_valid("aaaaaaaa")
+        before = {item.name: item.read_bytes() for item in self.folder.iterdir()}
+        with mock.patch.object(own_posts, "_link_like", side_effect=lambda info: stat.S_ISDIR(info.st_mode)):      # 폴더만 링크처럼 보이게(파일은 보통 파일)
+            for label, call in self.calls():
+                with self.subTest(call=label):
+                    self.refused(call, "folder")
+        self.assertEqual({item.name: item.read_bytes() for item in self.folder.iterdir()}, before)
+        self.assertTrue(path.exists())
+
+    def test_a_bad_number_is_still_refused_as_a_bad_number_before_the_folder_is_looked_at(self):
+        self.folder.mkdir(parents=True)
+        with mock.patch.object(own_posts, "_link_like", side_effect=lambda info: stat.S_ISDIR(info.st_mode)):
+            self.refused(lambda: ref.open_reference(self.ctx, "../x"), "id")
+            self.refused(lambda: ref.update_reference(self.ctx, "../x", title="제목", body="본문"), "id")
+            self.refused(lambda: ref.delete_reference(self.ctx, "../x", confirmed=True), "id")
+
+    def test_a_folder_that_does_not_exist_yet_is_not_a_problem_for_the_readers(self):
+        self.assertIsNone(ref._folder_problem(self.folder))
+        self.refused(lambda: ref.open_reference(self.ctx, "aaaaaaaa"), code="CONTENT_NOT_FOUND")
+        self.refused(lambda: ref.delete_reference(self.ctx, "aaaaaaaa", confirmed=True), code="CONTENT_NOT_FOUND")
+        self.assertFalse(self.folder.exists())
+
+    def test_a_real_windows_junction_is_refused_by_all_five_and_the_target_is_not_touched(self):
+        if os.name != "nt":
+            self.skipTest("정션은 윈도에만 있다 — 모의 상태 정보로 규칙 자체는 위 시험이 본다")
+        import subprocess
+        target = self.tmp / "target-folder"
+        target.mkdir()
+        (target / "ref-aaaaaaaa.json").write_text(json_text("aaaaaaaa"), encoding="utf-8")
+        self.ctx.workspace.root.mkdir(parents=True, exist_ok=True)
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", str(self.folder), str(target)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if made.returncode != 0 or not self.folder.exists():
+            self.skipTest("이 환경에서는 정션을 만들 수 없다")
+        before = {item.name: item.read_bytes() for item in target.iterdir()}
+        for label, call in self.calls():
+            with self.subTest(call=label):
+                self.refused(call, "folder")
+        self.assertEqual({item.name: item.read_bytes() for item in target.iterdir()}, before, "정션 너머 파일은 읽히지도 고쳐지지도 지워지지도 않았다")
+
+    def test_a_real_symlink_to_a_folder_is_refused_too_when_the_system_allows_one(self):
+        target = self.tmp / "target-folder"
+        target.mkdir()
+        (target / "ref-aaaaaaaa.json").write_text(json_text("aaaaaaaa"), encoding="utf-8")
+        self.ctx.workspace.root.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(target, self.folder, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("이 환경에서는 폴더 링크를 만들 수 없다")
+        before = {item.name: item.read_bytes() for item in target.iterdir()}
+        for label, call in self.calls():
+            with self.subTest(call=label):
+                self.refused(call, "folder")
+        self.assertEqual({item.name: item.read_bytes() for item in target.iterdir()}, before)
+
+
+def json_text(ref_id, body="본문입니다."):
+    import json
+    return json.dumps({"schema": 1, "id": ref_id, "title": "정션 너머의 글", "body": body, "created_at": "2026-11-15T01:00:00Z", "updated_at": "2026-11-15T01:00:00Z"}, ensure_ascii=False)
+
+
+class FileSizeBoundaryTest(RefCase):
+    """독립 검증 S-R6 — 보관 파일 하나의 상한은 정확히 1MiB(1,048,576 바이트)이고 그 바이트까지는 읽고 한 바이트 더 크면 건너뛴다."""
+
+    def padded(self, ref_id, size):
+        data = json_text(ref_id).encode("utf-8")
+        assert len(data) <= size
+        return data + b" " * (size - len(data))                                                # JSON 은 끝 공백을 허용한다
+
+    def test_the_limit_is_exactly_one_mebibyte(self):
+        self.assertEqual(ref.MAX_FILE_BYTES, 1_048_576)
+
+    def test_one_byte_under_exactly_and_one_byte_over(self):
+        for number, (size, listed) in enumerate(((ref.MAX_FILE_BYTES - 1, True), (ref.MAX_FILE_BYTES, True), (ref.MAX_FILE_BYTES + 1, False), (ref.MAX_FILE_BYTES + 4096, False))):
+            ref_id = f"size{number:04d}"
+            with self.subTest(size=size):
+                path = self.put_raw(f"ref-{ref_id}.json", self.padded(ref_id, size))
+                self.assertEqual(path.stat().st_size, size)
+                listing = ref.list_references(self.ctx)
+                self.assertEqual((ref_id in [entry.ref_id for entry in listing.entries], listing.skipped), (listed, 0 if listed else 1))
+                if listed:
+                    self.assertEqual(ref.open_reference(self.ctx, ref_id).title, "정션 너머의 글")
+                else:
+                    self.refused(lambda: ref.open_reference(self.ctx, ref_id), "broken")
+                    self.refused(lambda: ref.update_reference(self.ctx, ref_id, title="새 제목", body="새 본문"), "broken")
+                path.unlink()
+
+    def test_a_file_over_the_limit_is_not_even_opened(self):
+        self.put_raw("ref-readbyte.json", b" " * (ref.MAX_FILE_BYTES * 3))
+        seen = []
+        real = own_posts._read_prefix
+        with mock.patch.object(own_posts, "_read_prefix", side_effect=lambda path, limit, expected: (seen.append(limit), real(path, limit, expected))[1]):
+            ref.list_references(self.ctx)
+        self.assertEqual(seen, [], "크기가 상한을 넘는 파일은 열지도 않는다")
+
+
+class BackupNoteTest(RefCase):
+    """독립 검증 S-R4 — 백업 카드의 '담지 않는 것' 목록이 보관함에 대해 사실을 말한다(줄 수 아홉·이름은 그대로, 아홉째 줄의 이유 문장만 고쳤다)."""
+
+    def test_the_ninth_line_tells_the_truth_about_the_vault_and_the_list_keeps_its_nine_names(self):
+        from chanceblog_desktop.security import backup_note
+        self.assertEqual([name for name, _ in backup_note.EXCLUDED], ["키·토큰·쿠키·세션·자격 증명", "connections.json", "quota_state.json", "publish/", "locks/", "backups/", "logs/", "임시·복구용 사본", "외부에서 가져온 원본 자료"])
+        reason = dict(backup_note.EXCLUDED)["외부에서 가져온 원본 자료"]
+        for word in ("참고 글 보관함", "references/", "들어 있지 않아요", "직접 옮겨"):
+            self.assertIn(word, reason)
+        self.assertNotIn("앱 데이터에 두지 않아서", reason, "참고 글은 앱 데이터에 있으므로 이 말은 더는 사실이 아니다")
+        self.assertIn("오류 이름", dict(backup_note.EXCLUDED)["logs/"], "다른 줄(M074 의 logs/)은 그대로다")
+
+    def test_a_real_backup_manifest_carries_that_sentence_and_still_leaves_the_vault_out(self):
+        import backup_support as bs
+        from chanceblog_desktop.security import backup_note
+        with tempfile.TemporaryDirectory(prefix="refs-note-") as tmp:
+            world = bs.World(Path(os.path.realpath(tmp)), posts=1, drafts=0, candidates_count=0)
+            ref.add_reference(world.ctx, title="백업에 없는 글", body="본문")
+            manifest = world.manifest(world.backup())
+            reasons = {item["name"]: item["reason"] for item in manifest["excluded"]}
+            self.assertEqual(reasons["외부에서 가져온 원본 자료"], dict(backup_note.EXCLUDED)["외부에서 가져온 원본 자료"])
+            self.assertEqual(len(manifest["excluded"]), 9)
+
+
 # ---- 10) 소스 규칙 ----------------------------------------------------------------------------------------------------------------
 class SourceRulesTest(unittest.TestCase):
     def setUp(self):
@@ -986,7 +1377,7 @@ class SourceRulesTest(unittest.TestCase):
                 found.append((name, function))
             if full in ("os.open", "os.write", "os.fsync", "os.replace", "os.rename", "os.remove", "os.unlink", "os.link", "os.symlink", "os.makedirs", "os.mkdir", "os.chmod", "os.truncate"):
                 found.append((full, function))
-        self.assertEqual(found, [("unlink", "delete_reference")], "파일을 바꾸는 길은 지우기의 unlink 하나뿐이고 쓰기는 모두 context.write_json 이다")
+        self.assertEqual(found, [("unlink", "delete_reference")] * 2, "파일을 바꾸는 길은 지우기의 unlink 둘(그 번호의 임시 파일들·글 파일 하나)뿐이고 쓰기는 모두 context.write_json 이다")
         names = {ast.unparse(node.func) for node, _function in self.calls()}
         self.assertIn("write_json", names)
 
@@ -1051,7 +1442,7 @@ class SourceRulesTest(unittest.TestCase):
                     self.assertNotIn(UNIQ_TITLE.encode("utf-8"), data, path.name)
             self.assertEqual({path.name: path.read_bytes() for path in vault.iterdir()}, before, "백업이 보관함을 건드리지 않았다")
             manifest = world.manifest(outcome)
-            self.assertNotIn("references", repr(manifest))
+            self.assertEqual([key for key, value in manifest.items() if "references" in repr(value)], ["excluded"], "목록 파일에서 보관함을 말하는 곳은 '담지 않은 것' 의 이유 문장 하나뿐이다(담은 파일·빠진 것에는 없다)")
 
     def test_a_real_restore_leaves_the_vault_untouched_even_when_the_vault_changed_after_the_backup(self):
         """진짜 백업·복원 흐름 — 복원이 보관함(`references/`)의 파일을 지우거나 되돌리거나 고치지 않는다(보관함은 백업에 안 들어 있으니 백업 뒤에 올리고·고치고·지운 것이 복원 뒤에도 그대로여야 한다).

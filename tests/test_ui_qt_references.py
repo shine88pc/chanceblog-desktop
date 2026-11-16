@@ -564,6 +564,95 @@ class ListEditTest(Base):
         self.assertEqual(self.message(form), "")
 
 
+# ---- 5-2) 본문 통일(독립 검증 S-2) — 저장한 글이 곧 편집 칸의 글이다 -------------------------------------------------------------------------
+class NormalizeTest(Base):
+    """실제 Qt 편집 칸은 줄 끝(CRLF·CR·U+2028·U+2029)·NBSP·맨 앞 BOM 을 바꾼다. 서비스가 저장할 때 같은 것을 통일하므로 열자마자 '저장하지 않은 변경' 이 켜지지 않고, 저장해도 본문이 달라지지 않으며, 목록의 글자 수가 편집 칸의 글자 수와 같다."""
+    CR, LF, LS, PS, NBSP, BOM = chr(13), chr(10), chr(0x2028), chr(0x2029), chr(0xA0), chr(0xFEFF)
+
+    def originals(self):
+        cr, lf, ls, ps, nbsp, bom = self.CR, self.LF, self.LS, self.PS, self.NBSP, self.BOM
+        return ("가" + cr + lf + "나", "가" + cr + "나", "가" + lf + cr + "나", "가" + cr + cr + lf + "나", "가" + ls + "나", "가" + ps + "나", "가" + ls + cr + lf + "나", "가나" + cr + lf, bom + "가", bom + bom + "가", "가" + bom,
+                lf + bom + "가", "가" + nbsp + "나", bom + nbsp + "가", "가  " + chr(9) + "나 " + lf, "가" + chr(0x200B) + "나", "가" + chr(0x0B) + chr(0x0C) + chr(0x85) + "나", "가" + chr(0x1F600) + "나",
+                "끝 공백  ", lf * 3 + "가" + lf * 3, "가" + chr(7) + "나", "가" + chr(0x3000) + "나", "가" + chr(0x202E) + "나")
+
+    def test_every_kind_of_body_opens_clean_with_the_same_text_and_the_same_count_as_the_list(self):
+        originals = self.originals()
+        posts = []
+        for number, original in enumerate(originals):
+            posts.append((self.add_post(f"글 {number}", original, minutes=0), ref_service.normalize_body(original)))
+        window, form = self.vault_window()
+        for number, (added, expected) in enumerate(posts):
+            with self.subTest(body=ascii(expected)):
+                window.references_select(added.ref_id, discard=True)
+                self.settle(2)
+                self.assertEqual(form.body.toPlainText(), expected, "편집 칸의 글 == 저장한 글")
+                self.assertFalse(window.references.dirty, "열자마자 '저장하지 않은 변경' 이 켜지면 안 된다")
+                self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+                self.assertEqual(self.lt(form.body_count), f"{len(expected)}자")
+                row = next(line for line in self.texts(form) if line.startswith(f"글 {number} · "))
+                self.assertIn(f" · {len(expected):,}자 · ", row, "목록의 글자 수 == 편집 칸의 글자 수")
+
+    def test_what_the_service_stores_is_a_fixed_point_of_the_edit_box_on_random_strings(self):
+        import random
+        window, form = self.vault_window()
+        alphabet = ["가", "나", " ", chr(9), self.CR, self.LF, self.LS, self.PS, self.NBSP, self.BOM, chr(0x200B), "a"]
+        rng = random.Random(20261116)
+        for _ in range(400):
+            text_ = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 14)))
+            stored = ref_service.normalize_body(text_)
+            form.body.setPlainText(stored)
+            self.assertEqual(form.body.toPlainText(), stored, ascii(text_))
+
+    def test_a_windows_notepad_crlf_file_goes_from_the_file_to_the_list_to_the_editor_and_back_unchanged(self):
+        window, form = self.vault_window()
+        lines = ["첫 줄입니다.", "둘째 줄입니다.", "", "셋째 줄입니다."]
+        source = self.root / "메모장 글.txt"
+        source.write_bytes((self.CR + self.LF).join(lines).encode("utf-8") + (self.CR + self.LF).encode("utf-8"))
+        expected = self.LF.join(lines) + self.LF
+        self.picker.paths = [str(source)]
+        self.click(form.pick_button)
+        self.assertEqual(self.message(form), "")
+        self.assertEqual(len(self.vault_files()), 1)
+        row = next(line for line in self.texts(form) if line.startswith("메모장 글 · "))
+        self.assertIn(f" · {len(expected)}자 · ", row, "목록은 저장한 글(LF)의 글자 수를 센다 — 예전에는 CRLF 를 두 글자로 세어 편집 칸과 어긋났다")
+        self.click(form.open_buttons[0])
+        self.assertEqual(form.body.toPlainText(), expected)
+        self.assertEqual(self.lt(form.body_count), f"{len(expected)}자")
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"], "윈도 메모장 글을 열자마자 '저장하지 않은 변경이 있어요' 가 켜지던 것이 고쳐졌다")
+        self.assertFalse(window.references.dirty)
+        self.click(form.close_button)
+        self.assertFalse(window.dialog.is_open, "저장 안 한 변경이 없으니 묻지 않고 닫힌다")
+
+    def test_saving_after_only_a_title_change_keeps_the_body_exactly_and_reopening_is_still_clean(self):
+        added = self.add_post("옛 제목", "가" + self.CR + self.LF + "나" + self.NBSP + "다")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])
+        expected = "가" + self.LF + "나 다"
+        self.assertEqual(form.body.toPlainText(), expected)
+        form.title_input.setText("새 제목")
+        self.settle(2)
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+        self.clock.advance(hours=1)
+        self.save(window)
+        self.assertEqual(ref_service.open_reference(self.ctx, added.ref_id).body, expected, "제목만 고쳐 저장해도 본문은 그대로다")
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+        self.click(form.new_button)
+        self.click(form.open_buttons[0])
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("새 제목", expected))
+        self.assertFalse(window.references.dirty)
+
+    def test_pasted_text_with_windows_line_ends_is_stored_as_the_editor_shows_it(self):
+        window, form = self.vault_window()
+        form.title_input.setText("붙여 넣은 글")
+        form.body.setPlainText("가" + self.CR + self.LF + "나" + self.CR + self.LF + "다")                 # 칸이 이미 LF 로 바꿨다
+        self.settle(2)
+        self.save(window)
+        stored = ref_service.open_reference(self.ctx, window.references.current)
+        self.assertEqual(stored.body, "가" + self.LF + "나" + self.LF + "다")
+        self.assertEqual(self.lt(form.body_count), f"{len(stored.body)}자")
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+
+
 # ---- 6) 저장 안 한 변경 확인 ---------------------------------------------------------------------------------------------------------
 class UnsavedTest(Base):
     def dirty(self):

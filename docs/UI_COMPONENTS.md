@@ -199,7 +199,7 @@ ui/style_adapter.py → service/own_posts.py(읽기 전용) · content/style_sta
 
 ## 3-8. 참고 글 보관함 부품 (D-489·D-490 — `ui/qt/references_dialog.py`, 파일에 쓰는 대화상자)
 
-화면은 컨트롤러(`ui/core/references_view.py` 의 `ReferenceLibrary`)의 뷰모델을 공통 부품으로 조립하기만 하고 **이 화면 코드에는 파일을 쓰거나 지우는 호출이 없다** — 서비스 호출은 공급자(`ui/references_adapter.py` 의 `ServiceReferencesProvider`)가 작업 스레드에서 하고, 파일을 바꾸는 일은 `service/references.py` 한 곳이 한다. 진입은 `ui/qt/style_dialog.py` 의 문체 보기 대화상자 안의 `참고 글 보관함 열기` 단추 하나다(다른 화면은 바뀌지 않는다).
+화면은 컨트롤러(`ui/core/references_view.py` 의 `ReferenceLibrary`)의 뷰모델을 공통 부품으로 조립하기만 하고 **이 화면 코드에는 파일을 쓰거나 지우는 호출이 없다** — 서비스 호출은 공급자(`ui/references_adapter.py` 의 `ServiceReferencesProvider`)가 **화면 스레드에서 곧바로** 하고(작업 스레드가 아니다 — 50편이 모두 10만 자일 때 열기 0.7초·저장 0.39초 안팎이라 스레드를 두지 않았다, `UI_STATES.md` 5-6d), 파일을 바꾸는 일은 `service/references.py` 한 곳이 한다. 진입은 `ui/qt/style_dialog.py` 의 문체 보기 대화상자 안의 `참고 글 보관함 열기` 단추 하나다(다른 화면은 바뀌지 않는다).
 
 ```text
 core/references_view.py(ReferenceLibrary — 상태·세대 번호·뷰모델, ReferencesProvider 틀·FakeReferencesProvider)
