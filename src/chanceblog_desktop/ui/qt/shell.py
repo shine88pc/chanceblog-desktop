@@ -12,7 +12,7 @@ from PySide6.QtCore import QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
-from ..core import draft_rules, part_rules
+from ..core import channel_names, draft_rules, part_rules
 from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
 from ..core.backup_view import WRITE_KEY as BACKUPS_WRITE_KEY
@@ -206,6 +206,7 @@ class AppShell(QMainWindow):
         self.render()
         if autoload:
             QTimer.singleShot(0, self.reload)
+            QTimer.singleShot(0, self._load_blog_names)                                       # 다른 화면이 사용자가 정한 별명으로 블로그를 부르도록 블로그 정보도 앱이 열릴 때 한 번 읽는다(읽기만)
             QTimer.singleShot(0, self.read_connections)                                       # 앱이 열릴 때 홈의 `연결 상태` 한 줄이 값을 갖도록 설정 화면과 같은 읽기를 한 번 한다(UI-C1d, D-203)
 
     @staticmethod
@@ -823,8 +824,18 @@ class AppShell(QMainWindow):
     def _on_blogs_cancelled(self):
         self._guarded(self._show_blogs_cancelled, recover=self._recover_blogs)
 
+    def _load_blog_names(self):
+        """앱이 열릴 때 블로그 정보를 조용히 읽는다(읽기만 — 화면을 다시 그리지 않는다). 읽으면 `_names_changed` 가 다른 화면의 채널 이름(별명)을 바꾼다."""
+        self.state.blogs.start_load(**self.blogs_bridge.callbacks())
+
+    def _names_changed(self):
+        """블로그 관리가 읽거나 쓴 자료로 다른 화면의 채널 이름(별명)을 다시 정한다 — 바뀌었고 그 화면을 보는 중이면 다시 그린다(초안에 고친 내용이 있으면 입력을 지키려고 다음에 그릴 때 바뀐다)."""
+        if self.state.refresh_names() and self.state.page != "blogs" and not (self.state.page == "drafts" and self.state.drafts.has_unsaved()):
+            self.render()
+
     def _show_blogs_loaded(self, data):
         self.state.blogs.apply_loaded(data)
+        self._names_changed()
         self._render_blogs()
 
     def _show_blogs_failed(self, failure):
@@ -846,6 +857,7 @@ class AppShell(QMainWindow):
 
     def _show_blogs_written(self, outcome):
         self.state.blogs.apply_write_ok(outcome)
+        self._names_changed()
         self._render_blogs()
         selected = self.state.blogs.selected
         self._restore_focus("slot:" + selected if selected else "slot:add")                  # 마지막 블로그를 지우면 카드가 없다 — 포커스는 '블로그 추가' 카드로
@@ -2433,6 +2445,7 @@ class AppShell(QMainWindow):
                 else:
                     self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm if dialog.get("blogs") else self._close_after_drafts, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
                 return
+        channel_names.use(None)                                                   # 닫는 창의 채널 이름(별명)을 켜 둔 채 두지 않는다
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
         self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)
         if self.state.backups is not None and self.state.backups.busy:            # 백업·복원은 끝나기를 기다린다 — 복원은 중간에 끊으면 안전 사본으로 되돌리는 길을 타므로 마치게 두는 것이 가장 안전하다

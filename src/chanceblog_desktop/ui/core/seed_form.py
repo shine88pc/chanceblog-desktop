@@ -16,6 +16,7 @@ from ...content.profiles import find_markup
 from ...topics import channels as ch
 from ...topics import seeds as sd
 from ...topics import wording
+from . import channel_names as cn
 from .blog_form import clean_line, shown, split_words  # noqa: F401  — 같은 글 다듬기(한 줄·쉼표 낱말)와 가리고 줄이기를 그대로 쓴다
 from .text import T
 
@@ -237,7 +238,7 @@ def state_name(state):
 
 
 def scope_name(scope):
-    return wording.SCOPE_KO[scope]
+    return wording.SCOPE_KO[scope] if scope == "common" else cn.label(scope)                    # 채널 이름은 다른 화면과 같은 화면 이름(별명) — 공통만 서비스의 이름 표
 
 
 def importance_name(kind):
@@ -249,7 +250,9 @@ def target_name(target):
 
 
 def channel_name(code):
-    return wording.CHANNEL_KO[code]
+    """채널의 화면 이름 — `네이버 A` 같은 고정 이름이 아니라 블로그 관리의 별명(`channel_names` — blogsel-2). 모르는 열쇠는 오류(서비스의 이름 표와 같은 규칙)."""
+    wording.CHANNEL_KO[code]
+    return cn.label(code)
 
 
 def tag_name(tag):

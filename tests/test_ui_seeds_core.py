@@ -33,7 +33,7 @@ from chanceblog_desktop.topics import channels as ch  # noqa: E402
 from chanceblog_desktop.topics import seeds as sd  # noqa: E402
 from chanceblog_desktop.topics import wording  # noqa: E402
 from chanceblog_desktop.ui import adapters, seeds_adapter  # noqa: E402
-from chanceblog_desktop.ui.core import app_state, jobs, seed_form as sf, seed_rules as rules, seed_text, seeds, seeds_view, services, text  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, channel_names as cn, jobs, seed_form as sf, seed_rules as rules, seed_text, seeds, seeds_view, services, text  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
 T = text.T
@@ -119,7 +119,7 @@ class SpecTest(unittest.TestCase):
 
     def test_the_names_are_the_service_names(self):
         for code in sd.SCOPES:
-            self.assertEqual(sf.scope_name(code), wording.SCOPE_KO[code])
+            self.assertEqual(sf.scope_name(code), wording.SCOPE_KO[code] if code == "common" else cn.label(code), "의도적 갱신(blogsel-2, D-510): 채널 이름은 서비스의 고정 이름(`네이버 A`)이 아니라 화면 이름(별명) — 공통만 서비스의 이름 표")
         for kind in sd.SEED_TYPES:
             self.assertEqual(sf.importance_name(kind), wording.SEED_TYPE_KO[kind])
         for state in sd.STATES:
@@ -410,7 +410,7 @@ class ReadAndFilterTest(unittest.TestCase):
         self.assertEqual(summary["proposed"]["text"], "승인 전 9개 — 승인하기 전에는 후보 생성에 쓰이지 않습니다")
         self.assertEqual([chip["text"] for chip in summary["chips"]], ["사용 중 5개", "쉬는 중 2개", "전체 16개"])
         rows = {row["key"]: row for row in summary["channels"]["rows"]}
-        self.assertEqual(rows["naver_a"]["chip"]["text"], "네이버 A 3개 · 후보 생성 켜짐")
+        self.assertEqual(rows["naver_a"]["chip"]["text"], "네이버 블로그 1 3개 · 후보 생성 켜짐")
         self.assertEqual(rows["github_pages"]["chip"]["text"], "GitHub Pages 0개 · 후보 생성 꺼짐")
         self.assertEqual((rows["naver_a"]["generation"]["text"], rows["github_pages"]["generation"]["text"]), ("후보 생성 켜짐", "후보 생성 꺼짐"))
         self.assertEqual((rows["naver_a"]["chip"]["tone"], rows["github_pages"]["chip"]["tone"]), ("ok", "muted"))
@@ -439,7 +439,7 @@ class ReadAndFilterTest(unittest.TestCase):
         self.assertEqual(rows["EX006"]["flags"], [T["seeds_flag_region"]])
         self.assertEqual(rows["EX007"]["flags"], [T["seeds_flag_brand"]])
         self.assertEqual(rows["EX002"]["flags"], [T["seeds_flag_priority"]])
-        self.assertEqual(rows["EX011"]["channels"], "허용 채널 네이버 A, 네이버 B")
+        self.assertEqual(rows["EX011"]["channels"], "허용 채널 네이버 블로그 1, 네이버 블로그 2")
         for row in rows.values():
             self.assertTrue(row["status"]["text"], "색만이 아니라 늘 글자가 함께 있다")
             self.assertNotRegex(row["a11y"] + row["meta"] + row["path"], r"proposed|active|inactive|seasonal|None|\['")
@@ -467,12 +467,12 @@ class DrawerAndEditTest(unittest.TestCase):
         self.assertEqual((view["kind"], view["heading"], view["status"]["text"]), ("seed", "예시 낱말 마", "제안(승인 전)"))
         self.assertEqual([field["name"] for field in view["fields"]], ["priority", "excluded_keywords", "priority_keywords", "allowed_channels", "reason"], "공통 씨앗만 허용 채널 칸이 있다")
         info = {row["label"]: row["value"] for row in view["info"]}
-        self.assertEqual((info[T["seeds_info_scope"]], info[T["seeds_info_importance"]], info[T["seeds_info_channels"]]), ("공통", "일반", "네이버 A, 네이버 B"))
+        self.assertEqual((info[T["seeds_info_scope"]], info[T["seeds_info_importance"]], info[T["seeds_info_channels"]]), ("공통", "일반", "네이버 블로그 1, 네이버 블로그 2"))
         self.assertIn(T["seeds_stateline_proposed"], view["notes"])
         controller.open_detail("EX001")
         self.assertEqual([field["name"] for field in controller.drawer_view()["fields"]], ["priority", "excluded_keywords", "priority_keywords", "reason"])
         info = {row["label"]: row["value"] for row in controller.drawer_view()["info"]}
-        self.assertEqual(info[T["seeds_info_channels"]], "네이버 A 한 곳")
+        self.assertEqual(info[T["seeds_info_channels"]], "네이버 블로그 1 한 곳")
 
     def test_a_row_with_unsaved_changes_says_so_in_its_accessible_name_and_loses_it_when_the_value_is_put_back(self):
         """독립 검증 L5(변이 Q16 생존) — 줄 접근 이름에 '저장 전 변경이 있어요' 가 붙고 저장된 값으로 돌아가면 사라진다(뷰모델 — Qt 줄은 고치는 동안 다시 그리지 않고 다음에 그릴 때 이 이름을 받는다)."""
@@ -827,7 +827,7 @@ class BulkTest(unittest.TestCase):
         self.assertIn("처음 5개: ‘예시 낱말 가’, ‘예시 낱말 나’, ‘예시 낱말 다’, ‘예시 낱말 라’, ‘예시 낱말 마’ 외 1개", body)
         self.assertIn(T["seeds_bulk_effect_activate"], body)
         self.assertIn("나중에 쉬는 중으로 되돌릴 수 있어요", body, "되돌릴 수 있음을 사실대로")
-        self.assertIn(T["seeds_bulk_count_row"].format(name="네이버 A", before=3, after=7), body, "바꾸기 전과 뒤의 채널별 쓸 수 있는 수")
+        self.assertIn(T["seeds_bulk_count_row"].format(name="네이버 블로그 1", before=3, after=7), body, "바꾸기 전과 뒤의 채널별 쓸 수 있는 수")
         self.assertIn("고른 것 중 1개는 이 일로 바뀌지 않아요", body)
         self.assertIn(T["seeds_bulk_all_or_nothing"], body)
         self.assertEqual((dialog["ok"], dialog["cancel"]), ("사용 중으로 바꾸기", "취소"))
@@ -1013,7 +1013,7 @@ class ImportTest(unittest.TestCase):
         self.assertIn("파일 안 Seed 4개 · 새로 등록할 Seed 3개 · 이미 있어 건너뜀 1개 · 읽을 수 없어 뺀 Seed 0개(지금 등록된 Seed 16개)", dialog["body"], "파일 안 개수 = 새로 + 건너뜀 + 읽을 수 없어 뺌")
         self.assertIn("‘EX001’ 같은 씨앗 번호가 이미 등록되어 있어 건너뜁니다(덮어쓰지 않습니다)", dialog["body"])
         self.assertIn("새로 등록하는 Seed 는 모두 승인 전이에요. 승인하기 전에는 후보 생성에 쓰이지 않아요.", dialog["body"])
-        self.assertIn("네이버 A 2개(후보 생성 켜짐)", dialog["body"])
+        self.assertIn("네이버 블로그 1 2개(후보 생성 켜짐)", dialog["body"])
         self.assertIn("github_pages" if False else "GitHub Pages 0개(후보 생성 꺼짐)", dialog["body"])
 
     def test_without_the_dialog_nothing_is_registered_and_with_it_every_new_seed_is_proposed(self):

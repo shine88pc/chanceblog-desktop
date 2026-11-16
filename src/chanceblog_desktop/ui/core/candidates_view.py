@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from . import candidate_rules as rules
+from . import channel_names as cn
 from . import gauges as G
 from .candidates import CandidateFailure
 from .draft_rules import BLOG_NAMES
@@ -124,10 +125,9 @@ class CandidatesController:
 
     def channel_info(self, key):
         """채널 하나의 표시 정보 — 프로필을 읽지 못한 채널은 이름이 비어 있으므로 서비스의 채널 이름으로 대신한다."""
-        from ...topics import wording
         found = self.data.channel_map().get(key) if self.data is not None else None
-        name = rules.shown(found.name, 30) if found is not None and found.name else ""
-        return {"key": key, "name": name or wording.CHANNEL_KO.get(key, key), "preset": found.preset if found is not None else None, "weights": found.weights if found is not None else ()}
+        name = cn.label(key) if key in cn.ORDER else (rules.shown(found.name, 30) if found is not None and found.name else "")        # 다섯 채널은 다른 화면과 같은 화면 이름(별명)
+        return {"key": key, "name": name or key, "preset": found.preset if found is not None else None, "weights": found.weights if found is not None else ()}
 
     def notices_of(self, row):
         """후보 하나의 안내들(안전 표시) — 보이는 카드·열린 상세에서만 부르고 기억한다(안전 평가가 후보 하나에 1~2ms)."""

@@ -16,6 +16,7 @@ import datetime
 import re
 from itertools import islice
 
+from . import channel_names as cn
 from . import gauges
 from . import settings_view as sv
 from .services import HOME_CHANNELS, HOME_LIMIT, INTERESTS, SAVED_STAGE, STAGES, Topic
@@ -93,7 +94,7 @@ def row_vm(row, rank, trend_hidden=False, channel=""):
     title = _shown(row.title, TITLE_LIMIT)
     sample = bool(row.sample)
     heard = T["board_score_none"] if score is None else gauges.score_spoken(score, None if delta is None else delta["value"])
-    return {"id": row.id, "rank": rank, "channel": channel, "title": title, "score": score, "score_text": T["board_score_none"] if score is None else str(score), "ring": score is not None,
+    return {"id": row.id, "rank": rank, "channel": channel, "badge": cn.avatar_letter(cn.HOME_KEYS[channel]) if channel in cn.HOME_KEYS else channel, "title": title, "score": score, "score_text": T["board_score_none"] if score is None else str(score), "ring": score is not None,
             "band": band.key if band else None, "band_label": band.name if band else "", "delta": delta, "interest": interest,
             "sample": sample, "sample_tag": T["board_sample_tag"] if sample else "",
             "a11y": ", ".join(part for part in (title, heard, interest["label"], T["board_sample_tag"] if sample else "") if part)}
@@ -109,7 +110,7 @@ def _failure_vm(failure, title_key):
 def channel_vm(channel, trend_hidden=False):
     """채널 하나(A·B)의 추천 구역. 상태: `normal`(줄이 있다) · `empty`(정상 빈 상태 — 보관함이 아직 없거나 옛 구조인 때도 오류가 아니다) · `off`(후보 생성이 꺼져 있다) · `error`(그 구역만 못 읽었다)."""
     key = channel.key
-    name = _shown(channel.name, NAME_LIMIT) or T["blog_" + key.lower()]
+    name = cn.home_label(key) or _shown(channel.name, NAME_LIMIT) or T["blog_" + key.lower()]                # 홈의 두 구역은 블로그 관리의 별명으로 부른다(`channel_names`)
     rows = [row_vm(row, rank, trend_hidden, key) for rank, row in enumerate(islice(channel.rows, HOME_LIMIT), start=1)]      # 많아야 5개 — 많이 들어와도 앞의 다섯만 본다
     if channel.state == "failed":
         state = "error"

@@ -134,7 +134,7 @@ class ShellTest(QtBase):
         self.assertEqual(len(page.findChildren(board_module.KpiCard)), 4)
         self.assertEqual(len(page.findChildren(board_module.BoardRow)), 9)
         self.assertEqual(len(page.findChildren(board_module.ListRow)), 6)
-        self.assertEqual([label.text() for label in page.findChildren(UI.ElidedLabel) if label.property("role") == "h2"], ["블로그 A 추천", "블로그 B 추천", "작성 중인 초안", "최근 발행"])
+        self.assertEqual([label.text() for label in page.findChildren(UI.ElidedLabel) if label.property("role") == "h2"], ["네이버 블로그 1 추천", "네이버 블로그 2 추천", "작성 중인 초안", "최근 발행"])
         self.assertEqual([row.row["channel"] for row in page.findChildren(board_module.BoardRow)], ["A"] * 5 + ["B"] * 4)         # 위에서 아래로 Naver A 추천 다음 Naver B 추천
         self.assertEqual([b for b in page.findChildren(QAbstractButton) if b.property("chip")], [])                              # 칩은 없다
         self.assertTrue(any(b.accessibleName() == "예시 데이터" for b in window.findChildren(QAbstractButton)))

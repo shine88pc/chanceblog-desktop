@@ -245,7 +245,7 @@ class SemanticBadge(QLabel):
 
 
 def BlogBadge(blog, text):
-    """블로그 A·B 배지 — 색만이 아니라 글자('블로그 A')도 함께 보인다."""
+    """홈의 두 구역 배지 — 색(a·b 열쇠)만이 아니라 글자(이름의 끝 숫자 — `네이버 블로그 1` 은 1, 별명은 첫 글자)도 함께 보인다."""
     return Badge(blog.lower(), text)
 
 

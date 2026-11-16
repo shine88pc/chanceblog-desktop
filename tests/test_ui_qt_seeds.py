@@ -202,7 +202,7 @@ class MenuAndPageTest(Base):
         self.assertEqual(self.notice_bar(window, "승인 전 9개 — 승인하기 전에는 후보 생성에 쓰이지 않습니다").level, "warning")
         self.assertEqual(len(screen.findChildren(blog_parts.NoticeBar)), 1, "예시 데이터라도 알림 줄은 이 한 줄뿐이다(첫 화면에는 지난 동작의 결과가 없다)")
         badges = {label.text() for label in screen.findChildren(QLabel) if label.property("badge")}
-        for text_ in ("사용 중 5개", "쉬는 중 2개", "전체 16개", "네이버 A 3개 · 후보 생성 켜짐", "GitHub Pages 0개 · 후보 생성 꺼짐"):
+        for text_ in ("사용 중 5개", "쉬는 중 2개", "전체 16개", "네이버 블로그 1 3개 · 후보 생성 켜짐", "GitHub Pages 0개 · 후보 생성 꺼짐"):
             self.assertIn(text_, badges)
         self.assertIn("Seed 관리", labels)
         chips = {button.text() for button in screen.findChildren(QAbstractButton) if button.property("chip")}
@@ -210,7 +210,7 @@ class MenuAndPageTest(Base):
         rows = self.ui(window).list.rows
         self.assertEqual(list(rows), [f"EX{number:03d}" for number in range(1, 17)])
         texts = {label.text() for label in self.row(window, "EX001").findChildren(UI.ElidedLabel)}
-        self.assertEqual(texts, {"예시 낱말 가", "예시 대분류 하나 › 예시 중분류 하나", "네이버 A · 일반 · 제품", "허용 채널 네이버 A"})
+        self.assertEqual(texts, {"예시 낱말 가", "예시 대분류 하나 › 예시 중분류 하나", "네이버 블로그 1 · 일반 · 제품", "허용 채널 네이버 블로그 1"})
         statuses = {seed_id: {label.text() for label in row.findChildren(QLabel) if label.property("badge")} for seed_id, row in rows.items()}
         self.assertEqual(statuses["EX001"], {"제안(승인 전)"})
         self.assertEqual(statuses["EX009"], {"사용 중", "쉬게 할까요?"}, "180일 제안은 배지 글자로 보일 뿐이다")
@@ -328,7 +328,7 @@ class FilterAndSelectionTest(Base):
         self.buttons(window.screen_widget)["더 거르기"].click()
         self.settle()
         scope = {button.text() for button in window.screen_widget.findChildren(QAbstractButton) if str(button.property("focus_key")).startswith("seeds:scope:")}
-        self.assertEqual(scope, {"모든 소속  16", "공통  3", "GitHub Pages  1", "Blogger 영문  1", "Blogger 한글  1", "네이버 A  6", "네이버 B  4"})
+        self.assertEqual(scope, {"모든 소속  16", "공통  3", "GitHub Pages  1", "Blogger 2  1", "Blogger 1  1", "네이버 블로그 1  6", "네이버 블로그 2  4"})
         next(button for button in window.screen_widget.findChildren(QAbstractButton) if str(button.property("focus_key")) == "seeds:scope:common").click()
         self.settle()
         self.assertEqual(len(self.ui(window).list.rows), 3)
@@ -621,7 +621,7 @@ class BulkDialogTest(Base):
         names = self.labels(window.dialog)
         self.assertIn("고른 Seed 6개를 바꿀까요?", names)
         body = next(name for name in names if "사용 중으로 바꿉니다" in name)
-        for part in ("승인 전 6개를 사용 중으로 바꿉니다.", "처음 5개: ‘예시 낱말 가’", "외 1개", "나중에 쉬는 중으로 되돌릴 수 있어요", "네이버 A 3개 → 7개", "한 번에 모두 바뀌거나 하나도 안 바뀌어요"):
+        for part in ("승인 전 6개를 사용 중으로 바꿉니다.", "처음 5개: ‘예시 낱말 가’", "외 1개", "나중에 쉬는 중으로 되돌릴 수 있어요", "네이버 블로그 1 3개 → 7개", "한 번에 모두 바뀌거나 하나도 안 바뀌어요"):
             self.assertIn(part, body)
         buttons = self.buttons(window.dialog)
         self.assertEqual(sorted(buttons), ["사용 중으로 바꾸기", "취소"])

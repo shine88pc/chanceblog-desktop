@@ -26,7 +26,7 @@ from chanceblog_desktop.topics import notice, safety  # noqa: E402
 from chanceblog_desktop.topics.model import check_candidate_score  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.ui import candidates_adapter  # noqa: E402
-from chanceblog_desktop.ui.core import board_view, candidate_rules as rules, candidate_text, candidates as cd, candidates_view as cv, gauges, jobs, services, text  # noqa: E402
+from chanceblog_desktop.ui.core import board_view, candidate_rules as rules, channel_names as cn, candidate_text, candidates as cd, candidates_view as cv, gauges, jobs, services, text  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
 T = text.T
@@ -317,7 +317,7 @@ class RulesTest(unittest.TestCase):
     def test_the_info_rows_use_the_service_names_and_the_korean_time_and_mask_the_reader(self):
         candidate = ts.make(candidate_id="c-i", target_reader="독자 " + KEY_SHAPED, created_at="2026-11-04T09:56:00Z", similar_post_ids=("p1", "p2"), duplicate_status="different_topic")
         rows = {row["label"]: row["value"] for row in rules.info_rows(candidate, "예시 블로그 나")}
-        self.assertEqual((rows["채널"], rows["후보 종류"], rows["검색 의도"], rows["글 종류"], rows["언어"]), ("예시 블로그 나", "지속형", "고르기", "구매 안내", "한국어"))
+        self.assertEqual((rows["채널"], rows["후보 종류"], rows["검색 의도"], rows["글 종류"], rows["언어"]), (cn.label(candidate.channel), "지속형", "고르기", "구매 안내", "한국어"), "의도적 갱신(blogsel-2, D-510): 정보 줄의 채널도 별명")
         self.assertEqual((rows["만든 때"], rows["중복 판정"], rows["비슷한 글"]), ("2026-11-04 18:56", "다른 주제", "2개"))
         self.assertNotIn(KEY_SHAPED[:10], rows["대상 독자"])
 
@@ -326,8 +326,8 @@ class RulesTest(unittest.TestCase):
         self.assertTrue(picks <= set(rules.TOPIC_ICONS))
         self.assertEqual(rules.topic_icon("local-ai"), rules.topic_icon("local-ai"))
         self.assertEqual(len(rules.TOPIC_ICONS), 8)
-        self.assertEqual(rules.avatar_text("naver_a", "예시 블로그 가"), "A")
-        self.assertEqual((rules.avatar_text("blogger_ko", "블로그 에이"), rules.avatar_text("github_pages", "  Pages"), rules.avatar_text("blogger_en", "")), ("블", "P", "?"))
+        self.assertEqual((rules.avatar_text("naver_a", "예시 블로그 가"), rules.avatar_text("naver_b", "예시 블로그 나")), ("1", "2"), "별명이 없는 기본 이름이면 아바타 글자는 번호 — 같은 종류 두 자리가 가려진다")
+        self.assertEqual((rules.avatar_text("blogger_ko", "블로그 에이"), rules.avatar_text("github_pages", "  Pages"), rules.avatar_text("blogger_en", "")), ("1", "G", "2"), "의도적 갱신(blogsel-2, D-510): 다섯 채널의 아바타 글자는 화면 이름(별명)에서 — 기본 이름이면 번호, 별명이 있으면 별명의 첫 글자")
 
     def test_the_short_number_is_the_services_short_ref_for_engine_shaped_and_other_numbers(self):
         for candidate_id in ("tc-naver_a-seed-1393a6c72220948e", "tc-blogger_ko-follow_up-abcdef0123456789", "cand-ex-001", "x", "short"):
@@ -451,13 +451,14 @@ class ReadAndFilterTest(unittest.TestCase):
         self.assertEqual((none["summary"], none["summary_missing"], none["ring"]), ("추천 이유가 아직 없어요", True, False))
         self.assertEqual(cards["예시 후보 가 — 순서대로 따라 하는 안내"]["more_text"], "+2")
 
-    def test_every_card_text_is_the_masked_value_and_the_channel_name_is_the_profile_name_with_the_service_name_as_the_fallback(self):
+    def test_every_card_text_is_the_masked_value_and_the_channel_name_is_the_screen_name_of_the_channel_never_the_profile_name(self):
         data = cd.CandidatesData((row_of(ts.rated(80, channel="naver_a", candidate_id="c-1")),), "ready", (cd.ChannelInfo("naver_a", "", None, True),), (), 0, 1, False)
         controller = new_controller(data=data)
-        self.assertEqual(controller.view()["grid"]["cards"][0]["channel"]["name"], "네이버 A", "프로필 이름이 비면 서비스의 채널 이름")
+        self.assertEqual(controller.view()["grid"]["cards"][0]["channel"]["name"], "네이버 블로그 1", "의도적 갱신(blogsel-2, D-510): 카드의 채널 이름은 프로필 이름도 서비스의 고정 이름도 아니고 블로그 관리의 별명(없으면 종류 + 번호)")
         keyed = cd.CandidatesData((row_of(ts.rated(80, channel="naver_a", candidate_id="c-1")),), "ready", (cd.ChannelInfo("naver_a", "이름 " + KEY_SHAPED, None, True),), (), 0, 1, False)
         shown = new_controller(data=keyed).view()["grid"]["cards"][0]["channel"]["name"]
         self.assertNotIn(KEY_SHAPED[:10], shown)
+        self.assertEqual(shown, "네이버 블로그 1", "프로필 이름(키 모양이 든 것)은 이 화면에 나가지 않는다")
 
     def test_selection_survives_a_reload_and_goes_when_the_candidate_is_gone(self):
         controller = new_controller()
@@ -577,7 +578,7 @@ class DetailTest(unittest.TestCase):
         self.assertEqual([row["value"] for row in detail["seed"]["rows"]], ["씨앗", "‘예시 낱말 가’ · 예시 대분류 하나 › 예시 중분류 하나"])
         self.assertEqual(detail["safety"]["none"], "확인이 필요한 표시는 없어요.")
         self.assertEqual([item for item in detail["keywords"]["items"]], ["예시 낱말 가", "예시 보조 가", "예시 보조 나", "예시 보조 다", "예시 보조 라"], "상세에는 키워드가 모두 보인다")
-        self.assertEqual({row["label"]: row["value"] for row in detail["info"]["rows"]}["채널"], "예시 블로그 가")
+        self.assertEqual({row["label"]: row["value"] for row in detail["info"]["rows"]}["채널"], "네이버 블로그 1")
         self.assertTrue(detail["sample"] and detail["sample_tag"] == "예시 데이터")
         self.assertEqual([badge["text"] for badge in detail["badges"]], ["새 후보", "지속형"])
 
