@@ -391,6 +391,10 @@ class ChipsTest(Base):
         other = self.ui(window).fields["exclude_keywords"].chips["소형가전"]
         self.assertFalse(other.isEnabled())
         self.assertEqual(other.toolTip(), T["bf_chip_other"])
+        reason = self.ui(window).fields["exclude_keywords"].extra
+        self.assertTrue(reason.isVisibleTo(window), "BLOGSEL-2 ⑤: 꺼진 칩의 이유가 마우스를 올리지 않아도 칸 아래 한 줄로 보인다")
+        self.assertEqual(reason.plain_text(), T["bf_note_other"])
+        self.assertFalse(self.ui(window).fields["priority_keywords"].extra.isVisibleTo(window), "꺼진 칩이 없는 칸에는 줄이 없다")
         self.assertTrue(self.ui(window).fields["exclude_keywords"].chips["PC 주변기기"].isEnabled())
         self.assertEqual(window.state.blogs.problems(window.state.blogs.selected).get("priority_keywords"), None)
 

@@ -55,6 +55,7 @@ BLOG_T = {
     "bf_custom": "직접 입력", "bf_custom_a11y": "{label} 직접 입력", "bf_input_custom": "보기에 없는 말을 직접 적어요",
     "bf_suggest_label": "제안", "bf_suggest_use": "쓰기", "bf_suggest_a11y": "{label} 제안 쓰기", "bf_note_full": "{count}개까지 고를 수 있어요. 다른 낱말을 고르려면 먼저 하나를 빼 주세요.",
     "bf_chip_other": "다른 키워드 칸에서 이미 골랐어요.", "bf_chip_full": "고를 수 있는 개수를 다 채웠어요.",
+    "bf_note_other": "다른 키워드 칸에서 이미 고른 낱말은 흐리게 보여요. 그 칸에서 빼면 여기서 고를 수 있어요.",
     "bf_ref_help_naver": "내 블로그 주소의 맨 끝 아이디만 적어도 돼요. 영문·숫자와 . _ - 만, 공백 없이 써요. 예) example-blog",
     "bf_ref_help_web": "https 로 시작하는 내 블로그 주소를 공백 없이 그대로 붙여 넣어요. 계정 정보나 # 뒤의 글은 넣지 않아요.",
     "bf_pick": "파일 고르기", "bf_pick_a11y": "{label} 파일 고르기", "bf_pick_title": "{label} 고르기", "bf_pick_filter": "이미지 파일", "bf_clear": "지우기", "bf_clear_a11y": "{label} 지우기",

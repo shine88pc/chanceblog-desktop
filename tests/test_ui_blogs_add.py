@@ -771,6 +771,23 @@ class WordChipTest(unittest.TestCase):
         self.assertTrue(controller.toggle_choice("exclude_keywords", "소형가전"), "비운 뒤에는 반대쪽에서 고를 수 있다")
         self.assertEqual(self.options(controller, "priority_keywords")["소형가전"]["reason"], T["bf_chip_other"])
 
+    def test_the_reason_of_the_turned_off_chips_is_one_visible_line_under_the_field_only_while_such_chips_exist(self):
+        """검증 Q-12 — 꺼진 칩의 이유(`다른 키워드 칸에서 이미 골랐어요`)가 툴팁·접근 설명에만 있으면 마우스를 올리지 않는 사람은 왜 꺼졌는지 모른다 — 꺼진 칩이 있을 때만 칸 아래 한 줄로도 보인다."""
+        controller = new_controller("empty")
+        start_new(controller)
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], "", "꺼진 칩이 없으면 줄도 없다")
+        self.assertTrue(controller.toggle_choice("priority_keywords", "소형가전"))
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], T["bf_note_other"], "다른 칸에서 고른 낱말 때문에 꺼진 칩이 있으면 이유가 한 줄로 보인다")
+        self.assertEqual(fields_of(controller)["priority_keywords"]["extra"], "", "고른 쪽 칸에는 꺼진 칩이 없다")
+        self.assertTrue(controller.toggle_choice("priority_keywords", "소형가전"))
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], "", "다시 빼면 줄도 사라진다")
+        words, spec = list(bo.WORD_SUGGESTIONS["priority_keywords"]), bf.SPEC["priority_keywords"]
+        self.assertTrue(controller.toggle_choice("exclude_keywords", words[0]))
+        for word in words[1:1 + spec.count]:
+            self.assertTrue(controller.toggle_choice("priority_keywords", word), word)
+        self.assertEqual(fields_of(controller)["priority_keywords"]["extra"], T["bf_note_full"].format(count=spec.count) + " " + T["bf_note_other"], "한도를 채운 칸에서 다른 칸의 낱말도 꺼져 있으면 두 이유가 함께 보인다")
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], T["bf_note_other"])
+
     def test_typing_a_overlapping_word_still_gives_the_overlap_error_and_the_chips_do_not_hide_it(self):
         controller = new_controller()
         controller.edit("exclude_keywords", "예시 제외어, 예시 키워드 둘")

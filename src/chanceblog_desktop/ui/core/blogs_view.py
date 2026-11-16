@@ -526,7 +526,10 @@ class BlogsController:
                 reason = "" if folded in on else T["bf_chip_other"] if folded in other else T["bf_chip_full"] if full else ""
                 options.append({"value": word, "label": word, "checked": folded in on, "disabled": bool(reason), "reason": reason})
             view["options"] = options
-            view["extra"] = T["bf_note_full"].format(count=spec.count) if full else ""
+            notes = [T["bf_note_full"].format(count=spec.count)] if full else []                 # 꺼진 칩의 이유는 툴팁·접근 설명에만 두지 않고 칸 아래 한 줄로도 보인다(꺼진 칩이 있을 때만 — 검증 Q-12)
+            if any(option["reason"] == T["bf_chip_other"] for option in options):
+                notes.append(T["bf_note_other"])
+            view["extra"] = " ".join(notes)
         if spec.assist:                                                                        # 제안 문장(별명 — 종류 + 번호 / 소개글 — 고른 값으로 만든 문장): 이미 그 글을 쓰고 있으면 보이지 않는다
             suggestion = self.suggestion_text(spec.name, key)
             if suggestion and bf.clean_line(raw) != suggestion:
