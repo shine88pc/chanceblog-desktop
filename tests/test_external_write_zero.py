@@ -149,6 +149,7 @@ class EveryScreenActionTest(unittest.TestCase):
                 ("drafts.make_draft", lambda: drafts.make_draft(None, progress, cancelled)),
                 ("drafts.save_draft", lambda: saved.update(id=drafts.save_draft(SaveRequest(title="시험 글", body="시험 본문", blog="naver_a", post_type="정보형"), progress, cancelled).draft_id)),       # 저장한 초안(LOCALSAVE) — 글 보관함 파일에만 쓴다
                 ("drafts.list_saved", lambda: drafts.list_saved(progress, cancelled)), ("drafts.open_saved", lambda: drafts.open_saved(saved.get("id", MISSING_DRAFT), progress, cancelled)),
+                ("drafts.restore_photos", lambda: drafts.restore_photos(saved.get("id", MISSING_DRAFT), progress, cancelled)), ("drafts.clear_photos_trash", lambda: drafts.clear_photos_trash(saved.get("id", MISSING_DRAFT), progress, cancelled)),    # 사진 정보 되돌릴 사본(확인 024)
                 ("drafts.delete_saved", lambda: drafts.delete_saved(saved.get("id", MISSING_DRAFT), progress, cancelled)),                                                                         # 지우기 직전 사본도 같은 폴더 안에만 만든다
                 ("seeds.load_seeds", lambda: seeds.load_seeds(progress, cancelled)), ("seeds.set_state", lambda: seeds.set_state("s1", "paused", "0", progress, cancelled)),
                 ("seeds.set_states", lambda: seeds.set_states(["s1"], "paused", "0", progress, cancelled)), ("seeds.edit_seed", lambda: seeds.edit_seed("s1", {"keyword": "시험"}, "0", progress, cancelled)),
@@ -187,7 +188,7 @@ class EveryScreenActionTest(unittest.TestCase):
                         if isinstance(item, ast.FunctionDef) and not item.name.startswith("_") and item.args.args[-2:] and [arg.arg for arg in item.args.args[-2:]] == ["progress", "cancelled"]:
                             found.add(f"{prefix}.{item.name}")
         expected = {"home.load_home", "home.load_connections", "blogs.load_blogs", "blogs.save_blog", "blogs.clone_blog", "blogs.clear_blog", "candidates.load_candidates", "candidates.preview_make",
-                    "candidates.make_candidates", "drafts.make_draft", "drafts.save_draft", "drafts.list_saved", "drafts.open_saved", "drafts.delete_saved", "seeds.load_seeds", "seeds.set_state", "seeds.set_states", "seeds.edit_seed", "seeds.create_seed", "seeds.preview_import",
+                    "candidates.make_candidates", "drafts.make_draft", "drafts.save_draft", "drafts.list_saved", "drafts.open_saved", "drafts.restore_photos", "drafts.clear_photos_trash", "drafts.delete_saved", "seeds.load_seeds", "seeds.set_state", "seeds.set_states", "seeds.edit_seed", "seeds.create_seed", "seeds.preview_import",
                     "seeds.apply_import", "keys.add_key", "keys.remove_key", "keys.set_key_state", "keys.rename_key", "keys.move_key", "keys.test_key",
                     "backups.load_backups", "backups.create_backup", "backups.restore_backup", "backups.revert_interrupted"}
         self.assertEqual(found, expected, "화면 어댑터의 공개 동작과 이 시험의 표가 달라졌다 — 새 동작을 표에 더한다")

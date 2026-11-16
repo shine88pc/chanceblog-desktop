@@ -339,7 +339,7 @@ class SaveFailureTest(unittest.TestCase):
     def test_the_controller_has_no_argument_that_could_skip_the_check(self):
         self.assertEqual(list(inspect.signature(dv.DraftsController.start_save).parameters), ["self", "on_progress", "on_done", "on_error", "on_cancel", "after"])
         self.assertEqual(list(inspect.signature(drafts.SaveRequest).parameters), ["title", "body", "core_keywords", "sub_keywords", "tags", "category", "summary", "candidate_id", "topic", "blog",
-                                                                                   "post_type_choice", "post_type", "options", "base", "draft_id", "expected_revision"])
+                                                                                   "post_type_choice", "post_type", "options", "base", "draft_id", "expected_revision", "photos"])
         for name in dir(dv.DraftsController):
             self.assertFalse(any(word in name.lower() for word in ("force", "ignore_secret", "skip_check", "bypass", "override", "save_anyway")), name)
 

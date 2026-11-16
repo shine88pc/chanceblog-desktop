@@ -610,7 +610,10 @@ class ViewTest(unittest.TestCase):
         board.confirm("p001", True)
         card = board.card()
         self.assertEqual((card["has"], card["count"], card["button"]), (True, "사진 2장 · 확인 1/2", "사진 정리 열기"))
-        self.assertIn("저장한 초안에 아직 함께 담기지 않아요", card["unsaved"])
+        self.assertEqual((card["unsaved"], card["trash"]), ("", None), "사진을 넣었다고 저장 안내를 보이지는 않는다 — 고쳤는데 저장 안 했을 때만(3단계)")
+        self.assertEqual(board.card(unsaved=True)["unsaved"], "사진 정보를 고쳤어요. 초안을 저장해야 사진 정보도 함께 저장돼요.")
+        trash = board.card(trash=True)["trash"]
+        self.assertEqual((trash["text"], trash["restore"], trash["clear"]), ("지운 초안의 사진 정보를 되돌릴 사본으로 남겨 뒀어요. 사진 파일은 그대로 있어요.", "사진 정보 되돌리기", "사진 정보 사본 비우기"))
         self.assertIn("밖으로 보내지 않아요", card["hint"])
         self.assertEqual(card["row_title"], "사진 넣기(선택)")
 
@@ -653,7 +656,8 @@ class DraftsControllerTest(unittest.TestCase):
         job.join(30)
         controller.apply_made(results["ok"])
         self.assertEqual(controller.photos.count, 2, "다시 만들어도 사진 목록은 남는다")
-        self.assertFalse(controller.has_unsaved(), "사진을 넣어도 '고친 내용' 으로 치지 않는다 — 초안 저장 흐름은 그대로다")
+        self.assertFalse(controller.text_unsaved(), "사진을 넣어도 글은 안 바뀌었다 — 다시 만들기 확인은 글만 본다")
+        self.assertTrue(controller.photos_unsaved() and controller.has_unsaved(), "사진 정보를 고쳤다(저장 전)")
         self.assertEqual(controller.save_state(), self.made().save_state())
 
     def test_a_made_draft_is_the_same_with_or_without_photo_operations(self):
@@ -672,8 +676,9 @@ class DraftsControllerTest(unittest.TestCase):
             normal["options"] = {key: value for key, value in normal["options"].items() if key != "photos"}
             return normal
 
-        self.assertEqual((plain.title, plain.body, plain.has_unsaved(), plain.save_state()), (busy.title, busy.body, busy.has_unsaved(), busy.save_state()))
+        self.assertEqual((plain.title, plain.body, plain.text_unsaved(), plain.save_state()), (busy.title, busy.body, busy.text_unsaved(), busy.save_state()))
         self.assertEqual(without_photos(plain), without_photos(busy))
+        self.assertEqual((plain.has_unsaved(), busy.has_unsaved()), (False, True), "사진 정보를 고쳤으면 떠나기·닫기 앞에서 묻는다(3단계 — 사진 정보도 저장한다)")
         self.assertEqual(plain.photos.card()["count"], "넣은 사진이 없어요")
         self.assertEqual(busy.photos.card()["count"], "사진 1장 · 확인 0/1")
 
@@ -732,6 +737,7 @@ class SourceRulesTest(unittest.TestCase):
         "content/photo_manifest.py": "1단계 — 사진 정보 규칙", "service/photo_manifest.py": "1단계 — 사진 정보 보관·사진 파일 읽기 확인", "ui/core/photo_rules.py": "2단계 — 화면의 규칙표", "ui/core/photo_text.py": "2단계 — 화면 문구",
         "ui/core/photo_view.py": "2단계 — 사진 정리 컨트롤러", "ui/photo_adapter.py": "2단계 — 실제 사진 공급자(읽기만)", "ui/qt/photo_parts.py": "2단계 — 줄 부품", "ui/qt/photo_screen.py": "2단계 — 사진 정리 창",
         "ui/adapters.py": "홈 공급자의 짝 사진 공급자(읽기만)", "ui/core/app_state.py": "짝 공급자를 초안 컨트롤러의 사진 목록에 연결", "ui/core/drafts_view.py": "초안 컨트롤러가 사진 목록(메모리)을 들고 카드 뷰모델을 낸다",
+        "ui/core/drafts.py": "저장한 초안 공급자의 값(사진 정보 저장·열기·지우기 결과)과 가짜 공급자(3단계)", "ui/drafts_adapter.py": "저장한 초안 공급자가 사진 정보를 함께 저장·열기·사본으로 옮기기·되돌리기·사본 비우기(3단계, 확인 024)",
         "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",
         "ui/core/attribution.py": "기존 — 이미지 출처 표기(사진 정리와 무관)", "ui/qt/components.py": "기존 — 공통 부품 설명(사진 정리와 무관)",
     }
@@ -742,7 +748,7 @@ class SourceRulesTest(unittest.TestCase):
         found = sorted(path.relative_to(src).as_posix() for path in src.rglob("*.py") if "photo" in path.read_text(encoding="utf-8").lower())
         self.assertEqual(found, sorted(self.PHOTO_FILES), "사진을 새로 말하는 파일은 이유와 함께 PHOTO_FILES 에 더한다")
         self.assertTrue(all(reason.strip() for reason in self.PHOTO_FILES.values()))
-        for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py", "ui/core/drafts.py", "ui/drafts_adapter.py"):
+        for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py"):
             if (src / untouched).exists():
                 self.assertNotIn("photo", (src / untouched).read_text(encoding="utf-8").lower(), untouched)
 

@@ -1166,6 +1166,8 @@ class SourceRulesTest(unittest.TestCase):
         "ui/core/photo_text.py": "화면 문구 파일의 머리 설명이 1단계 파일 이름을 말할 뿐 코드로 가져오지는 않는다",
         "ui/core/photo_view.py": "사진 정리 화면의 컨트롤러(PhotoBoard) — 사진 목록을 1단계 규칙(추가·고치기·글칸 검사·순서·지우기·확정)으로만 고치고 저장하지 않는다",
         "ui/photo_adapter.py": "사진 파일을 읽기만 하는 어댑터 — 서비스의 `check_files`(읽기 전용)를 부른다",
+        "ui/core/drafts.py": "저장한 초안 공급자의 값(사진 정보 저장·열기·지우기 결과)·가짜 공급자 — 서비스의 고정 문장 하나를 글로만 가리킨다(`PHOTO_EXISTS_REASON` — 시험이 견준다)",
+        "ui/drafts_adapter.py": "저장한 초안 공급자가 사진 정보를 함께 저장·열기·되돌릴 사본으로 옮기기·되돌리기·사본 비우기(3단계, 운영자 확인 024) — 서비스 한 곳(photo_manifest)만 부른다",
     }
 
     def test_only_the_listed_source_files_use_the_photo_manifest_modules(self):

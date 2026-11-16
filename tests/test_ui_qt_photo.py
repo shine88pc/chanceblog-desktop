@@ -148,7 +148,8 @@ class SourceRulesTest(unittest.TestCase):
         self.assertLess(escape.index("photos_escape"), escape.index("close_dialog"), "Esc 는 닫기 단추와 같은 길을 먼저 거친다")
 
     def test_every_photo_text_is_used_and_every_used_text_is_defined(self):
-        files = [CORE_DIR / "photo_view.py", CORE_DIR / "photo_rules.py", QT_DIR / "photo_parts.py", QT_DIR / "photo_screen.py", QT_DIR / "shell.py", QT_DIR / "draft_screen.py", CORE_DIR / "drafts_view.py"]
+        files = [CORE_DIR / "photo_view.py", CORE_DIR / "photo_rules.py", QT_DIR / "photo_parts.py", QT_DIR / "photo_screen.py", QT_DIR / "shell.py", QT_DIR / "draft_screen.py", CORE_DIR / "drafts_view.py", CORE_DIR / "drafts.py",
+                 UI_DIR / "drafts_adapter.py"]
         used = set()
         for path in files:
             used |= set(re.findall(r"""["'](pho_[a-z0-9_]+)["']""", path.read_text(encoding="utf-8")))

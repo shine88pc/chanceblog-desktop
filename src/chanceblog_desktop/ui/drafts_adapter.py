@@ -12,7 +12,7 @@ from ..errors import AppError
 from ..service.context import make_context
 from .adapters import is_folder
 from .core.draft_rules import build_options, shown
-from .core.drafts import DraftFailure, DraftResult, DraftsProvider, OpenedResult, SavedListing, SavedOutcome, SavedRow, option_failure, restored_result, save_failure
+from .core.drafts import DeletedOutcome, DraftFailure, DraftResult, DraftsProvider, OpenedResult, PhotosRestored, SavedListing, SavedOutcome, SavedRow, option_failure, photo_failure, restored_result, save_failure
 from .core.jobs import JobCancelled
 from .core.text import T
 
@@ -79,7 +79,24 @@ class ServiceDraftsProvider(DraftsProvider):
                                            post_type=request.post_type, options=request.options, base=base, draft_id=request.draft_id, expected_revision=request.expected_revision)
         except AppError as error:
             raise save_failure(error) from None
-        return SavedOutcome(saved.draft_id, saved.revision, saved.updated_at)
+        photos, problem = self._save_photos(ctx, saved.draft_id, request.photos)                          # 저장 순서: 초안 먼저, 사진 정보 나중(초안 번호가 처음 저장할 때 생긴다)
+        return SavedOutcome(saved.draft_id, saved.revision, saved.updated_at, photos, problem)
+
+    @staticmethod
+    def _save_photos(ctx, draft_id, manifest):
+        """사진 정보를 함께 저장한다 → `(상태, 고정 문장)` — 상태 `none`(건드리지 않았다·사진이 없다) · `saved` · `failed`. 초안은 이미 저장했으므로 실패해도 초안 저장을 되돌리지 않는다(어긋남은 화면이 '고쳤어요' 로 남겨 다시 저장하게 한다). 같은 `persist_analysis`(기본)로 쓴다."""
+        if manifest is None:
+            return "none", ""
+        from ..service import photo_manifest
+        failure = None
+        try:
+            photo_manifest.save_manifest(ctx, draft_id, manifest)
+        except AppError as error:
+            failure = photo_failure(error, "pho_save_fail")
+            error.__traceback__ = None
+        if failure is not None:
+            return "failed", T["pho_save_fail"] + (" " + failure.user_message if failure.kind == "invalid" else "")
+        return ("saved" if manifest.photos else "none"), ""
 
     def list_saved(self, progress, cancelled):
         """저장한 초안 목록 — 읽기뿐이다(보관함이 없으면 빈 목록이고 파일을 만들지 않는다)."""
@@ -103,9 +120,27 @@ class ServiceDraftsProvider(DraftsProvider):
         if cancelled():
             raise JobCancelled()
         draft, context = opened.draft, opened.context
+        photos, photos_state, trash = self._load_photos(ctx, draft_id)
         result = restored_result(draft, names=tuple((key, shown(name, 30)) for key, name in context.blog_names), blog_url=context.blog_url, address=context.address, profile_found=context.profile_found,
                                  channel_found=context.channel_found)
-        return OpenedResult(result, draft.draft_id, draft.revision, draft.updated_at, opened.candidate, opened.context_problem, draft.topic, draft.title, draft.body, draft.post_type_choice)
+        return OpenedResult(result, draft.draft_id, draft.revision, draft.updated_at, opened.candidate, opened.context_problem, draft.topic, draft.title, draft.body, draft.post_type_choice, photos, photos_state, trash)
+
+    @staticmethod
+    def _load_photos(ctx, draft_id):
+        """저장한 초안의 사진 정보(읽기만) → `(사진 정보 또는 None, 상태, 되돌릴 사본이 있나)` — 상태 `none`·`ok`·`broken`(깨졌거나 보관 폴더가 올바르지 않다)·`unreadable`(지금 못 연다). 깨진 파일은 건드리지 않는다."""
+        from ..service import photo_manifest
+        loaded, state, trash = None, "none", False
+        failed = False
+        try:
+            loaded = photo_manifest.load_manifest(ctx, draft_id)
+            state = loaded.state
+            trash = photo_manifest.has_trash(ctx, draft_id)
+        except AppError as error:
+            failed = True
+            error.__traceback__ = None
+        if failed:
+            return None, "broken", False
+        return (loaded.manifest if state == "ok" else None), state, trash
 
     def delete_saved(self, draft_id, progress, cancelled):
         """저장한 초안을 지운다 — 확인창을 거친 뒤에만 불린다. 서비스가 지우기 직전 상태를 백업해 둔다(안 되면 지우지 않는다)."""
@@ -115,6 +150,33 @@ class ServiceDraftsProvider(DraftsProvider):
             draft_store.delete_draft(ctx, draft_id, confirmed=True)
         except AppError as error:
             raise save_failure(error) from None
+        from ..service import photo_manifest
+        photos = "none"
+        try:
+            photos = "trash" if photo_manifest.trash_manifest(ctx, draft_id, confirmed=True) == "moved" else "none"        # 완전히 지우지 않고 초안마다 한 벌뿐인 되돌릴 사본으로(운영자 확인 024) — 사진 파일은 건드리지 않는다
+        except AppError as error:
+            photos = "failed"                                                                               # 초안은 이미 지웠다 — 사진 정보 파일은 그대로 남아 있다(고아 찾기로 찾는다)
+            error.__traceback__ = None
+        return DeletedOutcome(draft_id, photos)
+
+    def restore_photos(self, draft_id, progress, cancelled):
+        """`사진 정보 되돌리기` — 되돌릴 사본을 읽어 멀쩡한지 확인한 뒤 사진 정보 파일로 되돌린다(이미 사진 정보가 있으면 덮어쓰지 않는다). 사용자가 단추를 눌렀을 때만 불린다."""
+        from ..service import photo_manifest
+        ctx = self._context()
+        try:
+            loaded = photo_manifest.restore_manifest(ctx, draft_id)
+        except AppError as error:
+            raise photo_failure(error) from None
+        return PhotosRestored(loaded.manifest)
+
+    def clear_photos_trash(self, draft_id, progress, cancelled):
+        """`사진 정보 사본 비우기` — 확인창을 거친 뒤에만 불린다. 되돌릴 사본 하나만 지운다(사진 정보 파일·사진 파일은 그대로)."""
+        from ..service import photo_manifest
+        ctx = self._context()
+        try:
+            photo_manifest.clear_trash(ctx, draft_id, confirmed=True)
+        except AppError as error:
+            raise photo_failure(error, "pho_trash_clear_fail") from None
         return draft_id
 
 
