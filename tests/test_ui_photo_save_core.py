@@ -307,6 +307,76 @@ class DeleteAndRestoreTest(unittest.TestCase):
         self.assertEqual((applied, controller.photos_trash, controller.notice), ("notfound", False, ("error", T["pho_trash_clear_fail"])))
 
 
+class LeaveWithFailedPhotosTest(unittest.TestCase):
+    """`저장` 을 골라 나가려는데 **사진 정보만** 저장하지 못했으면 나가지 않고 글 저장 실패와 같은 경고창이 먼저다(검증 S PS-1·Q PQ-1 — 그냥 나가면 고친 사진 정보가 조용히 사라졌다)."""
+    AFTERS = (("leave", lambda: None), ("list", None), ("close", None))
+
+    def failing(self):
+        controller, provider = with_photos()
+        provider.photo_fail = T["pho_save_fail"]
+        return controller, provider
+
+    def test_saving_to_leave_stops_with_a_warning_when_only_the_photo_info_failed(self):
+        for after in self.AFTERS:
+            with self.subTest(after=after[0]):
+                controller, provider = self.failing()
+                status, applied = store(controller, "save", after=after)
+                self.assertEqual((status, applied), ("started", ("photos_failed", after)), "이어서 나가라고 돌려주면 안 된다")
+                self.assertIn(saved_id(provider), provider.saved, "글은 저장됐다")
+                self.assertTrue(controller.photos_unsaved(), "사진 정보는 아직 저장되지 않았다")
+                self.assertEqual(controller.photos.count, 2, "사진 목록은 그대로 남아 있다")
+                problem = controller.take_save_problem()
+                self.assertEqual((problem.kind, problem.code, problem.user_message), ("other", "PHOTO_SAVE_FAILED", T["pho_save_fail"]))
+                closing = after[0] == "close"
+                self.assertEqual(controller.save_failure_dialog(problem, after), {"title": T["pho_savefail_leave_title"], "body": T["pho_save_fail"] + "\n\n" + T["pho_savefail_leave_tail"],
+                                                                                 "ok": T["pho_choice_discard_close" if closing else "pho_choice_discard_leave"], "cancel": T["drf_choice_stay"], "after": after})
+
+    def test_the_warning_says_the_photo_info_goes_away_and_the_draft_text_was_saved_and_the_buttons_say_so_too(self):
+        controller, provider = self.failing()
+        store(controller, "save", after=("leave", lambda: None))
+        dialog = controller.save_failure_dialog(controller.take_save_problem(), ("leave", lambda: None))
+        self.assertIn("초안은 저장했지만 사진 정보는 저장하지 못했어요", dialog["body"])
+        self.assertIn("그래도 나가면 고친 사진 정보가 사라져요", dialog["body"])
+        self.assertEqual((dialog["ok"], dialog["cancel"]), ("사진 정보 없이 나가기", "계속 고치기"))
+        self.assertNotIn("저장 안 하고", dialog["ok"], "글은 저장됐으므로 '저장 안 하고' 라고 하지 않는다")
+
+    def test_it_is_a_quiet_notice_when_nothing_is_waiting_to_leave(self):
+        controller, provider = self.failing()
+        status, applied = store(controller, "save")
+        self.assertEqual((status, applied), ("started", ("saved", None)))
+        self.assertIsNone(controller.take_save_problem())
+        self.assertEqual(controller.notice, ("error", T["pho_save_fail"]))
+        self.assertTrue(controller.photos_unsaved())
+
+    def test_after_the_warning_a_second_save_that_works_goes_on_to_leave(self):
+        controller, provider = self.failing()
+        after = ("close", None)
+        store(controller, "save", after=after)
+        controller.take_save_problem()
+        provider.photo_fail = None
+        status, applied = store(controller, "save", after=after)
+        self.assertEqual(applied, ("saved", after))
+        self.assertEqual((controller.photos_unsaved(), controller.save_state()), (False, "saved"))
+        self.assertIsNone(controller.take_save_problem())
+
+    def test_the_reason_the_service_gave_stays_in_the_warning(self):
+        controller, provider = with_photos()
+        reason = "사진 1 메모 줄 3 — 키나 토큰처럼 보이는 글이 있어요"
+        provider.photo_fail = T["pho_save_fail"] + " " + reason
+        after = ("leave", lambda: None)
+        store(controller, "save", after=after)
+        dialog = controller.save_failure_dialog(controller.take_save_problem(), after)
+        self.assertIn(reason, dialog["body"])
+
+    def test_a_text_failure_still_uses_the_text_warning(self):
+        controller, provider = self.failing()
+        failure = drafts.DraftFailure(T["drf_savefail_io"], code="FILE_WRITE_FAILED", kind="io")
+        after = ("close", None)
+        dialog = controller.save_failure_dialog(failure, after)
+        self.assertEqual((dialog["title"], dialog["ok"]), (T["drf_savefail_leave_title"], T["drf_choice_discard_close"]))
+        self.assertIn(T["drf_savefail_leave_tail"], dialog["body"])
+
+
 class FailureSentenceTest(unittest.TestCase):
     def test_photo_failures_use_the_fixed_sentences_and_never_the_details(self):
         from chanceblog_desktop.errors import AppError

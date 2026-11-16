@@ -1669,7 +1669,12 @@ class AppShell(QMainWindow):
                 self._photos_after_store()
 
     def _after_save(self, status, after):
-        """저장이 끝났다 — 저장 상태 줄·단추를 그 자리에서 바꾸고 알림(저장했어요 · 시각)을 띄운다. 확인창에서 `저장` 을 골랐다면 이어서 나가거나 닫는다."""
+        """저장이 끝났다 — 저장 상태 줄·단추를 그 자리에서 바꾸고 알림(저장했어요 · 시각)을 띄운다. 확인창에서 `저장` 을 골랐다면 이어서 나가거나 닫는다. 단 **사진 정보만** 저장하지 못했으면(`photos_failed`) 나가지 않고 글 저장 실패와
+        같은 경고창을 먼저 띄운다(저장 안 하고 나가기 / 계속 고치기 — 그냥 나가면 고친 사진 정보가 사라진다)."""
+        if status == "photos_failed":
+            self.photos_card_refresh()
+            self._after_save_failed(self.state.drafts.take_save_problem(), "photos", after)
+            return
         if status != "saved":
             return
         controller = self.state.drafts

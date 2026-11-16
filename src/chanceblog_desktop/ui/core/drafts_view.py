@@ -42,6 +42,7 @@ SAVE_STATES = ("none", "unsaved", "saved", "changed", "saving")
 STATES = ("empty", "loading", "normal", "refused", "notfound", "error")
 FAILURE_TEXT = {"io": "drf_fail_io", "newer": "drf_fail_newer", "corrupt": "drf_fail_corrupt", "invalid": "drf_fail_invalid", "notfound": "drf_fail_notfound", "stopped": "drf_refused_desc", "channel": "drf_channel_desc", "other": "drf_fail_other"}
 IMAGE_STATES = ("before", "skip")
+PHOTO_SAVE_CODE = "PHOTO_SAVE_FAILED"                        # 사진 정보만 저장하지 못했을 때 `save_problem` 의 진단 코드 — `save_failure_dialog` 가 이 코드로 사진 정보용 경고창을 고른다
 UPLOAD_LINES = 8                                             # 복사 전 확인창에 보이는 '올릴 사진' 줄의 수(나머지는 외 N건)
 KEYWORD_SEPARATOR = ", "
 
@@ -447,7 +448,7 @@ class DraftsController:
         return ("started", job) if job is not None else ("busy", None)
 
     def apply_saved(self, outcome):
-        """저장이 끝났다 → `(상태, 이어서 할 일)`: `saved` 또는 `left`(그 사이 화면을 떠났다 — 저장은 됐고 이 화면에는 아무것도 하지 않는다). 저장한 글을 기억해 '저장됨' 이 된다(저장하는 동안 더 친 글은 '저장한 뒤 고쳤어요')."""
+        """저장이 끝났다 → `(상태, 이어서 할 일)`: `saved` · `photos_failed`(글은 저장했는데 **사진 정보만** 저장하지 못했고 저장하고 나가려던 중이다 — 부른 쪽이 나가지 말고 `save_failure_dialog` 로 먼저 경고한다: 그냥 나가면 고친 사진 정보가 조용히 사라진다, 검증 S PS-1·Q PQ-1) · `left`(그 사이 화면을 떠났다 — 저장은 됐고 이 화면에는 아무것도 하지 않는다). 저장한 글을 기억해 '저장됨' 이 된다(저장하는 동안 더 친 글은 '저장한 뒤 고쳤어요')."""
         pending, self.store_pending = self.store_pending, None
         if pending is None or pending.get("op") != "save" or self.result is None:
             return "left", None
@@ -460,7 +461,12 @@ class DraftsController:
         if getattr(request, "photos", None) is not None and photos != "failed":
             self.photos_baseline = request.photos                                    # 사진 정보도 저장했다 — 이 목록이 저장한 판이다(저장하지 못했으면 기준을 그대로 둬 '고쳤어요' 가 남는다)
         if photos == "failed":
-            self.notice = ("error", getattr(outcome, "photos_problem", "") or T["pho_save_fail"])
+            message = getattr(outcome, "photos_problem", "") or T["pho_save_fail"]
+            self.notice = ("error", message)
+            after = pending.get("after")
+            if after is not None:                                                    # 확인창에서 `저장` 을 골라 나가려는데 사진 정보만 못 저장했다 — 이어서 나가면 고친 사진 정보가 사라지므로 글 저장 실패와 같은 경고창이 먼저다
+                self.save_problem = DraftFailure(message, code=PHOTO_SAVE_CODE, kind="other")
+                return "photos_failed", after
         return "saved", pending.get("after")
 
     def apply_save_failed(self, failure):
@@ -484,13 +490,16 @@ class DraftsController:
     def save_failure_dialog(self, failure, after=None):
         """저장 실패를 알리는 창의 글. `after` 가 없으면(`저장` 단추) 키·토큰 모양일 때만 창(확인 하나)이고 나머지는 알림 줄이라 None. `after` 가 있으면(확인창에서 `저장` 을 골랐다) **나가기를 막지 않되 경고**한다 —
         `ok`(저장 안 하고 나가기/닫기)·`cancel`(계속 고치기, 처음 포커스)이고 위치·종류 안내(있다면)와 '그래도 나가면 사라져요' 가 본문이다. 찾은 글은 어디에도 없다."""
-        secret = failure.kind == "keyshape"
+        secret, photos = failure.kind == "keyshape", failure.code == PHOTO_SAVE_CODE
         reason = "\n".join(line for line in (failure.user_message, failure.advice) if line)
         if after is None:
             if not secret:
                 return None
             return {"title": T["drf_savefail_secret_title"], "body": reason, "ok": T["drf_savefail_secret_ok"], "cancel": None}
         closing = after[0] == "close"
+        if photos:                                                                   # 글은 저장했고 사진 정보만 못 저장했다 — 그래도 나가면 고친 사진 정보가 사라진다(단추도 글은 저장됐음을 숨기지 않는다)
+            return {"title": T["pho_savefail_leave_title"], "body": reason + "\n\n" + T["pho_savefail_leave_tail"], "ok": T["pho_choice_discard_close" if closing else "pho_choice_discard_leave"],
+                    "cancel": T["drf_choice_stay"], "after": after}
         return {"title": T["drf_savefail_secret_title" if secret else "drf_savefail_leave_title"], "body": reason + "\n\n" + T["drf_savefail_leave_tail"],
                 "ok": T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"], "cancel": T["drf_choice_stay"], "after": after}
 

@@ -29,6 +29,8 @@ PHOTO_T = {
     "pho_restore_btn": "사진 정보 되돌리기", "pho_restore_btn_a11y": "되돌릴 사본에서 사진 정보 되돌리기", "pho_trash_clear_btn": "사진 정보 사본 비우기", "pho_trash_clear_btn_a11y": "사진 정보 사본 비우기 — 비우면 되돌릴 수 없어요",
     "pho_trash_clear_ask": "사진 정보 사본을 비울까요? 비우면 사진 정보를 되돌릴 수 없어요. 사진 파일은 그대로 있어요.", "pho_trash_clear_yes": "사본 비우기", "pho_trash_clear_no": "그만두기",
     "pho_restored_notice": "사진 정보를 되돌렸어요.", "pho_trash_cleared_notice": "사진 정보 사본을 비웠어요.", "pho_restore_fail": "사진 정보를 되돌리지 못했어요.", "pho_restore_missing": "되돌릴 사진 정보 사본이 없어요.", "pho_trash_clear_fail": "사진 정보 사본을 비우지 못했어요.",
+    "pho_savefail_leave_title": "사진 정보를 저장하지 못했어요", "pho_savefail_leave_tail": "그래도 나가면 고친 사진 정보가 사라져요. 계속 고치기를 누르면 이 화면에서 다시 저장할 수 있어요.",
+    "pho_choice_discard_leave": "사진 정보 없이 나가기", "pho_choice_discard_close": "사진 정보 없이 닫기",
     "pho_save_fail": "초안은 저장했지만 사진 정보는 저장하지 못했어요. 다시 저장해 보세요.", "pho_deleted_trash": "사진 정보는 되돌릴 사본으로 남겨 뒀어요.", "pho_deleted_trash_fail": "사진 정보를 사본으로 옮기지 못했어요. 사진 정보 파일은 그대로 남아 있어요.",
     "pho_open_broken": "저장한 사진 정보 파일을 읽을 수 없어요. 파일은 그대로 두었어요.", "pho_open_unreadable": "저장한 사진 정보 파일을 지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요.",
     "pho_row_title": "사진 넣기(선택)", "pho_row_desc": "글에 넣을 사진을 고르고 사진마다 한마디를 적어 두면 돼요.",
