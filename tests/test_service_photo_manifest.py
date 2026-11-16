@@ -284,10 +284,34 @@ class IdSafetyTest(Base):
 
 
 class BrokenFileTest(Base):
+    def good_text(self):
+        """멀쩡한 파일의 글 — 이 초안 번호의 것이라서 아래 사례는 각자의 결함 **하나**만 가진다(초안 번호가 빈 표본에서 출발하면 모든 사례가 '이름과 초안 번호가 다름' 으로 이미 깨져 있어 그 결함을 시험하지 못한다 — 검증 Q-3)."""
+        return dataclasses.replace(sample(1), draft_id=DRAFT_A).to_text()
+
     def broken_cases(self):
-        good = sample(1).to_text()
-        return {"JSON 아님": "{abc", "빈 파일": "", "BOM": "\ufeff" + good, "UTF-16": good.encode("utf-16"), "NUL": good.encode("utf-8") + b"\x00", "다른 초안 번호": good.replace('"draft_id": ""', f'"draft_id": "{DRAFT_B}"'),
-                "초안 번호 없음": good, "모르는 칸": good.replace('"draft_id"', '"exif": 1, "draft_id"'), "깊은 겹침": "[" * 50000, "너무 큼": "x" * (svc.MAX_FILE_BYTES + 1), "배열": "[]", "newer": good.replace("photo-manifest/1", "photo-manifest/2")}
+        good = self.good_text()
+        return {"JSON 아님": "{abc", "빈 파일": "", "BOM": chr(0xFEFF) + good, "UTF-16": good.encode("utf-16"), "NUL": good.encode("utf-8") + bytes(1),
+                "다른 초안 번호": good.replace(f'"draft_id": "{DRAFT_A}"', f'"draft_id": "{DRAFT_B}"'), "초안 번호 없음": good.replace(f'"draft_id": "{DRAFT_A}"', '"draft_id": ""'),
+                "모르는 칸": good.replace('"draft_id"', '"exif": 1, "draft_id"', 1), "깊은 겹침": "[" * 50000, "너무 큼": "x" * (svc.MAX_FILE_BYTES + 1), "배열": "[]", "newer": good.replace("photo-manifest/1", "photo-manifest/2")}
+
+    def test_the_good_sample_itself_loads_so_each_broken_case_has_exactly_its_own_defect(self):
+        self.write_raw(self.good_text())
+        self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "ok")
+        for name, content in self.broken_cases().items():
+            self.assertNotEqual(content, self.good_text(), name)
+
+    def test_a_read_that_fails_is_broken_never_none_and_the_file_is_left_alone(self):
+        """검증 Q-3 — 읽기가 사유를 돌려주면 '없음' 이 아니라 '깨짐' 이다(없음으로 알리면 저장이 그 위에 덮어쓴다). 읽기를 실패하게 바꿔 본다."""
+        path = self.write_raw(self.good_text())
+        before = path.read_bytes()
+        with mock.patch.object(own_posts, "_read_prefix", return_value=(b"", "unreadable")):
+            loaded = svc.load_manifest(self.ctx, DRAFT_A)
+            self.assertEqual((loaded.state, loaded.manifest.photos), ("broken", ()))
+            self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(1))
+            self.assertEqual(svc.list_manifests(self.ctx), svc.Listing((), 1))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.folder.iterdir()), [path.name], "읽기 실패가 새 파일·옮긴 파일을 만들지 않는다")
+        self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "ok")
 
     def test_an_unreadable_file_is_reported_broken_and_never_touched(self):
         for name, content in self.broken_cases().items():
@@ -549,6 +573,148 @@ class CheckFilesTest(Base):
 
     def test_windows_style_paths_that_cannot_exist_here_are_simply_missing(self):
         self.assertEqual([item.state for item in svc.check_files(sample(2))], ["missing", "missing"])
+
+
+class LinkAndCloudTest(Base):
+    """정션(윈도의 폴더 링크)·이름을 대신하는 재해석 지점·클라우드 '내려받지 않음' 비트를 시험이 직접 못박는다(독립 검증 S-1·Q-2). 심볼릭 링크는 `S_IFLNK` 로도 걸러져서 링크 시험만으로는
+    정션을 잡는 줄(`own_posts._link_like`)이나 '경로 위의 폴더' 순회가 빠져도 모른다. 진짜 정션 시험은 윈도에서만(`_winapi.CreateJunction` — 권한 불필요, 다른 곳에서는 건너뜀)이고, 가짜 상태 정보
+    시험은 리눅스에서도 돈다. 클라우드 세 비트의 값은 `own_posts` 의 상수를 읽지 않고 이 시험에 글자로 못박는다(상수가 바뀌면 여기서 걸린다)."""
+    REPARSE = 0x400                                                  # FILE_ATTRIBUTE_REPARSE_POINT
+    NAME_TAGS = {"symlink": 0xA000000C, "mount_point": 0xA0000003}   # 이름 대리 비트(0x20000000)가 켜진 재해석 표 — 링크 종류(심볼릭 링크·정션)
+    CLOUD_TAG = 0x9000601A                                           # OneDrive 같은 클라우드 표 — 이름 대리 비트가 꺼져 있다(링크가 아니다)
+    CLOUD_BITS = {"OFFLINE": 0x1000, "RECALL_ON_OPEN": 0x40000, "RECALL_ON_DATA_ACCESS": 0x400000}
+
+    def setUp(self):
+        super().setUp()
+        self.pictures = Path(self.tmp.name) / "pics"
+        self.pictures.mkdir()
+
+    def make(self, folder, name, size=64):
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / name
+        path.write_bytes(bytes([0xFF, 0xD8, 0xFF, 0xE0]) + bytes(size))
+        return path
+
+    @staticmethod
+    def manifest_of(*paths):
+        manifest = pm.empty_manifest()
+        for path in paths:
+            manifest, _id = pm.add_photo(manifest, str(path))
+        return manifest
+
+    @staticmethod
+    def info(kind, attributes=0, tag=0, size=64):
+        mode = (stat.S_IFDIR | 0o755) if kind == "dir" else (stat.S_IFREG | 0o644)
+        return types.SimpleNamespace(st_mode=mode, st_file_attributes=attributes, st_reparse_tag=tag, st_size=size)
+
+    @staticmethod
+    def fake_lstat(replacements):
+        """`svc._lstat` 를 바꾼다 — `{경로: 가짜 상태 정보}` 에 있는 경로만 가짜이고 나머지는 진짜다."""
+        real = svc._lstat
+        table = {Path(path): info for path, info in replacements.items()}
+
+        def fake(path):
+            return table[Path(path)] if Path(path) in table else real(path)
+        return mock.patch.object(svc, "_lstat", fake)
+
+    def store_calls(self):
+        return (lambda: svc.load_manifest(self.ctx, DRAFT_A), lambda: svc.save_manifest(self.ctx, DRAFT_A, sample(1)), lambda: svc.delete_manifest(self.ctx, DRAFT_A, confirmed=True),
+                lambda: svc.list_manifests(self.ctx), lambda: svc.orphans(self.ctx, ()))
+
+    def test_the_constants_are_the_ones_written_here(self):
+        self.assertEqual(own_posts._NAME_SURROGATE, 0x20000000)
+        self.assertEqual(own_posts._NOT_LOCAL, 0x1000 | 0x40000 | 0x400000)
+        self.assertEqual(sorted(self.CLOUD_BITS.values()), [0x1000, 0x40000, 0x400000])
+        self.assertEqual(stat.FILE_ATTRIBUTE_REPARSE_POINT, self.REPARSE)
+        for tag in self.NAME_TAGS.values():
+            self.assertTrue(tag & 0x20000000)
+        self.assertFalse(self.CLOUD_TAG & 0x20000000)
+
+    def test_a_name_surrogate_reparse_point_is_refused_as_the_store_folder_everywhere_and_nothing_is_made(self):
+        for label, tag in self.NAME_TAGS.items():
+            with self.subTest(tag=label):
+                with self.fake_lstat({self.folder: self.info("dir", self.REPARSE | 0x10, tag)}):
+                    for call in self.store_calls():
+                        error = self.refuses("CONTENT_INVALID", call)
+                        self.assertNoLeak(error, [self.tmp.name])
+                self.assertFalse(self.folder.exists(), "링크라고 본 폴더에 아무것도 만들지 않았다")
+
+    def test_a_reparse_point_without_the_name_surrogate_bit_is_not_taken_for_a_link(self):
+        self.folder.mkdir(parents=True)
+        with self.fake_lstat({self.folder: self.info("dir", self.REPARSE | 0x10, self.CLOUD_TAG)}):
+            self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "none")
+            self.assertEqual(svc.list_manifests(self.ctx), svc.Listing((), 0))
+            saved = svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A), svc.Loaded(saved, "ok"))
+
+    def test_a_name_surrogate_reparse_point_in_place_of_the_stored_file_is_broken_and_cannot_be_deleted(self):
+        saved = svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        before = self.file().read_bytes()
+        for label, tag in self.NAME_TAGS.items():
+            with self.subTest(tag=label):
+                with self.fake_lstat({self.file(): self.info("file", self.REPARSE, tag, size=len(before))}):
+                    self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "broken")
+                    self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(2))
+                    self.refuses("CONTENT_INVALID", svc.delete_manifest, self.ctx, DRAFT_A, confirmed=True)
+                self.assertEqual(self.file().read_bytes(), before)
+        self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A), svc.Loaded(saved, "ok"))
+
+    def test_a_name_surrogate_reparse_point_on_the_picture_path_is_a_link_whether_a_folder_or_the_file(self):
+        subfolder = self.pictures / "sub"
+        photo = self.make(subfolder, "a.jpg")
+        manifest = self.manifest_of(photo)
+        self.assertEqual(svc.check_files(manifest)[0].state, "ok")
+        for label, tag in self.NAME_TAGS.items():
+            with self.subTest(tag=label):
+                with self.fake_lstat({subfolder: self.info("dir", self.REPARSE | 0x10, tag)}):
+                    result = svc.check_files(manifest)[0]
+                self.assertEqual(result.state, "link", "경로 위의 폴더가 링크이면 그 아래 사진은 쓰지 않는다")
+                self.assertTrue(result.message)
+                with self.fake_lstat({photo: self.info("file", self.REPARSE, tag)}):
+                    self.assertEqual(svc.check_files(manifest)[0].state, "link")
+        with self.fake_lstat({subfolder: self.info("dir", self.REPARSE | 0x10, self.CLOUD_TAG)}):
+            self.assertEqual(svc.check_files(manifest)[0].state, "ok", "이름 대리 비트가 꺼진 재해석 지점은 링크가 아니다")
+
+    def test_each_cloud_bit_alone_means_the_file_is_not_downloaded_and_other_attributes_do_not(self):
+        photo = self.make(self.pictures, "c.jpg")
+        manifest = self.manifest_of(photo)
+        for name, bit in self.CLOUD_BITS.items():
+            with self.subTest(bit=name):
+                with self.fake_lstat({photo: self.info("file", bit)}):
+                    result = svc.check_files(manifest)[0]
+                self.assertEqual(result.state, "cloud")
+                self.assertIn("내려받지 않은", result.message)
+        with self.fake_lstat({photo: self.info("file", self.REPARSE | 0x1000, self.CLOUD_TAG)}):
+            self.assertEqual(svc.check_files(manifest)[0].state, "cloud", "실제 클라우드 파일의 모습(재해석 지점 + 오프라인)")
+        for harmless in (0x1, 0x2, 0x4, 0x20, 0x80, 0x2000, 0x8000):                           # 읽기 전용·숨김·시스템·보관·보통·색인 제외·무결성
+            with self.subTest(attributes=hex(harmless)):
+                with self.fake_lstat({photo: self.info("file", harmless)}):
+                    self.assertEqual(svc.check_files(manifest)[0].state, "ok")
+
+    def junction(self, link, target):
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        except (ImportError, AttributeError, OSError) as error:
+            self.skipTest(f"이 환경에서는 정션을 만들 수 없다({type(error).__name__})")
+
+    def test_a_real_junction_as_the_store_folder_is_refused_everywhere_and_nothing_is_written_beyond_it(self):
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.junction(self.folder, outside)
+        for call in self.store_calls():
+            self.refuses("CONTENT_INVALID", call)
+        self.assertEqual(list(outside.iterdir()), [], "정션 너머에 쓰지 않았다")
+
+    def test_a_real_junction_in_the_middle_of_the_picture_path_is_a_link_and_a_real_one_beside_it_is_ok(self):
+        real = Path(self.tmp.name) / "real_pics"
+        self.make(real, "a.jpg")
+        self.make(self.pictures / "plain", "b.jpg")
+        self.junction(self.pictures / "via", real)
+        results = svc.check_files(self.manifest_of(self.pictures / "via" / "a.jpg", self.pictures / "plain" / "b.jpg"))
+        self.assertEqual([item.state for item in results], ["link", "ok"])
+        self.assertTrue(results[0].message)
 
 
 class ScenarioTest(Base):
