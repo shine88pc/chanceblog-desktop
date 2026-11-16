@@ -196,14 +196,14 @@ class PhotoSheet(QWidget):
         if photo_id not in ids:
             return
         index = ids.index(photo_id)
-        target = None
+        box = None
         if name == "user_subject":
-            target = cards[index].note.edit
+            box = cards[index].note
         elif name == "user_note" and index + 1 < len(cards):
-            target = cards[index + 1].subject.edit
-        if target is not None:
-            target.setFocus(Qt.TabFocusReason)
-            self.scroll.ensureWidgetVisible(target, 0, K.SPACE["4"])                  # 프로그램으로 옮긴 포커스는 스크롤이 따라가지 않는다(Tab 은 Qt 가 따라간다) — 다음 사진이 화면 밖이어도 보이게
+            box = cards[index + 1].subject
+        if box is not None:
+            box.edit.setFocus(Qt.TabFocusReason)
+            self.scroll.ensureWidgetVisible(box, 0, K.SPACE["2"])                    # 칸 전체(이름표·입력 칸·글자 수)를 보이게 한다 — 입력 칸만 넘기면 Qt 는 글자 커서 줄만 맞춘다                  # 프로그램으로 옮긴 포커스는 스크롤이 따라가지 않는다(Tab 은 Qt 가 따라간다) — 다음 사진이 화면 밖이어도 보이게
 
     def _flip_lists(self):
         opened = not self.lists_body.isVisible()

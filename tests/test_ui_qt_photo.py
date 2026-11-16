@@ -909,11 +909,12 @@ class KeyboardTest(PhotoBase):
         self.settle(3)
         for number in range(2, 7):
             photo_id = f"p{number:03d}"
-            subject = form.rows[photo_id].subject.edit
+            box = form.rows[photo_id].subject
+            subject = box.edit
             self.assertIs(QApplication.focusWidget(), subject, photo_id)
-            top = subject.mapTo(viewport, subject.rect().topLeft()).y()
-            bottom = subject.mapTo(viewport, subject.rect().bottomLeft()).y()
-            self.assertTrue(0 <= top and bottom <= viewport.height(), (photo_id, top, bottom, viewport.height()))
+            top = box.mapTo(viewport, box.rect().topLeft()).y()
+            bottom = box.mapTo(viewport, box.rect().bottomLeft()).y()
+            self.assertTrue(0 <= top and bottom <= viewport.height(), (photo_id, top, bottom, viewport.height()))     # 이름표·입력 칸·글자 수 칸 전체가 보인다(입력 칸만 맞추면 Qt 는 글자 커서 줄만 맞춘다)
             QTest.keyClick(subject, Qt.Key_Return)                                       # 대상 → 같은 사진의 메모
             QTest.keyClick(QApplication.focusWidget(), Qt.Key_Return)                    # 메모 → 다음 사진의 대상
             self.settle(3)
