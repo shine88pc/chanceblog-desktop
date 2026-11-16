@@ -9,6 +9,7 @@
 """
 import re
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,38 @@ class LabelRuleTest(unittest.TestCase):
         """검증 Q2-5(B06): 대소문자만 다른 이름도 첫 단계에서 `(종류 + 번호)` 로 가른다 — `#2` 안전망이 대신 가르는 것이 아니다."""
         labels = cn.labels({"naver_a": ("My Blog", True), "naver_b": ("my blog", True)})
         self.assertEqual((labels["naver_a"], labels["naver_b"]), ("My Blog (네이버 블로그 1)", "my blog (네이버 블로그 2)"))
+
+
+class ReservedTextTest(unittest.TestCase):
+    """검증 S3-1: 별명이 칩 곁의 고정 글(`공통`·`전체`·`모든 소속`)과 같으면 서로 다른 칩이 같은 글이 된다 — 소속(전체 채널 대 한 채널)·거르기(전체 대 한 채널)를 잘못 고를 수 있다. 서비스는 이런 별명을 받는다."""
+
+    def tearDown(self):
+        cn.use(None)
+
+    def test_the_reserved_texts_are_exactly_the_fixed_chip_texts_that_sit_beside_the_channel_chips(self):
+        from chanceblog_desktop.topics import wording
+        self.assertEqual(cn.COMMON_SCOPE, wording.SCOPE_KO["common"], "서비스의 소속 이름 `공통` 과 같다")
+        self.assertEqual({T["cand_all"], T["seeds_all"], T["seeds_scope_all"]}, {"전체", "모든 소속"}, "채널 칩 곁의 거르기 `전체`·`모든 소속` 이 바뀌면 이 시험이 빨개진다")
+        self.assertEqual(cn.RESERVED, frozenset({"공통", "전체", "모든소속"}), "공백을 없앤 모양")
+
+    def test_the_fold_ignores_every_space_and_the_case(self):
+        self.assertEqual(cn._fold(" 공 통 "), cn._fold("공통"))
+        self.assertEqual(cn._fold(" A b "), cn._fold("ab"))
+        self.assertEqual(cn._fold("ABC"), cn._fold("abc"))
+        self.assertNotEqual(cn._fold("공통점"), cn._fold("공통"))
+
+    def test_an_alias_that_reads_like_a_fixed_chip_text_gets_the_kind_and_number_added_whatever_the_spaces(self):
+        for alias in ("공통", "전체", "모든 소속", " 공 통 ", "전 체", "모든소속", "공통\t"):
+            labels = cn.labels({"naver_a": (alias, True), "naver_b": ("", True)})
+            self.assertEqual(labels["naver_a"], f"{bf.clean_line(alias)} (네이버 블로그 1)", repr(alias))
+            self.assertNotIn(cn._fold(labels["naver_a"]), cn.RESERVED, repr(alias))
+            self.assertEqual(len({value.casefold() for value in labels.values()}), 5, repr(alias))
+        near = cn.labels({"naver_a": ("공통점", True), "naver_b": ("전체 보기", True)})
+        self.assertEqual((near["naver_a"], near["naver_b"]), ("공통점", "전체 보기"), "고정 글과 같을 때만 덧붙인다 — 비슷한 글은 그대로")
+
+    def test_the_kind_names_and_the_default_names_never_read_like_a_fixed_chip_text(self):
+        self.assertTrue(set(cn.DEFAULT.values()).isdisjoint(cn.RESERVED))
+        self.assertTrue({cn._fold(value) for value in cn.DEFAULT.values()}.isdisjoint(cn.RESERVED))
 
 
 class RegistryTest(unittest.TestCase):
@@ -198,6 +231,27 @@ class OtherScreensUseTheNamesTest(unittest.TestCase):
 
 
 
+class SourceNotesTest(unittest.TestCase):
+    """검증 Q3-5·S3-4: 옛 이름을 말하는 설명이 남지 않고, 가져온 도우미 함수의 이름을 매개변수가 가리지 않는다."""
+
+    SRC = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
+
+    def test_the_avatar_docstring_describes_the_letter_rule_as_it_is(self):
+        text = (self.SRC / "candidate_parts.py").read_text(encoding="utf-8")
+        self.assertNotIn("네이버 A·B 는 A·B", text, "옛 규칙(채널 열쇠 글자)이다")
+        self.assertIn("channel_names.avatar_letter", text)
+        self.assertIn("끝 숫자", text)
+
+    def test_no_parameter_of_a_component_factory_hides_the_imported_ampersand_helper(self):
+        import ast
+        tree = ast.parse((self.SRC / "components.py").read_text(encoding="utf-8"))
+        helpers = {alias.asname or alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module == "core.channel_names" or isinstance(node, ast.ImportFrom) and (node.module or "").endswith("channel_names") for alias in node.names}
+        self.assertEqual(len(helpers), 1, helpers)
+        parameters = {argument.arg for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.Lambda)) for argument in (*node.args.args, *node.args.kwonlyargs)}
+        self.assertTrue(helpers.isdisjoint(parameters), f"가져온 함수 {helpers} 를 가리는 매개변수가 있다: {helpers & parameters}")
+        self.assertNotIn("button_text", helpers, "`StateCard(…, button_text=…)` 매개변수와 같은 이름으로 가져오지 않는다(호출자는 키워드로 쓸 수 있다)")
+
+
 LONG_A = "가나다라마바사아자차카타파하" * 2                       # 28자
 LONG_B = LONG_A + "가"                                          # 29자 — 열두 자로 줄이면 LONG_A 와 같아진다
 
@@ -256,6 +310,24 @@ class NarrowPlacesTest(unittest.TestCase):
         self.assertEqual(cn.button_text("<b>x</b> 맛집"), "<b>x</b> 맛집", "`&` 밖의 글은 그대로다")
         self.assertEqual(cn.button_text("네이버 블로그 1"), "네이버 블로그 1")
         self.assertEqual(cn.button_text(5), "5")
+
+    def test_two_cut_names_that_differ_only_in_case_are_told_apart_too(self):
+        """검증 Q3-4: 줄인 이름의 같은 이름 가르기는 대소문자를 가리지 않는다(`ABC…`·`abc…` 가 열두 자 안에서 같아지면 `#2`)."""
+        upper, lower = "ABCDEFGHIJKLMNOP", "abcdefghijklmnop"
+        cn.use(cn.labels({"naver_a": (upper, True), "naver_b": (lower, True)}))
+        self.assertNotEqual(cn.label("naver_a").casefold(), cn.label("naver_b").casefold(), "전체 이름은 첫 가르기에서 이미 갈렸다")
+        short = {key: cn.short_label(key) for key in cn.ORDER}
+        self.assertEqual((short["naver_a"], short["naver_b"]), ("ABCDEFGHIJK…", "abcdefgh… #2"), "줄이면 대소문자만 다르다 — 둘째에 `#2` 가 붙는다")
+        self.assertEqual(len({value.casefold() for value in short.values()}), 5)
+
+    def test_display_order_puts_the_channels_in_the_card_order_and_keeps_unknown_keys_last(self):
+        """검증 Q3-1: 줄 글에 늘어놓는 채널은 엔진(저장) 순서가 아니라 블로그 관리의 카드 순서다 — 표시 전용이다(값·저장 순서는 그대로)."""
+        engine = ("github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b")
+        self.assertEqual(cn.display_order(engine), ["naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"])
+        self.assertEqual(cn.display_order(("zz", "naver_b", "naver_a")), ["naver_a", "naver_b", "zz"])
+        items = [types.SimpleNamespace(key=key) for key in engine]
+        self.assertEqual([item.key for item in cn.display_order(items, key=lambda item: item.key)], ["naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"])
+        self.assertEqual(cn.display_order(()), [])
 
     def test_the_full_name_is_given_only_for_a_cut_name(self):
         cn.use(cn.labels({"naver_a": (LONG_A, True)}))

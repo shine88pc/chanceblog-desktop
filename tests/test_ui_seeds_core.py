@@ -463,6 +463,58 @@ class ReadAndFilterTest(unittest.TestCase):
         self.assertFalse(controller.toggle_check("nope"))
 
 
+class DisplayOrderTest(unittest.TestCase):
+    """검증 Q3-1·S3-2(b)·S3-1: Seed 화면의 채널 글·칩 순서는 블로그 관리의 카드 순서이고(표시 전용 — 저장하는 값의 순서는 엔진 순서 그대로) 별명이 고정 칩 글과 같아도 칩 글이 서로 다르다."""
+
+    ENGINE = ("github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b")
+    CARDS = ["네이버 블로그 1", "네이버 블로그 2", "Blogger 1", "Blogger 2", "GitHub Pages"]
+
+    def tearDown(self):
+        cn.use(None)
+
+    def common_seed_with_every_channel(self):
+        import dataclasses
+        controller = new_controller()
+        provider = controller.provider
+        index = next(position for position, seed in enumerate(provider.seeds) if seed.seed_id == "EX011")
+        provider.seeds[index] = dataclasses.replace(provider.seeds[index], allowed_channels=self.ENGINE)
+        self.assertEqual(provider.seeds[index].allowed_channels, self.ENGINE, "서비스가 저장하는 순서는 엔진 순서다")
+        load(controller)
+        return controller
+
+    def test_the_list_row_and_the_info_row_name_the_allowed_channels_in_the_card_order(self):
+        controller = self.common_seed_with_every_channel()
+        rows = {row["id"]: row for row in controller.view()["list"]["rows"]}
+        self.assertEqual(rows["EX011"]["channels"], T["seeds_row_channels"].format(names=", ".join(self.CARDS)))
+        controller.open_detail("EX011")
+        info = {row["label"]: row["value"] for row in controller.drawer_view()["info"]}
+        self.assertEqual(info[T["seeds_info_channels"]], ", ".join(self.CARDS))
+        self.assertEqual(controller.by_id()["EX011"].allowed_channels, self.ENGINE, "읽어 온 값(저장 순서)은 그대로다")
+
+    def test_the_scope_chips_and_the_scope_options_follow_the_card_order_with_common_first(self):
+        """검증 S3-2(b): 소속 칩의 표시 순서(`DISPLAY_SCOPES`)를 못박는다 — 옛 엔진 순서(`SCOPE_ORDER`)로 되돌리면 빨개진다."""
+        self.assertEqual(sf.DISPLAY_SCOPES, ("common", "naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"))
+        self.assertEqual(sf.DISPLAY_CHANNELS, ("naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"))
+        self.assertEqual(sorted(sf.DISPLAY_SCOPES), sorted(sf.SCOPE_ORDER), "같은 소속을 다른 순서로 늘어놓을 뿐이다")
+        controller = new_controller()
+        self.assertEqual([chip["key"] for chip in controller.view()["filters"]["scope"]], ["all", *sf.DISPLAY_SCOPES])
+        controller.open_new()
+        options = {field["name"]: field["options"] for field in controller.drawer_view()["fields"] if field["options"]}
+        self.assertEqual([item["value"] for item in options["scope"]], list(sf.DISPLAY_SCOPES))
+        self.assertEqual([item["label"] for item in options["scope"]], ["공통", *self.CARDS])
+
+    def test_an_alias_like_a_fixed_chip_text_never_makes_two_scope_chips_read_the_same(self):
+        for alias in ("공통", "모든 소속"):
+            cn.use(cn.labels({"naver_a": (alias, True)}))
+            controller = new_controller()
+            chips = [chip["label"] for chip in controller.view()["filters"]["scope"]]
+            self.assertEqual(len({label.casefold() for label in chips}), len(chips), (alias, chips))
+            controller.open_new()
+            labels = [item["label"] for field in controller.drawer_view()["fields"] if field["name"] == "scope" for item in field["options"]]
+            self.assertEqual(len(set(labels)), len(labels), (alias, labels))
+            cn.use(None)
+
+
 class DrawerAndEditTest(unittest.TestCase):
     def test_opening_a_detail_shows_the_facts_the_notes_and_the_fields_of_that_seed_only(self):
         controller = new_controller()

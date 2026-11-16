@@ -266,7 +266,7 @@ class CandidatesController:
         if preview is None or not preview.can_make:
             return None
         self.make_asked = True
-        rows = " · ".join(T["cand_make_row"].format(name=rules.shown(item.name, 30), n=item.new) for item in preview.channels if item.new)
+        rows = " · ".join(T["cand_make_row"].format(name=rules.shown(item.name, 30), n=item.new) for item in cn.display_order(preview.channels, key=lambda item: item.key) if item.new)      # 화면 순서(검증 Q3-1)
         lines = [T["cand_make_counts"].format(total=preview.total_new, rows=rows)]
         lines.append(T["cand_make_seeds"].format(used=preview.seeds_used, proposed=preview.seeds_proposed) if preview.seeds_proposed else T["cand_make_seeds_none_proposed"].format(used=preview.seeds_used))
         skips = list(dict.fromkeys(reason for item in preview.channels for reason in item.reasons))

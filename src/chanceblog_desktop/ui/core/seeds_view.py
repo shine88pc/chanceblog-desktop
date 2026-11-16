@@ -17,6 +17,7 @@ from ...errors import AppError
 from ...topics import schedule
 from ...topics import seeds as sd
 from ...topics import wording
+from . import channel_names as cn
 from . import seed_form as sf
 from . import seed_rules as rules
 from .jobs import JobFailure
@@ -599,7 +600,7 @@ class SeedsController:
 
     def _info_rows(self, seed):
         none = T["seeds_info_none"]
-        channels_text = sf.channel_name(seed.scope) if seed.scope != sd.SCOPE_COMMON else ", ".join(sf.channel_name(code) for code in seed.allowed_channels)
+        channels_text = sf.channel_name(seed.scope) if seed.scope != sd.SCOPE_COMMON else ", ".join(sf.channel_name(code) for code in cn.display_order(seed.allowed_channels))      # 화면 순서(검증 Q3-1)
         if seed.scope != sd.SCOPE_COMMON:
             channels_text = T["seeds_info_channel_only"].format(name=channels_text)
         rows = [(T["seeds_info_scope"], sf.scope_name(seed.scope)), (T["seeds_info_importance"], sf.importance_name(seed.seed_type) + (" · " + T["seeds_flag_priority"] if seed.priority else "")),
@@ -707,7 +708,7 @@ class SeedsController:
         a11y = T["seeds_row_a11y_idle"].format(base=base) if idle is not None else base
         if unsaved:
             a11y = T["seeds_row_a11y_unsaved"].format(base=a11y)
-        names = ", ".join(sf.channel_name(code) for code in seed.allowed_channels)
+        names = ", ".join(sf.channel_name(code) for code in cn.display_order(seed.allowed_channels))                                                                          # 화면 순서(검증 Q3-1)
         return {"id": seed.seed_id, "title": title, "path": T["seeds_row_path"].format(major=sf.shown(seed.major, 30), minor=sf.shown(seed.minor, 30)), "status": status,
                 "meta": T["seeds_row_meta"].format(scope=sf.scope_name(seed.scope), importance=sf.importance_name(seed.seed_type), target=sf.target_name(seed.target_type)),
                 "channels": T["seeds_row_channels"].format(names=names), "flags": flags, "idle": idle is not None, "idle_text": T["seeds_idle_badge"] if idle is not None else "", "unsaved": unsaved,

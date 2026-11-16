@@ -19,6 +19,15 @@ ORDER = bf.DISPLAY_ORDER                                     # 종류별 채움 
 HOME_KEYS = {"A": "naver_a", "B": "naver_b"}                 # 홈의 채널 열쇠(A·B)가 가리키는 슬롯
 
 
+def _fold(text):
+    """같은 글인지 견주는 모양 — 공백을 모두 없애고 대소문자를 가리지 않는다(`공 통`·` 공통 ` 도 `공통` 이다)."""
+    return "".join(str(text).split()).casefold()
+
+
+COMMON_SCOPE = "공통"                                         # Seed 소속 칩 곁의 고정 글(서비스의 `SCOPE_KO["common"]` — 시험이 같은지 본다)
+RESERVED = frozenset(_fold(text) for text in (COMMON_SCOPE, T["cand_all"], T["seeds_all"], T["seeds_scope_all"]))      # 채널 칩 곁에 보이는 고정 글 — Seed 소속 `공통`·`모든 소속`, 거르기 `전체`(후보·Seed)
+
+
 def _kind_name(key):
     """카드가 아닌 슬롯의 이름 — 번호가 있는 종류(자리가 둘)는 `네이버 블로그 1`, 한 자리뿐이면 종류 이름 그대로."""
     return bf.suggest_alias(key) if len(bf.KIND_SLOTS[bf.KIND_KEY[key]]) > 1 else T["blogs_kind_" + bf.KIND_KEY[key]]
@@ -37,7 +46,10 @@ def labels(items=None, limit=LIMIT):
     out = {}
     for key in ORDER:
         alias, listed = items.get(key, ("", False))
-        out[key] = bf.shown(bf.card_title(key, alias) if listed else _kind_name(key), limit)
+        name = bf.shown(bf.card_title(key, alias) if listed else _kind_name(key), limit)
+        if _fold(name) in RESERVED:                           # 별명이 칩 곁의 고정 글(`공통`·`전체` …)과 같으면 서로 다른 칩이 같은 글이 된다 — `(종류 + 번호)` 를 덧붙인다(검증 S3-1)
+            name = bf.shown(f"{name} ({bf.suggest_alias(key)})", limit + 20)
+        out[key] = name
     seen = {}
     for key in ORDER:
         seen.setdefault(out[key].casefold(), []).append(key)
@@ -53,6 +65,12 @@ def labels(items=None, limit=LIMIT):
         for number, key in enumerate(group[1:], start=2):     # 그래도 겹치면(제안 이름과 같은 별명을 일부러 지은 경우) 번호를 붙인다
             out[key] = f"{out[key]} #{number}"
     return out
+
+
+def display_order(items, key=lambda item: item):
+    """채널(열쇠 또는 `key(항목)` 이 열쇠인 항목)들을 화면 순서(블로그 관리의 카드 순서)로 — 줄 글을 만들 때 쓴다. 표시 전용이다: 저장하는 순서·값은 그대로(검증 Q3-1)."""
+    rank = {code: number for number, code in enumerate(ORDER)}
+    return sorted(items, key=lambda item: rank.get(key(item), len(rank)))
 
 
 def short_names(full, limit=DRAWER_LIMIT):
@@ -129,4 +147,4 @@ def avatar_letter(key):
     return "?"
 
 
-__all__ = ["DEFAULT", "DRAWER_LIMIT", "button_text", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]
+__all__ = ["COMMON_SCOPE", "DEFAULT", "DRAWER_LIMIT", "RESERVED", "button_text", "display_order", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]

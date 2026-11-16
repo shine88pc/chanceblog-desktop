@@ -390,6 +390,17 @@ class ReadAndFilterTest(unittest.TestCase):
         self.assertFalse(controller.select("no-such-id"))
         self.assertTrue(controller.set_query(None) and controller.query == "", "글이 아닌 값은 빈 글이다")
 
+    def test_an_alias_like_the_all_chip_text_never_makes_a_channel_chip_read_like_the_all_chip(self):
+        """검증 S3-1: 별명이 `전체` 여도 후보 채널 거르기 칩의 `전체`(all)와 한 채널 칩이 같은 글이 되지 않는다."""
+        cn.use(cn.labels({"naver_a": ("전체", True)}))
+        self.addCleanup(cn.use, None)
+        controller = new_controller()
+        chips = controller.view()["filters"]["channel"]
+        labels = [chip["label"] for chip in chips]
+        self.assertEqual(labels[0], "전체")
+        self.assertEqual(len({label.casefold() for label in labels}), len(labels), labels)
+        self.assertIn("전체 (네이버 블로그 1)", labels)
+
     def test_the_chips_count_every_channel_status_and_band_and_mark_the_active_one(self):
         controller = new_controller()
         controller.set_status("NEW")
@@ -674,6 +685,15 @@ class MakeFlowTest(unittest.TestCase):
         for expected in ("새 후보를 최대 6개 만들어요: 예시 블로그 가 6개", "승인한 Seed 3개에서 만들어요. 승인 전 Seed 2개는 쓰이지 않아요.", "건너뛰는 것: 조합 제외", "지금 있는 후보는 지워지거나 바뀌지 않아요", "키나 네트워크는 쓰지 않아요", "연결 전"):
             self.assertIn(expected, body)
         self.assertNotIn("make", provider.calls, "미리 보기는 아무것도 쓰지 않는다")
+
+    def test_the_dialog_lists_the_channels_in_the_card_order_not_the_engine_order(self):
+        """검증 Q3-1: 확인창의 채널별 새 후보 수 줄도 블로그 관리의 카드 순서(네이버 1·2 → Blogger 1·2 → GitHub Pages)다 — 엔진(저장) 순서가 아니다. 표시 전용이다."""
+        provider, controller = self.ready()
+        engine = tuple(cd.ChannelPreview(key, name, number) for number, (key, name) in enumerate((("github_pages", "예시 지"), ("blogger_en", "예시 영"), ("blogger_ko", "예시 한"), ("naver_a", "예시 가"), ("naver_b", "예시 나")), start=1))
+        controller.preview = cd.MakePreview(store="ok", channels=engine, total_new=15, seeds_used=3)
+        body = controller.make_dialog()["body"]
+        positions = [body.index(f"{name} {number}개") for number, name in ((4, "예시 가"), (5, "예시 나"), (3, "예시 한"), (2, "예시 영"), (1, "예시 지"))]
+        self.assertEqual(positions, sorted(positions), body)
 
     def test_without_the_dialog_nothing_is_written_not_even_by_calling_start_make_directly(self):
         provider, controller = self.ready()
