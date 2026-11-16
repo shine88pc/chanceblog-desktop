@@ -36,6 +36,8 @@ from .candidate_parts import DetailPane
 from .sidebar import Sidebar
 from .references_dialog import DIALOG_WIDTH as REFERENCES_DIALOG_WIDTH
 from .references_dialog import ReferencesDialog
+from .photo_screen import DIALOG_WIDTH as PHOTO_DIALOG_WIDTH
+from .photo_screen import PhotoSheet
 from .style_dialog import DIALOG_WIDTH as STYLE_DIALOG_WIDTH
 from .style_dialog import StyleDialog
 from .topbar import TopBar
@@ -82,21 +84,30 @@ def qt_file_picker(parent, title, filter_text):
     return path
 
 
+def qt_files_picker(parent, title, filter_text):
+    """사진 여러 장을 고르는 윈도 대화상자 — 고른 파일들의 **위치 목록**(고르지 않으면 빈 목록). 파일을 읽거나 복사하지 않는다(시험은 이 대화상자 대신 가짜 선택기를 주입한다)."""
+    paths, _selected = QFileDialog.getOpenFileNames(parent, title, "", filter_text)
+    return list(paths)
+
+
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups, photos=photos)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
         self._url_opener = url_opener or qt_open_url                                     # 네이버 글쓰기 주소를 여는 함수(시험·사진은 가짜 열기 함수를 주입한다 — 주소만 연다)
         self._copy_timers = {}                                                           # 복사 단추의 `✓ … 복사됨` 모양을 되돌리는 시간 재개(복사한 항목마다 하나)
         self._close_confirmed = False                                                    # 앱을 닫을 때 고친 내용이 사라진다는 확인창에서 `그래도 닫기` 를 눌렀다
         self._drafts_side = None                                                         # 초안 화면을 그릴 때의 두 칸 배치 여부(창 논리 폭이 문턱을 넘으면 다시 그린다)
         self._file_picker = file_picker or qt_file_picker                                 # 이미지 위치를 고르는 대화상자(시험·사진은 가짜 선택기를 주입한다)
+        self._files_picker = files_picker or qt_files_picker                              # 사진 여러 장의 위치를 고르는 대화상자('사진 정리' — 시험은 가짜 선택기를 주입한다)
+        self.photo_form = None                                                            # 열려 있는 '사진 정리' 창의 안쪽 부품(없으면 None)
+        self.photo_preview_maker = photo_preview_maker                                    # 사진 미리보기를 만드는 함수(시험은 가짜를 주입한다 — 없으면 `imagecheck` 로 메모리에서만 만든다)
         self._clipboard_wipe = clipboard_wipe or qt_clipboard_wipe                        # 붙여 넣은 키가 클립보드에 남지 않게 비우는 함수(시험은 가짜를 주입한다)
         self.setWindowTitle(T["window_title"])
         root = QWidget()
@@ -474,6 +485,9 @@ class AppShell(QMainWindow):
         if self.dialog.is_open:
             if self.references_form is not None:                                  # 참고 글 보관함은 Esc 도 닫기 단추와 같은 확인을 거친다(저장 안 한 변경을 조용히 버리지 않는다)
                 self.references_escape()
+                return
+            if self.photo_form is not None:                                       # 사진 정리는 Esc 도 닫기 단추와 같다(확인 줄이 있으면 먼저 그것을 그만둔다)
+                self.photos_escape()
                 return
             self.close_dialog()
         else:
@@ -2184,6 +2198,93 @@ class AppShell(QMainWindow):
             self.references.cancel_delete()
             form.refresh()
             form.delete_button.setFocus(Qt.OtherFocusReason)
+
+    # ---- 사진 정리(사진 연동 2단계, 결정 D-499) — 초안 작성 화면의 '사진 넣기(선택)' 줄과 '사진' 카드가 여는 창. 사진 목록은 초안 컨트롤러의 `photos`(`PhotoBoard`)가 메모리에만 들고 있고 저장하지 않는다(3단계). 사진 파일은 읽기만 한다 ----
+    def photos_open(self, _checked=False):
+        """`사진 정리 열기`·`사진 넣기` — 창을 연다. 다른 대화상자가 열려 있으면 열지 않는다. 어느 길로든 닫히면 칸·미리보기·대기열을 비운다(사진 목록은 남는다)."""
+        if self.dialog.is_open:
+            return None
+        board = self.state.drafts.photos
+        previous_focus = QApplication.focusWidget()
+        board.open()
+        form = PhotoSheet(self, board)
+        self.dialog.clear()
+        self.dialog.cleanups.append(self._photos_discard)
+        self.dialog.setAccessibleName(T["pho_title"])
+        self.dialog.layout_.addWidget(form)
+        form.show()
+        if previous_focus is not None:
+            self._dialog_return = previous_focus
+        self.dialog.present(PHOTO_DIALOG_WIDTH)
+        self._trap_focus(True, self.dialog)
+        self.photo_form = form
+        form.refresh()
+        form.focus_start()
+        return form
+
+    def _photos_discard(self):
+        """대화상자가 닫히거나 바뀔 때 — 줄·그림을 비우고 컨트롤러를 닫힌 상태로 둔다(한도를 넘긴 글은 버린다). 여러 번 불러도 같다."""
+        form, self.photo_form = self.photo_form, None
+        if form is not None:
+            form.discard()
+        self.state.drafts.photos.shutdown()
+        self.photos_card_refresh()
+
+    def _photos_live(self):
+        form = self.photo_form
+        return form if form is not None and self.state.drafts.photos.is_open else None
+
+    def photos_close(self):
+        """`닫기` — 아직 규칙에 넘기지 않은 글을 마지막으로 넘기고, 한도를 넘겨 반영하지 못한 글이 남았으면 처음 한 번은 닫지 않고 알린다."""
+        form = self._photos_live()
+        if form is None:
+            return None
+        form.flush()
+        if self.state.drafts.photos.close() != "closed":
+            form.refresh()
+            return "warned"
+        self.close_dialog()
+        return "closed"
+
+    def photos_escape(self):
+        """Esc — 한꺼번에 확인의 확인 줄이 있으면 그것을 그만두고, 아니면 닫기와 같다."""
+        form = self._photos_live()
+        if form is None:
+            return None
+        board = self.state.drafts.photos
+        if board.confirm_all_asked:
+            form.act("cancel_confirm_all")
+            return "cancel_confirm"
+        return self.photos_close()
+
+    def photos_pick(self):
+        """`사진 추가` — 파일 선택 창(위치만 준다)에서 사진 여러 장을 골라 넣는다. 취소하면(빈 목록) 아무것도 하지 않는다. 못 넣은 파일은 창 안에 이름과 이유로 보이고 경로는 어디에도 남지 않는다."""
+        form = self._photos_live()
+        if form is None:
+            return None
+        paths = self._files_picker(self, T["pho_pick_title"], f"{T['pho_pick_filter']} {IMAGE_FILTER}")
+        result = self.state.drafts.photos.add_paths(paths)
+        paths = None
+        form.refresh()
+        return result
+
+    def photos_relink(self, photo_id):
+        """`다시 찾기` — 파일 선택 창에서 같은 사진의 새 위치를 골라 이어 붙인다."""
+        form = self._photos_live()
+        if form is None:
+            return None
+        path = self._file_picker(self, T["pho_relink_title"], f"{T['pho_pick_filter']} {IMAGE_FILTER}")
+        status = self.state.drafts.photos.relink(photo_id, path)
+        path = None
+        form.refresh()
+        return status
+
+    def photos_card_refresh(self):
+        """초안 작성 화면의 '사진' 카드와 '만드는 방법' 칸의 줄을 지금 사진 수에 맞춘다(화면 전체를 다시 그리지 않는다)."""
+        page = self._drafts_screen()
+        if page is not None:
+            from . import draft_screen as ds
+            ds.refresh_photos(page, self.state.drafts.photos.card())
 
     # ---- 설정 화면의 백업·복원 카드(BACKUPUI) — 읽기(목록)는 작업 스레드, 쓰기(지금 백업·복원)는 사용자가 단추를 눌렀을 때만 따로 시작하는 작업이다. 복원은 확인창이 먼저다 ----
     def _backups(self):

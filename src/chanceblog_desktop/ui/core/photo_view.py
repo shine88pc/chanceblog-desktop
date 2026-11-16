@@ -151,6 +151,17 @@ class PhotoBoard:
         found = [item for item in self.manifest.photos if item.photo_id == photo_id]
         return found[0] if found else None
 
+    def local_path(self, photo_id):
+        """미리보기를 읽을 때만 쓰는 파일 위치(없으면 빈 글) — **뷰모델에는 없다.** 화면 층이 이미지 읽기 도구(`imagecheck`)에 넘기려고 부르고 화면에 보이지도 어디에 적지도 않는다."""
+        photo = self.photo(photo_id)
+        return photo.local_path if photo is not None else ""
+
+    def shutdown(self):
+        """대화상자가 어느 길로든 닫힌다 — 경고 없이 닫고(한도를 넘긴 글은 버린다) 임시 상태를 비운다. 여러 번 불러도 같다."""
+        self.errors = {}
+        self.close_warned = True
+        return self.close()
+
     def _flag(self, level, text):
         self.notice = (level, text)
 

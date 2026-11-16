@@ -29,6 +29,7 @@ class DraftsUi:
         self.picks, self.copy, self.blog_chips, self.type_chips, self.fields = [], {}, {}, {}, {}
         self.options_panel = self.options_toggle = self.pending_note = None
         self.image_state = self.image_button = None
+        self.photos_count = self.photos_button = self.photos_unsaved = self.photos_row_button = None        # 사진 정리(2단계) — 오른쪽 '사진' 카드와 '만드는 방법' 칸의 줄
         self.accordions = {}
         self.checks_status = None
         self.back = self.apply = self.actions = self.action_bar = None
@@ -258,6 +259,12 @@ def _options_panel(shell, options, ui):
         ui.fields[field["name"]] = edit
         inner.addWidget(edit)
         inner.addWidget(UI.label(field["hint"], "caption", wrap=True))
+    photos = options["photos"]
+    inner.addWidget(UI.label(photos["row_title"], "small"))
+    inner.addWidget(UI.label(photos["row_desc"], "caption", wrap=True))
+    ui.photos_row_button = UI.Button("secondary", photos["button"], size="sm", accessible=photos["button_a11y"], focus_key="drf-photos-row")
+    ui.photos_row_button.clicked.connect(shell.photos_open)
+    inner.addWidget(ui.photos_row_button, 0, Qt.AlignLeft)
     ui.pending_note = UI.label(options["pending_text"], "small", wrap=True)
     ui.pending_note.set_tone("orange")
     ui.pending_note.setVisible(bool(options["pending"]))
@@ -340,6 +347,23 @@ def _image_card(shell, vm, ui):
     return card
 
 
+def _photos_card(shell, vm, ui):
+    """사진 카드 — 넣은 사진 수와 확인 수, `사진 정리 열기`(사진을 하나도 안 넣었으면 `사진 넣기`). 사진 정리는 별도 창이다. 사진을 넣지 않아도 초안 만들기는 그대로다."""
+    card, inner = _section(vm["title"])
+    ui.photos_count = UI.label(vm["count"], "h3", wrap=True)
+    ui.photos_count.setAccessibleName(vm["a11y"])
+    inner.addWidget(ui.photos_count)
+    inner.addWidget(UI.label(vm["hint"], "caption", wrap=True))
+    ui.photos_unsaved = UI.label(vm["unsaved"], "caption", wrap=True)
+    ui.photos_unsaved.set_tone("orange")
+    ui.photos_unsaved.setVisible(bool(vm["unsaved"]))
+    inner.addWidget(ui.photos_unsaved)
+    ui.photos_button = UI.Button("secondary", vm["button"], size="sm", accessible=vm["button_a11y"], focus_key="drf-photos")
+    ui.photos_button.clicked.connect(shell.photos_open)
+    inner.addWidget(ui.photos_button, 0, Qt.AlignLeft)
+    return card
+
+
 def _checks_card(shell, vm, ui):
     card, inner = _section(vm["title"])
     ui.checks_status = UI.label(vm["status"], "small", wrap=True)                    # 출처와 확인 필요 상태 한 줄(완료 조건 ⑭)
@@ -369,6 +393,7 @@ def _right(shell, side, ui):
     column.addWidget(_text_card(side["category"]["title"], side["category"]["text"], side["category"]["missing"]))
     column.addWidget(_text_card(side["summary"]["title"], side["summary"]["text"], False, _copy_button(shell, ui, side["summary"]["copy"])))
     column.addWidget(_image_card(shell, side["image"], ui))
+    column.addWidget(_photos_card(shell, side["photos"], ui))
     column.addWidget(_checks_card(shell, side["checks"], ui))
     column.addStretch(1)
     return column
@@ -577,6 +602,21 @@ def refresh_image(page, vm):
         ui.image_state.set_text(vm["state_text"])
         ui.image_button.setText(vm["button"])
         ui.image_button.setAccessibleName(vm["button_a11y"])
+
+
+def refresh_photos(page, card):
+    """사진 카드와 '만드는 방법' 칸의 줄 — 사진 수·확인 수·단추 글을 그 자리에서 바꾼다(창에서 사진을 넣고 지울 때마다 부른다)."""
+    ui = _ui(page)
+    if ui is None or ui.photos_count is None:
+        return
+    ui.photos_count.set_text(card["count"])
+    ui.photos_count.setAccessibleName(card["a11y"])
+    ui.photos_unsaved.set_text(card["unsaved"])
+    ui.photos_unsaved.setVisible(bool(card["unsaved"]))
+    for button in (ui.photos_button, ui.photos_row_button):
+        if button is not None:
+            button.setText(card["button"])
+            button.setAccessibleName(card["button_a11y"])
 
 
 def show_copy(page, key, copied_text, copied):
