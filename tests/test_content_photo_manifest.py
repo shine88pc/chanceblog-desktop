@@ -251,6 +251,18 @@ class PathRulesTest(Base):
         for bad in (None, 5, b"C:\\a.jpg", ["C:\\a.jpg"], Path("C:\\a.jpg"), True):
             self.assertIsNotNone(pm.path_problem(bad), repr(bad))
 
+    def test_network_places_and_web_addresses_are_refused_with_their_own_reason_even_where_a_slash_path_is_allowed(self):
+        """윈도가 아닌 곳(`posix=True`)에서는 `//서버/공유/a.jpg` 가 `/` 로 시작해 절대 경로로 보이므로 이 검사가 따로 있어야 막힌다 — 이유 문장도 따로다."""
+        network = pm._P_NETWORK
+        back = chr(92)
+        for path in ("//server/share/a.jpg", back * 2 + "server" + back + "share" + back + "a.jpg", back * 2 + "." + back + "C:" + back + "a.jpg", back * 2 + "?" + back + "C:" + back + "a.jpg",
+                     "https://example.com/a.jpg", "http://x/a.jpg", "file:///C:/a.jpg", "ftp://h/a.jpg", "javascript:alert(1)//a.jpg"):
+            for posix in (False, True):
+                with self.subTest(path=path, posix=posix):
+                    self.assertEqual(pm.path_problem(path, posix=posix), network)
+        self.assertIn("네트워크 위치", network)
+        self.assertNotEqual(pm.path_problem("relative/a.jpg"), network)
+
     def test_the_length_limit_is_260_characters(self):
         stem = "C:\\" + "d" * 240 + "\\"
         ok = stem + "a" * (260 - len(stem) - 4) + ".jpg"
@@ -763,6 +775,10 @@ class StrictReadTest(Base):
                 self.assertRefuses(pm.PhotoManifest.from_text, bad)
         self.assertEqual(pm.PhotoManifest.from_text(text), pm.PhotoManifest.from_dict(good))
         self.assertEqual(pm.PhotoManifest.from_text(text + "\n\n  "), pm.PhotoManifest.from_dict(good))
+        room = pm.MAX_TEXT_BYTES - len(text.encode("utf-8"))
+        self.assertEqual(pm.PhotoManifest.from_text(text + " " * room), pm.PhotoManifest.from_dict(good), "512KB 정확히는 된다")
+        error = self.assertRefuses(pm.PhotoManifest.from_text, text + " " * (room + 1))
+        self.assertIn("너무 커요", error.rendered().message, "JSON 으로는 멀쩡해도 512KB 를 넘으면 읽지 않는다")
 
     def test_a_newer_schema_is_reported_as_newer_and_other_schemas_as_wrong(self):
         for newer in ("chanceblog.photo-manifest/2", "chanceblog.photo-manifest/10"):
