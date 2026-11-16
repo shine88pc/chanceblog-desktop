@@ -10,7 +10,9 @@
 """
 import ast
 import json
+import random
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -467,6 +469,165 @@ class FilesAtAddTest(unittest.TestCase):
         board.provider.fail.add("inspect")
         self.assertEqual(board.relink("p001", path_of(9)), "refused")
         self.assertEqual(board.provider.calls, ["inspect"])
+
+
+class ManyFilesTest(unittest.TestCase):
+    """검증 S T-2 — 파일을 아주 많이(수백~수천 개) 골라도 느려지지 않는다. 사진이 한도(30장)에 차면 남은 파일은 읽지도 판정하지도 않고 개수만 세고, 못 넣은 파일 목록은 처음 `MAX_REJECTED_ROWS`(10)줄까지만 이름을 보이고 나머지는 '외 N개' 한두 줄로 합친다
+    (옛 구현은 줄이 고른 수만큼이라 화면이 장수의 제곱으로 느려졌다 — 100개 0.8초·300개 5.9초·1000개 70초)."""
+    FULL = "사진은 30장까지만 넣을 수 있어요."
+
+    @staticmethod
+    def reference(board, paths):
+        """옛 구현 — 고른 파일을 하나씩 모두 `_try_add` 로 넣어 보고 못 넣은 것을 전부 모은다 → `(넣은 수, 못 넣은 파일 전부)`."""
+        added, rejected = 0, []
+        for path in [item for item in (paths or ()) if isinstance(item, str) and item]:
+            reason = board._try_add(path)
+            if reason:
+                rejected.append(pv.Rejected(rules.short_name(path), reason))
+            else:
+                added += 1
+        return added, rejected
+
+    def test_three_thousand_files_take_under_a_second_and_only_the_thirty_that_fit_are_ever_read(self):
+        board = new_board()
+        paths = [path_of(number) for number in range(1, 3001)]
+        started = time.perf_counter()
+        result = board.add_paths(paths)
+        seconds = time.perf_counter() - started
+        self.assertEqual(result, (30, 2970))
+        self.assertLess(seconds, 1.0, f"3000개를 고르는 데 {seconds:.2f}초")
+        self.assertEqual(board.provider.calls, ["inspect", "judge"] * 30, "31번째부터는 점검도 읽기도 하지 않았다")
+        self.assertEqual([item.name for item in board.rejected], [f"{FILE_STEM}-{number}.jpg" for number in range(31, 41)])
+        self.assertEqual({item.reason for item in board.rejected}, {self.FULL})
+        self.assertEqual(board.rejected_more, pv.RejectedMore(over=2960, other=0))
+        shown = board.view()["rejected"]
+        self.assertEqual(len(shown["rows"]), pv.MAX_REJECTED_ROWS)
+        self.assertEqual([line["text"] for line in shown["more"]], ["외 2960개는 사진을 30장까지만 넣을 수 있어서 넣지 못했어요."])
+        self.assertEqual([line["a11y"] for line in shown["more"]], [line["text"] for line in shown["more"]])
+        self.assertEqual(board.view()["notice"], {"level": "info", "text": "사진 30장을 넣었어요."})
+        self.assertNotIn(f"{FILE_STEM}-100.jpg", dumped(board), "이름을 보이지 않은 파일은 어디에도 없다")
+        self.assertNotIn(USER_DIR, dumped(board))
+
+    def test_three_thousand_refused_files_are_also_fast_and_end_as_ten_rows_and_a_count(self):
+        paths = [path_of(number) for number in range(1, 3001)]
+        board = new_board(1)
+        board.provider.states.update({path: "link" for path in paths[1:]})
+        board.provider.calls.clear()
+        started = time.perf_counter()
+        result = board.add_paths(paths[1:])
+        seconds = time.perf_counter() - started
+        self.assertEqual(result, (0, 2999))
+        self.assertLess(seconds, 1.0, f"거절될 파일 3000개를 고르는 데 {seconds:.2f}초")
+        self.assertEqual(board.provider.calls.count("judge"), 0, "점검에서 걸린 파일은 읽지 않았다")
+        self.assertEqual(len(board.rejected), pv.MAX_REJECTED_ROWS)
+        self.assertEqual({item.reason for item in board.rejected}, {T["pho_file_link"]})
+        self.assertEqual(board.rejected_more, pv.RejectedMore(over=0, other=2989))
+        self.assertEqual([line["text"] for line in board.view()["rejected"]["more"]], ["외 2989개도 넣지 못했어요."])
+        self.assertIsNone(board.view()["notice"], "하나도 못 넣었으면 앞의 '넣었어요' 안내는 지워진다")
+
+    def test_up_to_ten_rejected_files_are_all_listed_and_only_the_eleventh_on_is_counted(self):
+        for refused in (9, 10, 11, 12):
+            with self.subTest(refused=refused):
+                paths = [path_of(number) for number in range(1, refused + 1)]
+                board = new_board()
+                board.provider.states.update({path: "cloud" for path in paths})
+                self.assertEqual(board.add_paths(paths), (0, refused))
+                self.assertEqual(len(board.rejected), min(refused, 10))
+                self.assertEqual(board.rejected_more, pv.RejectedMore(0, max(0, refused - 10)))
+                self.assertEqual(len(board.view()["rejected"]["more"]), 1 if refused > 10 else 0)
+        for extra in (9, 10, 11, 12):                                                     # 한도에 차서 못 넣는 파일도 같다
+            with self.subTest(over=extra):
+                board = new_board(30)
+                self.assertEqual(board.add_paths([path_of(number) for number in range(31, 31 + extra)]), (0, extra))
+                self.assertEqual((len(board.rejected), board.rejected_more), (min(extra, 10), pv.RejectedMore(max(0, extra - 10), 0)))
+        board = new_board(30)
+        self.assertEqual(board.add_paths([path_of(31)]), (0, 1))
+        self.assertEqual((len(board.rejected), board.view()["rejected"]["more"]), (1, []), "한 개면 옛 화면 그대로 — 줄 하나뿐")
+
+    def test_both_count_lines_come_over_first_and_are_fixed_sentences_with_numbers_only(self):
+        board = new_board(28)
+        refused = [path_of(number, "gif") for number in range(1, 13)]                      # 지원하지 않는 형식 12개 → 이름 10줄 + 나머지 2개
+        fits = [path_of(100), path_of(101)]                                                # 29·30번째 — 이제 가득 찬다
+        over = [path_of(number) for number in range(200, 205)]                            # 한도를 넘는 5개 — 줄은 이미 10개라 개수만
+        self.assertEqual(board.add_paths(refused + fits + over), (2, 17))
+        self.assertEqual(board.count, 30)
+        self.assertEqual([item.name for item in board.rejected], [f"{FILE_STEM}-{number:02d}.gif" for number in range(1, 11)])
+        self.assertEqual({item.reason for item in board.rejected}, {"지원하지 않는 형식이에요. JPG·PNG·WebP 사진만 쓸 수 있어요"})
+        self.assertEqual(board.rejected_more, pv.RejectedMore(over=5, other=2))
+        lines = [line["text"] for line in board.view()["rejected"]["more"]]
+        self.assertEqual(lines, ["외 5개는 사진을 30장까지만 넣을 수 있어서 넣지 못했어요.", "외 2개도 넣지 못했어요."])
+        for text in lines:
+            self.assertNotIn(FILE_STEM, text)
+        self.assertNotIn(f"{FILE_STEM}-200.jpg", dumped(board))
+        self.assertEqual(board.view()["notice"], {"level": "info", "text": "사진 2장을 넣었어요."})
+
+    def test_the_outcome_equals_trying_every_file_one_by_one_for_many_mixed_choices(self):
+        rng = random.Random(20261117)
+        seen = {"over": 0, "other": 0, "both": 0, "started_full": 0, "plain": 0, "nothing_added": 0}
+        for round_number in range(120):
+            have = rng.choice([0, 0, 1, 5, 20, 27, 28, 29, 30])
+            verdicts = {path_of(900 + number): R.Verdict(R.TOO_BIG, T["img_local_too_big"]) for number in range(5)}
+            states = {path_of(800 + number): rng.choice(["link", "cloud", "missing", "not_file"]) for number in range(5)}
+            fresh = [path_of(number) for number in range(100, 100 + rng.choice([0, 3, 12, 31, 45]))]
+            bad = [path_of(number, "gif") for number in range(rng.choice([0, 3, 12, 25]))] + [path_of(900 + number) for number in range(rng.randint(0, 5))] + [path_of(800 + number) for number in range(rng.randint(0, 5))]
+            repeat = [path_of(rng.randint(1, have)) for _ in range(rng.randint(0, 6))] if have else []
+            repeat += rng.sample(fresh, min(3, len(fresh)))
+            chosen = fresh + bad + repeat + ["", None, 7, "relative/x.jpg"]
+            rng.shuffle(chosen)
+            new, old = new_board(have, verdicts=verdicts), new_board(have, verdicts=verdicts)
+            new.provider.states.update(states)
+            old.provider.states.update(states)
+            result = new.add_paths(chosen)
+            added, everything = self.reference(old, chosen)
+            label = (round_number, have, len(chosen))
+            self.assertEqual(result, (added, len(everything)), label)
+            self.assertEqual(new.manifest, old.manifest, label)
+            self.assertEqual(new.states, old.states, label)
+            self.assertEqual(list(new.rejected), everything[:pv.MAX_REJECTED_ROWS], label)
+            tail = everything[pv.MAX_REJECTED_ROWS:]
+            tail_over = sum(1 for item in tail if item.reason == self.FULL)
+            self.assertEqual(new.rejected_more, pv.RejectedMore(tail_over, len(tail) - tail_over), label)
+            self.assertEqual(new.notice, ("info", T["pho_added"].format(n=added)) if added else None, label)
+            seen["over"] += tail_over > 0
+            seen["other"] += len(tail) - tail_over > 0
+            seen["both"] += tail_over > 0 and len(tail) - tail_over > 0
+            seen["started_full"] += have == 30
+            seen["plain"] += not tail
+            seen["nothing_added"] += added == 0
+        for name, number in seen.items():
+            self.assertGreaterEqual(number, 3, f"무작위 선택이 '{name}' 경우를 충분히 지나지 않았다 {seen}")
+
+    def test_a_full_board_reads_nothing_however_many_files_are_chosen(self):
+        board = new_board(30)
+        board.provider.calls.clear()
+        self.assertEqual(board.add_paths([path_of(number) for number in range(31, 3031)]), (0, 3000))
+        self.assertEqual(board.provider.calls, [])
+        self.assertEqual((len(board.rejected), board.rejected_more), (10, pv.RejectedMore(over=2990, other=0)))
+        self.assertEqual(board._try_add(path_of(99)), self.FULL, "한 파일씩 넣는 길도 가득 찼으면 같은 문장으로 거절한다")
+        self.assertEqual(board.provider.calls, [])
+
+    def test_the_counts_go_away_with_the_list_by_clear_rejected_a_new_choice_close_and_clear(self):
+        def crowded():
+            board = new_board()
+            board.provider.states.update({path_of(number): "link" for number in range(1, 16)})
+            board.add_paths([path_of(number) for number in range(1, 16)])
+            self.assertEqual(board.rejected_more, pv.RejectedMore(0, 5))
+            return board
+
+        gone = ((), pv.RejectedMore())
+        board = crowded()
+        board.clear_rejected()
+        self.assertEqual((board.rejected, board.rejected_more, board.view()["rejected"]), (*gone, None))
+        board = crowded()
+        board.add_paths([path_of(50)])
+        self.assertEqual((board.rejected, board.rejected_more), gone, "다음 선택이 앞 선택의 목록과 개수를 바꾼다")
+        board = crowded()
+        board.open()
+        board.close()
+        self.assertEqual((board.rejected, board.rejected_more), gone)
+        board = crowded()
+        board.clear()
+        self.assertEqual((board.rejected, board.rejected_more), gone)
 
 
 class FilesAndRelinkTest(unittest.TestCase):

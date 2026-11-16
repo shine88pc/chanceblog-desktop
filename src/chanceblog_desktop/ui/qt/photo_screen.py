@@ -279,7 +279,7 @@ class PhotoSheet(QWidget):
         if not rejected:
             return
         self.rejected_title.set_text(rejected["title"])
-        for item in rejected["rows"]:
+        for item in [*rejected["rows"], *rejected["more"]]:                                  # 이름을 보인 줄(많아야 10) + 개수만 센 한두 줄 — 줄 수는 고른 파일 수와 상관없이 일정하다(검증 S T-2)
             line = UI.label(item["text"], "small", wrap=True)
             line.setAccessibleName(item["a11y"])
             line.set_tone("red")

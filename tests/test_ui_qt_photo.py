@@ -375,6 +375,33 @@ class SheetTest(PhotoBase):
         self.add_photos(form)                                                          # 선택을 취소하면(빈 목록) 아무것도 바뀌지 않는다
         self.assertEqual(list(form.rows), ["p001", "p002"])
 
+    def test_picking_hundreds_of_files_shows_ten_names_and_one_count_line_instead_of_a_label_per_file(self):
+        """검증 S T-2 — 옛 화면은 못 넣은 파일마다 줄 하나를 만들어 100개에 0.8초·300개에 5.9초·1000개에 70초가 걸렸다. 이제 줄은 이름 10개 + 개수 한 줄로 일정하다."""
+        window, form = self.sheet()
+        self.add_photos(form, *[fake_path(number) for number in range(1, 301)])
+        self.assertEqual(list(form.rows), [f"p{number:03d}" for number in range(1, 31)], "한도 안의 30장만 줄이 된다")
+        self.assertEqual(form.rejected_rows.count(), 11, "이름을 보인 줄 10개와 개수 한 줄 — 고른 수와 상관없이 일정하다")
+        shown = self.shown_texts(form.rejected_host)
+        self.assertEqual(sum(1 for line in shown if line.endswith(T["pho_rejected_full"].format(n=30))), 10)
+        self.assertIn("외 260개는 사진을 30장까지만 넣을 수 있어서 넣지 못했어요.", shown)
+        self.assertEqual(self.widget_hits(window, [DIR_MARK]), [], "이름을 보이지 않은 파일도 폴더 이름도 어느 위젯에도 없다")
+        for index in range(form.rejected_rows.count()):
+            label = form.rejected_rows.itemAt(index).widget()
+            self.assertEqual(label.accessibleName(), self.lt(label), "개수 줄도 접근 이름이 보이는 글과 같다")
+        form.rejected_clear.click()
+        self.settle(3)
+        self.assertEqual((form.rejected_rows.count(), form.rejected_host.isVisibleTo(form)), (0, False))
+
+    def test_a_choice_of_unusable_files_also_ends_as_ten_names_and_a_count_line(self):
+        window, form = self.sheet()
+        self.add_photos(form, *[fake_path(number, "gif") for number in range(1, 13)])
+        self.assertEqual((list(form.rows), form.rejected_rows.count()), ([], 11))
+        shown = self.shown_texts(form.rejected_host)
+        self.assertIn("외 2개도 넣지 못했어요.", shown)
+        self.assertEqual(sum(1 for line in shown if line.startswith(FILE_MARK)), 10)
+        self.add_photos(form, fake_path(1))                                                # 다음 선택이 목록과 개수 줄을 바꾼다
+        self.assertEqual((list(form.rows), form.rejected_host.isVisibleTo(form), form.rejected_rows.count()), (["p001"], False, 0))
+
     def test_the_two_input_fields_are_always_visible_and_the_example_follows_the_type(self):
         window, form = self.sheet()
         self.add_photos(form, fake_path(1), fake_path(2))

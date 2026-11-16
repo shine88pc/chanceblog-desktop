@@ -26,6 +26,7 @@ PHOTO_T = {
     # 못 넣은 파일
     "pho_rejected_title": "넣지 못한 파일", "pho_rejected_row": "{name} — {reason}", "pho_rejected_clear": "목록 지우기", "pho_rejected_clear_a11y": "넣지 못한 파일 목록 지우기",
     "pho_rejected_dup": "이미 넣은 사진이에요.", "pho_rejected_full": "사진은 {n}장까지만 넣을 수 있어요.", "pho_added": "사진 {n}장을 넣었어요.",
+    "pho_rejected_more_full": "외 {n}개는 사진을 {max}장까지만 넣을 수 있어서 넣지 못했어요.", "pho_rejected_more_other": "외 {n}개도 넣지 못했어요.",
     # 사진 한 줄
     "pho_row_label": "사진 {n}", "pho_row_a11y": "사진 {n}, 종류 {type}, {confirm}", "pho_row_confirmed": "확인했어요", "pho_row_unconfirmed": "아직 확인하지 않았어요",
     "pho_type": "종류", "pho_type_a11y": "사진 {n} 종류", "pho_setting": "장소 분위기", "pho_setting_a11y": "사진 {n} 장소 분위기", "pho_setting_none": "정하지 않음",

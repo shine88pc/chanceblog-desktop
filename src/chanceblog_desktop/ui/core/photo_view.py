@@ -6,7 +6,7 @@
 목록 줄에는 파일 이름(폴더 없이, 비밀 모양을 가린 한 줄)만 보이고 못 넣은 파일도 이름과 고정 이유 문장만 있다. 이 파일은 파일·네트워크·로그·시계를 쓰지 않는다. 사진 파일을 읽는 일(판정·상태 확인)은 공급자가 한다(어댑터가 `imagecheck`·서비스를 부른다).
 
 규칙 요약(모두 시험이 못박는다):
-  · 사진을 넣을 때마다 `provider.judge` 로 파일을 판정한다(JPG·PNG·WebP 만·실제 형식·20MB). 못 넣은 파일은 이유와 함께 `rejected` 에 모은다(이름만 — 경로 없음). 30장이 차면 나머지는 '30장까지만' 으로 거절한다.
+  · 사진을 넣을 때마다 먼저 `provider.inspect`(읽지 않고 `lstat` 으로 링크·정션·내려받지 않은 파일·폴더·없음을 거른다)로 보고 이어서 `provider.judge` 로 파일을 판정한다(JPG·PNG·WebP 만·실제 형식·20MB). 못 넣은 파일은 이유와 함께 `rejected` 에 모은다(이름만 — 경로 없음). 30장이 차면 **남은 파일은 읽지도 판정하지도 않고 개수만 세어** '30장까지만' 으로 거절한다 — 한 번에 몇천 개를 골라도 창이 멈추지 않는다. 못 넣은 파일 줄은 처음 `MAX_REJECTED_ROWS`(10)줄까지만 이름을 보이고 나머지는 '외 N개' 한두 줄(`rejected_more`)로 합친다(검증 S T-2).
   · 사진의 내용(종류·장소 분위기·대상·메모·들어갈 곳·자리·설명 글)을 실제로 고치면 **확정(확인했어요)이 풀리고** 줄에 한 번 안내가 뜬다(1단계 규칙 그대로). 한도를 넘거나 검사에 걸린 글은 반영하지 않고 이유 문장을 칸 아래에 보인다.
   · 종류를 바꾸면 '들어갈 곳' 이 **사용자가 따로 고르지 않았을 때만** 새 종류의 기본값으로 바뀐다(간판·건물 외관 → 도입, 메뉴판·대표 메뉴·음식·반찬 → 내용 소제목, 인테리어 → 분위기 소제목, 지도 캡처·기타 → 자동).
   · '모두 확인했어요' 는 **확인 줄을 먼저 보이고**(확인할 사진 수) 한 번 더 눌러야 표시한다. 그만두면 아무것도 바뀌지 않는다.
@@ -53,6 +53,16 @@ class Rejected:
     """넣지 못한 파일 하나 — 화면에 보일 파일 이름(폴더 없음)과 고정 이유 문장. 이름은 `repr` 에 나오지 않는다."""
     name: str = field(repr=False)
     reason: str = field(repr=False)
+
+
+MAX_REJECTED_ROWS = 10                              # 못 넣은 파일 목록에 이름을 보이는 줄 수의 한도 — 더 많이 못 넣으면 나머지는 개수만 센다(검증 S T-2: 줄이 수백 개면 창이 몇 초씩 멈췄다)
+
+
+@dataclass(frozen=True)
+class RejectedMore:
+    """줄로 보이지 않고 개수만 센 못 넣은 파일 — `over`: 사진 한도(30장)가 차서 읽지도 판정하지도 않은 파일 수, `other`: 다른 이유로 못 넣었지만 줄 수 한도 때문에 이름을 못 보인 파일 수. 이름·경로는 없다."""
+    over: int = 0
+    other: int = 0
 
 
 class PhotoProvider:
@@ -137,6 +147,7 @@ class PhotoBoard:
         self.manifest = pm.empty_manifest()
         self.states = {}
         self.rejected = ()
+        self.rejected_more = RejectedMore()
         self.errors = {}                                    # (사진 번호, 칸) → 고정 이유 문장 — 글은 담지 않는다
         self.notes = {}                                     # 사진 번호 → 한 번 보이는 안내('확인 표시를 풀었어요')
         self.undo = None                                    # 방금 지운 한 장을 되돌릴 목록(지운 직후에만 — 다른 어떤 고침이 있으면 사라진다)
@@ -198,6 +209,7 @@ class PhotoBoard:
         self.is_open = False
         self.generation += 1
         self.rejected, self.undo, self.confirm_all_asked, self.notice, self.close_warned = (), None, 0, None, False
+        self.rejected_more = RejectedMore()
         self.errors = {}
         return "closed"
 
@@ -250,28 +262,46 @@ class PhotoBoard:
         return ""
 
     def add_paths(self, paths):
-        """파일 선택 창에서 고른 파일들을 하나씩 넣는다 → `(넣은 수, 못 넣은 수)`. 못 넣은 파일은 이름과 이유만 `rejected` 에 새로 모은다(앞 목록은 이 선택으로 바뀐다). 고르지 않았으면(빈 값) 아무것도 하지 않는다."""
+        """파일 선택 창에서 고른 파일들을 하나씩 넣는다 → `(넣은 수, 못 넣은 수)`. 못 넣은 파일은 이름과 이유만 `rejected` 에 새로 모은다(앞 목록은 이 선택으로 바뀐다). 고르지 않았으면(빈 값) 아무것도 하지 않는다.
+        **고른 수가 많아도 느려지지 않는다**(검증 S T-2) — 사진이 한도(30장)에 차면 남은 파일은 읽지도 판정하지도 않고 개수만 센다. 목록 줄은 처음 `MAX_REJECTED_ROWS` 개까지만 이름을 보이고 나머지는 `rejected_more` 에 개수만 둔다."""
         chosen = [path for path in (paths or ()) if isinstance(path, str) and path]
         if not chosen:
             return 0, 0
-        added, rejected = 0, []
-        for path in chosen:
+        added, rows, hidden_over, hidden_other = 0, [], 0, 0
+        for index, path in enumerate(chosen):
+            if self.full:                                   # 한도에 닿았다 — 남은 파일은 하나도 읽거나 판정하지 않는다
+                rest = chosen[index:]
+                shown = rest[:max(0, MAX_REJECTED_ROWS - len(rows))]
+                rows.extend(Rejected(rules.short_name(item), T["pho_rejected_full"].format(n=pm.MAX_PHOTOS)) for item in shown)
+                hidden_over = len(rest) - len(shown)
+                break
             reason = self._try_add(path)
-            if reason:
-                rejected.append(Rejected(rules.short_name(path), reason))
-            else:
+            if not reason:
                 added += 1
+            elif len(rows) < MAX_REJECTED_ROWS:
+                rows.append(Rejected(rules.short_name(path), reason))
+            else:
+                hidden_other += 1
         if added:
             self.undo, self.confirm_all_asked = None, 0
-        self.rejected = tuple(rejected)
+        self.rejected, self.rejected_more = tuple(rows), RejectedMore(hidden_over, hidden_other)
         if added:
             self._flag("info", T["pho_added"].format(n=added))
-        elif rejected:
+        else:
             self.notice = None
-        return added, len(rejected)
+        return added, len(chosen) - added
 
     def clear_rejected(self):
-        self.rejected = ()
+        self.rejected, self.rejected_more = (), RejectedMore()
+
+    def _rejected_more_lines(self):
+        """줄로 보이지 못한 못 넣은 파일의 개수 안내(0~2줄) — 이름·경로 없이 개수와 고정 문장만."""
+        more, lines = self.rejected_more, []
+        if more.over:
+            lines.append(T["pho_rejected_more_full"].format(n=more.over, max=pm.MAX_PHOTOS))
+        if more.other:
+            lines.append(T["pho_rejected_more_other"].format(n=more.other))
+        return [{"text": text, "a11y": text} for text in lines]
 
     def _apply(self, photo_id, **changes):
         """사진 한 장의 내용을 1단계 규칙(`update_photo`)으로 고친다 → `ok`·`unchanged`·`invalid`. 내용이 바뀌어 확정이 풀리면 줄에 한 번 안내를 남긴다."""
@@ -598,10 +628,10 @@ class PhotoBoard:
             "undo": {"text": T["pho_undo"], "a11y": T["pho_undo_a11y"]} if self.undo is not None else None,
             "notice": {"level": self.notice[0], "text": self.notice[1]} if self.notice else None,
             "rejected": {"title": T["pho_rejected_title"], "rows": [{"text": T["pho_rejected_row"].format(name=item.name, reason=item.reason), "a11y": T["pho_rejected_row"].format(name=item.name, reason=item.reason)} for item in self.rejected],
-                         "clear": T["pho_rejected_clear"], "clear_a11y": T["pho_rejected_clear_a11y"]} if self.rejected else None,
+                         "more": self._rejected_more_lines(), "clear": T["pho_rejected_clear"], "clear_a11y": T["pho_rejected_clear_a11y"]} if self.rejected else None,
             "rows": [self._row(photo, index) for index, photo in enumerate(self.manifest.photos)], "lists": self._lists_vm(),
             "close": {"text": T["pho_close"], "a11y": T["pho_close_a11y"]},
         }
 
 
-__all__ = ["CLOSE_WARNED", "FakePhotoProvider", "FileState", "PhotoBoard", "PhotoProvider", "Rejected"]
+__all__ = ["CLOSE_WARNED", "FakePhotoProvider", "FileState", "MAX_REJECTED_ROWS", "PhotoBoard", "PhotoProvider", "Rejected", "RejectedMore"]
