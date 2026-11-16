@@ -1651,7 +1651,7 @@ class AppShell(QMainWindow):
         elif kind == "list":
             self._drf_show_saved_now()
         elif kind == "close":
-            self._close_after_confirm()
+            self._close_after_drafts()
 
     def _show_leave_choices(self, dialog, after):
         """떠나기·앱 닫기 앞의 세 갈래 확인창 — `저장`(처음 포커스) / `저장 안 하고 나가기`(위험 단추) / `계속 고치기`(취소·Esc 와 같다)."""
@@ -2410,6 +2410,14 @@ class AppShell(QMainWindow):
         self._close_confirmed = True
         self.close()
 
+    def _close_after_drafts(self):
+        """초안 확인(저장·저장 안 하고 닫기·그래도 닫기)이 끝난 뒤의 닫기 — 저장하지 않은 블로그 입력이 같이 있으면 블로그 확인창이 이어서 뜬다(없으면 바로 닫는다). 초안 확인 하나가 블로그 입력을 알림 없이 버리지 않게(검증 T-1)."""
+        dialog = self.state.blogs.close_dialog()
+        if dialog is None:
+            self._close_after_confirm()
+            return
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True)
+
     def closeEvent(self, event):
         # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(저장하지 않은 고친 내용은 사라진다 — D-281, 저장해 둔 초안은 남는다: D-363). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
         # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
@@ -2423,7 +2431,7 @@ class AppShell(QMainWindow):
                 if "choices" in dialog:
                     self._show_leave_choices(dialog, ("close", None))
                 else:
-                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm if dialog.get("blogs") else self._close_after_drafts, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
                 return
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게
         self.dialog.dismiss()                                                     # 열려 있는 키 입력 대화상자의 칸을 비운다(정리 훅)

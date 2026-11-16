@@ -152,7 +152,7 @@ class BlogsController:
         """앱 닫기 확인창의 글(없으면 None) — 저장하지 않은 입력이 있을 때만이다. 처음 포커스는 취소(삭제 확인창과 같은 원칙)."""
         if not self.has_unsaved():
             return None
-        return {"title": T["blogs_close_title"], "body": T["blogs_close_body"], "ok": T["blogs_close_ok"], "cancel": T["blogs_close_cancel"]}
+        return {"title": T["blogs_close_title"], "body": T["blogs_close_body"], "ok": T["blogs_close_ok"], "cancel": T["blogs_close_cancel"], "blogs": True}      # `blogs` 표시 — 셸이 초안 확인(뒤에 이 확인이 이어질 수 있다)과 이 확인을 가른다
 
     def _pop_input(self, key):
         """그 슬롯에 대한 입력 상태(초안·고친 칸·저장 시도·직접 입력 칸·서비스가 알린 문제)를 꺼내 지운다 → 꺼낸 것(옮길 때 쓴다)."""

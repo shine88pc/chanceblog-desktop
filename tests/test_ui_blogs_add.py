@@ -17,6 +17,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -566,7 +567,8 @@ class CloseDialogTest(unittest.TestCase):
         dialog = controller.close_dialog()
         self.assertEqual((dialog["title"], dialog["ok"], dialog["cancel"]), (T["blogs_close_title"], T["blogs_close_ok"], T["blogs_close_cancel"]))
         for item in dialog.values():
-            self.assertNotRegex(item, SLOT_NAME, item)
+            if isinstance(item, str):                                                                       # `blogs` 표시(참/거짓)는 글이 아니다
+                self.assertNotRegex(item, SLOT_NAME, item)
         controller.revert()
         self.assertIsNone(controller.close_dialog(), "되돌리면 없다")
         controller.open_picker()
@@ -596,6 +598,19 @@ class CloseDialogTest(unittest.TestCase):
         self.assertIsNone(state.close_guard())
         state.blogs.edit("intro", "저장 전 소개")
         self.assertEqual(state.close_guard()["title"], T["blogs_close_title"])
+        self.assertTrue(state.close_guard()["blogs"], "블로그 확인에는 표시가 있어 셸이 초안 확인과 가른다")
+
+    def test_with_both_unsaved_the_drafts_question_comes_first_and_the_blog_question_stays_for_the_step_after_it(self):
+        """검증 T-1 — 초안 화면에도 저장 전 내용이 있으면 앱 닫기 확인은 초안 것이 먼저이고, 블로그 확인은 그 뒤에 이어서 물을 수 있게 그대로 남는다(초안 확인 하나가 블로그 입력을 알림 없이 버리지 않는다)."""
+        state = app_state.AppState(services.FakeHomeProvider())
+        load(state.blogs)
+        state.blogs.edit("intro", "저장 전 소개")
+        with mock.patch.object(state.drafts, "has_unsaved", return_value=True):
+            first = state.close_guard()
+            self.assertNotEqual(first["title"], T["blogs_close_title"], "초안 확인이 먼저다")
+            self.assertFalse(first.get("blogs"))
+        after = state.blogs.close_dialog()
+        self.assertEqual((after["title"], after["blogs"]), (T["blogs_close_title"], True), "초안 확인 뒤에도 블로그 입력은 그대로라 블로그 확인이 이어진다")
 
 
 # ---- 4) 낱말 제안 칩 -----------------------------------------------------------------------------------------------------------------------

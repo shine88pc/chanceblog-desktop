@@ -727,6 +727,68 @@ class FocusAndGuardTest(Base):
         self.settle()
         self.assertFalse(window.isVisible(), "'닫기' 를 누르면 닫힌다")
 
+    def dialog_buttons(self, window):
+        return {button.text(): button for button in window.dialog.findChildren(QAbstractButton)}
+
+    def test_with_the_drafts_screen_and_the_blogs_both_unsaved_the_blog_question_follows_the_drafts_one_and_cancel_keeps_the_input(self):
+        """검증 T-1 — 초안 확인(두 갈래의 `그래도 닫기`)을 누른 뒤에도 저장하지 않은 블로그 입력이 있으면 블로그 확인창이 이어서 뜬다. `취소` 면 창이 남고 입력이 그대로, `닫기` 면 닫힌다."""
+        window = self.make()
+        self.type_into(window, "alias", "저장 전 별명")
+        with mock.patch.object(window.state.drafts, "has_unsaved", return_value=True):
+            window.close()
+            self.settle()
+            self.assertEqual((window.isVisible(), window.dialog.is_open), (True, True))
+            first = self.dialog_buttons(window)
+            self.assertEqual(sorted(first), sorted([T["drf_close_ok"], T["drf_cancel"]]), "먼저 뜨는 것은 초안 확인이다")
+            first[T["drf_close_ok"]].click()
+            self.settle()
+            self.assertTrue(window.isVisible(), "초안 확인을 넘겼어도 블로그 입력이 있으면 닫지 않는다")
+            second = self.dialog_buttons(window)
+            self.assertEqual(sorted(second), sorted([T["blogs_close_ok"], T["blogs_close_cancel"]]), "이어서 블로그 확인창이 뜬다")
+            self.assertIs(QApplication.focusWidget(), second[T["blogs_close_cancel"]], "처음 포커스는 취소")
+            second[T["blogs_close_cancel"]].click()
+            self.settle()
+            self.assertEqual((window.isVisible(), window.dialog.is_open, self.ui(window).fields["alias"].edit.text()), (True, False, "저장 전 별명"), "취소하면 창이 남고 입력이 그대로다")
+            window.close()
+            self.settle()
+            self.dialog_buttons(window)[T["drf_close_ok"]].click()
+            self.settle()
+            self.dialog_buttons(window)[T["blogs_close_ok"]].click()
+            self.settle()
+            self.assertFalse(window.isVisible(), "두 확인을 모두 넘기면 닫힌다")
+
+    def test_the_three_way_drafts_question_also_chains_to_the_blog_question_when_the_blog_input_is_unsaved(self):
+        window = self.make()
+        self.type_into(window, "alias", "저장 전 별명")
+        controller = window.state.drafts
+        with mock.patch.object(controller, "has_unsaved", return_value=True), mock.patch.object(type(controller), "can_save", new_callable=mock.PropertyMock, return_value=True):
+            window.close()
+            self.settle()
+            first = self.dialog_buttons(window)
+            self.assertIn(T["drf_choice_discard_close"], first, "저장 기능이 있으면 세 갈래다")
+            first[T["drf_choice_discard_close"]].click()
+            self.settle()
+            self.assertTrue(window.isVisible())
+            self.assertIn(T["blogs_close_ok"], self.dialog_buttons(window), "저장 안 하고 닫기 뒤에도 블로그 확인이 이어진다")
+
+    def test_the_drafts_question_alone_closes_without_a_blog_question_and_the_references_question_never_hides_the_blog_one(self):
+        window = self.make()
+        with mock.patch.object(window.state.drafts, "has_unsaved", return_value=True):                 # 블로그 입력은 없다 — 초안 확인만
+            window.close()
+            self.settle()
+            self.dialog_buttons(window)[T["drf_close_ok"]].click()
+            self.settle()
+            self.assertFalse(window.isVisible(), "블로그에 저장 전 입력이 없으면 블로그 확인 없이 닫힌다")
+        other = self.make()
+        self.type_into(other, "alias", "저장 전 별명")
+        with mock.patch.object(other, "references_guard_quit", side_effect=[True, False]):          # 보관함 확인이 먼저(참고 글 보관함이 닫으면서 close 를 다시 부른다)
+            other.close()
+            self.settle()
+            self.assertEqual((other.isVisible(), other.dialog.is_open), (True, False), "보관함 확인이 먼저 막는다")
+            other.close()
+            self.settle()
+            self.assertIn(T["blogs_close_ok"], self.dialog_buttons(other), "보관함 확인 뒤에도 블로그 확인이 뜬다 — 서로 간섭하지 않는다")
+
     def test_closing_with_no_unsaved_blog_input_never_asks(self):
         window = self.make()
         self.add_blog(window, "github")                                                            # 제안 별명만 들어 있는 새 폼 — 사용자가 친 것이 없다
