@@ -198,6 +198,19 @@ class LimitTest(Base):
         raw["photos"][0]["visible_text"] = too_many
         self.assertRefuses(pm.PhotoManifest.from_dict, raw)
 
+    def test_the_limits_and_lists_the_operator_can_see_are_pinned_as_literal_numbers(self):
+        """한도 상수를 시험이 상수 이름으로만 대면 상수가 바뀌어도 시험이 따라 바뀐다 — 문서(D-497)에 적힌 숫자를 글자 그대로 못박는다."""
+        self.assertEqual((pm.MAX_PHOTOS, pm.MAX_SUBJECT, pm.MAX_NOTE, pm.MAX_CAPTION, pm.MAX_LABEL, pm.MAX_SECTION), (30, 60, 300, 100, 20, 60))
+        self.assertEqual((pm.MAX_OBSERVATIONS, pm.MAX_OBSERVATION_CHARS, pm.MAX_NTH, pm.MAX_NUMBER, pm.MAX_PATH_CHARS, pm.MAX_TEXT_BYTES), (20, 200, 50, 999, 260, 524288))
+        self.assertEqual(pm.PLACEMENT_KINDS, ("auto", "top", "after_heading", "after_paragraph", "between_sentences"))
+        self.assertEqual(pm.DEFAULT_SETTINGS, ("실내", "실외", "객실", "야경"))
+        self.assertEqual((pm.METHOD_MANUAL, pm.DEFAULT_TYPE, pm.SCHEMA), ("manual", "기타", "chanceblog.photo-manifest/1"))
+        self.assertEqual(pm.ENVELOPE_KEYS, ("schema", "draft_id", "next_number", "photos"))
+        self.assertEqual(pm.ADD_FIELDS, ("setting", "user_subject", "user_note", "preferred_section", "placement", "caption"))
+        self.assertEqual(pm.EDIT_FIELDS, ("local_path", "photo_type", *pm.ADD_FIELDS))
+        self.assertEqual(pm.DRAFT_KEYS, ("number", "display_order", "photo_type", "setting", "user_subject", "user_note", "preferred_section", "placement", "caption", "confirmed_objects", "confirmed_texts"))
+        self.assertEqual(pm.PLACEHOLDER.pattern, "\\{\\{사진 ([1-9][0-9]{0,2})\\}\\}")
+
     def test_the_placement_index_ranges(self):
         for kind in ("after_paragraph", "between_sentences"):
             with self.subTest(kind=kind):

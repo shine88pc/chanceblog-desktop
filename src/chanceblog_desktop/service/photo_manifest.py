@@ -221,10 +221,10 @@ def save_manifest(ctx, draft_id, manifest, *, persist_analysis=False, replace_br
         return manifest
     if state == "ok" and old.to_text(True) == manifest.to_text(persist_analysis):
         return manifest                                    # 바뀐 것이 없다(파일에 든 분석 결과까지 같다) — 쓰지 않는다. 분석 결과를 안 쓰기로 했는데 파일에 남아 있으면 같지 않아 다시 쓴다
-    if state == "broken":
-        keep_bad_copy(path)                                # 깨진 파일은 지우지 않고 `.bak` 으로 옮겨 둔다
     failure = None
     try:
+        if state == "broken":
+            keep_bad_copy(path)                            # 깨진 파일은 지우지 않고 `.bak` 으로 옮겨 둔다(못 옮기면 쓰지 않는다)
         write_json(path, manifest.to_dict(persist_analysis), unique_temp=True)
     except AppError as error:
         failure = error.code

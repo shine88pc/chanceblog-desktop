@@ -220,9 +220,10 @@ class SecretAndFailureTest(Base):
         analysis, _dropped = pm.set_analysis(sample(1), "p001", method="local:x", texts=["문서"])
         object.__setattr__(analysis.photos[0].visible_text[0], "text", key)
         self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, analysis, persist_analysis=True)
+        self.assertFalse(self.folder.exists(), "검사에 걸린 저장은 폴더도 만들지 않았다")
+        self.assertEqual(snapshot(self.root), before)
         svc.save_manifest(self.ctx, DRAFT_A, analysis)                                       # 쓰지 않는 분석 결과는 검사 대상이 아니다
         self.assertNotIn(key, self.file().read_text(encoding="utf-8"))
-        self.assertIsNone(before and None)
 
     def test_nothing_is_created_when_the_secret_check_fails(self):
         key = scan_samples.github()
@@ -276,7 +277,7 @@ class IdSafetyTest(Base):
         manifest, _id = pm.add_photo(pm.empty_manifest(), win("..x.jpg").replace("..x", "x"), user_note="../../evil", user_subject="x/y\\z")
         svc.save_manifest(self.ctx, DRAFT_A, manifest)
         names = sorted(path.name for path in self.root.rglob("*") if path.is_file())
-        self.assertEqual(names, ["settings.json", f"{DRAFT_A}.json"] if "settings.json" < f"{DRAFT_A}.json" else [f"{DRAFT_A}.json", "settings.json"])
+        self.assertEqual(sorted(names), sorted(["settings.json", f"{DRAFT_A}.json"]))
         for name in names:
             self.assertNotIn(UNIQ_FILE, name)
             self.assertNotIn("evil", name)
@@ -310,6 +311,15 @@ class BrokenFileTest(Base):
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()), sorted([path.name, backup.name]))
         svc.save_manifest(self.ctx, DRAFT_A, sample(2), replace_broken=True)            # 멀쩡한 파일에는 `.bak` 을 새로 만들지 않는다
         self.assertEqual(backup.read_text(encoding="utf-8"), "{ 깨진 글 UNIQ-OLD }")
+
+    def test_if_the_broken_file_cannot_be_moved_aside_nothing_is_written_and_the_path_is_hidden(self):
+        path = self.write_raw("{ 깨진 글 UNIQ-OLD }")
+        with mock.patch.object(context_module.os, "replace", side_effect=PermissionError(errno.EACCES, "denied", str(path))):
+            error = self.refuses("FILE_WRITE_FAILED", svc.save_manifest, self.ctx, DRAFT_A, sample(1), replace_broken=True)
+        self.assertNoLeak(error, [self.tmp.name, DRAFT_A, UNIQ_DIR])
+        self.assertEqual(error.slots.get("경로"), svc._WHERE)
+        self.assertEqual(path.read_text(encoding="utf-8"), "{ 깨진 글 UNIQ-OLD }", "옮기지 못하면 깨진 파일 위에 쓰지 않는다")
+        self.assertEqual(sorted(p.name for p in self.folder.iterdir()), [path.name])
 
     def test_a_directory_or_link_in_place_of_the_file_is_broken(self):
         self.folder.mkdir(parents=True)
@@ -541,6 +551,48 @@ class CheckFilesTest(Base):
         self.assertEqual([item.state for item in svc.check_files(sample(2))], ["missing", "missing"])
 
 
+class BackupTest(unittest.TestCase):
+    """1단계의 기본값 — 사진 정보는 전체 백업에 담지 않는다(백업 형식은 그대로). 진짜 백업·복원으로 못박는다."""
+
+    def test_the_photo_manifests_are_not_in_a_real_full_backup_and_a_real_restore_leaves_them_alone(self):
+        import backup_support as bs
+        from chanceblog_desktop.service import backup_flow as bf
+        with tempfile.TemporaryDirectory(prefix="pm-backup-") as tmp:
+            world = bs.World(Path(os.path.realpath(tmp)), posts=1, drafts=0, candidates_count=0)
+            ctx = world.ctx
+            ctx.clock.advance(minutes=1)
+            svc.save_manifest(ctx, DRAFT_A, sample(2, user_note=UNIQ_NOTE))
+            folder = world.root / "photo-manifests"
+
+            def snap():
+                return {path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in sorted(folder.iterdir())}
+
+            before = snap()
+            outcome = world.backup()
+            backup_folder = world.folder(outcome)
+            names = [path.relative_to(backup_folder).as_posix() for path in backup_folder.rglob("*")]
+            self.assertTrue(names, "백업은 만들어졌다")
+            self.assertFalse([name for name in names if "photo" in name or DRAFT_A in name], names)
+            for path in backup_folder.rglob("*"):
+                if path.is_file():
+                    data = path.read_bytes()
+                    self.assertNotIn(UNIQ_NOTE.encode("utf-8"), data, path.name)
+                    self.assertNotIn(UNIQ_DIR.encode("utf-8"), data, path.name)
+            self.assertEqual(snap(), before, "백업이 사진 정보를 건드리지 않았다")
+            ctx.clock.advance(minutes=1)
+            svc.save_manifest(ctx, DRAFT_B, sample(1, user_note="백업 뒤의 메모"))
+            svc.save_manifest(ctx, DRAFT_A, sample(3, user_note="고친 메모"))
+            expected = snap()
+            self.assertEqual(sorted(expected), sorted([f"{DRAFT_A}.json", f"{DRAFT_B}.json"]))
+            result = bf.restore_full_backup(ctx, outcome.row.name, confirmed=True)
+            self.assertEqual(result.status, bf.STATUS_COMPLETE)
+            self.assertEqual(snap(), expected, "복원은 사진 정보 파일을 하나도 건드리지 않았다(내용·수정 시각 그대로)")
+            for path in ctx.workspace.backups_dir.rglob("*"):                                    # 복원 전 안전 사본에도 사진 정보가 없다
+                self.assertNotIn("photo", path.relative_to(ctx.workspace.backups_dir).as_posix())
+                if path.is_file():
+                    self.assertNotIn(UNIQ_NOTE.encode("utf-8"), path.read_bytes(), path.name)
+
+
 class SourceRulesTest(unittest.TestCase):
     def tree(self):
         return ast.parse(SOURCE.read_text(encoding="utf-8"))
@@ -595,10 +647,14 @@ class SourceRulesTest(unittest.TestCase):
         for code in codes:
             self.assertIn(code, CATALOG)
 
-    def test_the_new_module_changes_no_existing_behavior_it_is_only_used_by_its_own_tests(self):
+    # 이 모듈을 부르는 소스 파일의 허용 목록(파일 → 이유). 1단계는 기존 코드를 바꾸지 않았으므로 비어 있다 — 다음 단계(화면 2단계·초안 연결 3단계)가 부를 때 이유와 함께 여기에 더한다(몰래 늘면 걸린다).
+    MODULE_USERS = {}
+
+    def test_no_existing_source_file_uses_the_new_modules_yet_so_no_behavior_changed(self):
         src = ROOT / "src" / "chanceblog_desktop"
         users = sorted(path.relative_to(src).as_posix() for path in src.rglob("*.py") if "photo_manifest" in path.read_text(encoding="utf-8") and path.name != "photo_manifest.py")
-        self.assertEqual(users, [], "1단계는 기존 코드를 바꾸지 않는다 — 초안·화면·백업에 연결하는 것은 다음 단계다")
+        self.assertEqual(users, sorted(self.MODULE_USERS), "이 모듈을 새로 부르는 파일은 이유와 함께 MODULE_USERS 에 더한다")
+        self.assertTrue(all(reason.strip() for reason in self.MODULE_USERS.values()))
 
 
 if __name__ == "__main__":
