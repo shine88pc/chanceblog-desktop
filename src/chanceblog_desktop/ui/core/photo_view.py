@@ -143,8 +143,9 @@ class PhotoBoard:
 
     def differs_from(self, baseline):
         """저장한(또는 연) 사진 정보(`baseline` — 없으면 빈 목록)와 다른가 — 초안 번호 칸은 견주지 않는다(저장할 때 서비스가 채운다)."""
-        base = baseline if isinstance(baseline, pm.PhotoManifest) else pm.empty_manifest()
-        return dataclasses.replace(self.manifest, draft_id="") != dataclasses.replace(base, draft_id="")
+        if not isinstance(baseline, pm.PhotoManifest):
+            return bool(self.manifest.photos)                                          # 저장한 사진 정보가 없다 — 지금 목록이 비어 있으면(넣었다 지운 뒤 포함) 저장할 것이 없다(서비스도 빈 목록은 파일을 만들지 않는다)
+        return dataclasses.replace(self.manifest, draft_id="") != dataclasses.replace(baseline, draft_id="")        # 저장한 판이 있으면 번호 예약(`next_number`)까지 견준다 — 지운 사진 번호를 새 사진이 물려받지 않게
 
     # ---- 읽기 ----
     @property

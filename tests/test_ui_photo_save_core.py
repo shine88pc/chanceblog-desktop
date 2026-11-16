@@ -131,6 +131,32 @@ class SaveTest(unittest.TestCase):
         self.assertEqual(len(provider.photo_files[saved_id(provider)].photos), 2)
 
 
+class DifferenceTest(unittest.TestCase):
+    def test_adding_and_removing_every_photo_in_a_draft_with_no_saved_photo_info_is_not_a_change(self):
+        """저장한 사진 정보가 없는 글에서 사진을 넣었다 모두 지우면 저장할 것이 없다 — 안내·확인창·저장 요청이 모두 없다(서비스도 빈 목록은 파일을 만들지 않는다)."""
+        controller, provider = made_saving()
+        controller.photos.add_paths([path_of(1), path_of(2)])
+        self.assertTrue(controller.photos_unsaved())
+        controller.photos.remove("p001")
+        controller.photos.remove("p002")
+        self.assertEqual(controller.photos.manifest.next_number, 3, "번호 예약은 메모리에 남는다")
+        self.assertEqual((controller.photos_unsaved(), controller.has_unsaved(), controller.photos_card()["unsaved"]), (False, False, ""))
+        self.assertIsNone(controller._save_request().photos)
+
+    def test_with_a_saved_photo_info_the_number_reservation_still_counts_as_a_change(self):
+        """저장한 판이 있으면 번호 예약까지 견준다 — 사진을 넣었다 지워도 저장해야 지운 번호를 새 사진이 물려받지 않는다."""
+        controller, provider = with_photos(2)
+        store(controller, "save")
+        self.assertFalse(controller.photos_unsaved())
+        controller.photos.add_paths([path_of(3)])
+        controller.photos.remove("p003")
+        self.assertEqual([photo.photo_id for photo in controller.photos.manifest.photos], ["p001", "p002"])
+        self.assertTrue(controller.photos_unsaved(), "사진 목록은 같지만 다음 번호(4)가 달라졌다")
+        store(controller, "save")
+        self.assertEqual(provider.photo_files[saved_id(provider)].next_number, 4)
+        self.assertFalse(controller.photos_unsaved())
+
+
 class OpenTest(unittest.TestCase):
     def test_opening_a_saved_draft_fills_the_photo_list_and_it_is_not_unsaved(self):
         controller, provider = with_photos(3)

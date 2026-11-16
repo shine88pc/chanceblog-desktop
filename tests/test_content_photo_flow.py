@@ -8,6 +8,7 @@
   5) 알림 글에는 사진 번호뿐이다(사용자 글·경로가 없다).
 """
 import dataclasses
+import random
 import re
 import sys
 import unittest
@@ -244,6 +245,61 @@ class NotesTest(unittest.TestCase):
         source = (block(db.INTRO, ""), block(db.SECTION, "빈 소제목"), block(db.CLOSING, "마무리", "끝."))
         result, _notes = pf.place_photos(source, (photo(1), photo(2, kind="after_paragraph", nth=3), photo(3, kind="between_sentences", nth=1)))
         self.assertEqual([text for text in result[1].paragraphs], ["{{사진 1}}", "{{사진 2}}", "{{사진 3}}"])
+
+
+class FuzzTest(unittest.TestCase):
+    """무작위(씨앗 고정) 본문 구조 × 무작위 사진 — 어떤 입력에서도 지켜야 할 것: 사진마다 자리표시자가 정확히 한 번 · 사용자 글은 한 문단씩 그대로 한 번 · 틀로 만든 글은 자리표시자뿐 · 원래 문단은 사진 줄을 빼면 그대로(문장 사이로 갈라도 이어 붙이면 같다) · 알림에는 사진 번호뿐 · 같은 입력은 같은 결과."""
+
+    WORDS = ("가나", "다라마", "바사", "아자차", "카타", "파하")
+    SECTIONS = ("", "도입", "내용 소제목", "분위기 소제목", "마무리", "주의", "경험", "intro", "없는 소제목 글", "소제목 둘")
+
+    def sentence(self, rng):
+        return " ".join(rng.choice(self.WORDS) for _ in range(rng.randint(1, 4))) + rng.choice((".", "!", "?", "…", "."))
+
+    def random_blocks(self, rng):
+        result = [block(db.INTRO, "", *[" ".join(self.sentence(rng) for _ in range(rng.randint(1, 3))) for _ in range(rng.randint(0, 3))])]
+        for index in range(rng.randint(1, 5)):
+            heading = rng.choice(("소제목 둘", "분위기 이야기", f"소제목 {index}"))
+            result.append(block(rng.choice((db.SECTION, db.SECTION, db.EXPERIENCE)), heading, *[" ".join(self.sentence(rng) for _ in range(rng.randint(1, 4))) for _ in range(rng.randint(0, 4))]))
+        if rng.random() < 0.7:
+            result.append(block(db.CAUTIONS, "확인할 점", self.sentence(rng)))
+        result.append(block(db.CLOSING, "마무리", *[self.sentence(rng) for _ in range(rng.randint(0, 2))]))
+        return tuple(result)
+
+    def random_photos(self, rng):
+        kinds = (("auto", 0), ("top", 0), ("after_heading", 0), ("after_paragraph", 1), ("after_paragraph", 3), ("between_sentences", 1), ("between_sentences", 2), ("between_sentences", 9), ("after_paragraph", 50))
+        numbers = rng.sample(range(1, 40), rng.randint(1, 12))
+        photos = []
+        for number in numbers:
+            kind, nth = rng.choice(kinds)
+            photos.append(photo(number, kind=kind, nth=nth, section=rng.choice(self.SECTIONS), subject=rng.choice(("", f"대상 {number}", f"대상 {number}이에요")), note=rng.choice(("", f"메모 {number}")), caption=rng.choice(("", f"설명 {number}")), order=rng.randint(1, 5)))
+        return tuple(photos)
+
+    def test_the_invariants_hold_for_three_hundred_random_inputs(self):
+        rng = random.Random(20261117)
+        for round_number in range(300):
+            source, photos = self.random_blocks(rng), self.random_photos(rng)
+            result, notes = pf.place_photos(source, photos)
+            self.assertEqual((result, notes), pf.place_photos(source, tuple(reversed(photos))), "넘기는 순서는 상관없다")
+            self.assertEqual([(item.kind, item.key, item.heading) for item in result], [(item.kind, item.key, item.heading) for item in source], round_number)
+            flat = [(text, made) for item in result for text, made in zip(item.paragraphs, item.generated)]
+            texts = [text for text, _made in flat]
+            lines = {}
+            for item in photos:
+                for text, made in pf.photo_lines(item):
+                    lines.setdefault(text, []).append(made)
+                    self.assertEqual(texts.count(text), 1, (round_number, text))
+                    self.assertIn((text, made), flat)
+            self.assertTrue(all(len(flags) == 1 for flags in lines.values()), "사진마다 줄이 서로 다르다")
+            made_by_app = {text for text, made in flat if made and text.startswith("{{사진 ")}
+            self.assertEqual(made_by_app, {f"{{{{사진 {item.number}}}}}" for item in photos}, round_number)
+            added = set(lines)
+            for before, after in zip(source, result):
+                kept = [text for text in after.paragraphs if text not in added]
+                self.assertEqual(" ".join(" ".join(kept).split()), " ".join(" ".join(before.paragraphs).split()), (round_number, before.heading))
+            for note in notes:
+                self.assertRegex(note, r"^사진 [0-9]+번은 [^0-9{}]+$", note)
+            self.assertLessEqual(len(notes), pf.MAX_NOTES)
 
 
 if __name__ == "__main__":
