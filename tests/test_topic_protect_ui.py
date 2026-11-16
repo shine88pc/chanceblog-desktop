@@ -259,7 +259,8 @@ class LoadHomeScenarioTest(unittest.TestCase):
                     self.assertNotIn("주제 01", repr(view))                                                                     # 옛 후보 저장소의 후보는 홈에 나오지 않는다
     def test_candidates_for_channels_other_than_naver_show_under_all_only_and_in_no_blog_count(self):
         """의도적 갱신(UI-C1d, D-201): 옛 시험의 데이터 쪽(후보의 블로그 열쇠·블로그별 후보 수)은 그대로 못박는다. 칩 수·행의 블로그 배지·칩 거르기(옛 추천 목록)는 홈에서 없어져 뺐다 —
-        네이버가 아닌 채널의 후보에 블로그 배지가 없다는 규칙은 상세 서랍으로 옮겨 본다(서랍의 블로그 라벨·초안 단추)."""
+        네이버가 아닌 채널의 후보에 블로그 배지가 없다는 규칙은 상세 서랍으로 옮겨 본다(서랍의 블로그 라벨·초안 단추).
+        의도적 갱신(BLOGSEL-2 ①, D-510): 서랍의 블로그 라벨은 이제 블로그 관리의 별명이다(별명이 없으면 `네이버 블로그 1·2`) — 옛 `블로그 A·B` 가 아니다. 규칙(네이버가 아닌 채널의 후보는 배지·초안 단추가 없다)과 단추 열쇠(`A`·`B`)는 그대로이고 라벨 글만 바뀌었다."""
         data = self.load([cand(1, ("github_pages",)), cand(2, ("blogger_en", "blogger_ko")), cand(3, ("naver_a",)), cand(4, ("github_pages", "naver_b"))])
         self.assertEqual([item.blogs for item in data.topics], [(), (), ("A",), ("B",)])
         self.assertEqual([(blog.key, blog.candidates) for blog in data.blogs], [("A", 1), ("B", 1)])
@@ -269,7 +270,7 @@ class LoadHomeScenarioTest(unittest.TestCase):
         for item in data.topics:
             state.open_drawer(item.id)
             labels.append((state.drawer_view()["blog_label"], [button["key"] for button in state.drawer_view()["drafts"]]))
-        self.assertEqual(labels, [("", []), ("", []), ("블로그 A", ["A"]), ("블로그 B", ["B"])])                              # 네이버가 아닌 채널의 후보는 블로그 배지·초안 단추가 없다
+        self.assertEqual(labels, [("", []), ("", []), ("네이버 블로그 1", ["A"]), ("네이버 블로그 2", ["B"])])                              # 네이버가 아닌 채널의 후보는 블로그 배지·초안 단추가 없다
     def test_held_candidates_are_saved_ideas_and_do_not_count_toward_a_blogs_candidates(self):
         with tempfile.TemporaryDirectory() as tmp:
             ctx = support.make_ctx(tmp)
@@ -360,11 +361,12 @@ class ChannelTwoAssumptionTest(unittest.TestCase):
             self.assertFalse(hasattr(app_state, gone), gone)
     def test_a_blog_key_outside_a_and_b_gets_no_badge_in_the_view_model(self):
         """의도적 갱신(UI-C1d, D-201): 옛 시험은 옛 추천 행의 뷰모델(`topic_vm` 의 `blogs`·`blog`·`blog_label`)을 봤다 — 그 행이 없어졌다. 같은 규칙(A·B 만 블로그로 센다, 그 밖의 열쇠는 배지가 없다)을 이 후보가 나가는 곳인
-        상세 서랍(블로그 라벨·초안 단추)에서 본다."""
+        상세 서랍(블로그 라벨·초안 단추)에서 본다.
+        의도적 갱신(BLOGSEL-2 ①, D-510): 서랍의 블로그 라벨은 이제 블로그 관리의 별명이다(별명이 없으면 `네이버 블로그 1`) — 옛 `블로그 A` 가 아니다. 규칙(A·B 만 블로그로 센다)과 초안 단추 열쇠는 그대로다."""
         state = state_with(topic("낯선 키", ("A", "C", "B", "github_pages")), topic("배지 없음", ("C",)))
         state.open_drawer("낯선 키")
         shown = state.drawer_view()
-        self.assertEqual((shown["blog_label"], [item["key"] for item in shown["drafts"]]), ("블로그 A", ["A", "B"]))
+        self.assertEqual((shown["blog_label"], [item["key"] for item in shown["drafts"]]), ("네이버 블로그 1", ["A", "B"]))
         state.open_drawer("배지 없음")
         none = state.drawer_view()
         self.assertEqual((none["blog_label"], none["drafts"]), ("", []))
@@ -563,9 +565,15 @@ class HomeOutputUnchangedTest(unittest.TestCase):
     의도적 갱신(UI-C1c, D-190): 새 홈 구역의 값이 새 키 `board` 하나로 **더해졌다**(옛 키는 한 글자도 안 바뀜 — 그때는 `board` 를 뺀 지문이 UI-C1a 의 옛 지문과 같음까지 못박았다).
     의도적 교체(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5·홈 구성): UI-C1d 가 `board` 를 그리고 **옛 키(요약 카드·칩·추천 행·선택·구역 머리·오른쪽 패널·옛 빈 상태)를 홈 뷰모델에서 없앴다** — 그래서 '`board` 를 뺀 값이 옛 지문과 같다' 는 시험(`LEGACY_BASELINE`)은
     의미가 없어져 아래 '키 목록' 시험(홈 뷰모델이 정확히 열한 칸이고 옛 칸이 없다)으로 바꿨다. 지문 값은 새 뷰모델의 값으로 다시 못박았다 — 시나리오는 정상·빈·일부만·오프라인·오류·읽는 중·연결 전(새 구역을 안 읽는 공급자). 옛 칩 거르기 시나리오(`home_filter_b`)는 칩이 없어져 뺐다.
-    **옛 후보의 상세 서랍(`drawer_s1`)의 지문은 UI-C1a 가 못박은 값 그대로다**(서랍은 한 글자도 안 바뀌었다) — 추천 줄의 서랍(`drawer_rA1`·`drawer_rA5`)이 새 지문이다."""
-    BASELINE = {"home_normal": "c3e41489dd84b42b", "home_empty": "9b8a476a0ff4a861", "home_partial": "3708e0a1323f6af0", "home_offline": "f06bf1c1b6be80fe", "home_error": "2900e031bc3fc98e", "home_loading": "1bc77e56c2fbf6b5", "home_before_connect": "51647256831381fb"}
-    DRAWERS = {"drawer_s1": "7e6ccf32dcb04a58", "drawer_rA1": "c941cf939e238add", "drawer_rA5": "a67e6f142d9507e7"}                    # `drawer_s1` 은 UI-C1a 의 값 그대로(서랍은 안 바뀌었다)
+    **옛 후보의 상세 서랍(`drawer_s1`)의 지문은 UI-C1a 가 못박은 값 그대로다**(서랍은 한 글자도 안 바뀌었다) — 추천 줄의 서랍(`drawer_rA1`·`drawer_rA5`)이 새 지문이다.
+    의도적 갱신(BLOGSEL-2 ①, D-510): 열 개 지문이 **모두** 바뀌었다 — 홈이 채널을 블로그 관리의 별명(별명이 없으면 `네이버 블로그 1·2`)으로 부르기 때문이다(옛 `블로그 A·B`). 바뀐 것은 추천 구역 머리의 `name`·`title`(일곱 홈 모두), 서랍의 `blog_label`·초안 단추 글(서랍 셋 — 두 곳씩),
+    추천 줄에 새로 생긴 `badge`(채널 배지 안 글자 — 이름의 끝 숫자, 홈 셋의 아홉 줄)뿐이다. 새 값에서 이름만 옛 이름으로 되돌리고 `badge` 를 빼면 **옛 지문 열 개가 글자까지 그대로** 나온다 — 아래 `BEFORE_BLOGSEL2` 와 `test_the_old_fingerprints_come_back_…` 가 못박는다
+    (서랍 내용·동작은 그대로라는 운영자 결정 5 도 이 시험이 지킨다). 지문 값은 새 뷰모델의 값으로 다시 못박았다(같은 강도)."""
+    BASELINE = {"home_normal": "b0e4043fca89919b", "home_empty": "5fb109c849b86947", "home_partial": "f4299959e5dccb36", "home_offline": "d649eae24c381423", "home_error": "69b6d51753e6f93a", "home_loading": "d8c773e48ccde558", "home_before_connect": "9e9af38998b39334"}
+    DRAWERS = {"drawer_s1": "34ddf8e2b56c7025", "drawer_rA1": "028716e292023766", "drawer_rA5": "8c121ce69b9d14ae"}                    # 의도적 갱신(BLOGSEL-2 ①, D-510): 서랍은 이름 두 곳(`blog_label`·초안 단추 글)만 바뀌었다 — 옛 값은 아래 `BEFORE_BLOGSEL2`
+    BEFORE_BLOGSEL2 = {"home_normal": "c3e41489dd84b42b", "home_empty": "9b8a476a0ff4a861", "home_partial": "3708e0a1323f6af0", "home_offline": "f06bf1c1b6be80fe", "home_error": "2900e031bc3fc98e", "home_loading": "1bc77e56c2fbf6b5", "home_before_connect": "51647256831381fb",
+                       "drawer_s1": "7e6ccf32dcb04a58", "drawer_rA1": "c941cf939e238add", "drawer_rA5": "a67e6f142d9507e7"}               # BLOGSEL-2 ① 직전(UI-C1d 가 못박은 값 — `drawer_s1` 은 UI-C1a 의 값 그대로)의 지문 열 개
+    OLD_NAMES = {"네이버 블로그 1": "블로그 A", "네이버 블로그 2": "블로그 B"}                                                                      # 홈이 채널을 별명으로 부르기 전의 이름
     WHEN = datetime.datetime(2026, 11, 3, 10, 0, 0)
 
     @staticmethod
@@ -600,15 +608,47 @@ class HomeOutputUnchangedTest(unittest.TestCase):
         homes, drawers = self.views()
         return {name: self.digest(view) for name, view in {**homes, **drawers}.items()}
 
+    @classmethod
+    def as_before_blogsel2(cls, view):
+        """새 뷰모델에서 채널 이름만 옛 이름으로 되돌리고 새로 생긴 칸 `badge` 를 뺀 것(JSON 으로 한 번 돌려 튜플 같은 것을 같은 모양으로 맞춘 뒤) — 옛 지문과 글자까지 같은지 견주려는 것이다(BLOGSEL-2 ① 가 바꾼 것은 이 둘뿐이다)."""
+        import json
+
+        def undo(value):
+            if isinstance(value, str):
+                for new, old in cls.OLD_NAMES.items():
+                    value = value.replace(new, old)
+                return value
+            if isinstance(value, list):
+                return [undo(item) for item in value]
+            if isinstance(value, dict):
+                return {key: undo(item) for key, item in value.items() if key != "badge"}
+            return value
+
+        return undo(json.loads(json.dumps(view, ensure_ascii=False, sort_keys=True, default=str)))
+
+    def test_the_old_fingerprints_come_back_once_only_the_channel_names_are_put_back(self):
+        """의도적 갱신(BLOGSEL-2 ①, D-510): 홈·서랍의 지문 열 개가 바뀐 것이 **채널 이름 표시 때문뿐** 임을 못박는다 — 새 값에서 이름(`네이버 블로그 1·2` → `블로그 A·B`)만 되돌리고 새 칸 `badge` 를 빼면 옛 지문(UI-C1d 가 못박은 값, 서랍 `drawer_s1` 은 UI-C1a 의 값)이 글자까지 그대로 나온다.
+        이름 밖의 한 글자라도 바뀌면(서랍의 내용·동작 포함) 이 시험이 빨개진다."""
+        homes, drawers = self.views()
+        got = {name: self.digest(self.as_before_blogsel2(view)) for name, view in {**homes, **drawers}.items()}
+        self.assertEqual({key: (self.BEFORE_BLOGSEL2[key], got[key]) for key in self.BEFORE_BLOGSEL2 if got[key] != self.BEFORE_BLOGSEL2[key]}, {}, "이름 밖에서 홈·서랍이 바뀌었다")
+        self.assertEqual(set(got), set(self.BEFORE_BLOGSEL2))
+        names_in_new = " ".join(repr(view) for view in {**homes, **drawers}.values())
+        self.assertIn("네이버 블로그 1", names_in_new)                                                                                          # 되돌릴 이름이 실제로 새 값에 들어 있다(아무것도 안 되돌려서 같아 보이는 일이 없게)
+        self.assertNotIn("블로그 A", names_in_new)
+
     def test_the_home_view_models_are_exactly_what_the_home_shape_bundle_made_them(self):
         got = self.current()
         expected = {**self.BASELINE, **self.DRAWERS}
         self.assertEqual({key: (expected[key], got[key]) for key in expected if got[key] != expected[key]}, {}, "홈의 출력이 바뀌었다 — 의도한 변경이면 이유를 적고 지문을 고친다")
         self.assertEqual(set(got), set(expected))
 
-    def test_the_drawer_of_an_old_candidate_is_byte_identical_to_the_one_the_c1a_shell_made(self):
-        """상세 서랍은 이 묶음에서 한 글자도 안 바뀌었다(서랍 내용·동작은 그대로 — 운영자 결정 5). 옛 후보 하나(`s1`)의 서랍 지문은 UI-C1a 가 못박은 값 그대로다."""
-        self.assertEqual(self.current()["drawer_s1"], "7e6ccf32dcb04a58")
+    def test_the_drawer_of_an_old_candidate_is_what_the_c1a_shell_made_but_for_the_channel_name(self):
+        """상세 서랍은 이 묶음에서 한 글자도 안 바뀌었다(서랍 내용·동작은 그대로 — 운영자 결정 5). 옛 후보 하나(`s1`)의 서랍 지문은 UI-C1a 가 못박은 값 그대로다.
+        의도적 갱신(BLOGSEL-2 ①, D-510): 서랍의 채널 이름(`blog_label`·초안 단추 글)이 블로그 관리의 별명으로 바뀌어 지문이 `7e6ccf32dcb04a58` 에서 `34ddf8e2b56c7025` 로 바뀌었다(이름 두 곳뿐). 새 값을 못박고, 이름만 옛 이름으로 되돌리면 UI-C1a 의 지문이 글자까지 그대로 나오는 것도 못박는다 —
+        같은 강도이고 '서랍이 이름 말고는 안 바뀐다' 는 것까지 더했다(이 시험의 이름도 '바이트까지 같다' 에서 '이름 말고는 같다' 로 바꿨다)."""
+        self.assertEqual(self.current()["drawer_s1"], "34ddf8e2b56c7025")
+        self.assertEqual(self.digest(self.as_before_blogsel2(self.views()[1]["drawer_s1"])), "7e6ccf32dcb04a58")
 
     def test_every_home_view_model_has_exactly_the_eleven_keys_and_none_of_the_old_ones(self):
         """UI-C1c 가 `board` 를 더하며 옛 키는 그대로 두었던 것을 UI-C1d 가 정리했다 — 일곱 시나리오 모두 아래 열한 칸뿐이다(옛 칸이 하나라도 있으면 실패)."""
