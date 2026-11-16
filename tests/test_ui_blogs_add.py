@@ -64,7 +64,7 @@ def view_strings(view):
 class CardRuleTest(unittest.TestCase):
     def test_the_sample_shows_only_its_three_registered_blogs_and_an_add_card_at_the_end(self):
         view = new_controller().view()
-        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko"], "의도적 갱신(blogsel-2, D-511): 카드 순서는 저장 슬롯 순서가 아니라 종류별 채움 순서(네이버 a→b·Blogger ko→en·GitHub Pages)")
         self.assertEqual(view["list"]["add"], {"key": "add", "title": "블로그 추가", "desc": "연결할 사이트를 골라요.", "a11y": T["blogs_add_a11y"], "selected": False})
         self.assertIsNone(view["picker"])
         self.assertEqual(view["form"]["key"], "naver_a")
@@ -107,6 +107,17 @@ class CardRuleTest(unittest.TestCase):
         self.assertEqual(controller.kind_free("github"), 0, "내용이 있는 슬롯은 빈 슬롯이 아니다 — 새 블로그가 덮어쓰지 않는다")
         self.assertIsNone(controller.start_adding("github"))
 
+    def test_the_cards_follow_the_fill_order_of_each_kind_so_blogger_1_is_above_blogger_2_whatever_order_they_were_added(self):
+        """검증 Q-10 — 목록 순서는 저장 슬롯 순서(github·blogger_en·blogger_ko·naver_a·naver_b)가 아니라 종류별 채움 순서(네이버 a→b·Blogger ko→en·GitHub Pages)다."""
+        controller = new_controller("empty")
+        for kind in ("github", "blogger", "blogger", "naver", "naver"):
+            start_new(controller, kind)
+        view = controller.view()
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], list(bf.DISPLAY_ORDER))
+        self.assertEqual([card["title"] for card in view["list"]["cards"]], ["네이버 블로그 1", "네이버 블로그 2", "Blogger 1", "Blogger 2", "GitHub Pages 1"], "Blogger 1 이 Blogger 2 위에 있다")
+        self.assertEqual(list(bf.DISPLAY_ORDER), [key for slots in bf.SLOT_KINDS for key in slots])
+        self.assertNotEqual(list(bf.DISPLAY_ORDER), list(bf.SLOTS), "저장 슬롯 순서와 다르다 — 저장 형식은 그대로다")
+
     def test_the_card_title_is_the_alias_or_the_kind_and_number_and_the_status_follows_the_registration(self):
         controller = new_controller()
         cards = {card["key"]: card for card in controller.view()["list"]["cards"]}
@@ -136,7 +147,7 @@ class AddFlowTest(unittest.TestCase):
         controller.open_picker()
         self.assertIsNone(controller.start_adding("github"))
         self.assertIsNone(controller.start_adding("no_such_kind"))
-        self.assertEqual(controller.listed_keys(), tuple(bf.SLOTS), "다섯 슬롯이 모두 새 블로그로 열려 있다")
+        self.assertEqual(controller.listed_keys(), tuple(bf.DISPLAY_ORDER), "다섯 슬롯이 모두 새 블로그로 열려 있다(종류별 채움 순서)")
 
     def test_the_picker_says_how_many_are_linked_and_why_a_kind_cannot_take_another(self):
         controller = new_controller()
@@ -236,10 +247,10 @@ class AddFlowTest(unittest.TestCase):
         controller.open_picker()
         key = start_new(controller, "github")
         controller.edit("display_name", "임시 이름")
-        self.assertEqual(controller.listed_keys(), ("github_pages", "blogger_ko", "naver_a", "naver_b"))
+        self.assertEqual(controller.listed_keys(), ("naver_a", "naver_b", "blogger_ko", "github_pages"))
         self.assertTrue(controller.revert())
         self.assertNotIn(key, controller.drafts)
-        self.assertEqual((controller.selected, controller.listed_keys()), ("naver_a", ("blogger_ko", "naver_a", "naver_b")), "의도적 갱신(blogsel 수정 1, D-493 ⑤·검증 Q-2): 취소하면 슬롯 순서의 첫 카드가 아니라 새 블로그를 열기 전에 폼에 열려 있던 카드(naver_a)로 돌아간다")
+        self.assertEqual((controller.selected, controller.listed_keys()), ("naver_a", ("naver_a", "naver_b", "blogger_ko")), "의도적 갱신(blogsel 수정 1, D-493 ⑤·검증 Q-2): 취소하면 슬롯 순서의 첫 카드가 아니라 새 블로그를 열기 전에 폼에 열려 있던 카드(naver_a)로 돌아간다")
         self.assertEqual(controller.provider.calls, ["load"], "취소는 파일에 닿지 않는다")
         empty = new_controller("empty")
         start_new(empty)
@@ -253,7 +264,7 @@ class AddFlowTest(unittest.TestCase):
         key = start_new(controller, "github")
         controller.edit("display_name", "저장 전 이름")
         controller.select("naver_a")
-        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["github_pages", "blogger_ko", "naver_a", "naver_b"], "새 블로그가 카드로 남아 있다")
+        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko", "github_pages"], "새 블로그가 카드로 남아 있다")
         controller.select(key)
         self.assertEqual(fields_of(controller)["display_name"]["value"], "저장 전 이름", "입력은 지워지지 않는다")
         self.assertEqual(controller.kind_free("github"), 0, "열어 둔 슬롯은 빈 자리로 세지 않는다")
@@ -314,6 +325,22 @@ class StaleInputTest(unittest.TestCase):
         self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
         slots = controller.provider.slots
         self.assertEqual((slots["naver_a"].blog_ref, slots["naver_a"].display_name, slots["naver_b"].blog_ref, slots["naver_b"].display_name), ("example-other-blog", "다른 쪽 블로그", "example-new-blog", "내 새 블로그"))
+
+    def test_a_moved_form_keeps_the_mark_that_the_app_put_the_suggested_alias_there_and_never_marks_a_typed_alias(self):
+        """앱이 미리 넣은 제안 별명 표시(`seeded`)는 다른 자리로 옮겨 가도 따라간다(새 번호로 다시 제안) — 사용자가 직접 친 별명에는 달지 않는다. (옮긴 폼에는 옛 슬롯의 기본값 칸도 함께 가므로 앱 닫기 확인에는 이 표시만으로는 차이가 안 보인다 — 그래서 표시 자체를 본다.)"""
+        controller = new_controller("empty")
+        first = start_new(controller, "naver")
+        self.assertEqual(controller.seeded, {first: "네이버 블로그 1"})
+        fill_elsewhere(controller, first, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        load(controller)                                                                           # 다시 읽으면 입력이 같은 종류의 다른 빈 자리로 옮겨진다
+        self.assertEqual((controller.selected, controller.values("naver_b")["alias"], controller.seeded), ("naver_b", "네이버 블로그 2", {"naver_b": "네이버 블로그 2"}), "제안이 새 번호로 바뀌고 표시도 따라간다")
+        typed = new_controller("empty")
+        mine = start_new(typed, "naver")
+        typed.edit("alias", "내가 정한 별명")
+        self.assertEqual(typed.seeded, {mine: "네이버 블로그 1"}, "표시는 앱이 넣은 글(제안)을 기억하고 사용자가 고친 값은 그와 달라 센다")
+        fill_elsewhere(typed, mine, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        load(typed)
+        self.assertEqual((typed.selected, typed.values("naver_b")["alias"], typed.seeded), ("naver_b", "내가 정한 별명", {}), "사용자가 직접 친 별명은 '앱이 넣은 것' 이 아니다")
 
     def test_when_the_kind_has_no_other_free_slot_the_input_is_dropped_and_the_reason_is_told(self):
         controller = new_controller("empty")
@@ -435,7 +462,7 @@ class CloneAndClearTest(unittest.TestCase):
         controller.select("blogger_ko")
         self.assertEqual(drive(controller, controller.start_clone), ("started", "ok", False))
         self.assertEqual(controller.selected, "blogger_en")
-        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["blogger_en", "blogger_ko", "naver_a", "naver_b"], "복제한 블로그가 카드가 된다")
+        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko", "blogger_en"], "복제한 블로그가 카드가 된다")
         self.assertEqual(controller.view()["form"]["actions"][2]["hint"], "", "복제할 자리가 없으면 힌트도 없다")
 
     def test_the_clone_hint_names_the_kind_and_never_a_slot(self):
@@ -519,7 +546,7 @@ class CancelReturnTest(unittest.TestCase):
         load(controller)
         self.assertEqual(controller.selected, "github_pages", "열어 둔 새 블로그 폼은 그대로다")
         self.assertTrue(controller.revert())
-        self.assertEqual(controller.selected, "blogger_ko", "돌아갈 카드가 사라졌으면 첫 카드다")
+        self.assertEqual(controller.selected, "naver_a", "돌아갈 카드가 사라졌으면 첫 카드다(종류별 채움 순서의 첫 카드)")
 
     def test_after_hopping_between_cards_cancel_returns_to_the_card_left_last_before_the_new_form(self):
         controller = new_controller()
@@ -649,6 +676,47 @@ class CloseDialogTest(unittest.TestCase):
 
 
 # ---- 4) 낱말 제안 칩 -----------------------------------------------------------------------------------------------------------------------
+class CloneAliasTest(unittest.TestCase):
+    """복제하면 서비스가 별명도 복사해 두 카드의 제목이 같아진다(검증 Q-7) — 화면이 복제 직후 구분되는 제안 별명을 저장 전 초안으로 채워 둔다(서비스는 그대로). 앱이 미리 넣은 것이라 앱 닫기 확인은 세지 않는다."""
+
+    def cloned(self, alias):
+        controller = new_controller()
+        fill_elsewhere(controller, "blogger_ko", alias=alias)
+        load(controller)
+        controller.select("blogger_ko")
+        self.assertEqual(drive(controller, controller.start_clone), ("started", "ok", False))
+        return controller
+
+    def test_a_clone_with_the_same_alias_gets_a_distinct_suggested_alias_as_an_unsaved_draft(self):
+        controller = self.cloned("Blogger 1")
+        self.assertEqual((controller.selected, controller.drafts["blogger_en"], controller.values("blogger_en")["alias"]), ("blogger_en", {"alias": "Blogger 2"}, "Blogger 2"))
+        self.assertEqual(controller.slot_map()["blogger_en"].alias, "Blogger 1", "저장된 값은 복사된 그대로다 — 서비스는 바꾸지 않는다")
+        self.assertTrue(controller.is_dirty("blogger_en"))
+        self.assertFalse(controller.has_unsaved(), "앱이 미리 넣은 제안 별명뿐이면 사용자가 친 것이 아니다")
+        self.assertIn(T["blogs_cloned"], controller.notice[1])
+        self.assertIn("Blogger 2", controller.notice[1], "무엇으로 채웠는지 알린다")
+        self.assertIn(T["blogs_cloned_alias"].format(alias="Blogger 2"), controller.notice[1])
+        self.assertIn("저장하면 이 별명으로 남아요", controller.notice[1], "저장 전 초안임을 분명히 말한다(검증 S2-4 — '저장 안 해도 채워진 것' 으로 읽히지 않게)")
+        controller.edit("alias", "내 영문 블로그")
+        self.assertTrue(controller.has_unsaved(), "사용자가 고치면 센다")
+
+    def test_a_clone_without_an_alias_gets_no_draft_because_the_two_cards_already_have_different_default_titles(self):
+        controller = self.cloned("")
+        self.assertNotIn("blogger_en", controller.drafts)
+        self.assertEqual(controller.notice, ("ok", T["blogs_cloned"]))
+        titles = {card["key"]: card["title"] for card in controller.view()["list"]["cards"]}
+        self.assertNotEqual(titles["blogger_ko"], titles["blogger_en"])
+
+    def test_saving_the_suggested_alias_makes_the_two_cards_differ(self):
+        controller = self.cloned("Blogger 1")
+        controller.edit("display_name", "영문 블로그")
+        controller.edit("blog_ref", "example-blog-en")
+        self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
+        titles = {card["key"]: card["title"] for card in controller.view()["list"]["cards"]}
+        self.assertEqual((titles["blogger_ko"], titles["blogger_en"]), ("Blogger 1", "Blogger 2"), "안 고치고 저장해도 제목이 구분된다")
+        self.assertNotIn("blogger_en", controller.seeded)
+
+
 class WordChipTest(unittest.TestCase):
     def options(self, controller, name):
         return {option["value"]: option for option in fields_of(controller)[name]["options"]}
@@ -704,6 +772,23 @@ class WordChipTest(unittest.TestCase):
         self.assertTrue(controller.toggle_choice("priority_keywords", "소형가전"), "고른 낱말을 끄는 것은 늘 된다")
         self.assertTrue(controller.toggle_choice("exclude_keywords", "소형가전"), "비운 뒤에는 반대쪽에서 고를 수 있다")
         self.assertEqual(self.options(controller, "priority_keywords")["소형가전"]["reason"], T["bf_chip_other"])
+
+    def test_the_reason_of_the_turned_off_chips_is_one_visible_line_under_the_field_only_while_such_chips_exist(self):
+        """검증 Q-12 — 꺼진 칩의 이유(`다른 키워드 칸에서 이미 골랐어요`)가 툴팁·접근 설명에만 있으면 마우스를 올리지 않는 사람은 왜 꺼졌는지 모른다 — 꺼진 칩이 있을 때만 칸 아래 한 줄로도 보인다."""
+        controller = new_controller("empty")
+        start_new(controller)
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], "", "꺼진 칩이 없으면 줄도 없다")
+        self.assertTrue(controller.toggle_choice("priority_keywords", "소형가전"))
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], T["bf_note_other"], "다른 칸에서 고른 낱말 때문에 꺼진 칩이 있으면 이유가 한 줄로 보인다")
+        self.assertEqual(fields_of(controller)["priority_keywords"]["extra"], "", "고른 쪽 칸에는 꺼진 칩이 없다")
+        self.assertTrue(controller.toggle_choice("priority_keywords", "소형가전"))
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], "", "다시 빼면 줄도 사라진다")
+        words, spec = list(bo.WORD_SUGGESTIONS["priority_keywords"]), bf.SPEC["priority_keywords"]
+        self.assertTrue(controller.toggle_choice("exclude_keywords", words[0]))
+        for word in words[1:1 + spec.count]:
+            self.assertTrue(controller.toggle_choice("priority_keywords", word), word)
+        self.assertEqual(fields_of(controller)["priority_keywords"]["extra"], T["bf_note_full"].format(count=spec.count) + " " + T["bf_note_other"], "한도를 채운 칸에서 다른 칸의 낱말도 꺼져 있으면 두 이유가 함께 보인다")
+        self.assertEqual(fields_of(controller)["exclude_keywords"]["extra"], T["bf_note_other"])
 
     def test_typing_a_overlapping_word_still_gives_the_overlap_error_and_the_chips_do_not_hide_it(self):
         controller = new_controller()
@@ -940,7 +1025,7 @@ class RealServiceTest(unittest.TestCase):
             self.assertEqual(self.stored()[key].display_name, default, "저장된 값은 슬롯 이름 그대로다(바꾸지 않는다)")
         controller = self.controller()
         view = controller.view()
-        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"])
         for card in view["list"]["cards"]:
             self.assertEqual(card["headline"], T["blogs_kind_" + bf.KIND_KEY[card["key"]]], card["key"])
             self.assertEqual(card["a11y"].split(", ")[2], card["headline"], "접근 이름의 이름 자리도 같다")

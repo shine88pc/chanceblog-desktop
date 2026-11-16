@@ -106,7 +106,7 @@ class PickerTest(Base):
         self.assertEqual(chosen, [], "자리가 없는 종류 카드는 '고른 종류' 신호를 내지 않는다 — 셸에 닿기 전에 카드가 먼저 막는다")
         self.assertIs(window.screen_widget, screen, "자리가 없는 종류를 눌러도 화면이 바뀌지 않는다")
         self.assertTrue(window.state.blogs.picking)
-        self.assertEqual(window.state.blogs.listed_keys(), ("blogger_ko", "naver_a", "naver_b"))
+        self.assertEqual(window.state.blogs.listed_keys(), ("naver_a", "naver_b", "blogger_ko"))
         QTest.keyClick(self.ui(window).kind_cards["naver"], Qt.Key_Return)
         self.assertTrue(window.state.blogs.picking)
         self.assertEqual(chosen, [], "키보드로 눌러도 같다")
@@ -391,6 +391,10 @@ class ChipsTest(Base):
         other = self.ui(window).fields["exclude_keywords"].chips["소형가전"]
         self.assertFalse(other.isEnabled())
         self.assertEqual(other.toolTip(), T["bf_chip_other"])
+        reason = self.ui(window).fields["exclude_keywords"].extra
+        self.assertTrue(reason.isVisibleTo(window), "BLOGSEL-2 ⑤: 꺼진 칩의 이유가 마우스를 올리지 않아도 칸 아래 한 줄로 보인다")
+        self.assertEqual(reason.plain_text(), T["bf_note_other"])
+        self.assertFalse(self.ui(window).fields["priority_keywords"].extra.isVisibleTo(window), "꺼진 칩이 없는 칸에는 줄이 없다")
         self.assertTrue(self.ui(window).fields["exclude_keywords"].chips["PC 주변기기"].isEnabled())
         self.assertEqual(window.state.blogs.problems(window.state.blogs.selected).get("priority_keywords"), None)
 

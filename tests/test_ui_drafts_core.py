@@ -939,7 +939,8 @@ class DraftFlowTest(unittest.TestCase):
         controller.set_blog("naver_b")
         drive(controller)
         notice = controller.view()["notice"]
-        self.assertIn("예시 블로그 나", notice["text"])
+        self.assertIn("네이버 블로그 2", notice["text"], "의도적 갱신(blogsel-2, D-510): 다른 화면의 채널 이름은 프로필 이름이 아니라 블로그 관리의 별명(없으면 종류 + 번호) — channel_names")
+        self.assertIn("네이버 블로그 1", notice["text"])
         self.assertIn("용으로 만들었어요", notice["text"])
 
     def test_a_new_draft_starts_fresh_and_the_same_input_gives_the_same_draft(self):
@@ -1008,7 +1009,7 @@ class DraftFlowTest(unittest.TestCase):
         self.assertEqual((controller.set_post_type("없는 유형"), controller.set_post_type("문제 해결형"), controller.set_post_type(None), controller.post_type), (False, True, True, None))
         options = controller.view()["normal"]["options"]
         self.assertEqual([item["label"] for item in options["types"]], ["후보 기준", *dv.POST_TYPES])
-        self.assertEqual([item["label"] for item in options["blogs"]], ["예시 블로그 가", "예시 블로그 나"])
+        self.assertEqual([item["label"] for item in options["blogs"]], ["네이버 블로그 1", "네이버 블로그 2"], "의도적 갱신(blogsel-2, D-510): 블로그 칩의 이름은 별명(없으면 종류 + 번호)")
         self.assertEqual([item["name"] for item in options["fields"]], ["message", "experience", "opinion", "conclusion", "audience", "must_include", "price_date", "urls"])
         self.assertEqual([item["label"] for item in options["fields"]][1], "실제 사용 경험")
         self.assertEqual(options["apply"]["text"], "다시 만들기")

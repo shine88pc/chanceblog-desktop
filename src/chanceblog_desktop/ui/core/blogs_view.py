@@ -39,6 +39,7 @@ class BlogsController:
         self.adding = set()                                  # 새 블로그로 열어 둔 빈 슬롯들 — 저장하기 전까지 카드에 '등록 전' 으로 보인다
         self.picking = False                                 # '블로그 추가' 의 종류 고르기가 열려 있나
         self.return_to = None                                # 새 블로그 폼을 열기 전에 폼에 열려 있던 카드 — 새 블로그 '취소' 뒤에 돌아가는 자리(없거나 사라졌으면 첫 카드)
+        self.seeded = {}                                     # 슬롯 → 앱이 미리 넣은 제안 별명(새 블로그 폼·복제한 블로그) — 사용자가 친 것이 아니라서 앱 닫기 확인이 세지 않는다
         self.custom_open = set()                             # (슬롯, 칸 이름) — '직접 입력' 을 눌러 입력 칸을 연 보기 칸들
         self.drafts = {}                                     # 슬롯 → {고친 칸 이름: 입력값}(고친 칸만 — 안 고친 칸은 늘 저장된 최신 값을 따른다)
         self.touched = {}                                    # 슬롯 → 사용자가 고친 칸 이름들
@@ -124,7 +125,8 @@ class BlogsController:
         """카드로 보이는 슬롯들(슬롯 순서) — 등록됐거나 내용이 있거나 새로 연결하는 중인 것(`blog_form.is_listed`)."""
         if self.data is None:
             return ()
-        return tuple(slot.key for slot in self.data.slots if bf.is_listed(slot.key, slot.raw(), slot.key in self.adding))
+        by_key = self.slot_map()
+        return tuple(key for key in bf.DISPLAY_ORDER if key in by_key and bf.is_listed(key, by_key[key].raw(), key in self.adding))      # 종류별 채움 순서(저장 슬롯 순서가 아니다)
 
     def _normalize_selection(self, prefer=None):
         """폼에 열린 슬롯이 카드로 보이는 슬롯이 아니면 `prefer`(새 블로그 폼을 열기 전의 카드 — 아직 카드면)로, 아니면 첫 카드로 옮기고(없으면 None — 종류 고르기가 열린다)."""
@@ -142,7 +144,7 @@ class BlogsController:
             return False
         for key in self.listed_keys():
             names = set(self.dirty_names(key))
-            if self._is_fresh(key) and bf.clean_line(self.values(key).get("alias")) == bf.suggest_alias(key):
+            if key in self.seeded and bf.clean_line(self.values(key).get("alias")) == self.seeded[key]:
                 names.discard("alias")
             if names:
                 return True
@@ -156,7 +158,7 @@ class BlogsController:
 
     def _pop_input(self, key):
         """그 슬롯에 대한 입력 상태(초안·고친 칸·저장 시도·직접 입력 칸·서비스가 알린 문제)를 꺼내 지운다 → 꺼낸 것(옮길 때 쓴다)."""
-        taken = {"touched": self.touched.pop(key, None), "problems": self.service_problems.pop(key, None), "submitted": key in self.submitted,
+        taken = {"touched": self.touched.pop(key, None), "problems": self.service_problems.pop(key, None), "submitted": key in self.submitted, "seeded": self.seeded.pop(key, None),
                  "custom": {name for slot, name in self.custom_open if slot == key}}
         self.drafts.pop(key, None)
         self.submitted.discard(key)
@@ -168,6 +170,8 @@ class BlogsController:
         effective = dict(effective)
         if bf.clean_line(effective.get("alias")) == bf.suggest_alias(old):
             effective["alias"] = bf.suggest_alias(target)
+            if taken["seeded"] is not None:
+                self.seeded[target] = bf.suggest_alias(target)
         base = self.form_base(target)
         self.adding.add(target)
         self.drafts[target] = {name: effective[name] for name in bf.dirty_names(target, base, {**base, **effective})}
@@ -250,6 +254,7 @@ class BlogsController:
         self._pop_input(key)                                                                                  # 이 자리에 낡은 입력이 남아 있어도 되살리지 않는다
         self.adding.add(key)
         self.drafts[key] = {"alias": bf.suggest_alias(key)}
+        self.seeded[key] = bf.suggest_alias(key)
         self.selected, self.picking, self.notice = key, False, None
         return key
 
@@ -450,12 +455,23 @@ class BlogsController:
         elif work["kind"] == "clone":
             self.selected = work["target"]
             self.notice = ("ok", T["blogs_cloned"])
+            if self._same_alias_as_source(work["key"], work["target"]):                                    # 복제하면 별명도 복사돼 두 카드의 제목이 같아진다 — 구분되는 제안 별명을 저장 전 초안으로 채워 둔다(고쳐서 저장할 수 있다)
+                suggestion = bf.suggest_alias(work["target"])
+                self.drafts[work["target"]] = {"alias": suggestion}
+                self.seeded[work["target"]] = suggestion
+                self.notice = ("ok", f"{T['blogs_cloned']} {T['blogs_cloned_alias'].format(alias=bf.shown(suggestion, 30))}")
         else:
             self.notice = ("ok", T["blogs_cleared"] if work["kind"] == "clear" else T["blogs_saved"])
         if stale:
             self.notice = ("warning", f"{self.notice[1]} {stale[1]}")
         self.picking = False
         self._normalize_selection()                                                                 # 지운 슬롯은 더 카드가 아니다 — 다른 카드로 옮겨 가고(없으면 종류 고르기)
+
+    def _same_alias_as_source(self, source, target):
+        """복제한 뒤 두 슬롯이 같은 별명(대소문자 구분 없음)을 가졌나 — 별명이 없으면(제안 이름이 슬롯마다 다르다) 아니다."""
+        slots = self.slot_map()
+        alias = bf.clean_line(slots[target].alias)
+        return bool(alias) and alias.casefold() == bf.clean_line(slots[source].alias).casefold()
 
     def apply_write_failed(self, failure):
         """쓰기가 실패했다 — 입력(초안)은 그대로다. 낡은 판이면 `True` 를 돌려줘 화면이 최신 내용을 다시 읽게 한다. 문장은 종류별로 정해진 쉬운 말뿐이다."""
@@ -510,7 +526,10 @@ class BlogsController:
                 reason = "" if folded in on else T["bf_chip_other"] if folded in other else T["bf_chip_full"] if full else ""
                 options.append({"value": word, "label": word, "checked": folded in on, "disabled": bool(reason), "reason": reason})
             view["options"] = options
-            view["extra"] = T["bf_note_full"].format(count=spec.count) if full else ""
+            notes = [T["bf_note_full"].format(count=spec.count)] if full else []                 # 꺼진 칩의 이유는 툴팁·접근 설명에만 두지 않고 칸 아래 한 줄로도 보인다(꺼진 칩이 있을 때만 — 검증 Q-12)
+            if any(option["reason"] == T["bf_chip_other"] for option in options):
+                notes.append(T["bf_note_other"])
+            view["extra"] = " ".join(notes)
         if spec.assist:                                                                        # 제안 문장(별명 — 종류 + 번호 / 소개글 — 고른 값으로 만든 문장): 이미 그 글을 쓰고 있으면 보이지 않는다
             suggestion = self.suggestion_text(spec.name, key)
             if suggestion and bf.clean_line(raw) != suggestion:

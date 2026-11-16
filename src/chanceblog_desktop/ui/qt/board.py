@@ -129,7 +129,7 @@ class BoardRow(UI.Pressable):
             self.sample_badge = UI.Badge("muted", row["sample_tag"])                       # 예시 값에는 `예시` 표시
             self.sample_badge.setProperty("compact", True)                                 # 좁은 자리라 안쪽 여백과 글자를 작게(11px — 사이드바 '준비 중' 과 같다)
             side.addWidget(self.sample_badge, 0, Qt.AlignVCenter)
-        self.channel_badge = UI.BlogBadge(row["channel"], row["channel"]) if row["channel"] in ("A", "B") else None             # 채널 열쇠(A·B) — 색과 글자를 함께
+        self.channel_badge = UI.BlogBadge(row["channel"], row.get("badge") or row["channel"]) if row["channel"] in ("A", "B") else None             # 채널 열쇠(A·B)가 색을 정하고, 글자는 화면 이름(별명)의 첫 글자(기본 이름이면 번호)
         if self.channel_badge is not None:
             self.channel_badge.setAccessibleName(channel_name or row["channel"])
             side.addWidget(self.channel_badge, 0, Qt.AlignVCenter)

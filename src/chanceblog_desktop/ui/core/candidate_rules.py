@@ -12,6 +12,7 @@ from ...content import candidates as legacy
 from ...topics import channels as ch
 from ...topics import notice, safety, wording
 from ...topics import score as sc
+from . import channel_names as cn
 from . import gauges as G
 from .board_view import date_text, time_text
 from .text import T, display_text
@@ -156,10 +157,9 @@ def keyword_chips(candidate):
 
 
 def avatar_text(key, name):
-    """채널 아바타 안의 글자 하나 — 네이버 A·B 는 A·B, 그 밖은 표시 이름의 첫 글자."""
-    fixed = {"naver_a": "A", "naver_b": "B"}.get(key)
-    if fixed:
-        return fixed
+    """채널 아바타 안의 글자 하나 — 다섯 채널은 화면 이름(별명)의 첫 글자, 그 밖은 표시 이름의 첫 글자."""
+    if key in cn.ORDER:
+        return cn.avatar_letter(key)
     for char in str(name):
         if not char.isspace():
             return char.upper()
@@ -255,7 +255,7 @@ def hold_row(candidate):
 def info_rows(candidate, channel_name):
     """기본 정보 — 채널·후보 종류·검색 의도·글 종류·주제 묶음·대상 독자·언어·만든 때(한국 시각)·중복 판정·비슷한 글 수."""
     none = T["cand_info_none"]
-    rows = [(T["cand_info_channel"], shown(channel_name, 40) or wording.CHANNEL_KO.get(candidate.channel, "")), (T["cand_info_type"], wording.CANDIDATE_TYPE_KO.get(candidate.candidate_type, none)),
+    rows = [(T["cand_info_channel"], cn.label(candidate.channel) if candidate.channel in cn.ORDER else shown(channel_name, 40)), (T["cand_info_type"], wording.CANDIDATE_TYPE_KO.get(candidate.candidate_type, none)),
             (T["cand_info_intent"], wording.SEARCH_INTENT_KO.get(candidate.search_intent, none)), (T["cand_info_content"], wording.CONTENT_TYPE_KO.get(candidate.content_type, none)),
             (T["cand_info_cluster"], shown(cluster_name(candidate.topic_cluster), 40)), (T["cand_info_reader"], shown(candidate.target_reader, 80)), (T["cand_info_lang"], wording.LANGUAGE_KO.get(candidate.language, none)),
             (T["cand_info_created"], time_text(candidate.created_at) or none), (T["cand_info_dup"], wording.DUPLICATE_STATUS_KO.get(candidate.duplicate_status, none))]
