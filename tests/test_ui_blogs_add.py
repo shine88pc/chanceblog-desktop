@@ -315,6 +315,22 @@ class StaleInputTest(unittest.TestCase):
         slots = controller.provider.slots
         self.assertEqual((slots["naver_a"].blog_ref, slots["naver_a"].display_name, slots["naver_b"].blog_ref, slots["naver_b"].display_name), ("example-other-blog", "다른 쪽 블로그", "example-new-blog", "내 새 블로그"))
 
+    def test_a_moved_form_keeps_the_mark_that_the_app_put_the_suggested_alias_there_and_never_marks_a_typed_alias(self):
+        """앱이 미리 넣은 제안 별명 표시(`seeded`)는 다른 자리로 옮겨 가도 따라간다(새 번호로 다시 제안) — 사용자가 직접 친 별명에는 달지 않는다. (옮긴 폼에는 옛 슬롯의 기본값 칸도 함께 가므로 앱 닫기 확인에는 이 표시만으로는 차이가 안 보인다 — 그래서 표시 자체를 본다.)"""
+        controller = new_controller("empty")
+        first = start_new(controller, "naver")
+        self.assertEqual(controller.seeded, {first: "네이버 블로그 1"})
+        fill_elsewhere(controller, first, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        load(controller)                                                                           # 다시 읽으면 입력이 같은 종류의 다른 빈 자리로 옮겨진다
+        self.assertEqual((controller.selected, controller.values("naver_b")["alias"], controller.seeded), ("naver_b", "네이버 블로그 2", {"naver_b": "네이버 블로그 2"}), "제안이 새 번호로 바뀌고 표시도 따라간다")
+        typed = new_controller("empty")
+        mine = start_new(typed, "naver")
+        typed.edit("alias", "내가 정한 별명")
+        self.assertEqual(typed.seeded, {mine: "네이버 블로그 1"}, "표시는 앱이 넣은 글(제안)을 기억하고 사용자가 고친 값은 그와 달라 센다")
+        fill_elsewhere(typed, mine, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        load(typed)
+        self.assertEqual((typed.selected, typed.values("naver_b")["alias"], typed.seeded), ("naver_b", "내가 정한 별명", {}), "사용자가 직접 친 별명은 '앱이 넣은 것' 이 아니다")
+
     def test_when_the_kind_has_no_other_free_slot_the_input_is_dropped_and_the_reason_is_told(self):
         controller = new_controller("empty")
         fill_elsewhere(controller, "naver_b", display_name="이미 있던 블로그", blog_ref="example-b-blog")
@@ -649,6 +665,45 @@ class CloseDialogTest(unittest.TestCase):
 
 
 # ---- 4) 낱말 제안 칩 -----------------------------------------------------------------------------------------------------------------------
+class CloneAliasTest(unittest.TestCase):
+    """복제하면 서비스가 별명도 복사해 두 카드의 제목이 같아진다(검증 Q-7) — 화면이 복제 직후 구분되는 제안 별명을 저장 전 초안으로 채워 둔다(서비스는 그대로). 앱이 미리 넣은 것이라 앱 닫기 확인은 세지 않는다."""
+
+    def cloned(self, alias):
+        controller = new_controller()
+        fill_elsewhere(controller, "blogger_ko", alias=alias)
+        load(controller)
+        controller.select("blogger_ko")
+        self.assertEqual(drive(controller, controller.start_clone), ("started", "ok", False))
+        return controller
+
+    def test_a_clone_with_the_same_alias_gets_a_distinct_suggested_alias_as_an_unsaved_draft(self):
+        controller = self.cloned("Blogger 1")
+        self.assertEqual((controller.selected, controller.drafts["blogger_en"], controller.values("blogger_en")["alias"]), ("blogger_en", {"alias": "Blogger 2"}, "Blogger 2"))
+        self.assertEqual(controller.slot_map()["blogger_en"].alias, "Blogger 1", "저장된 값은 복사된 그대로다 — 서비스는 바꾸지 않는다")
+        self.assertTrue(controller.is_dirty("blogger_en"))
+        self.assertFalse(controller.has_unsaved(), "앱이 미리 넣은 제안 별명뿐이면 사용자가 친 것이 아니다")
+        self.assertIn(T["blogs_cloned"], controller.notice[1])
+        self.assertIn("Blogger 2", controller.notice[1], "무엇으로 채웠는지 알린다")
+        controller.edit("alias", "내 영문 블로그")
+        self.assertTrue(controller.has_unsaved(), "사용자가 고치면 센다")
+
+    def test_a_clone_without_an_alias_gets_no_draft_because_the_two_cards_already_have_different_default_titles(self):
+        controller = self.cloned("")
+        self.assertNotIn("blogger_en", controller.drafts)
+        self.assertEqual(controller.notice, ("ok", T["blogs_cloned"]))
+        titles = {card["key"]: card["title"] for card in controller.view()["list"]["cards"]}
+        self.assertNotEqual(titles["blogger_ko"], titles["blogger_en"])
+
+    def test_saving_the_suggested_alias_makes_the_two_cards_differ(self):
+        controller = self.cloned("Blogger 1")
+        controller.edit("display_name", "영문 블로그")
+        controller.edit("blog_ref", "example-blog-en")
+        self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
+        titles = {card["key"]: card["title"] for card in controller.view()["list"]["cards"]}
+        self.assertEqual((titles["blogger_ko"], titles["blogger_en"]), ("Blogger 1", "Blogger 2"), "안 고치고 저장해도 제목이 구분된다")
+        self.assertNotIn("blogger_en", controller.seeded)
+
+
 class WordChipTest(unittest.TestCase):
     def options(self, controller, name):
         return {option["value"]: option for option in fields_of(controller)[name]["options"]}

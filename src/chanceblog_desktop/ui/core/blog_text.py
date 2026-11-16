@@ -83,6 +83,7 @@ BLOG_T = {
     "blogs_del_ok": "지우기", "blogs_del_cancel": "취소", "blogs_del_named": "‘{name}’ 블로그", "blogs_del_unnamed": "이 블로그",
     # 결과·실패
     "blogs_saved": "저장했어요.", "blogs_unchanged": "바뀐 내용이 없어요.", "blogs_cloned": "복제했어요. 이름과 블로그 ID 를 이 블로그에 맞게 바꿔 주세요.", "blogs_cleared": "블로그 정보를 지웠어요. 내 블로그 목록에서도 사라졌어요.",
+    "blogs_cloned_alias": "별명은 ‘{alias}’ 로 구분해 채워 두었어요. 마음에 안 들면 고쳐서 저장해 주세요.",
     "blogs_stale_reloaded": "다른 곳에서 바뀐 내용을 다시 불러왔어요. 입력한 내용은 그대로 두었어요. 확인한 뒤 다시 저장해 주세요.",
     "blogs_taken_moved": "고른 자리를 다른 곳에서 먼저 썼어요. 입력한 내용은 같은 사이트의 빈 자리로 옮겨 두었어요. 확인한 뒤 저장해 주세요.",
     "blogs_taken_dropped": "고른 자리를 다른 곳에서 먼저 썼고, 같은 사이트에는 남은 자리가 없어요. 새 블로그로 입력하던 내용은 저장되지 않았어요.",
