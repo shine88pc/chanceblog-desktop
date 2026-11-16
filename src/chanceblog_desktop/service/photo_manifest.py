@@ -10,6 +10,10 @@
   · **저장 직전에 키·토큰 모양을 검사한다**(`security/scan.py` — 초안 저장·백업과 같은 검사기, 경로·모든 글칸). 찾으면 **아무것도 쓰지 않고** `CONTENT_INVALID` 로 멈춘다 — 위치(사진 번호·칸)와 종류만 알리고 찾은 글은 다시 보이지 않는다.
   · **깨진 파일은 건드리지 않는다** — 읽을 수 없는 파일(JSON 불량·칸 모양·한도·512KB 초과·파일 이름과 초안 번호가 다름·링크·폴더)은 `broken` 으로 알리고 열지 않는다. 그 위에 새로 저장하려면 `replace_broken=True` 를 줘야 하고,
     그때도 깨진 파일은 지우지 않고 `.bak` 으로 옮겨 둔다(`context.keep_bad_copy`). 보관함 폴더가 링크(윈도의 정션 포함)이거나 폴더가 아니면 모든 길이 거절한다.
+  · **지금 못 연 파일은 깨진 파일과 다르다** — 파일을 열지 못한 오류(윈도의 공유 위반 — 백신·색인기가 파일을 잡은 순간 …)는 0.03초·0.06초 쉬고 두 번 더 해 보고, 그래도 안 되면 `unreadable` 로 알린다. 파일은 멀쩡할 수 있으므로 `replace_broken=True` 로도
+    그 위에 쓰지 않는다(`broken` 만 덮어쓴다). 더 새로운 판(`STORE_VERSION_UNSUPPORTED`)은 지금은 `broken` 으로 묶인다 — 덮어쓰면 새 판의 글이 `.bak` 으로 옮겨질 뿐 사라지지는 않지만, 3단계 화면은 이 경우 덮어쓰기를 권하지 않는다.
+  · **쓴 파일을 못 읽는 상태를 만들지 않는다** — 저장할 글이 `MAX_FILE_BYTES`(512KB)를 넘으면 아무것도 쓰지 않고 거절한다(분석 결과를 쓰는 최악의 경우는 그보다 크고 기본 길은 훨씬 작다).
+  · **`orphans` 는 fail closed** — '지금 있는 초안 번호' 가 list·tuple·set 이 아니거나 모양이 틀린 번호가 하나라도 있으면 거절한다. 초안 저장소를 읽지 못했을 때는 부르지 않는다.
   · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나와 그 번호의 임시 파일의 `unlink` 뿐이다. 되돌릴 수 없다(전체 백업에는 아직 담지 않는다 — 결정 D-496).
     초안을 지울 때 사진 정보를 함께 지우는 연결은 3단계에서 한다(1단계는 기존 코드를 바꾸지 않는다) — 그 사이에 남은 파일은 `orphans` 로 찾을 수 있다.
   · **사진 파일은 읽기만 본다**(`check_files`) — 경로 위의 폴더까지 링크가 아닌지·보통 파일인지·이 PC 에 내려받은 파일인지(클라우드 '오프라인' 표시면 읽으면 내려받기가 일어나므로 거절)를 `lstat` 으로 보고, 확장자·크기(20MB)·실제 형식·긴 변
@@ -24,6 +28,7 @@ import dataclasses
 import os
 import re
 import stat
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,7 +44,8 @@ SUBJECT = "사진 정보"
 FOLDER = "photo-manifests"                               # 사용자 데이터 폴더 아래 폴더 이름
 FILE_SUFFIX = ".json"
 MAX_FILE_BYTES = pm.MAX_TEXT_BYTES
-STATES = ("none", "ok", "broken")
+STATES = ("none", "ok", "broken", "unreadable")
+READ_RETRY_WAITS = (0.03, 0.06)                          # 파일을 못 열었을 때(윈도의 공유 위반 …) 이만큼씩 쉬고 두 번까지 다시 해 본다(합쳐 0.09초)
 OK, MISSING, LINK, NOT_FILE, CLOUD = "ok", "missing", "link", "not_file", "cloud"
 
 _NAME = re.compile(r"(dd-[0-9a-f]{20})\.json")
@@ -50,6 +56,9 @@ _R_ID = "초안 번호가 올바르지 않아요"
 _R_FOLDER = "사진 정보 폴더가 올바르지 않아요. 바로 가기나 파일이 아닌 폴더여야 해요"
 _R_FOLDER_READ = "사진 정보 폴더를 읽을 수 없어요"
 _R_BROKEN = "보관된 사진 정보 파일이 올바르지 않아 열지 않았어요"
+_R_UNREADABLE = "보관된 사진 정보 파일을 지금은 열 수 없어요. 잠시 뒤에 다시 해 주세요"
+_R_TOO_BIG = "사진 정보가 너무 커서 저장할 수 없어요. 사진 수나 분석 결과를 줄여 주세요"
+_R_KNOWN = "지금 있는 초안 번호 목록이 올바르지 않아요"
 _R_SECRET = "그 부분을 지운 뒤 다시 저장해 주세요 — 앱은 글을 자동으로 지우거나 바꾸지 않아요"          # 앞에 위치와 유형(`scan.describe` — 칸·줄·종류뿐 글 내용 없음)이 붙는다
 _R_FORM = "사진 정보의 모양이 올바르지 않아요"
 _NOT_FOUND = "사진 정보"
@@ -148,14 +157,27 @@ def _scan_names(folder):
     return sorted(found.group(1) for found in (_NAME.fullmatch(name) for name in names) if found), None
 
 
+def _pause(seconds):
+    """읽기를 다시 해 보기 전에 잠깐 쉰다(시험은 이 함수를 바꿔 끼워 실제로 기다리지 않는다) — 이 모듈에서 시간을 쓰는 단 하나의 곳이다."""
+    time.sleep(seconds)
+
+
 def _read_file(path, draft_id):
-    """파일 하나를 읽는다 → `(PhotoManifest, "ok")` · `(None, "none")`(없다) · `(None, "broken")`(읽을 수 없다 — 모양·크기·링크·글자·칸·이름과 초안 번호가 다름 어느 것이든)."""
+    """파일 하나를 읽는다 → `(PhotoManifest, "ok")` · `(None, "none")`(없다) · `(None, "broken")`(내용이 올바르지 않다 — 모양·크기·링크·글자·칸·이름과 초안 번호가 다름 어느 것이든) ·
+    `(None, "unreadable")`(지금은 열지 못했다 — 윈도의 공유 위반 같은 열기 오류가 짧은 재시도(`READ_RETRY_WAITS`) 뒤에도 이어졌다. 파일은 멀쩡할 수 있다 — 검증 S-2)."""
     info = _lstat(path)
     if info is None:
         return None, "none"
     if not stat.S_ISREG(info.st_mode) or own_posts._link_like(info) or info.st_size > MAX_FILE_BYTES:
         return None, "broken"
     data, reason = own_posts._read_prefix(path, MAX_FILE_BYTES + 1, info)       # 읽기 전용 `rb` 로 상한 + 1 바이트까지만(`own_posts` 의 읽기 규칙 그대로)
+    for wait in READ_RETRY_WAITS:
+        if reason != own_posts._R_MISSING:                 # 열기 오류만 다시 해 본다(검사와 열기 사이에 바뀐 파일·내용 오류는 그대로)
+            break
+        _pause(wait)
+        data, reason = own_posts._read_prefix(path, MAX_FILE_BYTES + 1, info)
+    if reason == own_posts._R_MISSING:
+        return (None, "none") if _lstat(path) is None else (None, "unreadable")      # 그 사이 지워졌으면 없는 것이다
     if reason is not None or len(data) > MAX_FILE_BYTES:
         return None, "broken"
     manifest = None
@@ -210,11 +232,15 @@ def save_manifest(ctx, draft_id, manifest, *, persist_analysis=False, replace_br
     reason = _secret_reason(manifest, persist_analysis)
     if reason is not None:
         raise _refuse(reason)
+    if len(manifest.to_text(persist_analysis).encode("utf-8")) > MAX_FILE_BYTES:
+        raise _refuse(_R_TOO_BIG)                          # 읽을 때 512KB 를 넘으면 거절하므로, 쓴 파일을 못 읽는 상태가 되지 않게 쓰기 전에 막는다(검증 Q-5)
     problem = _folder_problem(folder_path(ctx))
     if problem is not None:
         raise problem
     path = _file_of(ctx, draft_id)
     old, state = _read_file(path, draft_id)
+    if state == "unreadable":
+        raise _refuse(_R_UNREADABLE)                       # 지금 못 연 파일은 깨진 것과 다르다 — 멀쩡할 수 있으니 `replace_broken` 이어도 그 위에 쓰거나 옮기지 않는다(검증 S-2)
     if state == "broken" and not replace_broken:
         raise _refuse(_R_BROKEN)
     if state == "none" and not manifest.photos:
@@ -288,8 +314,11 @@ def list_manifests(ctx):
 
 
 def orphans(ctx, known_draft_ids):
-    """사진 정보 파일은 있는데 `known_draft_ids`(지금 저장돼 있는 초안 번호들)에 없는 초안 번호들 — 읽기만 한다(파일을 열지 않고 이름만 본다). 지우는 일은 `delete_manifest`(확인 필요)로 따로 한다."""
-    known = {draft_id for draft_id in known_draft_ids if is_draft_id(draft_id)}
+    """사진 정보 파일은 있는데 `known_draft_ids`(지금 저장돼 있는 초안 번호들)에 없는 초안 번호들 — 읽기만 한다(파일을 열지 않고 이름만 본다). 지우는 일은 `delete_manifest`(확인 필요)로 따로 한다.
+    `known_draft_ids` 는 list·tuple·set 이고 모두 초안 번호 모양이어야 한다(아니면 `CONTENT_INVALID`). **초안 저장소를 읽지 못했을 때는 이 함수를 부르지 않는다**(빈 목록으로 보이면 모든 파일이 고아가 된다)."""
+    if not isinstance(known_draft_ids, (list, tuple, set, frozenset)) or not all(is_draft_id(draft_id) for draft_id in known_draft_ids):
+        raise _refuse(_R_KNOWN)                            # fail closed — 잘못된 목록(대문자·공백·글 하나·모양이 틀린 번호)이 '모든 파일이 고아' 로 보이게 하지 않는다(검증 S-3)
+    known = set(known_draft_ids)
     found, problem = _scan_names(folder_path(ctx))
     if problem is not None:
         raise problem

@@ -15,7 +15,7 @@ preferred_section·placement·confirmed_by_user·caption. 목록 파일에 그 �
   · **경로** — `local_path` 는 이 PC 의 **절대 경로**(`C:\\…`·`C:/…`, 윈도가 아니면 `/…` 도)이고 `service/own_posts.py` 의 경로 모양 규칙과 같다: 인터넷 주소 모양·네트워크 위치(`\\\\서버\\공유`)·와일드카드·제어 문자·`..`·윈도 장치
     이름(`CON.jpg`)·드라이브 문자 자리가 아닌 `:`(대체 데이터 스트림)·끝의 구분자는 거절하고 260자(윈도가 파일을 못 여는 길이)를 넘으면 거절한다. 확장자는 **`ui/core/imagerules.py` 의 지원 확장자**(JPG·JPEG·PNG·WebP)뿐이다 —
     사진 규칙(실제 형식 확인·EXIF 회전 자동 적용·원본 수정 금지·20MB·긴 변 12,000px 경고)은 새로 만들지 않고 그 파일을 쓴다. 같은 파일(경로의 대소문자·구분자 차이 무시)을 두 번 넣을 수 없다. 경로는 어떤 출력(초안 입력·오류·`repr`)에도 나오지 않는다.
-  · **종류·위치** — 종류(`photo_type`)·장소 분위기(`setting`)는 사용자가 고르는 짧은 이름이다(목록은 사용자가 고칠 수 있어 이 모듈은 모양만 보고, 목록을 주면 그 안에서만 받는다). `placement` 는 `{kind, nth}` 이고 kind 는
+  · **종류·위치** — 종류(`photo_type`)·장소 분위기(`setting`)는 사용자가 고르는 짧은 이름이다(목록은 사용자가 고칠 수 있어 이 모듈은 모양만 본다 — 종류는 `photo_types` 목록을 주면 더할 때와 **바꿀 때** 그 안에서만 받고, 장소 분위기 목록은 이 모듈이 받지 않고 화면이 고르는 칸을 제한한다). `placement` 는 `{kind, nth}` 이고 kind 는
     `auto`(생성기가 정함)·`top`(글 맨 앞)·`after_heading`(소제목 뒤)·`after_paragraph`(n번째 문단 뒤)·`between_sentences`(n번째 문장 뒤)다.
   · **분석 결과는 기본으로 저장하지 않는다** — `observed_objects`·`visible_text` 는 `{글, 확인 여부}` 항목의 목록이고 메모리에서만 쓴다(`to_dict` 의 기본은 빈 목록이고 분석 방법도 `manual` 로 쓴다 — 켜려면 `persist_analysis=True`). 나중의 로컬 분석 플러그인이 `set_analysis` 로
     **확인 전** 항목을 채우고, 사용자가 고치고(`edit_item`) 확인해야(`confirm_item`) 한다. 관찰한 대상에서 얼굴·관계·감정·신원을 짐작한 말(`inference_problem`)은 받지 않는다. 읽은 글자도 사용자가 확인하기 전에는 사실이 아니다.
@@ -96,7 +96,7 @@ _P_LONG = f"사진 파일 위치가 너무 길어요({MAX_PATH_CHARS}자까지).
 _P_SUFFIX = "지원하지 않는 형식이에요. JPG·PNG·WebP 사진만 쓸 수 있어요"
 _P_RESERVED = "윈도에서 장치 이름으로 쓰이는 파일 이름은 쓰지 않아요. 파일 이름을 바꾼 뒤 골라 주세요"
 _R_INFERENCE = "사진 속 사람의 얼굴·관계·감정·신원을 짐작한 말은 받지 않아요. 직접 보고 확인한 대상만 적어 주세요"
-_R_PERSONAL = "주민등록번호나 카드 번호처럼 보이는 숫자는 받지 않아요"
+_R_PERSONAL = "주민등록번호나 카드 번호처럼 보이는 숫자는 받지 않아요. 번호가 아니라면 숫자 사이에 쉼표나 글자를 넣어 적어 주세요"
 _R_SECRET = "키·토큰처럼 보이는 글이 들어 있어요. 그 부분을 지운 뒤 다시 적어 주세요"
 _R_FULL = f"사진은 한 글에 {MAX_PHOTOS}장까지만 넣을 수 있어요"
 _R_NUMBERS = f"사진 번호를 모두 썼어요({MAX_NUMBER}번까지). 새 글에서 다시 시작해 주세요"
@@ -172,7 +172,13 @@ def stray_braces(text):
     if not isinstance(text, str):
         return 0
     spans = [(start, end) for _number, start, end in find_placeholders(text)]
-    return sum(1 for found in _BRACES.finditer(text) if not any(start <= found.start() < end for start, end in spans))
+    count, index = 0, 0
+    for found in _BRACES.finditer(text):                # 둘 다 글에 나온 순서라서 한 번씩만 훑는다(글자 수의 제곱이 아니다 — 검증 S-16)
+        while index < len(spans) and spans[index][1] <= found.start():
+            index += 1
+        if not (index < len(spans) and spans[index][0] <= found.start() < spans[index][1]):
+            count += 1
+    return count
 
 
 # ---- 경로 ---------------------------------------------------------------------------------------------------------------------------------
@@ -356,7 +362,7 @@ class Photo:
     photo_id: str
     local_path: str = field(repr=False)
     display_order: int
-    photo_type: str
+    photo_type: str = field(repr=False)
     analysis_method: str = METHOD_MANUAL
     observed_objects: tuple = field(default=(), repr=False)
     visible_text: tuple = field(default=(), repr=False)
@@ -410,7 +416,7 @@ class DraftPhoto:
     경로·파일 이름·`photo_id` 문자열·분석 방법·확인 전 항목은 없다. 글은 `repr` 에 나오지 않는다."""
     number: int
     display_order: int
-    photo_type: str
+    photo_type: str = field(repr=False)
     setting: str = field(repr=False)
     user_subject: str = field(repr=False)
     user_note: str = field(repr=False)
@@ -621,7 +627,7 @@ def reorder(manifest, photo_ids):
 
 def update_photo(manifest, photo_id, /, *, photo_types=None, **changes):
     """사진 한 장의 내용(`EDIT_FIELDS`)을 고친다. **내용이 실제로 바뀌면 확정이 풀린다**(확정은 지금 저장된 값에 대한 것이다). 파일 위치(`local_path`)를 바꾸면 다른 사진이므로 분석 결과도 비운다.
-    확정(`confirmed_by_user`)·순서·번호·분석 결과는 여기서 고칠 수 없다(`set_confirmed`·`move_photo`·`set_analysis` …). 바뀐 것이 없으면 그대로 돌려준다."""
+    확정(`confirmed_by_user`)·순서·번호·분석 결과는 여기서 고칠 수 없다(`set_confirmed`·`move_photo`·`set_analysis` …). 바뀐 것이 없으면 그대로 돌려준다. `photo_types` 를 주면 종류를 **바꿀 때만** 그 목록 안에 있어야 한다(옛 종류가 목록에서 빠졌어도 다른 칸은 고칠 수 있다)."""
     if set(changes) - set(EDIT_FIELDS):
         raise _invalid(_R_EDIT)
     old = manifest.photo(photo_id)
@@ -632,7 +638,8 @@ def update_photo(manifest, photo_id, /, *, photo_types=None, **changes):
         if path_key(changes["local_path"]) in {path_key(photo.local_path) for photo in manifest.photos if photo.photo_id != photo_id}:
             raise _invalid(_R_DUPLICATE, old.number)
     new = replace(old, **changes)
-    _require_type(new, photo_types)
+    if new.photo_type != old.photo_type:
+        _require_type(new, photo_types)                    # 종류가 실제로 바뀔 때만 목록을 본다 — 메모만 고쳤는데 옛 종류가 지금 목록에 없다고 거절하지 않는다(검증 Q-7)
     if new == old:
         return manifest
     if new.local_path != old.local_path:
@@ -726,11 +733,14 @@ def placeholder_report(manifest, text):
     found = tuple(number for number, _start, _end in find_placeholders(text))
     known = {photo.number: photo for photo in manifest.photos}
     appearing = _unique(found)
+    counts = {}
+    for number in found:
+        counts[number] = counts.get(number, 0) + 1
     sent = [photo.number for photo in manifest.photos if photo.confirmed_by_user]
     expected = [number for number in sent if number in appearing]
     actual = [number for number in appearing if number in sent]
     return PlaceholderReport(found, tuple(number for number in appearing if number not in known), tuple(number for number in appearing if number in known and not known[number].confirmed_by_user),
-                             tuple(number for number in sent if number not in appearing), tuple(number for number in appearing if found.count(number) > 1), actual != expected, stray_braces(text))
+                             tuple(number for number in sent if number not in appearing), tuple(number for number in appearing if counts[number] > 1), actual != expected, stray_braces(text))
 
 
 __all__ = ["ADD_FIELDS", "ANALYSIS_KINDS", "DEFAULT_PHOTO_TYPES", "DEFAULT_SETTINGS", "DRAFT_KEYS", "DraftPhoto", "EDIT_FIELDS", "ENVELOPE_KEYS", "FIELDS", "MAX_PHOTOS", "Observation", "PLACEMENT_KINDS",

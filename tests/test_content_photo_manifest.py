@@ -153,11 +153,15 @@ class ShapeTest(Base):
         self.assertEqual(data["photos"][0]["analysis_method"], "manual")
 
     def test_the_reprs_of_photos_and_manifests_never_show_paths_or_texts(self):
-        manifest = confirmed(build(2, user_subject="UNIQ-SUBJECT-a1", user_note="UNIQ-NOTE-b2", caption="UNIQ-CAP-c3"), "p001")
+        manifest = pm.empty_manifest()
+        for number in (1, 2):
+            manifest, _id = pm.add_photo(manifest, path_of(number), photo_type="UNIQ-TYPE-h8", setting="UNIQ-SETTING-f6", preferred_section="UNIQ-SECTION-g7", user_subject="UNIQ-SUBJECT-a1", user_note="UNIQ-NOTE-b2",
+                                         caption="UNIQ-CAP-c3")
+        manifest = confirmed(manifest, "p001")
         manifest, _dropped = pm.set_analysis(manifest, "p002", method="local:x", objects=["UNIQ-OBJ-d4"], texts=["UNIQ-TXT-e5"])
         shown = repr(manifest) + repr(manifest.photos[0]) + str(manifest.photos[1]) + repr(manifest.photos[1].observed_objects[0]) + repr(pm.draft_inputs(manifest))
-        for marker in (USER_DIR, FILE_STEM, "UNIQ-SUBJECT-a1", "UNIQ-NOTE-b2", "UNIQ-CAP-c3", "UNIQ-OBJ-d4", "UNIQ-TXT-e5"):
-            self.assertNotIn(marker, shown)
+        for marker in (USER_DIR, FILE_STEM, "UNIQ-SUBJECT-a1", "UNIQ-NOTE-b2", "UNIQ-CAP-c3", "UNIQ-OBJ-d4", "UNIQ-TXT-e5", "UNIQ-TYPE-h8", "UNIQ-SETTING-f6", "UNIQ-SECTION-g7"):
+            self.assertNotIn(marker, shown, "경로·종류·장소 분위기·들어갈 위치·대상·메모·설명 글·분석 글은 repr 에 나오지 않는다")
 
 
 def build_again(manifest):
@@ -377,6 +381,11 @@ class TextRulesTest(Base):
             with self.subTest(fine=text):
                 self.assertEqual(pm.check_text("user_note", text), (text, None))
         self.assertIsNotNone(pm.personal_number_problem("901301-1234568"), "달이 13 이어도 카드 번호 검사 숫자가 맞으면 거른다")
+        sentence = pm.personal_number_problem("901301-1234568")
+        self.assertIn("번호가 아니라면", sentence, "검증 Q-8 — 번호가 아닌 긴 숫자도 우연히 걸릴 수 있으니 풀이 안내가 문장에 있다")
+        self.assertIn("쉼표나 글자", sentence)
+        _clean, reason = pm.check_text("user_note", "주문번호 4539148803436467")
+        self.assertIn("쉼표나 글자", reason or "")
 
     def test_promises_of_results_are_refused_in_the_texts_that_reach_the_draft_but_not_in_labels(self):
         promise = "상위노출 보장"
@@ -392,7 +401,20 @@ class TextRulesTest(Base):
         error = self.assertRefuses(pm.add_photo, pm.empty_manifest(), win("a.jpg"), user_note="<i>UNIQ-NOTE-zz</i>")
         self.assertNoLeak(error, ["UNIQ-NOTE-zz", USER_DIR])
 
-    def test_the_type_and_setting_lists_can_be_given_and_then_the_kind_must_be_in_them(self):
+    def test_the_type_list_is_only_checked_when_the_type_changes_or_is_added(self):
+        """검증 Q-7 — 메모만 고쳤는데 옛 종류가 지금 목록에 없다고 거절하면 안 된다. 종류를 바꾸거나 더할 때만 목록을 본다."""
+        types = ("간판", "메뉴판", "기타")
+        manifest, _id = pm.add_photo(pm.empty_manifest(), path_of(1), photo_type="간판", photo_types=types)
+        later = ("메뉴판", "기타")                                                     # 사용자가 목록에서 '간판' 을 지운 뒤
+        edited = pm.update_photo(manifest, "p001", user_note="메모", photo_types=later)
+        self.assertEqual((edited.photos[0].photo_type, edited.photos[0].user_note), ("간판", "메모"))
+        self.assertRefuses(pm.update_photo, manifest, "p001", photo_type="반찬", photo_types=later)
+        self.assertRefuses(pm.update_photo, manifest, "p001", photo_type="간판 2", photo_types=later)
+        self.assertEqual(pm.update_photo(manifest, "p001", photo_type="메뉴판", photo_types=later).photos[0].photo_type, "메뉴판")
+        self.assertRefuses(pm.add_photo, manifest, path_of(2), photo_type="간판", photo_types=later)               # 더할 때는 늘 본다
+        self.assertEqual(pm.update_photo(manifest, "p001", user_note="메모").photos[0].user_note, "메모", "목록을 안 주면 보지 않는다")
+
+    def test_the_type_list_can_be_given_and_then_the_kind_must_be_in_it(self):
         types = ("간판", "메뉴판")
         manifest, _id = pm.add_photo(pm.empty_manifest(), path_of(1), photo_type="간판", photo_types=types)
         self.assertRefuses(pm.add_photo, manifest, path_of(2), photo_type="반찬", photo_types=types)
@@ -721,6 +743,35 @@ class PlaceholderTest(Base):
         for bad in (0, 1000, -1, True, None, "x", "p000", "p1", 2.0):
             self.assertRefuses(pm.placeholder, bad)
 
+    def test_stray_braces_matches_the_plain_definition_and_grows_with_the_text_not_its_square(self):
+        """검증 S-16 — 옛 구현은 글자 수의 제곱에 비례해(1만 개 자리표시자 본문 13초) 느렸다. 같은 답을 선형으로 내는지 단순한 정의와 견주고, 큰 본문이 금방 끝나는지 본다."""
+        import random
+        import re
+        import time
+        rng = random.Random(20261116)
+        parts = ["{{", "}}", "{{사진 1}}", "{{사진 22}}", "{{사진 0}}", "{{사진 1 }}", "{", "}", "가", " ", "{{{", "}}}", "{{사진 7}}{{"]
+
+        def plain(text):
+            spans = [(start, end) for _n, start, end in pm.find_placeholders(text)]
+            return sum(1 for found in re.finditer("[{][{]|[}][}]", text) if not any(start <= found.start() < end for start, end in spans))
+
+        for _ in range(400):
+            text = "".join(rng.choice(parts) for _ in range(rng.randint(0, 30)))
+            self.assertEqual(pm.stray_braces(text), plain(text), text)
+        self.assertEqual(pm.stray_braces("{{사진 1}} {{ }}"), 2)
+        self.assertEqual(pm.stray_braces(None), 0)
+        big = ("{{사진 1}}" + "본문 " * 5) * 10_000 + "{{ 하나 }}"
+        started = time.perf_counter()
+        report = pm.placeholder_report(build(3), big)
+        elapsed = time.perf_counter() - started
+        self.assertEqual((len(report.found), report.stray), (10_000, 2))
+        self.assertLess(elapsed, 3.0, "1만 개 자리표시자 본문이 몇 초씩 걸리면 안 된다(옛 구현 13초)")
+        many = "".join(f"{{{{사진 {number}}}}} " for number in range(1, 1000)) * 10
+        started = time.perf_counter()
+        report = pm.placeholder_report(build(3), many)
+        self.assertLess(time.perf_counter() - started, 3.0)
+        self.assertEqual(len(report.repeated), 999)
+
     def test_only_the_exact_form_counts_and_the_positions_are_reported(self):
         text = "도입 {{사진 1}} 본문{{사진 12}}끝 {{사진 1}}"
         found = pm.find_placeholders(text)
@@ -877,6 +928,16 @@ class SourceRulesTest(unittest.TestCase):
         done = subprocess.run([sys.executable, "-I", "-B", "-X", "utf8", "-c", code, str(ROOT / "src")], capture_output=True, text=True, timeout=120)
         self.assertEqual(done.returncode, 0, done.stderr[-400:])
         self.assertEqual(done.stdout.strip(), "[]", "이 모듈이 바깥과 닿는 모듈을 올렸다")
+
+    def test_the_screen_layer_is_reached_only_for_imagerules_and_only_inside_a_function(self):
+        """검증 Q-4 — 규칙 모듈이 화면 층(`ui.core`)을 가져오는 것은 이 저장소에서 처음이라 예외를 하나로 좁힌다: `imagerules` 한 모듈만, 함수 안에서만(맨 위에서 가져오면 `ui/core/__init__` 때문에 문구 모듈 열 개가 같이 올라온다)."""
+        tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                module = (node.module or "") if isinstance(node, ast.ImportFrom) else ""
+                self.assertNotIn("ui", module.split("."), "화면 층은 맨 위에서 가져오지 않는다")
+        found = {(node.module, tuple(alias.name for alias in node.names)) for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and "ui" in (node.module or "").split(".")}
+        self.assertEqual(found, {("ui.core", ("imagerules",))}, "허용 집합은 imagerules 하나다")
 
     def test_the_text_checks_reuse_the_existing_checkers_instead_of_new_ones(self):
         source = SOURCE.read_text(encoding="utf-8")
