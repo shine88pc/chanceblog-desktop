@@ -13,8 +13,10 @@
 """
 import ast
 import importlib.util
+import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -934,6 +936,39 @@ class FitTest(PhotoBase):
         self.assertGreater(form.scroll.verticalScrollBar().maximum(), 0, "몸이 길면 스크롤된다")
         for button in (form.add_button, form.all_button, form.close_button):
             self.assertFalse(form.scroll.isAncestorOf(button), "단추 줄은 스크롤 밖에 늘 보인다")
+
+
+# ---- 6-2) 화면 배율 125%·150% ---------------------------------------------------------------------------------------------------
+@unittest.skipUnless(HAVE and os.name == "nt", "PySide6 와 윈도 글꼴이 있어야 한다(글자 잘림은 글꼴에 달렸다)")
+class ScaleTest(unittest.TestCase):
+    """배율은 프로세스가 시작될 때 `QT_SCALE_FACTOR` 환경 변수로 정해야 해서 자식 프로세스(`tests/photo_scale_probe.py`)를 배율마다 돌린다 — **실제 윈도 배율 설정이 아니라 Qt 자체의 High DPI 경로로 흉내 낸 것이다**
+    (실제 윈도 125·150% 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC 에서 본다). 창의 논리 크기는 화면 크기를 배율로 나눈 값이다."""
+    ENVIRONMENTS = ((1366, 768, 1.0), (1920, 1080, 1.0), (1536, 864, 1.25), (1280, 720, 1.5), (900, 560, 1.0))
+
+    def probe(self, width, height, scale):
+        environment = dict(os.environ, PYTHONUTF8="1")
+        environment.pop("QT_SCALE_FACTOR", None)
+        if scale != 1.0:
+            environment["QT_SCALE_FACTOR"] = str(scale)
+        done = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "tests" / "photo_scale_probe.py"), str(width), str(height)], capture_output=True, text=True, encoding="utf-8", env=environment, timeout=240,
+                              creationflags=0x08000000)
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    def test_the_sheet_fits_every_environment_without_clipping_scrolling_sideways_or_hiding_the_buttons(self):
+        for width, height, scale in self.ENVIRONMENTS:
+            with self.subTest(size=(width, height), scale=scale):
+                report = self.probe(width, height, scale)
+                self.assertEqual(report["scale"], scale)
+                self.assertEqual(report["logical"], [width, height])
+                self.assertEqual([item["label"] for item in report["reports"]], ["빈 창", "사진 세 장과 못 넣은 파일", "한도를 넘긴 글", "모두 확인 줄", "지운 뒤 되돌리기", "목록 고치기"])
+                for item in report["reports"]:
+                    label = (width, height, scale, item["label"])
+                    self.assertTrue(item["inside"], label)
+                    self.assertEqual(item["hscroll"], 0, label)
+                    self.assertEqual(item["clipping"], [], label)
+                    self.assertEqual(item["squeezed"], [], label)
+                    self.assertTrue(item["buttons"], label)
 
 
 # ---- 7) 읽기 전용·네트워크 없음(진짜 사진 파일) -------------------------------------------------------------------------------------

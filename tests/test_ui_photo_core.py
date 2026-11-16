@@ -646,6 +646,27 @@ class DraftsControllerTest(unittest.TestCase):
         self.assertFalse(controller.has_unsaved(), "사진을 넣어도 '고친 내용' 으로 치지 않는다 — 초안 저장 흐름은 그대로다")
         self.assertEqual(controller.save_state(), self.made().save_state())
 
+    def test_a_made_draft_is_the_same_with_or_without_photo_operations(self):
+        """사진이 없으면 초안 만들기·저장 상태·화면 뷰모델이 지금과 같고, 사진을 넣고 확인하고 고치고 지워도 글·저장 상태·뷰모델(사진 카드 말고)은 그대로다(초안 연결은 3단계)."""
+        plain, busy = self.made(), self.made()
+        busy.photos.open()
+        busy.photos.add_paths([path_of(1), path_of(2)])
+        busy.photos.confirm("p001", True)
+        busy.photos.set_text("p001", "user_note", "비 오는 날")
+        busy.photos.remove("p002")
+        busy.photos.close()
+
+        def without_photos(controller):
+            normal = dict(controller.view()["normal"])
+            normal["side"] = {key: value for key, value in normal["side"].items() if key != "photos"}
+            normal["options"] = {key: value for key, value in normal["options"].items() if key != "photos"}
+            return normal
+
+        self.assertEqual((plain.title, plain.body, plain.has_unsaved(), plain.save_state()), (busy.title, busy.body, busy.has_unsaved(), busy.save_state()))
+        self.assertEqual(without_photos(plain), without_photos(busy))
+        self.assertEqual(plain.photos.card()["count"], "넣은 사진이 없어요")
+        self.assertEqual(busy.photos.card()["count"], "사진 1장 · 확인 0/1")
+
     def test_a_new_draft_leaving_the_screen_and_opening_a_saved_draft_clear_the_photos(self):
         controller = self.made()
         controller.photos.add_paths([path_of(1)])
@@ -696,6 +717,36 @@ class SourceRulesTest(unittest.TestCase):
             body = ast.unparse(handler)
             for leak in ("str(error", "repr(error", "error.args", "error.message", "format(error"):
                 self.assertNotIn(leak, body, "잡은 오류의 글을 그대로 다른 곳에 쓰지 않는다")
+
+    PHOTO_FILES = {
+        "content/photo_manifest.py": "1단계 — 사진 정보 규칙", "service/photo_manifest.py": "1단계 — 사진 정보 보관·사진 파일 읽기 확인", "ui/core/photo_rules.py": "2단계 — 화면의 규칙표", "ui/core/photo_text.py": "2단계 — 화면 문구",
+        "ui/core/photo_view.py": "2단계 — 사진 정리 컨트롤러", "ui/photo_adapter.py": "2단계 — 실제 사진 공급자(읽기만)", "ui/qt/photo_parts.py": "2단계 — 줄 부품", "ui/qt/photo_screen.py": "2단계 — 사진 정리 창",
+        "ui/adapters.py": "홈 공급자의 짝 사진 공급자(읽기만)", "ui/core/app_state.py": "짝 공급자를 초안 컨트롤러의 사진 목록에 연결", "ui/core/drafts_view.py": "초안 컨트롤러가 사진 목록(메모리)을 들고 카드 뷰모델을 낸다",
+        "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",
+        "ui/core/attribution.py": "기존 — 이미지 출처 표기(사진 정리와 무관)", "ui/qt/components.py": "기존 — 공통 부품 설명(사진 정리와 무관)",
+    }
+
+    def test_only_the_listed_source_files_mention_photos_so_saving_making_exporting_and_backup_are_untouched(self):
+        """3단계(초안 연결) 전에는 초안 저장(`draft_store`·`saved_draft`)·글 만들기(엔진·`DraftOptions`)·내보내기·백업 코드가 사진을 모른다 — 새로 사진 이야기가 나오는 파일은 이유와 함께 여기에 더한다."""
+        src = ROOT / "src" / "chanceblog_desktop"
+        found = sorted(path.relative_to(src).as_posix() for path in src.rglob("*.py") if "photo" in path.read_text(encoding="utf-8").lower())
+        self.assertEqual(found, sorted(self.PHOTO_FILES), "사진을 새로 말하는 파일은 이유와 함께 PHOTO_FILES 에 더한다")
+        self.assertTrue(all(reason.strip() for reason in self.PHOTO_FILES.values()))
+        for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py", "ui/core/drafts.py", "ui/drafts_adapter.py"):
+            if (src / untouched).exists():
+                self.assertNotIn("photo", (src / untouched).read_text(encoding="utf-8").lower(), untouched)
+
+    def test_the_pure_files_import_only_the_repository_modules_they_need(self):
+        """순수 파일이 서비스·초안 저장·초안 목록 같은 쪽을 가져오지 않는다 — 이 저장소 안에서 가져오는 모듈이 정해진 것뿐이다."""
+        expected = {"photo_rules.py": {"content.photo_manifest", "imagerules", "text"}, "photo_view.py": {"content.photo_manifest", "errors", "imagerules", "photo_rules", "text"}, "photo_text.py": set()}
+        for name, wanted in expected.items():
+            tree = ast.parse((UI_CORE / name).read_text(encoding="utf-8"))
+            found = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.level:                              # 이 저장소 안의 모듈(상대 가져오기)만
+                    for alias in node.names:
+                        found.add(alias.name if node.module is None else (f"{node.module}.{alias.name}" if node.module == "content" else node.module))
+            self.assertEqual(found, wanted, name)
 
     def test_the_view_core_reuses_the_stage_one_rules_and_never_its_own_limits(self):
         source = (UI_CORE / "photo_view.py").read_text(encoding="utf-8")

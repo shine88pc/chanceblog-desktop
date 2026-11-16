@@ -76,6 +76,12 @@ class SourceTest(unittest.TestCase):
         attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
         self.assertFalse(attributes & {"write", "write_text", "write_bytes", "unlink", "remove", "rename", "replace", "mkdir", "makedirs", "copy", "copyfile", "move", "rmtree", "touch", "chmod", "stdout", "stderr"}, attributes)
 
+    def test_the_app_state_pairs_the_real_photo_provider_when_the_home_provider_is_real(self):
+        state = app_state.AppState(adapters.ServiceHomeProvider())
+        self.assertIsInstance(state.drafts.photos.provider, photo_adapter.ServicePhotoProvider)
+        injected = pv.FakePhotoProvider()
+        self.assertIs(app_state.AppState(adapters.ServiceHomeProvider(), photos=injected).drafts.photos.provider, injected, "넣어 준 공급자가 짝 공급자보다 먼저다")
+
     def test_the_real_provider_pairs_with_the_home_provider_and_the_fake_stays_the_default_without_it(self):
         self.assertIsInstance(adapters.ServiceHomeProvider().photos_provider(), photo_adapter.ServicePhotoProvider)
         self.assertFalse(photo_adapter.ServicePhotoProvider.sample)
