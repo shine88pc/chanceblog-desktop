@@ -831,6 +831,17 @@ class SourceRulesTest(unittest.TestCase):
         text = SOURCE.read_text(encoding="utf-8")
         self.assertNotIn("print(", text)
 
+    def test_using_the_pure_module_in_a_fresh_interpreter_loads_no_network_process_or_screen_module(self):
+        """정적 검사(위)에 더해 실제로 써 본다 — 새 인터프리터에서 모듈을 가져와 사진을 더하고 초안 입력까지 뽑아도(늦게 가져오는 `imagerules`·`security` 포함) 소켓·ssl·http·하위 프로세스·PySide6 같은 모듈이 올라오지 않는다."""
+        import subprocess
+        code = "\n".join(["import sys", "sys.path.insert(0, sys.argv[1])", "before = set(sys.modules)", "from chanceblog_desktop.content import photo_manifest as pm",
+                          "m = pm.add_photo(pm.empty_manifest(), 'C:/a/b.jpg')[0]", "pm.draft_inputs(pm.set_confirmed(m, 'p001', True))", "pm.PhotoManifest.from_text(m.to_text())", "loaded = sorted(set(sys.modules) - before)",
+                          "watch = ('socket', 'ssl', 'http', 'subprocess', 'ctypes', 'asyncio', 'PySide6', 'requests', 'webbrowser', 'smtplib', 'ftplib', 'select', 'selectors', 'tempfile', 'logging', 'random', 'secrets', 'shutil')",
+                          "print([n for n in loaded if n.split('.')[0] in watch or n == 'urllib.request'])"])
+        done = subprocess.run([sys.executable, "-I", "-B", "-X", "utf8", "-c", code, str(ROOT / "src")], capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-400:])
+        self.assertEqual(done.stdout.strip(), "[]", "이 모듈이 바깥과 닿는 모듈을 올렸다")
+
     def test_the_text_checks_reuse_the_existing_checkers_instead_of_new_ones(self):
         source = SOURCE.read_text(encoding="utf-8")
         for needle in ("clean_line", "find_markup", "forbidden_claim", "_BLANK_LOOKALIKES", "_STACKED_MARKS", "_looks_secret", "scan.has_secret", "imagerules", "is_draft_id"):

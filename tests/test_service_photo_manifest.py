@@ -551,6 +551,42 @@ class CheckFilesTest(Base):
         self.assertEqual([item.state for item in svc.check_files(sample(2))], ["missing", "missing"])
 
 
+class ScenarioTest(Base):
+    def test_one_whole_session_from_adding_photos_to_the_saved_file_and_back_with_the_draft_input_unchanged(self):
+        manifest = pm.empty_manifest()
+        for name, kind, subject in (("a.jpg", "간판", "매장 입구 간판과 주차장 전경"), ("b.jpg", "메뉴판", ""), ("c.jpg", "대표 메뉴", "메인 메뉴 한우 불고기 전골"), ("d.jpg", "반찬", "반찬 5개"), ("e.jpg", "기타", "")):
+            manifest, _id = pm.add_photo(manifest, win(name), photo_type=kind, user_subject=subject)
+        manifest = pm.move_photo(manifest, "p005", 1)                                         # 기타 사진을 맨 앞으로
+        manifest = pm.remove_photo(manifest, "p002")                                          # 메뉴판을 뺀다
+        manifest = pm.update_photo(manifest, "p003", user_note="비 오는 날 갔어요", placement={"kind": "after_paragraph", "nth": 2})
+        for photo_id in ("p001", "p003", "p004"):
+            manifest = pm.set_confirmed(manifest, photo_id, True)
+        self.assertEqual([(photo.photo_id, photo.display_order) for photo in manifest.photos], [("p005", 1), ("p001", 2), ("p003", 3), ("p004", 4)])
+        sent = pm.draft_inputs(manifest)
+        self.assertEqual([item.number for item in sent], [1, 3, 4], "확정한 사진만, 사진 순서대로")
+        body = "\n\n".join(pm.placeholder(item.number) for item in sent)
+        self.assertTrue(pm.placeholder_report(manifest, body).ok)
+
+        saved = svc.save_manifest(self.ctx, DRAFT_A, manifest)
+        loaded = svc.load_manifest(self.ctx, DRAFT_A)
+        self.assertEqual((loaded.state, loaded.manifest), ("ok", saved))
+        self.assertEqual(pm.draft_inputs(loaded.manifest), sent, "저장했다 다시 열어도 초안 입력이 같다")
+        self.assertEqual([item.state for item in svc.check_files(loaded.manifest)], ["missing"] * 4, "이 환경에는 없는 윈도 경로라 모두 파일 없음으로 보인다")
+
+        again = pm.remove_photo(loaded.manifest, "p004")
+        again, new_id = pm.add_photo(again, win("f.jpg"))
+        self.assertEqual(new_id, "p006", "지운 p004 의 번호를 새 사진이 물려받지 않는다")
+        report = pm.placeholder_report(again, body)
+        self.assertEqual((report.dangling, report.ok), ((4,), False), "본문에는 아직 {{사진 4}} 가 있어 어긋남으로 알린다")
+        svc.save_manifest(self.ctx, DRAFT_A, again)
+        reopened = svc.load_manifest(self.ctx, DRAFT_A).manifest
+        self.assertEqual([photo.photo_id for photo in reopened.photos], ["p005", "p001", "p003", "p006"])
+        self.assertEqual(reopened.next_number, 7)
+        text = self.file().read_text(encoding="utf-8")
+        for hidden in ("observed_objects\": [\n        {", "visible_text\": [\n        {"):
+            self.assertNotIn(hidden, text)
+
+
 class BackupTest(unittest.TestCase):
     """1단계의 기본값 — 사진 정보는 전체 백업에 담지 않는다(백업 형식은 그대로). 진짜 백업·복원으로 못박는다."""
 
