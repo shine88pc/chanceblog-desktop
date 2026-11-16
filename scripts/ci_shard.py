@@ -172,27 +172,23 @@ if __name__ == "__main__":
 
     def _esc(text):
         text = _re.sub(r"[0-9]{10,}", "#", text)
-        return text.replace("%", "%25").replace("", "%0D").replace("
-", "%0A").replace(":", "%3A").replace(",", "%2C")
+        return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
     done = _sp.run([sys.executable, "-X", "utf8", str(Path(__file__).resolve()), "--diag-child", *sys.argv[1:]], capture_output=True, text=True, encoding="utf-8", errors="replace")
-    merged = (done.stdout or "") + "
-" + (done.stderr or "")
+    merged = (done.stdout or "") + "\n" + (done.stderr or "")
     print(merged, flush=True)
     lines = [line.rstrip() for line in merged.splitlines() if line.strip()]
-    head = f"exit={done.returncode} lines={len(lines)}"
+    print("::warning title=DIAG-HEAD::" + _esc(f"exit={done.returncode} lines={len(lines)}"), flush=True)
     marks = [line for line in lines if _re.match(r"^(FAIL|ERROR|FAILED|Ran |OK|Traceback)", line) or "Error" in line][:25]
-    print(f"::warning title=DIAG-HEAD::{_esc(head)}", flush=True)
-    tail = lines[-40:]
     chunk, size, index = [], 0, 0
-    for line in marks + ["--- tail ---"] + tail:
+    for line in marks + ["--- tail ---"] + lines[-40:]:
         piece = line[:300]
         if size + len(piece) > 1800 and chunk:
             index += 1
-            print(f"::error title=DIAG-OUT-{index}::{_esc(chr(10).join(chunk))}", flush=True)
+            print("::error title=DIAG-OUT-" + str(index) + "::" + _esc("\n".join(chunk)), flush=True)
             chunk, size = [], 0
         chunk.append(piece)
         size += len(piece) + 1
     if chunk:
         index += 1
-        print(f"::error title=DIAG-OUT-{index}::{_esc(chr(10).join(chunk))}", flush=True)
+        print("::error title=DIAG-OUT-" + str(index) + "::" + _esc("\n".join(chunk)), flush=True)
     sys.exit(done.returncode)
