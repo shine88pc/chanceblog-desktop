@@ -301,17 +301,77 @@ class BrokenFileTest(Base):
             self.assertNotEqual(content, self.good_text(), name)
 
     def test_a_read_that_fails_is_broken_never_none_and_the_file_is_left_alone(self):
-        """검증 Q-3 — 읽기가 사유를 돌려주면 '없음' 이 아니라 '깨짐' 이다(없음으로 알리면 저장이 그 위에 덮어쓴다). 읽기를 실패하게 바꿔 본다."""
+        """검증 Q-3 — 열기 오류가 아닌 읽기 실패(검사와 열기 사이에 파일이 바뀜)는 '없음' 이 아니라 '깨짐' 이다(없음으로 알리면 저장이 그 위에 덮어쓴다). 읽기를 실패하게 바꿔 본다."""
         path = self.write_raw(self.good_text())
         before = path.read_bytes()
-        with mock.patch.object(own_posts, "_read_prefix", return_value=(b"", "unreadable")):
+        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", return_value=(None, own_posts._R_CHANGED)):
             loaded = svc.load_manifest(self.ctx, DRAFT_A)
             self.assertEqual((loaded.state, loaded.manifest.photos), ("broken", ()))
             self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(1))
             self.assertEqual(svc.list_manifests(self.ctx), svc.Listing((), 1))
         self.assertEqual(path.read_bytes(), before)
+        pause.assert_not_called()                                                         # 열기 오류가 아니면 다시 해 보지 않는다
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()), [path.name], "읽기 실패가 새 파일·옮긴 파일을 만들지 않는다")
         self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "ok")
+
+    def test_an_open_error_is_retried_and_a_lasting_one_is_unreadable_never_broken(self):
+        """검증 S-2 — '지금 못 엶(윈도의 공유 위반)' 과 '내용이 깨짐' 을 갈라 알린다. 앞의 것은 짧게 두 번 더 해 보고, 계속되면 `unreadable` 이고 `replace_broken` 으로도 그 위에 쓰지 않는다."""
+        saved = svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        path = self.file()
+        before = path.read_bytes()
+        real = own_posts._read_prefix
+        calls = {"count": 0}
+
+        def flaky(*args, **kwargs):
+            calls["count"] += 1
+            return (None, own_posts._R_MISSING) if calls["count"] == 1 else real(*args, **kwargs)
+
+        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", flaky):
+            self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A), svc.Loaded(saved, "ok"), "한 번 못 열고 다시 해 보니 열렸다")
+        self.assertEqual([call.args for call in pause.call_args_list], [(0.03,)])
+        self.assertEqual(svc.READ_RETRY_WAITS, (0.03, 0.06))
+        with mock.patch.object(svc, "_pause") as pause, mock.patch.object(own_posts, "_read_prefix", return_value=(None, own_posts._R_MISSING)):
+            loaded = svc.load_manifest(self.ctx, DRAFT_A)
+            self.assertEqual((loaded.state, loaded.manifest.photos, loaded.manifest.draft_id), ("unreadable", (), DRAFT_A))
+            self.assertEqual([call.args for call in pause.call_args_list], [(0.03,), (0.06,)])
+            error = self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(2))
+            self.assertNoLeak(error, [self.tmp.name, DRAFT_A])
+            self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, sample(2), replace_broken=True)
+            self.assertEqual(svc.list_manifests(self.ctx), svc.Listing((), 1))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.folder.iterdir()), [path.name], ".bak 도 임시 파일도 만들지 않았다")
+        self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A), svc.Loaded(saved, "ok"))
+        self.assertIn("unreadable", svc.STATES)
+
+    def test_a_file_that_vanishes_between_the_check_and_the_open_is_none_not_unreadable(self):
+        svc.save_manifest(self.ctx, DRAFT_A, sample(1))
+        path = self.file()
+
+        def vanish(*args, **kwargs):
+            path.unlink(missing_ok=True)
+            return None, own_posts._R_MISSING
+
+        with mock.patch.object(svc, "_pause"), mock.patch.object(own_posts, "_read_prefix", vanish):
+            self.assertEqual(svc.load_manifest(self.ctx, DRAFT_A).state, "none")
+
+    def test_a_list_too_big_to_read_back_is_refused_before_anything_is_written(self):
+        """검증 Q-5 — 읽을 때 512KB 를 넘으면 거절하므로, 쓴 파일을 못 읽는 상태가 되지 않게 쓰기 전에 막는다(분석 결과를 쓰는 최악의 경우만 넘는다)."""
+        def words(seed):
+            return "".join(chr(0xAC00 + (seed * 7 + step * 13) % 1500) for step in range(200))
+
+        manifest = pm.empty_manifest()
+        for number in range(1, 31):
+            manifest, photo_id = pm.add_photo(manifest, win(f"{number:02d}.jpg"))
+            manifest, _dropped = pm.set_analysis(manifest, photo_id, method="local:x", objects=[words(number * 100 + index) for index in range(20)], texts=[words(number * 100 + 50 + index) for index in range(20)])
+        self.assertGreater(len(manifest.to_text(True).encode("utf-8")), svc.MAX_FILE_BYTES, "시험의 전제: 분석 결과까지 쓰면 읽을 수 있는 크기를 넘는다")
+        self.assertLess(len(manifest.to_text(False).encode("utf-8")), svc.MAX_FILE_BYTES // 4, "기본(분석 결과를 쓰지 않는) 길은 훨씬 작다")
+        error = self.refuses("CONTENT_INVALID", svc.save_manifest, self.ctx, DRAFT_A, manifest, persist_analysis=True)
+        self.assertNoLeak(error, [self.tmp.name, DRAFT_A])
+        self.assertFalse(self.folder.exists(), "아무것도 쓰지 않았고 폴더도 만들지 않았다")
+        svc.save_manifest(self.ctx, DRAFT_A, manifest)
+        loaded = svc.load_manifest(self.ctx, DRAFT_A)
+        self.assertEqual((loaded.state, len(loaded.manifest.photos)), ("ok", 30), "분석 결과를 쓰지 않는 기본 길은 그대로 저장되고 읽힌다")
+        self.assertTrue(all(photo.observed_objects == () and photo.visible_text == () for photo in loaded.manifest.photos))
 
     def test_an_unreadable_file_is_reported_broken_and_never_touched(self):
         for name, content in self.broken_cases().items():
@@ -379,7 +439,12 @@ class BrokenFileTest(Base):
         self.write_raw("{bad", "dd-" + "1" * 20)
         self.assertEqual(svc.orphans(self.ctx, [DRAFT_A, DRAFT_C]), tuple(sorted((DRAFT_B, "dd-" + "1" * 20))))
         self.assertEqual(svc.orphans(self.ctx, [DRAFT_A, DRAFT_B, DRAFT_C, "dd-" + "1" * 20]), ())
-        self.assertEqual(svc.orphans(self.ctx, ["bad", None, 5]), tuple(sorted((DRAFT_A, DRAFT_B, DRAFT_C, "dd-" + "1" * 20))))
+        for ok in ([], (), set(), frozenset(), [DRAFT_A], (DRAFT_A, DRAFT_B), {DRAFT_A}):
+            svc.orphans(self.ctx, ok)                                                   # 빈 목록과 올바른 번호의 목록·튜플·집합은 받는다
+        for bad in (["bad", None, 5], [DRAFT_A.upper()], [" " + DRAFT_A], [DRAFT_A, "dd-"], DRAFT_A, None, 5, {DRAFT_A: 1}, (number for number in [DRAFT_A]), b"dd-aaaaaaaaaaaaaaaaaaaa"):
+            with self.subTest(bad=repr(bad)[:40]):
+                error = self.refuses("CONTENT_INVALID", svc.orphans, self.ctx, bad)        # 검증 S-3 — fail closed: 잘못된 목록이 모든 파일을 고아로 보이게 하지 않는다
+                self.assertNoLeak(error, [self.tmp.name])
         before = snapshot(self.root)
         svc.orphans(self.ctx, [])
         self.assertEqual(snapshot(self.root), before, "읽기만 한다")
@@ -828,7 +893,12 @@ class SourceRulesTest(unittest.TestCase):
             self.assertFalse(module.startswith("ui") or "ui." in module, "화면 층은 함수 안에서 늦게 가져온다")
         names = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
         names |= {(node.module or "").split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.level == 0}
-        self.assertFalse(names & {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "asyncio", "logging", "traceback", "PySide6", "random", "time"})
+        self.assertFalse(names & {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "asyncio", "logging", "traceback", "PySide6", "random"})
+        clock = {ast.unparse(node.func): function.name for function in ast.walk(tree) if isinstance(function, ast.FunctionDef) for node in ast.walk(function)
+                 if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[0] == "time"}
+        self.assertEqual(clock, {"time.sleep": "_pause"}, "시간은 읽기를 다시 해 보기 전에 쉬는 `_pause` 한 곳에서만 쓴다(시계를 읽지 않는다)")
+        screen = {(node.module, tuple(alias.name for alias in node.names)) for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and "ui" in (node.module or "").split(".")}
+        self.assertEqual(screen, {("ui.core", ("imagerules",))}, "검증 Q-4 — 화면 층에서 가져오는 것은 imagerules 하나뿐이다")
         late = [node for function in ast.walk(tree) if isinstance(function, ast.FunctionDef) for node in ast.walk(function) if isinstance(node, ast.ImportFrom) and node.level == 2]
         self.assertTrue(any((node.module or "") == "ui.core" and any(alias.name == "imagerules" for alias in node.names) for node in late), "사진 규칙은 imagerules 를 쓴다")
         self.assertEqual(sum(1 for text in SOURCE.read_text(encoding="utf-8").splitlines() if "SUPPORTED_EXTENSIONS" in text), 0, "확장자 목록을 따로 두지 않는다")
