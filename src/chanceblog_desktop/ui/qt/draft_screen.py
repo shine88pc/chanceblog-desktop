@@ -472,10 +472,10 @@ def _normal_page(shell, vm):
 
 
 def _stops(ui):
-    """Tab 정거장의 읽는 순서 — 뒤로 → 만드는 방법 → (펼쳤다면 그 안) → 제목 → 제목 후보 → 본문 → 오른쪽 칸(`검사하기` 다음에 글 모양 점검의 `무시` 단추들이 이어진다) → 아래 행동 줄."""
+    """Tab 정거장의 읽는 순서 — 뒤로 → 만드는 방법 → (펼쳤다면 그 안 — 사진 넣기 줄 포함) → 제목 → 제목 후보 → 본문 → 오른쪽 칸(`검사하기` 다음에 글 모양 점검의 `무시` 단추들이 이어지고 이미지·사진 카드의 단추가 뒤따른다) → 아래 행동 줄."""
     chain = [ui.back, ui.saved_list, ui.options_toggle]
-    chain += [ui.blog_chips.get(key) for key in ("naver_a", "naver_b")] + list(ui.type_chips.values()) + list(ui.fields.values()) + [ui.apply]
-    chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, *(ui.garbage.stops() if ui.garbage is not None else []), ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button]
+    chain += [ui.blog_chips.get(key) for key in ("naver_a", "naver_b")] + list(ui.type_chips.values()) + list(ui.fields.values()) + [ui.photos_row_button, ui.apply]
+    chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, *(ui.garbage.stops() if ui.garbage is not None else []), ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button, ui.photos_button]
     chain += [ui.accordions[key].toggle for key in ("specific", "common")]
     chain += [ui.actions[key] for key in ("save", "title", "body", "all", "open") if key in ui.actions]
     return [widget for widget in chain if widget is not None]

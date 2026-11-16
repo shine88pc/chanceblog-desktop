@@ -309,6 +309,12 @@ class PhotoRowCard(QWidget):
     def fields(self):
         return (self.subject, self.note, self.caption)
 
+    def stops(self):
+        """Tab 정거장(화면에 보이는 순서) — 줄 머리의 단추들 → 종류 칩 → 장소 분위기 칩 → 대상 → 메모 → 자리 정하기(펼쳤을 때만 그 안) → 확인했어요. 보이지 않거나 꺼진 것은 Qt 가 건너뛴다."""
+        chips = [*getattr(self, "_chips_type", {}).values(), *getattr(self, "_chips_setting", {}).values()]
+        place = [*getattr(self, "_chips_section", {}).values(), *getattr(self, "_chips_kind", {}).values(), self.nth_less, self.nth_more, self.caption.edit]
+        return [self.relink, self.up, self.down, self.remove, *chips, self.subject.edit, self.note.edit, self.place_toggle, *place, self.confirm_box]
+
     def pending_fields(self):
         """닫기 전에 마지막으로 규칙에 넘길 글이 든 칸들."""
         pairs = ((self.subject, self.vm["subject"]), (self.note, self.vm["note"]), (self.caption, self.vm["caption"]))

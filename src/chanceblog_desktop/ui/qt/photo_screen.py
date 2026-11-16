@@ -142,7 +142,7 @@ class PhotoSheet(QWidget):
             chip_host.setLayout(items)
             box.addWidget(chip_host)
             box.addLayout(line)
-            self.lists_parts[kind] = {"title": title, "items": items, "input": input_box, "add": add}
+            self.lists_parts[kind] = {"title": title, "items": items, "input": input_box, "add": add, "buttons": []}
         self.lists_body.setVisible(False)
         column.addWidget(self.lists_body)
 
@@ -285,6 +285,7 @@ class PhotoSheet(QWidget):
                 button.clicked.connect(lambda _=False, name=item["name"], method=remove_method: self.act(method, name))
                 part["items"].addWidget(button, 0, Qt.AlignLeft)
                 buttons.append(button)
+            part["buttons"] = buttons
 
     def _rebuild_confirm(self, ask):
         """'모두 확인했어요' 확인 줄 — 뜨면 `{n}장 모두 확인`·`그만두기`. 단추 순서는 (진행, 그만두기) — 마지막이 안전한 쪽이다."""
@@ -354,11 +355,19 @@ class PhotoSheet(QWidget):
             self._making = False
 
     # ---- 탭 순서·크기·포커스 ----
+    def ordered_cards(self):
+        """줄 부품들을 화면에 보이는 순서(위에서 아래)로 — `rows` 는 넣은 차례라 순서를 바꾸면 달라진다."""
+        found = [self.rows_layout.itemAt(index).widget() for index in range(self.rows_layout.count())]
+        return [widget for widget in found if widget is not None]
+
     def _tab_order(self):
         chain = [self.scroll]
-        for card in self.rows.values():
-            chain += [card.relink, card.up, card.down, card.remove, card.subject.edit, card.note.edit, card.place_toggle, card.confirm_box]
-        chain += [self.lists_toggle, *self.confirm_buttons, self.undo_button, self.add_button, self.all_button, self.close_button]
+        for card in self.ordered_cards():
+            chain += card.stops()
+        chain += [self.rejected_clear, self.lists_toggle]
+        for part in self.lists_parts.values():
+            chain += [*part["buttons"], part["input"], part["add"]]
+        chain += [*self.confirm_buttons, self.undo_button, self.add_button, self.all_button, self.close_button]
         for first, second in zip(chain, chain[1:]):
             QWidget.setTabOrder(first, second)
 
@@ -383,8 +392,8 @@ class PhotoSheet(QWidget):
 
     def focus_start(self):
         """열릴 때의 첫 포커스 — 사진이 없으면 `사진 추가`, 있으면 첫 사진의 대상 칸."""
-        first = next(iter(self.rows.values()), None)
-        target = first.subject.edit if first is not None else self.add_button
+        cards = self.ordered_cards()
+        target = cards[0].subject.edit if cards else self.add_button
         target.setFocus(Qt.OtherFocusReason)
 
     def focus_confirm(self):
