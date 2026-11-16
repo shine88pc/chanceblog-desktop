@@ -41,7 +41,7 @@ from chanceblog_desktop.topics import score as scoremod  # noqa: E402
 from chanceblog_desktop.topics import seeds as sd  # noqa: E402
 from chanceblog_desktop.topics.model import check_candidate_score  # noqa: E402
 from chanceblog_desktop.ui import adapters, candidates_adapter  # noqa: E402
-from chanceblog_desktop.ui.core import app_state, candidates as cd, candidates_view as cv, gauges, jobs, services, text  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, board_view, candidates as cd, candidates_view as cv, gauges, jobs, services, text  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
 T = text.T
@@ -257,7 +257,7 @@ class ReadTest(unittest.TestCase):
                 with self.subTest(channel=key, title=row.title):
                     self.assertEqual((card["score"], card["ring"]), (row.score, row.score is not None))
                     self.assertEqual(card["band_label"], gauges.score_band(row.score).name, "홈과 같은 구간 이름")
-                    self.assertEqual(card["channel"]["name"], read.name, "홈과 같은 표시 이름")
+                    self.assertEqual(card["channel"]["name"], board_view.channel_vm(read)["name"], "홈과 같은 표시 이름(둘 다 블로그 관리의 별명 — blogsel-2)")
                 compared += 1
         self.assertGreaterEqual(compared, 8)
         self.assertEqual(len(cards), 17, "홈이 숨기는 보류·낮은 점수 후보도 이 화면에는 있다(전체 후보를 비교하는 화면)")

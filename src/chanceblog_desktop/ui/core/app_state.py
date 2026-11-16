@@ -11,6 +11,7 @@ import re
 import sys
 
 from . import board_view as bv
+from . import channel_names
 from . import settings_view as sv
 from .backup_view import BackupController
 from .blogs import FakeBlogsProvider
@@ -154,6 +155,7 @@ class AppState:
         paired_blogs = getattr(self.provider, "blogs_provider", None)
         self.blogs_provider = blogs if blogs is not None else (paired_blogs() if paired_blogs else FakeBlogsProvider())
         self.blogs = BlogsController(self.blogs_provider, self.runner)
+        channel_names.use(None)                                                       # 다른 화면이 쓰는 채널 이름은 블로그 관리가 읽은 별명으로 정해진다 — 아직 못 읽었으면 별명 없는 기본 이름(옛 고정 이름이 아니다)
         # Seed 관리 화면 — 두 번째로 파일에 쓰는 화면이라 같은 틀(`SeedsController`)을 쓴다. 쓰는 일은 승인·바꾸기·저장·등록·불러오기를 눌렀을 때만이다
         paired_seeds = getattr(self.provider, "seeds_provider", None)
         self.seeds_provider = seeds if seeds is not None else (paired_seeds() if paired_seeds else FakeSeedsProvider())
@@ -289,10 +291,25 @@ class AppState:
         fields = [(T["d_demand"], fmt_demand(topic.demand)), (T["d_split"], split), (T["d_docs"], fmt_docs(topic.docs)), (T["d_trend"], trend["label"]),
                   (T["d_season"], shown(topic.season, 80) if topic.season else NO_DATA), (T["d_written"], written or NO_DATA), (T["d_sub"], shown(", ".join(topic.keywords)) or NO_DATA),
                   (T["d_date"], shown(topic.date, 40) or NO_DATA)]
-        blogs = [{"key": key, "label": T["draft_a"] if key == "A" else T["draft_b"]} for key in topic.blogs if key in BLOG_NAMES]
-        return {"id": topic.id, "title": T["drawer_title"], "topic": shown(topic.title, 200), "blog_label": BLOG_NAMES.get(topic.blogs[0], "") if topic.blogs else "", "priority": topic.priority or NO_DATA,
+        blogs = []
+        for key in topic.blogs:
+            if key in BLOG_NAMES:
+                short = channel_names.short_home_label(key)                                              # 서랍은 폭이 420 이라 긴 별명은 줄인 이름을 보인다(검증 Q2-1) — 줄였으면 전체 이름은 `tip` 에(툴팁·접근 이름)
+                item = {"key": key, "label": T["draft_of"].format(name=short)}
+                cut = channel_names.full_if_cut(channel_names.HOME_KEYS[key], short)
+                if cut:
+                    item["tip"] = T["draft_of"].format(name=cut)
+                blogs.append(item)
+        first = topic.blogs[0] if topic.blogs else ""
+        blog_label = channel_names.short_home_label(first) if first else ""
+        view = {"id": topic.id, "title": T["drawer_title"], "topic": shown(topic.title, 200), "blog_label": blog_label, "priority": topic.priority or NO_DATA,
                 "reason_title": T["d_reason"], "reason": shown(topic.reason) or NO_DATA, "fields": [{"label": a, "value": b, "missing": b == NO_DATA} for a, b in fields],
                 "drafts": blogs, "hold": T["hold"], "more": T["more"], "close": T["drawer_close"], "sample": bool(self.data and self.data.sample), "sample_tag": T["sample_tag"]}
+        if blog_label and first in channel_names.HOME_KEYS:
+            cut = channel_names.full_if_cut(channel_names.HOME_KEYS[first], blog_label)
+            if cut:
+                view["blog_tip"] = cut                                                                   # 줄인 이름일 때만 더하는 칸 — 기본 이름처럼 안 줄이면 뷰모델은 그대로다
+        return view
 
     def open_drawer(self, topic_id):
         if self.drawer_topic(topic_id) is None:
@@ -406,6 +423,10 @@ class AppState:
         """블로그 관리 화면 뷰모델 — 만드는 일은 `BlogsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         failure = self.blogs.failure
         return self.blogs.view(diagnostic_text(failure, self.blogs.failed_at) if failure else "")
+
+    def refresh_names(self):
+        """블로그 관리가 읽은 자료로 다른 화면의 채널 이름(별명)을 다시 정한다 → 바뀌었는가(바뀌었으면 화면이 다시 그려야 한다). 규칙은 `channel_names`(순수)."""
+        return channel_names.use(channel_names.labels(channel_names.entries(self.blogs.data, self.blogs.adding)))
 
     # ---- 눌림 → 안내 문구 ----
     def soon(self, name):

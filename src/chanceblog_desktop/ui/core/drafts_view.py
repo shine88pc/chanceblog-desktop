@@ -18,11 +18,20 @@ from __future__ import annotations
 
 from ...content.profiles import POST_TYPES
 from . import draft_garbage as garbage
+from . import channel_names as cn
 from . import draft_rules as rules
 from .board_view import time_text
 from .drafts import DraftFailure, DraftRequest, DraftTarget, SaveRequest, review_health
 from .jobs import Job, JobFailure
 from .text import T
+
+
+def _blog_label(key, names, limit=30, empty=None):
+    """초안 화면의 블로그 이름 — 네이버 블로그 둘(`naver_a`·`naver_b`)은 다른 화면과 같은 화면 이름(별명 — `channel_names`), 그 밖은 읽어 온 표시 이름. 이름이 없고 `empty` 가 주어지면 `empty`."""
+    if key in rules.BLOG_NAMES:
+        return cn.label(key)
+    name = rules.shown(dict(names).get(key) or "", limit)
+    return name or (key if empty is None else empty)
 
 DRAFT_KEY = "drafts-make"                                    # 초안을 만드는 작업의 이름(후보·홈·설정 읽기와 따로 돈다)
 STORE_KEY = "drafts-store"                                   # 저장한 초안의 저장·목록·열기·지우기 작업의 이름 — 넷은 한 번에 하나만 돈다(서로 겹쳐 보관함을 두 번 쓰지 않는다)
@@ -163,7 +172,7 @@ class DraftsController:
             notes.append(T["drf_note_rejected"])
         names = dict(result.blog_names)
         if target.channel in rules.BLOG_NAMES and target.channel != result.blog:
-            notes.append(T["drf_note_other_blog"].format(channel=rules.shown(names.get(target.channel) or target.channel_name, 30), blog=rules.shown(names.get(result.blog, ""), 30)))
+            notes.append(T["drf_note_other_blog"].format(channel=_blog_label(target.channel, names) or rules.shown(target.channel_name, 30), blog=_blog_label(result.blog, names)))
         if again:
             notes.append(T["drf_made_again"])
         self.notice = ("ok" if again else "info", " ".join(notes)) if notes else None
@@ -506,7 +515,7 @@ class DraftsController:
         result = opened.result
         names = dict(result.blog_names)
         self._clear_draft()
-        self.target = (DraftTarget(result.candidate_id, rules.shown(opened.topic, 80), result.blog, rules.shown(names.get(result.blog) or "", 30), False, bool(result.sample))
+        self.target = (DraftTarget(result.candidate_id, rules.shown(opened.topic, 80), result.blog, _blog_label(result.blog, names, empty=""), False, bool(result.sample))
                        if opened.candidate == "found" else None)
         self.result = result
         self.title, self.body = opened.title, opened.body
@@ -865,7 +874,7 @@ class DraftsController:
         if state == "ok" and listing is not None:
             for row in listing.rows:
                 title = rules.shown(row.title, 80) or T["drf_saved_no_title"]
-                meta = T["drf_saved_row_meta"].format(topic=rules.shown(row.topic, 40) or T["drf_saved_no_topic"], blog=T.get("drf_saved_blog_" + str(row.blog), T["drf_saved_blog_none"]), when=time_text(row.updated_at),
+                meta = T["drf_saved_row_meta"].format(topic=rules.shown(row.topic, 40) or T["drf_saved_no_topic"], blog=cn.label(row.blog) if row.blog in rules.BLOG_NAMES else T["drf_saved_blog_none"], when=time_text(row.updated_at),
                                                       chars=f"{row.chars:,}")
                 rows.append({"id": row.draft_id, "title": title, "meta": meta, "a11y": T["drf_saved_row_a11y"].format(title=title, meta=meta), "unreadable": False,
                              "open": {"text": T["drf_saved_open"], "a11y": T["drf_saved_open_a11y"].format(title=title), "enabled": not self.store_busy},
@@ -892,7 +901,7 @@ class DraftsController:
     def _options(self):
         result = self.result
         names = dict(result.blog_names)
-        blogs = [{"key": key, "label": rules.shown(names.get(key) or key, 30), "active": key == (self.blog or result.blog), "a11y": T["drf_blog_a11y"].format(name=rules.shown(names.get(key) or key, 30))} for key in rules.BLOG_NAMES]
+        blogs = [{"key": key, "label": _blog_label(key, names), "active": key == (self.blog or result.blog), "a11y": T["drf_blog_a11y"].format(name=_blog_label(key, names))} for key in rules.BLOG_NAMES]
         kinds = [{"key": None, "label": T["drf_type_auto"], "active": self.post_type is None, "a11y": T["drf_type_a11y"].format(name=T["drf_type_auto"])},
                  *({"key": kind, "label": kind, "active": self.post_type == kind, "a11y": T["drf_type_a11y"].format(name=kind)} for kind in POST_TYPES)]
         pending = self.options_pending()
@@ -1016,7 +1025,7 @@ class DraftsController:
         title_pick = self.title_picks()
         return {
             "context": {"candidate": T["drf_ctx_candidate"].format(title=rules.shown(self.target.title, 80)) if self.target is not None and self.target.title else "",
-                        "made": T["drf_ctx_made"].format(blog=rules.shown(names.get(result.blog) or result.blog, 30), post_type=result.post_type), "a11y": T["drf_ctx_a11y"]},
+                        "made": T["drf_ctx_made"].format(blog=_blog_label(result.blog, names), post_type=result.post_type), "a11y": T["drf_ctx_a11y"]},
             "options": self._options(),
             "title_box": {"label": T["drf_title_label"], "value": self.title, "a11y": T["drf_title_input_a11y"], "picks_title": T["drf_title_picks"], "picks": title_pick, "edited": self.title_edited(),
                           "editable": not self.locked, "locked_text": T["drf_edit_locked"] if self.locked else ""},
