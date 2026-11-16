@@ -506,7 +506,7 @@ class PhotoManifest:
             raise _invalid(_R_SHAPE)
         schema = data["schema"]
         if schema != SCHEMA:
-            if isinstance(schema, str) and schema.startswith(SCHEMA_PREFIX) and schema[len(SCHEMA_PREFIX):].isdigit() and int(schema[len(SCHEMA_PREFIX):]) > 1:
+            if isinstance(schema, str) and schema.startswith(SCHEMA_PREFIX) and re.fullmatch("[0-9]{1,6}", schema[len(SCHEMA_PREFIX):]) and int(schema[len(SCHEMA_PREFIX):]) > 1:
                 raise AppError("STORE_VERSION_UNSUPPORTED", {"파일": "사진 정보"}, detail="사진 정보 판이 더 새롭다")
             raise _invalid(_R_SHAPE)
         if not isinstance(data["photos"], list) or type(data["next_number"]) is not int or data["next_number"] < 1:
@@ -574,7 +574,7 @@ def _swap(manifest, photo_id, new):
     return replace(manifest, photos=tuple(new if photo.photo_id == photo_id else photo for photo in manifest.photos))
 
 
-def add_photo(manifest, local_path, *, photo_type=DEFAULT_TYPE, photo_types=None, **fields):
+def add_photo(manifest, local_path, /, *, photo_type=DEFAULT_TYPE, photo_types=None, **fields):
     """사진 한 장을 맨 뒤에 더한다 → `(새 목록, 새 사진 번호)`. 30장이 차 있거나 번호를 다 썼거나 경로가 틀렸거나 같은 사진이 이미 있으면 거절한다. 처음부터 줄 수 있는 칸은 `ADD_FIELDS` 뿐이고
     확정(`confirmed_by_user`)·분석 결과는 줄 수 없다. `photo_types` 를 주면 종류가 그 목록 안에 있어야 한다."""
     if not isinstance(manifest, PhotoManifest) or set(fields) - set(ADD_FIELDS):
@@ -618,7 +618,7 @@ def reorder(manifest, photo_ids):
     return replace(manifest, photos=_renumber([by_id[photo_id] for photo_id in photo_ids]))
 
 
-def update_photo(manifest, photo_id, *, photo_types=None, **changes):
+def update_photo(manifest, photo_id, /, *, photo_types=None, **changes):
     """사진 한 장의 내용(`EDIT_FIELDS`)을 고친다. **내용이 실제로 바뀌면 확정이 풀린다**(확정은 지금 저장된 값에 대한 것이다). 파일 위치(`local_path`)를 바꾸면 다른 사진이므로 분석 결과도 비운다.
     확정(`confirmed_by_user`)·순서·번호·분석 결과는 여기서 고칠 수 없다(`set_confirmed`·`move_photo`·`set_analysis` …). 바뀐 것이 없으면 그대로 돌려준다."""
     if set(changes) - set(EDIT_FIELDS):
