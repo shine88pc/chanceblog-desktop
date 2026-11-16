@@ -291,10 +291,25 @@ class AppState:
         fields = [(T["d_demand"], fmt_demand(topic.demand)), (T["d_split"], split), (T["d_docs"], fmt_docs(topic.docs)), (T["d_trend"], trend["label"]),
                   (T["d_season"], shown(topic.season, 80) if topic.season else NO_DATA), (T["d_written"], written or NO_DATA), (T["d_sub"], shown(", ".join(topic.keywords)) or NO_DATA),
                   (T["d_date"], shown(topic.date, 40) or NO_DATA)]
-        blogs = [{"key": key, "label": T["draft_of"].format(name=channel_names.home_label(key))} for key in topic.blogs if key in BLOG_NAMES]
-        return {"id": topic.id, "title": T["drawer_title"], "topic": shown(topic.title, 200), "blog_label": channel_names.home_label(topic.blogs[0]) if topic.blogs else "", "priority": topic.priority or NO_DATA,
+        blogs = []
+        for key in topic.blogs:
+            if key in BLOG_NAMES:
+                short = channel_names.short_home_label(key)                                              # 서랍은 폭이 420 이라 긴 별명은 줄인 이름을 보인다(검증 Q2-1) — 줄였으면 전체 이름은 `tip` 에(툴팁·접근 이름)
+                item = {"key": key, "label": T["draft_of"].format(name=short)}
+                cut = channel_names.full_if_cut(channel_names.HOME_KEYS[key], short)
+                if cut:
+                    item["tip"] = T["draft_of"].format(name=cut)
+                blogs.append(item)
+        first = topic.blogs[0] if topic.blogs else ""
+        blog_label = channel_names.short_home_label(first) if first else ""
+        view = {"id": topic.id, "title": T["drawer_title"], "topic": shown(topic.title, 200), "blog_label": blog_label, "priority": topic.priority or NO_DATA,
                 "reason_title": T["d_reason"], "reason": shown(topic.reason) or NO_DATA, "fields": [{"label": a, "value": b, "missing": b == NO_DATA} for a, b in fields],
                 "drafts": blogs, "hold": T["hold"], "more": T["more"], "close": T["drawer_close"], "sample": bool(self.data and self.data.sample), "sample_tag": T["sample_tag"]}
+        if blog_label and first in channel_names.HOME_KEYS:
+            cut = channel_names.full_if_cut(channel_names.HOME_KEYS[first], blog_label)
+            if cut:
+                view["blog_tip"] = cut                                                                   # 줄인 이름일 때만 더하는 칸 — 기본 이름처럼 안 줄이면 뷰모델은 그대로다
+        return view
 
     def open_drawer(self, topic_id):
         if self.drawer_topic(topic_id) is None:

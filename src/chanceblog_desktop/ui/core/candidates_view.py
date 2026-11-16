@@ -121,7 +121,8 @@ class CandidatesController:
         if self.data is None:
             return ()
         have = {row.candidate.channel for row in self.data.rows}
-        return tuple(item for item in self.data.channels if item.key in have or item.enabled is True)
+        shown = [item for item in self.data.channels if item.key in have or item.enabled is True]
+        return tuple(sorted(shown, key=lambda item: cn.ORDER.index(item.key) if item.key in cn.ORDER else len(cn.ORDER)))               # 블로그 관리의 카드 순서(네이버 1·2 → Blogger 1·2 → GitHub Pages — 검증 Q2-4)
 
     def channel_info(self, key):
         """채널 하나의 표시 정보 — 프로필을 읽지 못한 채널은 이름이 비어 있으므로 서비스의 채널 이름으로 대신한다."""

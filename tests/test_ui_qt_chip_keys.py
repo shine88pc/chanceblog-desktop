@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from test_ui_qt_blogs import HAVE, Base  # noqa: E402,I001
 
 if HAVE:
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QEvent, QObject, Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
     from chanceblog_desktop.ui.qt import blog_parts
@@ -78,6 +78,29 @@ class ChipGroupRuleTest(Base):
             self.assertIs(QApplication.focusWidget(), chips[expected], (key, expected))
             self.assertEqual(self.stops(chips), [chips[expected]], "화살표로 옮긴 칩이 새 정거장이다")
         self.assertEqual([chip.isChecked() for chip in chips], before, "화살표는 옮기기만 한다 — 고르지 않는다")
+
+    def test_the_arrow_keys_move_the_focus_with_a_keyboard_focus_reason_so_the_keyboard_tooltip_can_show(self):
+        """검증 Q2-6(Q11): 화살표로 옮긴 칩의 포커스 이유는 앞으로(→ ↓·End)면 Tab, 뒤로(← ↑·Home)면 Shift+Tab 이다 — 앱의 '키보드 포커스 툴팁'(`_FocusTooltips`)이 이 이유일 때만 뜬다(마우스·Other 로는 안 뜬다)."""
+        chips, group, _ = self.build()
+        reasons = []
+
+        class Spy(QObject):
+            def eventFilter(self, watched, event):
+                if event.type() == QEvent.FocusIn and watched in chips:
+                    reasons.append((chips.index(watched), event.reason()))
+                return False
+
+        spy = Spy(box := chips[0].parentWidget())
+        for chip in chips:
+            chip.installEventFilter(spy)
+        self.focus(chips[2])
+        reasons.clear()
+        for source, key, expected in ((2, Qt.Key_Right, (3, Qt.TabFocusReason)), (3, Qt.Key_Left, (2, Qt.BacktabFocusReason)), (2, Qt.Key_Down, (3, Qt.TabFocusReason)),
+                                      (3, Qt.Key_Up, (2, Qt.BacktabFocusReason)), (2, Qt.Key_End, (5, Qt.TabFocusReason)), (5, Qt.Key_Home, (0, Qt.BacktabFocusReason))):
+            QTest.keyClick(chips[source], key)
+            self.settle(1)
+            self.assertEqual(reasons[-1], expected, key)
+        self.assertIsNotNone(box)
 
     def test_a_key_combination_is_left_to_qt(self):
         chips, group, after = self.build()

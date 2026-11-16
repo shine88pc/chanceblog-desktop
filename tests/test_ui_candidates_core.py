@@ -397,7 +397,7 @@ class ReadAndFilterTest(unittest.TestCase):
         status = {chip["key"]: chip for chip in filters["status"]}
         self.assertEqual([(key, chip["count"]) for key, chip in status.items()], [("all", 14), ("NEW", 10), ("REVIEW", 1), ("SELECTED", 1), ("HOLD", 1), ("REJECTED", 1)])
         self.assertEqual([key for key, chip in status.items() if chip["active"]], ["NEW"])
-        self.assertEqual([chip["key"] for chip in filters["channel"]], ["all", "github_pages", "blogger_ko", "naver_a", "naver_b"], "후보가 있거나 후보 생성이 켜진 채널만")
+        self.assertEqual([chip["key"] for chip in filters["channel"]], ["all", "naver_a", "naver_b", "blogger_ko", "github_pages"], "후보가 있거나 후보 생성이 켜진 채널만 — 의도적 갱신(BLOGSEL-2 Q2-4, D-510): 블로그 관리의 카드 순서(옛 시험은 엔진의 채널 순서를 못박았다)")
         self.assertEqual(sum(chip["count"] for chip in filters["band"] if chip["key"] != "all"), 14, "구간 칩의 합은 전체와 같다(점수 계산 전 포함)")
         self.assertEqual(status["HOLD"]["a11y"], "작업 상태 보류 1개")
         self.assertEqual({chip["key"]: chip["a11y"] for chip in filters["band"]}["mid"], "점수 구간 보류 2개", "같은 낱말(보류·제외)도 어느 묶음인지 접근 이름이 가른다")

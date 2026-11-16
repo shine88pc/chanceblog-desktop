@@ -638,6 +638,7 @@ class HomeOutputUnchangedTest(unittest.TestCase):
         self.assertNotIn("블로그 A", names_in_new)
 
     def test_the_home_view_models_are_exactly_what_the_home_shape_bundle_made_them(self):
+        """의도적 갱신(BLOGSEL-2 ①, D-510): 열 개 지문을 새 값으로 다시 못박았다(같은 강도) — 홈·서랍이 채널을 블로그 관리의 별명(없으면 `네이버 블로그 1·2`)으로 부르기 때문이다. 어느 자리가 왜 바뀌었는지와 옛 값과의 관계는 이 클래스의 설명과 아래 `…come_back…` 시험이 못박는다."""
         got = self.current()
         expected = {**self.BASELINE, **self.DRAWERS}
         self.assertEqual({key: (expected[key], got[key]) for key in expected if got[key] != expected[key]}, {}, "홈의 출력이 바뀌었다 — 의도한 변경이면 이유를 적고 지문을 고친다")

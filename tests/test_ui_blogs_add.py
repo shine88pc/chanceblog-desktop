@@ -695,6 +695,8 @@ class CloneAliasTest(unittest.TestCase):
         self.assertFalse(controller.has_unsaved(), "앱이 미리 넣은 제안 별명뿐이면 사용자가 친 것이 아니다")
         self.assertIn(T["blogs_cloned"], controller.notice[1])
         self.assertIn("Blogger 2", controller.notice[1], "무엇으로 채웠는지 알린다")
+        self.assertIn(T["blogs_cloned_alias"].format(alias="Blogger 2"), controller.notice[1])
+        self.assertIn("저장하면 이 별명으로 남아요", controller.notice[1], "저장 전 초안임을 분명히 말한다(검증 S2-4 — '저장 안 해도 채워진 것' 으로 읽히지 않게)")
         controller.edit("alias", "내 영문 블로그")
         self.assertTrue(controller.has_unsaved(), "사용자가 고치면 센다")
 

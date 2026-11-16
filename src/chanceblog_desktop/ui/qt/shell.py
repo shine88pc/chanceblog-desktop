@@ -828,9 +828,18 @@ class AppShell(QMainWindow):
         """앱이 열릴 때 블로그 정보를 조용히 읽는다(읽기만 — 화면을 다시 그리지 않는다). 읽으면 `_names_changed` 가 다른 화면의 채널 이름(별명)을 바꾼다."""
         self.state.blogs.start_load(**self.blogs_bridge.callbacks())
 
+    def _typing_would_be_lost(self):
+        """다시 그리면 입력 중인 칸이 사라지는 화면인가 — 고친 초안이 있는 초안 작성 화면, 입력이 든 Seed 서랍(새 Seed·고치는 중). 이름은 다음에 그릴 때 바뀐다(검증 S2-6 — 시작 직후 늦게 도착한 읽기가 입력을 끊지 않게)."""
+        if self.state.page == "drafts":
+            return self.state.drafts.has_unsaved()
+        if self.state.page == "seed" and self.state.seeds.drawer is not None:
+            kind, seed_id = self.state.seeds.drawer
+            return self.state.seeds.new_dirty() if kind == "new" else self.state.seeds.is_dirty(seed_id)
+        return False
+
     def _names_changed(self):
-        """블로그 관리가 읽거나 쓴 자료로 다른 화면의 채널 이름(별명)을 다시 정한다 — 바뀌었고 그 화면을 보는 중이면 다시 그린다(초안에 고친 내용이 있으면 입력을 지키려고 다음에 그릴 때 바뀐다)."""
-        if self.state.refresh_names() and self.state.page != "blogs" and not (self.state.page == "drafts" and self.state.drafts.has_unsaved()):
+        """블로그 관리가 읽거나 쓴 자료로 다른 화면의 채널 이름(별명)을 다시 정한다 — 바뀌었고 그 화면을 보는 중이면 다시 그린다(입력 중인 칸이 있으면 입력을 지키려고 다음에 그릴 때 바뀐다)."""
+        if self.state.refresh_names() and self.state.page != "blogs" and not self._typing_would_be_lost():
             self.render()
 
     def _show_blogs_loaded(self, data):
@@ -2399,6 +2408,7 @@ class AppShell(QMainWindow):
         self._reload_after_backups()
         if getattr(result, "action", "") == "restored":
             self.reload()                                                             # 복원이 데이터를 바꿨다 — 홈이 읽어 둔 값을 새로 읽는다(다른 화면은 열 때마다 읽는다)
+            self._load_blog_names()                                                   # 복원은 블로그 프로필 파일도 바꾼다 — 다른 화면(Seed·후보·초안·홈)의 채널 이름(별명)도 새로 읽는다(검증 Q2-2)
         self._render_backups()
         self._give_backup_focus()
 

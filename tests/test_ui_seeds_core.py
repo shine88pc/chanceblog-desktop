@@ -285,8 +285,12 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(self.seeds[0].state, "proposed")
 
     def test_the_channel_rows_follow_the_channel_order_and_say_when_generation_is_unknown(self):
+        """의도적 갱신(BLOGSEL-2 Q2-4, D-510): 채널 줄은 화면 순서(블로그 관리의 카드 순서 — 네이버 1·2 → Blogger 1·2 → GitHub Pages)이다 — 옛 시험은 엔진의 채널 순서(`ch.CHANNELS` — GitHub Pages 가 맨 앞)를 못박았다. 저장하는 값의 순서(`CHANNEL_ORDER`)는 그대로다."""
         rows = rules.channel_rows(self.seeds, seeds.DEFAULT_GENERATION)
-        self.assertEqual([row["key"] for row in rows], list(ch.CHANNELS))
+        self.assertEqual([row["key"] for row in rows], ["naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"])
+        self.assertEqual([row["key"] for row in rows], list(sf.DISPLAY_CHANNELS))
+        self.assertEqual(sorted(sf.DISPLAY_CHANNELS), sorted(ch.CHANNELS), "화면 순서는 같은 다섯 채널의 다른 줄 세우기일 뿐이다")
+        self.assertEqual(tuple(sf.CHANNEL_ORDER), tuple(ch.CHANNELS), "저장하는 값의 순서는 엔진의 채널 순서 그대로다")
         self.assertEqual({row["key"]: row["generation"] for row in rows}, {"github_pages": False, "blogger_en": False, "blogger_ko": False, "naver_a": True, "naver_b": True})
         unknown = rules.channel_rows(self.seeds, tuple((code, None) for code in ch.CHANNELS))
         self.assertEqual({row["generation"] for row in unknown}, {None})

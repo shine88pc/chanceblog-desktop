@@ -14,6 +14,7 @@ from . import blog_form as bf
 from .text import T
 
 LIMIT = 30                                                   # 화면 이름 길이 상한 — 서비스의 별명 한도(`ch.MAX_ALIAS`)와 같다
+DRAWER_LIMIT = 12                                            # 서랍처럼 좁은 자리(폭 420)에 보이는 이름의 길이 상한 — 한글 열두 자면 배지·단추·칩이 서랍 안에 든다(검증 Q2-1: 별명이 길면 서랍이 넘쳤다). 전체 이름은 툴팁·접근 이름에 둔다
 ORDER = bf.DISPLAY_ORDER                                     # 종류별 채움 순서: naver_a·naver_b·blogger_ko·blogger_en·github_pages
 HOME_KEYS = {"A": "naver_a", "B": "naver_b"}                 # 홈의 채널 열쇠(A·B)가 가리키는 슬롯
 
@@ -54,6 +55,18 @@ def labels(items=None, limit=LIMIT):
     return out
 
 
+def short_names(full, limit=DRAWER_LIMIT):
+    """좁은 자리(서랍)에 보일 이름 `{열쇠: 글}` — 화면 이름(`full`)을 `limit` 자로 줄이고(넘으면 …), 줄인 뒤 같아진 이름은 ` #번호` 로 가른다(서랍의 초안 단추 둘이 같은 글이 되지 않게). 순수 규칙이다."""
+    out = {key: bf.shown(full[key], limit) for key in ORDER}
+    groups = {}
+    for key in ORDER:
+        groups.setdefault(out[key].casefold(), []).append(key)
+    for group in groups.values():
+        for number, key in enumerate(group[1:], start=2):
+            out[key] = f"{bf.shown(full[key], limit - 3)} #{number}"
+    return out
+
+
 DEFAULT = labels(None)                                       # 아직 블로그 관리를 읽지 못했을 때(또는 자료가 없을 때)의 이름
 _current = None                                              # 지금 켜 둔 이름들(없으면 DEFAULT)
 
@@ -82,6 +95,29 @@ def home_label(letter):
     return label(key) if key else ""
 
 
+def button_text(text):
+    """단추·칩에 넣는 글 — Qt 는 단추 글의 `&` 를 Alt 단축키 표시로 읽어 별명의 `&` 가 사라지고 단축키가 생긴다(`A&B` → `AB`·Alt+B, `&lt;` → `lt;`). `&&` 로 써야 글자 그대로 보인다(검증 S2-3).
+    접근 이름·툴팁은 이 글을 쓰지 않고 별명 그대로다. 표시 규칙은 이 한 곳이고 단추·칩을 만드는 `components` 가 부른다."""
+    return str(text).replace("&", "&&")
+
+
+def short_label(key, limit=DRAWER_LIMIT):
+    """채널 열쇠(`naver_a` 등) 하나의 좁은 자리용 이름 — 모르는 열쇠는 그대로."""
+    return short_names(current(), limit).get(key, key)
+
+
+def short_home_label(letter, limit=DRAWER_LIMIT):
+    """홈의 채널 열쇠(`A`·`B`)의 좁은 자리용 이름 — 모르는 글자는 빈 글."""
+    key = HOME_KEYS.get(letter)
+    return short_label(key, limit) if key else ""
+
+
+def full_if_cut(key, short):
+    """좁은 자리용 이름(`short`)이 줄인 글이면 전체 이름(툴팁·접근 이름용), 아니면 빈 글 — 줄이지 않았으면 뷰모델에 따로 싣지 않는다."""
+    full = label(key)
+    return full if short != full else ""
+
+
 def avatar_letter(key):
     """채널 아바타 안의 글자 하나 — 별명이 있으면 별명의 첫 글자, 아직 별명이 없어 기본 이름(`네이버 블로그 1`)이면 그 번호(같은 종류 두 자리가 아바타에서도 가려진다)."""
     text = str(label(key))
@@ -93,4 +129,4 @@ def avatar_letter(key):
     return "?"
 
 
-__all__ = ["DEFAULT", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "home_label", "label", "labels", "use"]
+__all__ = ["DEFAULT", "DRAWER_LIMIT", "button_text", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]
