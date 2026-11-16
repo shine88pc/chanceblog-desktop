@@ -30,6 +30,7 @@ class DraftsUi:
         self.options_panel = self.options_toggle = self.pending_note = None
         self.image_state = self.image_button = None
         self.photos_count = self.photos_button = self.photos_unsaved = self.photos_row_button = None        # 사진 정리(2단계) — 오른쪽 '사진' 카드와 '만드는 방법' 칸의 줄
+        self.photos_trash_box = self.photos_trash_text = self.photos_restore = self.photos_restore_note = self.photos_clear = None   # 되돌릴 사본(확인 024) — 지운 초안의 사진 정보를 되살리는 안내와 두 단추
         self.accordions = {}
         self.checks_status = None
         self.back = self.apply = self.actions = self.action_bar = None
@@ -361,7 +362,51 @@ def _photos_card(shell, vm, ui):
     ui.photos_button = UI.Button("secondary", vm["button"], size="sm", accessible=vm["button_a11y"], focus_key="drf-photos")
     ui.photos_button.clicked.connect(shell.photos_open)
     inner.addWidget(ui.photos_button, 0, Qt.AlignLeft)
+    inner.addWidget(_photos_trash(shell, vm["trash"], ui))
     return card
+
+
+def _photos_trash(shell, trash, ui):
+    """지운 초안의 사진 정보를 되돌릴 사본으로 남겨 뒀을 때의 안내와 두 단추 — `사진 정보 되돌리기`(사진이 있으면 꺼짐)·`사진 정보 사본 비우기`(확인창을 거친다). 사본이 없으면 통째로 숨긴다(운영자 확인 024)."""
+    ui.photos_trash_box = QWidget()
+    column = QVBoxLayout(ui.photos_trash_box)
+    column.setContentsMargins(0, K.SPACE["2"], 0, 0)
+    column.setSpacing(K.SPACE["2"])
+    ui.photos_trash_text = UI.label("", "caption", wrap=True)
+    column.addWidget(ui.photos_trash_text)
+    ui.photos_restore = UI.Button("secondary", "", size="sm", focus_key="drf-photos-restore")
+    ui.photos_restore.clicked.connect(shell.photos_restore)
+    column.addWidget(ui.photos_restore, 0, Qt.AlignLeft)
+    ui.photos_restore_note = UI.label("", "caption", wrap=True)
+    ui.photos_restore_note.set_tone("orange")
+    column.addWidget(ui.photos_restore_note)
+    ui.photos_clear = UI.Button("secondary", "", size="sm", focus_key="drf-photos-clear")
+    ui.photos_clear.clicked.connect(shell.photos_trash_clear)
+    column.addWidget(ui.photos_clear, 0, Qt.AlignLeft)
+    _apply_trash(ui, trash)
+    return ui.photos_trash_box
+
+
+def _apply_trash(ui, trash):
+    """되돌릴 사본 줄의 글·꺼짐·보임을 뷰모델에 맞춘다. 단추가 사라지는 순간 포커스가 거기 있었다면 같은 카드의 `사진 정리 열기` 로 옮긴다(포커스를 잃지 않게)."""
+    box = ui.photos_trash_box
+    if box is None:
+        return
+    had_focus = ui.photos_restore.hasFocus() or ui.photos_clear.hasFocus()
+    box.setVisible(trash is not None)
+    if trash is None:
+        if had_focus and ui.photos_button is not None:
+            ui.photos_button.setFocus(Qt.OtherFocusReason)
+        return
+    ui.photos_trash_text.set_text(trash["text"])
+    ui.photos_restore.setText(trash["restore"])
+    ui.photos_restore.setAccessibleName(trash["restore_a11y"])
+    ui.photos_restore.setEnabled(trash["restore_enabled"])
+    ui.photos_restore_note.set_text(trash["restore_note"])
+    ui.photos_restore_note.setVisible(bool(trash["restore_note"]))
+    ui.photos_clear.setText(trash["clear"])
+    ui.photos_clear.setAccessibleName(trash["clear_a11y"])
+    ui.photos_clear.setEnabled(trash["clear_enabled"])
 
 
 def _checks_card(shell, vm, ui):
@@ -475,7 +520,7 @@ def _stops(ui):
     """Tab 정거장의 읽는 순서 — 뒤로 → 만드는 방법 → (펼쳤다면 그 안 — 사진 넣기 줄 포함) → 제목 → 제목 후보 → 본문 → 오른쪽 칸(`검사하기` 다음에 글 모양 점검의 `무시` 단추들이 이어지고 이미지·사진 카드의 단추가 뒤따른다) → 아래 행동 줄."""
     chain = [ui.back, ui.saved_list, ui.options_toggle]
     chain += [ui.blog_chips.get(key) for key in ("naver_a", "naver_b")] + list(ui.type_chips.values()) + list(ui.fields.values()) + [ui.photos_row_button, ui.apply]
-    chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, *(ui.garbage.stops() if ui.garbage is not None else []), ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button, ui.photos_button]
+    chain += [ui.title, *ui.picks, ui.editor, ui.inspect_button, *(ui.garbage.stops() if ui.garbage is not None else []), ui.copy.get("keywords"), ui.copy.get("tags"), ui.copy.get("summary"), ui.image_button, ui.photos_button, ui.photos_restore, ui.photos_clear]
     chain += [ui.accordions[key].toggle for key in ("specific", "common")]
     chain += [ui.actions[key] for key in ("save", "title", "body", "all", "open") if key in ui.actions]
     return [widget for widget in chain if widget is not None]
@@ -617,6 +662,7 @@ def refresh_photos(page, card):
         if button is not None:
             button.setText(card["button"])
             button.setAccessibleName(card["button_a11y"])
+    _apply_trash(ui, card["trash"])
 
 
 def show_copy(page, key, copied_text, copied):

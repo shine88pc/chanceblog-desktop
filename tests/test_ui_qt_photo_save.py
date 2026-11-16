@@ -1,0 +1,336 @@
+"""사진 정보를 초안과 함께 저장하고, 지운 초안의 사진 정보를 되돌릴 사본에서 되돌리거나 비우는 **Qt 화면** 시험(PySide6, 사진 연동 3단계 — 운영자 확인 024).
+창을 화면에 띄우지 않고(offscreen) 가짜 공급자(메모리)로 한다 — 사용자의 파일·데이터 폴더·클립보드는 건드리지 않고, 사진 파일은 만들지도 읽지도 않는다(경로는 글자일 뿐이고 미리보기는 가짜 그림이다).
+**PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다 — 순수 부분은 `test_ui_photo_save_core`·`test_ui_photo_save_service`).
+
+지키는 것:
+  1) 사진 정보를 고치면 저장 상태 줄이 '저장한 뒤 고쳤어요' 로 바뀌고(글은 안 바뀌어도) 카드에 안내가 보이며, `저장` 한 번이 글과 사진 정보를 함께 저장하면 안내가 사라진다. 사진 정보만 고친 채 떠나려 하면 세 갈래 확인창이 먼저다.
+  2) 지운 초안이 되살아나 열리면 카드에 되돌릴 사본의 안내와 두 단추가 보인다. `사진 정보 되돌리기` 는 사진 목록을 되살리고(지금 사진이 있으면 꺼지고 까닭을 글로 말한다), `사진 정보 사본 비우기` 는 확인창(처음 포커스는 `그만두기`)을 거친 뒤에만 사본을 지운다.
+  3) 두 단추의 이름·크기·Tab 순서·포커스(단추가 사라질 때 같은 카드의 `사진 정리 열기` 로)·모든 크기에서 잘림 없음. 실패하면 고정 문장으로 알리고 단추는 그대로다.
+  4) 저장한 초안을 지우면 '사진 정보는 되돌릴 사본으로 남겨 뒀어요' 가 목록 알림에 함께 보인다.
+  5) 새 셸 함수는 공급자·파일·네트워크를 직접 부르지 않고 컨트롤러만 부른다.
+"""
+import ast
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_ui_drafts_core import CATALOG  # noqa: E402
+from test_ui_qt_drafts import HAVE, QT_DIR, SIZES  # noqa: E402
+from test_ui_qt_drafts_save import SaveBase, provider  # noqa: E402
+from test_ui_qt_photo import PhotoBase, called_names, fake_path, methods_of  # noqa: E402
+
+if HAVE:
+    from test_ui_qt_drafts import QAbstractButton, QTest, Qt, ui_offscreen  # noqa: E402
+
+from chanceblog_desktop.ui.core import drafts, text, tokens  # noqa: E402
+
+T = text.T
+
+
+class FailingTrash(drafts.FakeDraftsProvider):
+    """되돌리기·사본 비우기가 실패하는 가짜 공급자(고정 문장으로 알리는 길을 본다)."""
+
+    def restore_photos(self, draft_id, progress, cancelled):
+        raise drafts.DraftFailure(T["pho_restore_fail"], code="FILE_WRITE_FAILED", kind="io")
+
+    def clear_photos_trash(self, draft_id, progress, cancelled):
+        raise drafts.DraftFailure(T["pho_trash_clear_fail"], code="FILE_WRITE_FAILED", kind="io")
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class Base(PhotoBase, SaveBase):
+    def open_list(self, window):
+        window.go("drafts")
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.drafts.list_state == "ok", 10))
+        self.settle()
+        self.activate(window)
+
+    def saved_with_photos(self, count=2, fake=None):
+        """사진을 넣고 저장한 초안 → `(창, 가짜 공급자, 초안 번호)`."""
+        fake = fake or provider()
+        window = self.drafted(drafts_provider=fake)
+        window, form = self.sheet(window)
+        self.add_photos(form, *[fake_path(number) for number in range(1, count + 1)])
+        self.assertEqual(window.photos_close(), "closed")
+        self.settle(4)
+        self.press_save(window)
+        return window, fake, window.state.drafts.saved_id
+
+    def deleted_and_back(self, count=2, fake=None):
+        """사진을 넣어 저장한 초안을 목록에서 지우고(사진 정보는 되돌릴 사본으로) 같은 번호로 되살아난 초안을 연다 → `(창, 가짜 공급자, 초안 번호)`."""
+        window, fake, draft_id = self.saved_with_photos(count, fake)
+        draft = fake.saved[draft_id]
+        window.state.drafts.leave()
+        window.go("home")
+        self.settle()
+        self.open_list(window)
+        self.ui(window).saved_rows[0].delete_button.click()
+        self.settle(3)
+        self.dialog_buttons(window)[T["drf_delete_ok"]].click()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.drafts.list_state == "ok" and not window.state.drafts.store_busy and not fake.saved, 10))
+        self.settle()
+        self.deleted_notice = window.state.drafts.list_notice
+        fake.saved[draft_id] = draft                                                  # 백업에서 같은 번호로 되살아난 것처럼
+        window.go("home")
+        self.settle()
+        self.open_list(window)
+        self.ui(window).saved_rows[0].open_button.click()
+        self.assertTrue(self.wait_store(window))
+        self.settle(4)
+        self.assertEqual(window.state.drafts.saved_id, draft_id)
+        return window, fake, draft_id
+
+    def trash_ui(self, window):
+        ui = self.ui(window)
+        return ui, ui.photos_trash_box, ui.photos_restore, ui.photos_clear
+
+
+class SaveTest(Base):
+    def test_a_photo_only_change_turns_the_status_to_changed_and_one_save_stores_both(self):
+        fake = provider()
+        window = self.drafted(drafts_provider=fake)
+        ui, controller = self.ui(window), window.state.drafts
+        window, form = self.sheet(window)
+        self.add_photos(form, fake_path(1), fake_path(2))
+        self.assertEqual(window.photos_close(), "closed")
+        self.settle(4)
+        self.assertTrue(ui.photos_unsaved.isVisibleTo(window.screen_widget), "사진 정보를 고쳤는데 저장하지 않았다는 안내")
+        self.assertIn("초안을 저장해야 사진 정보도 함께 저장돼요", ui.photos_unsaved.plain_text())
+        self.assertFalse(controller.text_unsaved())
+        self.press_save(window)
+        self.assertEqual(len(fake.save_calls), 1)
+        self.assertEqual([photo.photo_id for photo in fake.save_calls[0].photos.photos], ["p001", "p002"], "저장 요청에 사진 정보가 실렸다")
+        self.assertEqual([photo.photo_id for photo in fake.photo_files[controller.saved_id].photos], ["p001", "p002"])
+        self.assertFalse(ui.photos_unsaved.isVisibleTo(window.screen_widget), "함께 저장했으니 안내가 사라진다")
+        self.assertEqual((controller.save_state(), self.saved_status(window)), ("saved", controller.save_vm()["text"]))
+        window, form = self.sheet(window)
+        form.rows["p001"].confirm_box.click()
+        self.settle(3)
+        window.photos_close()
+        self.settle(3)
+        self.assertEqual((controller.save_state(), self.saved_status(window)), ("changed", T["drf_state_changed"]), "글은 그대로인데 사진 정보만 고쳤다")
+        self.assertTrue(ui.photos_unsaved.isVisibleTo(window.screen_widget))
+        self.press_save(window)
+        self.assertTrue(fake.photo_files[controller.saved_id].photo("p001").confirmed_by_user)
+        self.assertEqual(controller.save_state(), "saved")
+
+    def test_leaving_with_only_the_photo_info_changed_asks_with_three_choices(self):
+        window, fake, draft_id = self.saved_with_photos()
+        window, form = self.sheet(window)
+        form.rows["p001"].confirm_box.click()
+        self.settle(3)
+        window.photos_close()
+        self.settle(3)
+        window.go("topics")
+        self.settle(3)
+        self.assertTrue(window.dialog.is_open)
+        self.assertEqual(list(self.dialog_buttons(window)), [T["drf_choice_save"], T["drf_choice_discard_leave"], T["drf_choice_stay"]])
+        self.assertEqual(window.state.page, "drafts")
+        self.dialog_buttons(window)[T["drf_choice_save"]].click()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.page == "topics", 10))
+        self.settle()
+        self.assertTrue(fake.photo_files[draft_id].photo("p001").confirmed_by_user, "저장하고 나갔다 — 사진 정보도 함께")
+
+    def test_a_failed_photo_save_keeps_the_note_and_says_so_while_the_text_is_saved(self):
+        fake = provider()
+        window = self.drafted(drafts_provider=fake)
+        ui, controller = self.ui(window), window.state.drafts
+        window, form = self.sheet(window)
+        self.add_photos(form, fake_path(1))
+        window.photos_close()
+        self.settle(3)
+        fake.photo_fail = drafts.DraftFailure(T["pho_save_fail"], code="FILE_WRITE_FAILED", kind="io")
+        self.press_save(window)
+        self.assertEqual(len(fake.saved), 1, "글은 저장됐다")
+        self.assertEqual(controller.notice[0], "error")
+        self.assertTrue(controller.notice[1].startswith(T["pho_save_fail"]))
+        self.assertTrue(ui.photos_unsaved.isVisibleTo(window.screen_widget), "저장하지 못했으니 안내가 남는다")
+        self.assertEqual(controller.save_state(), "changed")
+        fake.photo_fail = None
+        self.press_save(window)
+        self.assertEqual(controller.save_state(), "saved")
+        self.assertEqual(len(fake.photo_files), 1)
+
+
+class TrashTest(Base):
+    def test_a_draft_without_a_trash_copy_has_no_trash_block(self):
+        window, fake, draft_id = self.saved_with_photos()
+        ui, box, restore, clear = self.trash_ui(window)
+        self.assertFalse(box.isVisibleTo(window.screen_widget))
+        self.assertNotIn(T["pho_card_trash"], self.texts(window.screen_widget))
+
+    def test_deleting_a_saved_draft_with_photos_says_the_photo_info_was_kept_as_a_copy(self):
+        window, fake, draft_id = self.deleted_and_back()
+        self.assertEqual(self.deleted_notice, ("ok", T["drf_deleted_notice"] + " " + T["pho_deleted_trash"]))
+        self.assertIn(draft_id, fake.photo_trash)
+        self.assertNotIn(draft_id, fake.photo_files)
+
+    def test_a_draft_that_comes_back_shows_the_copy_and_the_two_buttons_with_names_and_sizes(self):
+        window, fake, draft_id = self.deleted_and_back()
+        ui, box, restore, clear = self.trash_ui(window)
+        self.assertTrue(box.isVisibleTo(window.screen_widget))
+        self.assertIn(T["pho_card_trash"], self.texts(window.screen_widget))
+        self.assertEqual((restore.text(), clear.text()), (T["pho_restore_btn"], T["pho_trash_clear_btn"]))
+        self.assertEqual((restore.accessibleName(), clear.accessibleName()), (T["pho_restore_btn_a11y"], T["pho_trash_clear_btn_a11y"]))
+        for button in (restore, clear):
+            self.assertTrue(button.isEnabled() and button.isVisibleTo(window.screen_widget))
+            self.assertGreaterEqual(button.height(), tokens.SIZE["hit"] - 8)
+            self.assertNotEqual(button.focusPolicy(), Qt.NoFocus)
+        self.assertFalse(ui.photos_restore_note.isVisibleTo(window.screen_widget), "사진이 없으니 되돌릴 수 있다 — 막는 안내가 없다")
+        self.assertEqual(ui.stops[ui.stops.index(ui.photos_button) + 1:ui.stops.index(ui.photos_button) + 3], [restore, clear], "Tab 순서: 사진 정리 열기 다음에 두 단추")
+        self.assertEqual(window.state.drafts.photos.count, 0)
+
+    def test_restoring_brings_the_photo_list_back_moves_focus_to_the_card_button_and_tells_it(self):
+        window, fake, draft_id = self.deleted_and_back()
+        ui, box, restore, clear = self.trash_ui(window)
+        self.activate(window)
+        restore.setFocus(Qt.MouseFocusReason)                                          # 진짜 누름은 단추에 포커스를 준다(`click()` 은 안 준다)
+        restore.click()
+        self.assertTrue(self.wait_store(window))
+        self.settle(3)
+        controller = window.state.drafts
+        self.assertEqual((controller.photos.count, controller.photos_trash, controller.photos_unsaved()), (2, False, False))
+        self.assertEqual(controller.notice, ("ok", T["pho_restored_notice"]))
+        self.assertTrue(window.toast.isVisible())
+        self.assertFalse(box.isVisibleTo(window.screen_widget), "사본을 쓰고 났으니 줄이 사라진다")
+        self.assertEqual(self.lt(ui.photos_count), "사진 2장 · 확인 0/2")
+        self.assertEqual(ui.photos_button.text(), "사진 정리 열기")
+        self.assertTrue(ui.photos_button.hasFocus(), "눌렀던 단추가 사라져도 포커스를 잃지 않는다")
+        self.assertNotIn(draft_id, fake.photo_trash)
+        self.assertEqual([photo.photo_id for photo in fake.photo_files[draft_id].photos], ["p001", "p002"])
+        self.assertFalse(ui.photos_unsaved.isVisibleTo(window.screen_widget), "되돌린 것은 저장된 사진 정보 그대로다")
+
+    def test_restore_is_off_with_a_reason_while_photos_are_in_the_draft_and_back_on_when_they_are_gone(self):
+        window, fake, draft_id = self.deleted_and_back()
+        ui, box, restore, clear = self.trash_ui(window)
+        window, form = self.sheet(window)
+        self.add_photos(form, fake_path(7))
+        window.photos_close()
+        self.settle(4)
+        self.assertTrue(box.isVisibleTo(window.screen_widget))
+        self.assertFalse(restore.isEnabled())
+        self.assertTrue(ui.photos_restore_note.isVisibleTo(window.screen_widget))
+        self.assertEqual(ui.photos_restore_note.plain_text(), T["pho_restore_blocked"], "꺼진 단추만 두지 않고 까닭을 글로 말한다")
+        self.assertTrue(clear.isEnabled(), "사본 비우기는 사진이 있어도 된다")
+        window, form = self.sheet(window)
+        form.rows["p001"].remove.click()
+        self.settle(3)
+        window.photos_close()
+        self.settle(3)
+        self.assertTrue(restore.isEnabled())
+        self.assertFalse(ui.photos_restore_note.isVisibleTo(window.screen_widget))
+
+    def test_clearing_the_copy_asks_first_with_focus_on_cancel_and_clears_only_after_yes(self):
+        window, fake, draft_id = self.deleted_and_back()
+        ui, box, restore, clear = self.trash_ui(window)
+        controller = window.state.drafts
+        self.activate(window)
+        clear.setFocus(Qt.MouseFocusReason)
+        clear.click()
+        self.settle(3)
+        self.assertTrue(window.dialog.is_open)
+        buttons = self.dialog_buttons(window)
+        self.assertEqual(list(buttons), [T["pho_trash_clear_no"], T["pho_trash_clear_yes"]])
+        self.assertTrue(buttons[T["pho_trash_clear_no"]].hasFocus(), "처음 포커스는 안전한 쪽(그만두기)")
+        self.assertIn(T["pho_trash_clear_ask"], " ".join(self.texts(window.dialog)))
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.settle(3)
+        self.assertEqual((window.dialog.is_open, controller.photos_trash, controller.trash_asked, draft_id in fake.photo_trash), (False, True, False, True), "Esc 는 그만두기와 같다")
+        self.assertEqual(controller.start_clear_trash(), ("unconfirmed", None), "확인창을 거치지 않으면 지우지 않는다")
+        clear.setFocus(Qt.MouseFocusReason)
+        clear.click()
+        self.settle(3)
+        self.dialog_buttons(window)[T["pho_trash_clear_yes"]].click()
+        self.assertTrue(self.wait_store(window))
+        self.settle(3)
+        self.assertEqual((controller.photos_trash, controller.notice), (False, ("ok", T["pho_trash_cleared_notice"])))
+        self.assertNotIn(draft_id, fake.photo_trash)
+        self.assertIn(draft_id, fake.saved, "초안은 그대로다")
+        self.assertFalse(box.isVisibleTo(window.screen_widget))
+        self.assertTrue(ui.photos_button.hasFocus())
+        self.assertTrue(window.toast.isVisible())
+
+    def test_a_failed_restore_or_clear_says_it_in_a_fixed_sentence_and_keeps_the_buttons(self):
+        fake = FailingTrash(lambda: CATALOG, saving=True)
+        window, fake, draft_id = self.deleted_and_back(fake=fake)
+        ui, box, restore, clear = self.trash_ui(window)
+        controller = window.state.drafts
+        restore.click()
+        self.assertTrue(self.wait_store(window))
+        self.settle(3)
+        self.assertEqual(controller.notice, ("error", T["pho_restore_fail"]))
+        self.assertTrue(box.isVisibleTo(window.screen_widget) and restore.isEnabled(), "다시 눌러 볼 수 있다")
+        self.assertEqual(controller.photos.count, 0)
+        clear.click()
+        self.settle(3)
+        self.dialog_buttons(window)[T["pho_trash_clear_yes"]].click()
+        self.assertTrue(self.wait_store(window))
+        self.settle(3)
+        self.assertEqual(controller.notice, ("error", T["pho_trash_clear_fail"]))
+        self.assertTrue(box.isVisibleTo(window.screen_widget))
+        self.assertIn(draft_id, fake.photo_trash)
+
+    def test_while_a_job_runs_both_buttons_are_off_and_a_second_press_does_nothing(self):
+        window, fake, draft_id = self.deleted_and_back()
+        ui, box, restore, clear = self.trash_ui(window)
+        controller = window.state.drafts
+        calls = []
+        original = fake.restore_photos
+
+        def counted(draft_id, progress, cancelled):
+            calls.append(draft_id)
+            return original(draft_id, progress, cancelled)
+
+        fake.restore_photos = counted
+        restore.click()
+        self.assertEqual(window.photos_restore(), "busy", "작업이 도는 동안의 두 번째 누름")
+        self.assertTrue(self.wait_store(window))
+        self.settle(3)
+        self.assertEqual(calls, [draft_id])
+        self.assertEqual(controller.photos.count, 2)
+
+    def test_the_trash_block_fits_every_size_without_clipping_or_sideways_scroll(self):
+        for size in SIZES:
+            with self.subTest(size=size):
+                window, fake, draft_id = self.deleted_and_back(count=1)
+                window.resize(*size)
+                self.settle(8)
+                ui, box, restore, clear = self.trash_ui(window)
+                self.assertTrue(box.isVisibleTo(window.screen_widget))
+                self.assertEqual(ui_offscreen.find_clipping(window.screen_widget), [], size)
+                self.assertEqual(ui_offscreen.find_squeezed(window.screen_widget), [], size)
+                for button in (restore, clear):
+                    self.assertTrue(button.width() >= button.sizeHint().width() - 2, (size, button.text()))
+                window.close()
+
+
+class SourceRulesTest(unittest.TestCase):
+    NEW = ("photos_restore", "photos_trash_clear", "_photos_trash_clear_confirmed", "_photos_after_store", "photos_card_refresh")
+
+    def test_the_new_shell_functions_only_call_the_controller(self):
+        shell = QT_DIR / "shell.py"
+        forbidden = {"restore_photos", "clear_photos_trash", "trash_manifest", "restore_manifest", "clear_trash", "open", "write", "write_text", "unlink", "rename", "replace", "urlopen", "run", "system"}
+        for name in self.NEW:
+            functions = methods_of(shell, "AppShell")
+            self.assertIn(name, functions, name)
+            calls = called_names(functions[name])
+            self.assertEqual(sorted(calls & forbidden), [], f"{name} 가 직접 파일·공급자를 부른다")
+        allowed_controller = {"start_restore_photos", "trash_clear_dialog", "start_clear_trash", "photos_card", "notify", "photos_card_refresh", "_live_drafts", "callbacks", "show_dialog"}
+        for name in ("photos_restore", "photos_trash_clear", "_photos_trash_clear_confirmed"):
+            calls = called_names(methods_of(shell, "AppShell")[name])
+            self.assertTrue(calls & {"start_restore_photos", "trash_clear_dialog", "start_clear_trash"}, name)
+            self.assertLessEqual({call for call in calls if call.startswith(("start_", "apply_", "trash_"))}, allowed_controller, name)
+
+    def test_the_draft_screen_part_has_no_file_network_or_provider_calls(self):
+        source = (QT_DIR / "draft_screen.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        for forbidden in ("restore_photos", "clear_photos_trash", "trash_manifest", "urlopen", "subprocess", "socket"):
+            self.assertNotIn(forbidden, names, forbidden)
+
+
+if __name__ == "__main__":
+    unittest.main()

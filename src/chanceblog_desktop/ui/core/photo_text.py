@@ -10,6 +10,7 @@ PHOTO_T = {
     "pho_card_hint": "사진은 이 컴퓨터 안에서만 쓰고 밖으로 보내지 않아요. 사진을 넣지 않아도 초안은 그대로 만들어져요.",
     "pho_card_unsaved": "사진 정보를 고쳤어요. 초안을 저장해야 사진 정보도 함께 저장돼요.",
     "pho_card_trash": "지운 초안의 사진 정보를 되돌릴 사본으로 남겨 뒀어요. 사진 파일은 그대로 있어요.",
+    "pho_restore_blocked": "지금 사진 정보가 있어서 되돌릴 수 없어요. 사진을 모두 지운 뒤에 되돌려 주세요.",
     "pho_restore_btn": "사진 정보 되돌리기", "pho_restore_btn_a11y": "되돌릴 사본에서 사진 정보 되돌리기", "pho_trash_clear_btn": "사진 정보 사본 비우기", "pho_trash_clear_btn_a11y": "사진 정보 사본 비우기 — 비우면 되돌릴 수 없어요",
     "pho_trash_clear_ask": "사진 정보 사본을 비울까요? 비우면 사진 정보를 되돌릴 수 없어요. 사진 파일은 그대로 있어요.", "pho_trash_clear_yes": "사본 비우기", "pho_trash_clear_no": "그만두기",
     "pho_restored_notice": "사진 정보를 되돌렸어요.", "pho_trash_cleared_notice": "사진 정보 사본을 비웠어요.", "pho_restore_fail": "사진 정보를 되돌리지 못했어요.", "pho_restore_missing": "되돌릴 사진 정보 사본이 없어요.", "pho_trash_clear_fail": "사진 정보 사본을 비우지 못했어요.",

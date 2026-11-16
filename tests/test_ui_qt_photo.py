@@ -125,7 +125,7 @@ class SourceRulesTest(unittest.TestCase):
     def test_the_shell_functions_of_the_photo_sheet_never_touch_providers_files_or_the_network(self):
         methods = methods_of(QT_DIR / "shell.py", "AppShell")
         found = [name for name in methods if name.startswith(("photos_", "_photos_"))]
-        self.assertEqual(sorted(found), ["_photos_discard", "_photos_live", "photos_card_refresh", "photos_close", "photos_escape", "photos_open", "photos_pick", "photos_relink"])
+        self.assertEqual(sorted(found), ["_photos_after_store", "_photos_discard", "_photos_live", "_photos_trash_clear_confirmed", "photos_card_refresh", "photos_close", "photos_escape", "photos_open", "photos_pick", "photos_relink", "photos_restore", "photos_trash_clear"])
         for name in found:
             source = "\n".join(ast.unparse(statement) for statement in methods[name].body)
             for forbidden in ("provider.", "service.", "sqlite3", "subprocess", "socket", "urllib", "shutil", "os.", "pathlib"):
@@ -289,8 +289,9 @@ class EntryTest(PhotoBase):
         self.assertEqual((ui.editor.toPlainText(), ui.title.text()), (body, title))
         self.assertFalse(controller.has_unsaved())
         self.add_photos(form, fake_path(1), fake_path(2))
-        self.assertEqual((ui.editor.toPlainText(), ui.title.text()), (body, title), "사진을 넣어도 글은 그대로다(초안 연결은 3단계)")
-        self.assertFalse(controller.has_unsaved())
+        self.assertEqual((ui.editor.toPlainText(), ui.title.text()), (body, title), "사진을 넣어도 글은 그대로다(본문에 사진 넣기는 아직 없다)")
+        self.assertFalse(controller.text_unsaved(), "글은 안 바뀌었다")
+        self.assertTrue(controller.photos_unsaved() and controller.has_unsaved(), "사진 정보를 고쳤으니 초안을 저장해야 함께 저장된다(3단계)")
         self.assertEqual(controller.body, body)
 
     def test_a_second_open_while_the_sheet_is_open_does_nothing(self):
@@ -306,7 +307,7 @@ class EntryTest(PhotoBase):
         self.assertEqual(ui.photos_count.accessibleName(), "넣은 사진 2장 중 0장을 확인했어요")
         self.assertEqual((ui.photos_button.text(), ui.photos_row_button.text()), ("사진 정리 열기", "사진 정리 열기"))
         self.assertTrue(ui.photos_unsaved.isVisibleTo(window.screen_widget))
-        self.assertIn("저장한 초안에 아직 함께 담기지 않아요", self.lt(ui.photos_unsaved))
+        self.assertIn("사진 정보를 고쳤어요. 초안을 저장해야 사진 정보도 함께 저장돼요.", self.lt(ui.photos_unsaved))
         form.rows["p001"].confirm_box.click()
         self.settle(3)
         self.assertEqual(self.lt(ui.photos_count), "사진 2장 · 확인 1/2")
@@ -324,7 +325,7 @@ class EntryTest(PhotoBase):
         window.photos_close()
         self.settle(4)
         self.assertEqual(window.state.drafts.photos.count, 1)
-        window.go("topics")
+        window.go("topics", force=True)                                           # 사진 정보를 고쳤으면 확인창이 먼저다(세 갈래) — 여기서는 `저장 안 하고 나가기` 와 같다
         self.settle(6)
         self.assertEqual(window.state.drafts.photos.count, 0)
 

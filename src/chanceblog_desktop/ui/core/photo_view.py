@@ -518,7 +518,8 @@ class PhotoBoard:
         """초안 작성 화면의 '사진' 카드 — 장수·확인 수·단추. `unsaved`: 사진 정보를 고쳤는데 아직 저장하지 않았다(안내를 보인다) · `trash`: 지운 초안의 사진 정보가 되돌릴 사본으로 남아 있다(되돌리기·비우기 단추를 보인다)."""
         count, confirmed = self.count, self.confirmed_count
         return {"title": T["pho_card_title"], "has": count > 0, "count": T["pho_card_count"].format(n=count, c=confirmed) if count else T["pho_card_none"],
-                "a11y": T["pho_card_count_a11y"].format(n=count, c=confirmed) if count else T["pho_card_none"], "hint": T["pho_card_hint"], "unsaved": T["pho_card_unsaved"] if unsaved else "", "trash": {"text": T["pho_card_trash"], "restore": T["pho_restore_btn"], "restore_a11y": T["pho_restore_btn_a11y"], "clear": T["pho_trash_clear_btn"], "clear_a11y": T["pho_trash_clear_btn_a11y"]} if trash else None,
+                "a11y": T["pho_card_count_a11y"].format(n=count, c=confirmed) if count else T["pho_card_none"], "hint": T["pho_card_hint"], "unsaved": T["pho_card_unsaved"] if unsaved else "", "trash": {"text": T["pho_card_trash"], "restore": T["pho_restore_btn"], "restore_a11y": T["pho_restore_btn_a11y"], "clear": T["pho_trash_clear_btn"], "clear_a11y": T["pho_trash_clear_btn_a11y"],
+                  "restore_note": T["pho_restore_blocked"] if count else ""} if trash else None,
                 "button": T["pho_card_open"] if count else T["pho_card_add"], "button_a11y": T["pho_card_open_a11y"] if count else T["pho_card_add_a11y"],
                 "row_title": T["pho_row_title"], "row_desc": T["pho_row_desc"]}
 
