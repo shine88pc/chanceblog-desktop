@@ -683,10 +683,15 @@ class SourceRulesTest(unittest.TestCase):
         for code in codes:
             self.assertIn(code, CATALOG)
 
-    # 이 모듈을 부르는 소스 파일의 허용 목록(파일 → 이유). 1단계는 기존 코드를 바꾸지 않았으므로 비어 있다 — 다음 단계(화면 2단계·초안 연결 3단계)가 부를 때 이유와 함께 여기에 더한다(몰래 늘면 걸린다).
-    MODULE_USERS = {}
+    # 이 모듈을 부르는 소스 파일의 허용 목록(파일 → 이유). 1단계는 기존 코드를 바꾸지 않았으므로 비어 있었다 — 2단계(사진 정리 화면, 결정 D-499)가 아래 넷을 더했다. 3단계(초안 연결)가 부를 때도 이유와 함께 여기에 더한다(몰래 늘면 걸린다).
+    MODULE_USERS = {
+        "ui/core/photo_rules.py": "사진 정리 화면의 규칙표 — 종류·장소 분위기·글자 수 한도·자리 종류를 1단계 규칙에서 그대로 가져온다(새 한도를 만들지 않는다)",
+        "ui/core/photo_text.py": "화면 문구 파일의 머리 설명이 1단계 파일 이름을 말할 뿐 코드로 가져오지는 않는다",
+        "ui/core/photo_view.py": "사진 정리 화면의 컨트롤러(PhotoBoard) — 사진 목록을 1단계 규칙(추가·고치기·글칸 검사·순서·지우기·확정)으로만 고치고 저장하지 않는다",
+        "ui/photo_adapter.py": "사진 파일을 읽기만 하는 어댑터 — 서비스의 `check_files`(읽기 전용)를 부른다",
+    }
 
-    def test_no_existing_source_file_uses_the_new_modules_yet_so_no_behavior_changed(self):
+    def test_only_the_listed_source_files_use_the_photo_manifest_modules(self):
         src = ROOT / "src" / "chanceblog_desktop"
         users = sorted(path.relative_to(src).as_posix() for path in src.rglob("*.py") if "photo_manifest" in path.read_text(encoding="utf-8") and path.name != "photo_manifest.py")
         self.assertEqual(users, sorted(self.MODULE_USERS), "이 모듈을 새로 부르는 파일은 이유와 함께 MODULE_USERS 에 더한다")
