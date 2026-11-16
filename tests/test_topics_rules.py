@@ -263,8 +263,10 @@ class HygieneTest(unittest.TestCase):
         # 이 파일은 이미 아래 허용 목록에 있어 목록은 늘지 않았다(읽기·계산뿐이고 `topics/` 는 바꾸지 않았다).
         # 의도적 갱신(전체 백업·복원, D-380): 서비스 `service/backup_flow.py` 가 **파일 이름 상수만** 가져온다(`topics.layout` 의 주제 보관함·채널 프로필·Seed·캘린더 파일 이름) — 이름을 따로 베끼면 백업이 담는 파일과 앱이 쓰는 파일이 어긋날 수 있어서다.
         # 저장·계산은 쓰지 않고 `topics/` 는 바꾸지 않았다(백업은 파일을 통째로 복사할 뿐 주제 엔진의 규칙을 모른다).
+        # 의도적 갱신(blogsel, D-494): 블로그 관리 화면의 새 순수 모듈 `ui/core/blog_options.py`(보기 목록·제안 문장)가 **주제 묶음 이름 표**(`topics.wording.CLUSTER_KO`)·**협찬 분야 이름 표**(`TAG_KO`)·소개글 한도(`topics.channels.MAX_INTRO`)를 가져온다 —
+        # 제안 칩의 낱말을 화면이 따로 베끼지 않고 앱이 이미 가진 목록에서만 가져오려고(시험이 같은 목록임을 견준다). 저장·계산은 쓰지 않고 `topics/` 는 바꾸지 않았다 — 목록에 이 파일 하나가 늘었다.
         users = sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py") if TOPICS not in path.parents and pattern.search(path.read_text(encoding="utf-8")))
-        self.assertEqual(users, ["service/backup_flow.py", "service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/draft_engine.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/candidates_adapter.py", "ui/core/blog_form.py", "ui/core/blogs.py", "ui/core/candidate_rules.py", "ui/core/candidates.py", "ui/core/candidates_view.py", "ui/core/drafts.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
+        self.assertEqual(users, ["service/backup_flow.py", "service/blog_profiles.py", "service/cli.py", "service/draft_body.py", "service/draft_engine.py", "service/seed_manage.py", "service/topic_files.py", "service/topic_format.py", "service/topics.py", "topicdb/backup.py", "topicdb/store.py", "ui/candidates_adapter.py", "ui/core/blog_form.py", "ui/core/blog_options.py", "ui/core/blogs.py", "ui/core/candidate_rules.py", "ui/core/candidates.py", "ui/core/candidates_view.py", "ui/core/drafts.py", "ui/core/seed_form.py", "ui/core/seed_rules.py", "ui/core/seeds.py", "ui/core/seeds_view.py"],
                          "이 패키지를 쓰는 곳을 늘리는 것은 의식적인 변경이다 — 이 목록과 결정 기록을 함께 고친다")
 
     def test_the_pattern_that_looks_for_users_of_the_package_works(self):

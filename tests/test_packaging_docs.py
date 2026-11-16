@@ -116,7 +116,7 @@ class PersonalPcTestDocTest(unittest.TestCase):
         for label in labels:
             self.assertIn(label, real, f"시험지가 부르는 '{label}' 이 앱의 화면 글자에 없다")
             self.assertIn(label, self.text, label)
-        self.assertIn("{slot} 등록", T["blogs_form_new"])
+        self.assertEqual(T["blogs_form_new"].format(kind=T["blogs_kind_naver"]), "네이버 블로그 새로 연결하기")        # 의도적 갱신(blogsel, D-493): 옛 `{slot} 등록`('네이버 A 등록') 대신 시험지가 부르는 새 블로그 폼의 머리 글
 
     def test_the_save_and_backup_words_the_paper_uses_are_the_real_words_of_the_merged_save_and_backup_features(self):
         """저장한 초안(LOCALSAVE)·전체 백업·복원(BACKUPUI)이 합쳐진 앱의 실제 글 — 시험지가 단추·창·안내 글로 부르는 말이 앱의 문구표에 그대로 있다(이 시험은 두 기능이 있는 트리에서만 의미가 있다)."""
@@ -193,16 +193,19 @@ class PersonalPcTestDocTest(unittest.TestCase):
             if "해당 없음" in line:
                 self.assertTrue(any(word in line for word in ("쓸 수 없습니다", "아니라", "(선택)", "없습니다")), line)       # 필수 칸에 '해당 없음' 을 허용하는 문장이 되살아나지 않게
 
-    def test_the_two_register_key_buttons_are_told_apart_and_the_empty_blog_card_words_are_the_real_ones(self):
+    def test_the_two_register_key_buttons_are_told_apart_and_the_blog_add_words_are_the_real_ones(self):
         from chanceblog_desktop.service import connections as cn
         step5 = self.text.split("## 5단계")[1].split("## 6단계")[0]
         self.assertEqual(cn.PURPOSES["naver_apihub"].label, "NAVER API HUB 검색어 트렌드")
         self.assertIn("NAVER API HUB 검색어 트렌드", step5)
         self.assertIn("그것이 아닙니다", step5)
         self.assertIn("`AI 보조(선택)` 카드의 것을 누릅니다", step5)
-        for key in ("blogs_card_empty_title", "blogs_card_empty_desc", "blogs_status_empty", "blogs_status_registered"):
+        # 의도적 갱신(blogsel, D-493): 시험지가 옛 '비어 있는 슬롯 카드'(`블로그를 등록해 보세요`·`비어 있음`) 대신 새 흐름의 글을 인용한다 — `블로그 추가` 카드·종류 고르기·새 블로그 카드·상태 배지의 글이 시험지에 **화면과 같은 글로** 적혀 있다
+        for key in ("blogs_pick_title", "blogs_kind_naver", "blogs_kind_blogger", "blogs_kind_github", "blogs_add_title", "blogs_card_new_title", "blogs_status_new", "blogs_status_registered"):
             self.assertIn(T[key], self.text, key)
-        self.assertNotIn("눌러서 등록", self.text)                                         # 접근성 읽기 이름이지 화면 글자가 아니다(`blogs_card_a11y_empty`)
+        self.assertIn(T["blogs_form_new"].format(kind=T["blogs_kind_naver"]), self.text, "새 블로그 폼의 머리 글")
+        for stale in ("눌러서 등록", "블로그를 등록해 보세요", "눌러서 이름과 블로그 ID 를 넣어요", "`네이버 A` 카드"):                  # 옛 화면의 글이 되살아나지 않는다(앞의 둘은 접근성 읽기 이름이었다)
+            self.assertNotIn(stale, self.text, stale)
 
     def test_the_cmdkey_line_shape_the_second_account_steps_and_the_data_folder_warning_are_there(self):
         for needle in ("LegacyGeneric:target=ChanceBlogDesktop:", "Microsoft 계정이 없는 사용자 추가", "로컬 계정", "이 사람의 로그인 정보가 없습니다"):

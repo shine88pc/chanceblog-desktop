@@ -29,7 +29,7 @@ from chanceblog_desktop.topics import channels as ch  # noqa: E402
 from chanceblog_desktop.ui import blogs_adapter  # noqa: E402
 from chanceblog_desktop.ui.core import blog_form as bf  # noqa: E402
 from chanceblog_desktop.ui.core import blogs, blogs_view, jobs, text  # noqa: E402
-from test_ui_blogs_core import NEVER, SAFE, drive, load, new_controller  # noqa: E402,I001
+from test_ui_blogs_core import NEVER, SAFE, drive, load, new_controller, start_new  # noqa: E402,I001
 
 SRC = ROOT / "src" / "chanceblog_desktop"
 T = text.T
@@ -124,7 +124,7 @@ class SpecTest(unittest.TestCase):
         controller = new_controller()
         controller.select("naver_a")
         body = controller.delete_dialog()["body"]
-        for part in ("우선 키워드", "제외 키워드", "선호 글 유형", "이름·블로그 ID·주제", "모두 비워져요", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요"):
+        for part in ("우선 키워드", "제외 키워드", "선호 글 유형", "이름·블로그 ID·주제", "모두 비워지고", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요"):      # 의도적 갱신(blogsel, D-493): '모두 비워져요' 는 '모두 비워지고, 내 블로그 목록에서도 사라져요' 로 바뀌었다
             self.assertIn(part, body, part)
 
 
@@ -281,7 +281,9 @@ class ControllerTest(unittest.TestCase):
             self.assertEqual((field["required"], field["error"], field["changed"], field["disabled"]), (False, "", False, False), name)
             self.assertTrue(field["hint"], name)
         self.assertIn("20개", fields["priority_keywords"]["hint"])
-        empty = {field["name"]: field for section in new_controller("empty").view()["form"]["sections"] for field in section["fields"]}
+        fresh = new_controller("empty")
+        start_new(fresh)                                                                              # 의도적 갱신(blogsel, D-493): 빈 슬롯의 폼은 '블로그 추가' 로만 열린다
+        empty = {field["name"]: field for section in fresh.view()["form"]["sections"] for field in section["fields"]}
         self.assertEqual((empty["priority_keywords"]["value"], empty["exclude_keywords"]["value"], empty["preferred_post_types"]["value"]), ("", "", ()))
 
     def test_every_slot_shows_the_topic_section_with_the_three_fields(self):
@@ -310,6 +312,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_the_post_type_chips_toggle_in_the_services_order_and_only_the_five_known_values_are_accepted(self):
         controller = new_controller("empty")
+        start_new(controller)
         self.assertTrue(controller.toggle_choice("preferred_post_types", "장소·업체 정보형"))
         self.assertTrue(controller.toggle_choice("preferred_post_types", "정보형"))
         self.assertEqual(bf.typed_values("naver_a", controller.values("naver_a"))["preferred_post_types"], ("정보형", "장소·업체 정보형"), "저장하는 값은 서비스의 글 유형 순서로 정리된다")
@@ -445,6 +448,8 @@ class ControllerTest(unittest.TestCase):
                 values = {**bf.default_values("naver_b"), name: value}
                 self.assertFalse(bf.is_empty_values("naver_b", values))
         controller = new_controller("empty")
+        start_new(controller)
+        controller.edit("display_name", "예시 블로그 가")
         controller.edit("blog_ref", "example-blog-a")
         self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
         self.assertEqual(controller.clone_info()[0], True, "네이버 B 가 비어 있어 복제할 자리가 있다")
@@ -457,7 +462,8 @@ class ControllerTest(unittest.TestCase):
         self.assertTrue(controller.can_clear(), "세 칸 중 하나만 있어도 비어 있지 않아 지울 수 있다(확인창 뒤)")
         self.assertEqual(drive(controller, controller.start_clear), ("started", "ok", False))
         self.assertEqual(controller.provider.slots["naver_b"].priority_keywords, (), "지우면 우선 키워드도 비워진다")
-        self.assertFalse(controller.can_clear(), "이미 비었다")
+        self.assertFalse(controller.can_clear("naver_b"), "이미 비었다")
+        self.assertEqual(controller.selected, "naver_a", "의도적 갱신(blogsel, D-493): 지운 슬롯은 카드가 아니라서 폼이 첫 카드로 옮겨 갔다")
 
     def test_nothing_in_the_view_model_is_a_code_a_python_list_or_a_field_name_after_an_overlap_failure(self):
         import re
@@ -576,6 +582,8 @@ class AdapterTest(unittest.TestCase):
             prepare()
             before, listing = self.tree(), sorted(str(path) for path in self.root.parent.rglob("*"))
             controller = self.controller()
+            if controller.selected is None:                                                           # 의도적 갱신(blogsel, D-493): 등록한 블로그가 없으면 폼이 닫혀 있다 — '블로그 추가' 로 연다
+                start_new(controller)
             controller.edit("priority_keywords", "예시 새 우선, 예시 새 우선 둘")
             controller.edit("exclude_keywords", "예시 우선")
             controller.toggle_choice("preferred_post_types", "비교형")
@@ -590,6 +598,7 @@ class AdapterTest(unittest.TestCase):
 
     def test_a_save_through_the_adapter_writes_exactly_the_profile_file_and_a_fresh_screen_shows_the_saved_values(self):
         controller = self.controller()
+        start_new(controller)
         controller.edit("display_name", "예시 블로그 가")
         controller.edit("blog_ref", "example-blog-a")
         controller.edit("priority_keywords", "예시 우선 하나, 예시 우선 둘")
@@ -603,7 +612,7 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual((values["priority_keywords"], values["exclude_keywords"], values["preferred_post_types"]), ("예시 우선 하나, 예시 우선 둘", "예시 제외어", ("정보형", "문제 해결형")))
         stored = {profile.key: profile for profile in bp.read_snapshot(self.ctx).profiles}["naver_a"]
         self.assertEqual((stored.priority_keywords, stored.exclude_keywords, stored.preferred_post_types), (("예시 우선 하나", "예시 우선 둘"), ("예시 제외어",), ("정보형", "문제 해결형")))
-        self.assertEqual(self.provider.writes[0][2].keys(), {"display_name", "blog_ref", "priority_keywords", "exclude_keywords", "preferred_post_types"}, "서비스에는 고친 칸만 간다")
+        self.assertEqual(self.provider.writes[0][2].keys(), {"display_name", "blog_ref", "alias", "priority_keywords", "exclude_keywords", "preferred_post_types"}, "서비스에는 고친 칸만 간다(제안해 넣은 별명 포함)")
 
     def test_a_hand_edited_version_two_file_shows_the_three_values_and_saving_another_field_keeps_them(self):
         self.hand_edit(blog_ref="example-blog-a", priority_keywords=("예시 우선",), exclude_keywords=("예시 제외",), preferred_post_types=("비교형", "정보형"), home_regions=("예시 지역",), top_n=9)
@@ -633,6 +642,8 @@ class AdapterTest(unittest.TestCase):
 
     def test_the_screen_blocks_an_overlap_before_the_service_is_ever_called_and_a_key_shaped_word_is_refused_with_the_field_beside_it(self):
         controller = self.controller()
+        start_new(controller)
+        controller.edit("display_name", "예시 블로그 가")
         controller.edit("blog_ref", "example-blog-a")
         controller.edit("priority_keywords", "예시 우선")
         self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
@@ -656,9 +667,11 @@ class AdapterTest(unittest.TestCase):
         raw = (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
         self.paths.profiles.write_bytes(raw)
         controller = self.controller()
+        start_new(controller)
         shown = form_of(controller)
         self.assertEqual((shown["priority_keywords"]["value"], shown["exclude_keywords"]["value"], shown["preferred_post_types"]["value"]), ("", "", ()))
         self.assertEqual(self.paths.profiles.read_bytes(), raw, "읽기는 다시 쓰지 않는다")
+        controller.edit("display_name", "예시 블로그 가")
         controller.edit("blog_ref", "example-blog-a")                                              # 화면은 블로그 ID 가 있어야 저장한다(필수 칸)
         controller.edit("priority_keywords", "예시 우선")
         self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
@@ -673,7 +686,7 @@ class SourceRulesTest(unittest.TestCase):
             source = (ROOT / "tests" / name).read_text(encoding="utf-8")
             for word in ("ssae" + "ssace", "shine" + "5652", "스마트" + "프라이싱", "디지털" + "찬스"):
                 self.assertNotIn(word, source, name)
-        for name in ("blog_form.py", "blogs.py", "blogs_view.py", "blog_text.py"):
+        for name in ("blog_form.py", "blogs.py", "blogs_view.py", "blog_text.py", "blog_options.py"):
             source = (SRC / "ui" / "core" / name).read_text(encoding="utf-8")
             self.assertNotIn("open(", source, name)
 
