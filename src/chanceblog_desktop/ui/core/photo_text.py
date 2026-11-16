@@ -39,7 +39,7 @@ PHOTO_T = {
     "pho_caption": "설명 글(선택)", "pho_caption_a11y": "사진 {n} 설명 글", "pho_caption_example": "예: 기본 반찬",
     "pho_confirm": "확인했어요 — 이 내용을 초안에 써요", "pho_confirm_a11y": "사진 {n} 확인했어요", "pho_unconfirmed_note": "내용을 고쳐서 확인 표시를 풀었어요. 다시 확인해 주세요.",
     "pho_up": "위로", "pho_up_a11y": "사진 {n} 위로 옮기기", "pho_down": "아래로", "pho_down_a11y": "사진 {n} 아래로 옮기기", "pho_remove": "지우기", "pho_remove_a11y": "사진 {n} 목록에서 지우기",
-    "pho_removed": "사진 {n}을 목록에서 지웠어요. 파일은 그대로 있어요.", "pho_restored": "지운 사진을 되돌렸어요.",
+    "pho_removed": "사진 {n}번을 목록에서 지웠어요. 파일은 그대로 있어요.", "pho_restored": "지운 사진을 되돌렸어요.",
     # 파일 상태 배지
     "pho_file_ok": "파일 있음", "pho_file_ok_size": "파일 있음 · {w}×{h}", "pho_file_missing": "파일 없음", "pho_file_link": "링크라서 쓰지 않아요", "pho_file_cloud": "내려받지 않은 파일이에요", "pho_file_toobig": "너무 커요(20MB까지)",
     "pho_file_unsupported": "지원하지 않는 형식이에요", "pho_file_notimage": "사진 파일이 아니에요", "pho_file_notfile": "파일이 아니에요", "pho_file_unreadable": "읽지 못했어요", "pho_file_unknown": "아직 확인하지 않았어요",

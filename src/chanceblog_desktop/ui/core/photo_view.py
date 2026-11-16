@@ -126,8 +126,7 @@ class PhotoBoard:
         self.rejected = ()
         self.errors = {}                                    # (사진 번호, 칸) → 고정 이유 문장 — 글은 담지 않는다
         self.notes = {}                                     # 사진 번호 → 한 번 보이는 안내('확인 표시를 풀었어요')
-        self.undo = None                                    # 방금 지운 한 장을 되돌릴 목록(지운 직후에만)
-        self.undo_number = 0
+        self.undo = None                                    # 방금 지운 한 장을 되돌릴 목록(지운 직후에만 — 다른 어떤 고침이 있으면 사라진다)
         self.confirm_all_asked = 0                          # 0 이 아니면 '모두 확인했어요' 확인 줄을 보이는 중 — 확인할 사진 수
         self.notice = None                                  # (수준, 글)
         self.close_warned = False
@@ -356,7 +355,10 @@ class PhotoBoard:
         self.manifest = pm.set_confirmed(self.manifest, photo_id, on)
         self.notes.pop(photo_id, None)
         self.confirm_all_asked = 0
-        return "ok" if self.manifest != before else "unchanged"
+        if self.manifest == before:
+            return "unchanged"
+        self.undo = None                                    # 되돌리기는 목록 전체를 되돌리므로 다른 고침이 생기면 쓸 수 없다
+        return "ok"
 
     def ask_confirm_all(self):
         """'모두 확인했어요' 1단계 — 확인하지 않은 사진 수를 확인 줄에 보인다(바꾸지 않는다). 없으면 안내만."""
@@ -379,6 +381,7 @@ class PhotoBoard:
                 self.notes.pop(photo.photo_id, None)
                 done += 1
         self.confirm_all_asked = 0
+        self.undo = None
         self._flag("info", T["pho_all_done"].format(n=done))
         return "ok"
 
@@ -411,7 +414,7 @@ class PhotoBoard:
             self.errors.pop(key)
         self.notes.pop(photo_id, None)
         self.confirm_all_asked = 0
-        self.undo, self.undo_number = snapshot, number
+        self.undo = snapshot
         self._flag("info", T["pho_removed"].format(n=number))
         return "ok"
 
