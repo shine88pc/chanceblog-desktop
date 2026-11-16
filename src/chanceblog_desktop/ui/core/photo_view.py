@@ -11,7 +11,7 @@
   · 종류를 바꾸면 '들어갈 곳' 이 **사용자가 따로 고르지 않았을 때만** 새 종류의 기본값으로 바뀐다(간판·건물 외관 → 도입, 메뉴판·대표 메뉴·음식·반찬 → 내용 소제목, 인테리어 → 분위기 소제목, 지도 캡처·기타 → 자동).
   · '모두 확인했어요' 는 **확인 줄을 먼저 보이고**(확인할 사진 수) 한 번 더 눌러야 표시한다. 그만두면 아무것도 바뀌지 않는다.
   · 지우기는 사진 정보만 목록에서 뺀다(파일은 그대로) — 방금 지운 한 장은 되돌릴 수 있고 다른 일을 하면 되돌리기가 사라진다.
-  · 미리보기는 **PNG 이고 가로×세로가 1억 화소를 넘으면** 만들지 않고 안내한다(사진은 그대로 쓴다 — `photo_rules.preview_blocked`).
+  · 미리보기는 **PNG 이고 가로×세로가 6천만 화소를 넘으면** 만들지 않고 안내한다(사진은 그대로 쓴다 — `photo_rules.preview_blocked`).
   · 종류·장소 분위기 목록은 이 창에서 더하고 지울 수 있다(사진이 쓰는 이름·`기타` 는 못 지운다). 앱을 닫으면 처음 목록으로 돌아간다(새 설정 칸을 만들지 않았다).
 """
 from __future__ import annotations
@@ -25,6 +25,8 @@ from . import photo_rules as rules
 from .text import T
 
 CLOSE_WARNED = "close_warned"
+FIELD_TEXT_KEY = {"user_subject": "pho_field_user_subject", "user_note": "pho_field_user_note", "caption": "pho_field_caption"}      # 닫기 경고가 부르는 칸 이름(사진 번호와 이 이름뿐 — 글은 없다)
+MAX_CLOSE_FIELDS = 3                                 # 닫기 경고에 이름을 적는 칸의 수 — 더 많으면 '외 N곳'
 
 
 @dataclass(frozen=True)
@@ -179,6 +181,12 @@ class PhotoBoard:
         photo = self.photo(photo_id)
         return photo.local_path if photo is not None else ""
 
+    def _unapplied_fields(self):
+        """반영하지 못한 글이 남은 칸의 이름(`사진 2 한마디 메모` …) — 사진 번호와 칸 이름뿐이고 글·경로는 없다. 많으면 처음 `MAX_CLOSE_FIELDS` 곳만 쓰고 '외 N곳'."""
+        names = [T["pho_field_of"].format(n=photo.number, field=T[FIELD_TEXT_KEY[name]]) for photo in self.manifest.photos for name in rules.TEXT_FIELDS if (photo.photo_id, name) in self.errors]
+        shown = ", ".join(names[:MAX_CLOSE_FIELDS])
+        return shown + (" " + T["pho_field_more"].format(n=len(names) - MAX_CLOSE_FIELDS) if len(names) > MAX_CLOSE_FIELDS else "")
+
     def shutdown(self):
         """대화상자가 어느 길로든 닫힌다 — 경고 없이 닫고(한도를 넘긴 글은 버린다) 임시 상태를 비운다. 여러 번 불러도 같다."""
         self.errors = {}                                    # 한도를 넘긴 글을 버리면 닫기가 경고할 이유가 없다
@@ -204,7 +212,7 @@ class PhotoBoard:
         """창을 닫는다 — 한도를 넘겨 반영하지 못한 글이 칸에 남아 있으면 처음 한 번은 닫지 않고 알린다(`close_warned`, 한 번 더 누르면 그 글은 버리고 닫는다). 닫으면 못 넣은 파일 목록·확인 줄·되돌리기가 사라진다(사진 목록은 남는다)."""
         if self.errors and not self.close_warned:
             self.close_warned = True
-            self._flag("warn", T["pho_over_close"])
+            self._flag("warn", T["pho_over_close"].format(fields=self._unapplied_fields()))
             return CLOSE_WARNED
         self.is_open = False
         self.generation += 1
@@ -285,11 +293,14 @@ class PhotoBoard:
         if added:
             self.undo, self.confirm_all_asked = None, 0
         self.rejected, self.rejected_more = tuple(rows), RejectedMore(hidden_over, hidden_other)
-        if added:
+        refused = len(chosen) - added
+        if not refused:
             self._flag("info", T["pho_added"].format(n=added))
+        elif added:                                         # 일부만 넣었다 — 못 넣은 파일이 있다는 것과 어디서 이유를 보는지(줄들 아래 목록)를 상태 줄이 알린다(검증 Q N-5)
+            self._flag("warn", T["pho_added_some"].format(n=added, m=refused))
         else:
-            self.notice = None
-        return added, len(chosen) - added
+            self._flag("warn", T["pho_added_none"].format(m=refused))
+        return added, refused
 
     def clear_rejected(self):
         self.rejected, self.rejected_more = (), RejectedMore()
@@ -443,6 +454,8 @@ class PhotoBoard:
         photo = self.photo(photo_id)
         if photo is None:
             return self._refuse("pho_bad_photo")
+        if not isinstance(delta, int) or isinstance(delta, bool):          # 없음·실수·글·참/거짓은 더하기 전에 거절한다(검증 Q N-9 (f))
+            return self._refuse()
         target = photo.display_order + delta
         if delta not in (-1, 1) or not 1 <= target <= self.count:
             self._flag("info", T["pho_bad_order"])

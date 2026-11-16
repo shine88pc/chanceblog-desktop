@@ -6,7 +6,7 @@
   1) 진입 — 초안 화면에 '사진' 카드와 '만드는 방법' 칸의 '사진 넣기(선택)' 줄이 있고(접근 이름·36px 이상·Tab 정거장) 둘 다 같은 창을 연다. 사진을 넣지 않아도 초안 화면은 그대로다.
   2) 입력 칸 — '이 사진은 무엇인가요?'·'한마디 메모' 는 접지 않고 늘 보이고 예시가 종류에 따라 바뀐다. 글자 수(12/60·0/300)가 치는 동안 바뀌고 한도를 넘으면 글로도 알린다. 한도를 넘긴 글은 반영하지 않고 이유만 보이며 닫을 때 한 번 알린다.
   3) 흐름 — 사진 추가(못 넣은 파일은 이름과 이유만)·확인했어요(고치면 풀림)·모두 확인했어요(확인 줄을 먼저 보이고 처음 포커스는 그만두기)·↑↓·지우기와 한 번 되돌리기·다시 찾기·종류 목록 고치기·30장 한도.
-  4) 미리보기 — 메모리에서만 한 장씩 만들고, 큰 PNG(1억 화소 초과)·없는 파일은 만들지 않고 글로 알린다. 닫으면 줄·그림·대기열이 비워진다.
+  4) 미리보기 — 메모리에서만 한 장씩 만들고, 큰 PNG(6천만 화소 초과)·없는 파일은 만들지 않고 글로 알린다. 닫으면 줄·그림·대기열이 비워진다.
   5) 경로·글이 새지 않는다 — 어느 위젯의 글·접근 이름·툴팁에도 폴더 이름이 없고, 파일 이름은 줄·못 넣은 파일 목록에만 보이며, 한도를 넘겨 반영하지 못한 글은 입력 칸에만 있다.
   6) 키보드·크기 — Tab 은 이름 있는 곳만 보이는 순서로 지나고 대화상자 밖으로 새지 않으며, 모든 필수 크기와 최소 창에서 가로 스크롤·글자 잘림·삐져나옴이 없고 단추 줄이 늘 보인다.
   7) 읽기 전용 — 진짜 사진 파일을 넣고 미리보기까지 만들어도 파일 바이트·폴더 목록이 그대로이고 네트워크를 부르지 않는다.
@@ -289,7 +289,8 @@ class EntryTest(PhotoBase):
         self.assertFalse(controller.has_unsaved())
         self.add_photos(form, fake_path(1), fake_path(2))
         self.assertEqual((ui.editor.toPlainText(), ui.title.text()), (body, title), "사진을 넣어도 글은 그대로다(초안 연결은 3단계)")
-        self.assertFalse(controller.has_unsaved())
+        self.assertFalse(controller.text_unsaved(), "사진을 넣어도 글은 고친 내용이 아니다")
+        self.assertTrue(controller.has_unsaved(), "다만 사진 정보는 저장하지 못해서 떠날 때는 묻는다(검증 Q N-2)")
         self.assertEqual(controller.body, body)
 
     def test_a_second_open_while_the_sheet_is_open_does_nothing(self):
@@ -324,8 +325,12 @@ class EntryTest(PhotoBase):
         self.settle(4)
         self.assertEqual(window.state.drafts.photos.count, 1)
         window.go("topics")
+        self.settle(4)
+        self.assertTrue(window.dialog.is_open, "사진 정보가 있으면 떠나기 전에 먼저 묻는다(검증 Q N-2)")
+        self.assertEqual((window.state.page, window.state.drafts.photos.count), ("drafts", 1))
+        self.dialog_buttons(window)["그래도 이동"].click()
         self.settle(6)
-        self.assertEqual(window.state.drafts.photos.count, 0)
+        self.assertEqual((window.state.page, window.state.drafts.photos.count), ("topics", 0))
 
 
 # ---- 2) 창과 입력 칸 --------------------------------------------------------------------------------------------------------------
@@ -367,7 +372,7 @@ class SheetTest(PhotoBase):
         shown = self.shown_texts(form.rejected_host)
         self.assertIn(f"{FILE_MARK}-03.gif — 지원하지 않는 형식이에요. JPG·PNG·WebP 사진만 쓸 수 있어요", shown)
         self.assertIn("relative.jpg — 사진 파일 위치가 올바르지 않아요. 파일 선택 창에서 직접 골라 주세요", shown)
-        self.assertEqual(self.lt(form.notice), "사진 2장을 넣었어요.")
+        self.assertEqual(self.lt(form.notice), "사진 2장을 넣었어요. 2개는 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요.")
         self.assertEqual(self.widget_hits(window, [DIR_MARK]), [], "폴더 이름은 어느 위젯의 글·접근 이름·툴팁에도 없다")
         form.rejected_clear.click()
         self.settle(3)
@@ -492,7 +497,7 @@ class SheetTest(PhotoBase):
         self.assertEqual(window.photos_close(), "warned")
         self.assertIs(window.photo_form, form)
         self.assertTrue(window.dialog.is_open)
-        self.assertEqual(self.lt(form.notice), T["pho_over_close"])
+        self.assertEqual(self.lt(form.notice), T["pho_over_close"].format(fields="사진 1 대상"), "칸 이름만 있고 글은 없다")
         self.assertEqual(window.photos_close(), "closed")
         self.assertIsNone(window.photo_form)
         self.assertFalse(window.dialog.is_open)
@@ -762,7 +767,7 @@ class PreviewTest(PhotoBase):
         self.assertTrue(all(not card.preview.pixmap().isNull() for card in form.rows.values()))
 
     def test_a_big_png_and_a_missing_file_get_no_preview_and_a_sentence_instead(self):
-        provider = pv.FakePhotoProvider(verdicts={fake_path(1, "png"): R.Verdict(R.OK, "", "", 12_000, 12_000, "png"), fake_path(2): R.Verdict(R.OK, "", "", 12_000, 12_000, "jpeg")}, states={fake_path(3): "missing"})
+        provider = pv.FakePhotoProvider(verdicts={fake_path(1, "png"): R.Verdict(R.OK, "", "", 12_000, 12_000, "png"), fake_path(2): R.Verdict(R.OK, "", "", 12_000, 12_000, "jpeg")})                 # 파일 없음 상태는 넣은 뒤에 정한다 — 넣을 때는 읽기 전에 없는 파일을 거른다(검증 S T-1)
         window = self.drafted(photos=provider)
         window, form = self.sheet(window)
         self.add_photos(form, fake_path(1, "png"), fake_path(2), fake_path(3))
@@ -775,7 +780,7 @@ class PreviewTest(PhotoBase):
         window, form = self.sheet(window)
         ui_offscreen.wait_until(self.app, lambda: len(self.maker_calls) >= 1, 5)
         self.settle(6)
-        self.assertEqual(self.maker_calls, [fake_path(2)], "큰 PNG(1억 화소 초과)와 없는 파일은 만들지 않는다 — 큰 JPEG 는 만든다")
+        self.assertEqual(self.maker_calls, [fake_path(2)], "큰 PNG(6천만 화소 초과)와 없는 파일은 만들지 않는다 — 큰 JPEG 는 만든다")
         big, jpeg, missing = form.rows["p001"], form.rows["p002"], form.rows["p003"]
         self.assertEqual(big.preview.text(), T["pho_preview_blocked"])
         self.assertTrue(big.preview_note.isVisibleTo(form))
@@ -907,7 +912,7 @@ class KeyboardTest(PhotoBase):
         self.settle(2)
         expected = []
         for card in form.ordered_cards():
-            expected += [widget for widget in card.stops() if widget.isVisibleTo(form) and widget.isEnabled() and widget.focusPolicy() != Qt.NoFocus]
+            expected += [widget for widget in card.stops() if widget.isVisibleTo(form) and widget.isEnabled() and bool(widget.focusPolicy() & Qt.TabFocus)]      # 칩 묶음은 정거장 하나뿐(나머지는 클릭·방향키로만 포커스 — 검증 Q N-6)
         expected += [form.lists_toggle, form.add_button, form.all_button, form.close_button]
         form.scroll.setFocus(Qt.TabFocusReason)
         self.settle(2)

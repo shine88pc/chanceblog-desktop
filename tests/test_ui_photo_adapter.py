@@ -242,7 +242,7 @@ class CheckTest(TempPhotos):
     def test_the_big_png_rule_is_decided_by_the_pixels_the_reader_reports_and_only_for_png(self):
         path = self.make("big.png")
         manifest = self.manifest_of(path)
-        for fmt, width, height, blocked in (("png", 10_000, 10_000, False), ("png", 10_001, 10_000, True), ("png", 12_001, 12_001, True), ("jpeg", 12_001, 12_001, False), ("webp", 12_001, 12_001, False)):
+        for fmt, width, height, blocked in (("png", 6_000, 10_000, False), ("png", 6_001, 10_000, True), ("png", 12_001, 12_001, True), ("jpeg", 12_001, 12_001, False), ("webp", 12_001, 12_001, False)):
             results = photo_adapter.ServicePhotoProvider(probe=probe_of(fmt, width, height)).check(manifest)
             self.assertEqual(results[0].state, R.OK, (fmt, width, height))
             self.assertEqual(results[0].preview_blocked, blocked, (fmt, width, height))

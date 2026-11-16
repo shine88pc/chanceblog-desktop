@@ -273,7 +273,16 @@ class DraftsController:
     def options_pending(self):
         return self.result is not None and rules.options_dict(self.fields) != dict(self.result.options)
 
+    def photos_unsaved(self):
+        """사진 정보가 있는가 — 사진 정보는 저장하지 못해서(저장은 3단계) 하나라도 있으면 화면을 떠나거나 앱을 닫을 때 사라진다. 사진이 없으면 거짓이라 지금과 같다.
+        3단계: 저장한 판과 다를 때만 참이 되게 바꾼다(`photos_unsaved` 로 대체 — N-2)."""
+        return self.photos.count > 0
+
     def has_unsaved(self):
+        """떠나기·앱 닫기·저장한 초안 열기가 묻는 기준 — 고친 내용이 있거나(`text_unsaved`) 사진 정보가 있다(`photos_unsaved`). 다시 만들기·제목 바꾸기는 사진을 잃지 않아서 `text_unsaved` 만 본다."""
+        return self.text_unsaved() or self.photos_unsaved()
+
+    def text_unsaved(self):
         """고친 내용이 있는가 — 저장한 판이 있으면 **그 판과 다른 제목·본문**, 없으면 만든 초안에서 제목·본문을 고쳤거나, 선택 입력을 적고 아직 반영하지 않았다. 있으면 사라지는 일(다시 만들기·떠나기·닫기) 전에 확인창이 먼저다.
         저장한 글은 저장해 둔 것이라 그대로 두고 나가도 사라지지 않는다(저장한 초안 목록에 있다)."""
         if self.result is None:
@@ -312,8 +321,8 @@ class DraftsController:
 
     # ---- 다시 만들기 ----
     def regen_dialog(self):
-        """고친 내용이 사라지면 확인창의 글, 아니면 None(바로 만들어도 된다)."""
-        if not self.has_unsaved():
+        """고친 내용이 사라지면 확인창의 글, 아니면 None(바로 만들어도 된다). 다시 만들어도 사진 정보는 그대로라 `text_unsaved` 만 본다."""
+        if not self.text_unsaved():
             return None
         self.regen_asked = True
         return {"title": T["drf_regen_title"], "body": T["drf_regen_body"], "ok": T["drf_regen_ok"], "cancel": T["drf_cancel"]}
@@ -325,24 +334,29 @@ class DraftsController:
         """다시 만들기 — 고친 내용이 있는데 확인창을 보이지 않았으면 아무것도 하지 않는다(`unconfirmed`)."""
         if self.result is None:
             return "unavailable", None
-        if self.has_unsaved() and not self.regen_asked:
+        if self.text_unsaved() and not self.regen_asked:
             return "unconfirmed", None
         return self.start_make(**callbacks)
 
     # ---- 화면을 떠나거나 앱을 닫기 ----
     def leave_dialog(self, kind="leave"):
-        """고친 내용이 있으면 확인창의 글(`leave`: 다른 화면으로 — 후보를 바꾸러 가는 것도 같다 · `close`: 앱 닫기), 없으면 None.
-        저장 기능이 있으면 **세 갈래**다(`choices`: `save` 저장 · `discard` 저장 안 하고 나가기/닫기 · `stay` 계속 고치기 — Esc 는 `stay`, 처음 포커스는 `save`). 없으면 예전의 두 갈래(그래도 이동·취소)다."""
+        """고친 내용이 있거나 사진 정보가 있으면(`has_unsaved` — 사진 정보는 저장하지 못한다) 확인창의 글(`leave`: 다른 화면으로 — 후보를 바꾸러 가는 것도 같다 · `close`: 앱 닫기), 없으면 None.
+        저장 기능이 있으면 **세 갈래**다(`choices`: `save` 저장 · `discard` 저장 안 하고 나가기/닫기 · `stay` 계속 고치기 — Esc 는 `stay`, 처음 포커스는 `save`). 없으면 예전의 두 갈래(그래도 이동·취소)다.
+        **사진 정보만** 저장되지 않았으면(초안은 그대로) 저장 기능이 있어도 두 갈래이고 글이 사진 정보가 사라진다는 말이다(저장해도 사진 정보는 저장되지 않는다). 고친 내용과 사진이 함께면 위 글 끝에 사진 문장 한 줄을 더한다(검증 Q N-2)."""
         if not self.has_unsaved():
             return None
         self.leave_asked = kind
         closing = kind == "close"
+        photos = self.photos.count
+        if not self.text_unsaved():                         # 사진 정보만 저장되지 않았다 — 초안은 그대로라 '저장' 갈래를 보이지 않는다(저장해도 사진 정보는 저장되지 않는다). 3단계: 사진 정보도 저장되면 이 갈래를 없앤다 — N-2
+            return {"title": T["pho_leave_title"], "body": T["pho_close_body" if closing else "pho_leave_body"].format(n=photos), "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
+        note = " " + T["pho_leave_note"].format(n=photos) if photos else ""      # 고친 내용과 사진 정보가 함께 있으면 확인창 글 끝에 사진 정보도 사라진다는 한 문장을 더한다
         if self.can_save:
             discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
-            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"], "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
+            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"] + note, "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
                     "choices": [{"key": "save", "text": T["drf_choice_save"], "kind": "primary"}, {"key": "discard", "text": discard, "kind": "danger"}, {"key": "stay", "text": T["drf_choice_stay"], "kind": "secondary"}],
                     "first": "save", "after": kind}
-        return {"title": T["drf_leave_title"], "body": T["drf_close_body"] if closing else T["drf_leave_body"], "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
+        return {"title": T["drf_leave_title"], "body": (T["drf_close_body"] if closing else T["drf_leave_body"]) + note, "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
 
     def discard_leave(self):
         self.leave_asked = None
