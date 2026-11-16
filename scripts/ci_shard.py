@@ -159,7 +159,6 @@ def main(argv=None, env=None):
     tests = [test for name in mine for test in found[name]]
     everything = sum(len(items) for items in found.values())
     print(f"조각 {shard}/{total}: 시험 파일 {len(mine)}개·시험 {len(tests):,}개 (전체 {len(found)}개 파일·{everything:,}개 시험)", flush=True)
-    result = make_runner().run(unittest.TestSuite(tests))
     import re as _re
 
     def _esc(text):
@@ -169,7 +168,15 @@ def main(argv=None, env=None):
 
     def _note(level, title, text):
         print(f"::{level} title={_esc(title)[:90]}::{_esc(text)}", flush=True)
-    try:                                                   # 진단용(병합하지 않는 가지): 결과 요약과 실패한 시험 이름을 주석으로 남긴다
+    try:                                                   # 진단용(병합하지 않는 가지): 러너가 예외로 끝나면 그 이유를, 아니면 결과 요약과 실패한 시험 이름을 주석으로 남긴다
+        result = make_runner().run(unittest.TestSuite(tests))
+    except BaseException as error:
+        import traceback
+        _note("error", "RUN-EXC " + type(error).__name__, " | ".join(traceback.format_exc().strip().splitlines()[-8:]))
+        import io
+        result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(unittest.TestSuite(tests))
+        _note("warning", "FALLBACK-SUMMARY", f"run={result.testsRun} fail={len(result.failures)} err={len(result.errors)}")
+    try:
         _note("warning", "SUMMARY", f"run={result.testsRun} fail={len(result.failures)} err={len(result.errors)} skip={len(result.skipped)} xfail={len(result.expectedFailures)} xpass={len(result.unexpectedSuccesses)} ok={result.wasSuccessful()} type={type(result).__name__}")
         for kind, items in (("FAIL", result.failures), ("ERROR", result.errors)):
             for test, tb in list(items)[:8]:
