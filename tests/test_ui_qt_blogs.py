@@ -738,7 +738,7 @@ class KeyboardTest(Base):
         start = window.nav_buttons["blogs"]
         self.focus(start)
         seen, current = [], start
-        for _ in range(450):                                                                      # 의도적 갱신(blogsel, D-493): 낱말 칸 넷에 제안 칩(26·11·27·27)이 생겨 한 바퀴가 150곳에서 늘었다 — 칩마다 Tab 정거장이라는 규칙은 그대로다
+        for _ in range(150):                                                                      # 의도적 갱신(blogsel-2, D-510): 칩 묶음(낱말 제안·보기·여럿 고르기)이 묶음 하나에 Tab 정거장 하나라 한 바퀴가 450곳에서 150곳 안으로 줄었다(검증 Q-1)
             seen.append(current)
             current.focusNextChild()
             self.settle(1)
@@ -758,10 +758,14 @@ class KeyboardTest(Base):
             groups = {}
             for control in view.controls:
                 group = control.group() if hasattr(control, "group") and control.group() is not None and control.group().exclusive() else None
+                if group is None and view.chip_group is not None and control in view.chip_group.chips:
+                    group = view.chip_group                                                       # 의도적 갱신(blogsel-2, D-510): 칩 묶음은 묶음 하나가 정거장 하나다(칩마다가 아니다)
                 groups.setdefault(id(group) if group is not None else id(control), []).append(control)
             for members in groups.values():
                 enabled = [control for control in members if control.isEnabled() and control.isVisibleTo(window)]      # 의도적 갱신(blogsel, D-493): 숨은 입력 칸('직접 입력' 이 아닐 때)은 정거장이 아니다
-                if enabled:
+                if enabled and view.chip_group is not None and enabled[0] in view.chip_group.chips:
+                    self.assertEqual([id(control) in stops for control in enabled].count(True), 1, f"칩 묶음 {name} 은 정거장이 정확히 하나다")
+                elif enabled:
                     self.assertTrue(any(id(control) in stops for control in enabled), f"Tab 한 바퀴에 {name} 칸이 있다")
             if view.kind == "choice":                                                             # 하나만 고르는 칩 묶음은 **고른 칩만** 정거장이고 나머지는 화살표 키로 옮긴다(Tab 으로 들어가 Space 를 눌러도 값이 안 바뀐다)
                 self.assertEqual([chip.isChecked() for chip in view.chips.values() if id(chip) in stops], [True], name)

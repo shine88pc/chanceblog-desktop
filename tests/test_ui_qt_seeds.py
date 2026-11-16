@@ -916,6 +916,22 @@ class KeyboardTest(Base):
             self.assertTrue(widget.accessibleName().strip(), type(widget).__name__)
             self.assertGreaterEqual(widget.height(), tokens.SIZE["hit"] if not widget.property("nav") else 1, widget.accessibleName())
 
+    def test_the_channel_chips_of_a_seed_are_one_tab_stop_and_the_arrow_keys_move_between_them_without_choosing(self):
+        """BLOGSEL-2 ②(D-510) — 서랍의 폼 칸은 블로그 관리와 같은 칸 부품이라 칩 묶음 규칙(묶음 하나가 Tab 정거장 하나·화살표로 옮기기)도 같다."""
+        window = self.make()
+        self.open_row(window, "EX011")
+        view = self.dui(window).fields["allowed_channels"]
+        group = view.chip_group
+        self.assertIsNotNone(group)
+        before = {key: chip.isChecked() for key, chip in view.chips.items()}
+        stops = [chip for chip in group.chips if chip.focusPolicy() == Qt.StrongFocus]
+        self.assertEqual(len(stops), 1, "채널 칩 다섯이 Tab 정거장 하나다")
+        self.focus(stops[0])
+        QTest.keyClick(stops[0], Qt.Key_Right)
+        self.settle(1)
+        self.assertIs(QApplication.focusWidget(), group.chips[(group.chips.index(stops[0]) + 1) % len(group.chips)])
+        self.assertEqual({key: chip.isChecked() for key, chip in view.chips.items()}, before, "화살표는 옮기기만 한다 — 고르지 않는다")
+
     def test_space_on_a_box_picks_the_row_and_enter_on_a_row_opens_it_without_picking(self):
         window = self.make()
         row = self.row(window, "EX002")

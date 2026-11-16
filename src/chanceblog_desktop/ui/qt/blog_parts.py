@@ -136,6 +136,70 @@ class IgnoreDoubleClick(QObject):
         return event.type() == QEvent.MouseButtonDblClick
 
 
+def reveal(widget):
+    """포커스가 간 부품이 보이게 둘러싼 스크롤 영역들을 움직인다 — Tab 으로 옮길 때 Qt 가 하는 일을 화살표 키로 옮길 때도 한다."""
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QScrollArea):
+            parent.ensureWidgetVisible(widget)
+        parent = parent.parentWidget()
+
+
+class ChipGroup(QObject):
+    """칩 묶음 하나의 키보드 규칙(낱말 제안 칩·보기 칩·여럿 고르는 칩 — 검증 Q-1) — **묶음 전체가 Tab 정거장 하나**이고(마지막에 포커스가 있던 칩, 처음에는 고른 첫 칩·없으면 첫 칩), 묶음 안에서는
+    화살표 키(← ↑ 이전 · → ↓ 다음, 끝에서는 반대 끝으로)·Home·End 로 칩 사이를 옮긴다. 칩이 백여 개인 폼에서 Tab 을 백 번 누르지 않게 하려는 것이다. Space·Enter 로 켜고 끄는 일은 칩(눌림 단추)
+    자신의 일이라 그대로이고 화살표는 **옮기기만** 한다(고르지 않는다 — 하나만 고르는 묶음은 `FieldView._tab_stop` 의 라디오 규칙이다). 꺼진(못 고르는) 칩은 건너뛰고, 쓸 수 있는 칩이 하나도 없으면 정거장도 없다.
+    정거장이 아닌 칩도 마우스로 누르면 포커스를 받고(`ClickFocus`) 그 칩이 새 정거장이 된다."""
+
+    KEYS = (Qt.Key_Left, Qt.Key_Up, Qt.Key_Right, Qt.Key_Down, Qt.Key_Home, Qt.Key_End)
+
+    def __init__(self, chips, parent):
+        super().__init__(parent)
+        self.chips = list(chips)
+        self.current = None
+        for chip in self.chips:
+            chip.installEventFilter(self)
+        self.refresh()
+
+    def usable(self):
+        return [chip for chip in self.chips if chip.isEnabled()]
+
+    def refresh(self):
+        """정거장이 쓸 수 있는 칩 하나인지 맞춘다 — 지금 칩이 아직 쓸 수 있으면 그대로, 아니면 고른 첫 칩·첫 칩, 쓸 수 있는 칩이 없으면 정거장 없음."""
+        usable = self.usable()
+        if self.current not in usable:
+            self.current = next((chip for chip in usable if chip.isChecked()), usable[0] if usable else None)
+        for chip in self.chips:
+            wanted = Qt.StrongFocus if chip is self.current else Qt.ClickFocus
+            if chip.focusPolicy() != wanted:                                                   # 칸을 고칠 때마다 불리므로 같은 값을 다시 쓰지 않는다
+                chip.setFocusPolicy(wanted)
+
+    def target(self, chip, key):
+        """`chip` 에서 `key` 를 눌렀을 때 포커스가 갈 칩(없으면 None)."""
+        usable = self.usable()
+        if chip not in usable or key not in self.KEYS:
+            return None
+        if key == Qt.Key_Home:
+            return usable[0]
+        if key == Qt.Key_End:
+            return usable[-1]
+        step = -1 if key in (Qt.Key_Left, Qt.Key_Up) else 1
+        return usable[(usable.index(chip) + step) % len(usable)]
+
+    def eventFilter(self, watched, event):
+        kind = event.type()
+        if kind == QEvent.FocusIn and watched is not self.current and watched in self.chips:
+            self.current = watched                                                             # 마우스로 누르거나 화살표로 옮긴 칩이 새 정거장이다(Tab 으로 되돌아오면 거기로 온다)
+            self.refresh()
+        elif kind == QEvent.KeyPress and watched in self.chips and not event.modifiers() & ~Qt.KeypadModifier:
+            target = self.target(watched, event.key())
+            if target is not None:
+                target.setFocus(Qt.BacktabFocusReason if event.key() in (Qt.Key_Left, Qt.Key_Up, Qt.Key_Home) else Qt.TabFocusReason)
+                reveal(target)
+                return True
+        return False
+
+
 class AddCard(UI.Pressable):
     """'블로그 추가' 카드 — 목록 맨 끝, 점선 테두리. 눌러서(Enter·Space 도) 연결할 사이트 고르기를 연다. 종류 고르기가 열려 있으면 선택(2px 테두리)으로 보인다."""
 
@@ -216,7 +280,8 @@ class FieldView(QWidget):
     여럿 고르는 칩 묶음(`multi` — 협찬 가능 분야·선호 글 유형)은 칩마다 따로 켜고 끄고, 어느 칸의 어느 값인지를 `toggled_choice` 가 함께 알린다(P4c 에서 협찬 분야 전용 신호를 일반화했다).
     **직접 입력은 보기로 고른다**(blogsel): ① 낱말 칸(`words` + 제안 `options` — 주요 주제·카테고리·우선·제외 키워드)은 제안 칩(`toggled_choice`)이 먼저이고 직접 추가하는 입력 칸이 그 아래 보조로 남는다. ② 보기가 있는 한 줄 칸
     (`line` + `options` — 채널 역할·대상 독자·문체)은 보기 칩(`chose_option`)과 '직접 입력' 칩(`opened_custom`)이고 입력 칸은 '직접 입력' 일 때만 보인다. ③ 제안이 있는 한 줄 칸(별명·소개글)은 입력 칸 아래 제안 문장과 '쓰기' 단추(`used_suggestion`)가 있다.
-    ④ 이미지 위치(`path`)는 쓰는 칸이 아니라 고른 위치를 보이는 읽기 전용 칸 + 파일 고르기·지우기 단추다. Seed 관리의 칸(`SeedFieldView`)은 이 새 열쇠들이 없어도 그대로 그려진다(`vm.get`)."""
+    ④ 이미지 위치(`path`)는 쓰는 칸이 아니라 고른 위치를 보이는 읽기 전용 칸 + 파일 고르기·지우기 단추다. Seed 관리의 칸(`SeedFieldView`)은 이 새 열쇠들이 없어도 그대로 그려진다(`vm.get`).
+    **키보드**: 칩이 많은 묶음(낱말 제안·보기·여럿 고르기)은 묶음 하나가 Tab 정거장 하나이고 화살표 키로 칩 사이를 옮긴다(`ChipGroup` — Space·Enter 로 켜고 끈다). 하나만 고르는 묶음(`choice`)은 고른 칩만 정거장이고 화살표가 옮기며 고른다(`_tab_stop`)."""
     edited = Signal(str, object)
     picked = Signal(str)
     toggled_choice = Signal(str, str)
@@ -230,6 +295,7 @@ class FieldView(QWidget):
         self.controls = []
         self.edit = self.pick = self.clear_button = self.toggle = self.custom_chip = self.suggest_row = self.suggest_text = self.suggest_button = None
         self.chips = {}
+        self.chip_group = None
         self._chip_signature = None
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
@@ -326,6 +392,7 @@ class FieldView(QWidget):
                     self.chips[option["value"]] = chip
                     chips.append(chip)
                 column.addWidget(UI.chip_row(chips))
+                self.chip_group = ChipGroup(chips, self)
             elif self.kind == "line" and options:                                                 # 보기 하나 + '직접 입력'
                 for option in options:
                     chip = self._chip(label, option["label"], option["checked"], option["value"], lambda _=False, value=option["value"]: self.chose_option.emit(self.name, value))
@@ -335,6 +402,7 @@ class FieldView(QWidget):
                 self.custom_chip.setAccessibleName(T["bf_custom_a11y"].format(label=label))
                 chips.append(self.custom_chip)
                 column.addWidget(UI.chip_row(chips))
+                self.chip_group = ChipGroup(chips, self)
             self.edit = self._text_input(label, vm["placeholder"])
             column.addWidget(self.edit)
             if vm.get("assist"):                                                                  # 제안 문장 줄 — 입력 칸 아래(보일지는 뷰모델이 정한다)
@@ -381,6 +449,7 @@ class FieldView(QWidget):
                 self.chips[option["value"]] = chip
             column.addWidget(UI.chip_row(list(self.chips.values())))
             self.controls = list(self.chips.values())
+            self.chip_group = ChipGroup(self.controls, self)
         elif self.kind == "flag":
             self.toggle = UI.Toggle(T["bf_on" if vm["value"] else "bf_off"], accessible=label)
             self.toggle.setProperty("focus_key", self._focus_key())
@@ -500,3 +569,5 @@ class FieldView(QWidget):
             UI.repolish(self.edit)
         if self.clear_button is not None:
             self.clear_button.setEnabled(not vm["disabled"] and bool(value))
+        if self.chip_group is not None:
+            self.chip_group.refresh()                                                         # 못 고르게 된 칩이 정거장이었으면 다른 칩으로 옮긴다(켜고 끈 칩·꺼진 칩이 바뀐 뒤)
