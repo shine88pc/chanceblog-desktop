@@ -194,6 +194,15 @@ class AddingTest(unittest.TestCase):
         self.assertTrue(board.view()["add"]["enabled"])
         self.assertEqual(board.add_paths([path_of(31)]), (1, 0))
 
+    def test_the_list_of_files_not_added_is_replaced_by_each_new_choice(self):
+        board = new_board()
+        board.add_paths([path_of(1, "gif"), path_of(2, "bmp")])
+        self.assertEqual(sorted(item.name for item in board.rejected), [f"{FILE_STEM}-01.gif", f"{FILE_STEM}-02.bmp"])
+        board.add_paths([path_of(3, "tif")])
+        self.assertEqual([item.name for item in board.rejected], [f"{FILE_STEM}-03.tif"], "앞 선택의 못 넣은 파일은 이번 선택으로 바뀐다")
+        board.add_paths([path_of(4)])
+        self.assertEqual(board.rejected, (), "다 넣었으면 목록이 비워진다")
+
     def test_choosing_nothing_changes_nothing(self):
         board = new_board(2)
         before = board.manifest

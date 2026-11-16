@@ -157,8 +157,7 @@ class PhotoBoard:
 
     def shutdown(self):
         """대화상자가 어느 길로든 닫힌다 — 경고 없이 닫고(한도를 넘긴 글은 버린다) 임시 상태를 비운다. 여러 번 불러도 같다."""
-        self.errors = {}
-        self.close_warned = True
+        self.errors = {}                                    # 한도를 넘긴 글을 버리면 닫기가 경고할 이유가 없다
         return self.close()
 
     def _flag(self, level, text):
