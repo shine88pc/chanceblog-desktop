@@ -1,6 +1,7 @@
 """블로그 관리 화면(P4b) — 뷰모델(`ui/core/blogs_view.py` 가 만든 딕셔너리)을 공통 부품(`components.py`·`bars.py`·`blog_parts.py`)으로 조립하기만 한다.
-화면: 위 머리(제목·예시 표시·다시 읽기) → 알림 줄(마지막 동작의 결과) → **왼쪽 슬롯 카드 다섯**(빈 슬롯은 '등록' 카드)과 **오른쪽 폼**(제목·칸 구역 셋·**아래 고정 행동 줄** 저장·되돌리기·복제·삭제).
-폭이 좁으면(`LAYOUT["blogs_beside_min"]` 미만) 슬롯 목록이 폼 위로 올라간다 — 가로 스크롤은 없다. 폼 칸들은 안쪽 스크롤(`FormScroll`)에 들어가고 행동 줄은 그 밖에 있어 1366×768 에서도 저장 단추가 늘 보인다.
+화면: 위 머리(제목·예시 표시·다시 읽기) → 알림 줄(마지막 동작의 결과) → **왼쪽 블로그 카드**(**등록한 블로그만** + 맨 끝의 '블로그 추가' 카드)와 **오른쪽**(블로그 폼: 제목·칸 구역 넷·**아래 고정 행동 줄** 저장·되돌리기·복제·삭제 —
+또는 '블로그 추가' 를 눌렀을 때 **종류 고르기**: 네이버·Blogger·GitHub Pages 카드. 등록한 블로그가 없으면 처음부터 종류 고르기가 열려 있다. 저장 형식의 다섯 슬롯은 그대로이고 사용자 눈에는 슬롯 이름이 없다).
+폭이 좁으면(`LAYOUT["blogs_beside_min"]` 미만) 블로그 목록이 오른쪽 내용 위로 올라간다 — 가로 스크롤은 없다. 폼 칸들은 안쪽 스크롤(`FormScroll`)에 들어가고 행동 줄은 그 밖에 있어 1366×768 에서도 저장 단추가 늘 보인다.
 화면은 읽기·고르기·고치기까지만 하고 **파일에 쓰는 일은 하지 않는다** — 단추를 누르면 셸(`shell.blog_*`)이 상태(`BlogsController`)를 거쳐 서비스를 부른다(이 파일에는 쓰기 호출이 없다 — 시험이 소스를 훑는다).
 칸을 고치는 동안에는 화면을 다시 그리지 않고(`update_blogs_live` 가 오류 글·단추·카드 표시만 그 자리에서 바꾼다) 입력 중이던 자리가 사라지지 않는다.
 """
@@ -13,7 +14,7 @@ from ..core import tokens as K
 from ..core.text import T
 from . import components as UI
 from .bars import ActionBar
-from .blog_parts import FieldView, FormScroll, NoticeBar, SlotCard
+from .blog_parts import AddCard, FieldView, FormScroll, IgnoreDoubleClick, KindCard, NoticeBar, SlotCard
 from .screens import FlowGrid, page_head
 
 
@@ -22,6 +23,8 @@ class BlogsUi:
 
     def __init__(self):
         self.fields, self.cards = {}, {}
+        self.add_card = None
+        self.kind_cards = {}
         self.form_scroll = None
         self.bar = None
         self.unsaved = None
@@ -63,7 +66,7 @@ class BlogsBody(QWidget):
 
 
 def _listing(shell, vm, ui):
-    """왼쪽 슬롯 목록 — 제목·안내는 고정이고 카드 다섯은 안쪽 스크롤에 들어간다(카드가 한 화면보다 길어도 페이지가 늘어나 저장 단추가 밀려나지 않는다)."""
+    """왼쪽 블로그 목록 — 제목·안내는 고정이고 카드(등록한 블로그 + 맨 끝의 '블로그 추가')는 안쪽 스크롤에 들어간다(카드가 한 화면보다 길어도 페이지가 늘어나 저장 단추가 밀려나지 않는다)."""
     box = QWidget()
     column = QVBoxLayout(box)
     column.setContentsMargins(0, 0, 0, 0)
@@ -76,6 +79,10 @@ def _listing(shell, vm, ui):
         widget.activated.connect(lambda key=card["key"]: shell.blog_select(key))
         ui.cards[card["key"]] = widget
         cards.append(widget)
+    add = AddCard(vm["list"]["add"])
+    add.activated.connect(shell.blog_add_open)
+    ui.add_card = add
+    cards.append(add)
     grid = FlowGrid(cards, (1,), min_col=260, gap=K.SPACE["2"])
     holder = QWidget()
     inner = QVBoxLayout(holder)
@@ -87,6 +94,33 @@ def _listing(shell, vm, ui):
     scroll.setAccessibleName(vm["list"]["a11y"])
     column.addWidget(scroll, 1)
     return box, scroll, grid
+
+
+def _picker(shell, vm, ui):
+    """오른쪽 종류 고르기 — 네이버·Blogger·GitHub Pages 카드(연결 수·남은 자리·자리가 없을 때의 이유)와, 카드가 있으면 닫기. 안쪽 스크롤에 들어간다(작은 창에서도 페이지가 늘어나지 않게)."""
+    picker = vm["picker"]
+    frame, outer = UI.Card((0, 0, 0, 0))
+    outer.setSpacing(0)
+    frame.setAccessibleName(picker["a11y"])
+    content = QWidget()
+    body = QVBoxLayout(content)
+    body.setContentsMargins(K.SPACE["5"], K.SPACE["4"], K.SPACE["5"], K.SPACE["5"])
+    body.setSpacing(K.SPACE["3"])
+    body.addWidget(UI.label(picker["title"], "h2", wrap=True))
+    body.addWidget(UI.label(picker["desc"], "caption", wrap=True))
+    for kind in picker["kinds"]:
+        card = KindCard(kind)
+        card.chosen.connect(shell.blog_add_kind)
+        ui.kind_cards[kind["kind"]] = card
+        body.addWidget(card)
+    if picker["close"]:
+        close = UI.Button("ghost", picker["close"], focus_key="blogs:picker:close")
+        close.clicked.connect(shell.blog_add_close)
+        body.addWidget(close, 0, Qt.AlignLeft)
+    body.addStretch(1)
+    ui.form_scroll = FormScroll(content)
+    outer.addWidget(ui.form_scroll, 1)
+    return frame
 
 
 def _form(shell, vm, ui):
@@ -128,6 +162,9 @@ def _form(shell, vm, ui):
             view.edited.connect(shell.blog_edit)
             view.picked.connect(shell.blog_pick_image)
             view.toggled_choice.connect(shell.blog_toggle_choice)
+            view.chose_option.connect(shell.blog_pick_option)
+            view.opened_custom.connect(shell.blog_open_custom)
+            view.used_suggestion.connect(shell.blog_use_suggestion)
             ui.fields[field["name"]] = view
             part.addWidget(view)
         body.addLayout(part)
@@ -138,6 +175,10 @@ def _form(shell, vm, ui):
     outer.addWidget(ui.form_scroll, 1)
     bar = ActionBar([{"key": action["key"], "text": action["text"], "kind": action["kind"]} for action in form["actions"]], accessible=form["actions_a11y"])
     bar.triggered.connect(shell.blog_action)
+    guard = IgnoreDoubleClick(bar)                                                          # 입력을 버리거나 지우는 단추(취소·되돌리기·삭제)는 더블클릭의 두 번째 눌림을 받지 않는다
+    for button, spec in zip(bar.buttons, bar.specs, strict=True):
+        if spec["key"] in ("revert", "delete"):
+            button.installEventFilter(guard)
     ui.bar = bar
     outer.addWidget(bar)
     update_blogs_live_parts(ui, vm)
@@ -159,6 +200,8 @@ def update_blogs_live_parts(ui, vm):
         widget = ui.cards.get(card["key"])
         if widget is not None:
             widget.update_from(card)
+    if ui.add_card is not None and vm["list"]["add"] is not None:
+        ui.add_card.update_from(vm["list"]["add"])
     if ui.unsaved is not None:
         ui.unsaved.setVisible(bool(form["unsaved"]))
     errors = [field["name"] for section in form["sections"] for field in section["fields"] if field["error"]]
@@ -173,7 +216,7 @@ def update_blogs_live(page, vm):
 
 
 def blogs_screen(shell, vm):
-    """블로그 관리 — ① 머리 ② 알림 줄 ③ 슬롯 카드 다섯 + 폼(읽는 중·읽기 오류는 홈·설정과 같은 틀의 상태 카드)."""
+    """블로그 관리 — ① 머리 ② 알림 줄 ③ 블로그 카드('블로그 추가' 포함) + 폼 또는 종류 고르기(읽는 중·읽기 오류는 홈·설정과 같은 틀의 상태 카드)."""
     page = QWidget()
     outer = QVBoxLayout(page)
     margin = K.LAYOUT["page_margin"]
@@ -211,5 +254,6 @@ def blogs_screen(shell, vm):
         outer.addStretch(1)
     else:
         listing, scroll, grid = _listing(shell, vm, ui)
-        outer.addWidget(BlogsBody(listing, scroll, grid, _form(shell, vm, ui)), 1)
+        right = _picker(shell, vm, ui) if vm["picker"] else _form(shell, vm, ui)
+        outer.addWidget(BlogsBody(listing, scroll, grid, right), 1)
     return page

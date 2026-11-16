@@ -9,6 +9,7 @@
   6) 가짜 공급자(`--sample`·시험·사진)는 메모리에서만 일하고 같은 일을 서비스에 해 본 결과와 같다.
   7) 화면 코드(`ui/core`·`ui/qt`)에는 파일을 쓰는 호출이 없고, 쓰는 길은 어댑터가 부르는 서비스 함수 셋뿐이며 삭제는 확인(`confirmed=True`)이 있을 때만 불린다.
   8) 실제 블로그 이름·아이디는 어디에도 없다 — 예시는 가짜 이름뿐이다.
+  9) (blogsel, D-493) 등록한 블로그만 카드로 보이고 끝에 '블로그 추가' 카드가 있다 — 새 블로그는 종류(네이버·Blogger·GitHub Pages)로 고르고 속의 빈 슬롯이 쓰이며 슬롯 이름은 화면 글에 없다. 새 규칙의 시험은 `test_ui_blog_options`(보기 목록·제안·낱말 칩)와 `test_ui_blogs_add`(카드 규칙·연결 흐름)에 있다.
 """
 import ast
 import dataclasses
@@ -55,6 +56,15 @@ def new_controller(scenario="normal", **kwargs):
     controller = blogs_view.BlogsController(provider, jobs.JobRunner())
     load(controller)
     return controller
+
+
+def start_new(controller, kind="naver"):
+    """'블로그 추가' 로 새 블로그를 연결하려고 폼을 연다 → 열린 슬롯 열쇠(그 종류의 첫 빈 슬롯). 의도적 갱신(blogsel, D-493): 등록한 블로그만 카드로 보이므로 빈 슬롯의 폼은 이 길로만 열린다."""
+    if not controller.picker_shown():
+        controller.open_picker()                                                                 # 실제 순서 그대로 — 카드가 있으면 '블로그 추가' 카드를 눌러 종류 고르기를 연 다음 종류를 고른다(카드가 없으면 처음부터 열려 있다)
+    key = controller.start_adding(kind)
+    assert key is not None, kind
+    return key
 
 
 def drive(controller, starter):
@@ -291,15 +301,21 @@ class CloneStateTest(unittest.TestCase):
 
 # ---- 4) 상태·동작: 입력 유지 · 쓰기는 누를 때만 --------------------------------------------------------------------------------------------
 class ControllerTest(unittest.TestCase):
-    def test_loading_selects_the_default_slot_and_shows_the_five_cards(self):
+    def test_loading_selects_the_default_card_and_shows_only_the_registered_blogs_and_the_add_card(self):
+        """의도적 갱신(blogsel, D-493): 다섯 슬롯 카드가 아니라 **등록한 블로그만** 카드로 보이고(예시 데이터: 셋) 맨 끝에 '블로그 추가' 카드가 있다. 기본으로 열리는 카드가 네이버 첫 블로그인 것은 그대로다."""
         controller = new_controller()
         view = controller.view()
-        self.assertEqual((view["state"], view["selected"], len(view["list"]["cards"])), ("normal", "naver_a", 5))
-        self.assertEqual([card["key"] for card in view["list"]["cards"]], list(bf.SLOTS))
+        self.assertEqual((view["state"], view["selected"], len(view["list"]["cards"])), ("normal", "naver_a", 3))
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["blogger_ko", "naver_a", "naver_b"], "등록한 슬롯만 — 슬롯 순서대로")
+        self.assertEqual((view["list"]["add"]["key"], view["list"]["add"]["title"], view["list"]["add"]["selected"]), ("add", T["blogs_add_title"], False))
+        self.assertIsNone(view["picker"])
         self.assertTrue(view["sample"])
         self.assertEqual(view["form"]["key"], "naver_a")
         blank = blogs_view.BlogsController(blogs.FakeBlogsProvider(), jobs.JobRunner())
-        self.assertEqual((blank.state, blank.view()["form"], blank.view()["list"]["cards"]), ("loading", None, []))
+        self.assertEqual((blank.state, blank.view()["form"], blank.view()["list"]["cards"], blank.view()["list"]["add"], blank.view()["picker"]), ("loading", None, [], None, None))
+        empty = new_controller("empty").view()
+        self.assertEqual((empty["list"]["cards"], empty["form"], empty["selected"], empty["list"]["add"]["selected"]), ([], None, None, True), "등록한 블로그가 없으면 카드는 '블로그 추가' 뿐이고 폼 자리에 종류 고르기가 열려 있다")
+        self.assertEqual([kind["kind"] for kind in empty["picker"]["kinds"]], ["naver", "blogger", "github"])
 
     def test_selecting_and_editing_never_touch_the_provider_and_keep_drafts_per_slot(self):
         controller = new_controller()
@@ -311,7 +327,7 @@ class ControllerTest(unittest.TestCase):
         self.assertTrue(controller.edit("tone", "새 문체"))
         self.assertTrue(controller.select("naver_b"))
         self.assertEqual(controller.values("naver_b")["alias"], "새 별명", "슬롯을 옮겼다 돌아와도 초안이 남는다")
-        self.assertEqual({card["key"]: card["unsaved"] for card in controller.view()["list"]["cards"]}, {"github_pages": False, "blogger_en": False, "blogger_ko": False, "naver_a": True, "naver_b": True})
+        self.assertEqual({card["key"]: card["unsaved"] for card in controller.view()["list"]["cards"]}, {"blogger_ko": False, "naver_a": True, "naver_b": True}, "의도적 갱신(blogsel, D-493): 카드는 등록한 슬롯만")
         self.assertEqual(controller.provider.calls, calls, "고르기·고치기는 공급자(파일)를 부르지 않는다")
         self.assertFalse(controller.select("no_slot"))
         self.assertFalse(controller.edit("no_field", "x"))
@@ -352,14 +368,21 @@ class ControllerTest(unittest.TestCase):
 
     def test_errors_show_only_for_touched_fields_until_a_save_is_tried(self):
         controller = new_controller("empty")
+        start_new(controller)
         errors = lambda: {field["name"]: field["error"] for section in controller.view()["form"]["sections"] for field in section["fields"] if field["error"]}  # noqa: E731
         self.assertEqual(errors(), {}, "처음 보는 빈 등록 칸은 오류로 시작하지 않는다")
         controller.edit("alias", "가" * 40)
         self.assertEqual(list(errors()), ["alias"], "고친 칸만 보인다")
         controller.edit("display_name", "")
         self.assertEqual(set(errors()), {"alias", "display_name"})
+        controller.start_save()
+        self.assertEqual(set(errors()), {"alias", "display_name", "blog_ref"}, "저장을 시도하면 비어 있는 필수 칸도 보인다")
         controller.revert()
-        self.assertEqual(errors(), {})
+        self.assertIsNone(controller.view()["form"], "새 블로그의 되돌리기는 연결을 그만두는 일 — 폼이 닫힌다(종류 고르기가 다시 보인다)")
+        registered = new_controller()
+        registered.edit("alias", "가" * 40)
+        registered.revert()
+        self.assertEqual({field["name"]: field["error"] for section in registered.view()["form"]["sections"] for field in section["fields"] if field["error"]}, {}, "등록한 블로그의 되돌리기는 초안만 버린다")
 
     def test_a_successful_save_replaces_the_data_and_empties_only_that_slots_draft(self):
         controller = new_controller()
@@ -498,11 +521,13 @@ class ControllerTest(unittest.TestCase):
         fresh.edit("alias", "저장 전 변경")
         self.assertEqual(fresh.clone_info(), (False, T["blogs_clone_unsaved"], "blogger_en"), "저장하지 않은 변경이 있으면 먼저 저장하게 한다")
 
-    def test_clear_needs_a_registered_slot_and_empties_it_but_the_slot_stays(self):
+    def test_clear_needs_a_registered_slot_and_empties_it_and_the_card_goes_but_the_stored_slot_stays(self):
+        """의도적 갱신(blogsel, D-493): 지운 블로그는 카드에서 사라지고 다른 카드로 옮겨 간다 — 저장 형식의 다섯 슬롯은 그대로(이름 칸이 기본 프로필의 값으로 돌아간 빈 슬롯)다."""
         controller = new_controller()
-        controller.select("github_pages")
+        start_new(controller, "github")
         self.assertFalse(controller.can_clear())
         self.assertEqual(controller.start_clear()[0], "nothing")
+        controller.revert()
         controller.select("naver_a")
         self.assertTrue(controller.can_clear())
         dialog = controller.delete_dialog()
@@ -510,15 +535,21 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual((dialog["title"], dialog["ok"], dialog["cancel"]), (T["blogs_del_title"], T["blogs_del_ok"], T["blogs_del_cancel"]))
         self.assertEqual(drive(controller, controller.start_clear), ("started", "ok", False))
         self.assertEqual(controller.notice, ("ok", T["blogs_cleared"]))
-        self.assertEqual(len(controller.view()["list"]["cards"]), 5, "슬롯은 사라지지 않는다")
+        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["blogger_ko", "naver_b"], "지운 블로그의 카드는 사라진다")
+        self.assertEqual(controller.selected, "blogger_ko", "카드가 없어진 슬롯에서 첫 카드로 옮겨 간다")
+        self.assertEqual(len(controller.data.slots), 5, "저장 형식의 슬롯은 다섯 그대로다")
         self.assertFalse(controller.slot_map()["naver_a"].registered)
-        self.assertFalse(controller.can_clear())
+        controller.select("naver_a")
+        self.assertFalse(controller.can_clear(), "이미 비었다")
 
     def test_the_delete_dialog_says_what_is_erased_that_it_cannot_be_undone_and_what_stays(self):
         controller = new_controller()
         body = controller.delete_dialog()["body"]
-        for part in ("비워져요", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요", "사라지지 않고"):
+        self.assertTrue(body.startswith("‘예시 블로그 가’ 블로그에 넣은 이름·블로그 ID·주제·우선 키워드·제외 키워드·선호 글 유형 같은 내용이 모두 비워지고"), "수정 2(검증 T-4): 이름이 있으면 ‘이름’ 블로그에 — 문장이 이렇게 시작한다")
+        self.assertNotIn("블로그 블로그", body)
+        for part in ("모두 비워지고", "목록에서도 사라져요", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요", "‘블로그 추가’ 로 다시 연결"):      # 의도적 갱신(blogsel, D-493): 슬롯이 사라지지 않는다는 옛 문장은 '카드가 목록에서 사라진다' 로 바뀌었다
             self.assertIn(part, body)
+        self.assertNotIn("슬롯", body, "슬롯 이름은 화면 글에 없다")
 
     def test_a_read_error_keeps_what_was_shown_and_an_unexpected_exception_becomes_an_easy_error(self):
         controller = new_controller()
@@ -536,20 +567,23 @@ class ControllerTest(unittest.TestCase):
 
 # ---- 뷰모델 -------------------------------------------------------------------------------------------------------------------------
 class ViewModelTest(unittest.TestCase):
-    def test_cards_show_registered_and_empty_slots_with_chips_and_accessible_names(self):
+    def test_cards_show_the_registered_blogs_with_chips_and_accessible_names_and_no_slot_names(self):
+        """의도적 갱신(blogsel, D-493): 카드는 등록한 블로그만이고(빈 슬롯의 '등록' 카드는 없다) 윗줄 이름은 슬롯 이름(`네이버 A`)이 아니라 별명 — 별명이 없으면 종류 + 번호 제안이다."""
         view = new_controller().view()
         cards = {card["key"]: card for card in view["list"]["cards"]}
-        self.assertTrue(cards["naver_a"]["registered"])
+        self.assertEqual(sorted(cards), ["blogger_ko", "naver_a", "naver_b"])
+        self.assertTrue(all(card["registered"] for card in cards.values()))
         self.assertEqual((cards["naver_a"]["headline"], cards["naver_a"]["status"]["text"], cards["naver_a"]["preset"], cards["naver_b"]["preset"]), ("예시 블로그 가", "등록됨", "warm_lifestyle", "cool_technology"))
-        self.assertEqual(cards["naver_a"]["title"], "네이버 A")
+        self.assertEqual((cards["naver_a"]["title"], cards["naver_b"]["title"], cards["blogger_ko"]["title"]), ("예시 별명", "네이버 블로그 2", "Blogger 1"), "별명, 별명이 없으면 종류 + 그 종류 안의 번호")
         self.assertEqual([chip["text"] for chip in cards["naver_a"]["chips"]], ["한국어", "후보 만들기 켜짐"])
         self.assertEqual([chip["text"] for chip in cards["blogger_ko"]["chips"]], ["한국어", "후보 만들기 지원 전"])
-        empty = cards["github_pages"]
-        self.assertEqual((empty["registered"], empty["headline"], empty["status"]["text"], empty["preset"]), (False, T["blogs_card_empty_title"], "비어 있음", ""))
-        self.assertIn("비어 있음", empty["a11y"])
+        self.assertEqual((cards["naver_a"]["meta"], cards["blogger_ko"]["meta"]), ("네이버 블로그 · 한국어 · 후보 만들기 켜짐", "Blogger · 한국어 · 후보 만들기 지원 전"))
         self.assertIn("선택됨", cards["naver_a"]["a11y"])
         self.assertNotIn("선택됨", cards["naver_b"]["a11y"])
         self.assertEqual([card["selected"] for card in view["list"]["cards"]].count(True), 1)
+        for card in cards.values():
+            for name in ("title", "a11y", "meta", "headline", "sub"):
+                self.assertNotRegex(card[name], r"네이버 [AB]\b|Blogger (?:한글|영문)|naver_|blogger_|github_pages", f"{card['key']} {name}: 슬롯 이름은 사용자에게 보이지 않는다")
 
     def test_the_form_has_the_required_four_first_then_the_optional_fields_and_the_color_and_images_last(self):
         form = new_controller().view()["form"]
@@ -568,8 +602,10 @@ class ViewModelTest(unittest.TestCase):
         self.assertEqual(other, ["display_name", "blog_ref", "language"], "나머지 슬롯의 사용 여부는 꺼진 채 잠겨 있어 필수 표시가 없다")
         self.assertEqual([action["key"] for action in form["actions"]], ["save", "revert", "clone", "delete"])
         self.assertEqual([action["kind"] for action in form["actions"]], ["primary", "secondary", "secondary", "danger"], "화면당 주요 행동은 하나, 위험 행동은 하나")
-        self.assertEqual(form["title"], "네이버 A 정보")
-        self.assertEqual(new_controller("empty").view()["form"]["title"], "네이버 A 등록")
+        self.assertEqual(form["title"], "예시 별명 정보", "의도적 갱신(blogsel, D-493): 폼 머리는 슬롯 이름이 아니라 별명(없으면 종류 + 번호)이다")
+        fresh = new_controller("empty")
+        start_new(fresh)
+        self.assertEqual((fresh.view()["form"]["title"], fresh.view()["form"]["kind"]), ("네이버 블로그 새로 연결하기", T["blogs_form_new_desc"]))
 
     def test_the_candidate_switch_is_a_real_choice_for_naver_and_a_disabled_one_with_a_reason_for_the_others(self):
         controller = new_controller()
@@ -590,8 +626,19 @@ class ViewModelTest(unittest.TestCase):
         self.assertTrue(actions()["delete"]["enabled"])
         controller.edit("alias", "고침")
         self.assertTrue(actions()["save"]["enabled"] and actions()["revert"]["enabled"])
+        controller.revert()
+        # 의도적 갱신(blogsel, D-493): 새로 연결하는 블로그의 폼에는 복제·삭제가 없다(복제할 것도 지울 것도 아직 없다) — 저장과 취소뿐이다. 주소 없이 내용만 있는 슬롯(손으로 고친 파일)은 삭제가 켜져 있고 복제는 이유와 함께 꺼져 있다
+        start_new(controller, "github")
+        self.assertEqual([(action["key"], action["text"]) for action in controller.view()["form"]["actions"]], [("save", "저장"), ("revert", "취소")])
+        self.assertTrue(controller.view()["form"]["actions"][1]["enabled"], "취소는 늘 누를 수 있다")
+        controller.revert()
+        provider = controller.provider
+        provider.slots["github_pages"] = dataclasses.replace(provider.slots["github_pages"], alias="손으로 쓴 별명")
+        provider.revision += 1
+        load(controller)
         controller.select("github_pages")
-        self.assertEqual((actions()["delete"]["enabled"], actions()["delete"]["reason"]), (False, T["blogs_delete_empty"]))
+        self.assertEqual([action["key"] for action in controller.view()["form"]["actions"]], ["save", "revert", "clone", "delete"])
+        self.assertTrue(actions()["delete"]["enabled"], "내용이 있으면 지울 수 있다")
         self.assertEqual(actions()["clone"]["reason"], T["blogs_clone_no_source"])
 
     def test_a_second_slot_with_the_same_blog_id_gets_a_warning_not_an_error(self):
@@ -651,11 +698,11 @@ class ViewModelTest(unittest.TestCase):
         controller = new_controller()
         secret = "AK" + "IA" + "ABCDEFGHIJKLMNOP"                                    # 키 모양의 가짜 값 — 조각으로 나눠 적어 저장소에 키 문자열이 없다
         provider = controller.provider
-        provider.slots["naver_a"] = dataclasses.replace(provider.slots["naver_a"], display_name="블로그 " + secret, blog_ref=secret, channel_role="역할 " + secret)
+        provider.slots["naver_a"] = dataclasses.replace(provider.slots["naver_a"], display_name="블로그 " + secret, blog_ref=secret, channel_role="역할 " + secret, alias="별명 " + secret)
         load(controller)
         controller.select("naver_a")
         card = next(card for card in controller.view()["list"]["cards"] if card["key"] == "naver_a")
-        for name in ("headline", "sub", "role", "a11y"):
+        for name in ("headline", "sub", "role", "a11y", "title", "meta"):
             self.assertNotIn(secret, card[name], name)
         self.assertTrue(card["headline"].startswith("블로그"), "가린 뒤에도 앞의 글은 남는다")
         self.assertNotIn(secret, " ".join(str(item) for item in controller.delete_dialog().values()))
@@ -747,6 +794,10 @@ class AdapterTest(unittest.TestCase):
             controller.edit("alias", "고치는 중")
             controller.select("naver_a")
             controller.revert()
+            controller.open_picker()
+            controller.start_adding("blogger")
+            controller.edit("alias", "새 블로그 별명")
+            controller.toggle_choice("main_topics", "소형가전")
             controller.view()
             self.assertEqual(self.tree(), before)
             self.assertEqual(sorted(str(path) for path in self.root.parent.rglob("*")), listing, "읽기는 파일도 폴더도 만들지 않는다")
@@ -754,10 +805,14 @@ class AdapterTest(unittest.TestCase):
     def test_a_save_writes_exactly_the_profile_file_and_the_failure_kinds_map_to_easy_kinds(self):
         controller = blogs_view.BlogsController(self.provider, jobs.JobRunner())
         load(controller)
+        self.assertEqual(start_new(controller), "naver_a", "처음 연결하는 네이버 블로그는 첫 빈 슬롯을 속에서 쓴다")
         controller.edit("display_name", "예시 블로그 가")
         controller.edit("blog_ref", "example-blog-a")
         self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
         self.assertEqual(sorted(path.relative_to(self.root).as_posix() for path in self.root.rglob("*") if path.is_file() and path.name != "settings.json"), ["topic_engine/channel_profiles.json"])
+        saved = {profile.key: profile for profile in bp.read_snapshot(self.ctx).profiles}["naver_a"]
+        self.assertEqual((saved.display_name, saved.blog_ref, saved.alias), ("예시 블로그 가", "example-blog-a", "네이버 블로그 1"), "제안한 별명은 사용자가 고치지 않으면 그대로 저장된다")
+        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["naver_a"], "저장하면 등록한 블로그의 카드가 된다")
         self.assertEqual(controller.base_raw("naver_a")["blog_ref"], "example-blog-a")
         # 다른 창이 먼저 바꿨다
         other = bp.save_slot(self.ctx, "naver_b", {"display_name": "예시 블로그 나", "blog_ref": "example-blog-b"}, expected_version=bp.read_snapshot(self.ctx).version)
@@ -829,7 +884,7 @@ class MenuTest(unittest.TestCase):
 
 # ---- 7) 소스 규칙 ---------------------------------------------------------------------------------------------------------------------
 class SourceRulesTest(unittest.TestCase):
-    NEW_CORE = ("blog_form.py", "blogs.py", "blogs_view.py", "blog_text.py")
+    NEW_CORE = ("blog_form.py", "blogs.py", "blogs_view.py", "blog_text.py", "blog_options.py")
     WRITERS = {"write_text", "write_bytes", "unlink", "mkdir", "rmdir", "rmtree", "copy2", "copyfile", "copytree", "touch", "chmod", "makedirs", "write_json", "fsync", "truncate", "symlink"}
     DOTTED = {"os.replace", "os.rename", "os.remove", "os.write", "os.open", "os.link", "shutil.move", "shutil.copy", "open"}      # `replace`·`move`·`copy` 는 글·창에도 쓰는 이름이라 파일을 다루는 모듈 이름과 함께 있을 때만 센다
 
@@ -870,7 +925,7 @@ class SourceRulesTest(unittest.TestCase):
         used += "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "scripts").glob("ui_*.py"))
         families = {"bf_label_": [spec.name for spec in bf.FIELDS], "bf_hint_": [spec.name for spec in bf.FIELDS] + ["generation_off"], "bf_tag_": list(bf.TAG_ORDER), "bf_preset_": [preset or "none" for preset in bf.PRESET_ORDER],
                     "blogs_slot_": list(bf.SLOTS), "blogs_kind_": ["naver", "blogger", "github"], "blogs_lang_": ["ko", "en"], "blogs_sec_": [f"{key}{suffix}" for key in bf.SECTIONS for suffix in ("", "_desc")],
-                    "bf_placeholder_": ["display_name", "blog_ref", "words", "path"]}
+                    "bf_placeholder_": ["display_name", "blog_ref", "words", "path"], "blogs_kinddesc_": ["naver", "blogger", "github"]}
         for key, value in blog_text.BLOG_T.items():
             family = next((prefix for prefix in families if key.startswith(prefix)), None)
             if family is not None:

@@ -181,8 +181,9 @@ class AppState:
         return None
 
     def close_guard(self):
-        """앱을 닫을 때 초안의 고친 내용이 사라지면 확인창의 글(없으면 None)."""
-        return self.drafts.leave_dialog("close")
+        """앱을 닫을 때 초안의 고친 내용이나 블로그 관리의 저장하지 않은 입력이 사라지면 확인창의 글(없으면 None) — 초안이 먼저다."""
+        dialog = self.drafts.leave_dialog("close")
+        return dialog if dialog is not None else self.blogs.close_dialog()
 
     def nav(self, key, force=False):
         """화면을 옮긴다. 초안 작성 화면을 떠날 때 고친 내용이 있으면 `force`(확인창에서 `그래도 이동` 을 눌렀다)가 아니면 옮기지 않는다 — 그리고 떠나면 초안은 메모리에서 지운다(저장하지 않는다)."""
