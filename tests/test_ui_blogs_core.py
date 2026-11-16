@@ -545,6 +545,8 @@ class ControllerTest(unittest.TestCase):
     def test_the_delete_dialog_says_what_is_erased_that_it_cannot_be_undone_and_what_stays(self):
         controller = new_controller()
         body = controller.delete_dialog()["body"]
+        self.assertTrue(body.startswith("‘예시 블로그 가’ 블로그에 넣은 이름·블로그 ID·주제·우선 키워드·제외 키워드·선호 글 유형 같은 내용이 모두 비워지고"), "수정 2(검증 T-4): 이름이 있으면 ‘이름’ 블로그에 — 문장이 이렇게 시작한다")
+        self.assertNotIn("블로그 블로그", body)
         for part in ("모두 비워지고", "목록에서도 사라져요", "되돌릴 수 없어요", "후보·초안·발행 기록은 지워지지 않아요", "‘블로그 추가’ 로 다시 연결"):      # 의도적 갱신(blogsel, D-493): 슬롯이 사라지지 않는다는 옛 문장은 '카드가 목록에서 사라진다' 로 바뀌었다
             self.assertIn(part, body)
         self.assertNotIn("슬롯", body, "슬롯 이름은 화면 글에 없다")

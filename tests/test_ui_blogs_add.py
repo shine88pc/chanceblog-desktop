@@ -310,6 +310,7 @@ class StaleInputTest(unittest.TestCase):
                          "입력은 그대로이고, 제안 그대로였던 별명만 새 자리의 번호로 다시 제안한다")
         self.assertTrue(controller.view()["form"]["fresh"])
         self.assertEqual(controller.notice, ("warning", T["blogs_taken_moved"]), "이유를 쉬운 말로 알린다 — 조용히 바뀌지 않는다")
+        self.assertEqual((controller.touched.get("naver_b"), "naver_a" in controller.touched), ({"display_name", "blog_ref", "main_topics"}, False), "고친 칸 표시(오류를 보일 칸)도 새 슬롯으로 따라간다")
         self.assertEqual(drive(controller, controller.start_save), ("started", "ok", False))
         slots = controller.provider.slots
         self.assertEqual((slots["naver_a"].blog_ref, slots["naver_a"].display_name, slots["naver_b"].blog_ref, slots["naver_b"].display_name), ("example-other-blog", "다른 쪽 블로그", "example-new-blog", "내 새 블로그"))
@@ -373,6 +374,24 @@ class StaleInputTest(unittest.TestCase):
         self.assertEqual(controller.drafts["naver_a"], {"alias": "네이버 블로그 1"})
         self.assertEqual((controller.touched.get("naver_a"), "naver_a" in controller.submitted, ("naver_a", "tone") in controller.custom_open, controller.service_problems.get("naver_a")), (None, False, False, None))
         self.assertEqual(fields_of(controller)["display_name"]["value"], "")
+
+    def test_the_data_received_after_a_write_is_checked_the_same_way_and_both_notices_are_told(self):
+        """방어선(검증 T-3·N-4 의 D19·D26·D27) — 쓴 뒤 받은 자료에도 다른 곳의 변경이 실려 오면 같은 정리를 하고, 저장했다는 알림에 이유를 덧붙인다."""
+        controller = new_controller("empty")
+        first = start_new(controller, "naver")
+        controller.edit("display_name", "첫 입력")
+        controller.open_picker()
+        second = start_new(controller, "naver")
+        controller.edit("display_name", "둘째 입력")
+        controller.edit("blog_ref", "example-second")
+        fill_elsewhere(controller, first, display_name="다른 쪽 블로그", blog_ref="example-other-blog")
+        provider = controller.provider
+        controller.pending = {"kind": "save", "key": second, "target": None}
+        outcome = provider.save_blog(second, {"display_name": "둘째 입력", "blog_ref": "example-second", "alias": "네이버 블로그 2"}, str(provider.revision), SAFE, NEVER)
+        controller.apply_write_ok(outcome)                                                                 # 이 자료에는 첫 자리가 이미 채워져 있다
+        self.assertEqual(controller.adding, set(), "저장한 둘째 자리는 보통 카드가 되고, 채워진 첫 자리의 입력은 버려진다(남은 빈 자리가 없다)")
+        self.assertNotIn(first, controller.drafts)
+        self.assertEqual(controller.notice, ("warning", f"{T['blogs_saved']} {T['blogs_taken_dropped']}"))
 
     def test_a_vanished_card_without_input_is_cleaned_without_a_notice(self):
         controller = new_controller()
@@ -462,14 +481,17 @@ class DefaultNameTest(unittest.TestCase):
         self.assertIn(T["blogs_kind_naver"], card["a11y"], "접근 이름의 이름 자리도 종류 이름이다")
         for item in view_strings(view) + [controller.delete_dialog()["body"]]:
             self.assertNotRegex(item, SLOT_NAME, item)
-        self.assertIn(T["blogs_del_unnamed"], controller.delete_dialog()["body"])
+        body = controller.delete_dialog()["body"]
+        self.assertTrue(body.startswith("이 블로그에 넣은 이름·블로그 ID·주제·우선 키워드·제외 키워드·선호 글 유형 같은 내용이 모두 비워지고"), "수정 2(검증 T-4): 이름이 없으면 `이 블로그에 넣은` — `블로그` 가 두 번 읽히지 않는다")
+        self.assertNotIn("블로그 블로그", body)
         self.assertEqual(fields_of(controller)["display_name"]["value"], bf.default_values("naver_b")["display_name"], "이름 입력 칸에는 저장된 값이 그대로 보인다 — 사용자 자료이고 화면 글이 아니다")
 
     def test_the_delete_dialog_of_a_selected_empty_slot_names_no_one(self):
         controller = new_controller("empty")
         controller.select("naver_b")
         dialog = controller.delete_dialog()
-        self.assertIn(T["blogs_del_unnamed"], dialog["body"])
+        self.assertTrue(dialog["body"].startswith("이 블로그에 넣은 이름"), dialog["body"])
+        self.assertNotIn("블로그 블로그", dialog["body"])
         self.assertNotRegex(dialog["body"], SLOT_NAME)
 
 
@@ -579,6 +601,19 @@ class CloseDialogTest(unittest.TestCase):
         controller.revert()
         self.assertFalse(controller.has_unsaved(), "취소하면 없다")
 
+    def test_the_close_question_looks_at_every_card_not_only_the_one_open_in_the_form(self):
+        """검증 T-3·N-3 — 카드 A 를 고치고 카드 B 를 연 채 앱을 닫아도 A 의 저장 전 입력이 확인 없이 사라지지 않는다."""
+        controller = new_controller()
+        controller.select("naver_a")
+        controller.edit("intro", "A 의 저장 전 소개")
+        controller.select("naver_b")
+        self.assertFalse(controller.is_dirty("naver_b"))
+        self.assertTrue(controller.has_unsaved(), "폼에 열린 카드(B)는 그대로여도 다른 카드(A)의 입력이 있다")
+        self.assertEqual(controller.close_dialog()["title"], T["blogs_close_title"])
+        controller.select("naver_a")
+        controller.revert()
+        self.assertFalse(controller.has_unsaved(), "A 를 되돌리면 물을 것이 없다")
+
     def test_a_write_in_progress_or_an_unread_list_never_asks(self):
         controller = new_controller()
         controller.edit("intro", "저장 전 소개")
@@ -592,7 +627,7 @@ class CloseDialogTest(unittest.TestCase):
         blank = blogs_view.BlogsController(blogs.FakeBlogsProvider(), jobs.JobRunner())
         self.assertIsNone(blank.close_dialog(), "아직 읽지 않았다")
 
-    def test_the_app_state_asks_for_blog_input_only_after_the_drafts_screen_has_nothing_to_ask(self):
+    def test_the_app_state_asks_for_blog_input_when_the_drafts_screen_has_nothing_to_ask(self):
         state = app_state.AppState(services.FakeHomeProvider())
         load(state.blogs)
         self.assertIsNone(state.close_guard())
@@ -912,7 +947,8 @@ class RealServiceTest(unittest.TestCase):
         for key in bf.SLOTS:
             controller.select(key)
             body = controller.delete_dialog()["body"]
-            self.assertIn(T["blogs_del_unnamed"], body, key)
+            self.assertTrue(body.startswith("이 블로그에 넣은 이름"), f"{key}: {body[:40]}")
+            self.assertNotIn("블로그 블로그", body, key)
             for item in view_strings(controller.view()) + [body]:
                 self.assertNotRegex(item, SLOT_NAME, f"{key}: {item}")
             self.assertEqual(fields_of(controller)["display_name"]["value"], bf.default_values(key)["display_name"], f"{key}: 이름 입력 칸에는 저장된 값이 그대로 보인다(사용자 자료)")

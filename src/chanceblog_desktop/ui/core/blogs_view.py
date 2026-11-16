@@ -418,8 +418,8 @@ class BlogsController:
         """삭제 확인창의 글 — 무엇이 지워지는지·되돌릴 수 없다는 것·후보·초안·발행 기록은 지워지지 않는다는 것(저장된 파일은 이 일이 건드리지 않는다)."""
         slot = self.slot_map().get(self.selected)
         named = bf.user_name(slot.key, slot.display_name) if slot is not None else ""                    # 사용자가 정한 이름만 보인다 — 기본 프로필의 이름(슬롯 이름 `네이버 A`)이 저장돼 있어도 이 글에 나가지 않는다
-        name = bf.shown(named, 30) if named else T["blogs_del_unnamed"]
-        return {"title": T["blogs_del_title"], "body": T["blogs_del_body"].format(name=name), "ok": T["blogs_del_ok"], "cancel": T["blogs_del_cancel"]}
+        who = T["blogs_del_named"].format(name=bf.shown(named, 30)) if named else T["blogs_del_unnamed"]        # 이름이 없으면 `이 블로그` — `‘이름 없는 블로그’ 블로그` 처럼 '블로그' 가 두 번 읽히지 않는다
+        return {"title": T["blogs_del_title"], "body": T["blogs_del_body"].format(who=who), "ok": T["blogs_del_ok"], "cancel": T["blogs_del_cancel"]}
 
     def start_clear(self, **callbacks):
         """삭제(슬롯 비우기) — 확인창에서 '지우기' 를 눌렀을 때만 불린다. 서비스에는 확인 표시가 진짜 `True` 로 간다."""
