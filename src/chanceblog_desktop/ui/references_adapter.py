@@ -22,12 +22,21 @@ def _row(entry):
     return RefRow(entry.ref_id, entry.title, entry.chars, entry.updated_at)
 
 
+def _reason_of(error):
+    """이 보관함 서비스가 낸 `CONTENT_INVALID` 의 이유 문장(서비스가 쓴 고정 해요체 — 글·제목·경로·번호가 없다). 항목 글이 `참고 글 보관함 — ` 로 시작할 때만 쓰고 그 밖의 오류 세부는 쓰지 않는다. 없으면 빈 글."""
+    item = str(error.slots.get("항목", "")) if error.code == "CONTENT_INVALID" else ""
+    prefix = f"{service.SUBJECT} — "
+    return item[len(prefix):] if item.startswith(prefix) else ""
+
+
 def sentence_of(error, write_failure=""):
-    """서비스 오류 → 화면에 나가는 고정 문장. 서비스가 낸 고정 문장의 오류만 그대로이고, 폴더를 못 정한 오류와 그 밖의 오류는 경로·세부 없는 고정 안내문이다."""
+    """서비스 오류 → 화면에 나가는 고정 문장. 서비스가 낸 고정 문장의 오류만 그대로이고, 폴더를 못 정한 오류와 그 밖의 오류는 경로·세부 없는 고정 안내문이다.
+    보관함이 직접 거절한 것(제목 비었음·한도·키 모양 등)은 앱 공통의 딱딱한 문장('다음 칸의 값이 올바르지 않습니다: …') 대신 이유 문장 하나를 해요체 그대로 쓴다(검증자 Q-08 — 앱 전체의 공통 문장은 건드리지 않았다)."""
     if write_failure and error.code == "FILE_WRITE_FAILED":                     # 지우기가 실패한 것을 '저장하지 못했습니다' 로 말하지 않도록 일에 맞는 고정 문장을 쓴다
         return write_failure
     if error.code in SERVICE_CODES:
-        return error.rendered().message
+        reason = _reason_of(error)
+        return f"{reason}." if reason else error.rendered().message
     return T["ref_fail_folder"] if error.code in FOLDER_CODES else T["ref_fail_other"]
 
 

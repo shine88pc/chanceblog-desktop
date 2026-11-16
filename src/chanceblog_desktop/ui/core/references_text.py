@@ -12,7 +12,7 @@ REF_T = {
     # 목록
     "ref_list_title": "보관한 글", "ref_list_a11y": "보관한 글 목록", "ref_list_loading": "보관한 글을 읽는 중이에요…",
     "ref_list_empty": "아직 보관한 글이 없어요. 아래에 글을 붙여 넣어 저장하거나 파일에서 올려 주세요.",
-    "ref_row": "{title} · {chars}자 · {when}", "ref_row_a11y": "{title}, {chars}자, 고친 때 {when}", "ref_row_selected_a11y": "{title}, {chars}자, 고친 때 {when}, 지금 편집 중",
+    "ref_row": "{title} · {chars}자 · {when}", "ref_row_selected": "{title} · {chars}자 · {when} · 지금 편집 중", "ref_row_a11y": "{title}, {chars}자, 고친 때 {when}", "ref_row_selected_a11y": "{title}, {chars}자, 고친 때 {when}, 지금 편집 중",
     "ref_open": "열기", "ref_open_a11y": "{title} 열어서 고치기",
     "ref_skipped": "읽을 수 없어 건너뛴 파일이 {n}개 있어요. 보관함 폴더에서 직접 확인해 주세요.",
     "ref_count": "{n}개 보관 중",
@@ -43,7 +43,8 @@ REF_T = {
     "ref_folder_label": "보관함 폴더 위치", "ref_folder_note": "글 하나가 파일 하나로 들어 있어요. 이 폴더의 파일을 직접 지우거나 고치지 마세요.",
     # 결과 안내
     "ref_done_saved": "저장했어요.", "ref_done_deleted": "지웠어요.", "ref_done_file": "파일에서 올렸어요.",
-    "ref_note_cp949": "옛 메모장 글자 모양(CP949)으로 읽었어요. 글자가 깨져 보이면 UTF-8 로 저장해 다시 올려 주세요.",
+    "ref_vanished": "열어 둔 글이 보관함에서 사라졌어요. 저장하면 새 글로 보관돼요.",
+    "ref_note_cp949": "옛 메모장 방식의 글자로 읽었어요. 글자가 깨져 보이면 메모장의 다른 이름으로 저장에서 아래쪽 인코딩 칸을 바꿔 저장한 뒤 다시 올려 주세요.",
     "ref_fail_load": "보관한 글을 읽지 못했어요. 파일은 고치거나 지우지 않았어요. 아래 다시 읽기를 눌러 주세요.", "ref_reload": "다시 읽기", "ref_reload_a11y": "보관한 글 목록 다시 읽기",
     "ref_fail_other": "처리하지 못했어요. 잠시 뒤 다시 해 주세요.", "ref_fail_delete": "글 파일을 지우지 못했어요. 다른 프로그램이 그 파일을 쓰고 있지 않은지 확인한 뒤 다시 해 주세요.", "ref_fail_folder": "참고 글을 보관할 폴더를 쓸 수 없어요. 데이터 폴더 설정을 확인해 주세요.", "ref_none_selected": "먼저 목록에서 글을 열어 주세요.",
 }

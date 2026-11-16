@@ -261,7 +261,26 @@ class ShapeTest(Base):
         self.assertFalse(self.vault.exists(), "열기만 해서는 보관함 폴더도 만들어지지 않는다")
         self.assertEqual(window.dialog.accessibleName(), T["ref_title"])
 
-    def test_every_button_has_a_name_a_hit_size_and_the_tab_order_reaches_all_of_them(self):
+    def test_opened_directly_without_the_style_dialog_tab_still_stays_inside(self):
+        """변이 Q19 — 문체 보기 대화상자를 거치면 바깥 위젯의 포커스는 이미 잠겨 있다. 보관함을 곧바로 열어도(`references_open`) Tab·Shift+Tab 이 대화상자 밖으로 새지 않는다."""
+        self.add_post("글", "본문")
+        window = self.make()
+        form = window.references_open()
+        self.settle(10)
+        self.assertIsNotNone(form)
+        form.save_button.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        self.assertIs(QApplication.focusWidget(), form.save_button)
+        QTest.keyClick(form.save_button, Qt.Key_Tab)
+        self.settle(2)
+        self.assertTrue(form.isAncestorOf(QApplication.focusWidget()), "마지막에서 Tab 을 눌렀더니 대화상자 밖으로 나갔다")
+        form.scroll.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        QTest.keyClick(form.scroll, Qt.Key_Backtab)
+        self.settle(2)
+        self.assertTrue(form.isAncestorOf(QApplication.focusWidget()), "처음에서 Shift+Tab 을 눌렀더니 대화상자 밖으로 나갔다")
+
+    def test_every_button_has_a_name_a_hit_size_and_a_focus_policy(self):
         window, form = self.vault_window()
         self.add_post("글", "본문")
         window.references.refresh()
@@ -276,6 +295,34 @@ class ShapeTest(Base):
                 self.assertNotEqual(button.focusPolicy(), Qt.NoFocus)
         names = [button.accessibleName() for button in buttons]
         self.assertEqual(len(names), len(set(names)), "접근 이름이 겹치지 않는다")
+
+    def tab_walk(self, key, steps):
+        seen = [QApplication.focusWidget()]
+        for _ in range(steps):
+            QTest.keyClick(QApplication.focusWidget(), key)
+            self.settle(1)
+            seen.append(QApplication.focusWidget())
+        return seen
+
+    def test_tab_and_shift_tab_walk_the_parts_in_the_visible_order_and_stay_inside_the_dialog(self):
+        """검증자 Q-07 — 옛 시험은 이름과 달리 Tab 을 한 번도 누르지 않았다. 실제로 Tab·Shift+Tab 을 눌러: 몸(스크롤) → 목록의 `열기`들 → 제목 → 본문 → 지우기 → 파일에서 올리기 → 새 글 → 닫기 → 저장 → 다시 몸. 대화상자 밖으로 새지 않고 거꾸로도 같다."""
+        self.add_post("첫째 글", "첫째 본문")
+        self.add_post("둘째 글", "둘째 본문")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])
+        expected = [form.scroll, form.open_buttons[0], form.open_buttons[1], form.title_input, form.body, form.delete_button, form.pick_button, form.new_button, form.close_button, form.save_button]
+        form.scroll.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        self.assertIs(QApplication.focusWidget(), expected[0])
+        names = lambda widgets: [getattr(widget, "accessibleName", lambda: "?")() for widget in widgets]
+        forward = self.tab_walk(Qt.Key_Tab, len(expected))
+        self.assertEqual(forward[:-1], expected, names(forward))
+        self.assertIs(forward[-1], expected[0], "마지막에서 Tab 을 누르면 대화상자 안의 처음으로 돌아온다 — 바깥으로 새지 않는다")
+        backward = self.tab_walk(Qt.Key_Backtab, len(expected))
+        self.assertEqual(backward[:-1], [expected[0]] + expected[:0:-1], names(backward))
+        self.assertIs(backward[-1], expected[0], "Shift+Tab 도 한 바퀴 돌면 제자리다")
+        for widget in forward + backward:
+            self.assertTrue(form.isAncestorOf(widget), "포커스가 대화상자 밖으로 나갔다")
 
     def test_the_dialog_is_760_wide_and_never_wider_than_ninety_four_percent_of_the_window(self):
         self.assertEqual(references_dialog.DIALOG_WIDTH, 760)
@@ -577,20 +624,91 @@ class ListEditTest(Base):
         self.assertEqual(len(form.open_buttons), 12)
         self.assertFalse(self.in_view(form, form.title_input), "처음에는 편집 칸이 목록 아래에 있다(스크롤 전)")
         self.assertEqual(form.scroll.verticalScrollBar().value(), 0)
-        self.click(form.open_buttons[7])
+        self.assertIs(QApplication.focusWidget(), form.title_input, "처음 포커스는 이미 제목 칸에 있다 — 포커스가 옮겨 가며 저절로 스크롤되는 일이 없다(검증자 Q 의 재현과 같은 길)")
+        window.references_select(window.references.rows[7].ref_id)
         self.settle(4)
         self.assertGreater(form.scroll.verticalScrollBar().value(), 0, "편집 칸이 보이도록 몸이 스크롤됐다")
         self.assertTrue(self.in_view(form, form.title_input), "제목 칸이 몸의 보이는 영역 안에 있다")
         self.assertIs(QApplication.focusWidget(), form.title_input)
         self.assertEqual(form.title_input.text(), "글 4", "목록은 새 것 먼저 — 8번째가 5번째로 만든 글이다")
 
+    def test_clicking_the_open_button_of_a_far_down_post_also_shows_the_editor(self):
+        """마우스로 `열기` 를 누르는 길(눌린 단추가 지워지며 포커스가 옮겨 간다)도 같다."""
+        for number in range(12):
+            self.add_post(f"글 {number}", f"본문 {number}")
+        window, form = self.vault_window(size=(900, 560))
+        self.click(form.open_buttons[7])
+        self.settle(4)
+        self.assertTrue(self.in_view(form, form.title_input))
+        self.assertEqual(form.title_input.text(), "글 4")
+
+    def test_the_open_row_is_marked_in_the_visible_text_and_in_the_spoken_name_and_only_that_row(self):
+        """검증자 Q-10·변이 Q13 — 열린 글 줄은 파랑뿐 아니라 보이는 글자와 접근 이름 둘 다에 '지금 편집 중' 이 있다."""
+        self.add_post("첫째 글", "첫째 본문")
+        self.add_post("둘째 글", "둘째 본문")
+        window, form = self.vault_window()
+        labels = lambda: [label for label in form.rows_host.findChildren(QLabel) if label.isVisibleTo(form)]
+        self.assertFalse(any("지금 편집 중" in self.lt(label) + label.accessibleName() for label in labels()))
+        self.click(form.open_buttons[0])
+        marked = [label for label in labels() if "지금 편집 중" in self.lt(label)]
+        self.assertEqual(len(marked), 1)
+        self.assertTrue(self.lt(marked[0]).startswith("둘째 글 · "))
+        spoken = marked[0].accessibleName()
+        self.assertIn(", 지금 편집 중", spoken, "읽어 주는 이름은 쉼표로 이어지는 말이다")
+        self.assertNotIn(" · ", spoken, "보이는 글(가운뎃점으로 이어진다)과 같은 글이 아니다")
+        self.assertTrue(spoken.startswith("둘째 글, "), spoken)
+        others = [label for label in labels() if label is not marked[0]]
+        self.assertEqual(len(others), 1)
+        self.assertNotIn("지금 편집 중", self.lt(others[0]) + others[0].accessibleName())
+
+    def test_a_post_that_was_deleted_outside_while_open_leaves_its_text_as_an_unsaved_new_post_and_says_so(self):
+        """독립 검증 Q-04 — 열어 둔 글이 바깥에서 지워진 뒤 목록을 다시 읽으면(`파일에서 올리기` 가 그 길이다) 편집 칸의 글이 변경 표시 없이 남아 닫기·새 글이 묻지 않고 버렸다."""
+        first = self.add_post("첫째 글", "첫째 본문")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])
+        form.body.setPlainText("고치던 본문 " + BODY_MARK)
+        self.settle(2)
+        ref_service.delete_reference(self.ctx, first.ref_id, confirmed=True)                    # 바깥에서 지웠다
+        folder = self.root / "내 글 모음"
+        folder.mkdir(exist_ok=True)
+        (folder / "다른 글.txt").write_text("새로 올린 본문", encoding="utf-8")
+        self.picker.paths = [str(folder / "다른 글.txt")]
+        self.click(form.pick_button)
+        self.assertEqual(self.lt(form.heading), T["ref_editor_new"], "새 글 모습으로 바뀐다")
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"], "칸의 글은 저장 안 한 새 글이다")
+        self.assertEqual(self.lt(form.notice), T["ref_done_file"] + " " + T["ref_vanished"])
+        self.assertEqual(form.body.toPlainText(), "고치던 본문 " + BODY_MARK, "칸의 글은 그대로다")
+        self.assertFalse(form.delete_button.isEnabled())
+        self.click(form.close_button)
+        self.assertEqual(window.references.pending, ("close",), "확인 없이 닫히지 않는다")
+        self.assertIn(T["ref_discard_q_close"], self.texts(form))
+        self.click(form.confirm_buttons[-1])
+        self.assertEqual(len(self.vault_files()), 1, "올린 파일 하나뿐")
+        self.save(window)                                                                         # 저장하면 새 글로 보관된다
+        self.assertEqual(len(self.vault_files()), 2)
+        self.assertEqual(self.lt(form.notice), T["ref_done_saved"])
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+
+    def test_typing_after_saving_takes_back_the_saved_notice_on_the_screen(self):
+        """검증자 Q-09 — 저장한 뒤 다시 고치면 '저장하지 않은 변경이 있어요.' 와 '저장했어요.' 가 한 화면에 같이 남았다."""
+        window, form = self.vault_window()
+        self.type_post(form, "제목", "본문")
+        self.save(window)
+        self.assertEqual(self.lt(form.notice), T["ref_done_saved"])
+        form.body.insertPlainText("더")
+        self.settle(2)
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+        self.assertFalse(form.notice.isVisibleTo(form), "저장했다는 안내는 거둔다")
+
     def test_opening_a_post_in_the_default_window_with_a_long_list_also_shows_the_editor(self):
         for number in range(30):
             self.add_post(f"글 {number}", f"본문 {number}")
         window, form = self.vault_window()
-        self.click(form.open_buttons[20])
+        self.assertFalse(self.in_view(form, form.title_input))
+        window.references_select(window.references.rows[20].ref_id)
         self.settle(4)
         self.assertTrue(self.in_view(form, form.title_input))
+        self.assertEqual(form.title_input.text(), "글 9")
 
 
 # ---- 5-2) 본문 통일(독립 검증 S-2) — 저장한 글이 곧 편집 칸의 글이다 -------------------------------------------------------------------------
@@ -977,6 +1095,26 @@ class DeleteTest(Base):
         self.assertEqual(len(self.vault_files()), 2)
         self.assertEqual(self.outside_editors(window, [NAME_MARK, "접근 거부", str(self.root / NAME_MARK)]), [])
         self.assertEqual(window.references.delete_step, 0)
+
+    def test_only_the_second_confirmation_button_looks_dangerous(self):
+        """변이 Q11 — 1단계의 `계속` 은 보통 모양이고 2단계의 `지우기` 만 위험한(빨강) 모양이다."""
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        self.assertEqual(form.confirm_buttons[0].property("kind"), "secondary")
+        self.click(form.confirm_buttons[0])
+        self.assertEqual(form.confirm_buttons[0].property("kind"), "danger")
+        self.assertEqual(form.confirm_buttons[0].text(), T["ref_delete_yes"])
+        self.assertEqual(form.confirm_buttons[1].property("kind"), "ghost", "그만두기는 조용한 모양")
+
+    def test_after_a_failed_delete_the_focus_goes_back_to_the_title_field(self):
+        """변이 Q16 — 지우기가 거절되면 포커스가 사라진 확인 줄에 남지 않고 제목 칸으로 돌아온다."""
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        self.click(form.confirm_buttons[0])
+        with mock.patch.object(Path, "unlink", side_effect=PermissionError(errno.EACCES, "접근 거부", str(self.root / NAME_MARK))):
+            self.click(form.confirm_buttons[0])
+        self.assertTrue(self.message(form))
+        self.assertIs(QApplication.focusWidget(), form.title_input)
 
     def test_the_delete_button_is_not_reachable_by_a_stale_answer_after_the_dialog_was_closed(self):
         window, form, first, second = self.open_one()

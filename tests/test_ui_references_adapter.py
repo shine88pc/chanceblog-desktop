@@ -74,6 +74,55 @@ class ProviderTest(AdapterCase):
             else:
                 self.fail("거절되지 않았다")
 
+    def refusal_of(self, call):
+        with self.assertRaises(rv.ReferencesRefusal) as caught:
+            call()
+        return caught.exception.message
+
+    def test_the_vault_refusals_are_one_easy_sentence_not_the_stiff_common_one(self):
+        """검증자 Q-08 — 보관함이 직접 거절한 것은 대화상자 나머지와 같은 해요체 한 문장이다('다음 칸의 값이 올바르지 않습니다: 「…」' 가 아니다)."""
+        self.assertEqual(self.refusal_of(lambda: self.provider.add("", "본문")), "제목을 적어 주세요.")
+        self.assertEqual(self.refusal_of(lambda: self.provider.add("가" * 81, "본문")), "제목은 80자까지만 적을 수 있어요.")
+        self.assertEqual(self.refusal_of(lambda: self.provider.add("제목", "   ")), self.refusal_of(lambda: self.provider.add("제목", "")))
+        for sentence in (self.refusal_of(lambda: self.provider.add("", "본문")), self.refusal_of(lambda: self.provider.add("제목", "x" * 100001))):
+            self.assertNotIn("다음 칸의 값이", sentence)
+            self.assertNotIn("「", sentence)
+            self.assertNotIn("습니다", sentence)
+            self.assertTrue(sentence.endswith("."))
+        full = "".join(self.provider.add(f"글 {number}", "본문") and "" for number in range(50))
+        self.assertEqual(full, "")
+        self.assertEqual(self.refusal_of(lambda: self.provider.add("쉰한째", "본문")), "참고 글은 50개까지만 보관할 수 있어요. 쓰지 않는 글을 지운 뒤 다시 올려 주세요.")
+
+    def test_a_secret_shape_refusal_names_only_the_place_and_the_kind_in_one_easy_sentence(self):
+        sentence = self.refusal_of(lambda: self.provider.add("제목", "첫 줄\n" + ss.KEY + "\n끝"))
+        self.assertIn("그 부분을 지운 뒤 다시 올려 주세요", sentence)
+        self.assertIn("본문", sentence)
+        self.assertNotIn(ss.KEY, sentence)
+        self.assertNotIn("다음 칸의 값이", sentence)
+        self.assertTrue(sentence.endswith("."))
+
+    def test_sentences_of_other_errors_are_unchanged(self):
+        """보관함이 쓰지 않은 오류 — 다른 곳의 CONTENT_INVALID(항목이 보관함 것이 아님)·쓰기 실패·못 찾음 — 는 앱 공통 문장 그대로다(앱 전체의 공통 문장은 건드리지 않았다)."""
+        other = AppError("CONTENT_INVALID", {"항목": "다른 곳의 칸"}, detail="세부 " + MARK_BODY)
+        self.assertEqual(adapter.sentence_of(other), other.rendered().message)
+        self.assertIn("다음 칸의 값이", adapter.sentence_of(other))
+        self.assertNotIn(MARK_BODY, adapter.sentence_of(other))
+        missing = AppError("CONTENT_NOT_FOUND", {"항목": "없는 참고 글"}, detail="없음")
+        self.assertEqual(adapter.sentence_of(missing), missing.rendered().message)
+        failed = AppError("FILE_WRITE_FAILED", {"경로": "참고 글 보관함 폴더"}, detail="x")
+        self.assertEqual(adapter.sentence_of(failed), failed.rendered().message)
+        self.assertEqual(adapter.sentence_of(failed, T["ref_fail_delete"]), T["ref_fail_delete"])
+        self.assertEqual(adapter.sentence_of(AppError("UNEXPECTED_ERROR", {}, detail="x")), T["ref_fail_other"])
+
+    def test_the_reason_is_taken_only_when_the_item_starts_with_the_vault_subject(self):
+        from chanceblog_desktop.service import references as service
+        tricky = AppError("CONTENT_INVALID", {"항목": "다른 곳 — " + service.SUBJECT + " — 속임수"}, detail="x")
+        self.assertEqual(adapter.sentence_of(tricky), tricky.rendered().message)
+        mine = AppError("CONTENT_INVALID", {"항목": f"{service.SUBJECT} — 제목을 적어 주세요"}, detail="x")
+        self.assertEqual(adapter.sentence_of(mine), "제목을 적어 주세요.")
+        self.assertEqual(adapter.sentence_of(AppError("CONTENT_NOT_FOUND", {"항목": f"{service.SUBJECT} — 가짜"}, detail="x")), AppError("CONTENT_NOT_FOUND", {"항목": f"{service.SUBJECT} — 가짜"}, detail="x").rendered().message,
+                         "CONTENT_INVALID 가 아닌 오류의 항목은 이유로 쓰지 않는다")
+
     def test_a_failed_delete_has_its_own_sentence_and_a_failed_save_keeps_the_service_sentence(self):
         row = self.provider.add("지울 글", "지울 본문")
         with mock.patch.object(Path, "unlink", side_effect=PermissionError(errno.EACCES, "접근 거부 " + MARK_BODY, str(self.tmp / MARK_BODY))):

@@ -181,6 +181,7 @@ class ReferenceLibrary:
         self.mode = "new"                           # new = 새 글 올리기, edit = 열린 글 고치기
         self.current = None                         # 열린 글의 번호(새 글이면 None)
         self.baseline = digest("", "")              # 열릴 때(저장했을 때)의 지문 — 지금 편집 칸의 지문과 견준다
+        self.box_print = self.baseline              # 편집 칸이 마지막으로 알려 온 글의 지문(글은 쥐지 않는다) — 열어 둔 글이 사라졌을 때 변경 표시를 다시 정한다
         self.dirty = False
         self.delete_step, self.delete_target = 0, None
         self.pending = None                         # 저장 안 한 변경 확인이 기다리는 일 — `("select", 번호)`·`("new",)`·`("close",)`·`("quit",)`(없으면 None)
@@ -253,8 +254,12 @@ class ReferenceLibrary:
             return False
         self.rows, self.skipped, self.loaded, self.load_failed = tuple(listing.rows), int(listing.skipped), True, False
         if self.current is not None and all(row.ref_id != self.current for row in self.rows):
-            self.current, self.mode, self.dirty = None, "new", False        # 열려 있던 글이 사라졌다(다른 곳에서 지움) — 새 글 모습으로
-            self.baseline = digest("", "")
+            gone = self.current                                              # 열려 있던 글이 사라졌다(다른 곳에서 지움) — 새 글 모습으로 바뀐다. 편집 칸의 글은 그대로이므로 칸에 글이 있으면 저장 안 한 새 글이다
+            self.current, self.mode, self.baseline = None, "new", digest("", "")
+            self.dirty = self.box_print != self.baseline                     # 그래서 닫기·새 글이 확인 없이 버리지 않는다(검증자 Q-04)
+            if self.delete_target == gone:
+                self.cancel_delete()                                         # 사라진 글의 지우기 확인은 그만둔다
+            self.notice = f"{self.notice} {T['ref_vanished']}".strip()       # 파일에서 올린 안내 같은 앞 안내 뒤에 덧붙인다
         return True
 
     def apply_failed(self, ticket, message):
@@ -290,7 +295,7 @@ class ReferenceLibrary:
         if not self.is_open or ticket != self.generation:
             return False
         self.mode, self.current, self.dirty = "edit", opened.ref_id, False
-        self.baseline = digest(opened.title, opened.body)
+        self.baseline = self.box_print = digest(opened.title, opened.body)
         self.delete_step, self.delete_target, self.pending = 0, None, None
         self.message = self.notice = ""
         return True
@@ -305,7 +310,7 @@ class ReferenceLibrary:
             return "dirty"
         self.begin()
         self.mode, self.current, self.dirty = "new", None, False
-        self.baseline = digest("", "")
+        self.baseline = self.box_print = digest("", "")
         self.delete_step, self.delete_target, self.pending = 0, None, None
         self.message = self.notice = ""
         return "ready"
@@ -350,7 +355,7 @@ class ReferenceLibrary:
         칸이 글을 되읽으며 글자(줄 끝 같은 것)를 바꿔도 열자마자 '저장하지 않은 변경이 있어요' 가 켜지지 않는다(사용자가 아직 아무것도 안 쳤으므로). 글은 쥐지 않고 지문만 쥔다."""
         if not self.is_open:
             return False
-        self.baseline = digest(title if isinstance(title, str) else "", body if isinstance(body, str) else "")
+        self.baseline = self.box_print = digest(title if isinstance(title, str) else "", body if isinstance(body, str) else "")
         self.dirty = False
         return True
 
@@ -358,7 +363,10 @@ class ReferenceLibrary:
         """편집 칸이 바뀌었다 — 지문만 견주어 저장 안 한 변경 표시를 정한다(글은 쥐지 않는다) → `dirty`."""
         if not self.is_open:
             return False
-        self.dirty = digest(title if isinstance(title, str) else "", body if isinstance(body, str) else "") != self.baseline
+        self.box_print = digest(title if isinstance(title, str) else "", body if isinstance(body, str) else "")
+        self.dirty = self.box_print != self.baseline
+        if self.dirty and self.notice == T["ref_done_saved"]:
+            self.notice = ""                                                 # 저장한 뒤 다시 고치면 '저장했어요.' 안내를 거둔다(변경 표시와 같이 남지 않게)
         return self.dirty
 
     def save(self, title, body):
@@ -377,7 +385,7 @@ class ReferenceLibrary:
             return "refused" if self.apply_failed(ticket, message) else "stale"
         if ticket != self.generation:
             return "stale"
-        self.mode, self.current, self.dirty, self.baseline = "edit", row.ref_id, False, fresh
+        self.mode, self.current, self.dirty, self.baseline, self.box_print = "edit", row.ref_id, False, fresh, fresh
         self.message, self.notice, self.delete_step, self.delete_target, self.pending = "", T["ref_done_saved"], 0, None, None
         self.refresh()
         return "saved"
@@ -437,6 +445,7 @@ class ReferenceLibrary:
         if ticket != self.generation:
             return "stale"
         self.mode, self.current, self.dirty, self.baseline, self.pending = "new", None, False, digest("", ""), None
+        self.box_print = self.baseline
         self.message, self.notice = "", T["ref_done_deleted"]
         self.refresh()
         return "deleted"
@@ -455,7 +464,7 @@ class ReferenceLibrary:
             title = display_text(row.title, TITLE_MAX)
             fields = {"title": title, "chars": f"{row.chars:,}", "when": when_text(row.updated_at)}
             selected = row.ref_id == self.current
-            rows.append({"id": row.ref_id, "label": T["ref_row"].format(**fields), "selected": selected,
+            rows.append({"id": row.ref_id, "label": T["ref_row_selected" if selected else "ref_row"].format(**fields), "selected": selected,
                          "a11y": T["ref_row_selected_a11y" if selected else "ref_row_a11y"].format(**fields),
                          "open": {"text": T["ref_open"], "a11y": T["ref_open_a11y"].format(title=title)}})
         editing = self.mode == "edit" and self.current is not None

@@ -92,8 +92,10 @@ class ReferencesDialog(QWidget):
         self.reload_button.setVisible(False)
         self.skipped = UI.label("", "small", wrap=True)
         self.skipped.set_tone("blue")
-        for widget in (self.list_title, self.list_count, self.rows_host, self.list_note, self.reload_button, self.skipped):
+        for widget in (self.list_title, self.list_count, self.rows_host, self.list_note):
             column.addWidget(widget)
+        column.addWidget(self.reload_button, 0, Qt.AlignLeft)                       # 몸 폭 가득 늘어나지 않게 왼쪽에 둔다
+        column.addWidget(self.skipped)
 
     def _build_editor(self, column):
         self.heading = UI.label(T["ref_editor_new"], "h3", wrap=True)
@@ -234,6 +236,8 @@ class ReferencesDialog(QWidget):
         self.body_count.setAccessibleName(vm["editor"]["count_a11y"])
         self.editor_state.set_text(vm["editor"]["state"])
         self.editor_state.setVisible(bool(vm["editor"]["state"]))
+        self.notice.set_text(vm["notice"])                                                # 저장한 뒤 다시 고치면 '저장했어요.' 를 거둔다(변경 표시와 같이 남지 않게)
+        self.notice.setVisible(bool(vm["notice"]))
 
     # ---- 그리기 ----
     def refresh(self):

@@ -207,6 +207,8 @@ core/references_view.py(ReferenceLibrary — 상태·세대 번호·뷰모델, R
 ui/references_adapter.py(ServiceReferencesProvider) → service/references.py(저장·읽기·지우기 — 화면 없음)
 ```
 
+**Tab 순서**: 몸(스크롤) → 목록의 `열기`들 → `다시 읽기`(목록을 못 읽었을 때만 보인다) → 제목 칸 → 본문 칸 → 확인 줄 단추 → `지우기` → `파일에서 올리기` → `새 글` → `닫기` → `저장`. 안 보이거나 꺼진 부품은 Qt 가 건너뛰고, 실제로 Tab·Shift+Tab 을 눌러 이 순서와 대화상자 밖으로 새지 않음을 시험이 본다. 글을 열면 편집 칸(제목 칸)이 보이는 곳으로 스크롤되고 포커스가 제목 칸에 간다. 열린 글 줄은 파랑과 '지금 편집 중' 글자·접근 이름 둘 다로 표시한다.
+
 문구는 `ui/core/text.py` 의 `T` 가 정본이다. 상태별 동작은 `UI_STATES.md` 5-6d, 화면 규칙은 `UI_DESIGN_SPEC.md` 4-9 에 있다. **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 16절).
 
 ## 4. 새 부품을 더할 때

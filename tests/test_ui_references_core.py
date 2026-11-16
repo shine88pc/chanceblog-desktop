@@ -121,6 +121,22 @@ class SelectEditTest(unittest.TestCase):
         self.assertTrue(view["buttons"]["delete"]["enabled"])
         self.assertEqual([row["selected"] for row in view["list"]["rows"]], [False, True])
 
+    def test_the_open_row_has_a_visible_marker_and_a_spoken_name_and_the_others_do_not(self):
+        """검증자 Q-10(색만으로 표시하지 않는다)·변이 C17 — 열린 글 줄은 파랑뿐 아니라 보이는 글자('지금 편집 중')와 읽어 주는 이름 둘 다에 표시가 있고, 다른 줄에는 없다."""
+        library, _ = make()
+        library.open()
+        library.select("bbbbbbbb")
+        rows = {row["id"]: row for row in library.view()["list"]["rows"]}
+        self.assertTrue(rows["bbbbbbbb"]["selected"])
+        self.assertTrue(rows["bbbbbbbb"]["label"].endswith(" · 지금 편집 중"), rows["bbbbbbbb"]["label"])
+        self.assertTrue(rows["bbbbbbbb"]["a11y"].endswith(", 지금 편집 중"), rows["bbbbbbbb"]["a11y"])
+        self.assertEqual(rows["bbbbbbbb"]["a11y"], T["ref_row_selected_a11y"].format(title="둘째 글", chars="9", when="2026-11-15 11:00"))
+        self.assertNotIn("지금 편집 중", rows["aaaaaaaa"]["label"])
+        self.assertNotIn("지금 편집 중", rows["aaaaaaaa"]["a11y"])
+        self.assertEqual(rows["aaaaaaaa"]["a11y"], T["ref_row_a11y"].format(title="첫 글", chars="4", when="2026-11-15 10:00"))
+        library.new_post()
+        self.assertFalse(any("지금 편집 중" in row["label"] + row["a11y"] for row in library.view()["list"]["rows"]))
+
     def test_editing_marks_unsaved_changes_by_comparing_fingerprints_only(self):
         library, _ = make()
         library.open()
@@ -281,13 +297,83 @@ class StaleResultTest(unittest.TestCase):
         library.open()
         self.assertEqual((library.current, library.dirty, library.mode), (None, False, "new"))
 
-    def test_when_the_open_post_disappears_from_the_list_the_editor_returns_to_new(self):
+    def test_when_the_open_post_disappears_from_the_list_the_editor_returns_to_new_and_the_text_left_in_the_box_counts_as_unsaved(self):
+        """독립 검증 Q-04 — 열어 둔 글이 바깥에서 지워져 목록에서 사라지면 새 글 모습으로 바뀌지만 편집 칸의 글은 그대로다. 그 글은 저장 안 한 새 글이므로 변경 표시가 켜져 닫기·새 글이 확인 없이 버리지 않는다(옛 시험은 여기서 dirty=False 를 못박고 있었다)."""
         library, provider = make()
         library.open()
         library.select("aaaaaaaa")
         del provider.items["aaaaaaaa"]
         library.refresh()
+        self.assertEqual((library.current, library.mode, library.dirty), (None, "new", True))
+        self.assertEqual(library.notice, T["ref_vanished"])
+        self.assertEqual(library.view()["editor"]["state"], T["ref_dirty"])
+        self.assertEqual(library.leave("close"), "ask", "칸의 글이 확인 없이 버려지지 않는다")
+        library.keep_editing()
+        self.assertEqual(library.new_post(), "dirty")
+
+    def test_a_box_that_was_already_emptied_is_clean_when_its_post_vanishes(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        library.edited("", "")
+        del provider.items["aaaaaaaa"]
+        library.refresh()
         self.assertEqual((library.current, library.mode, library.dirty), (None, "new", False))
+        self.assertEqual(library.leave("close"), "go")
+
+    def test_saving_after_the_post_vanished_keeps_it_as_a_new_post_and_the_notice_is_replaced(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        library.edited("고친 제목", "고친 본문")
+        del provider.items["aaaaaaaa"]
+        library.refresh()
+        self.assertEqual(library.save("고친 제목", "고친 본문"), "saved")
+        self.assertNotEqual(library.current, "aaaaaaaa")
+        self.assertEqual((library.mode, library.dirty, library.notice), ("edit", False, T["ref_done_saved"]))
+        self.assertEqual(sorted(provider.items)[0], "bbbbbbbb")
+        self.assertEqual(len(provider.items), 2, "새 글로 보관됐다")
+
+    def test_the_notice_of_an_earlier_job_stays_and_the_vanished_one_follows_it(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        del provider.items["aaaaaaaa"]
+        self.assertEqual(library.add_file("C:/x/a.txt"), "added")
+        self.assertEqual(library.notice, T["ref_done_file"] + " " + T["ref_vanished"])
+
+    def test_the_delete_question_of_a_post_that_vanished_is_dropped(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        library.ask_delete()
+        del provider.items["aaaaaaaa"]
+        library.refresh()
+        self.assertEqual((library.delete_step, library.delete_target), (0, None))
+        self.assertEqual(library.advance_delete(), "idle")
+        self.assertNotIn("delete", provider.calls)
+
+    def test_a_post_that_did_not_vanish_keeps_the_open_state_and_adds_no_notice(self):
+        library, provider = make()
+        library.open()
+        library.select("aaaaaaaa")
+        del provider.items["bbbbbbbb"]
+        library.refresh()
+        self.assertEqual((library.current, library.mode, library.dirty, library.notice), ("aaaaaaaa", "edit", False, ""))
+
+    def test_editing_again_after_saving_takes_back_the_saved_notice(self):
+        """검증자 Q-09 — 저장한 뒤 다시 고치면 '저장하지 않은 변경이 있어요.' 와 '저장했어요.' 가 한 화면에 같이 남았다."""
+        library, _ = make(items={})
+        library.open()
+        library.edited("글", "본문")
+        self.assertEqual(library.save("글", "본문"), "saved")
+        self.assertEqual(library.notice, T["ref_done_saved"])
+        self.assertFalse(library.edited("글", "본문"), "그대로면 안내가 남는다")
+        self.assertEqual(library.notice, T["ref_done_saved"])
+        self.assertTrue(library.edited("글", "본문 고침"))
+        self.assertEqual(library.notice, "", "고치면 저장했다는 안내를 거둔다")
+        self.assertFalse(library.edited("글", "본문"))
+        self.assertEqual(library.notice, "", "다시 되돌려도 안내는 돌아오지 않는다")
 
 
 class DeleteTest(unittest.TestCase):
@@ -433,6 +519,16 @@ class LeaveEscapeTest(unittest.TestCase):
         self.assertEqual((library.escape(), library.pending), ("keep_editing", ("close",)), "묻는 중에 Esc 는 닫지 않고 계속 고치는 쪽이다(여기서는 상태만 정하고 화면이 `keep_editing` 을 한다)")
         library.keep_editing()
         self.assertIsNone(library.pending)
+
+    def test_escape_looks_at_the_delete_question_before_the_discard_question_even_if_both_were_forced(self):
+        """두 질문은 이제 함께 열리지 않지만(검증자 Q-03) 규칙의 순서는 못박아 둔다 — 지우기 확인이 먼저, 그다음 버릴지 묻는 중, 그다음 저장 안 한 변경(변이 C04)."""
+        library, _ = self.dirty_library()
+        library.delete_step, library.delete_target, library.pending = 1, "aaaaaaaa", ("close",)
+        self.assertEqual(library.escape(), "cancel_delete")
+        library.delete_step, library.delete_target = 0, None
+        self.assertEqual(library.escape(), "keep_editing")
+        library.pending = None
+        self.assertEqual(library.escape(), "ask_close")
 
     def test_escape_cancels_a_delete_confirmation_before_anything_else(self):
         library, provider = self.dirty_library()
