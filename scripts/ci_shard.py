@@ -160,6 +160,20 @@ def main(argv=None, env=None):
     everything = sum(len(items) for items in found.values())
     print(f"조각 {shard}/{total}: 시험 파일 {len(mine)}개·시험 {len(tests):,}개 (전체 {len(found)}개 파일·{everything:,}개 시험)", flush=True)
     result = make_runner().run(unittest.TestSuite(tests))
+    if not result.wasSuccessful():                         # 진단용(병합하지 않는 가지): 실패한 시험 이름과 마지막 줄을 주석으로 남긴다
+        import re as _re
+
+        def _note(kind, test, tb):
+            lines = [line for line in tb.strip().splitlines() if line.strip()]
+            text = " | ".join(lines[-4:])
+            text = _re.sub(r"\d{10,}", "#", text)[:700]
+            text = text.replace("%", "%25").replace("", "%0D").replace("
+", "%0A").replace(":", "%3A").replace(",", "%2C")
+            print(f"::error title={kind} {test.id()[-90:]}::{text}", flush=True)
+        for test, tb in list(result.failures)[:8]:
+            _note("FAIL", test, tb)
+        for test, tb in list(result.errors)[:8]:
+            _note("ERROR", test, tb)
     return 0 if result.wasSuccessful() else 1
 
 
