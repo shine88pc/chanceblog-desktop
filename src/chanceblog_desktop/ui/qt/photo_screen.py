@@ -189,6 +189,21 @@ class PhotoSheet(QWidget):
     def relink(self, photo_id):
         return self.shell.photos_relink(photo_id)
 
+    def advance(self, photo_id, name):
+        """Enter 뒤의 포커스 — 대상 칸에서는 같은 사진의 메모 칸으로, 메모 칸에서는 다음 사진의 대상 칸으로 간다(다음이 없거나 다른 칸이면 그대로 둔다)."""
+        cards = self.ordered_cards()
+        ids = [card.photo_id for card in cards]
+        if photo_id not in ids:
+            return
+        index = ids.index(photo_id)
+        target = None
+        if name == "user_subject":
+            target = cards[index].note.edit
+        elif name == "user_note" and index + 1 < len(cards):
+            target = cards[index + 1].subject.edit
+        if target is not None:
+            target.setFocus(Qt.TabFocusReason)
+
     def _flip_lists(self):
         opened = not self.lists_body.isVisible()
         self.lists_body.setVisible(opened)

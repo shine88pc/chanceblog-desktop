@@ -871,6 +871,34 @@ class KeyboardTest(PhotoBase):
         self.settle(4)
         self.assertIsNone(window.photo_form)
 
+    def test_enter_moves_from_the_subject_to_the_memo_and_from_the_memo_to_the_next_photos_subject(self):
+        """설계 5-3 — Enter 는 글을 넘기고 다음 칸으로 간다: 대상 칸 → 같은 사진의 메모 칸 → 다음 사진의 대상 칸(마지막 사진의 메모 칸에서는 그대로)."""
+        window, form = self.sheet()
+        board = window.state.drafts.photos
+        self.add_photos(form, fake_path(1), fake_path(2))
+        first, second = form.rows["p001"], form.rows["p002"]
+        first.subject.edit.setFocus(Qt.TabFocusReason)
+        QTest.keyClicks(first.subject.edit, "abc")
+        QTest.keyClick(first.subject.edit, Qt.Key_Return)
+        self.settle(3)
+        self.assertEqual(board.photo("p001").user_subject, "abc")
+        self.assertIs(QApplication.focusWidget(), first.note.edit)
+        QTest.keyClicks(first.note.edit, "memo")
+        QTest.keyClick(first.note.edit, Qt.Key_Return)
+        self.settle(3)
+        self.assertEqual(board.photo("p001").user_note, "memo")
+        self.assertIs(QApplication.focusWidget(), second.subject.edit)
+        QTest.keyClick(second.subject.edit, Qt.Key_Return)
+        self.settle(2)
+        self.assertIs(QApplication.focusWidget(), second.note.edit)
+        QTest.keyClick(second.note.edit, Qt.Key_Return)
+        self.settle(2)
+        self.assertIs(QApplication.focusWidget(), second.note.edit, "다음 사진이 없으면 그대로")
+        first.caption.edit.setFocus(Qt.TabFocusReason)
+        QTest.keyClick(first.caption.edit, Qt.Key_Return)
+        self.settle(2)
+        self.assertIs(QApplication.focusWidget(), first.caption.edit, "설명 글 칸의 Enter 는 칸을 옮기지 않는다")
+
     def test_focus_returns_to_the_card_button_that_opened_the_sheet(self):
         window = self.drafted()
         ui = self.ui(window)

@@ -47,6 +47,7 @@ class FieldBox(QWidget):
         self.edit.setProperty("focus_key", f"{focus_prefix}:{photo_id}")
         self.edit.textChanged.connect(self._live)
         self.edit.editingFinished.connect(self.commit)
+        self.edit.returnPressed.connect(self._enter)
         layout.addWidget(self.edit)
         self.error = UI.label("", "small", wrap=True)
         self.error.set_tone("red")
@@ -65,6 +66,11 @@ class FieldBox(QWidget):
             self.error.setVisible(True)
         elif not self.invalid:
             self.error.setVisible(False)
+
+    def _enter(self):
+        """Enter — 글을 규칙에 넘기고(`commit`) 다음 칸으로 간다(대상 칸 → 같은 사진의 메모 칸 → 다음 사진의 대상 칸)."""
+        self.commit()
+        self.sheet.advance(self.photo_id, self.name)
 
     def commit(self):
         """칸의 글을 한 번 규칙에 넘긴다 — 반영되면 정리한 글로 칸을 다시 채우고(포커스가 옮겨 간 뒤) 거절되면 칸의 글은 그대로 두고 이유만 보인다."""

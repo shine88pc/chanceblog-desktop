@@ -27,6 +27,7 @@ from chanceblog_desktop.ui.core import drafts, drafts_view as dv, imagerules as 
 
 T = text.T
 UI_CORE = ROOT / "src" / "chanceblog_desktop" / "ui" / "core"
+UI_QT = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
 USER_DIR, FILE_STEM = "UNIQ-USERDIR-q7w2", "UNIQ-FILE-k3x9"
 
 
@@ -744,6 +745,27 @@ class SourceRulesTest(unittest.TestCase):
         for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py", "ui/core/drafts.py", "ui/drafts_adapter.py"):
             if (src / untouched).exists():
                 self.assertNotIn("photo", (src / untouched).read_text(encoding="utf-8").lower(), untouched)
+
+    def test_every_tone_the_sheet_uses_has_a_readable_text_color_on_every_surface(self):
+        """글자 대비 — 사진 정리 화면이 글에 입히는 계열(`set_tone` 과 `TONE` 표)의 글자색은 바탕(면·앱 바탕·옅은 면) 어디서나 대비 4.5 이상이다(토큰 시험이 계열마다 따로도 지킨다 — 여기서는 이 화면이 실제로 쓰는 것만 본다)."""
+        from chanceblog_desktop.ui.core import tokens
+        colors = tokens.palette()
+        used = set()
+        for name in ("photo_parts.py", "photo_screen.py"):
+            tree = ast.parse((UI_QT / name).read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "set_tone":
+                    for argument in node.args:
+                        used |= {item.value for item in ast.walk(argument) if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+                if isinstance(node, ast.Assign) and any(getattr(target, "id", "") == "TONE" for target in node.targets):
+                    used |= {item.value for item in node.value.values if isinstance(item, ast.Constant)}
+        used &= set(tokens.TONES)                                                     # 인자에 든 다른 글(칸 이름 등)은 계열이 아니다
+        self.assertEqual(used, {"blue", "green", "orange", "red", "slate"}, "이 화면이 쓰는 계열 — 새 계열을 쓰면 여기서 대비를 다시 본다")
+        for tone in sorted(used):
+            text_color = colors[tokens.TONES[tone][2]]
+            for background in ("surface", "bg_app", "surface_2"):
+                self.assertGreaterEqual(tokens.contrast(text_color, colors[background]), 4.5, (tone, background))
+        self.assertGreaterEqual(tokens.contrast(colors["text_secondary"], colors["surface"]), 5.4, "보조 글(안내·글자 수·예시)은 5.4 이상")
 
     def test_the_pure_files_import_only_the_repository_modules_they_need(self):
         """순수 파일이 서비스·초안 저장·초안 목록 같은 쪽을 가져오지 않는다 — 이 저장소 안에서 가져오는 모듈이 정해진 것뿐이다."""
