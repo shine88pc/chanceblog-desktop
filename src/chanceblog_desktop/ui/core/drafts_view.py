@@ -22,6 +22,7 @@ from . import draft_rules as rules
 from .board_view import time_text
 from .drafts import DraftFailure, DraftRequest, DraftTarget, SaveRequest, review_health
 from .jobs import Job, JobFailure
+from .photo_view import PhotoBoard
 from .text import T
 
 DRAFT_KEY = "drafts-make"                                    # 초안을 만드는 작업의 이름(후보·홈·설정 읽기와 따로 돈다)
@@ -47,6 +48,7 @@ class DraftsController:
         self.list_notice = None                              # 목록 위의 알림 한 줄 `(level, 글)` — 지웠다·열지 못했다
         self.store_pending = None                            # 도는 저장 작업 하나 `{"op": save|list|open|delete, …}`
         self.save_problem = None                             # 마지막 저장 실패(`DraftFailure`) — 화면이 한 번 알리고 거둔다
+        self.photos = PhotoBoard()                           # 사진 정리(사진 연동 2단계, D-499) — 사진 목록은 메모리에만 있고 새 초안·떠남·저장한 초안 열기에서 비워진다(저장·불러오기는 3단계)
         self._clear_draft()
         self.state = "empty"
 
@@ -79,6 +81,7 @@ class DraftsController:
         self.opening = None                                  # 여는 중인 저장한 초안의 번호
         self.delete_asked = None                             # 지우기 확인창을 보인 저장한 초안의 번호
         self._cancel_garbage()                               # 새 초안·떠남 — 도는 글 모양 점검의 답은 받지 않고 결과·무시 기억을 지운다(저장하지 않는다)
+        self.photos.clear()                                  # 새 초안·떠남·저장한 초안 열기 — 사진 목록도 비운다(저장하지 않는다)
 
     # ---- 읽기(파일·폴더를 만들지 않는다) ----
     @property
@@ -898,7 +901,7 @@ class DraftsController:
         pending = self.options_pending()
         return {"open": self.options_open, "toggle": T["drf_options_close" if self.options_open else "drf_options_open"], "title": T["drf_options_title"], "note": T["drf_options_note"],
                 "blog_title": T["drf_blog_label"], "blogs": blogs, "type_title": T["drf_type_label"], "types": kinds, "fields": self._fields(),
-                "apply": {"text": T["drf_remake"], "tip": T["drf_remake_tip"], "enabled": not self.busy}, "pending": pending, "pending_text": T["drf_options_pending"] if pending else ""}
+                "apply": {"text": T["drf_remake"], "tip": T["drf_remake_tip"], "enabled": not self.busy}, "pending": pending, "pending_text": T["drf_options_pending"] if pending else "", "photos": self.photos.card()}
 
     def title_picks(self):
         """제목 후보 셋의 줄 — 지금 제목 칸의 글과 같은 후보가 선택으로 보인다(글을 칠 때마다 이것만 다시 만들어 보인다)."""
@@ -953,6 +956,7 @@ class DraftsController:
             "tags": {"title": T["drf_side_tags"], "items": [rules.shown(item, 40) for item in body.tags], "copy": self._copy_button("tags", T["drf_copy_tags"])},
             "category": {"title": T["drf_side_category"], "text": rules.shown(body.category, 60) if body.category else T["drf_category_none"], "missing": not body.category},
             "summary": {"title": T["drf_side_summary"], "text": rules.shown(body.summary, 200), "copy": self._copy_button("summary", T["drf_copy_summary"])},
+            "photos": self.photos.card(),
             "image": {"title": T["drf_side_image"], "state": self.image_state, "state_text": T["drf_image_skip" if self.image_state == "skip" else "drf_image_before"], "desc": T["drf_image_desc"],
                       "button": T["drf_image_undo" if self.image_state == "skip" else "drf_image_btn"], "button_a11y": T["drf_image_undo_a11y" if self.image_state == "skip" else "drf_image_btn_a11y"]},
             "checks": {"title": T["drf_side_checks"], "status": self._source_status(specific, common), "open_text": T["conn_group_open"], "closed_text": T["conn_group_closed"], "specific": {"key": "specific", "title": T["drf_chk_specific"], "lines": list(specific), "open": True, "empty": T["drf_chk_specific_none"], "chip": T["drf_chk_count"].format(n=len(specific)), "tone": "warning" if specific else "muted"},
