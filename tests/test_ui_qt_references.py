@@ -1,0 +1,1052 @@
+"""'참고 글 보관함'(결정 D-490)의 PySide6 시험 — 창을 화면에 띄우지 않고(offscreen) '내 글 문체 참고값 보기' 대화상자 안의 진입 단추와 보관함 대화상자(목록·붙여 넣어 올리기·파일에서 올리기·열어서 고쳐 저장·
+저장 안 한 변경 확인·지우기 두 단계·오류 문장·닫기)를 **진짜 서비스 + 임시 데이터 폴더**로 실제로 눌러 본다. **PySide6 가 없으면 통째로 건너뛴다**(저장소 CI 에는 PySide6 가 없다 — 그쪽은 계속 초록이다).
+모든 글·파일은 임시 폴더이고 이 PC 의 실제 데이터 폴더는 읽지도 쓰지도 않는다(가짜 파일 선택기·임시 데이터 폴더). 처음 띄워 본 날(2026-11-16) 찾아 고친 것: 거절 문장·확인 줄이 스크롤 안쪽 아래에 있어 안 보였고, Esc 가 확인 없이 닫았다.
+
+지키는 것:
+  · 진입 — 문체 보기 대화상자에 단추가 하나 늘었고(접근 이름·36px 이상·Tab 정거장), 누르면 보관함이 열리며 문체 보기의 나머지 동작은 그대로다.
+  · 흐름 — 빈 상태 문구·붙여 넣어 올리기(정상·빈 제목·너무 긴 제목·비밀 모양·너무 긴 본문)·파일에서 올리기·목록 순서·열기→고치기→저장·깨진 파일 건너뜀 알림.
+  · 저장 안 한 변경 — 다른 글 열기·새 글·닫기 단추·Esc·창 닫기(X·Alt+F4)가 모두 같은 확인을 거치고, 확인이 열려 있으면 다른 단추가 꺼지며, 어느 쪽을 골라도 글이 조용히 사라지지 않는다.
+  · 지우기 — 두 단계 확인, 어느 단계에서든 그만두면 아무것도 안 지워지고, 지우면 그 글 파일 하나만 사라진다.
+  · 거절·오류 문장 — 스크롤 밖 상태 줄에 늘 보이고, 글·제목·경로·파일 이름이 문장·위젯 어디에도 되풀이되지 않는다(글은 편집 칸에만 있다).
+  · 낡은 결과 — 닫은 뒤 늦게 온 결과는 새 대화상자에 섞이지 않는다. 닫으면 편집 칸·목록이 비워진다.
+  · 크기 — 모든 필수 크기와 최소 창(900×560)에서 가로 스크롤·글자 잘림·삐져나옴이 없고 단추 줄이 늘 보인다.
+"""
+import errno
+import importlib.util
+import os
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
+import key_leak_support as leak  # noqa: E402
+import service_support as ss  # noqa: E402
+from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.service import context as context_module  # noqa: E402
+from chanceblog_desktop.service import references as ref_service  # noqa: E402
+from chanceblog_desktop.ui.core import references_view as rv  # noqa: E402
+from chanceblog_desktop.ui.core import services, text, tokens  # noqa: E402
+from chanceblog_desktop.ui.core.references_view import FakeReferencesProvider  # noqa: E402
+
+HAVE = importlib.util.find_spec("PySide6") is not None
+if HAVE:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import ui_offscreen
+    ui_offscreen.prepare_environment()
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QLineEdit, QPlainTextEdit, QWidget
+    from chanceblog_desktop.ui.qt import app as qapp
+    from chanceblog_desktop.ui.qt import components as UI
+    from chanceblog_desktop.ui.qt import references_dialog
+    from chanceblog_desktop.ui.qt import shell as shell_module
+    from chanceblog_desktop.ui.references_adapter import ServiceReferencesProvider
+
+T = text.T
+SIZES = ((1366, 768), (1536, 864), (1280, 720), (1920, 1080), (900, 560))
+BODY_MARK, TITLE_MARK, NAME_MARK = "UNIQ-BODY-qt5k-본문", "UNIQ-TITLE-qt8m-제목", "uniq-name-qt2w"
+KEY = ss.KEY
+LONG_BODY = "가나다라마바사아자차카타파하 " * 6 + "입니다.\n"
+
+
+class Picker:
+    """가짜 파일 선택기 — 정해 둔 위치를 차례로 돌려주고(없으면 취소 = 빈 글) 부른 횟수를 센다."""
+
+    def __init__(self):
+        self.paths, self.calls = [], 0
+
+    def __call__(self, parent, title, filter_text):
+        self.calls += 1
+        self.last = (title, filter_text)
+        return self.paths.pop(0) if self.paths else ""
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class Base(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fonts = ui_offscreen.install_system_fonts()
+        cls.app = qapp.make_app()
+
+    def setUp(self):
+        self.errors = []
+        self._hook = sys.excepthook
+        sys.excepthook = lambda kind, value, trace: self.errors.append(f"{kind.__name__}: {value}")        # 화면 슬롯 안의 예외도 시험이 잡는다
+        holder = tempfile.TemporaryDirectory(prefix="refs-qt-")
+        self.addCleanup(holder.cleanup)
+        self.root = Path(os.path.realpath(holder.name))
+        self.clock = ss.Clock()
+        self.ctx = ss.make_ctx(self.root, clock=self.clock, repo="")
+        self.vault = self.ctx.workspace.root / "references"
+        self.picker = Picker()
+
+    def tearDown(self):
+        sys.excepthook = self._hook
+        self.assertEqual(self.errors, [], "화면 슬롯 안에서 예외가 났다")
+
+    # ---- 도우미 ----
+    def settle(self, times=6):
+        ui_offscreen.settle(self.app, times)
+
+    def real(self):
+        return ServiceReferencesProvider(None, context_factory=lambda data_dir=None: self.ctx)
+
+    def make(self, *, size=(1440, 900), provider=None, **kwargs):
+        window = shell_module.AppShell(services.FakeHomeProvider(), connections=services.FakeConnectionsProvider(), autoload=False, file_picker=self.picker, references=provider or self.real(), **kwargs)
+        window.resize(*size)
+        window.show()
+        self.addCleanup(window.close)
+        self.settle()
+        window.activateWindow()
+        ui_offscreen.wait_until(self.app, window.isActiveWindow, 2)
+        return window
+
+    def open_vault(self, window):
+        """문체 보기 대화상자를 열고 그 안의 `참고 글 보관함 열기` 단추를 누른다(진짜 길)."""
+        window.style_open()
+        self.settle()
+        self.assertIsNotNone(window.style_form)
+        window.style_form.refs_button.click()
+        self.settle(10)
+        self.assertIsNotNone(window.references_form)
+        return window.references_form
+
+    def vault_window(self, **kwargs):
+        window = self.make(**kwargs)
+        return window, self.open_vault(window)
+
+    def add_post(self, title, body, minutes=1):
+        """서비스로 곧바로 글을 하나 보관한다(화면을 거치지 않는다) — 시계는 `minutes` 분 흐른다."""
+        self.clock.advance(minutes=minutes)
+        return ref_service.add_reference(self.ctx, title=title, body=body)
+
+    def click(self, button):
+        QTest.mouseClick(button, Qt.LeftButton)
+        self.settle()
+
+    def type_post(self, form, title, body):
+        form.title_input.setText(title)
+        form.body.setPlainText(body)
+        self.settle(2)
+
+    def save(self, window):
+        window.references.edited(window.references_form.title_text(), window.references_form.body_text())
+        self.click(window.references_form.save_button)
+
+    def texts(self, root):
+        return [label.text() if not isinstance(label, UI.Label) else label.plain_text() for label in root.findChildren(QLabel) if label.isVisibleTo(root)]
+
+    def buttons(self, root):
+        return [widget for widget in root.findChildren(QAbstractButton) if widget.isVisibleTo(root)]
+
+    def named(self, form, name):
+        found = [button for button in form.findChildren(QAbstractButton) if button.accessibleName() == name and button.isVisibleTo(form)]
+        self.assertEqual(len(found), 1, (name, [button.accessibleName() for button in self.buttons(form)]))
+        return found[0]
+
+    def vault_files(self):
+        return sorted(path.name for path in self.vault.iterdir()) if self.vault.exists() else []
+
+    def outside_editors(self, window, probes):
+        """편집 칸(제목·본문 입력)을 뺀 모든 위젯의 글·접근 이름·툴팁에서 조각을 찾는다 — 글은 편집 칸에만 있어야 한다."""
+        editors = set()
+        for form in (window.references_form, window.style_form):
+            if form is not None:
+                editors.update(id(widget) for widget in form.findChildren(QLineEdit) + form.findChildren(QPlainTextEdit))
+        hits = []
+        for widget in [window, *window.findChildren(QWidget)]:
+            if id(widget) in editors:
+                continue
+            for label, value in leak.own_texts(widget):
+                hits += [f"{label}: {probe}" for probe in leak.text_hits(value, probes)[:1]]
+        return hits
+
+    def lt(self, label):
+        """라벨의 보이는 글(`UI.Label` 은 `plain_text`)."""
+        return label.plain_text() if isinstance(label, UI.Label) else label.text()
+
+    def message(self, form):
+        return self.lt(form.message) if form.message.isVisibleTo(form) else ""
+
+
+# ---- 1) 진입 ----------------------------------------------------------------------------------------------------------------------
+class EntryTest(Base):
+    def test_the_style_dialog_has_exactly_one_more_button_and_the_rest_is_unchanged(self):
+        window = self.make()
+        window.style_open()
+        self.settle()
+        names = {button.accessibleName() for button in self.buttons(window.style_form)}
+        self.assertEqual(names, {T["style_pick_a11y"], T["style_compute_a11y"], T["style_close_a11y"], T["ref_entry_open_a11y"]}, "고르기·계산하기·닫기(+ 결과 모습의 다시 하기)에 단추 하나만 더해졌다")
+        button = window.style_form.refs_button
+        self.assertEqual((button.text(), button.accessibleName()), (T["ref_entry_open"], T["ref_entry_open_a11y"]))
+        self.assertGreaterEqual(button.height(), tokens.SIZE["hit"])
+        self.assertNotEqual(button.focusPolicy(), Qt.NoFocus)
+
+    def test_pressing_the_button_replaces_the_style_dialog_with_the_vault_and_the_style_state_is_dropped(self):
+        window = self.make()
+        window.style_open()
+        self.settle()
+        self.assertTrue(window.style.is_open)
+        form = self.open_vault(window)
+        self.assertTrue(window.dialog.is_open)
+        self.assertIs(window.references_form, form)
+        self.assertIsNone(window.style_form, "문체 보기는 정리 훅이 불려 닫혔다")
+        self.assertFalse(window.style.is_open)
+        self.assertEqual(window.dialog.accessibleName(), T["ref_title"])
+
+    def test_the_button_works_with_the_keyboard_too(self):
+        for key in (Qt.Key_Return, Qt.Key_Space):
+            with self.subTest(key=key):
+                window = self.make()
+                window.style_open()
+                self.settle()
+                window.style_form.refs_button.setFocus(Qt.TabFocusReason)
+                self.settle(2)
+                QTest.keyClick(window.style_form.refs_button, key)
+                self.settle(8)
+                self.assertIsNotNone(window.references_form)
+                window.close()
+
+    def test_the_vault_does_not_open_over_another_dialog(self):
+        window = self.make()
+        window.show_sample_info()
+        self.settle()
+        self.assertTrue(window.dialog.is_open)
+        self.assertIsNone(window.references_open())
+        self.assertIsNone(window.references_form)
+
+    def test_the_style_dialog_still_works_without_the_vault(self):
+        """진입 단추를 더해도 문체 보기의 고르기·닫기는 그대로다 — 닫으면 보관함은 열리지 않고 보관함 폴더도 만들어지지 않는다."""
+        window = self.make()
+        window.style_open()
+        self.settle()
+        window.escape()
+        self.settle()
+        self.assertFalse(window.dialog.is_open)
+        self.assertIsNone(window.references_form)
+        self.assertFalse(self.vault.exists())
+
+    def test_the_default_shell_with_the_sample_provider_uses_an_in_memory_vault(self):
+        window = shell_module.AppShell(services.FakeHomeProvider(), connections=services.FakeConnectionsProvider(), autoload=False)
+        self.addCleanup(window.close)
+        window.resize(1440, 900)
+        window.show()
+        self.settle()
+        self.assertTrue(window.references.provider.sample)
+        form = self.open_vault(window)
+        self.type_post(form, "예시 글", "예시 본문입니다")
+        self.save(window)
+        self.assertEqual(len(window.references.rows), 1)
+        self.assertFalse(self.vault.exists(), "예시 공급자는 파일을 만들지 않는다")
+
+
+# ---- 2) 모습 ----------------------------------------------------------------------------------------------------------------------
+class ShapeTest(Base):
+    def test_it_opens_empty_with_the_title_field_focused_and_every_fixed_sentence(self):
+        window, form = self.vault_window()
+        shown = self.texts(form)
+        for key in ("ref_title", "ref_intro", "ref_list_title", "ref_list_empty", "ref_editor_new", "ref_title_label", "ref_title_hint", "ref_body_label", "ref_body_hint", "ref_folder_label", "ref_folder_note"):
+            self.assertIn(T[key], shown, key)
+        self.assertTrue(any("50개" in line and "80자" in line and "100,000자" in line for line in shown), shown)
+        self.assertIn("0개 보관 중", shown)
+        self.assertIs(QApplication.focusWidget(), form.title_input)
+        self.assertFalse(form.delete_button.isEnabled())
+        self.assertTrue(all(button.isEnabled() for button in (form.save_button, form.new_button, form.pick_button, form.close_button)))
+        self.assertEqual(self.lt(form.folder_text), str(self.vault))
+        self.assertFalse(self.vault.exists(), "열기만 해서는 보관함 폴더도 만들어지지 않는다")
+        self.assertEqual(window.dialog.accessibleName(), T["ref_title"])
+
+    def test_every_button_has_a_name_a_hit_size_and_the_tab_order_reaches_all_of_them(self):
+        window, form = self.vault_window()
+        self.add_post("글", "본문")
+        window.references.refresh()
+        form.refresh()
+        self.settle()
+        buttons = self.buttons(form)
+        self.assertGreaterEqual(len(buttons), 6)
+        for button in buttons:
+            with self.subTest(button=button.accessibleName()):
+                self.assertTrue(button.accessibleName())
+                self.assertGreaterEqual(button.height(), tokens.SIZE["hit"] - 8 if button.property("size") == "sm" else tokens.SIZE["hit"])
+                self.assertNotEqual(button.focusPolicy(), Qt.NoFocus)
+        names = [button.accessibleName() for button in buttons]
+        self.assertEqual(len(names), len(set(names)), "접근 이름이 겹치지 않는다")
+
+    def test_the_dialog_is_760_wide_and_never_wider_than_ninety_four_percent_of_the_window(self):
+        self.assertEqual(references_dialog.DIALOG_WIDTH, 760)
+        self.assertEqual(shell_module.REFERENCES_DIALOG_WIDTH, 760)
+        for size in SIZES:
+            with self.subTest(size=size):
+                window, form = self.vault_window(size=size)
+                self.assertEqual(window.dialog.width(), min(760, int(window.width() * 0.94)))
+                self.assertTrue(window.rect().contains(window.dialog.geometry()), (size, window.dialog.geometry()))
+                window.close()
+
+    def test_the_status_line_and_the_buttons_sit_outside_the_scrolling_body(self):
+        """처음 띄워 보고 찾은 틈 — 거절 문장·확인 줄이 스크롤 안쪽 아래에 있어 길어진 몸에서는 화면 밖이었다. 지금은 스크롤 밖에 있다."""
+        window, form = self.vault_window(size=(900, 560))
+        for name in ("editor_state", "confirm_host", "message", "notice", "save_button", "close_button", "delete_button", "pick_button", "new_button"):
+            self.assertFalse(form.scroll.isAncestorOf(getattr(form, name)), name)
+        for name in ("title_input", "body", "rows_host", "folder_text"):
+            self.assertTrue(form.scroll.isAncestorOf(getattr(form, name)), name)
+
+
+# ---- 3) 붙여 넣어 올리기 ------------------------------------------------------------------------------------------------------------
+class PasteTest(Base):
+    def test_a_pasted_post_is_saved_listed_and_shown_as_saved(self):
+        window, form = self.vault_window()
+        self.type_post(form, "내 첫 글", "안녕하세요.\n두 번째 줄입니다.")
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+        self.assertTrue(form.editor_state.isVisibleTo(form))
+        self.save(window)
+        self.assertEqual(self.message(form), "")
+        self.assertEqual(self.lt(form.notice), T["ref_done_saved"])
+        self.assertTrue(form.notice.isVisibleTo(form))
+        self.assertEqual(len(self.vault_files()), 1)
+        rows = [line for line in self.texts(form) if "내 첫 글" in line]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("17자", rows[0])
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("내 첫 글", "안녕하세요.\n두 번째 줄입니다."), "저장해도 편집 칸의 글은 그대로다")
+        self.assertEqual(self.lt(form.heading), T["ref_editor_edit"])
+        self.assertTrue(form.delete_button.isEnabled())
+
+    def test_an_empty_or_blank_title_is_refused_in_the_always_visible_status_line_and_the_text_stays(self):
+        window, form = self.vault_window()
+        for title in ("", "   "):
+            self.type_post(form, title, "제목이 없는 본문")
+            self.save(window)
+            self.assertIn("제목을 적어 주세요", self.message(form))
+            self.assertTrue(form.message.isVisibleTo(form))
+            self.assertFalse(form.scroll.isAncestorOf(form.message))
+            self.assertEqual(form.body.toPlainText(), "제목이 없는 본문")
+            self.assertEqual(self.vault_files(), [])
+        self.assertTrue(self.lt(form.editor_state) == T["ref_dirty"])
+
+    def test_a_refusal_removes_the_earlier_saved_notice(self):
+        window, form = self.vault_window()
+        self.type_post(form, "첫 글", "본문")
+        self.save(window)
+        self.assertEqual(self.lt(form.notice), T["ref_done_saved"])
+        self.type_post(form, "", "본문")
+        self.save(window)
+        self.assertTrue(self.message(form))
+        self.assertFalse(form.notice.isVisibleTo(form), "앞 일의 '저장했어요' 가 새 거절 문장 옆에 남지 않는다")
+
+    def test_a_title_of_eighty_one_characters_is_refused_and_eighty_is_accepted(self):
+        window, form = self.vault_window()
+        self.type_post(form, "가" * 81, "본문")
+        self.save(window)
+        self.assertIn("80자까지만", self.message(form))
+        self.assertEqual(self.vault_files(), [])
+        self.type_post(form, "가" * 80, "본문")
+        self.save(window)
+        self.assertEqual(self.message(form), "", "다음 저장이 되면 앞의 거절 문장은 사라진다")
+        self.assertEqual(len(self.vault_files()), 1)
+
+    def test_the_body_limit_is_one_hundred_thousand_characters(self):
+        window, form = self.vault_window()
+        self.type_post(form, "긴 글", "가" * 100_001)
+        self.assertEqual(self.lt(form.body_count), "100001자")
+        self.save(window)
+        self.assertIn("100,000자 이하만", self.message(form))
+        self.assertEqual(self.vault_files(), [])
+        self.type_post(form, "긴 글", "가" * 100_000)
+        self.save(window)
+        self.assertEqual(self.message(form), "")
+        self.assertEqual(len(self.vault_files()), 1)
+
+    def test_a_blank_body_is_refused(self):
+        window, form = self.vault_window()
+        self.type_post(form, "빈 본문", "  \n \t ")
+        self.save(window)
+        self.assertIn("읽을 글이 없어요", self.message(form))
+        self.assertEqual(self.vault_files(), [])
+
+    def test_a_secret_shape_is_refused_with_only_the_place_and_nothing_is_stored_or_shown(self):
+        window, form = self.vault_window()
+        probes = leak.needles(KEY, size=8)
+        for where, title, body in (("본문", "멀쩡한 제목", "앞 글입니다.\n둘째 줄 " + KEY + "\n끝"), ("제목", "제목 " + KEY, "멀쩡한 본문")):
+            self.type_post(form, title, body)
+            self.save(window)
+            shown = self.message(form)
+            self.assertIn(f"{where} ", shown)
+            self.assertIn("줄에", shown)
+            self.assertIn("그 부분을 지운 뒤 다시 올려 주세요", shown)
+            self.assertEqual(self.vault_files(), [])
+            self.assertEqual(self.outside_editors(window, probes), [], "찾은 글은 문장·위젯 어디에도 없다(글은 편집 칸에만 있다)")
+        self.assertEqual(leak.graph_hits(window.references, probes, skip=(window.references.provider,)), [], "화면 규칙의 상태에도 없다")
+
+    def test_the_counter_follows_the_typing_and_a_marker_shows_unsaved_changes(self):
+        window, form = self.vault_window()
+        self.assertEqual(self.lt(form.body_count), "0자")
+        form.body.setPlainText("가나다")
+        self.settle(2)
+        self.assertEqual(self.lt(form.body_count), "3자")
+        self.assertIn("3", form.body_count.accessibleName())
+        QTest.keyClicks(form.title_input, "abc")
+        self.assertEqual(form.title_input.text(), "abc")
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+
+    def test_the_first_save_of_an_untitled_empty_dialog_creates_nothing_and_a_save_button_press_with_nothing_typed_is_a_refusal(self):
+        window, form = self.vault_window()
+        self.click(form.save_button)
+        self.assertIn("제목을 적어 주세요", self.message(form))
+        self.assertFalse(self.vault.exists())
+
+
+# ---- 4) 파일에서 올리기 -------------------------------------------------------------------------------------------------------------
+class FileTest(Base):
+    def put(self, name, data):
+        folder = self.root / "내 글 모음"
+        folder.mkdir(exist_ok=True)
+        path = folder / name
+        path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+        return str(path)
+
+    def test_a_text_file_is_added_with_a_title_from_its_name_and_the_editor_is_left_alone(self):
+        window, form = self.vault_window()
+        path = self.put("여름 휴가 후기.txt", "여름 휴가를 다녀왔어요.\n정말 좋았어요.")
+        self.type_post(form, "쓰던 글", "쓰던 본문")
+        self.picker.paths = [path]
+        window.references.edited(form.title_text(), form.body_text())
+        self.click(form.save_button)
+        self.clock.advance(minutes=1)
+        self.picker.paths = [path]
+        self.click(form.pick_button)
+        self.assertEqual(self.picker.calls, 1)
+        self.assertEqual(self.picker.last, (T["ref_pick_title"], f"{T['ref_pick_filter']} (*.txt *.md)"))
+        self.assertEqual(self.lt(form.notice), T["ref_done_file"])
+        self.assertEqual(len(self.vault_files()), 2)
+        shown = self.texts(form)
+        self.assertTrue(any("여름 휴가 후기" in line for line in shown), shown)
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("쓰던 글", "쓰던 본문"), "올린 글이 편집 칸을 덮지 않는다")
+        self.assertEqual(Path(path).read_text(encoding="utf-8"), "여름 휴가를 다녀왔어요.\n정말 좋았어요.", "원본 파일은 그대로다")
+
+    def test_a_cp949_file_adds_the_reading_note(self):
+        window, form = self.vault_window()
+        self.picker.paths = [self.put("옛 메모장.txt", "옛 메모장 글자 모양으로 저장한 글입니다.".encode("cp949"))]
+        self.click(form.pick_button)
+        self.assertIn(T["ref_note_cp949"], self.lt(form.notice))
+        self.assertEqual(len(self.vault_files()), 1)
+
+    def test_cancelling_the_picker_reads_nothing_and_says_nothing(self):
+        window, form = self.vault_window()
+        self.click(form.pick_button)
+        self.assertEqual(self.picker.calls, 1)
+        self.assertEqual((self.message(form), form.notice.isVisibleTo(form)), ("", False))
+        self.assertFalse(self.vault.exists())
+
+    def test_refused_files_show_a_fixed_sentence_and_never_the_path_the_name_or_the_text(self):
+        window, form = self.vault_window()
+        probes = [NAME_MARK, BODY_MARK, str(self.root / "내 글 모음"), "내 글 모음"]                    # 보관함 폴더 위치(안내 글)는 데이터 폴더 경로라 파일을 고른 폴더와 다르다
+        cases = {"형식": self.put(NAME_MARK + ".docx", BODY_MARK), "없음": str(self.root / "내 글 모음" / (NAME_MARK + "-없음.txt")), "큰 파일": self.put(NAME_MARK + "-big.txt", b"a" * (2 * 1024 * 1024 + 1)),
+                 "이진": self.put(NAME_MARK + "-bin.txt", BODY_MARK.encode("utf-8") + b"\x00"), "빈 파일": self.put(NAME_MARK + "-empty.txt", ""), "비밀": self.put(NAME_MARK + "-key.txt", BODY_MARK + " " + KEY)}
+        for label, path in cases.items():
+            with self.subTest(label=label):
+                self.picker.paths = [path]
+                self.click(form.pick_button)
+                self.assertTrue(self.message(form), label)
+                self.assertTrue(form.message.isVisibleTo(form))
+                self.assertEqual(self.outside_editors(window, probes + leak.needles(KEY, size=8)), [], label)
+        self.assertEqual(self.vault_files(), [])
+        self.assertFalse(self.vault.exists())
+
+    def test_a_file_when_the_vault_is_full_is_refused(self):
+        for number in range(50):
+            self.add_post(f"글 {number}", "본문", minutes=0)
+        window, form = self.vault_window()
+        self.picker.paths = [self.put("쉰한째.txt", "본문")]
+        self.click(form.pick_button)
+        self.assertIn("50개까지만 보관할 수 있어요", self.message(form))
+        self.assertEqual(len(self.vault_files()), 50)
+
+
+# ---- 5) 목록·열기·고치기·저장 -------------------------------------------------------------------------------------------------------
+class ListEditTest(Base):
+    def three(self):
+        return [self.add_post("첫째 글", "첫째 본문", 1), self.add_post("둘째 글", "둘째 본문 입니다", 1), self.add_post("셋째 글", "셋째 본문 입니다 정말로", 1)]
+
+    def test_the_list_is_newest_first_with_title_length_and_korean_time(self):
+        first, second, third = self.three()
+        window, form = self.vault_window()
+        rows = [line for line in self.texts(form) if " · " in line and "자 · " in line]
+        self.assertEqual([line.split(" · ")[0] for line in rows], ["셋째 글", "둘째 글", "첫째 글"])
+        self.assertEqual(rows[0], "셋째 글 · 13자 · 2026-11-02 10:33", "시계는 UTC 01:30 에서 1분씩 흘렀고 화면에는 한국 시각이 나온다")
+        self.assertIn("3개 보관 중", self.texts(form))
+        self.assertEqual(len(form.open_buttons), 3)
+        names = [button.accessibleName() for button in form.open_buttons]
+        self.assertTrue(all(title in name for title, name in zip(("셋째 글", "둘째 글", "첫째 글"), names)), names)
+
+    def test_opening_a_post_fills_the_editor_and_switches_to_the_edit_mode(self):
+        first, second, third = self.three()
+        window, form = self.vault_window()
+        self.click(form.open_buttons[1])
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("둘째 글", "둘째 본문 입니다"))
+        self.assertEqual(self.lt(form.heading), T["ref_editor_edit"])
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+        self.assertTrue(form.delete_button.isEnabled())
+        self.assertEqual(window.references.current, second.ref_id)
+
+    def test_edit_then_save_overwrites_the_one_file_keeps_the_creation_time_and_moves_it_to_the_top(self):
+        first, second, third = self.three()
+        window, form = self.vault_window()
+        self.click(form.open_buttons[2])
+        self.assertEqual(form.title_input.text(), "첫째 글")
+        path = self.vault / f"ref-{first.ref_id}.json"
+        before = path.read_bytes()
+        form.body.setPlainText("고쳐 쓴 첫째 본문")
+        form.title_input.setText("고친 첫째 글")
+        self.settle(2)
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+        self.clock.advance(hours=2)
+        self.save(window)
+        self.assertEqual(self.lt(form.notice), T["ref_done_saved"])
+        saved = ref_service.open_reference(self.ctx, first.ref_id)
+        self.assertEqual((saved.title, saved.body, saved.created_at), ("고친 첫째 글", "고쳐 쓴 첫째 본문", first.created_at))
+        self.assertGreater(saved.updated_at, first.updated_at)
+        self.assertNotEqual(path.read_bytes(), before)
+        self.assertEqual(len(self.vault_files()), 3, "고쳐도 파일은 늘지 않는다")
+        self.assertEqual([line.split(" · ")[0] for line in self.texts(form) if "자 · " in line][0], "고친 첫째 글", "고친 글이 맨 위로 온다")
+
+    def test_putting_the_text_back_clears_the_unsaved_marker(self):
+        self.three()
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])
+        original = form.body.toPlainText()
+        form.body.setPlainText(original + "!")
+        self.settle(2)
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+        form.body.setPlainText(original)
+        self.settle(2)
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+
+    def test_broken_files_are_skipped_with_a_count_and_never_touched(self):
+        self.three()
+        self.vault.mkdir(exist_ok=True)
+        (self.vault / "ref-brokenaa.json").write_text("깨진 파일 " + BODY_MARK, encoding="utf-8")
+        (self.vault / "ref-brokenbb.json").write_bytes(b"\xff\xfe\x00")
+        before = {path.name: path.read_bytes() for path in self.vault.iterdir()}
+        window, form = self.vault_window()
+        self.assertIn(T["ref_skipped"].format(n=2), self.texts(form))
+        self.assertEqual(len(form.open_buttons), 3)
+        self.assertEqual({path.name: path.read_bytes() for path in self.vault.iterdir()}, before)
+        self.assertEqual(self.outside_editors(window, [BODY_MARK]), [])
+
+    def test_a_post_that_broke_after_listing_shows_a_fixed_sentence_when_opened(self):
+        first, = [self.add_post("곧 깨질 글", "본문")]
+        window, form = self.vault_window()
+        (self.vault / f"ref-{first.ref_id}.json").write_text("깨졌다 " + BODY_MARK, encoding="utf-8")
+        self.type_post(form, "쓰던 글", "쓰던 본문")
+        window.references.edited(form.title_text(), form.body_text())
+        window.references_select(first.ref_id, discard=True)
+        self.settle()
+        self.assertIn("보관된 글 파일이 올바르지 않아 열지 않았어요", self.message(form))
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("쓰던 글", "쓰던 본문"), "열지 못해도 편집 칸은 그대로다")
+        self.assertEqual(self.outside_editors(window, [BODY_MARK]), [])
+
+    def test_a_full_vault_refuses_the_fifty_first_post_but_allows_editing(self):
+        for number in range(50):
+            self.add_post(f"글 {number}", "본문", minutes=0)
+        window, form = self.vault_window()
+        self.type_post(form, "쉰한째", "본문")
+        self.save(window)
+        self.assertIn("50개까지만 보관할 수 있어요", self.message(form))
+        self.assertEqual(len(self.vault_files()), 50)
+        self.click(form.open_buttons[0])
+        form.body.setPlainText("고친 본문")
+        self.save(window)
+        self.assertEqual(self.message(form), "")
+
+
+# ---- 6) 저장 안 한 변경 확인 ---------------------------------------------------------------------------------------------------------
+class UnsavedTest(Base):
+    def dirty(self):
+        first = self.add_post("첫째 글", "첫째 본문")
+        second = self.add_post("둘째 글", "둘째 본문")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])                                            # 목록은 새 것 먼저 — 0번이 둘째 글(second)이다
+        form.body.setPlainText("고치는 중인 글 " + BODY_MARK)
+        self.settle(2)
+        return window, form, first, second
+
+    def confirm_names(self, form):
+        return [button.accessibleName() for button in form.confirm_buttons]
+
+    def assert_asking(self, window, form, kind):
+        self.assertEqual(window.references.pending[0], kind)
+        self.assertIn(T["ref_discard_q_" + kind], self.texts(form))
+        self.assertEqual(self.confirm_names(form), [T["ref_discard_yes_a11y_" + kind], T["ref_discard_no_a11y"]])
+        self.assertFalse(form.scroll.isAncestorOf(form.confirm_host), "확인 줄은 스크롤 밖이라 늘 보인다")
+        self.assertTrue(all(button.isVisibleTo(form) for button in form.confirm_buttons))
+        for button in (form.save_button, form.new_button, form.pick_button, form.delete_button):
+            self.assertFalse(button.isEnabled(), button.accessibleName())
+        self.assertTrue(form.close_button.isEnabled())
+        self.assertIs(QApplication.focusWidget(), form.confirm_buttons[-1], "처음 포커스는 안전한 쪽(계속 고치기)")
+
+    def test_opening_another_post_asks_first_and_keep_editing_loses_nothing(self):
+        window, form, first, second = self.dirty()
+        self.click(form.open_buttons[1])
+        self.assert_asking(window, form, "select")
+        self.assertEqual(window.references.current, second.ref_id, "물은 동안 아무것도 바뀌지 않았다")
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        self.click(form.confirm_buttons[-1])
+        self.assertIsNone(window.references.pending)
+        self.assertEqual(form.confirm_buttons, [])
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+        self.assertIs(QApplication.focusWidget(), form.title_input)
+        self.assertTrue(all(button.isEnabled() for button in (form.save_button, form.new_button, form.pick_button, form.delete_button)))
+
+    def test_opening_another_post_after_choosing_to_discard_replaces_the_editor(self):
+        window, form, first, second = self.dirty()
+        self.click(form.open_buttons[1])
+        self.click(form.confirm_buttons[0])
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("첫째 글", "첫째 본문"))
+        self.assertEqual(window.references.current, first.ref_id)
+        self.assertIsNone(window.references.pending)
+        self.assertEqual(self.lt(form.editor_state), T["ref_clean"])
+        self.assertEqual(ref_service.open_reference(self.ctx, second.ref_id).body, "둘째 본문", "버린 변경은 저장되지 않았다")
+
+    def test_new_post_asks_first_then_empties_the_editor_on_yes(self):
+        window, form, first, second = self.dirty()
+        self.click(form.new_button)
+        self.assert_asking(window, form, "new")
+        self.click(form.confirm_buttons[0])
+        self.assertEqual((form.title_input.text(), form.body.toPlainText(), window.references.current, window.references.mode), ("", "", None, "new"))
+        self.assertEqual(self.lt(form.heading), T["ref_editor_new"])
+
+    def test_the_close_button_asks_first(self):
+        window, form, first, second = self.dirty()
+        self.click(form.close_button)
+        self.assert_asking(window, form, "close")
+        self.assertTrue(window.dialog.is_open)
+        self.click(form.confirm_buttons[-1])
+        self.assertTrue(window.dialog.is_open)
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        self.click(form.close_button)
+        self.click(form.confirm_buttons[0])
+        self.assertFalse(window.dialog.is_open)
+        self.assertIsNone(window.references_form)
+
+    def test_escape_asks_first_and_a_second_escape_keeps_editing(self):
+        window, form, first, second = self.dirty()
+        QTest.keyClick(form.body, Qt.Key_Escape)
+        self.settle()
+        self.assertTrue(window.dialog.is_open, "저장 안 한 변경이 있는데 Esc 가 확인 없이 닫았다")
+        self.assert_asking(window, form, "close")
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.settle()
+        self.assertTrue(window.dialog.is_open)
+        self.assertIsNone(window.references.pending, "묻는 중의 Esc 는 닫지 않고 계속 고치는 쪽이다")
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        QTest.keyClick(form.title_input, Qt.Key_Escape)
+        self.settle()
+        self.assert_asking(window, form, "close")
+        self.click(form.confirm_buttons[0])
+        self.assertFalse(window.dialog.is_open)
+
+    def test_escape_closes_at_once_when_nothing_is_unsaved_and_gives_the_focus_back(self):
+        self.add_post("글", "본문")
+        window = self.make()
+        window.style_open()
+        self.settle()
+        window.style_form.refs_button.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        window.style_form.refs_button.click()
+        self.settle(8)
+        form = window.references_form
+        self.click(form.open_buttons[0])
+        QTest.keyClick(form.body, Qt.Key_Escape)
+        self.settle()
+        self.assertFalse(window.dialog.is_open)
+        self.assertIsNone(window.references_form)
+
+    def test_the_window_close_x_and_alt_f4_ask_first_and_the_window_stays(self):
+        window, form, first, second = self.dirty()
+        window.close()
+        self.settle()
+        self.assertTrue(window.isVisible(), "창 닫기가 저장 안 한 변경을 확인 없이 버렸다")
+        self.assert_asking(window, form, "quit")
+        self.assertEqual(form.body.toPlainText(), "고치는 중인 글 " + BODY_MARK)
+        self.click(form.confirm_buttons[-1])
+        self.assertTrue(window.isVisible())
+        self.assertIsNone(window.references.pending)
+        window.close()
+        self.settle()
+        self.assertTrue(window.isVisible())
+        self.click(form.confirm_buttons[0])
+        self.assertFalse(window.isVisible(), "버리고 닫기를 누르면 창이 닫힌다")
+        self.assertIsNone(window.references_form)
+
+    def test_the_window_close_is_not_held_when_nothing_is_unsaved(self):
+        self.add_post("글", "본문")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])
+        window.close()
+        self.settle()
+        self.assertFalse(window.isVisible())
+
+    def test_saving_first_then_leaving_asks_nothing(self):
+        window, form, first, second = self.dirty()
+        self.save(window)
+        self.assertEqual(window.references.pending, None)
+        self.click(form.close_button)
+        self.assertFalse(window.dialog.is_open)
+        self.assertEqual(ref_service.open_reference(self.ctx, second.ref_id).body, "고치는 중인 글 " + BODY_MARK)
+
+    def test_the_question_replaces_an_old_message_and_notice(self):
+        window, form, first, second = self.dirty()
+        self.type_post(form, "", "본문")
+        self.save(window)
+        self.assertTrue(self.message(form))
+        self.click(form.close_button)
+        self.assertEqual(self.message(form), "")
+        self.assertFalse(form.notice.isVisibleTo(form))
+
+
+# ---- 7) 지우기 --------------------------------------------------------------------------------------------------------------------
+class DeleteTest(Base):
+    def open_one(self):
+        first = self.add_post("첫째 글", "첫째 본문")
+        second = self.add_post("둘째 글", "둘째 본문")
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])                                            # 목록은 새 것 먼저 — 0번이 둘째 글(second)이다
+        return window, form, first, second
+
+    def test_the_delete_button_is_off_until_a_post_is_open(self):
+        self.add_post("글", "본문")
+        window, form = self.vault_window()
+        self.assertFalse(form.delete_button.isEnabled())
+        self.click(form.open_buttons[0])
+        self.assertTrue(form.delete_button.isEnabled())
+
+    def test_two_steps_and_nothing_is_deleted_before_the_second_confirmation(self):
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        self.assertEqual(self.vault_files(), sorted([f"ref-{first.ref_id}.json", f"ref-{second.ref_id}.json"]))
+        self.assertIn(T["ref_delete_q1"], self.texts(form))
+        self.assertEqual([button.text() for button in form.confirm_buttons], [T["ref_delete_next"], T["ref_delete_no"]])
+        self.assertFalse(form.scroll.isAncestorOf(form.confirm_host))
+        self.assertIs(QApplication.focusWidget(), form.confirm_buttons[-1], "처음 포커스는 그만두기")
+        for button in (form.save_button, form.new_button, form.pick_button, form.delete_button):
+            self.assertFalse(button.isEnabled())
+        self.click(form.confirm_buttons[0])
+        self.assertIn(T["ref_delete_q2"], self.texts(form))
+        self.assertEqual([button.text() for button in form.confirm_buttons], [T["ref_delete_yes"], T["ref_delete_no"]])
+        self.assertEqual(len(self.vault_files()), 2, "두 번째 확인 전에는 지우지 않는다")
+        self.assertIs(QApplication.focusWidget(), form.confirm_buttons[-1])
+        self.click(form.confirm_buttons[0])
+        self.assertEqual(self.vault_files(), [f"ref-{first.ref_id}.json"], "열려 있던 둘째 글 파일 하나만 사라졌다")
+        self.assertEqual(self.lt(form.notice), T["ref_done_deleted"])
+        self.assertEqual((form.title_input.text(), form.body.toPlainText(), window.references.current), ("", "", None))
+        self.assertFalse(form.delete_button.isEnabled())
+        self.assertEqual(len(form.open_buttons), 1)
+        self.assertIs(QApplication.focusWidget(), form.title_input)
+
+    def cancel_after(self, steps):
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        for _ in range(steps):
+            self.click(form.confirm_buttons[0])
+        self.click(form.confirm_buttons[-1])
+        self.assertEqual(len(self.vault_files()), 2, "그만두면 아무것도 안 지워진다")
+        self.assertEqual(form.confirm_buttons, [])
+        self.assertIs(QApplication.focusWidget(), form.delete_button)
+        self.assertTrue(all(button.isEnabled() for button in (form.save_button, form.new_button, form.pick_button, form.delete_button)))
+        self.assertEqual((window.references.current, window.references.delete_step), (second.ref_id, 0))
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("둘째 글", "둘째 본문"))
+
+    def test_cancelling_at_the_first_step_deletes_nothing_and_gives_the_focus_back(self):
+        self.cancel_after(0)
+
+    def test_cancelling_at_the_second_step_deletes_nothing_and_gives_the_focus_back(self):
+        self.cancel_after(1)
+
+    def test_escape_cancels_only_the_delete_question_not_the_dialog(self):
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.settle()
+        self.assertTrue(window.dialog.is_open)
+        self.assertEqual((window.references.delete_step, len(self.vault_files())), (0, 2))
+        self.click(form.delete_button)
+        self.click(form.confirm_buttons[0])
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.settle()
+        self.assertTrue(window.dialog.is_open)
+        self.assertEqual((window.references.delete_step, len(self.vault_files())), (0, 2))
+
+    def test_enter_on_the_focused_safe_button_cancels(self):
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        self.assertIs(QApplication.focusWidget(), form.confirm_buttons[-1])
+        QTest.keyClick(QApplication.focusWidget(), Qt.Key_Return)
+        self.settle()
+        self.assertEqual((window.references.delete_step, len(self.vault_files())), (0, 2))
+
+    def test_a_delete_that_fails_shows_a_fixed_sentence_without_the_path(self):
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        self.click(form.confirm_buttons[0])
+        with mock.patch.object(Path, "unlink", side_effect=PermissionError(errno.EACCES, "접근 거부 " + NAME_MARK, str(self.root / NAME_MARK))):
+            self.click(form.confirm_buttons[0])
+        self.assertEqual(self.message(form), T["ref_fail_delete"], "지우기가 실패했는데 '저장하지 못했습니다' 라고 말하지 않는다")
+        self.assertEqual(len(self.vault_files()), 2)
+        self.assertEqual(self.outside_editors(window, [NAME_MARK, "접근 거부", str(self.root / NAME_MARK)]), [])
+        self.assertEqual(window.references.delete_step, 0)
+
+    def test_the_delete_button_is_not_reachable_by_a_stale_answer_after_the_dialog_was_closed(self):
+        window, form, first, second = self.open_one()
+        self.click(form.delete_button)
+        self.click(form.confirm_buttons[0])
+        window.close_dialog()
+        self.settle()
+        self.assertIsNone(window.references_delete_next())
+        self.assertEqual(len(self.vault_files()), 2)
+
+
+# ---- 8) 오류 문장에 글이 없다 --------------------------------------------------------------------------------------------------------
+class ErrorTextTest(Base):
+    def test_a_failed_write_shows_the_fixed_sentence_keeps_the_text_and_repeats_nothing(self):
+        window, form = self.vault_window()
+        self.type_post(form, TITLE_MARK, "본문 " + BODY_MARK)
+        probes = [BODY_MARK, str(self.root / NAME_MARK), "I/O 오류", NAME_MARK]                      # 제목은 편집 칸에만 있어야 하고 목록 줄에는 저장된 뒤에야 나온다 — 저장이 안 됐으니 목록에도 없다
+        with mock.patch.object(context_module.os, "replace", side_effect=OSError(errno.EIO, "I/O 오류 " + NAME_MARK, str(self.root / NAME_MARK))):
+            self.save(window)
+        self.assertEqual(self.message(form), "파일을 저장하지 못했습니다: 「참고 글 보관함 폴더」.")
+        self.assertEqual((form.title_input.text(), form.body.toPlainText()), (TITLE_MARK, "본문 " + BODY_MARK), "저장하지 못해도 글은 편집 칸에 남아 다시 해 볼 수 있다")
+        self.assertEqual(self.outside_editors(window, probes + [TITLE_MARK]), [], "저장이 안 됐으니 제목도 목록에 없다 — 편집 칸에만 있다")
+        self.assertEqual(self.vault_files(), [], "임시 파일도 남지 않았다")
+        self.save(window)
+        self.assertEqual(self.message(form), "")
+        self.assertEqual(len(self.vault_files()), 1)
+
+    def test_a_full_disk_has_its_own_fixed_sentence(self):
+        window, form = self.vault_window()
+        self.type_post(form, "제목", "본문 " + BODY_MARK)
+        with mock.patch.object(context_module.os, "write", side_effect=OSError(errno.ENOSPC, "꽉 참 " + NAME_MARK, str(self.root / NAME_MARK))):
+            self.save(window)
+        self.assertEqual(self.message(form), "저장 공간이 부족합니다.")
+        self.assertEqual(self.outside_editors(window, [BODY_MARK, NAME_MARK, "꽉 참"]), [])
+
+    def test_no_text_stays_in_the_screen_rules_state_or_the_adapter_after_a_whole_session(self):
+        window, form = self.vault_window()
+        probes = leak.needles(BODY_MARK, TITLE_MARK, size=8)
+        self.type_post(form, TITLE_MARK, BODY_MARK + " 하나")
+        self.save(window)
+        self.type_post(form, TITLE_MARK + "-2", BODY_MARK + " 둘")
+        self.save(window)
+        window.references_new()
+        self.settle()
+        body_probes = leak.needles(BODY_MARK, size=8)
+        self.assertEqual(leak.graph_hits(window.references, body_probes, skip=(window.references.provider,)), [], "화면 규칙의 상태에는 글(본문)이 없다 — 지문과 목록 줄의 제목·글자 수뿐이다")
+        self.assertEqual([row.title for row in window.references.rows], [TITLE_MARK + "-2"], "목록 줄의 제목은 있다(목록에 보여야 하므로)")
+        window.close_dialog()
+        self.settle()
+        self.assertEqual(leak.widget_hits(window, probes), [], "닫으면 편집 칸도 목록도 비워진다")
+
+
+# ---- 9) 낡은 결과·닫기 --------------------------------------------------------------------------------------------------------------
+class StaleAndCloseTest(Base):
+    def test_a_result_from_before_the_dialog_was_closed_is_not_shown_in_the_next_one(self):
+        self.add_post("지금 있는 글", "본문")
+        window, form = self.vault_window()
+        old = window.references.begin()
+        listing = rv.RefListing((rv.RefRow("zzzzzzzz", "낡은 결과의 글", 3, "2026-11-15T01:00:00Z"),))
+        window.close_dialog()
+        self.settle()
+        form2 = self.open_vault(window)
+        self.assertFalse(window.references.apply_list(old, listing), "닫기 전 번호의 결과는 받지 않는다")
+        self.assertFalse(window.references.apply_opened(old, rv.OpenedRef("zzzzzzzz", "낡은", "낡은 본문")))
+        self.assertFalse(window.references.apply_failed(old, "낡은 실패"))
+        form2.refresh()
+        self.assertFalse(any("낡은" in line for line in self.texts(form2)))
+        self.assertEqual(len(form2.open_buttons), 1)
+
+    def test_calls_after_the_dialog_is_gone_do_nothing(self):
+        window, form = self.vault_window()
+        window.close_dialog()
+        self.settle()
+        for call in (window.references_save, window.references_new, window.references_pick, window.references_delete, window.references_delete_next, window.references_close, window.references_escape,
+                     window.references_discard_yes, window.references_discard_no, lambda: window.references_select("aaaaaaaa")):
+            self.assertIsNone(call())
+        self.assertFalse(window.references_guard_quit())
+        self.assertFalse(self.vault.exists())
+
+    def test_closing_by_any_way_wipes_the_editor_and_the_list(self):
+        for how in ("button", "escape", "other_dialog", "window"):
+            with self.subTest(how=how):
+                self.add_post("글 " + how, "본문")
+                window, form = self.vault_window()
+                self.type_post(form, TITLE_MARK, BODY_MARK)
+                window.references.edited("", "")                                   # 저장 안 한 변경 확인은 다른 시험이 본다 — 여기서는 곧바로 닫는다
+                window.references.dirty = False
+                if how == "button":
+                    self.click(form.close_button)
+                elif how == "escape":
+                    QTest.keyClick(form.body, Qt.Key_Escape)
+                elif how == "other_dialog":
+                    window.show_sample_info()
+                else:
+                    window.close()
+                self.settle()
+                self.assertIsNone(window.references_form)
+                self.assertFalse(window.references.is_open)
+                self.assertEqual((form.library, form.open_buttons), (None, []))
+                self.assertEqual((form.title_input.text(), form.body.toPlainText()), ("", ""))
+                self.assertFalse(form.body.document().isUndoAvailable(), "되돌리기 기록까지 지웠다")
+                self.assertEqual(leak.widget_hits(window, leak.needles(BODY_MARK, TITLE_MARK, size=8)), [])
+                window.close()
+
+    def test_reopening_starts_clean(self):
+        self.add_post("글", "본문")
+        window, form = self.vault_window()
+        self.type_post(form, "", "본문")
+        self.save(window)
+        self.assertTrue(self.message(form))
+        window.references.dirty = False
+        window.close_dialog()
+        self.settle()
+        form2 = self.open_vault(window)
+        self.assertEqual((self.message(form2), form2.notice.isVisibleTo(form2), form2.title_input.text(), form2.body.toPlainText()), ("", False, "", ""))
+        self.assertEqual((window.references.mode, window.references.current, window.references.dirty, window.references.pending), ("new", None, False, None))
+
+    def test_the_generation_grows_with_every_open_and_close(self):
+        window = self.make()
+        numbers = []
+        for _ in range(3):
+            self.open_vault(window)
+            numbers.append(window.references.generation)
+            window.close_dialog()
+            self.settle()
+            numbers.append(window.references.generation)
+        self.assertEqual(numbers, sorted(set(numbers)))
+
+
+# ---- 10) 크기 ---------------------------------------------------------------------------------------------------------------------
+class FitTest(Base):
+    def check_fit(self, window, form, label):
+        dialog = window.dialog
+        self.assertTrue(window.rect().contains(dialog.geometry()), (label, dialog.geometry(), window.rect()))
+        self.assertEqual(form.scroll.horizontalScrollBar().maximum(), 0, label)
+        self.assertEqual(ui_offscreen.find_clipping(dialog), [], label)
+        self.assertEqual(ui_offscreen.find_squeezed(dialog), [], label)
+        for button in self.buttons(form):
+            if not form.scroll.isAncestorOf(button):
+                bottom = button.mapTo(window, button.rect().bottomRight())
+                self.assertTrue(window.rect().contains(bottom) and button.isVisible(), (label, button.accessibleName()))
+        for name in ("editor_state", "message", "notice"):
+            widget = getattr(form, name)
+            if widget.isVisibleTo(form):
+                self.assertTrue(window.rect().contains(widget.mapTo(window, widget.rect().bottomRight())), (label, name, "상태 줄이 창 밖이다"))
+        for button in form.confirm_buttons:
+            self.assertTrue(window.rect().contains(button.mapTo(window, button.rect().bottomRight())), (label, "확인 단추가 창 밖이다"))
+
+    def test_every_state_fits_every_size_without_clipping_scrolling_sideways_or_hiding_the_buttons(self):
+        for number in range(12):
+            self.add_post("가" * 80 if number == 0 else f"참고 글 {number}", LONG_BODY * 40 if number % 3 == 0 else "짧은 본문")
+        for size in SIZES:
+            with self.subTest(size=size):
+                window, form = self.vault_window(size=size)
+                self.check_fit(window, form, (size, "열자마자"))
+                self.click(form.open_buttons[-1])
+                self.check_fit(window, form, (size, "긴 제목 열기"))
+                form.body.setPlainText(form.body.toPlainText() + " 고침")
+                self.settle(2)
+                self.click(form.open_buttons[0])
+                self.check_fit(window, form, (size, "버릴지 묻기"))
+                self.click(form.confirm_buttons[-1])
+                self.type_post(form, "", "본문")
+                self.save(window)
+                self.check_fit(window, form, (size, "거절 문장"))
+                self.type_post(form, "제목", "본문")
+                self.save(window)
+                self.click(form.delete_button)
+                self.check_fit(window, form, (size, "지우기 1단계"))
+                self.click(form.confirm_buttons[0])
+                self.check_fit(window, form, (size, "지우기 2단계"))
+                self.click(form.confirm_buttons[-1])
+                form.body.setPlainText("저장 안 한 글 " + "가" * 60)
+                self.settle(2)
+                window.references_guard_quit()
+                self.settle(8)
+                self.check_fit(window, form, (size, "창 닫기 확인"))
+                window.close()
+
+    def test_an_eighty_character_title_and_a_long_message_fit_in_the_minimum_window(self):
+        window, form = self.vault_window(size=(900, 560))
+        self.type_post(form, "가" * 80, "나" * 100_001)
+        self.save(window)
+        self.assertTrue(self.message(form))
+        self.check_fit(window, form, "긴 거절 문장")
+
+
+# ---- 11) 시간 ---------------------------------------------------------------------------------------------------------------------
+class SpeedTest(Base):
+    def test_a_one_hundred_thousand_character_post_opens_and_saves_without_a_noticeable_freeze(self):
+        """동기 호출이 느린지 재 둔 숫자의 안전망 — 10만 자 글 한 편을 열고 고쳐 저장하는 데 몇 초씩 걸리면 여기서 걸린다(이 PC 에서 열기 0.3초·저장 0.4초 안팎이었다)."""
+        added = self.add_post("큰 글", LONG_BODY * 1000)
+        self.assertGreater(len(ref_service.open_reference(self.ctx, added.ref_id).body), 50_000)
+        window, form = self.vault_window()
+        started = time.perf_counter()
+        self.click(form.open_buttons[0])
+        opened = time.perf_counter() - started
+        form.body.insertPlainText("고침")
+        started = time.perf_counter()
+        self.save(window)
+        saved = time.perf_counter() - started
+        self.assertEqual(self.message(form), "")
+        self.assertLess(opened, 5.0, f"열기 {opened:.2f}초")
+        self.assertLess(saved, 5.0, f"저장 {saved:.2f}초")
+
+    def test_typing_in_a_big_post_updates_the_marker_quickly(self):
+        added = self.add_post("큰 글", LONG_BODY * 1000)
+        window, form = self.vault_window()
+        self.click(form.open_buttons[0])
+        started = time.perf_counter()
+        for _ in range(10):
+            form.body.insertPlainText("가")
+        per_key = (time.perf_counter() - started) / 10
+        self.assertLess(per_key, 0.5, f"글자 하나 입력에 {per_key * 1000:.0f}ms")
+        self.assertEqual(self.lt(form.editor_state), T["ref_dirty"])
+
+
+# ---- 12) 소스 규칙 ----------------------------------------------------------------------------------------------------------------
+class SourceTest(unittest.TestCase):
+    def test_the_dialog_module_has_no_file_network_process_or_output_calls(self):
+        import ast
+        source = (ROOT / "src" / "chanceblog_desktop" / "ui" / "qt" / "references_dialog.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        banned = {"os", "pathlib", "socket", "subprocess", "urllib", "http", "logging", "tempfile", "shutil", "json", "sqlite3", "threading"}
+        for node in ast.walk(tree):
+            names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else ([node.module or ""] if isinstance(node, ast.ImportFrom) and node.level == 0 else [])
+            for name in names:
+                self.assertNotIn(name.split(".")[0], banned, name)
+        called = {ast.unparse(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+        self.assertFalse(called & {"print", "open", "eval", "exec"})
+        self.assertFalse({name for name in called if name.split(".")[-1] in ("unlink", "write_text", "write_bytes", "mkdir", "rmdir", "replace", "rename", "setStyleSheet")})
+        self.assertNotIn(chr(0x7E), source)
+        self.assertNotIn("http", source)
+
+    def test_the_shell_methods_use_only_the_screen_rules_and_the_dialog(self):
+        import ast
+        source = (ROOT / "src" / "chanceblog_desktop" / "ui" / "qt" / "shell.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        methods = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name.startswith(("references_", "_references_"))]
+        self.assertGreaterEqual(len(methods), 14)
+        for method in methods:
+            for node in ast.walk(method):
+                if isinstance(node, ast.Call):
+                    self.assertNotIn(ast.unparse(node.func), {"open", "print", "os.remove", "os.replace", "subprocess.run"}, method.name)
+        self.assertNotIn("from ..service import references", source)
+        self.assertNotIn("from ...service import references", source)
+
+
+if __name__ == "__main__":
+    unittest.main()
