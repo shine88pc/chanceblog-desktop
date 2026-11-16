@@ -1,12 +1,12 @@
 """블로그 관리 폼의 **칩 묶음 키보드 규칙**(BLOGSEL-2 ② — 검증 Q-1)의 PySide6 시험 — 창을 화면에 띄우지 않고(offscreen) 가짜 공급자로, 아무것도 쓰지 않는다.
-**PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다). 칩이 백여 개라 이름 칸에서 저장 단추까지 Tab 을 백서른네 번 눌러야 하던 것(검증 Q-1)을 줄이는 규칙이다.
+**PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다). 칩이 백여 개라 이름 칸에서 저장 단추까지 Tab 을 백사십 번 가까이 눌러야 하던 것(검증 Q-1 은 134번이라 적었다)을 줄이는 규칙이다.
 
 지키는 것:
   1) 칩이 많은 묶음(낱말 제안 넷·보기 셋·여럿 고르기 둘)은 **묶음 하나가 Tab 정거장 하나**다 — 처음엔 고른 첫 칩(꺼진 칩은 빼고, 없으면 첫 칩)이고 나머지 칩은 마우스로만 포커스를 받는다.
   2) 묶음 안에서는 화살표 키(← ↑ 이전 · → ↓ 다음, 끝에서는 반대 끝으로)·Home·End 로 **옮기기만** 하고(고르지 않는다) 꺼진(못 고르는) 칩은 건너뛴다. 키 조합(Ctrl 등)은 건드리지 않는다.
   3) Tab 으로 묶음을 지나가면 Shift+Tab 으로 마지막에 있던 칩으로 돌아오고, 마우스로 누른 칩이 새 정거장이다. Space·Enter 로 켜고 끄는 것은 그대로이고 정거장은 그대로 남는다.
   4) 쓸 수 있는 칩이 하나도 없으면 정거장도 없고(갇히지 않는다), 정거장이던 칩이 꺼지면 다른 칩으로 옮긴다. 하나만 고르는 묶음(언어·색)은 그대로다(고른 칩만 정거장).
-  5) 이름 칸에서 저장 단추까지 Tab 횟수가 크게 줄었다(134 → 아래 상한). 접근 이름은 그대로다.
+  5) 이름 칸에서 저장 단추까지 Tab 횟수가 크게 줄었다(직접 센 값 140 → 29, 아래 상한 45). 접근 이름은 그대로다.
 """
 import sys
 import unittest
@@ -222,7 +222,7 @@ class ChipGroupsOnTheFormTest(Base):
             self.assertIsNotNone(current)
             steps += 1
         self.assertIs(current, save, "Tab 으로 저장 단추에 닿는다")
-        self.assertLessEqual(steps, TAB_LIMIT, "의도적 개선(blogsel-2, D-511): 칩 묶음이 정거장 하나라 134번 → 상한 안")
+        self.assertLessEqual(steps, TAB_LIMIT, "의도적 개선(blogsel-2, D-510): 칩 묶음이 정거장 하나라 이름 칸에서 저장까지 140번 → 29번(상한 안)")
 
     def test_the_chips_keep_their_accessible_names_and_every_group_still_reaches_each_chip_by_arrows(self):
         window = self.make()

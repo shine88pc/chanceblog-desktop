@@ -625,10 +625,10 @@ class WritingTest(Base):
         self.assertEqual(provider.calls[-1], "clear")
         self.assertFalse(provider.slots["naver_a"].registered)
         self.assertEqual(len(provider.slots), 5, "저장 형식의 슬롯은 다섯 그대로다")
-        self.assertEqual(list(self.ui(window).cards), ["blogger_ko", "naver_b"], "지운 블로그의 카드는 사라진다")
+        self.assertEqual(list(self.ui(window).cards), ["naver_b", "blogger_ko"], "지운 블로그의 카드는 사라진다(의도적 갱신 blogsel-2, D-511: 카드 순서는 종류별 채움 순서)")
         self.assertEqual(window.state.blogs.notice, ("ok", T["blogs_cleared"]))
-        self.assertEqual(window.state.blogs.selected, "blogger_ko")
-        self.assertEqual(self.ui(window).fields["blog_ref"].edit.text(), "example-blog-c", "다음 카드의 폼이 열린다")
+        self.assertEqual(window.state.blogs.selected, "naver_b")
+        self.assertEqual(self.ui(window).fields["blog_ref"].edit.text(), "example-blog-b", "다음 카드의 폼이 열린다(첫 카드는 종류별 채움 순서의 네이버 2)")
         self.assertTrue(self.action(window, "delete").isEnabled())
 
     def test_closing_the_window_waits_for_a_write_in_progress(self):
