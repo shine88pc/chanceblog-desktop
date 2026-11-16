@@ -125,7 +125,7 @@ class SourceRulesTest(unittest.TestCase):
     def test_the_shell_functions_of_the_photo_sheet_never_touch_providers_files_or_the_network(self):
         methods = methods_of(QT_DIR / "shell.py", "AppShell")
         found = [name for name in methods if name.startswith(("photos_", "_photos_"))]
-        self.assertEqual(sorted(found), ["_photos_after_store", "_photos_discard", "_photos_live", "_photos_trash_clear_confirmed", "photos_card_refresh", "photos_close", "photos_escape", "photos_open", "photos_pick", "photos_relink", "photos_restore", "photos_trash_clear"])
+        self.assertEqual(sorted(found), ["_photos_after_store", "_photos_discard", "_photos_flush", "_photos_live", "_photos_trash_clear_confirmed", "photos_card_refresh", "photos_close", "photos_escape", "photos_open", "photos_pick", "photos_relink", "photos_restore", "photos_trash_clear"])
         for name in found:
             source = "\n".join(ast.unparse(statement) for statement in methods[name].body)
             for forbidden in ("provider.", "service.", "sqlite3", "subprocess", "socket", "urllib", "shutil", "os.", "pathlib"):
@@ -146,6 +146,19 @@ class SourceRulesTest(unittest.TestCase):
         escape = ast.unparse(methods["escape"])
         self.assertIn("photos_escape", escape, "Esc 가 사진 정리 길로 간다")
         self.assertLess(escape.index("photos_escape"), escape.index("close_dialog"), "Esc 는 닫기 단추와 같은 길을 먼저 거친다")
+
+    def test_the_app_close_and_the_leave_questions_hand_over_the_text_being_typed_before_they_clear_the_sheet(self):
+        """검증 S U-10 — 질문(`show_dialog`)이 열려 있던 사진 정리 창을 치우기 전에 치는 중인 글을 규칙에 넘긴다(앱 닫기·떠나기 두 길)."""
+        methods = methods_of(QT_DIR / "shell.py", "AppShell")
+        flush = ast.unparse(methods["_photos_flush"])
+        self.assertIn("_photos_live()", flush)
+        self.assertIn("form.flush()", flush)
+        close_text, go_text = ast.unparse(methods["closeEvent"]), ast.unparse(methods["go"])
+        self.assertEqual(close_text.count("_photos_flush()"), 1)
+        self.assertLess(close_text.index("_photos_flush()"), close_text.index("references_guard_quit"), "참고 글 보관함 질문보다 먼저")
+        self.assertLess(close_text.index("_photos_flush()"), close_text.index("close_guard"), "초안 닫기 질문보다 먼저")
+        self.assertEqual(go_text.count("_photos_flush()"), 1)
+        self.assertLess(go_text.index("_photos_flush()"), go_text.index("leave_guard"), "떠나기 질문보다 먼저")
 
     def test_every_photo_text_is_used_and_every_used_text_is_defined(self):
         files = [CORE_DIR / "photo_view.py", CORE_DIR / "photo_rules.py", QT_DIR / "photo_parts.py", QT_DIR / "photo_screen.py", QT_DIR / "shell.py", QT_DIR / "draft_screen.py", CORE_DIR / "drafts_view.py", CORE_DIR / "drafts.py",

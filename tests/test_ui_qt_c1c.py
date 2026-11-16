@@ -79,7 +79,8 @@ class HomeDrawsTheBoardTest(QtBase):
     def test_the_example_board_is_drawn_with_every_kind_of_row(self):
         """의도적 교체(UI-C1d, D-201 — 운영자 2026-11-06 확인 요청 004 의 답 5): 옛 `HomeLooksTheSameTest` 의 첫 시험(새 구역을 안 읽어도 있어도 홈 화면이 같음)의 자리 — 이제 새 구역을 그린다. 예시 보드(점수 있음·점수 없음·관심도 없음·이전 점수 없음·오르내림·발행일 모름)가 모두 그려진다 — 새 구역의 글이 화면에 있다."""
         shown = self.texts(self.make(services.FakeHomeProvider()))
-        for piece in ("점수 계산 전", "관심도 데이터 부족", "관심도 상승", "관심도 하락", "관심도 보통", "발행일 확인 불가", "작성 중인 초안", "초안 생성됨", "검토 필요", "최근 발행", "연결 상태", "예시", "블로그 A 추천", "블로그 B 추천",
+        # 의도적 갱신(blogsel-2, D-510): 홈 두 구역의 이름은 블로그 관리의 별명(없으면 종류 + 번호) — 옛 고정 이름 `블로그 A·B` 가 아니다
+        for piece in ("점수 계산 전", "관심도 데이터 부족", "관심도 상승", "관심도 하락", "관심도 보통", "발행일 확인 불가", "작성 중인 초안", "초안 생성됨", "검토 필요", "최근 발행", "연결 상태", "예시", "네이버 블로그 1 추천", "네이버 블로그 2 추천",
                       "우선 추천", "일반 후보", "후보 5개", "후보 4개"):
             self.assertIn(piece, shown, piece)
         self.assertIn("예시 데이터", shown)

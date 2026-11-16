@@ -17,6 +17,7 @@ from ...errors import AppError
 from ...topics import schedule
 from ...topics import seeds as sd
 from ...topics import wording
+from . import channel_names as cn
 from . import seed_form as sf
 from . import seed_rules as rules
 from .jobs import JobFailure
@@ -566,6 +567,14 @@ class SeedsController:
         self.notice = ("error", T["seeds_fail_other"])
 
     # ---- 뷰모델 ----
+    @staticmethod
+    def _option(value, full, short):
+        """서랍의 고르기 칩 하나 — 칩 글은 줄인 이름(`short`)이고, 줄였으면 전체 이름을 `tip` 에 싣는다(툴팁·접근 이름 — 줄이지 않았으면 이 칸은 없다)."""
+        item = {"value": value, "label": short}
+        if short != full:
+            item["tip"] = full
+        return item
+
     def _field(self, spec, values, shown, *, changed, seed=None):
         problem = shown.get(spec.name, "")
         raw = values.get(spec.name)
@@ -580,18 +589,18 @@ class SeedsController:
         elif spec.name == "target_type":
             view["options"] = [{"value": kind, "label": sf.target_name(kind)} for kind in sf.TARGET_ORDER]
         elif spec.name == "scope":
-            view["options"] = [{"value": scope, "label": sf.scope_name(scope)} for scope in sf.SCOPE_ORDER]
+            view["options"] = [self._option(scope, sf.scope_name(scope), sf.scope_short_name(scope)) for scope in sf.DISPLAY_SCOPES]
         elif spec.name == "sponsor_tag":
             view["options"] = [{"value": tag, "label": sf.tag_name(tag)} for tag in sf.TAG_ORDER]
         elif spec.name == "allowed_channels":
-            view["options"] = [{"value": code, "label": sf.channel_name(code)} for code in sf.CHANNEL_ORDER]
+            view["options"] = [self._option(code, sf.channel_name(code), sf.channel_short_name(code)) for code in sf.DISPLAY_CHANNELS]
             if seed is not None and seed.state == sd.STATE_ACTIVE and changed:
                 view["warning"] = T["sf_warn_active_channels"]
         return view
 
     def _info_rows(self, seed):
         none = T["seeds_info_none"]
-        channels_text = sf.channel_name(seed.scope) if seed.scope != sd.SCOPE_COMMON else ", ".join(sf.channel_name(code) for code in seed.allowed_channels)
+        channels_text = sf.channel_name(seed.scope) if seed.scope != sd.SCOPE_COMMON else ", ".join(sf.channel_name(code) for code in cn.display_order(seed.allowed_channels))      # 화면 순서(검증 Q3-1)
         if seed.scope != sd.SCOPE_COMMON:
             channels_text = T["seeds_info_channel_only"].format(name=channels_text)
         rows = [(T["seeds_info_scope"], sf.scope_name(seed.scope)), (T["seeds_info_importance"], sf.importance_name(seed.seed_type) + (" · " + T["seeds_flag_priority"] if seed.priority else "")),
@@ -699,7 +708,7 @@ class SeedsController:
         a11y = T["seeds_row_a11y_idle"].format(base=base) if idle is not None else base
         if unsaved:
             a11y = T["seeds_row_a11y_unsaved"].format(base=a11y)
-        names = ", ".join(sf.channel_name(code) for code in seed.allowed_channels)
+        names = ", ".join(sf.channel_name(code) for code in cn.display_order(seed.allowed_channels))                                                                          # 화면 순서(검증 Q3-1)
         return {"id": seed.seed_id, "title": title, "path": T["seeds_row_path"].format(major=sf.shown(seed.major, 30), minor=sf.shown(seed.minor, 30)), "status": status,
                 "meta": T["seeds_row_meta"].format(scope=sf.scope_name(seed.scope), importance=sf.importance_name(seed.seed_type), target=sf.target_name(seed.target_type)),
                 "channels": T["seeds_row_channels"].format(names=names), "flags": flags, "idle": idle is not None, "idle_text": T["seeds_idle_badge"] if idle is not None else "", "unsaved": unsaved,
@@ -738,7 +747,7 @@ class SeedsController:
         return {"a11y": T["seeds_filter_a11y"], "status_title": T["seeds_filter_status"], "status": chips(rules.STATUS_KEYS, status_labels, status_counts, self.status),
                 "query": {"label": T["seeds_search_label"], "placeholder": T["seeds_search_placeholder"], "value": self.query},
                 "more": {"text": T["seeds_filter_less" if more_open else "seeds_filter_more"], "open": more_open},
-                "scope_title": T["seeds_filter_scope"], "scope": chips(("all", *sf.SCOPE_ORDER), scope_labels, scope_counts, self.scope),
+                "scope_title": T["seeds_filter_scope"], "scope": chips(("all", *sf.DISPLAY_SCOPES), scope_labels, scope_counts, self.scope),
                 "importance_title": T["seeds_filter_importance"], "importance": chips(("all", *sd.SEED_TYPES), importance_labels, importance_counts, self.importance),
                 "result": T["seeds_filter_result"].format(shown=shown, found=len(found), total=len(data.seeds)), "active": self.filters_active(), "reset": T["seeds_filter_reset"]}
 

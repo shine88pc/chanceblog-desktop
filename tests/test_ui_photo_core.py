@@ -1085,6 +1085,37 @@ class DraftsControllerTest(unittest.TestCase):
         self.assertEqual(controller.start_open_saved("dd-" + "0" * 20), ("unconfirmed", None))
         self.assertEqual(controller.photos.count, 1)
 
+    def test_the_remake_button_asks_only_about_edited_text_and_photos_alone_never_stop_it_and_survive_it(self):
+        """검증 S U-1 — 단추를 눌렀을 때 실제로 만들기를 시작하는 문(`start_regenerate`)이 `text_unsaved`(글)만 본다. 사진만 있고 글을 안 고쳤으면 묻지 않고 곧바로 시작하고(사진 목록은 남는다), 글을 고쳤으면 확인창을 보이기 전에는 시작하지 않는다."""
+        def remade(controller):
+            holder = {}
+            status, job = controller.start_regenerate(on_done=lambda result, _payload: holder.setdefault("ok", result), on_error=lambda failure, _payload: holder.setdefault("failed", failure))
+            if job is not None:
+                job.join(30)
+                if "ok" in holder:
+                    controller.apply_made(holder["ok"])                                    # 새 초안이 와도 사진 목록은 그대로다
+            return status
+
+        for edited in (False, True):
+            for photos in (0, 3):
+                with self.subTest(edited=edited, photos=photos):
+                    def build():
+                        controller = self.made()
+                        if edited:
+                            controller.set_body(controller.body + chr(10) * 2 + "고친 문단이에요.")
+                        if photos:
+                            controller.photos.add_paths([path_of(number) for number in range(1, photos + 1)])
+                        return controller
+
+                    controller = build()
+                    self.assertEqual((controller.text_unsaved(), controller.has_unsaved()), (edited, edited or bool(photos)))
+                    self.assertEqual(remade(controller), "unconfirmed" if edited else "started", "확인창을 보이지 않고 바로 누르면 — 글을 고쳤을 때만 막힌다")
+                    asking = build()
+                    dialog = asking.regen_dialog()
+                    self.assertEqual(dialog is not None, edited, "확인창도 글을 고쳤을 때만")
+                    self.assertEqual(remade(asking), "started", "확인창을 보인 뒤에는 시작한다")
+                    self.assertEqual(asking.photos.count, photos, "다시 만들어도 사진 목록은 남는다")
+
     def test_a_forced_unsaved_flag_without_any_photo_still_gives_the_usual_dialog_never_the_photo_only_one(self):
         """합친 앱의 블로그 닫기 확인 시험(`test_ui_qt_blogs_add` — M079 체인)은 `has_unsaved` 만 참으로 바꿔 쓴다(고친 글도 사진도 없다). 사진이 없으면 '사진 정보가 사라져요' 갈래를 타지 않고 지금과 같은 확인창이어야 한다 — 이 시험이 그것을 못박는다(첫 N-2 구현이 놓쳐 그 시험이 깨졌었다)."""
         controller = self.made(saving=True)

@@ -26,6 +26,7 @@ SLOTS = ("github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b")      
 GENERATION_SLOTS = ("naver_a", "naver_b")                                                   # 후보 만들기를 켜고 끌 수 있는 슬롯
 SLOT_KINDS = (("naver_a", "naver_b"), ("blogger_ko", "blogger_en"), ("github_pages",))      # 복제는 같은 종류끼리만
 KIND_KEY = {"naver_a": "naver", "naver_b": "naver", "blogger_ko": "blogger", "blogger_en": "blogger", "github_pages": "github"}
+DISPLAY_ORDER = tuple(key for slots in SLOT_KINDS for key in slots)                          # 목록(카드)·채널 이름 표의 순서 = 종류별 채움 순서: 네이버 a→b·Blogger ko→en·GitHub Pages(저장 슬롯 순서가 아니다 — `Blogger 2` 가 `Blogger 1` 위에 보이지 않게)
 KINDS = tuple(KIND_KEY[slots[0]] for slots in SLOT_KINDS)                                  # 블로그 종류(사용자가 '블로그 추가' 에서 고르는 것) — 화면에 보이는 순서: 네이버·Blogger·GitHub Pages
 KIND_SLOTS = {KIND_KEY[slots[0]]: slots for slots in SLOT_KINDS}                            # 종류 → 그 종류가 속에서 쓰는 슬롯들(채우는 순서 — 네이버 2·Blogger 2·GitHub 1)
 SECTIONS = ("basic", "more", "topic", "look")                                               # 기본 정보 → 자세한 정보 → 주제 설정(P4c) → 모양

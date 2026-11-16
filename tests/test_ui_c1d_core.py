@@ -192,7 +192,7 @@ class DrawerOfARowTest(unittest.TestCase):
         old.open_drawer("s1")
         self.assertEqual([field["label"] for field in shown["fields"]], [field["label"] for field in old.drawer_view()["fields"]])        # 칸이 같다(새 칸 없음)
         self.assertEqual(set(shown), set(old.drawer_view()))                                                                               # 키도 같다
-        self.assertEqual((shown["topic"], shown["blog_label"], shown["priority"], shown["reason"]), ("자취방 곰팡이 없애는 순서", "블로그 A", "데이터 없음", "데이터 없음"))
+        self.assertEqual((shown["topic"], shown["blog_label"], shown["priority"], shown["reason"]), ("자취방 곰팡이 없애는 순서", "네이버 블로그 1", "데이터 없음", "데이터 없음"))
         values = {field["label"]: field["value"] for field in shown["fields"]}
         self.assertEqual(values["최근 트렌드"], "상승")                                                                                      # 관심도(상승)가 서랍에 이미 있는 '최근 트렌드' 칸에 들어간다
         for label in ("월간 검색량", "PC·모바일 검색 비중", "관련 블로그 검색 결과 수", "계절성", "기존 작성 여부", "보조 키워드", "데이터 조회일"):
@@ -218,7 +218,7 @@ class DrawerOfARowTest(unittest.TestCase):
         self.assertFalse(state.open_drawer("r6"))                                                                                          # 여섯째는 홈에 없다
         self.assertEqual(state.drawer_id, "r5")                                                                                            # 열지 못한 시도는 열린 서랍을 건드리지 않는다
         self.assertTrue(state.open_drawer("old"))
-        self.assertEqual(state.drawer_view()["blog_label"], "블로그 B")
+        self.assertEqual(state.drawer_view()["blog_label"], "네이버 블로그 2", "의도적 갱신(blogsel-2, D-510): 홈 서랍의 블로그 이름도 별명(없으면 종류 + 번호)")
         self.assertFalse(state.open_drawer("nope"))
 
     def test_a_row_drawer_masks_a_key_shaped_title_and_never_invents_a_priority(self):

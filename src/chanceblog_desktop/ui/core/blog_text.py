@@ -55,6 +55,7 @@ BLOG_T = {
     "bf_custom": "직접 입력", "bf_custom_a11y": "{label} 직접 입력", "bf_input_custom": "보기에 없는 말을 직접 적어요",
     "bf_suggest_label": "제안", "bf_suggest_use": "쓰기", "bf_suggest_a11y": "{label} 제안 쓰기", "bf_note_full": "{count}개까지 고를 수 있어요. 다른 낱말을 고르려면 먼저 하나를 빼 주세요.",
     "bf_chip_other": "다른 키워드 칸에서 이미 골랐어요.", "bf_chip_full": "고를 수 있는 개수를 다 채웠어요.",
+    "bf_note_other": "다른 키워드 칸에서 이미 고른 낱말은 흐리게 보여요. 그 칸에서 빼면 여기서 고를 수 있어요.",
     "bf_ref_help_naver": "내 블로그 주소의 맨 끝 아이디만 적어도 돼요. 영문·숫자와 . _ - 만, 공백 없이 써요. 예) example-blog",
     "bf_ref_help_web": "https 로 시작하는 내 블로그 주소를 공백 없이 그대로 붙여 넣어요. 계정 정보나 # 뒤의 글은 넣지 않아요.",
     "bf_pick": "파일 고르기", "bf_pick_a11y": "{label} 파일 고르기", "bf_pick_title": "{label} 고르기", "bf_pick_filter": "이미지 파일", "bf_clear": "지우기", "bf_clear_a11y": "{label} 지우기",
@@ -83,6 +84,7 @@ BLOG_T = {
     "blogs_del_ok": "지우기", "blogs_del_cancel": "취소", "blogs_del_named": "‘{name}’ 블로그", "blogs_del_unnamed": "이 블로그",
     # 결과·실패
     "blogs_saved": "저장했어요.", "blogs_unchanged": "바뀐 내용이 없어요.", "blogs_cloned": "복제했어요. 이름과 블로그 ID 를 이 블로그에 맞게 바꿔 주세요.", "blogs_cleared": "블로그 정보를 지웠어요. 내 블로그 목록에서도 사라졌어요.",
+    "blogs_cloned_alias": "별명 칸에 ‘{alias}’ 를 넣어 두었어요. 저장하면 이 별명으로 남아요. 마음에 안 들면 고친 뒤 저장해 주세요.",
     "blogs_stale_reloaded": "다른 곳에서 바뀐 내용을 다시 불러왔어요. 입력한 내용은 그대로 두었어요. 확인한 뒤 다시 저장해 주세요.",
     "blogs_taken_moved": "고른 자리를 다른 곳에서 먼저 썼어요. 입력한 내용은 같은 사이트의 빈 자리로 옮겨 두었어요. 확인한 뒤 저장해 주세요.",
     "blogs_taken_dropped": "고른 자리를 다른 곳에서 먼저 썼고, 같은 사이트에는 남은 자리가 없어요. 새 블로그로 입력하던 내용은 저장되지 않았어요.",

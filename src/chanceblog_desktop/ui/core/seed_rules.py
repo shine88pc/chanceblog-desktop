@@ -74,7 +74,7 @@ def usable_counts(seeds, override=None):
 def channel_rows(seeds, generation):
     """채널마다 한 줄: 이름·쓸 수 있는 수·후보 생성 켜짐 여부(켜짐 True·꺼짐 False·읽지 못함 None)."""
     counts, flags = usable_counts(seeds), dict(generation)
-    return [{"key": code, "name": sf.channel_name(code), "count": counts[code], "generation": flags.get(code)} for code in sf.CHANNEL_ORDER]
+    return [{"key": code, "name": sf.channel_name(code), "count": counts[code], "generation": flags.get(code)} for code in sf.DISPLAY_CHANNELS]            # 화면 순서(블로그 관리와 같다 — 검증 Q2-4)
 
 
 def generation_text(flag):
@@ -98,4 +98,4 @@ def bulk_preview(seeds, selected, kind):
     after = usable_counts(seeds, {seed_id: BULK_TARGET[kind] for seed_id in ids})
     chosen = {seed_id for seed_id in selected if seed_id in by_id}
     return {"ids": ids, "count": len(ids), "parts": parts, "names": names, "rest": max(0, len(ids) - len(names)), "skipped": len(chosen) - len(ids),
-            "channels": [{"key": code, "name": sf.channel_name(code), "before": before[code], "after": after[code]} for code in sf.CHANNEL_ORDER]}
+            "channels": [{"key": code, "name": sf.channel_name(code), "before": before[code], "after": after[code]} for code in sf.DISPLAY_CHANNELS]}

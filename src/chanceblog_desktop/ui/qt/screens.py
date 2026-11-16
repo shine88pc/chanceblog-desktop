@@ -411,15 +411,17 @@ def drawer_content(shell, d):
     head.addWidget(close)
     layout.addLayout(head)
     layout.addWidget(UI.label(d["topic"], "h1", wrap=True))
-    meta = QHBoxLayout()
-    meta.setSpacing(8)
+    badges = []                                                                                  # 배지 줄은 폭이 모자라면 다음 줄로 내려간다(한 줄에 고정하면 긴 별명이 서랍 폭을 넘었다 — 검증 Q2-1)
     if d["blog_label"]:
-        meta.addWidget(UI.Badge("info", d["blog_label"]))
-    meta.addWidget(UI.Badge("muted", f"{T['priority']} {d['priority']}"))
+        badge = UI.Badge("info", d["blog_label"])
+        if d.get("blog_tip"):                                                                    # 줄인 이름이면 전체 이름이 툴팁·접근 이름이다
+            badge.setToolTip(d["blog_tip"])
+            badge.setAccessibleName(d["blog_tip"])
+        badges.append(badge)
+    badges.append(UI.Badge("muted", f"{T['priority']} {d['priority']}"))
     if d["sample"]:
-        meta.addWidget(UI.Badge("muted", d["sample_tag"]))
-    meta.addStretch(1)
-    layout.addLayout(meta)
+        badges.append(UI.Badge("muted", d["sample_tag"]))
+    layout.addWidget(UI.chip_row(badges))
     layout.addWidget(UI.label(d["reason_title"], "small"))
     layout.addWidget(UI.label(d["reason"], "body", wrap=True))
     grid, inner = UI.Card((16, 12, 16, 12), kind="plain")
@@ -434,6 +436,9 @@ def drawer_content(shell, d):
     for index, draft in enumerate(d["drafts"]):
         button = UI.Button("primary" if index == 0 else "secondary", draft["label"], size="lg" if index == 0 else None, focus_key="drawer-draft:" + draft["key"])
         button.clicked.connect(lambda _=False, key=draft["key"]: shell.draft(d["id"], key))
+        if draft.get("tip"):                                                                     # 줄인 이름이면 전체 이름이 툴팁·접근 이름이다
+            button.setToolTip(draft["tip"])
+            button.setAccessibleName(draft["tip"])
         layout.addWidget(button)
     extra = QHBoxLayout()
     for text in (d["hold"], d["more"]):

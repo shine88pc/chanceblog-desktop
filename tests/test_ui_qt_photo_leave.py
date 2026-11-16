@@ -104,6 +104,61 @@ class LeaveWithPhotosTest(tq.PhotoBase):
         self.assertIn(T["pho_card_unsaved"], self.texts(window.screen_widget))
 
 
+class TypingSurvivesTheQuestionTest(tq.PhotoBase):
+    """검증 S U-10 — 사진 정리 창에서 글을 치는 중(Enter·Tab 전)에 앱 닫기·떠나기 질문이 뜨면 질문이 창을 치우므로, 질문이 뜨기 전에 그 글을 규칙에 넘겨 '취소' 해도 글이 남게 한다."""
+    TYPED = "typing now"
+
+    def typing(self):
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1))
+        board = window.state.drafts.photos
+        edit = form.rows["p001"].note.edit
+        edit.setFocus(tq.Qt.TabFocusReason)
+        self.settle(1)
+        tq.QTest.keyClicks(edit, self.TYPED)
+        self.assertEqual((edit.text(), board.photo("p001").user_note), (self.TYPED, ""), "시험의 전제: 글은 칸에만 있고 규칙에는 아직 안 넘어갔다")
+        return window, board
+
+    def reopened_note(self, window):
+        form = window.photos_open()
+        self.settle(4)
+        return form.rows["p001"].note.edit.text()
+
+    def test_the_app_close_question_keeps_the_text_being_typed_when_it_is_cancelled(self):
+        window, board = self.typing()
+        self.assertFalse(window.close(), "사진이 있으니 닫기를 막고 먼저 묻는다")
+        self.settle(3)
+        self.assertEqual(sorted(self.dialog_buttons(window)), ["그래도 닫기", "취소"])
+        self.dialog_buttons(window)["취소"].click()
+        self.settle(3)
+        self.assertTrue(window.isVisible())
+        self.assertEqual(board.photo("p001").user_note, self.TYPED, "취소해도 치던 글은 규칙에 넘어가 남는다")
+        self.assertEqual(self.reopened_note(window), self.TYPED, "사진 정리 창을 다시 열어도 칸에 그 글이 있다")
+
+    def test_the_leave_question_keeps_the_text_being_typed_when_it_is_cancelled(self):
+        window, board = self.typing()
+        window.go("home")
+        self.settle(3)
+        self.assertTrue(window.dialog.is_open)
+        self.dialog_buttons(window)["취소"].click()
+        self.settle(3)
+        self.assertEqual((window.state.page, board.photo("p001").user_note), ("drafts", self.TYPED))
+        self.assertEqual(self.reopened_note(window), self.TYPED)
+
+    def test_without_a_sheet_the_close_and_the_leave_do_not_need_one_and_a_confirmed_close_goes_on(self):
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1))
+        self.assertEqual(window.photos_close(), "closed")
+        self.settle(3)
+        self.assertIsNone(window._photos_live())
+        window._photos_flush()                                                               # 창이 없으면 아무 일도 없다
+        self.assertFalse(window.close())
+        self.settle(3)
+        self.dialog_buttons(window)["그래도 닫기"].click()
+        self.settle(4)
+        self.assertFalse(window.isVisible(), "두 번째 길 — 확인하면 닫힌다")
+
+
 class RejectedRevealTest(tq.PhotoBase):
     def test_files_that_could_not_be_added_are_announced_in_the_status_line_and_scrolled_into_view_once(self):
         window, form = self.sheet(size=(1366, 768))
