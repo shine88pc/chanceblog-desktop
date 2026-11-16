@@ -190,6 +190,10 @@ QFrame[card="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus'
 QFrame[slot="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-left: 4px solid {c['border_strong']}; border-radius: {r['card']}px; }}
 QFrame[slot="true"]:hover {{ background: {c['surface_hover']}; }}
 QFrame[slot="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; border-left: 4px solid {c['primary']}; background: {c['surface']}; }}
+QFrame[slot="true"][addcard="true"] {{ background: {c['surface']}; border: 1px dashed {c['border_strong']}; border-left: 1px dashed {c['border_strong']}; }}
+QFrame[slot="true"][addcard="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; background: {c['surface']}; }}
+QFrame[slot="true"][kindfull="true"] {{ background: {c['disabled_bg']}; border-left: 4px solid {c['border']}; }}
+QFrame[slot="true"][kindfull="true"]:hover {{ background: {c['disabled_bg']}; }}
 {_presets(c)}
 QFrame[seedrow="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[seedrow="true"]:hover {{ background: {c['surface_hover']}; }}
@@ -197,6 +201,7 @@ QFrame[seedrow="true"][checked="true"] {{ background: {c['surface_selected']}; b
 QFrame[seedrow="true"][selected="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
 QFrame[seedrow="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 QFrame[slot="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; border-left: 4px solid {c['border_focus']}; }}
+QFrame[slot="true"][addcard="true"]:focus {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 QFrame[candcard="true"] {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[candcard="true"]:hover {{ border: 1px solid {c['border_hover']}; }}
 QFrame[candcard="true"][selected="true"], QFrame[candcard="true"][selected="true"]:hover {{ border: {K.FOCUS_RING_PX}px solid {c['primary']}; }}
