@@ -3,7 +3,7 @@
 
 지키는 것:
   1) 새 구역 `주제 설정(선택)` 이 자세한 정보와 모양 사이에 있고 설명은 사실만 말한다(지금은 저장만 — 아직 연결되어 있지 않다). 칸은 이름·힌트(한도 숫자)·접근 이름이 있고 칩은 글 유형 다섯이 서비스의 이름 그대로 보이며 누르는 칸은 36px 이상이다.
-  2) 칸을 고치는 동안 화면을 다시 그리지 않고, 칩은 눌러서도 키보드(Space)로도 켜고 끌 수 있으며 칩마다 따로 Tab 정거장이다. 되돌리기는 저장된 값으로 돌려놓는다.
+  2) 칸을 고치는 동안 화면을 다시 그리지 않고, 칩은 눌러서도 키보드(Space)로도 켜고 끌 수 있으며 칩 묶음 하나가 Tab 정거장 하나이고 화살표 키로 칩 사이를 옮긴다(BLOGSEL-2 ②). 되돌리기는 저장된 값으로 돌려놓는다.
   3) 우선·제외에 같은 낱말이 있으면 고친 칸 옆에, 저장을 시도하면 두 칸 옆에 쉬운 문장이 보이고 첫 오류 칸으로 포커스·스크롤이 가며 서비스를 부르지 않는다. 두 칸을 함께 바꾸는 옳은 요청(바꿔치기)은 저장된다.
   4) 실제 서비스: 등록하며 세 칸을 채워 저장→다시 열면 보인다·삭제가 세 칸을 비운다·키 모양은 서비스가 거절해 칸 옆에 문장이 보이고 입력은 남는다·손으로 고친 판 2 파일의 값이 보이고 다른 칸을 저장해도 보존된다.
   5) 열고 고르고 고치고 칩을 눌러도 **파일이 하나도 안 바뀐다**(임시 폴더 전체 바이트).
@@ -117,7 +117,7 @@ class TopicSectionTest(Base):
         self.assertEqual((fields["exclude_keywords"].edit.text(), fields["priority_keywords"].edit.text()), ("예시 제외어", "예시 키워드 하나, 예시 키워드 둘"))
         self.assertFalse(window.state.blogs.is_dirty("naver_a"))
 
-    def test_the_chips_work_by_click_and_by_keyboard_and_each_chip_is_its_own_tab_stop(self):
+    def test_the_chips_work_by_click_and_by_keyboard_and_each_chip_group_is_one_tab_stop(self):      # 의도적 갱신(blogsel-2, D-510): 이름이 '칩마다 정거장' 이 아니라 '묶음마다 정거장'
         window = self.make()
         view = self.ui(window).fields["preferred_post_types"]
         chip = view.chips["장소·업체 정보형"]
@@ -133,7 +133,7 @@ class TopicSectionTest(Base):
         start = window.nav_buttons["blogs"]
         self.focus(start)
         seen, current = [], start
-        for _ in range(450):                                                                          # 의도적 갱신(blogsel, D-493): 낱말 칸 넷의 제안 칩이 정거장에 더해져 한 바퀴가 길어졌다
+        for _ in range(150):                                                                          # 의도적 갱신(blogsel-2, D-510): 칩 묶음이 정거장 하나라 한 바퀴가 150곳 안이다(옛 450)
             seen.append(current)
             current.focusNextChild()
             self.settle(1)
@@ -145,9 +145,13 @@ class TopicSectionTest(Base):
             self.fail("Tab 이 한 바퀴를 돌지 못했다")
         stops = {id(widget) for widget in seen}
         for name in THREE:
-            for control in self.ui(window).fields[name].controls:
-                if control.isEnabled() and control.isVisibleTo(window):                              # 한도·겹침으로 꺼진 칩과 숨은 입력 칸은 정거장이 아니다
+            view = self.ui(window).fields[name]
+            group = view.chip_group
+            for control in view.controls:
+                if control.isEnabled() and control.isVisibleTo(window) and not (group is not None and control in group.chips):      # 한도·겹침으로 꺼진 칩과 숨은 입력 칸은 정거장이 아니다
                     self.assertIn(id(control), stops, f"{name}: {control.accessibleName()} 가 Tab 한 바퀴에 있다")
+            if group is not None:
+                self.assertEqual([chip for chip in group.chips if id(chip) in stops], [group.current], f"{name}: 칩 묶음은 정거장이 하나이고 마지막에 쓴 칩이다")
 
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")

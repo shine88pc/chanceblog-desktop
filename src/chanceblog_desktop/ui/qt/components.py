@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QLayout, Q
 
 from ..core import tokens as K
 from ..core.attribution import UTM_SOURCE, check_url, with_utm
+from ..core.channel_names import button_text as ampersand_safe_text                        # `StateCard` 의 매개변수 `button_text` 가 가리지 않게 다른 이름으로 가져온다(검증 S3-4)
 from ..core.notify import ToastPolicy
 from ..core.part_rules import BADGE_MAX_CHARS, clip_text, drawer_width
 from ..core.text import T
@@ -129,7 +130,7 @@ def with_tooltip(widget, text):
 def Button(kind, text, icon_name=None, size=None, accessible=None, focus_key=None):
     """PrimaryButton·SecondaryButton·GhostButton·DangerButton — kind: primary | secondary | ghost | danger | danger_ghost(위험한 3차 행동 — 배경 없는 빨간 글자, 일반 카드의 `제외` 같은 곳).
     size: None(표준 40) | "lg"(큰 주 단추 44) | "sm"(작은 단추 — 누르는 칸 36)."""
-    button = QPushButton(text)
+    button = QPushButton(ampersand_safe_text(text))                              # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3)
     button.setAutoDefault(True)                                           # Enter 로도 눌린다(대화상자 밖의 단추는 기본이 Space 뿐이다)
     button.setProperty("kind", kind)
     if size == "sm":
@@ -180,7 +181,7 @@ def NavButton(text, icon_name, accessible):
 
 
 def LinkButton(text, accessible=None):
-    button = QPushButton(text)
+    button = QPushButton(ampersand_safe_text(text))
     button.setAutoDefault(True)
     button.setProperty("link", True)
     button.setMinimumHeight(K.SIZE["hit"])
@@ -192,7 +193,7 @@ def LinkButton(text, accessible=None):
 # ---- 칩·배지 ------------------------------------------------------------------------------------------------------------------
 def FilterChip(text, count, active, focus_key=None):
     """칩 — 보이는 높이 34, 누르는 칸 36."""
-    chip = QPushButton(f"{text}  {count}" if count is not None else text)
+    chip = QPushButton(ampersand_safe_text(f"{text}  {count}" if count is not None else text))                      # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3), 접근 이름은 아래에서 그대로
     chip.setAutoDefault(True)
     chip.setProperty("chip", True)
     chip.setCheckable(True)
@@ -216,6 +217,7 @@ def KeywordChip(text):
 def Badge(kind, text):
     """배지 — kind: a · b(블로그, 색과 글자를 함께) · ok · warning · danger · info · muted(상태 배지는 색만이 아니라 늘 글자를 함께 쓴다)."""
     badge = QLabel(text)
+    badge.setTextFormat(Qt.PlainText)                                       # 별명의 `<b>x</b>` 가 서식으로 읽히지 않고 글자 그대로(검증 S2-3)
     badge.setProperty("badge", kind)
     badge.setAlignment(Qt.AlignCenter)
     badge.setMinimumHeight(K.SIZE["badge_h"])
@@ -245,7 +247,7 @@ class SemanticBadge(QLabel):
 
 
 def BlogBadge(blog, text):
-    """블로그 A·B 배지 — 색만이 아니라 글자('블로그 A')도 함께 보인다."""
+    """홈의 두 구역 배지 — 색(a·b 열쇠)만이 아니라 글자(이름의 끝 숫자 — `네이버 블로그 1` 은 1, 별명은 첫 글자)도 함께 보인다."""
     return Badge(blog.lower(), text)
 
 

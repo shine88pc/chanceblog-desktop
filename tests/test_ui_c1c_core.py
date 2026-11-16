@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from chanceblog_desktop.ui.core import app_state, board_view, services, text, timed  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, board_view, channel_names as cn, services, text, timed  # noqa: E402
 from chanceblog_desktop.ui.core import settings_view as sv  # noqa: E402
 from chanceblog_desktop.ui.core.jobs import JobFailure  # noqa: E402
 from chanceblog_desktop.ui.core.services import (BoardData, ChannelRead, DraftRow, HomeData, ListRead, RecentRow, RecommendRow, Topic)  # noqa: E402
@@ -169,10 +169,11 @@ class RowViewTest(unittest.TestCase):
 
     def test_a_row_has_exactly_these_keys_no_volume_no_document_count_no_internal_number(self):
         """의도적 갱신(UI-C1d, D-201): 줄에 `id` 칸이 **하나** 늘었다 — 줄을 눌러 상세 서랍을 열려면 줄을 가리킬 열쇠가 필요하다(옛 시험은 '내부 번호가 뷰모델에 없다' 였다). 그 번호는 글이 아니라 열쇠이고
-        어떤 글(제목·접근 이름·꼬리표 …)에도 나가지 않으며(아래·`texts_of` 시험이 지킨다) 그 칸 하나뿐이다. 월 검색량·문서 수 칸은 그대로 없다."""
+        어떤 글(제목·접근 이름·꼬리표 …)에도 나가지 않으며(아래·`texts_of` 시험이 지킨다) 그 칸 하나뿐이다. 월 검색량·문서 수 칸은 그대로 없다.
+        의도적 갱신(blogsel-2, D-510): 줄에 `badge` 칸이 **하나** 늘었다 — 채널 배지 안의 글자(이름의 끝 숫자 또는 첫 글자)이다. 색은 `channel` 열쇠가 그대로 정하므로 글자를 따로 실었고, 어디에도 번호·내부 열쇠가 아니다."""
         number = "tc-naver_a-seed-aaaa000000000001"
         row = board_view.row_vm(rec(id_=number), 3)
-        self.assertEqual(set(row), {"id", "rank", "channel", "title", "score", "score_text", "ring", "band", "band_label", "delta", "interest", "sample", "sample_tag", "a11y"})
+        self.assertEqual(set(row), {"id", "rank", "channel", "badge", "title", "score", "score_text", "ring", "band", "band_label", "delta", "interest", "sample", "sample_tag", "a11y"})
         self.assertEqual((row["id"], row["rank"], row["channel"]), (number, 3, ""))                         # 채널은 `channel_vm` 이 열쇠(A·B)를 넘긴다 — 직접 부르면 비어 있다
         self.assertEqual(repr(row).count(number), 1)                                                        # 번호는 `id` 칸 하나뿐이다
         self.assertNotIn("tc-naver_a", texts_of(row))                                                       # 글에는 없다
@@ -194,7 +195,7 @@ class RowViewTest(unittest.TestCase):
 class ChannelViewTest(unittest.TestCase):
     def test_a_channel_with_rows_is_normal_and_counts_them(self):
         view = board_view.channel_vm(channel("A", [rec("하나", 90, id_="a"), rec("둘", 70, id_="b")], name="예시 이름 에이"))
-        self.assertEqual((view["key"], view["name"], view["title"], view["state"], view["count"], view["count_text"]), ("A", "예시 이름 에이", "예시 이름 에이 추천", "normal", 2, "후보 2개"))
+        self.assertEqual((view["key"], view["name"], view["title"], view["state"], view["count"], view["count_text"]), ("A", "네이버 블로그 1", "네이버 블로그 1 추천", "normal", 2, "후보 2개"))
         self.assertEqual([(row["rank"], row["channel"], row["title"]) for row in view["rows"]], [(1, "A", "하나"), (2, "A", "둘")])
         self.assertEqual({row["channel"] for row in board_view.channel_vm(channel("B", [rec(id_="x")]))["rows"]}, {"B"})
         self.assertEqual((view["enabled"], view["enabled_text"], view["note"], view["error"]), (True, "켜짐", "", None))
@@ -235,12 +236,18 @@ class ChannelViewTest(unittest.TestCase):
         lost = board_view.channel_vm(channel("A", state="failed", failure=None))
         self.assertEqual((lost["error"]["desc"], lost["error"]["diag"]), (text.T["job_failed"], "code: UNKNOWN"))
 
-    def test_the_name_is_masked_then_cut_and_falls_back_to_the_plain_blog_label(self):
-        for lead in range(0, 90, 5):
-            shown = board_view.channel_vm(channel("A", name="가" * lead + " " + KEY))
-            self.assertEqual(leaks(shown["name"] + shown["title"], KEY, 5), [], lead)
-            self.assertLessEqual(len(shown["name"]), board_view.NAME_LIMIT)
-        self.assertEqual([board_view.channel_vm(channel(key, name=name))["name"] for key, name in (("A", ""), ("B", "   "), ("A", NONE_OF * 3))], ["블로그 A", "블로그 B", "블로그 A"])
+    def test_the_name_is_the_screen_name_of_the_channel_masked_then_cut_and_the_provider_name_is_not_used(self):
+        """의도적 갱신(blogsel-2, D-510): 홈 구역의 이름은 공급자가 준 블로그 이름이 아니라 블로그 관리의 별명(`channel_names` — 가린 뒤 줄인다). 별명이 없으면 종류 + 번호."""
+        try:
+            for lead in range(0, 90, 5):
+                cn.use(cn.labels({"naver_a": ("가" * lead + " " + KEY, True)}))
+                shown = board_view.channel_vm(channel("A", name="공급자가 준 이름"))
+                self.assertEqual(leaks(shown["name"] + shown["title"], KEY, 5), [], lead)
+                self.assertLessEqual(len(shown["name"]), board_view.NAME_LIMIT)
+                self.assertNotIn("공급자가 준 이름", shown["name"])
+        finally:
+            cn.use(None)
+        self.assertEqual([board_view.channel_vm(channel(key, name=name))["name"] for key, name in (("A", ""), ("B", "   "), ("A", NONE_OF * 3))], ["네이버 블로그 1", "네이버 블로그 2", "네이버 블로그 1"])
 
     def test_at_most_five_rows_are_taken_from_a_thousand_and_the_rest_are_never_touched(self):
         class Counting:
@@ -457,7 +464,7 @@ class BoardViewTest(unittest.TestCase):
 
     def test_the_two_channels_always_come_in_a_then_b_order_whatever_the_provider_sent(self):
         swapped = view_of(data_with(board([channel("B", [rec("비")], name="비 이름"), channel("A", [rec("에이")], name="에이 이름")])))
-        self.assertEqual([(item["key"], item["name"], item["rows"][0]["title"]) for item in swapped["recommend"]], [("A", "에이 이름", "에이"), ("B", "비 이름", "비")])
+        self.assertEqual([(item["key"], item["name"], item["rows"][0]["title"]) for item in swapped["recommend"]], [("A", "네이버 블로그 1", "에이"), ("B", "네이버 블로그 2", "비")], "의도적 갱신(blogsel-2, D-510): 홈 구역의 이름은 공급자가 준 이름이 아니라 블로그 관리의 별명(없으면 종류 + 번호) — A 다음 B 순서는 그대로")
         only_a = view_of(data_with(board([channel("A", [rec()])])))
         self.assertEqual([(item["key"], item["state"]) for item in only_a["recommend"]], [("A", "normal"), ("B", "empty")])
         extra = view_of(data_with(board([channel("A"), channel("B"), channel("C", [rec()])])))

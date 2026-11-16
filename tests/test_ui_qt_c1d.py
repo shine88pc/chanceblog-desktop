@@ -211,8 +211,8 @@ class RowLookTest(QtBase):
         self.assertEqual(row.title_label.plain_text(), "가 예시 주제 1")
         self.assertEqual(row.interest.text_label.text(), "관심도 상승")
         self.assertEqual(row.interest.text_label.property("trend"), "up")
-        self.assertEqual((row.sample_badge.text(), row.channel_badge.text(), row.channel_badge.property("badge")), ("예시", "A", "a"))
-        self.assertEqual(row.channel_badge.accessibleName(), "블로그 A")                                      # 열쇠 한 글자만 읽히지 않게 채널 이름
+        self.assertEqual((row.sample_badge.text(), row.channel_badge.text(), row.channel_badge.property("badge")), ("예시", "1", "a"), "의도적 갱신(blogsel-2, D-510): 배지 글자는 이름의 끝 숫자(네이버 블로그 1 → 1), 색 열쇠는 그대로 a")
+        self.assertEqual(row.channel_badge.accessibleName(), "네이버 블로그 1", "의도적 갱신(blogsel-2, D-510): 홈의 채널 이름은 블로그 관리의 별명(없으면 종류 + 번호)")                                      # 열쇠 한 글자만 읽히지 않게 채널 이름
         self.assertEqual(row.accessibleName(), row.row["a11y"])
         self.assertEqual(row.accessibleDescription(), text.T["board_row_hint"])
         self.assertEqual(ui_offscreen.find_clipping(window), [])
@@ -326,7 +326,7 @@ class SectionStatesTest(QtBase):
         self.assertIn(text.T["board_rec_off"], notes)
         self.assertIn(text.T["board_draft_error_title"], notes)
         headers = [label.text() for label in page.findChildren(UI.ElidedLabel) if label.property("role") == "h2"]
-        self.assertEqual(headers, ["블로그 A 추천", "블로그 B 추천", "작성 중인 초안", "최근 발행"])             # 네 구역 머리가 모두 있다
+        self.assertEqual(headers, ["네이버 블로그 1 추천", "네이버 블로그 2 추천", "작성 중인 초안", "최근 발행"])             # 네 구역 머리가 모두 있다
         self.assertIn("꺼짐", [label.text() for label in page.findChildren(QLabel) if label.property("badge") == "muted"])      # 꺼진 채널은 색이 아니라 글자로
         self.assertIn(text.T["board_posts_skipped"].format(n=1), [label.plain_text() for label in page.findChildren(UI.Label)])
         recent = [row.caption_label.text() for row in page.findChildren(board_module.ListRow)]
@@ -532,7 +532,7 @@ class AccessibilityTest(QtBase):
         self.assertEqual([card.accessibleName() for card in page.findChildren(board_module.KpiCard)], ["추천 주제 9개", "작성 완료 3개", "발행 완료 2개", "저장된 아이디어 2개"])
         self.assertEqual([card.accessibleName() for card in page.findChildren(board_module.KpiCard)], [kpi["a11y"] for kpi in view["kpi"]])
         sections = [frame for frame in page.findChildren(QWidget) if hasattr(frame, "rows_layout")]
-        self.assertEqual([frame.accessibleName() for frame in sections], ["블로그 A 추천, 후보 5개", "블로그 B 추천, 후보 4개", "작성 중인 초안", "최근 발행"])      # 구역 이름 + 후보 수(구역을 읽으면 어느 블로그인지 먼저 들린다)
+        self.assertEqual([frame.accessibleName() for frame in sections], ["네이버 블로그 1 추천, 후보 5개", "네이버 블로그 2 추천, 후보 4개", "작성 중인 초안", "최근 발행"])      # 구역 이름 + 후보 수(구역을 읽으면 어느 블로그인지 먼저 들린다)
         self.assertEqual([row.accessibleName() for row in self.rows(window)], [row["a11y"] for section in view["recommend"] for row in section["rows"]])
         self.assertEqual([row.accessibleName() for row in page.findChildren(board_module.ListRow)], [row["a11y"] for section in (view["drafts"], view["recent"]) for row in section["rows"]])
         self.assertTrue(all("예시" in row.accessibleName() for row in self.rows(window)))                    # 예시 데이터는 말로도 알려 준다

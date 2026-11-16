@@ -59,7 +59,7 @@ T = {
     "drawer_title": "주제 상세", "drawer_close": "상세 닫기", "d_demand": "월간 검색량", "d_split": "PC·모바일 검색 비중", "d_docs": "관련 블로그 검색 결과 수", "d_trend": "최근 트렌드",
     "d_season": "계절성", "d_written": "기존 작성 여부", "d_sub": "보조 키워드", "d_date": "데이터 조회일", "d_reason": "추천 이유",
     "written_yes": "이미 쓴 글이 있어요", "written_no": "아직 쓴 글이 없어요", "split_value": "PC {pc}% · 모바일 {mobile}%",
-    "draft_a": "블로그 A 초안", "draft_b": "블로그 B 초안", "hold": "보류", "more": "더보기",
+    "draft_of": "{name} 초안", "hold": "보류", "more": "더보기",
     # 상태 화면
     "loading": "후보를 불러오고 있어요…", "loading_a11y": "후보를 불러오는 중",
     "error_title": "주제 후보를 불러오지 못했어요.", "error_desc": "잠시 뒤에 다시 시도해 주세요. 계속되면 아래 진단 정보를 함께 알려 주세요.", "retry": "다시 시도",

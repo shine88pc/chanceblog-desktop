@@ -21,7 +21,7 @@ import scan_samples as SS  # noqa: E402
 from test_ui_drafts_core import CATALOG, GENERIC, HEALTH, KEYS_NOT_SHOWN, all_strings, made, target_of  # noqa: E402
 
 from chanceblog_desktop.errors import AppError  # noqa: E402
-from chanceblog_desktop.ui.core import app_state, board_view, draft_rules as rules, draft_text, drafts, drafts_view as dv, jobs, text  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, board_view, channel_names as cn, draft_rules as rules, draft_text, drafts, drafts_view as dv, jobs, text  # noqa: E402
 
 T = text.T
 EMOJI = chr(0x1F600)
@@ -727,7 +727,7 @@ class ListAndDeleteTest(unittest.TestCase):
         self.assertEqual([row["title"] for row in saved["rows"]], ["제목 2", "제목 1", "제목 0"])
         row = saved["rows"][0]
         record = next(item for item in provider.saved.values() if item.title == "제목 2")
-        self.assertEqual(row["meta"], T["drf_saved_row_meta"].format(topic=rules.shown(record.topic, 40), blog=T["drf_saved_blog_naver_a"], when=board_view.time_text(record.updated_at), chars=f"{len(''.join(record.body.split())):,}"))
+        self.assertEqual(row["meta"], T["drf_saved_row_meta"].format(topic=rules.shown(record.topic, 40), blog=cn.label("naver_a"), when=board_view.time_text(record.updated_at), chars=f"{len(''.join(record.body.split())):,}"))
         self.assertEqual((row["open"]["text"], row["delete"]["text"], row["unreadable"]), (T["drf_saved_open"], T["drf_saved_delete"], False))
         self.assertIn("제목 2", row["open"]["a11y"])
         self.assertIn("제목 2", row["delete"]["a11y"])

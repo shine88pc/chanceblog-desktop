@@ -16,11 +16,14 @@ from ...content.profiles import find_markup
 from ...topics import channels as ch
 from ...topics import seeds as sd
 from ...topics import wording
+from . import channel_names as cn
 from .blog_form import clean_line, shown, split_words  # noqa: F401  — 같은 글 다듬기(한 줄·쉼표 낱말)와 가리고 줄이기를 그대로 쓴다
 from .text import T
 
 CHANNEL_ORDER = ch.CHANNELS                                                                    # 허용 채널을 고르는 순서(코드의 채널 순서)
+DISPLAY_CHANNELS = cn.ORDER                                                                    # 화면에 늘어놓는 순서 = 블로그 관리의 카드 순서(네이버 1·2 → Blogger 1·2 → GitHub Pages — 검증 Q2-4). 저장하는 값의 순서(`CHANNEL_ORDER`)는 그대로다
 SCOPE_ORDER = sd.SCOPES                                                                         # 소속: 공통 + 다섯 채널
+DISPLAY_SCOPES = (sd.SCOPE_COMMON, *cn.ORDER)                                                    # 소속을 화면에 늘어놓는 순서 — 공통 다음에 `DISPLAY_CHANNELS` 순서(검증 Q2-4)
 IMPORTANCE_CREATE = tuple(item for item in sd.SEED_TYPES if item != sd.SEED_SEASONAL)           # 수동 등록의 중요도 — 계절형은 일정 칸이 있는 고급 편집이라 뺀다
 TARGET_ORDER = sd.TARGET_TYPES                                                                  # 대상 유형 열한 가지(묶음 행 셋은 제안 파일 이름이라 고르는 칸에 없다)
 TAG_ORDER = tuple(wording.TAG_KO)                                                               # 협찬 가능 분야 여섯
@@ -237,7 +240,10 @@ def state_name(state):
 
 
 def scope_name(scope):
-    return wording.SCOPE_KO[scope]
+    if scope == "common":
+        return wording.SCOPE_KO[scope]
+    wording.CHANNEL_KO[scope]                                                                    # 모르는 소속은 오류(`channel_name` 과 같은 규칙 — 검증 S2-8)
+    return cn.label(scope)                                                                       # 채널 이름은 다른 화면과 같은 화면 이름(별명) — 공통만 서비스의 이름 표
 
 
 def importance_name(kind):
@@ -248,8 +254,24 @@ def target_name(target):
     return wording.TARGET_TYPE_KO[target] if target in wording.TARGET_TYPE_KO else T["seeds_target_none"]
 
 
+def scope_short_name(scope):
+    """서랍(폭 420)에 보이는 소속 이름 — 긴 별명은 줄인다(`channel_names.short_label` — 검증 Q2-1). 공통은 그대로."""
+    if scope == "common":
+        return wording.SCOPE_KO[scope]
+    wording.CHANNEL_KO[scope]
+    return cn.short_label(scope)
+
+
+def channel_short_name(code):
+    """서랍(폭 420)에 보이는 허용 채널 이름 — 긴 별명은 줄인다. 모르는 열쇠는 오류(`channel_name` 과 같다)."""
+    wording.CHANNEL_KO[code]
+    return cn.short_label(code)
+
+
 def channel_name(code):
-    return wording.CHANNEL_KO[code]
+    """채널의 화면 이름 — `네이버 A` 같은 고정 이름이 아니라 블로그 관리의 별명(`channel_names` — blogsel-2). 모르는 열쇠는 오류(서비스의 이름 표와 같은 규칙)."""
+    wording.CHANNEL_KO[code]
+    return cn.label(code)
 
 
 def tag_name(tag):

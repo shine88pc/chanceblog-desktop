@@ -180,7 +180,7 @@ class MenuAndLayoutTest(Base):
         """의도적 갱신(blogsel, D-493): 옛 시험은 다섯 슬롯 카드(빈 슬롯은 '등록' 카드)를 못박았다. 이제 카드는 **등록한 블로그만**이고 윗줄 이름은 슬롯 이름이 아니라 별명(없으면 종류 + 번호)이다 — 같은 사실(카드마다 이름·색·선택·접근 이름·누르는 칸)을 새 구조에서 더 정확히 못박는다."""
         window = self.make()
         cards = self.ui(window).cards
-        self.assertEqual(list(cards), ["blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual(list(cards), ["naver_a", "naver_b", "blogger_ko"], "의도적 갱신(blogsel-2, D-511): 카드 순서는 종류별 채움 순서")
         self.assertEqual({key: card.property("preset") for key, card in cards.items()}, {"blogger_ko": "", "naver_a": "warm_lifestyle", "naver_b": "cool_technology"})
         self.assertEqual([key for key, card in cards.items() if card.property("selected")], ["naver_a"])
         self.assertIn("선택됨", cards["naver_a"].accessibleName())
@@ -625,10 +625,10 @@ class WritingTest(Base):
         self.assertEqual(provider.calls[-1], "clear")
         self.assertFalse(provider.slots["naver_a"].registered)
         self.assertEqual(len(provider.slots), 5, "저장 형식의 슬롯은 다섯 그대로다")
-        self.assertEqual(list(self.ui(window).cards), ["blogger_ko", "naver_b"], "지운 블로그의 카드는 사라진다")
+        self.assertEqual(list(self.ui(window).cards), ["naver_b", "blogger_ko"], "지운 블로그의 카드는 사라진다(의도적 갱신 blogsel-2, D-511: 카드 순서는 종류별 채움 순서)")
         self.assertEqual(window.state.blogs.notice, ("ok", T["blogs_cleared"]))
-        self.assertEqual(window.state.blogs.selected, "blogger_ko")
-        self.assertEqual(self.ui(window).fields["blog_ref"].edit.text(), "example-blog-c", "다음 카드의 폼이 열린다")
+        self.assertEqual(window.state.blogs.selected, "naver_b")
+        self.assertEqual(self.ui(window).fields["blog_ref"].edit.text(), "example-blog-b", "다음 카드의 폼이 열린다(첫 카드는 종류별 채움 순서의 네이버 2)")
         self.assertTrue(self.action(window, "delete").isEnabled())
 
     def test_closing_the_window_waits_for_a_write_in_progress(self):
@@ -738,7 +738,7 @@ class KeyboardTest(Base):
         start = window.nav_buttons["blogs"]
         self.focus(start)
         seen, current = [], start
-        for _ in range(450):                                                                      # 의도적 갱신(blogsel, D-493): 낱말 칸 넷에 제안 칩(26·11·27·27)이 생겨 한 바퀴가 150곳에서 늘었다 — 칩마다 Tab 정거장이라는 규칙은 그대로다
+        for _ in range(150):                                                                      # 의도적 갱신(blogsel-2, D-510): 칩 묶음(낱말 제안·보기·여럿 고르기)이 묶음 하나에 Tab 정거장 하나라 한 바퀴가 450곳에서 150곳 안으로 줄었다(검증 Q-1)
             seen.append(current)
             current.focusNextChild()
             self.settle(1)
@@ -758,10 +758,14 @@ class KeyboardTest(Base):
             groups = {}
             for control in view.controls:
                 group = control.group() if hasattr(control, "group") and control.group() is not None and control.group().exclusive() else None
+                if group is None and view.chip_group is not None and control in view.chip_group.chips:
+                    group = view.chip_group                                                       # 의도적 갱신(blogsel-2, D-510): 칩 묶음은 묶음 하나가 정거장 하나다(칩마다가 아니다)
                 groups.setdefault(id(group) if group is not None else id(control), []).append(control)
             for members in groups.values():
                 enabled = [control for control in members if control.isEnabled() and control.isVisibleTo(window)]      # 의도적 갱신(blogsel, D-493): 숨은 입력 칸('직접 입력' 이 아닐 때)은 정거장이 아니다
-                if enabled:
+                if enabled and view.chip_group is not None and enabled[0] in view.chip_group.chips:
+                    self.assertEqual([id(control) in stops for control in enabled].count(True), 1, f"칩 묶음 {name} 은 정거장이 정확히 하나다")
+                elif enabled:
                     self.assertTrue(any(id(control) in stops for control in enabled), f"Tab 한 바퀴에 {name} 칸이 있다")
             if view.kind == "choice":                                                             # 하나만 고르는 칩 묶음은 **고른 칩만** 정거장이고 나머지는 화살표 키로 옮긴다(Tab 으로 들어가 Space 를 눌러도 값이 안 바뀐다)
                 self.assertEqual([chip.isChecked() for chip in view.chips.values() if id(chip) in stops], [True], name)

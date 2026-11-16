@@ -142,7 +142,7 @@ class CardImage(QWidget):
 
 
 class ChannelAvatar(QWidget):
-    """채널 아바타 — 안에 글자 하나(네이버 A·B 는 A·B, 그 밖은 이름의 첫 글자). 채널 색 프리셋은 **테두리와 바탕에만** 쓰고(글자색은 `text_strong`) 프리셋이 없으면 중립색이다. 글자가 늘 함께 있어 색만으로 구분하지 않는다."""
+    """채널 아바타 — 안에 글자 하나(기본 이름 `네이버 블로그 1` 이면 이름의 끝 숫자 `1`, 별명이면 첫 글자 — `channel_names.avatar_letter`). 채널 색 프리셋은 **테두리와 바탕에만** 쓰고(글자색은 `text_strong`) 프리셋이 없으면 중립색이다. 글자가 늘 함께 있어 색만으로 구분하지 않는다."""
 
     def __init__(self, letter, preset=None, side=None):
         super().__init__()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from . import candidate_rules as rules
+from . import channel_names as cn
 from . import gauges as G
 from .candidates import CandidateFailure
 from .draft_rules import BLOG_NAMES
@@ -120,14 +121,14 @@ class CandidatesController:
         if self.data is None:
             return ()
         have = {row.candidate.channel for row in self.data.rows}
-        return tuple(item for item in self.data.channels if item.key in have or item.enabled is True)
+        shown = [item for item in self.data.channels if item.key in have or item.enabled is True]
+        return tuple(sorted(shown, key=lambda item: cn.ORDER.index(item.key) if item.key in cn.ORDER else len(cn.ORDER)))               # 블로그 관리의 카드 순서(네이버 1·2 → Blogger 1·2 → GitHub Pages — 검증 Q2-4)
 
     def channel_info(self, key):
         """채널 하나의 표시 정보 — 프로필을 읽지 못한 채널은 이름이 비어 있으므로 서비스의 채널 이름으로 대신한다."""
-        from ...topics import wording
         found = self.data.channel_map().get(key) if self.data is not None else None
-        name = rules.shown(found.name, 30) if found is not None and found.name else ""
-        return {"key": key, "name": name or wording.CHANNEL_KO.get(key, key), "preset": found.preset if found is not None else None, "weights": found.weights if found is not None else ()}
+        name = cn.label(key) if key in cn.ORDER else (rules.shown(found.name, 30) if found is not None and found.name else "")        # 다섯 채널은 다른 화면과 같은 화면 이름(별명)
+        return {"key": key, "name": name or key, "preset": found.preset if found is not None else None, "weights": found.weights if found is not None else ()}
 
     def notices_of(self, row):
         """후보 하나의 안내들(안전 표시) — 보이는 카드·열린 상세에서만 부르고 기억한다(안전 평가가 후보 하나에 1~2ms)."""
@@ -265,7 +266,7 @@ class CandidatesController:
         if preview is None or not preview.can_make:
             return None
         self.make_asked = True
-        rows = " · ".join(T["cand_make_row"].format(name=rules.shown(item.name, 30), n=item.new) for item in preview.channels if item.new)
+        rows = " · ".join(T["cand_make_row"].format(name=rules.shown(item.name, 30), n=item.new) for item in cn.display_order(preview.channels, key=lambda item: item.key) if item.new)      # 화면 순서(검증 Q3-1)
         lines = [T["cand_make_counts"].format(total=preview.total_new, rows=rows)]
         lines.append(T["cand_make_seeds"].format(used=preview.seeds_used, proposed=preview.seeds_proposed) if preview.seeds_proposed else T["cand_make_seeds_none_proposed"].format(used=preview.seeds_used))
         skips = list(dict.fromkeys(reason for item in preview.channels for reason in item.reasons))
