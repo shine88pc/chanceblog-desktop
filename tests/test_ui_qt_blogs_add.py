@@ -106,7 +106,7 @@ class PickerTest(Base):
         self.assertEqual(chosen, [], "자리가 없는 종류 카드는 '고른 종류' 신호를 내지 않는다 — 셸에 닿기 전에 카드가 먼저 막는다")
         self.assertIs(window.screen_widget, screen, "자리가 없는 종류를 눌러도 화면이 바뀌지 않는다")
         self.assertTrue(window.state.blogs.picking)
-        self.assertEqual(window.state.blogs.listed_keys(), ("blogger_ko", "naver_a", "naver_b"))
+        self.assertEqual(window.state.blogs.listed_keys(), ("naver_a", "naver_b", "blogger_ko"))
         QTest.keyClick(self.ui(window).kind_cards["naver"], Qt.Key_Return)
         self.assertTrue(window.state.blogs.picking)
         self.assertEqual(chosen, [], "키보드로 눌러도 같다")

@@ -14,7 +14,7 @@ from . import blog_form as bf
 from .text import T
 
 LIMIT = 30                                                   # 화면 이름 길이 상한 — 서비스의 별명 한도(`ch.MAX_ALIAS`)와 같다
-ORDER = tuple(key for slots in bf.SLOT_KINDS for key in slots)      # 종류별 채움 순서: naver_a·naver_b·blogger_ko·blogger_en·github_pages
+ORDER = bf.DISPLAY_ORDER                                     # 종류별 채움 순서: naver_a·naver_b·blogger_ko·blogger_en·github_pages
 HOME_KEYS = {"A": "naver_a", "B": "naver_b"}                 # 홈의 채널 열쇠(A·B)가 가리키는 슬롯
 
 

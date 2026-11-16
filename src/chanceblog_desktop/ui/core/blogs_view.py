@@ -125,7 +125,8 @@ class BlogsController:
         """카드로 보이는 슬롯들(슬롯 순서) — 등록됐거나 내용이 있거나 새로 연결하는 중인 것(`blog_form.is_listed`)."""
         if self.data is None:
             return ()
-        return tuple(slot.key for slot in self.data.slots if bf.is_listed(slot.key, slot.raw(), slot.key in self.adding))
+        by_key = self.slot_map()
+        return tuple(key for key in bf.DISPLAY_ORDER if key in by_key and bf.is_listed(key, by_key[key].raw(), key in self.adding))      # 종류별 채움 순서(저장 슬롯 순서가 아니다)
 
     def _normalize_selection(self, prefer=None):
         """폼에 열린 슬롯이 카드로 보이는 슬롯이 아니면 `prefer`(새 블로그 폼을 열기 전의 카드 — 아직 카드면)로, 아니면 첫 카드로 옮기고(없으면 None — 종류 고르기가 열린다)."""

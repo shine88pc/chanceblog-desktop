@@ -180,7 +180,7 @@ class MenuAndLayoutTest(Base):
         """의도적 갱신(blogsel, D-493): 옛 시험은 다섯 슬롯 카드(빈 슬롯은 '등록' 카드)를 못박았다. 이제 카드는 **등록한 블로그만**이고 윗줄 이름은 슬롯 이름이 아니라 별명(없으면 종류 + 번호)이다 — 같은 사실(카드마다 이름·색·선택·접근 이름·누르는 칸)을 새 구조에서 더 정확히 못박는다."""
         window = self.make()
         cards = self.ui(window).cards
-        self.assertEqual(list(cards), ["blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual(list(cards), ["naver_a", "naver_b", "blogger_ko"], "의도적 갱신(blogsel-2, D-511): 카드 순서는 종류별 채움 순서")
         self.assertEqual({key: card.property("preset") for key, card in cards.items()}, {"blogger_ko": "", "naver_a": "warm_lifestyle", "naver_b": "cool_technology"})
         self.assertEqual([key for key, card in cards.items() if card.property("selected")], ["naver_a"])
         self.assertIn("선택됨", cards["naver_a"].accessibleName())

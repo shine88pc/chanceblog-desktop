@@ -64,7 +64,7 @@ def view_strings(view):
 class CardRuleTest(unittest.TestCase):
     def test_the_sample_shows_only_its_three_registered_blogs_and_an_add_card_at_the_end(self):
         view = new_controller().view()
-        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko"], "의도적 갱신(blogsel-2, D-511): 카드 순서는 저장 슬롯 순서가 아니라 종류별 채움 순서(네이버 a→b·Blogger ko→en·GitHub Pages)")
         self.assertEqual(view["list"]["add"], {"key": "add", "title": "블로그 추가", "desc": "연결할 사이트를 골라요.", "a11y": T["blogs_add_a11y"], "selected": False})
         self.assertIsNone(view["picker"])
         self.assertEqual(view["form"]["key"], "naver_a")
@@ -107,6 +107,17 @@ class CardRuleTest(unittest.TestCase):
         self.assertEqual(controller.kind_free("github"), 0, "내용이 있는 슬롯은 빈 슬롯이 아니다 — 새 블로그가 덮어쓰지 않는다")
         self.assertIsNone(controller.start_adding("github"))
 
+    def test_the_cards_follow_the_fill_order_of_each_kind_so_blogger_1_is_above_blogger_2_whatever_order_they_were_added(self):
+        """검증 Q-10 — 목록 순서는 저장 슬롯 순서(github·blogger_en·blogger_ko·naver_a·naver_b)가 아니라 종류별 채움 순서(네이버 a→b·Blogger ko→en·GitHub Pages)다."""
+        controller = new_controller("empty")
+        for kind in ("github", "blogger", "blogger", "naver", "naver"):
+            start_new(controller, kind)
+        view = controller.view()
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], list(bf.DISPLAY_ORDER))
+        self.assertEqual([card["title"] for card in view["list"]["cards"]], ["네이버 블로그 1", "네이버 블로그 2", "Blogger 1", "Blogger 2", "GitHub Pages 1"], "Blogger 1 이 Blogger 2 위에 있다")
+        self.assertEqual(list(bf.DISPLAY_ORDER), [key for slots in bf.SLOT_KINDS for key in slots])
+        self.assertNotEqual(list(bf.DISPLAY_ORDER), list(bf.SLOTS), "저장 슬롯 순서와 다르다 — 저장 형식은 그대로다")
+
     def test_the_card_title_is_the_alias_or_the_kind_and_number_and_the_status_follows_the_registration(self):
         controller = new_controller()
         cards = {card["key"]: card for card in controller.view()["list"]["cards"]}
@@ -136,7 +147,7 @@ class AddFlowTest(unittest.TestCase):
         controller.open_picker()
         self.assertIsNone(controller.start_adding("github"))
         self.assertIsNone(controller.start_adding("no_such_kind"))
-        self.assertEqual(controller.listed_keys(), tuple(bf.SLOTS), "다섯 슬롯이 모두 새 블로그로 열려 있다")
+        self.assertEqual(controller.listed_keys(), tuple(bf.DISPLAY_ORDER), "다섯 슬롯이 모두 새 블로그로 열려 있다(종류별 채움 순서)")
 
     def test_the_picker_says_how_many_are_linked_and_why_a_kind_cannot_take_another(self):
         controller = new_controller()
@@ -236,10 +247,10 @@ class AddFlowTest(unittest.TestCase):
         controller.open_picker()
         key = start_new(controller, "github")
         controller.edit("display_name", "임시 이름")
-        self.assertEqual(controller.listed_keys(), ("github_pages", "blogger_ko", "naver_a", "naver_b"))
+        self.assertEqual(controller.listed_keys(), ("naver_a", "naver_b", "blogger_ko", "github_pages"))
         self.assertTrue(controller.revert())
         self.assertNotIn(key, controller.drafts)
-        self.assertEqual((controller.selected, controller.listed_keys()), ("naver_a", ("blogger_ko", "naver_a", "naver_b")), "의도적 갱신(blogsel 수정 1, D-493 ⑤·검증 Q-2): 취소하면 슬롯 순서의 첫 카드가 아니라 새 블로그를 열기 전에 폼에 열려 있던 카드(naver_a)로 돌아간다")
+        self.assertEqual((controller.selected, controller.listed_keys()), ("naver_a", ("naver_a", "naver_b", "blogger_ko")), "의도적 갱신(blogsel 수정 1, D-493 ⑤·검증 Q-2): 취소하면 슬롯 순서의 첫 카드가 아니라 새 블로그를 열기 전에 폼에 열려 있던 카드(naver_a)로 돌아간다")
         self.assertEqual(controller.provider.calls, ["load"], "취소는 파일에 닿지 않는다")
         empty = new_controller("empty")
         start_new(empty)
@@ -253,7 +264,7 @@ class AddFlowTest(unittest.TestCase):
         key = start_new(controller, "github")
         controller.edit("display_name", "저장 전 이름")
         controller.select("naver_a")
-        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["github_pages", "blogger_ko", "naver_a", "naver_b"], "새 블로그가 카드로 남아 있다")
+        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko", "github_pages"], "새 블로그가 카드로 남아 있다")
         controller.select(key)
         self.assertEqual(fields_of(controller)["display_name"]["value"], "저장 전 이름", "입력은 지워지지 않는다")
         self.assertEqual(controller.kind_free("github"), 0, "열어 둔 슬롯은 빈 자리로 세지 않는다")
@@ -451,7 +462,7 @@ class CloneAndClearTest(unittest.TestCase):
         controller.select("blogger_ko")
         self.assertEqual(drive(controller, controller.start_clone), ("started", "ok", False))
         self.assertEqual(controller.selected, "blogger_en")
-        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["blogger_en", "blogger_ko", "naver_a", "naver_b"], "복제한 블로그가 카드가 된다")
+        self.assertEqual([card["key"] for card in controller.view()["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko", "blogger_en"], "복제한 블로그가 카드가 된다")
         self.assertEqual(controller.view()["form"]["actions"][2]["hint"], "", "복제할 자리가 없으면 힌트도 없다")
 
     def test_the_clone_hint_names_the_kind_and_never_a_slot(self):
@@ -535,7 +546,7 @@ class CancelReturnTest(unittest.TestCase):
         load(controller)
         self.assertEqual(controller.selected, "github_pages", "열어 둔 새 블로그 폼은 그대로다")
         self.assertTrue(controller.revert())
-        self.assertEqual(controller.selected, "blogger_ko", "돌아갈 카드가 사라졌으면 첫 카드다")
+        self.assertEqual(controller.selected, "naver_a", "돌아갈 카드가 사라졌으면 첫 카드다(종류별 채움 순서의 첫 카드)")
 
     def test_after_hopping_between_cards_cancel_returns_to_the_card_left_last_before_the_new_form(self):
         controller = new_controller()
@@ -995,7 +1006,7 @@ class RealServiceTest(unittest.TestCase):
             self.assertEqual(self.stored()[key].display_name, default, "저장된 값은 슬롯 이름 그대로다(바꾸지 않는다)")
         controller = self.controller()
         view = controller.view()
-        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["github_pages", "blogger_en", "blogger_ko", "naver_a", "naver_b"])
+        self.assertEqual([card["key"] for card in view["list"]["cards"]], ["naver_a", "naver_b", "blogger_ko", "blogger_en", "github_pages"])
         for card in view["list"]["cards"]:
             self.assertEqual(card["headline"], T["blogs_kind_" + bf.KIND_KEY[card["key"]]], card["key"])
             self.assertEqual(card["a11y"].split(", ")[2], card["headline"], "접근 이름의 이름 자리도 같다")
