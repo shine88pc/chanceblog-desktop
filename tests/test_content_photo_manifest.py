@@ -401,6 +401,20 @@ class TextRulesTest(Base):
         error = self.assertRefuses(pm.add_photo, pm.empty_manifest(), win("a.jpg"), user_note="<i>UNIQ-NOTE-zz</i>")
         self.assertNoLeak(error, ["UNIQ-NOTE-zz", USER_DIR])
 
+    def test_lost_confirmation_lists_the_photos_whose_confirmation_a_change_undid(self):
+        """검증 Q-9 — `update_photo` 는 새 목록만 돌려주므로 확정이 풀린 사진 번호를 알려 주는 도우미를 둔다."""
+        manifest = confirmed(build(3), "p001", "p003")
+        self.assertEqual(pm.lost_confirmation(manifest, manifest), ())
+        self.assertEqual(pm.lost_confirmation(manifest, pm.update_photo(manifest, "p001", user_note="새 메모")), (1,))
+        self.assertEqual(pm.lost_confirmation(manifest, pm.update_photo(manifest, "p002", user_note="새 메모")), (), "확정이 아니던 사진은 풀린 것이 아니다")
+        self.assertEqual(pm.lost_confirmation(manifest, pm.set_confirmed(manifest, "p003", False)), (3,))
+        self.assertEqual(pm.lost_confirmation(manifest, pm.remove_photo(manifest, "p003")), (), "지운 사진은 목록에 없으니 풀린 것으로 세지 않는다")
+        moved = pm.move_photo(manifest, "p003", 1)
+        self.assertEqual(pm.lost_confirmation(manifest, moved), (), "순서만 바꾸면 확정은 그대로다")
+        self.assertEqual(pm.lost_confirmation(manifest, pm.update_photo(pm.update_photo(manifest, "p003", caption="설명"), "p001", caption="설명")), (1, 3))
+        self.assertRefuses(pm.lost_confirmation, manifest, None)
+        self.assertRefuses(pm.lost_confirmation, "p001", manifest)
+
     def test_the_type_list_is_only_checked_when_the_type_changes_or_is_added(self):
         """검증 Q-7 — 메모만 고쳤는데 옛 종류가 지금 목록에 없다고 거절하면 안 된다. 종류를 바꾸거나 더할 때만 목록을 본다."""
         types = ("간판", "메뉴판", "기타")

@@ -405,6 +405,26 @@ class BrokenFileTest(Base):
         self.assertEqual(path.read_text(encoding="utf-8"), "{ 깨진 글 UNIQ-OLD }", "옮기지 못하면 깨진 파일 위에 쓰지 않는다")
         self.assertEqual(sorted(p.name for p in self.folder.iterdir()), [path.name])
 
+    def test_the_list_comes_back_sorted_whatever_order_the_folder_is_read_in(self):
+        """검증 Q-11 ③ — 윈도 NTFS 는 이름 순으로 읽어 주지만 리눅스는 아니다. 폴더를 거꾸로 읽어도 목록·고아는 번호순이다."""
+        for draft_id in (DRAFT_C, DRAFT_A, DRAFT_B):
+            svc.save_manifest(self.ctx, draft_id, sample(1))
+        real = os.scandir
+
+        class Reversed:
+            def __init__(self, path):
+                self.entries = list(real(path))[::-1]
+
+            def __enter__(self):
+                return iter(self.entries)
+
+            def __exit__(self, *exc):
+                return False
+
+        with mock.patch.object(svc.os, "scandir", Reversed):
+            self.assertEqual(svc.list_manifests(self.ctx).draft_ids, tuple(sorted((DRAFT_A, DRAFT_B, DRAFT_C))))
+            self.assertEqual(svc.orphans(self.ctx, []), tuple(sorted((DRAFT_A, DRAFT_B, DRAFT_C))))
+
     def test_a_directory_or_link_in_place_of_the_file_is_broken(self):
         self.folder.mkdir(parents=True)
         self.file().mkdir()
@@ -620,12 +640,13 @@ class CheckFilesTest(Base):
         manifest = self.manifest("a.jpg", "b.png", "c.webp", "missing.jpg")
         before = {path.name: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns, path.stat().st_size) for path in paths}
         listing = sorted(os.listdir(self.pictures))
+        root_before = snapshot(self.root)
         for probe in (None, self.probe(), self.probe(can_read=False)):
             svc.check_files(manifest, probe=probe)
         after = {path.name: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns, path.stat().st_size) for path in paths}
         self.assertEqual(after, before)
         self.assertEqual(sorted(os.listdir(self.pictures)), listing)
-        self.assertEqual(snapshot(self.root), snapshot(self.root))
+        self.assertEqual(snapshot(self.root), root_before, "데이터 폴더도 그대로다(검증 Q-11 — 앞뒤를 견준다)")
 
     def test_the_results_carry_no_path_and_a_bad_argument_is_refused(self):
         self.make("a.jpg")

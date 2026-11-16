@@ -272,10 +272,11 @@ class PhotoBoard:
             return "invalid"
         if updated == self.manifest:
             return "unchanged"
+        lost = pm.lost_confirmation(self.manifest, updated)        # 확정이 풀린 사진 번호(1단계 규칙이 알려 준다)
         self.manifest = updated
         self.undo, self.confirm_all_asked = None, 0
-        if before.confirmed_by_user and not self.photo(photo_id).confirmed_by_user:
-            self.notes[photo_id] = T["pho_unconfirmed_note"]
+        for number in lost:
+            self.notes[pm.photo_id_of(number)] = T["pho_unconfirmed_note"]
         return "ok"
 
     def set_type(self, photo_id, label):

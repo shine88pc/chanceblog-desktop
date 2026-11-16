@@ -658,6 +658,15 @@ def set_confirmed(manifest, photo_id, confirmed):
     return _swap(manifest, photo_id, replace(old, confirmed_by_user=_flag(confirmed, old.number)))
 
 
+def lost_confirmation(before, after):
+    """고친 뒤 확정이 풀린 사진 번호 N 들 — 앞(`before`)에는 확정이었는데 뒤(`after`)에는 확정이 아닌 사진(둘 다에 있는 번호만, 뒤 목록의 순서대로). `update_photo` 는 새 목록만 돌려주므로
+    화면이 '내용을 고쳐서 확인 표시를 풀었어요' 를 알릴 때 쓴다(검증 Q-9)."""
+    if not isinstance(before, PhotoManifest) or not isinstance(after, PhotoManifest):
+        raise _invalid(_R_FORM)
+    was = {photo.number for photo in before.photos if photo.confirmed_by_user}
+    return tuple(photo.number for photo in after.photos if photo.number in was and not photo.confirmed_by_user)
+
+
 def _kind(kind):
     if kind not in ANALYSIS_KINDS:
         raise _invalid(_R_KIND)
@@ -745,5 +754,5 @@ def placeholder_report(manifest, text):
 
 __all__ = ["ADD_FIELDS", "ANALYSIS_KINDS", "DEFAULT_PHOTO_TYPES", "DEFAULT_SETTINGS", "DRAFT_KEYS", "DraftPhoto", "EDIT_FIELDS", "ENVELOPE_KEYS", "FIELDS", "MAX_PHOTOS", "Observation", "PLACEMENT_KINDS",
            "PLACEHOLDER", "Photo", "PhotoManifest", "Placement", "PlaceholderReport", "SCHEMA", "accepted_extensions", "add_photo", "check_text", "confirm_item", "draft_inputs", "edit_item", "empty_manifest",
-           "find_placeholders", "inference_problem", "is_photo_id", "move_photo", "number_of", "path_key", "path_problem", "personal_number_problem", "photo_id_of", "placeholder", "placeholder_report",
+           "find_placeholders", "inference_problem", "is_photo_id", "lost_confirmation", "move_photo", "number_of", "path_key", "path_problem", "personal_number_problem", "photo_id_of", "placeholder", "placeholder_report",
            "remove_photo", "reorder", "set_analysis", "set_confirmed", "stray_braces", "update_photo"]
