@@ -16,7 +16,7 @@ PHOTO_T = {
     "pho_gate_missing": "확정했는데 본문에 자리가 없는 사진이 있어요: {numbers}번",
     "pho_gate_repeated": "같은 사진의 자리가 본문에 두 번 이상 있어요: {numbers}번",
     "pho_gate_order": "본문의 사진 자리 순서가 사진 정리의 순서와 달라요",
-    "pho_gate_stray": "사진 자리가 아닌 이중 중괄호 표시가 {n}곳 있어요 — 복사하면 글자 그대로 남아요",
+    "pho_gate_stray": "사진 자리가 아닌 ‘{{{{ }}}}’ 표시가 {n}곳 있어요 — 복사하면 글자 그대로 남아요",
     "pho_gate_uploads": "올릴 사진 {n}장 — 네이버 편집기에서 이 순서로 올려 주세요",
     "pho_gate_upload_line": "[이미지 {n}] 사진 {n}번 · {name}",
     "pho_gate_no_name": "이름을 보일 수 없어요",
