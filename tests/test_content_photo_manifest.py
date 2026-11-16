@@ -599,6 +599,28 @@ class DraftInputsTest(Base):
         self.assertRefuses(pm.draft_inputs, "p001")
         self.assertRefuses(pm.draft_inputs, None)
 
+    def test_the_last_gate_checks_every_text_that_leaves_not_just_the_note(self):
+        """검증 Q-1 — 마지막 관문은 초안으로 나가는 글 모두를 본다(`DraftPhoto.texts()` 에서 하나라도 빠지면 걸린다): 종류·장소 분위기·대상·메모·들어갈 곳·설명 글과 확인한 대상·확인한 글자 각각.
+        입력 검사(`check_text`)를 건너뛴 값을 `object.__setattr__` 로 넣어 본다."""
+        key = scan_samples.google()
+        for name in ("photo_type", "setting", "user_subject", "user_note", "preferred_section", "caption"):
+            with self.subTest(field=name):
+                manifest = confirmed(build(1), "p001")
+                object.__setattr__(manifest.photos[0], name, key)
+                error = self.assertRefuses(pm.draft_inputs, manifest)
+                self.assertNoLeak(error, [key[:10]])
+        for kind, attribute in ((pm.OBJECTS, "observed_objects"), (pm.TEXTS, "visible_text")):
+            for index in (0, 1):
+                with self.subTest(kind=kind, index=index):
+                    manifest, _dropped = pm.set_analysis(build(1), "p001", method="local:x", objects=["접시", "국자"], texts=["김치찌개", "된장찌개"])
+                    for position in (0, 1):
+                        manifest = pm.confirm_item(manifest, "p001", kind, position)
+                    manifest = confirmed(manifest, "p001")
+                    self.assertEqual(len(pm.draft_inputs(manifest)[0].texts()), 6 + 2, "확인한 항목이 하나의 종류에서 둘 나간다는 전제")
+                    object.__setattr__(getattr(manifest.photos[0], attribute)[index], "text", key)
+                    error = self.assertRefuses(pm.draft_inputs, manifest)
+                    self.assertNoLeak(error, [key[:10]])
+
 
 class AnalysisTest(Base):
     def test_analysis_results_are_not_written_by_default_and_come_back_empty(self):
@@ -845,7 +867,10 @@ class SourceRulesTest(unittest.TestCase):
     def test_using_the_pure_module_in_a_fresh_interpreter_loads_no_network_process_or_screen_module(self):
         """정적 검사(위)에 더해 실제로 써 본다 — 새 인터프리터에서 모듈을 가져와 사진을 더하고 초안 입력까지 뽑아도(늦게 가져오는 `imagerules`·`security` 포함) 소켓·ssl·http·하위 프로세스·PySide6 같은 모듈이 올라오지 않는다."""
         import subprocess
-        code = "\n".join(["import sys", "sys.path.insert(0, sys.argv[1])", "before = set(sys.modules)", "from chanceblog_desktop.content import photo_manifest as pm",
+        # `import uuid` 는 스냅샷 앞에 둔다: 기존 모듈(content/candidates.py·model.py)이 uuid 를 가져오는데, 파이썬 3.10 의 uuid 는 윈도·맥이 아니면 맨 위에서 platform 을 가져오고
+        # 3.10 의 platform 은 subprocess(→ select·selectors)를 맨 위에서 가져온다 — 리눅스 3.10 에서만 이 셋이 같이 올라와 앱 CI 한 칸이 빨갛게 됐다(2026-11-16).
+        # 감시 목록(subprocess·select·selectors 포함)은 그대로 두고, 사진 규칙 모듈이 '새로' 올린 것만 본다(소스에서 이 모듈들을 가져오는 일은 위 정적 검사가 따로 막는다).
+        code = "\n".join(["import sys", "sys.path.insert(0, sys.argv[1])", "import uuid", "before = set(sys.modules)", "from chanceblog_desktop.content import photo_manifest as pm",
                           "m = pm.add_photo(pm.empty_manifest(), 'C:/a/b.jpg')[0]", "pm.draft_inputs(pm.set_confirmed(m, 'p001', True))", "pm.PhotoManifest.from_text(m.to_text())", "loaded = sorted(set(sys.modules) - before)",
                           "watch = ('socket', 'ssl', 'http', 'subprocess', 'ctypes', 'asyncio', 'PySide6', 'requests', 'webbrowser', 'smtplib', 'ftplib', 'select', 'selectors', 'tempfile', 'logging', 'random', 'secrets', 'shutil')",
                           "print([n for n in loaded if n.split('.')[0] in watch or n == 'urllib.request'])"])
