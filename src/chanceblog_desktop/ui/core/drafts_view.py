@@ -293,7 +293,9 @@ class DraftsController:
 
     def photos_unsaved(self):
         """사진 정보를 고쳤는데 아직 저장하지 않았나 — 저장한(또는 연) 사진 정보와 다르면 참이다(사진을 한 번도 안 넣었으면 늘 거짓 — 사진이 없으면 초안은 지금과 같다)."""
-        return self.result is not None and self.photos.differs_from(self.photos_baseline)
+        if self.result is None:                             # 초안이 아직 없다(초안을 만들기 전에 사진부터 넣었다) — 사진 정보를 저장할 곳이 없으므로 사진이 하나라도 있으면 떠날 때 사라진다(검증 Q N-2)
+            return self.photos.count > 0
+        return self.photos.differs_from(self.photos_baseline)
 
     def text_unsaved(self):
         """고친 글이 있는가 — 저장한 판이 있으면 **그 판과 다른 제목·본문**, 없으면 만든 초안에서 제목·본문을 고쳤거나, 선택 입력을 적고 아직 반영하지 않았다. 있으면 사라지는 일(다시 만들기·떠나기·닫기) 전에 확인창이 먼저다.
@@ -359,6 +361,8 @@ class DraftsController:
             return None
         self.leave_asked = kind
         closing = kind == "close"
+        if self.result is None and self.photos.count:       # 초안이 없어 사진 정보를 저장할 수 없다 — 사진 정보가 사라진다는 두 갈래 확인창(검증 Q N-2 — 사진이 없으면 이 갈래를 타지 않는다)
+            return {"title": T["pho_leave_title"], "body": T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count), "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
         if self.can_save:
             discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
             return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"], "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],

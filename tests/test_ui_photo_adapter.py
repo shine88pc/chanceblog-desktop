@@ -50,6 +50,117 @@ class TempPhotos(unittest.TestCase):
         return manifest
 
 
+class InspectBeforeReadTest(TempPhotos):
+    """검증 S T-1 — 실제 공급자는 사진을 넣을 때·다시 찾을 때 이미지 읽기를 부르기 전에 서비스의 `lstat` 점검(목록 점검과 같은 코드)을 거친다. 걸린 파일은 읽기 도구를 **한 번도 부르지 않는다**."""
+
+    def setUp(self):
+        super().setUp()
+        self.reads = []
+
+        def judge(path):
+            self.reads.append(path)
+            return R.Verdict(R.OK, "", "", 640, 480, "jpeg")
+        self.board = pv.PhotoBoard(photo_adapter.ServicePhotoProvider(judge=judge, probe=probe_of()))
+
+    @staticmethod
+    def helpers():
+        import test_service_photo_manifest as tsm                                      # 모듈만 가져온다(시험 모음 클래스를 이 모듈에 들이지 않는다)
+        return tsm.LinkAndCloudTest, tsm.svc
+
+    def test_each_cloud_bit_and_each_link_tag_and_a_folder_and_a_missing_file_are_refused_without_a_read(self):
+        helpers, svc = self.helpers()
+        photo = self.make("a.jpg")
+        cases = {"OFFLINE": helpers.info("file", helpers.CLOUD_BITS["OFFLINE"]), "RECALL_ON_OPEN": helpers.info("file", helpers.CLOUD_BITS["RECALL_ON_OPEN"]),
+                 "RECALL_ON_DATA_ACCESS": helpers.info("file", helpers.CLOUD_BITS["RECALL_ON_DATA_ACCESS"]), "symlink": helpers.info("file", helpers.REPARSE, helpers.NAME_TAGS["symlink"]),
+                 "mount_point": helpers.info("file", helpers.REPARSE, helpers.NAME_TAGS["mount_point"]), "folder": helpers.info("dir", 0x10)}
+        expected = {"OFFLINE": svc._C_CLOUD, "RECALL_ON_OPEN": svc._C_CLOUD, "RECALL_ON_DATA_ACCESS": svc._C_CLOUD, "symlink": svc._C_LINK, "mount_point": svc._C_LINK, "folder": svc._C_NOT_FILE}
+        for label, info in cases.items():
+            with self.subTest(case=label):
+                with helpers.fake_lstat({Path(photo): info}):
+                    self.assertEqual(self.board.add_paths([photo]), (0, 1))
+                self.assertEqual(self.reads, [], "이미지 읽기를 부르지 않았다")
+                self.assertEqual(self.board.rejected[0].reason, expected[label])
+                self.assertEqual(self.board.count, 0)
+        self.assertEqual(self.board.add_paths([str(self.folder / "nothing.jpg")]), (0, 1))
+        self.assertEqual((self.reads, self.board.rejected[0].reason), ([], R.T[R.MESSAGES[R.MISSING]]), "없는 파일도 읽지 않는다")
+
+    def test_a_folder_on_the_path_that_is_a_link_refuses_every_photo_below_it_without_a_read(self):
+        helpers, svc = self.helpers()
+        sub = self.folder / "sub"
+        sub.mkdir()
+        photo = str(sub / "a.jpg")
+        (sub / "a.jpg").write_bytes(b"x")
+        for tag in helpers.NAME_TAGS.values():
+            with helpers.fake_lstat({sub: helpers.info("dir", helpers.REPARSE | 0x10, tag)}):
+                self.assertEqual(self.board.add_paths([photo]), (0, 1))
+            self.assertEqual((self.reads, self.board.rejected[0].reason), ([], svc._C_LINK))
+
+    def test_a_normal_file_is_read_exactly_once_and_added(self):
+        photo = self.make("a.jpg")
+        self.assertEqual(self.board.add_paths([photo]), (1, 0))
+        self.assertEqual(self.reads, [photo])
+
+    def test_relinking_to_a_refused_file_is_refused_without_a_read_and_a_normal_file_still_relinks(self):
+        helpers, svc = self.helpers()
+        first, second, third = self.make("a.jpg"), self.make("b.jpg"), self.make("c.jpg")
+        self.board.add_paths([first])
+        self.reads.clear()
+        with helpers.fake_lstat({Path(second): helpers.info("file", helpers.CLOUD_BITS["RECALL_ON_DATA_ACCESS"])}):
+            self.assertEqual(self.board.relink("p001", second), "refused")
+        self.assertEqual((self.reads, self.board.photo("p001").local_path), ([], first))
+        with helpers.fake_lstat({Path(second): helpers.info("file", helpers.REPARSE, helpers.NAME_TAGS["symlink"])}):
+            self.assertEqual(self.board.relink("p001", second), "refused")
+        self.assertEqual(self.reads, [])
+        self.assertEqual(self.board.relink("p001", third), "ok")
+        self.assertEqual((self.reads, self.board.photo("p001").local_path), ([third], third))
+
+    def test_a_real_junction_and_a_real_symbolic_link_are_refused_without_a_read_and_the_plain_file_is_added(self):
+        real = self.folder / "real"
+        real.mkdir()
+        (real / "a.jpg").write_bytes(b"x")
+        plain = self.make("plain.jpg")
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(real), str(self.folder / "via"))
+            junction = str(self.folder / "via" / "a.jpg")
+        except (ImportError, AttributeError, OSError):
+            junction = None
+        symlink = self.folder / "link.jpg"
+        try:
+            os.symlink(plain, symlink)
+        except (OSError, NotImplementedError, AttributeError):
+            symlink = None
+        if junction is None and symlink is None:
+            self.skipTest("이 환경에서는 정션도 심볼릭 링크도 만들 수 없다")
+        chosen = [item for item in (junction, str(symlink) if symlink else None, plain) if item]
+        added, refused = self.board.add_paths(chosen)
+        self.assertEqual((added, refused), (1, len(chosen) - 1))
+        self.assertEqual(self.reads, [plain], "정상 사진만 읽었다")
+        self.assertEqual({item.reason for item in self.board.rejected}, {self.helpers()[1]._C_LINK})
+
+    def test_the_light_check_is_the_same_code_the_list_check_uses(self):
+        helpers, svc = self.helpers()
+        photo = self.make("a.jpg")
+        manifest = self.manifest_of(photo)
+        for info in (None, helpers.info("file", helpers.CLOUD_BITS["OFFLINE"]), helpers.info("file", helpers.REPARSE, helpers.NAME_TAGS["symlink"]), helpers.info("dir", 0x10)):
+            with helpers.fake_lstat({Path(photo): info} if info is not None else {}):
+                state, message = svc.inspect_photo(photo)
+                result = svc.check_files(manifest)[0]
+            self.assertEqual((state, message), (result.state, result.message if state != "ok" else ""))
+        self.assertEqual(svc.inspect_photo(str(self.folder / "missing.jpg"))[0], "missing")
+        for odd in ("", None, 7, b"x"):
+            self.assertEqual(svc.inspect_photo(odd)[0], "missing", "글이 아니거나 빈 글은 없는 것으로 본다")
+
+    def test_the_adapter_hands_the_check_to_a_swapped_in_function_and_to_the_service_by_default(self):
+        seen = []
+        provider = photo_adapter.ServicePhotoProvider(inspect=lambda path: seen.append(path) or ("ok", ""))
+        self.assertEqual(provider.inspect("C:/a/b.jpg"), ("ok", ""))
+        self.assertEqual(seen, ["C:/a/b.jpg"])
+        photo = self.make("a.jpg")
+        self.assertEqual(photo_adapter.ServicePhotoProvider().inspect(photo), ("ok", ""))
+        self.assertEqual(photo_adapter.ServicePhotoProvider().inspect(str(self.folder / "x.jpg"))[0], "missing")
+
+
 class SourceTest(unittest.TestCase):
     def test_importing_the_adapter_needs_no_pyside6_and_the_qt_reader_is_fetched_late(self):
         tree = ast.parse(ADAPTER.read_text(encoding="utf-8"))
@@ -104,7 +215,7 @@ class JudgeTest(unittest.TestCase):
     def test_a_reader_that_blows_up_is_not_hidden_here_the_board_turns_it_into_a_fixed_sentence(self):
         def judge(_path):
             raise RuntimeError(MARKER)
-        board = pv.PhotoBoard(photo_adapter.ServicePhotoProvider(judge=judge))
+        board = pv.PhotoBoard(photo_adapter.ServicePhotoProvider(judge=judge, inspect=lambda path: ("ok", "")))
         self.assertEqual(board.add_paths(["C:/a/b.jpg"]), (0, 1))
         shown = repr(board.rejected) + str(board.view()) + str(board.card())
         self.assertNotIn(MARKER, shown)
@@ -131,7 +242,7 @@ class CheckTest(TempPhotos):
     def test_the_big_png_rule_is_decided_by_the_pixels_the_reader_reports_and_only_for_png(self):
         path = self.make("big.png")
         manifest = self.manifest_of(path)
-        for fmt, width, height, blocked in (("png", 10_000, 10_000, False), ("png", 10_001, 10_000, True), ("png", 12_001, 12_001, True), ("jpeg", 12_001, 12_001, False), ("webp", 12_001, 12_001, False)):
+        for fmt, width, height, blocked in (("png", 6_000, 10_000, False), ("png", 6_001, 10_000, True), ("png", 12_001, 12_001, True), ("jpeg", 12_001, 12_001, False), ("webp", 12_001, 12_001, False)):
             results = photo_adapter.ServicePhotoProvider(probe=probe_of(fmt, width, height)).check(manifest)
             self.assertEqual(results[0].state, R.OK, (fmt, width, height))
             self.assertEqual(results[0].preview_blocked, blocked, (fmt, width, height))

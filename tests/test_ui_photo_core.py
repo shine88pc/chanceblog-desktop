@@ -1,7 +1,7 @@
 """'사진 정리'(사진 연동 초안 2단계, 결정 D-499)의 순수 층 — `ui/core/photo_rules.py`·`photo_view.py`(PhotoBoard)·`photo_text.py` 와 초안 컨트롤러에 매단 사진 목록. PySide6 없이 돈다(CI 와 같은 조건). 파일은 만들지 않는다(가짜 공급자).
 
 지키는 것:
-  1) 규칙표 — 종류 9종·장소 분위기 6종·종류별 기본 '들어갈 곳'(결정 4)·종류별 예시(운영자 예시 문장)·큰 PNG 판정(PNG 만, 1억 화소를 넘을 때만 — 결정 16)·글자 수 표시.
+  1) 규칙표 — 종류 9종·장소 분위기 6종·종류별 기본 '들어갈 곳'(결정 4)·종류별 예시(운영자 예시 문장)·큰 PNG 판정(PNG 만, 6천만 화소를 넘을 때만 — 결정 16·검증 Q N-8)·글자 수 표시.
   2) 사진 넣기 — 못 넣은 파일은 이름과 고정 이유만(경로 없음), 30장 한도, 중복, 읽기 도구가 터져도 그 파일만 못 넣음.
   3) 고치기 — 한도를 넘거나 검사에 걸린 글은 반영하지 않고 이유만(글은 이 객체가 쥐지 않음), 내용을 고치면 확인이 풀리고 안내가 한 번 뜸, 종류를 바꾸면 사용자가 따로 안 골랐을 때만 기본 들어갈 곳이 바뀜.
   4) 확인 — '모두 확인했어요' 는 확인 줄(수)을 먼저 보이고 한 번 더 눌러야 표시, 그만두면 그대로.
@@ -10,8 +10,12 @@
 """
 import ast
 import json
+import random
+import re
 import sys
+import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -35,10 +39,13 @@ def path_of(number, ext="jpg"):
     return f"C:/Users/{USER_DIR}/Pictures/{FILE_STEM}-{number:02d}.{ext}"
 
 
-def new_board(count=0, **provider):
+def new_board(count=0, states=None, **provider):
+    """`states`(파일 → 상태)는 사진을 **넣은 뒤**에 정한다 — 넣을 때는 읽기 전에 링크·내려받지 않은 파일·없음을 거르므로(검증 S T-1) 처음부터 그 상태인 파일은 넣어지지 않는다(그 시험은 `FilesAtAddTest`)."""
     board = pv.PhotoBoard(pv.FakePhotoProvider(**provider))
     if count:
         board.add_paths([path_of(number) for number in range(1, count + 1)])
+    if states:
+        board.provider.states.update(states)
     return board
 
 
@@ -70,11 +77,13 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(set(rules.EXAMPLES), set(rules.TYPES))
         self.assertEqual(len(set(rules.EXAMPLES.values())), len(rules.TYPES), "종류마다 예시가 다르다")
 
-    def test_a_png_over_a_hundred_million_pixels_gets_no_preview_but_nothing_else_does(self):
+    def test_a_png_over_sixty_million_pixels_gets_no_preview_but_nothing_else_does(self):
         limit = rules.PNG_PIXEL_LIMIT
-        self.assertEqual(limit, 100_000_000)
-        self.assertFalse(rules.preview_blocked("png", 10_000, 10_000), "정확히 1억 화소는 만든다")
-        self.assertTrue(rules.preview_blocked("png", 10_001, 10_000))
+        self.assertEqual(limit, 60_000_000)
+        self.assertLess(limit, 8192 * 8192, "이미지 읽기 도구는 256MB 를 넘는 그림을 읽지 못한다(8192×8192 화소까지 읽히고 8193×8193 부터 실패 — 직접 쟀다) — 읽기에 실패할 크기를 그 아래에서 미리 막는다(검증 Q N-8)")
+        self.assertFalse(rules.preview_blocked("png", 6_000, 10_000), "정확히 6천만 화소는 만든다")
+        self.assertTrue(rules.preview_blocked("png", 6_001, 10_000))
+        self.assertTrue(rules.preview_blocked("png", 10_000, 10_000), "예전 기준(1억)에서는 만들던 크기도 이제는 막는다")
         self.assertTrue(rules.preview_blocked("PNG", 20_000, 20_000))
         self.assertTrue(rules.preview_blocked("png", 1, limit + 1))
         for fmt in ("jpeg", "jpg", "webp", "gif", "", None):
@@ -412,6 +421,355 @@ class OrderAndRemoveTest(unittest.TestCase):
         self.assertEqual(board.remove("p001"), "refused")
 
 
+class FilesAtAddTest(unittest.TestCase):
+    """검증 S T-1 — 사진을 넣을 때·다시 찾을 때도 읽기 전에 링크·내려받지 않은 파일·폴더·없음을 거르고, 걸리면 이미지 읽기(`judge`)를 한 번도 부르지 않는다."""
+    STATES = ("link", "cloud", "not_file", "missing")
+
+    def test_a_file_the_light_check_refuses_is_never_read_and_goes_to_the_rejected_list_with_its_fixed_reason(self):
+        for state in self.STATES:
+            with self.subTest(state=state):
+                board = new_board(0, states={path_of(1): state})
+                self.assertEqual(board.add_paths([path_of(1)]), (0, 1))
+                self.assertEqual(board.provider.calls, ["inspect"], "읽기(judge)는 부르지 않았다")
+                self.assertEqual(board.count, 0)
+                self.assertEqual(board.rejected[0].reason, T[rules.BADGE_KEY[state]])
+                self.assertEqual(board.rejected[0].name, f"{FILE_STEM}-01.jpg")
+
+    def test_a_good_file_is_inspected_first_and_then_read_once(self):
+        board = new_board()
+        self.assertEqual(board.add_paths([path_of(1)]), (1, 0))
+        self.assertEqual(board.provider.calls, ["inspect", "judge"])
+
+    def test_a_mixed_choice_reads_only_the_good_files_in_order(self):
+        board = new_board(0, states={path_of(2): "link", path_of(4): "cloud", path_of(5): "missing"})
+        self.assertEqual(board.add_paths([path_of(number) for number in range(1, 6)]), (2, 3))
+        self.assertEqual(board.provider.calls, ["inspect", "judge", "inspect", "inspect", "judge", "inspect", "inspect"], "사진마다 읽기 전에 점검 — 걸린 파일은 점검에서 끝난다")
+        self.assertEqual([photo.local_path for photo in board.manifest.photos], [path_of(1), path_of(3)])
+        self.assertEqual([item.reason for item in board.rejected], [T["pho_file_link"], T["pho_file_cloud"], T["pho_file_missing"]])
+
+    def test_relinking_to_a_refused_file_refuses_without_reading_and_keeps_the_old_path(self):
+        for state in self.STATES:
+            with self.subTest(state=state):
+                board = new_board(1)
+                board.provider.calls.clear()
+                board.provider.states[path_of(9)] = state
+                self.assertEqual(board.relink("p001", path_of(9)), "refused")
+                self.assertEqual(board.provider.calls, ["inspect"])
+                self.assertEqual(board.photo("p001").local_path, path_of(1))
+                self.assertEqual(board.view()["notice"]["text"], T[rules.BADGE_KEY[state]])
+        board = new_board(1)
+        board.provider.calls.clear()
+        self.assertEqual(board.relink("p001", path_of(9)), "ok")
+        self.assertEqual(board.provider.calls, ["inspect", "judge"])
+
+    def test_a_crashing_light_check_only_loses_that_file_and_nothing_is_read(self):
+        board = new_board()
+        board.provider.fail.add("inspect")
+        self.assertEqual(board.add_paths([path_of(1)]), (0, 1))
+        self.assertEqual(board.rejected[0].reason, T["img_local_unreadable"])
+        self.assertEqual(board.provider.calls, ["inspect"])
+        board = new_board(1)
+        board.provider.calls.clear()
+        board.provider.fail.add("inspect")
+        self.assertEqual(board.relink("p001", path_of(9)), "refused")
+        self.assertEqual(board.provider.calls, ["inspect"])
+
+
+class ManyFilesTest(unittest.TestCase):
+    """검증 S T-2 — 파일을 아주 많이(수백~수천 개) 골라도 느려지지 않는다. 사진이 한도(30장)에 차면 남은 파일은 읽지도 판정하지도 않고 개수만 세고, 못 넣은 파일 목록은 처음 `MAX_REJECTED_ROWS`(10)줄까지만 이름을 보이고 나머지는 '외 N개' 한두 줄로 합친다
+    (옛 구현은 줄이 고른 수만큼이라 화면이 장수의 제곱으로 느려졌다 — 100개 0.8초·300개 5.9초·1000개 70초)."""
+    FULL = "사진은 30장까지만 넣을 수 있어요."
+
+    @staticmethod
+    def reference(board, paths):
+        """옛 구현 — 고른 파일을 하나씩 모두 `_try_add` 로 넣어 보고 못 넣은 것을 전부 모은다 → `(넣은 수, 못 넣은 파일 전부)`."""
+        added, rejected = 0, []
+        for path in [item for item in (paths or ()) if isinstance(item, str) and item]:
+            reason = board._try_add(path)
+            if reason:
+                rejected.append(pv.Rejected(rules.short_name(path), reason))
+            else:
+                added += 1
+        return added, rejected
+
+    def test_three_thousand_files_take_under_a_second_and_only_the_thirty_that_fit_are_ever_read(self):
+        board = new_board()
+        paths = [path_of(number) for number in range(1, 3001)]
+        started = time.perf_counter()
+        result = board.add_paths(paths)
+        seconds = time.perf_counter() - started
+        self.assertEqual(result, (30, 2970))
+        self.assertLess(seconds, 1.0, f"3000개를 고르는 데 {seconds:.2f}초")
+        self.assertEqual(board.provider.calls, ["inspect", "judge"] * 30, "31번째부터는 점검도 읽기도 하지 않았다")
+        self.assertEqual([item.name for item in board.rejected], [f"{FILE_STEM}-{number}.jpg" for number in range(31, 41)])
+        self.assertEqual({item.reason for item in board.rejected}, {self.FULL})
+        self.assertEqual(board.rejected_more, pv.RejectedMore(over=2960, other=0))
+        shown = board.view()["rejected"]
+        self.assertEqual(len(shown["rows"]), pv.MAX_REJECTED_ROWS)
+        self.assertEqual([line["text"] for line in shown["more"]], ["외 2960개는 사진을 30장까지만 넣을 수 있어서 넣지 못했어요."])
+        self.assertEqual([line["a11y"] for line in shown["more"]], [line["text"] for line in shown["more"]])
+        self.assertEqual(board.view()["notice"], {"level": "warn", "text": "사진 30장을 넣었어요. 2970개는 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요."})
+        self.assertNotIn(f"{FILE_STEM}-100.jpg", dumped(board), "이름을 보이지 않은 파일은 어디에도 없다")
+        self.assertNotIn(USER_DIR, dumped(board))
+
+    def test_three_thousand_refused_files_are_also_fast_and_end_as_ten_rows_and_a_count(self):
+        paths = [path_of(number) for number in range(1, 3001)]
+        board = new_board(1)
+        board.provider.states.update({path: "link" for path in paths[1:]})
+        board.provider.calls.clear()
+        started = time.perf_counter()
+        result = board.add_paths(paths[1:])
+        seconds = time.perf_counter() - started
+        self.assertEqual(result, (0, 2999))
+        self.assertLess(seconds, 1.0, f"거절될 파일 3000개를 고르는 데 {seconds:.2f}초")
+        self.assertEqual(board.provider.calls.count("judge"), 0, "점검에서 걸린 파일은 읽지 않았다")
+        self.assertEqual(len(board.rejected), pv.MAX_REJECTED_ROWS)
+        self.assertEqual({item.reason for item in board.rejected}, {T["pho_file_link"]})
+        self.assertEqual(board.rejected_more, pv.RejectedMore(over=0, other=2989))
+        self.assertEqual([line["text"] for line in board.view()["rejected"]["more"]], ["외 2989개도 넣지 못했어요."])
+        self.assertEqual(board.view()["notice"], {"level": "warn", "text": "고른 파일 2999개를 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요."}, "하나도 못 넣었으면 앞의 '넣었어요' 안내는 이 안내로 바뀐다")
+
+    def test_up_to_ten_rejected_files_are_all_listed_and_only_the_eleventh_on_is_counted(self):
+        for refused in (9, 10, 11, 12):
+            with self.subTest(refused=refused):
+                paths = [path_of(number) for number in range(1, refused + 1)]
+                board = new_board()
+                board.provider.states.update({path: "cloud" for path in paths})
+                self.assertEqual(board.add_paths(paths), (0, refused))
+                self.assertEqual(len(board.rejected), min(refused, 10))
+                self.assertEqual(board.rejected_more, pv.RejectedMore(0, max(0, refused - 10)))
+                self.assertEqual(len(board.view()["rejected"]["more"]), 1 if refused > 10 else 0)
+        for extra in (9, 10, 11, 12):                                                     # 한도에 차서 못 넣는 파일도 같다
+            with self.subTest(over=extra):
+                board = new_board(30)
+                self.assertEqual(board.add_paths([path_of(number) for number in range(31, 31 + extra)]), (0, extra))
+                self.assertEqual((len(board.rejected), board.rejected_more), (min(extra, 10), pv.RejectedMore(max(0, extra - 10), 0)))
+        board = new_board(30)
+        self.assertEqual(board.add_paths([path_of(31)]), (0, 1))
+        self.assertEqual((len(board.rejected), board.view()["rejected"]["more"]), (1, []), "한 개면 옛 화면 그대로 — 줄 하나뿐")
+
+    def test_both_count_lines_come_over_first_and_are_fixed_sentences_with_numbers_only(self):
+        board = new_board(28)
+        refused = [path_of(number, "gif") for number in range(1, 13)]                      # 지원하지 않는 형식 12개 → 이름 10줄 + 나머지 2개
+        fits = [path_of(100), path_of(101)]                                                # 29·30번째 — 이제 가득 찬다
+        over = [path_of(number) for number in range(200, 205)]                            # 한도를 넘는 5개 — 줄은 이미 10개라 개수만
+        self.assertEqual(board.add_paths(refused + fits + over), (2, 17))
+        self.assertEqual(board.count, 30)
+        self.assertEqual([item.name for item in board.rejected], [f"{FILE_STEM}-{number:02d}.gif" for number in range(1, 11)])
+        self.assertEqual({item.reason for item in board.rejected}, {"지원하지 않는 형식이에요. JPG·PNG·WebP 사진만 쓸 수 있어요"})
+        self.assertEqual(board.rejected_more, pv.RejectedMore(over=5, other=2))
+        lines = [line["text"] for line in board.view()["rejected"]["more"]]
+        self.assertEqual(lines, ["외 5개는 사진을 30장까지만 넣을 수 있어서 넣지 못했어요.", "외 2개도 넣지 못했어요."])
+        for text in lines:
+            self.assertNotIn(FILE_STEM, text)
+        self.assertNotIn(f"{FILE_STEM}-200.jpg", dumped(board))
+        self.assertEqual(board.view()["notice"], {"level": "warn", "text": "사진 2장을 넣었어요. 17개는 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요."})
+
+    def test_the_outcome_equals_trying_every_file_one_by_one_for_many_mixed_choices(self):
+        rng = random.Random(20261117)
+        seen = {"over": 0, "other": 0, "both": 0, "started_full": 0, "plain": 0, "nothing_added": 0}
+        for round_number in range(120):
+            have = rng.choice([0, 0, 1, 5, 20, 27, 28, 29, 30])
+            verdicts = {path_of(900 + number): R.Verdict(R.TOO_BIG, T["img_local_too_big"]) for number in range(5)}
+            states = {path_of(800 + number): rng.choice(["link", "cloud", "missing", "not_file"]) for number in range(5)}
+            fresh = [path_of(number) for number in range(100, 100 + rng.choice([0, 3, 12, 31, 45]))]
+            bad = [path_of(number, "gif") for number in range(rng.choice([0, 3, 12, 25]))] + [path_of(900 + number) for number in range(rng.randint(0, 5))] + [path_of(800 + number) for number in range(rng.randint(0, 5))]
+            repeat = [path_of(rng.randint(1, have)) for _ in range(rng.randint(0, 6))] if have else []
+            repeat += rng.sample(fresh, min(3, len(fresh)))
+            chosen = fresh + bad + repeat + ["", None, 7, "relative/x.jpg"]
+            rng.shuffle(chosen)
+            new, old = new_board(have, verdicts=verdicts), new_board(have, verdicts=verdicts)
+            new.provider.states.update(states)
+            old.provider.states.update(states)
+            result = new.add_paths(chosen)
+            added, everything = self.reference(old, chosen)
+            label = (round_number, have, len(chosen))
+            self.assertEqual(result, (added, len(everything)), label)
+            self.assertEqual(new.manifest, old.manifest, label)
+            self.assertEqual(new.states, old.states, label)
+            self.assertEqual(list(new.rejected), everything[:pv.MAX_REJECTED_ROWS], label)
+            tail = everything[pv.MAX_REJECTED_ROWS:]
+            tail_over = sum(1 for item in tail if item.reason == self.FULL)
+            self.assertEqual(new.rejected_more, pv.RejectedMore(tail_over, len(tail) - tail_over), label)
+            expected = ("info", T["pho_added"].format(n=added)) if not everything else (("warn", T["pho_added_some"].format(n=added, m=len(everything))) if added else ("warn", T["pho_added_none"].format(m=len(everything))))
+            self.assertEqual(new.notice, expected, label)
+            seen["over"] += tail_over > 0
+            seen["other"] += len(tail) - tail_over > 0
+            seen["both"] += tail_over > 0 and len(tail) - tail_over > 0
+            seen["started_full"] += have == 30
+            seen["plain"] += not tail
+            seen["nothing_added"] += added == 0
+        for name, number in seen.items():
+            self.assertGreaterEqual(number, 3, f"무작위 선택이 '{name}' 경우를 충분히 지나지 않았다 {seen}")
+
+    def test_a_full_board_reads_nothing_however_many_files_are_chosen(self):
+        board = new_board(30)
+        board.provider.calls.clear()
+        self.assertEqual(board.add_paths([path_of(number) for number in range(31, 3031)]), (0, 3000))
+        self.assertEqual(board.provider.calls, [])
+        self.assertEqual((len(board.rejected), board.rejected_more), (10, pv.RejectedMore(over=2990, other=0)))
+        self.assertEqual(board._try_add(path_of(99)), self.FULL, "한 파일씩 넣는 길도 가득 찼으면 같은 문장으로 거절한다")
+        self.assertEqual(board.provider.calls, [])
+
+    def test_the_counts_go_away_with_the_list_by_clear_rejected_a_new_choice_close_and_clear(self):
+        def crowded():
+            board = new_board()
+            board.provider.states.update({path_of(number): "link" for number in range(1, 16)})
+            board.add_paths([path_of(number) for number in range(1, 16)])
+            self.assertEqual(board.rejected_more, pv.RejectedMore(0, 5))
+            return board
+
+        gone = ((), pv.RejectedMore())
+        board = crowded()
+        board.clear_rejected()
+        self.assertEqual((board.rejected, board.rejected_more, board.view()["rejected"]), (*gone, None))
+        board = crowded()
+        board.add_paths([path_of(50)])
+        self.assertEqual((board.rejected, board.rejected_more), gone, "다음 선택이 앞 선택의 목록과 개수를 바꾼다")
+        board = crowded()
+        board.open()
+        board.close()
+        self.assertEqual((board.rejected, board.rejected_more), gone)
+        board = crowded()
+        board.clear()
+        self.assertEqual((board.rejected, board.rejected_more), gone)
+
+
+class RelinkAndUndoGapsTest(unittest.TestCase):
+    """검증 S T-3 — 변이 시험이 찾은 시험의 틈 둘(PV21·PV20)을 메운다."""
+
+    def test_relinking_to_a_file_the_reader_refuses_is_refused_with_its_reason_and_changes_nothing(self):
+        verdicts = {"not_image": R.Verdict(R.NOT_IMAGE, T["img_local_not_image"]), "too_big": R.Verdict(R.TOO_BIG, T["img_local_too_big"]), "unsupported": R.Verdict(R.UNSUPPORTED, T["img_local_unsupported"]),
+                    "missing": R.Verdict(R.MISSING, T["img_local_missing"]), "silent": R.Verdict(R.UNREADABLE, "")}
+        for label, verdict in verdicts.items():
+            with self.subTest(label=label):
+                board = new_board(1, verdicts={path_of(9): verdict})
+                before = (board.manifest, dict(board.states))
+                self.assertEqual(board.relink("p001", path_of(9)), "refused")
+                self.assertEqual(board.view()["notice"], {"level": "error", "text": verdict.message or T["img_local_unreadable"]}, "읽기 도구의 판정 문장이 그대로 보이고 말이 없으면 고정 안내문")
+                self.assertEqual((board.manifest, board.states), before, "아무것도 바뀌지 않았다")
+                self.assertEqual(board.photo("p001").local_path, path_of(1))
+        good = new_board(1, verdicts={path_of(9): R.Verdict(R.OK, "", "", 1200, 800, "png")})
+        self.assertEqual(good.relink("p001", path_of(9)), "ok")
+        state = good.states["p001"]
+        self.assertEqual((good.photo("p001").local_path, state.width, state.height, state.format, state.verified), (path_of(9), 1200, 800, "png", True), "읽어 본 크기·형식이 상태에 담긴다")
+
+    def test_undoing_a_removal_reads_the_file_again_so_the_returned_row_shows_what_is_true_now(self):
+        board = new_board(3)
+        self.assertEqual(board.remove("p002"), "ok")
+        self.assertNotIn("p002", board.states, "지우면 그 사진의 파일 상태도 버린다")
+        board.provider.states[path_of(2)] = "missing"                                   # 지운 사이에 파일이 없어졌다
+        board.provider.calls.clear()
+        self.assertEqual(board.undo_remove(), "ok")
+        self.assertEqual(board.provider.calls, ["check"], "되돌리면 파일 상태를 다시 읽는다")
+        self.assertEqual(board.states["p002"].state, "missing")
+        file_view = row_of(board, "p002")["file"]
+        self.assertEqual((file_view["state"], file_view["badge"]), ("missing", "파일 없음"))
+        again = new_board(2)
+        again.remove("p002")
+        again.undo_remove()
+        self.assertTrue(again.states["p002"].ok and again.states["p002"].verified, "그대로면 '파일 있음'으로 돌아온다")
+        self.assertEqual(row_of(again, "p002")["file"]["state"], "ok")
+
+
+class ReviewFixesTest(unittest.TestCase):
+    """검증 Q(2단계 재검증)의 고침 — N-1 문구·N-4 닫기 경고·N-5 넣지 못한 파일 안내·N-9(f) 옮기기 입력·N-7 시험 틈(다시 찾기·자리 정하기 펼침)."""
+    SRC = ROOT / "src" / "chanceblog_desktop"
+
+    def test_the_three_texts_say_the_confirmed_photos_are_used_in_the_draft_now_that_stage_three_connects_them(self):
+        """검증 Q N-1 — 2단계 수정은 초안 연결이 없는 동안 세 문구를 '다음 단계에서 열려요' 로 적어 두었다. 3단계(초안 연결)가 열려 세 문구는 사실이 되는 원래 글로 되돌아와 있어야 한다."""
+        self.assertEqual(photo_text.STAGE3_RESTORE_KEYS, ("pho_intro", "pho_all_ask", "pho_confirm"))
+        truth = {"pho_intro": "초안에 쓰여요", "pho_all_ask": "초안에 쓰여요", "pho_confirm": "초안에 써요"}
+        for key in photo_text.STAGE3_RESTORE_KEYS:
+            self.assertIn(truth[key], T[key], key)
+            self.assertNotIn("다음 단계", T[key], key)
+        self.assertEqual(sorted(key for key, value in photo_text.PHOTO_T.items() if "다음 단계" in value), [], "3단계 뒤에는 '다음 단계에서 열려요' 문구가 남지 않는다")
+
+    def test_the_stage_three_connection_that_hands_the_confirmed_photos_to_a_draft_exists_so_the_texts_may_say_it(self):
+        pattern = re.compile(r"(?<![\w])draft_inputs\(")
+        users = [path.relative_to(self.SRC).as_posix() for path in sorted(self.SRC.rglob("*.py")) if path.name != "photo_manifest.py" and pattern.search(path.read_text(encoding="utf-8"))]
+        self.assertEqual(users, ["ui/core/drafts_view.py"], "3단계는 확인한 사진을 초안으로 뽑는 연결을 `drafts_view` 에 두었다 — 이 연결이 없어지면 위 세 문구를 다시 '다음 단계에서 열려요' 로 바꿔야 한다(검증 Q N-1)")
+
+    def test_the_close_warning_names_the_photo_and_the_field_and_says_what_to_do_whatever_the_reason(self):
+        board = new_board(4)
+        self.assertEqual(board.set_text("p002", "user_note", "가" * 301), "invalid")
+        self.assertEqual(board.close(), pv.CLOSE_WARNED)
+        self.assertEqual(board.view()["notice"], {"level": "warn", "text": "반영하지 못한 글이 있어요(사진 2 한마디 메모). 고치거나 줄여 주세요. 그대로 한 번 더 닫기를 누르면 그 글은 버리고 닫아요."})
+        self.assertNotIn("한도", board.view()["notice"]["text"], "한도를 넘긴 글만이 아니다 — 금지된 글도 같은 경고다")
+        for name, shown in (("user_subject", "대상"), ("user_note", "한마디 메모"), ("caption", "설명 글")):
+            single = new_board(1)
+            single.set_text("p001", name, "나" * 400)
+            single.close()
+            self.assertIn(f"(사진 1 {shown})", single.view()["notice"]["text"], name)
+        for number, name in ((1, "user_subject"), (1, "user_note"), (2, "caption"), (3, "user_note"), (4, "user_subject")):
+            board.set_text(f"p00{number}", name, "나" * 400)
+        board.close_warned = False
+        self.assertEqual(board.close(), pv.CLOSE_WARNED)
+        self.assertIn("(사진 1 대상, 사진 1 한마디 메모, 사진 2 한마디 메모 외 3곳)", board.view()["notice"]["text"], "많으면 처음 세 곳과 개수 — 사진 순서, 한 사진 안에서는 대상·메모·설명 글 순서")
+        self.assertEqual(board.close(), "closed", "그대로 한 번 더 누르면 닫는다")
+        self.assertEqual(board.errors, {})
+
+    def test_the_close_warning_has_no_typed_text_and_no_path_and_a_forbidden_text_gets_the_same_warning(self):
+        marker = "UNIQ-TYPED-marker-77"
+        board = new_board(2)
+        forbidden = marker + " 상위노출 보장"
+        self.assertEqual(board.set_text("p001", "user_note", forbidden), "invalid", "금지된 글은 한도와 상관없이 반영하지 않는다")
+        self.assertEqual(board.close(), pv.CLOSE_WARNED)
+        shown = board.view()["notice"]["text"]
+        self.assertIn("(사진 1 한마디 메모)", shown)
+        for needle in (marker, USER_DIR, FILE_STEM, "상위노출"):
+            self.assertNotIn(needle, shown)
+        self.assertNotIn(marker, dumped(board))
+
+    def test_a_choice_with_files_that_could_not_be_added_says_so_in_the_status_line_with_how_many_and_where_to_look(self):
+        board = new_board()
+        self.assertEqual(board.add_paths([path_of(1), path_of(2, "gif"), "relative/a.jpg"]), (1, 2))
+        self.assertEqual(board.view()["notice"], {"level": "warn", "text": "사진 1장을 넣었어요. 2개는 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요."})
+        self.assertEqual(board.add_paths([path_of(3, "bmp")]), (0, 1))
+        self.assertEqual(board.view()["notice"], {"level": "warn", "text": "고른 파일 1개를 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요."}, "앞의 '넣었어요' 안내는 이 안내로 바뀐다")
+        self.assertEqual(board.add_paths([path_of(4)]), (1, 0))
+        self.assertEqual(board.view()["notice"], {"level": "info", "text": "사진 1장을 넣었어요."}, "다 넣었으면 지금과 같다")
+        before = board.view()["notice"]
+        self.assertEqual(board.add_paths([]), (0, 0))
+        self.assertEqual(board.view()["notice"], before, "고르지 않았으면 아무것도 바뀌지 않는다")
+        for text in (T["pho_added_some"], T["pho_added_none"]):
+            self.assertNotIn(FILE_STEM, text)
+
+    def test_moving_with_something_that_is_not_one_up_or_down_is_refused_before_any_arithmetic(self):
+        board = new_board(3)
+        before = (board.manifest, board.undo)
+        for delta in (None, 1.0, "1", True, False, [1], (1,)):
+            with self.subTest(delta=repr(delta)):
+                self.assertEqual(board.move("p002", delta), "refused")
+                self.assertEqual((board.manifest, board.undo), before)
+                self.assertEqual(board.view()["notice"], {"level": "error", "text": "그 값은 쓸 수 없어요."})
+        self.assertEqual((board.move("p002", 0), board.move("p002", 2), board.move("p002", -2)), ("edge", "edge", "edge"), "정수인데 한 칸이 아니면 예전처럼 '더 옮길 수 없어요'")
+        self.assertEqual(board.move("p002", -1), "ok")
+        self.assertEqual(board.move("p009", None), "refused", "없는 사진이 먼저 거절된다")
+        self.assertEqual(board.view()["notice"]["text"], "그 사진을 찾을 수 없어요.")
+
+    def test_relinking_to_the_same_location_after_the_file_came_back_refreshes_the_state_instead_of_calling_it_a_duplicate(self):
+        board = new_board(2)
+        board.provider.states[path_of(1)] = "missing"
+        board.refresh_files()
+        self.assertEqual(board.states["p001"].state, "missing")
+        del board.provider.states[path_of(1)]                                            # 파일이 돌아왔다 — 가장 흔한 길: 같은 곳을 다시 고른다
+        self.assertEqual(board.relink("p001", path_of(1)), "unchanged")
+        self.assertEqual(board.states["p001"].state, "ok")
+        self.assertEqual(board.view()["notice"], {"level": "info", "text": "사진 파일을 다시 연결했어요."})
+        self.assertEqual(board.relink("p001", path_of(2)), "refused", "다른 사진이 쓰는 위치는 여전히 중복이다")
+        self.assertEqual(board.view()["notice"]["text"], "이미 넣은 사진이에요.")
+
+    def test_the_place_part_opens_by_itself_when_any_of_its_values_is_set_including_only_a_caption(self):
+        cases = {"아무것도 없음": (lambda board: None, False), "설명 글만": (lambda board: board.set_text("p001", "caption", "기본 반찬"), True),
+                 "들어갈 곳만": (lambda board: board.set_section("p001", "도입"), True), "자리만": (lambda board: board.set_placement("p001", "top"), True)}
+        for label, (act, opened) in cases.items():
+            with self.subTest(label=label):
+                board = new_board(1)
+                act(board)
+                self.assertEqual(row_of(board)["place"]["open"], opened)
+
+
 class FilesAndRelinkTest(unittest.TestCase):
     def test_the_file_state_badges_in_the_row(self):
         board = new_board(4, states={path_of(2): "missing", path_of(3): "link", path_of(4): "cloud"})
@@ -625,8 +983,8 @@ def engine(number, topic, keyword, channel="naver_a"):
 class DraftsControllerTest(unittest.TestCase):
     ROW = engine(901, "예시 후보 가 — 분야를 알 수 없는 안내", "예시 낱말 가")
 
-    def made(self):
-        controller = dv.DraftsController(drafts.FakeDraftsProvider(lambda: [self.ROW]), jobs.JobRunner())
+    def made(self, saving=False):
+        controller = dv.DraftsController(drafts.FakeDraftsProvider(lambda: [self.ROW], saving=saving), jobs.JobRunner())
         controller.open_target(drafts.DraftTarget(self.ROW.candidate_id, self.ROW.topic, self.ROW.channel, "예시 블로그 가", safety.assess(self.ROW).stop, True))
         results = {}
         status, job = controller.start_make(on_done=lambda result, _payload: results.setdefault("ok", result), on_error=lambda failure, _payload: results.setdefault("failed", failure))
@@ -659,6 +1017,7 @@ class DraftsControllerTest(unittest.TestCase):
         controller.apply_made(results["ok"])
         self.assertEqual(controller.photos.count, 2, "다시 만들어도 사진 목록은 남는다")
         self.assertFalse(controller.text_unsaved(), "사진을 넣어도 글은 안 바뀌었다 — 다시 만들기 확인은 글만 본다")
+        self.assertIsNone(controller.regen_dialog(), "다시 만들어도 사진 정보는 그대로라 묻지 않는다")
         self.assertTrue(controller.photos_unsaved() and controller.has_unsaved(), "사진 정보를 고쳤다(저장 전)")
         self.assertEqual(controller.save_state(), self.made().save_state())
 
@@ -679,10 +1038,86 @@ class DraftsControllerTest(unittest.TestCase):
             return normal
 
         self.assertEqual((plain.title, plain.body, plain.text_unsaved(), plain.save_state()), (busy.title, busy.body, busy.text_unsaved(), busy.save_state()))
+        self.assertEqual((plain.has_unsaved(), busy.has_unsaved()), (False, True), "다른 점은 사진이 있으면 떠날 때 묻는다는 것 하나뿐이다(검증 Q N-2)")
         self.assertEqual(without_photos(plain), without_photos(busy))
         self.assertEqual((plain.has_unsaved(), busy.has_unsaved()), (False, True), "사진 정보를 고쳤으면 떠나기·닫기 앞에서 묻는다(3단계 — 사진 정보도 저장한다)")
         self.assertEqual(plain.photos.card()["count"], "넣은 사진이 없어요")
         self.assertEqual(busy.photos.card()["count"], "사진 1장 · 확인 0/1")
+
+    def test_photos_count_as_unsaved_for_leaving_and_closing_but_not_for_remaking(self):
+        """검증 Q N-2 — 사진 정보를 고쳤는데 저장하지 않았으면 떠나기·앱 닫기가 먼저 묻는다(3단계: 저장한 판과 다를 때). 사진이 없으면 지금과 같다."""
+        controller = self.made()
+        self.assertEqual((controller.has_unsaved(), controller.photos_unsaved(), controller.leave_dialog("leave"), controller.leave_dialog("close")), (False, False, None, None))
+        controller.photos.add_paths([path_of(1), path_of(2)])
+        self.assertEqual((controller.has_unsaved(), controller.photos_unsaved(), controller.text_unsaved()), (True, True, False))
+        self.assertIsNone(controller.regen_dialog(), "다시 만들어도 사진 정보는 그대로라 묻지 않는다")
+        leave, close = controller.leave_dialog("leave"), controller.leave_dialog("close")
+        self.assertEqual((leave["title"], leave["ok"], leave["cancel"], "choices" in leave), (T["drf_leave_title"], T["drf_leave_ok"], T["drf_cancel"], False), "저장 기능이 없는 공급자는 두 갈래 확인창")
+        self.assertEqual((leave["body"], close["body"]), (T["drf_leave_body"], T["drf_close_body"]))
+        self.assertEqual(controller.leave_asked, "close")
+        for text in (leave["body"], close["body"]):
+            self.assertNotIn(USER_DIR, text)
+            self.assertNotIn(FILE_STEM, text)
+        controller.photos.remove("p001")
+        controller.photos.remove("p002")
+        self.assertEqual((controller.has_unsaved(), controller.leave_dialog("leave")), (False, None), "사진을 모두 지우면(저장한 판과 같아지면) 묻지 않는다")
+
+    def test_with_saving_the_photo_only_question_has_a_save_choice_because_the_photos_are_saved_with_the_draft(self):
+        controller = self.made(saving=True)
+        controller.photos.add_paths([path_of(1)])
+        photo_only = controller.leave_dialog("leave")
+        self.assertEqual([choice["key"] for choice in photo_only["choices"]], ["save", "discard", "stay"], "3단계: 저장하면 사진 정보도 함께 저장되므로 '저장' 갈래가 있다")
+        self.assertEqual(photo_only["body"], T["drf_leave3_body"])
+        controller.set_body(controller.body + chr(10) * 2 + "고친 문단이에요.")
+        self.assertTrue(controller.text_unsaved())
+        mixed, closing = controller.leave_dialog("leave"), controller.leave_dialog("close")
+        self.assertEqual([choice["key"] for choice in mixed["choices"]], ["save", "discard", "stay"])
+        self.assertEqual((mixed["body"], closing["body"]), (T["drf_leave3_body"], T["drf_close3_body"]), "글과 사진이 함께여도 문장은 같다")
+        plain = self.made()
+        plain.photos.add_paths([path_of(1)])
+        plain.set_body(plain.body + chr(10) * 2 + "고친 문단이에요.")
+        self.assertEqual((plain.leave_dialog("leave")["body"], plain.leave_dialog("close")["body"]), (T["drf_leave_body"], T["drf_close_body"]), "저장 기능이 없는 공급자의 두 갈래 확인창")
+
+    def test_opening_a_saved_draft_over_photos_asks_first_because_it_would_clear_them(self):
+        controller = self.made(saving=True)
+        self.assertFalse(controller.has_unsaved(), "사진이 없으면 묻지 않는다 — 지금과 같다")
+        controller.photos.add_paths([path_of(1)])
+        self.assertEqual(controller.start_open_saved("dd-" + "0" * 20), ("unconfirmed", None))
+        self.assertEqual(controller.photos.count, 1)
+
+    def test_a_forced_unsaved_flag_without_any_photo_still_gives_the_usual_dialog_never_the_photo_only_one(self):
+        """합친 앱의 블로그 닫기 확인 시험(`test_ui_qt_blogs_add` — M079 체인)은 `has_unsaved` 만 참으로 바꿔 쓴다(고친 글도 사진도 없다). 사진이 없으면 '사진 정보가 사라져요' 갈래를 타지 않고 지금과 같은 확인창이어야 한다 — 이 시험이 그것을 못박는다(첫 N-2 구현이 놓쳐 그 시험이 깨졌었다)."""
+        controller = self.made(saving=True)
+        self.assertEqual(controller.photos.count, 0)
+        with mock.patch.object(controller, "has_unsaved", return_value=True):
+            leave, close = controller.leave_dialog("leave"), controller.leave_dialog("close")
+        self.assertEqual([choice["key"] for choice in leave["choices"]], ["save", "discard", "stay"], "저장 기능이 있으면 세 갈래")
+        self.assertEqual((leave["title"], leave["body"], close["body"]), (T["drf_leave3_title"], T["drf_leave3_body"], T["drf_close3_body"]))
+        plain = self.made()
+        with mock.patch.object(plain, "has_unsaved", return_value=True):
+            dialog = plain.leave_dialog("leave")
+        self.assertEqual((dialog["title"], dialog["body"], "choices" in dialog), (T["drf_leave_title"], T["drf_leave_body"], False))
+        fresh = dv.DraftsController(drafts.FakeDraftsProvider(lambda: [self.ROW], saving=True), jobs.JobRunner())              # 초안을 만들기 전(결과 없음)에도 같다
+        self.assertIsNone(fresh.result)
+        with mock.patch.object(fresh, "has_unsaved", return_value=True):
+            dialog = fresh.leave_dialog("close")
+        self.assertNotEqual(dialog["title"], T["pho_leave_title"])
+        self.assertEqual(dialog["body"], T["drf_close3_body"] if fresh.can_save else T["drf_close_body"])
+
+    def test_the_app_state_guards_follow_the_photos_even_before_a_draft_exists(self):
+        from chanceblog_desktop.ui.core import app_state
+        state = app_state.AppState()
+        self.assertTrue(state.nav("drafts"))
+        self.assertEqual((state.leave_guard("topics"), state.close_guard()), (None, None), "사진이 없으면 지금과 같다")
+        state.drafts.photos.add_paths([path_of(1)])
+        self.assertIsNone(state.drafts.result)
+        self.assertEqual(state.leave_guard("topics")["title"], "사진 정보가 사라져요")
+        self.assertEqual(state.close_guard()["ok"], "그래도 닫기")
+        self.assertIsNone(state.leave_guard("drafts"), "같은 화면 단추는 묻지 않는다")
+        self.assertFalse(state.nav("topics"), "확인 없이는 옮기지 않는다")
+        self.assertEqual((state.page, state.drafts.photos.count), ("drafts", 1))
+        self.assertTrue(state.nav("topics", force=True))
+        self.assertEqual((state.page, state.drafts.photos.count), ("topics", 0), "확인하고 떠나면 사진 정보는 사라진다")
 
     def test_a_new_draft_leaving_the_screen_and_opening_a_saved_draft_clear_the_photos(self):
         controller = self.made()

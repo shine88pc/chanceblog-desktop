@@ -33,6 +33,7 @@ PHOTO_T = {
     "pho_open_broken": "저장한 사진 정보 파일을 읽을 수 없어요. 파일은 그대로 두었어요.", "pho_open_unreadable": "저장한 사진 정보 파일을 지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요.",
     "pho_row_title": "사진 넣기(선택)", "pho_row_desc": "글에 넣을 사진을 고르고 사진마다 한마디를 적어 두면 돼요.",
     # 창 머리
+    # 3단계(초안 연결)가 열려 N-1 의 세 문구(`STAGE3_RESTORE_KEYS`: pho_intro·pho_all_ask·pho_confirm)를 사실이 되는 원래 글로 되돌렸다
     "pho_title": "사진 정리", "pho_intro": "글에 넣을 사진을 고르고, 사진마다 무엇인지 적어 주세요. 확인했다고 표시한 사진만 초안에 쓰여요. 사진 파일은 복사하지 않고, 이 컴퓨터 안에서만 쓰고, 밖으로 보내지 않아요.",
     "pho_limits": "사진은 {n}장까지 넣을 수 있어요. 대상은 {subject}자, 메모는 {note}자, 설명 글은 {caption}자까지예요.",
     "pho_count": "사진 {n}장 · 확인 {c}/{n}", "pho_count_a11y": "넣은 사진 {n}장, 그중 {c}장을 확인했어요",
@@ -43,11 +44,14 @@ PHOTO_T = {
     "pho_confirm_all": "모두 확인했어요", "pho_confirm_all_a11y": "모든 사진을 확인했다고 표시하기",
     "pho_close": "닫기", "pho_close_a11y": "사진 정리 닫기", "pho_undo": "지운 사진 되돌리기", "pho_undo_a11y": "방금 지운 사진 되돌리기",
     # 한꺼번에 확인하는 확인 줄
+    # 3단계(초안 연결)가 끝나면 사실이 되는 문구로 되돌린다 — N-1
     "pho_all_ask": "사진 {n}장을 모두 ‘확인했어요’ 로 표시할까요? 표시한 사진의 종류·대상·메모가 초안에 쓰여요.", "pho_all_yes": "{n}장 모두 확인", "pho_all_yes_a11y": "사진 {n}장을 모두 확인했다고 표시하기", "pho_all_no": "그만두기", "pho_all_no_a11y": "한꺼번에 확인하지 않고 그만두기",
     "pho_all_none": "확인하지 않은 사진이 없어요.", "pho_all_done": "사진 {n}장을 확인했다고 표시했어요.",
     # 못 넣은 파일
     "pho_rejected_title": "넣지 못한 파일", "pho_rejected_row": "{name} — {reason}", "pho_rejected_clear": "목록 지우기", "pho_rejected_clear_a11y": "넣지 못한 파일 목록 지우기",
     "pho_rejected_dup": "이미 넣은 사진이에요.", "pho_rejected_full": "사진은 {n}장까지만 넣을 수 있어요.", "pho_added": "사진 {n}장을 넣었어요.",
+    "pho_rejected_more_full": "외 {n}개는 사진을 {max}장까지만 넣을 수 있어서 넣지 못했어요.", "pho_rejected_more_other": "외 {n}개도 넣지 못했어요.",
+    "pho_chip_hint": "{n}개 중 {m}번째예요. 방향키로 옮기고 스페이스나 엔터로 골라요.",
     # 사진 한 줄
     "pho_row_label": "사진 {n}", "pho_row_a11y": "사진 {n}, 종류 {type}, {confirm}", "pho_row_confirmed": "확인했어요", "pho_row_unconfirmed": "아직 확인하지 않았어요",
     "pho_type": "종류", "pho_type_a11y": "사진 {n} 종류", "pho_setting": "장소 분위기", "pho_setting_a11y": "사진 {n} 장소 분위기", "pho_setting_none": "정하지 않음",
@@ -59,6 +63,7 @@ PHOTO_T = {
     "pho_place": "자리", "pho_place_kind_a11y": "사진 {n} 자리", "pho_place_auto": "자동", "pho_place_top": "글 맨 앞", "pho_place_after_heading": "소제목 바로 뒤", "pho_place_after_paragraph": "문단 뒤", "pho_place_between_sentences": "문장 사이",
     "pho_nth": "몇 번째", "pho_nth_less": "−", "pho_nth_less_a11y": "사진 {n} 몇 번째 하나 줄이기", "pho_nth_more": "+", "pho_nth_more_a11y": "사진 {n} 몇 번째 하나 늘리기", "pho_nth_value": "{k}번째",
     "pho_caption": "설명 글(선택)", "pho_caption_a11y": "사진 {n} 설명 글", "pho_caption_example": "예: 기본 반찬",
+    # 3단계(초안 연결)가 끝나면 사실이 되는 문구로 되돌린다 — N-1
     "pho_confirm": "확인했어요 — 이 내용을 초안에 써요", "pho_confirm_a11y": "사진 {n} 확인했어요", "pho_unconfirmed_note": "내용을 고쳐서 확인 표시를 풀었어요. 다시 확인해 주세요.",
     "pho_up": "위로", "pho_up_a11y": "사진 {n} 위로 옮기기", "pho_down": "아래로", "pho_down_a11y": "사진 {n} 아래로 옮기기", "pho_remove": "지우기", "pho_remove_a11y": "사진 {n} 목록에서 지우기",
     "pho_removed": "사진 {n}번을 목록에서 지웠어요. 파일은 그대로 있어요.", "pho_restored": "지운 사진을 되돌렸어요.",
@@ -76,5 +81,15 @@ PHOTO_T = {
     "pho_lists_remove_a11y": "{name} 목록에서 지우기", "pho_lists_in_use": "사진에서 쓰고 있어서 지울 수 없어요.", "pho_lists_dup": "이미 있는 이름이에요.", "pho_lists_keep": "‘기타’ 는 지울 수 없어요.",
     "pho_lists_full": "목록에는 {n}개까지 둘 수 있어요.", "pho_lists_added": "목록에 더했어요.", "pho_lists_removed": "목록에서 지웠어요.",
     # 안내·거절
-    "pho_over_close": "한도를 넘겨 반영하지 못한 글이 있어요. 줄여 주세요. 그대로 한 번 더 닫기를 누르면 그 글은 버리고 닫아요.", "pho_bad_photo": "그 사진을 찾을 수 없어요.", "pho_bad_value": "그 값은 쓸 수 없어요.", "pho_bad_order": "더 옮길 수 없어요.", "pho_fail_other": "사진 정보를 바꾸지 못했어요. 다시 해 주세요.",
+    "pho_over_close": "반영하지 못한 글이 있어요({fields}). 고치거나 줄여 주세요. 그대로 한 번 더 닫기를 누르면 그 글은 버리고 닫아요.",
+    "pho_field_of": "사진 {n} {field}", "pho_field_more": "외 {n}곳", "pho_field_user_subject": "대상", "pho_field_user_note": "한마디 메모", "pho_field_caption": "설명 글",
+    # 넣지 못한 파일이 있을 때의 안내(상태 줄) — 넣지 못한 파일의 목록은 사진 줄들 아래에 있다(N-5)
+    "pho_added_some": "사진 {n}장을 넣었어요. {m}개는 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요.", "pho_added_none": "고른 파일 {m}개를 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요.",
+    # 초안 화면을 떠나거나 앱을 닫을 때의 확인창 — 사진 정보는 저장하지 않아서(저장은 3단계) 있으면 사라진다(N-2)
+    "pho_leave_title": "사진 정보가 사라져요", "pho_leave_body": "넣어 둔 사진 {n}장의 정보는 아직 저장되지 않아서 다른 화면으로 가면 사라져요. 사진 파일은 그대로 있어요. 그래도 이동할까요?",
+    "pho_close_body": "넣어 둔 사진 {n}장의 정보는 아직 저장되지 않아서 앱을 닫으면 사라져요. 사진 파일은 그대로 있어요. 그래도 닫을까요?", "pho_bad_photo": "그 사진을 찾을 수 없어요.", "pho_bad_value": "그 값은 쓸 수 없어요.", "pho_bad_order": "더 옮길 수 없어요.", "pho_fail_other": "사진 정보를 바꾸지 못했어요. 다시 해 주세요.",
 }
+
+# 2단계 수정(검증 Q N-1)은 초안 연결이 없는 동안 세 문구를 '다음 단계에서 열려요' 로 적어 두었다. 3단계(초안 연결 — `draft_inputs` 를 쓰는 `drafts_view`)가 열려 아래 세 문구는 사실이 되는 원래 글로 되돌렸다.
+# 이 키 목록은 시험이 두 문구가 서로 어긋나지 않는지 보는 자리로 남겨 둔다.
+STAGE3_RESTORE_KEYS = ("pho_intro", "pho_all_ask", "pho_confirm")

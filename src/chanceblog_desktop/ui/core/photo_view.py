@@ -6,12 +6,12 @@
 목록 줄에는 파일 이름(폴더 없이, 비밀 모양을 가린 한 줄)만 보이고 못 넣은 파일도 이름과 고정 이유 문장만 있다. 이 파일은 파일·네트워크·로그·시계를 쓰지 않는다. 사진 파일을 읽는 일(판정·상태 확인)은 공급자가 한다(어댑터가 `imagecheck`·서비스를 부른다).
 
 규칙 요약(모두 시험이 못박는다):
-  · 사진을 넣을 때마다 `provider.judge` 로 파일을 판정한다(JPG·PNG·WebP 만·실제 형식·20MB). 못 넣은 파일은 이유와 함께 `rejected` 에 모은다(이름만 — 경로 없음). 30장이 차면 나머지는 '30장까지만' 으로 거절한다.
+  · 사진을 넣을 때마다 먼저 `provider.inspect`(읽지 않고 `lstat` 으로 링크·정션·내려받지 않은 파일·폴더·없음을 거른다)로 보고 이어서 `provider.judge` 로 파일을 판정한다(JPG·PNG·WebP 만·실제 형식·20MB). 못 넣은 파일은 이유와 함께 `rejected` 에 모은다(이름만 — 경로 없음). 30장이 차면 **남은 파일은 읽지도 판정하지도 않고 개수만 세어** '30장까지만' 으로 거절한다 — 한 번에 몇천 개를 골라도 창이 멈추지 않는다. 못 넣은 파일 줄은 처음 `MAX_REJECTED_ROWS`(10)줄까지만 이름을 보이고 나머지는 '외 N개' 한두 줄(`rejected_more`)로 합친다(검증 S T-2).
   · 사진의 내용(종류·장소 분위기·대상·메모·들어갈 곳·자리·설명 글)을 실제로 고치면 **확정(확인했어요)이 풀리고** 줄에 한 번 안내가 뜬다(1단계 규칙 그대로). 한도를 넘거나 검사에 걸린 글은 반영하지 않고 이유 문장을 칸 아래에 보인다.
   · 종류를 바꾸면 '들어갈 곳' 이 **사용자가 따로 고르지 않았을 때만** 새 종류의 기본값으로 바뀐다(간판·건물 외관 → 도입, 메뉴판·대표 메뉴·음식·반찬 → 내용 소제목, 인테리어 → 분위기 소제목, 지도 캡처·기타 → 자동).
   · '모두 확인했어요' 는 **확인 줄을 먼저 보이고**(확인할 사진 수) 한 번 더 눌러야 표시한다. 그만두면 아무것도 바뀌지 않는다.
   · 지우기는 사진 정보만 목록에서 뺀다(파일은 그대로) — 방금 지운 한 장은 되돌릴 수 있고 다른 일을 하면 되돌리기가 사라진다.
-  · 미리보기는 **PNG 이고 가로×세로가 1억 화소를 넘으면** 만들지 않고 안내한다(사진은 그대로 쓴다 — `photo_rules.preview_blocked`).
+  · 미리보기는 **PNG 이고 가로×세로가 6천만 화소를 넘으면** 만들지 않고 안내한다(사진은 그대로 쓴다 — `photo_rules.preview_blocked`).
   · 종류·장소 분위기 목록은 이 창에서 더하고 지울 수 있다(사진이 쓰는 이름·`기타` 는 못 지운다). 앱을 닫으면 처음 목록으로 돌아간다(새 설정 칸을 만들지 않았다).
 """
 from __future__ import annotations
@@ -26,6 +26,8 @@ from . import photo_rules as rules
 from .text import T
 
 CLOSE_WARNED = "close_warned"
+FIELD_TEXT_KEY = {"user_subject": "pho_field_user_subject", "user_note": "pho_field_user_note", "caption": "pho_field_caption"}      # 닫기 경고가 부르는 칸 이름(사진 번호와 이 이름뿐 — 글은 없다)
+MAX_CLOSE_FIELDS = 3                                 # 닫기 경고에 이름을 적는 칸의 수 — 더 많으면 '외 N곳'
 
 
 @dataclass(frozen=True)
@@ -56,9 +58,23 @@ class Rejected:
     reason: str = field(repr=False)
 
 
+MAX_REJECTED_ROWS = 10                              # 못 넣은 파일 목록에 이름을 보이는 줄 수의 한도 — 더 많이 못 넣으면 나머지는 개수만 센다(검증 S T-2: 줄이 수백 개면 창이 몇 초씩 멈췄다)
+
+
+@dataclass(frozen=True)
+class RejectedMore:
+    """줄로 보이지 않고 개수만 센 못 넣은 파일 — `over`: 사진 한도(30장)가 차서 읽지도 판정하지도 않은 파일 수, `other`: 다른 이유로 못 넣었지만 줄 수 한도 때문에 이름을 못 보인 파일 수. 이름·경로는 없다."""
+    over: int = 0
+    other: int = 0
+
+
 class PhotoProvider:
     """공급자 틀 — 실제는 `ui/photo_adapter.py`(`imagecheck` 와 서비스 `check_files`), 시험·사진은 가짜. 사진 파일을 읽기만 한다(쓰지 않는다)."""
     sample = False
+
+    def inspect(self, path):
+        """읽지 않고 쓸 만한 파일인지만 본다 → `(상태 이름, 고정 문장)`(쓸 만하면 `("ok", "")` — 링크·정션 아래·폴더·내려받지 않은 파일·없음은 `link`·`not_file`·`cloud`·`missing`). `judge`(이미지 읽기)를 부르기 **전에** 부른다."""
+        raise NotImplementedError
 
     def judge(self, path):
         """파일 하나의 판정 → `imagerules.Verdict`."""
@@ -77,6 +93,15 @@ class FakePhotoProvider(PhotoProvider):
     def __init__(self, verdicts=None, states=None, fail=()):
         self.verdicts, self.states, self.fail = dict(verdicts or {}), dict(states or {}), set(fail)
         self.calls = []
+
+    def inspect(self, path):
+        self.calls.append("inspect")
+        if "inspect" in self.fail:
+            raise RuntimeError("가짜 점검 실패")
+        state = self.states.get(path, R.OK)
+        if state in rules.LSTAT_STATES:                                                       # 읽지 않고 알 수 있는 상태만(없음·링크·폴더 아님·내려받지 않음)
+            return state, T[rules.BADGE_KEY[state]]
+        return R.OK, ""
 
     def judge(self, path):
         self.calls.append("judge")
@@ -125,6 +150,7 @@ class PhotoBoard:
         self.manifest = pm.empty_manifest()
         self.states = {}
         self.rejected = ()
+        self.rejected_more = RejectedMore()
         self.errors = {}                                    # (사진 번호, 칸) → 고정 이유 문장 — 글은 담지 않는다
         self.notes = {}                                     # 사진 번호 → 한 번 보이는 안내('확인 표시를 풀었어요')
         self.undo = None                                    # 방금 지운 한 장을 되돌릴 목록(지운 직후에만 — 다른 어떤 고침이 있으면 사라진다)
@@ -169,6 +195,12 @@ class PhotoBoard:
         photo = self.photo(photo_id)
         return photo.local_path if photo is not None else ""
 
+    def _unapplied_fields(self):
+        """반영하지 못한 글이 남은 칸의 이름(`사진 2 한마디 메모` …) — 사진 번호와 칸 이름뿐이고 글·경로는 없다. 많으면 처음 `MAX_CLOSE_FIELDS` 곳만 쓰고 '외 N곳'."""
+        names = [T["pho_field_of"].format(n=photo.number, field=T[FIELD_TEXT_KEY[name]]) for photo in self.manifest.photos for name in rules.TEXT_FIELDS if (photo.photo_id, name) in self.errors]
+        shown = ", ".join(names[:MAX_CLOSE_FIELDS])
+        return shown + (" " + T["pho_field_more"].format(n=len(names) - MAX_CLOSE_FIELDS) if len(names) > MAX_CLOSE_FIELDS else "")
+
     def shutdown(self):
         """대화상자가 어느 길로든 닫힌다 — 경고 없이 닫고(한도를 넘긴 글은 버린다) 임시 상태를 비운다. 여러 번 불러도 같다."""
         self.errors = {}                                    # 한도를 넘긴 글을 버리면 닫기가 경고할 이유가 없다
@@ -194,11 +226,12 @@ class PhotoBoard:
         """창을 닫는다 — 한도를 넘겨 반영하지 못한 글이 칸에 남아 있으면 처음 한 번은 닫지 않고 알린다(`close_warned`, 한 번 더 누르면 그 글은 버리고 닫는다). 닫으면 못 넣은 파일 목록·확인 줄·되돌리기가 사라진다(사진 목록은 남는다)."""
         if self.errors and not self.close_warned:
             self.close_warned = True
-            self._flag("warn", T["pho_over_close"])
+            self._flag("warn", T["pho_over_close"].format(fields=self._unapplied_fields()))
             return CLOSE_WARNED
         self.is_open = False
         self.generation += 1
         self.rejected, self.undo, self.confirm_all_asked, self.notice, self.close_warned = (), None, 0, None, False
+        self.rejected_more = RejectedMore()
         self.errors = {}
         return "closed"
 
@@ -228,6 +261,12 @@ class PhotoBoard:
         if pm.path_key(path) in {pm.path_key(item.local_path) for item in self.manifest.photos}:
             return T["pho_rejected_dup"]
         try:
+            place, message = self.provider.inspect(path)         # 읽기 전에 먼저(`lstat` 뿐) — 링크·정션 아래·폴더·내려받지 않은 파일·없음은 이미지 읽기를 부르지 않고 거절한다(검증 S T-1)
+        except Exception:
+            return T["img_local_unreadable"]
+        if place != R.OK:
+            return message or T[rules.BADGE_KEY.get(place, "pho_file_unknown")]
+        try:
             verdict = self.provider.judge(path)
         except Exception:                                   # 읽기 도구가 터져도 이 파일만 못 넣는다
             return T["img_local_unreadable"]
@@ -245,28 +284,49 @@ class PhotoBoard:
         return ""
 
     def add_paths(self, paths):
-        """파일 선택 창에서 고른 파일들을 하나씩 넣는다 → `(넣은 수, 못 넣은 수)`. 못 넣은 파일은 이름과 이유만 `rejected` 에 새로 모은다(앞 목록은 이 선택으로 바뀐다). 고르지 않았으면(빈 값) 아무것도 하지 않는다."""
+        """파일 선택 창에서 고른 파일들을 하나씩 넣는다 → `(넣은 수, 못 넣은 수)`. 못 넣은 파일은 이름과 이유만 `rejected` 에 새로 모은다(앞 목록은 이 선택으로 바뀐다). 고르지 않았으면(빈 값) 아무것도 하지 않는다.
+        **고른 수가 많아도 느려지지 않는다**(검증 S T-2) — 사진이 한도(30장)에 차면 남은 파일은 읽지도 판정하지도 않고 개수만 센다. 목록 줄은 처음 `MAX_REJECTED_ROWS` 개까지만 이름을 보이고 나머지는 `rejected_more` 에 개수만 둔다."""
         chosen = [path for path in (paths or ()) if isinstance(path, str) and path]
         if not chosen:
             return 0, 0
-        added, rejected = 0, []
-        for path in chosen:
+        added, rows, hidden_over, hidden_other = 0, [], 0, 0
+        for index, path in enumerate(chosen):
+            if self.full:                                   # 한도에 닿았다 — 남은 파일은 하나도 읽거나 판정하지 않는다
+                rest = chosen[index:]
+                shown = rest[:max(0, MAX_REJECTED_ROWS - len(rows))]
+                rows.extend(Rejected(rules.short_name(item), T["pho_rejected_full"].format(n=pm.MAX_PHOTOS)) for item in shown)
+                hidden_over = len(rest) - len(shown)
+                break
             reason = self._try_add(path)
-            if reason:
-                rejected.append(Rejected(rules.short_name(path), reason))
-            else:
+            if not reason:
                 added += 1
+            elif len(rows) < MAX_REJECTED_ROWS:
+                rows.append(Rejected(rules.short_name(path), reason))
+            else:
+                hidden_other += 1
         if added:
             self.undo, self.confirm_all_asked = None, 0
-        self.rejected = tuple(rejected)
-        if added:
+        self.rejected, self.rejected_more = tuple(rows), RejectedMore(hidden_over, hidden_other)
+        refused = len(chosen) - added
+        if not refused:
             self._flag("info", T["pho_added"].format(n=added))
-        elif rejected:
-            self.notice = None
-        return added, len(rejected)
+        elif added:                                         # 일부만 넣었다 — 못 넣은 파일이 있다는 것과 어디서 이유를 보는지(줄들 아래 목록)를 상태 줄이 알린다(검증 Q N-5)
+            self._flag("warn", T["pho_added_some"].format(n=added, m=refused))
+        else:
+            self._flag("warn", T["pho_added_none"].format(m=refused))
+        return added, refused
 
     def clear_rejected(self):
-        self.rejected = ()
+        self.rejected, self.rejected_more = (), RejectedMore()
+
+    def _rejected_more_lines(self):
+        """줄로 보이지 못한 못 넣은 파일의 개수 안내(0~2줄) — 이름·경로 없이 개수와 고정 문장만."""
+        more, lines = self.rejected_more, []
+        if more.over:
+            lines.append(T["pho_rejected_more_full"].format(n=more.over, max=pm.MAX_PHOTOS))
+        if more.other:
+            lines.append(T["pho_rejected_more_other"].format(n=more.other))
+        return [{"text": text, "a11y": text} for text in lines]
 
     def _apply(self, photo_id, **changes):
         """사진 한 장의 내용을 1단계 규칙(`update_photo`)으로 고친다 → `ok`·`unchanged`·`invalid`. 내용이 바뀌어 확정이 풀리면 줄에 한 번 안내를 남긴다."""
@@ -408,6 +468,8 @@ class PhotoBoard:
         photo = self.photo(photo_id)
         if photo is None:
             return self._refuse("pho_bad_photo")
+        if not isinstance(delta, int) or isinstance(delta, bool):          # 없음·실수·글·참/거짓은 더하기 전에 거절한다(검증 Q N-9 (f))
+            return self._refuse()
         target = photo.display_order + delta
         if delta not in (-1, 1) or not 1 <= target <= self.count:
             self._flag("info", T["pho_bad_order"])
@@ -450,6 +512,13 @@ class PhotoBoard:
         if problem is None and pm.path_key(path) in {pm.path_key(item.local_path) for item in self.manifest.photos if item.photo_id != photo_id}:
             problem = T["pho_rejected_dup"]
         verdict = None
+        if problem is None:
+            try:
+                place, message = self.provider.inspect(path)       # 넣을 때와 같은 길 — 읽기 전에 먼저 본다
+                if place != R.OK:
+                    problem = message or T[rules.BADGE_KEY.get(place, "pho_file_unknown")]
+            except Exception:
+                problem = T["img_local_unreadable"]
         if problem is None:
             try:
                 verdict = self.provider.judge(path)
@@ -587,10 +656,10 @@ class PhotoBoard:
             "undo": {"text": T["pho_undo"], "a11y": T["pho_undo_a11y"]} if self.undo is not None else None,
             "notice": {"level": self.notice[0], "text": self.notice[1]} if self.notice else None,
             "rejected": {"title": T["pho_rejected_title"], "rows": [{"text": T["pho_rejected_row"].format(name=item.name, reason=item.reason), "a11y": T["pho_rejected_row"].format(name=item.name, reason=item.reason)} for item in self.rejected],
-                         "clear": T["pho_rejected_clear"], "clear_a11y": T["pho_rejected_clear_a11y"]} if self.rejected else None,
+                         "more": self._rejected_more_lines(), "clear": T["pho_rejected_clear"], "clear_a11y": T["pho_rejected_clear_a11y"]} if self.rejected else None,
             "rows": [self._row(photo, index) for index, photo in enumerate(self.manifest.photos)], "lists": self._lists_vm(),
             "close": {"text": T["pho_close"], "a11y": T["pho_close_a11y"]},
         }
 
 
-__all__ = ["CLOSE_WARNED", "FakePhotoProvider", "FileState", "PhotoBoard", "PhotoProvider", "Rejected"]
+__all__ = ["CLOSE_WARNED", "FakePhotoProvider", "FileState", "MAX_REJECTED_ROWS", "PhotoBoard", "PhotoProvider", "Rejected", "RejectedMore"]

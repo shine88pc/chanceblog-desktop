@@ -4,7 +4,7 @@ PySide6·파일·서비스를 모른다(그래서 CI 에서 시험한다). 사�
 운영자 확인 023(이슈 #219, 2026-11-16 '추천대로 전부 진행')으로 정한 값:
   · 사진 종류 기본 9종(`pm.DEFAULT_PHOTO_TYPES`)과 장소 분위기 기본 6종(실내·실외·테라스·주차장·객실·야경 — `pm.DEFAULT_SETTINGS`)은 화면 안에서 더하고 지울 수 있다(앱을 닫으면 처음 목록으로 돌아간다 — 새 설정 칸을 만들지 않았다).
   · 종류별 기본 '들어갈 곳': 간판·건물 외관 → 도입, 메뉴판·대표 메뉴·음식·반찬 → 내용 소제목, 인테리어 → 분위기 소제목, 지도 캡처·기타 → 자동. 사용자가 고른 값은 바꾸지 않는다.
-  · **PNG 만** 가로×세로가 1억 화소를 넘으면 미리보기(썸네일)를 만들지 않고 '너무 커서 미리보기를 못 만들어요' 로 알린다(사진은 그대로 쓸 수 있다). JPG·WebP 는 영향이 없다 — 이미지 읽기 도구가 **헤더에서 읽은 크기**로 판정하고 본문을 풀기 전에 막는다.
+  · **PNG 만** 가로×세로가 6천만 화소를 넘으면 미리보기(썸네일)를 만들지 않고 '너무 커서 미리보기를 못 만들어요' 로 알린다(사진은 그대로 쓸 수 있다). JPG·WebP 는 영향이 없다 — 이미지 읽기 도구가 **헤더에서 읽은 크기**로 판정하고 본문을 풀기 전에 막는다.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ TYPES = tuple(pm.DEFAULT_PHOTO_TYPES)
 SETTINGS = tuple(pm.DEFAULT_SETTINGS)
 MAX_LIST_ITEMS = 20                                      # 종류·장소 분위기 목록 하나에 둘 수 있는 이름의 수
 PROTECTED_TYPE = pm.DEFAULT_TYPE                          # 지울 수 없는 종류(사진을 처음 넣을 때의 종류)
-PNG_PIXEL_LIMIT = 100_000_000                            # PNG 의 가로×세로가 이 값을 넘으면 미리보기를 만들지 않는다(결정 16)
+PNG_PIXEL_LIMIT = 60_000_000                             # PNG 의 가로×세로가 이 값을 넘으면 미리보기를 만들지 않는다(결정 16 — 처음 1억에서 검증 Q N-8 로 6천만으로 낮췄다: 이미지 읽기 도구의 할당 한도(256MB)로 8192×8192=67,108,864 화소까지 읽히고 그 위는 읽기에 실패하므로 그 아래에서 보수적으로 막는다)
 THUMB_SIDE = 96                                          # 한 줄의 미리보기 한 변(px — 긴 변을 이만큼으로 줄여 그린다)
 FIELD_LIMITS = {"user_subject": pm.MAX_SUBJECT, "user_note": pm.MAX_NOTE, "caption": pm.MAX_CAPTION}
 TEXT_FIELDS = tuple(FIELD_LIMITS)
@@ -81,7 +81,7 @@ def over_text(length, limit):
 
 
 def preview_blocked(fmt, width, height):
-    """미리보기를 만들면 안 되는 사진인가 — **PNG 이고** 가로×세로가 1억 화소를 넘을 때만 참이다(JPG·WebP·크기를 모르는 것은 거짓). 헤더에서 읽은 크기로 판정하므로 본문을 풀기 전에 부른다."""
+    """미리보기를 만들면 안 되는 사진인가 — **PNG 이고** 가로×세로가 6천만 화소를 넘을 때만 참이다(JPG·WebP·크기를 모르는 것은 거짓). 헤더에서 읽은 크기로 판정하므로 본문을 풀기 전에 부른다."""
     try:
         return str(fmt).lower() == "png" and int(width) * int(height) > PNG_PIXEL_LIMIT
     except (TypeError, ValueError):
@@ -102,6 +102,7 @@ STATE_OK, STATE_MISSING, STATE_LINK, STATE_NOT_FILE, STATE_CLOUD = "ok", "missin
 STATE_UNKNOWN = "unknown"
 BADGE_KEY = {R.OK: "pho_file_ok", STATE_MISSING: "pho_file_missing", STATE_LINK: "pho_file_link", STATE_CLOUD: "pho_file_cloud", R.TOO_BIG: "pho_file_toobig", R.UNSUPPORTED: "pho_file_unsupported",
              R.NOT_IMAGE: "pho_file_notimage", STATE_NOT_FILE: "pho_file_notfile", R.UNREADABLE: "pho_file_unreadable", STATE_UNKNOWN: "pho_file_unknown"}
+LSTAT_STATES = frozenset({STATE_MISSING, STATE_LINK, STATE_NOT_FILE, STATE_CLOUD})                                       # 파일을 열지 않고 `lstat` 만으로 아는 상태(넣을 때·다시 찾을 때 읽기 전에 거른다)
 RELINKABLE = frozenset({STATE_MISSING, STATE_LINK, STATE_NOT_FILE, R.UNSUPPORTED, R.NOT_IMAGE, R.UNREADABLE})      # '다시 찾기' 를 보이는 상태(파일을 바꿔 연결하면 풀릴 수 있는 것)
 TONE = {R.OK: "ok", STATE_UNKNOWN: "muted"}                                                                         # 그 밖의 상태는 모두 'warn'
 

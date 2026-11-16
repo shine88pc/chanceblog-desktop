@@ -6,7 +6,7 @@
   1) 진입 — 초안 화면에 '사진' 카드와 '만드는 방법' 칸의 '사진 넣기(선택)' 줄이 있고(접근 이름·36px 이상·Tab 정거장) 둘 다 같은 창을 연다. 사진을 넣지 않아도 초안 화면은 그대로다.
   2) 입력 칸 — '이 사진은 무엇인가요?'·'한마디 메모' 는 접지 않고 늘 보이고 예시가 종류에 따라 바뀐다. 글자 수(12/60·0/300)가 치는 동안 바뀌고 한도를 넘으면 글로도 알린다. 한도를 넘긴 글은 반영하지 않고 이유만 보이며 닫을 때 한 번 알린다.
   3) 흐름 — 사진 추가(못 넣은 파일은 이름과 이유만)·확인했어요(고치면 풀림)·모두 확인했어요(확인 줄을 먼저 보이고 처음 포커스는 그만두기)·↑↓·지우기와 한 번 되돌리기·다시 찾기·종류 목록 고치기·30장 한도.
-  4) 미리보기 — 메모리에서만 한 장씩 만들고, 큰 PNG(1억 화소 초과)·없는 파일은 만들지 않고 글로 알린다. 닫으면 줄·그림·대기열이 비워진다.
+  4) 미리보기 — 메모리에서만 한 장씩 만들고, 큰 PNG(6천만 화소 초과)·없는 파일은 만들지 않고 글로 알린다. 닫으면 줄·그림·대기열이 비워진다.
   5) 경로·글이 새지 않는다 — 어느 위젯의 글·접근 이름·툴팁에도 폴더 이름이 없고, 파일 이름은 줄·못 넣은 파일 목록에만 보이며, 한도를 넘겨 반영하지 못한 글은 입력 칸에만 있다.
   6) 키보드·크기 — Tab 은 이름 있는 곳만 보이는 순서로 지나고 대화상자 밖으로 새지 않으며, 모든 필수 크기와 최소 창에서 가로 스크롤·글자 잘림·삐져나옴이 없고 단추 줄이 늘 보인다.
   7) 읽기 전용 — 진짜 사진 파일을 넣고 미리보기까지 만들어도 파일 바이트·폴더 목록이 그대로이고 네트워크를 부르지 않는다.
@@ -41,7 +41,7 @@ if HAVE:
     sys.path.insert(0, str(ROOT / "scripts"))
     import ui_offscreen
     ui_offscreen.prepare_environment()
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QTimer, Qt
     from PySide6.QtGui import QColor, QImage, QPixmap
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QLineEdit, QWidget
@@ -130,7 +130,7 @@ class SourceRulesTest(unittest.TestCase):
             source = "\n".join(ast.unparse(statement) for statement in methods[name].body)
             for forbidden in ("provider.", "service.", "sqlite3", "subprocess", "socket", "urllib", "shutil", "os.", "pathlib"):
                 self.assertIsNone(re.search(r"\b" + re.escape(forbidden), source), f"{name}: {forbidden}")
-            self.assertFalse(called_names(methods[name]) & {"write", "write_text", "write_bytes", "mkdir", "unlink", "rename", "replace"}, name)
+            self.assertFalse(called_names(methods[name]) & {"write", "write_text", "write_bytes", "mkdir", "unlink", "rename", "replace", "clipboard", "setText", "setMimeData", "setImage", "setPixmap"}, name)
             self.assertFalse(builtin_calls(methods[name]) & {"open", "print", "exec", "eval"}, name)
         self.assertEqual(ast.unparse(methods["photos_pick"]).count("add_paths"), 1)
         self.assertIn("paths = None", ast.unparse(methods["photos_pick"]), "고른 위치 목록은 쓰고 나서 바로 놓는다")
@@ -327,7 +327,7 @@ class EntryTest(PhotoBase):
         self.assertEqual(window.state.drafts.photos.count, 1)
         window.go("topics", force=True)                                           # 사진 정보를 고쳤으면 확인창이 먼저다(세 갈래) — 여기서는 `저장 안 하고 나가기` 와 같다
         self.settle(6)
-        self.assertEqual(window.state.drafts.photos.count, 0)
+        self.assertEqual((window.state.page, window.state.drafts.photos.count), ("topics", 0))
 
 
 # ---- 2) 창과 입력 칸 --------------------------------------------------------------------------------------------------------------
@@ -369,13 +369,53 @@ class SheetTest(PhotoBase):
         shown = self.shown_texts(form.rejected_host)
         self.assertIn(f"{FILE_MARK}-03.gif — 지원하지 않는 형식이에요. JPG·PNG·WebP 사진만 쓸 수 있어요", shown)
         self.assertIn("relative.jpg — 사진 파일 위치가 올바르지 않아요. 파일 선택 창에서 직접 골라 주세요", shown)
-        self.assertEqual(self.lt(form.notice), "사진 2장을 넣었어요.")
+        self.assertEqual(self.lt(form.notice), "사진 2장을 넣었어요. 2개는 넣지 못했어요 — 아래 ‘넣지 못한 파일’ 에서 이유를 확인해 주세요.")
         self.assertEqual(self.widget_hits(window, [DIR_MARK]), [], "폴더 이름은 어느 위젯의 글·접근 이름·툴팁에도 없다")
         form.rejected_clear.click()
         self.settle(3)
         self.assertFalse(form.rejected_host.isVisibleTo(form))
         self.add_photos(form)                                                          # 선택을 취소하면(빈 목록) 아무것도 바뀌지 않는다
         self.assertEqual(list(form.rows), ["p001", "p002"])
+
+    def test_picking_hundreds_of_files_shows_ten_names_and_one_count_line_instead_of_a_label_per_file(self):
+        """검증 S T-2 — 옛 화면은 못 넣은 파일마다 줄 하나를 만들어 100개에 0.8초·300개에 5.9초·1000개에 70초가 걸렸다. 이제 줄은 이름 10개 + 개수 한 줄로 일정하다."""
+        window, form = self.sheet()
+        self.add_photos(form, *[fake_path(number) for number in range(1, 301)])
+        self.assertEqual(list(form.rows), [f"p{number:03d}" for number in range(1, 31)], "한도 안의 30장만 줄이 된다")
+        self.assertEqual(form.rejected_rows.count(), 11, "이름을 보인 줄 10개와 개수 한 줄 — 고른 수와 상관없이 일정하다")
+        shown = self.shown_texts(form.rejected_host)
+        self.assertEqual(sum(1 for line in shown if line.endswith(T["pho_rejected_full"].format(n=30))), 10)
+        self.assertIn("외 260개는 사진을 30장까지만 넣을 수 있어서 넣지 못했어요.", shown)
+        self.assertEqual(self.widget_hits(window, [DIR_MARK]), [], "이름을 보이지 않은 파일도 폴더 이름도 어느 위젯에도 없다")
+        for index in range(form.rejected_rows.count()):
+            label = form.rejected_rows.itemAt(index).widget()
+            self.assertEqual(label.accessibleName(), self.lt(label), "개수 줄도 접근 이름이 보이는 글과 같다")
+        form.rejected_clear.click()
+        self.settle(3)
+        self.assertEqual((form.rejected_rows.count(), form.rejected_host.isVisibleTo(form)), (0, False))
+
+    def test_a_choice_of_unusable_files_also_ends_as_ten_names_and_a_count_line(self):
+        window, form = self.sheet()
+        self.add_photos(form, *[fake_path(number, "gif") for number in range(1, 13)])
+        self.assertEqual((list(form.rows), form.rejected_rows.count()), ([], 11))
+        shown = self.shown_texts(form.rejected_host)
+        self.assertIn("외 2개도 넣지 못했어요.", shown)
+        self.assertEqual(sum(1 for line in shown if line.startswith(FILE_MARK)), 10)
+        self.add_photos(form, fake_path(1))                                                # 다음 선택이 목록과 개수 줄을 바꾼다
+        self.assertEqual((list(form.rows), form.rejected_host.isVisibleTo(form), form.rejected_rows.count()), (["p001"], False, 0))
+
+    def test_picking_and_relinking_files_never_copy_their_locations_to_the_clipboard(self):
+        """검증 S T-3(SH1) — 고른 파일의 위치는 사진 정보에만 가고 시스템 클립보드로 새지 않는다."""
+        sentinel = "UNIQ-SENTINEL-clip-5d2f"
+        QApplication.clipboard().setText(sentinel)
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1), fake_path(2), fake_path(3, "gif"))
+        self.assertEqual((QApplication.clipboard().text(), self.copied), (sentinel, []))
+        self.relinks.append(fake_path(7))
+        window.photos_relink("p001")
+        self.settle(4)
+        self.assertEqual(window.state.drafts.photos.photo("p001").local_path, fake_path(7))
+        self.assertEqual((QApplication.clipboard().text(), self.copied), (sentinel, []))
 
     def test_the_two_input_fields_are_always_visible_and_the_example_follows_the_type(self):
         window, form = self.sheet()
@@ -454,7 +494,7 @@ class SheetTest(PhotoBase):
         self.assertEqual(window.photos_close(), "warned")
         self.assertIs(window.photo_form, form)
         self.assertTrue(window.dialog.is_open)
-        self.assertEqual(self.lt(form.notice), T["pho_over_close"])
+        self.assertEqual(self.lt(form.notice), T["pho_over_close"].format(fields="사진 1 대상"), "칸 이름만 있고 글은 없다")
         self.assertEqual(window.photos_close(), "closed")
         self.assertIsNone(window.photo_form)
         self.assertFalse(window.dialog.is_open)
@@ -706,8 +746,25 @@ class PreviewTest(PhotoBase):
         self.settle(6)
         self.assertEqual(len(self.maker_calls), calls, "같은 사진의 미리보기는 다시 만들지 않는다")
 
+    def test_each_preview_is_made_in_its_own_turn_of_the_event_loop_so_the_window_never_freezes(self):
+        """검증 S T-3(PS4) — 미리보기를 한 번에 몰아 만들면(30장이면 한참) 창이 멈춘다. 한 장을 만들 때마다 이벤트 루프로 한 번 돌아간다."""
+        events = []
+
+        def maker(path):
+            events.append("make")
+            QTimer.singleShot(0, lambda: events.append("turn"))                           # 이 장을 만든 뒤 이벤트 루프가 한 바퀴 돌았다는 표시
+            return self.make_preview(path)
+        window = self.drafted(maker=maker)
+        window, form = self.sheet(window)
+        self.add_photos(form, *[fake_path(number) for number in range(1, 7)])
+        ui_offscreen.wait_until(self.app, lambda: events.count("make") >= 6, 8)
+        self.settle(4)
+        self.assertEqual(events.count("make"), 6)
+        self.assertFalse(any(first == second == "make" for first, second in zip(events, events[1:])), f"두 장 이상이 이벤트 루프를 한 번도 돌지 않고 이어서 만들어졌다: {events}")
+        self.assertTrue(all(not card.preview.pixmap().isNull() for card in form.rows.values()))
+
     def test_a_big_png_and_a_missing_file_get_no_preview_and_a_sentence_instead(self):
-        provider = pv.FakePhotoProvider(verdicts={fake_path(1, "png"): R.Verdict(R.OK, "", "", 12_000, 12_000, "png"), fake_path(2): R.Verdict(R.OK, "", "", 12_000, 12_000, "jpeg")}, states={fake_path(3): "missing"})
+        provider = pv.FakePhotoProvider(verdicts={fake_path(1, "png"): R.Verdict(R.OK, "", "", 12_000, 12_000, "png"), fake_path(2): R.Verdict(R.OK, "", "", 12_000, 12_000, "jpeg")})                 # 파일 없음 상태는 넣은 뒤에 정한다 — 넣을 때는 읽기 전에 없는 파일을 거른다(검증 S T-1)
         window = self.drafted(photos=provider)
         window, form = self.sheet(window)
         self.add_photos(form, fake_path(1, "png"), fake_path(2), fake_path(3))
@@ -720,7 +777,7 @@ class PreviewTest(PhotoBase):
         window, form = self.sheet(window)
         ui_offscreen.wait_until(self.app, lambda: len(self.maker_calls) >= 1, 5)
         self.settle(6)
-        self.assertEqual(self.maker_calls, [fake_path(2)], "큰 PNG(1억 화소 초과)와 없는 파일은 만들지 않는다 — 큰 JPEG 는 만든다")
+        self.assertEqual(self.maker_calls, [fake_path(2)], "큰 PNG(6천만 화소 초과)와 없는 파일은 만들지 않는다 — 큰 JPEG 는 만든다")
         big, jpeg, missing = form.rows["p001"], form.rows["p002"], form.rows["p003"]
         self.assertEqual(big.preview.text(), T["pho_preview_blocked"])
         self.assertTrue(big.preview_note.isVisibleTo(form))
@@ -852,7 +909,7 @@ class KeyboardTest(PhotoBase):
         self.settle(2)
         expected = []
         for card in form.ordered_cards():
-            expected += [widget for widget in card.stops() if widget.isVisibleTo(form) and widget.isEnabled() and widget.focusPolicy() != Qt.NoFocus]
+            expected += [widget for widget in card.stops() if widget.isVisibleTo(form) and widget.isEnabled() and bool(widget.focusPolicy() & Qt.TabFocus)]      # 칩 묶음은 정거장 하나뿐(나머지는 클릭·방향키로만 포커스 — 검증 Q N-6)
         expected += [form.lists_toggle, form.add_button, form.all_button, form.close_button]
         form.scroll.setFocus(Qt.TabFocusReason)
         self.settle(2)
@@ -1054,6 +1111,26 @@ class RealFilesTest(PhotoBase):
 
     def snapshot(self):
         return {item.name: item.read_bytes() for item in sorted(self.tmp.iterdir()) if item.is_file()}
+
+    def test_the_preview_is_made_from_a_reduced_read_and_never_from_the_full_size_picture(self):
+        """검증 S T-3(PS1) — 큰 사진을 통째로 읽어 줄이면 메모리가 크게 든다. 미리보기는 읽는 도중에 줄여 읽는다(긴 변 `PREVIEW_PIXELS`)."""
+        big = self.make_image("큰사진.jpg", "JPG", 3000, 2000)
+        seen = []
+        real = photo_screen.imagecheck.make_thumbnail
+
+        def spy(path, max_side=None):
+            image = real(path) if max_side is None else real(path, max_side=max_side)
+            seen.append((max_side, None if image is None else (image.width(), image.height())))
+            return image
+        photo_screen.imagecheck.make_thumbnail = spy
+        self.addCleanup(setattr, photo_screen.imagecheck, "make_thumbnail", real)
+        pixmap = photo_screen.make_preview(big)
+        self.assertFalse(pixmap.isNull())
+        self.assertEqual(photo_screen.PREVIEW_PIXELS, rules.THUMB_SIDE * 2)
+        self.assertEqual([item[0] for item in seen], [photo_screen.PREVIEW_PIXELS], "줄여 읽는 한도를 정해서 불렀다")
+        self.assertLessEqual(max(seen[0][1]), photo_screen.PREVIEW_PIXELS, "읽어 온 그림이 이미 작다 — 3000×2000 을 통째로 읽지 않았다")
+        self.assertLessEqual(max(pixmap.width(), pixmap.height()), rules.THUMB_SIDE)
+        self.assertEqual(sorted(item.name for item in self.tmp.iterdir()), ["큰사진.jpg"], "미리보기가 파일을 만들지 않는다")
 
     def test_real_photos_get_previews_and_nothing_is_written_read_or_sent_anywhere_else(self):
         png, jpg = self.make_image("메뉴판.png", "PNG"), self.make_image("간판.jpg", "JPG", 64, 48)

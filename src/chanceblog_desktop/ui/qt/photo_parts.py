@@ -2,17 +2,19 @@
 규칙(한도·확인이 풀리는 때·종류별 예시·기본 들어갈 곳·큰 PNG 판정)은 모두 core 에 있다. 색·글꼴·크기·간격은 토큰(`K`·스타일시트)에서만 오고 여기서 인라인으로 정하지 않는다.
 이 파일에는 파일을 읽거나 쓰는 호출·네트워크·하위 프로세스·표준 출력이 없다(미리보기 그림은 창(`photo_screen.py`)이 `imagecheck` 로 메모리에서만 만들어 넘긴다).
 
-**입력 칸(이 사진은 무엇인가요? · 한마디 메모)은 접지 않고 늘 보인다**(운영자 요구). 종류·장소 분위기도 늘 보이고, 들어갈 곳·자리·설명 글만 '자리 정하기' 로 접는다(값이 있으면 펼쳐 둔다).
+**입력 칸(이 사진은 무엇인가요? · 한마디 메모)은 접지 않고 늘 보인다**(운영자 요구) — 줄 머리(미리보기) 바로 아래에 두어 그림과 칸이 한 화면에 함께 보인다(검증 Q N-3). 종류·장소 분위기 칩은 그 아래에 늘 보이고, 들어갈 곳·자리·설명 글만 '자리 정하기' 로 접는다 —
+값이 없다가 생겼을 때만 저절로 펼치고 사용자가 접은 줄은 그 줄이 지워질 때까지 접힌 채 둔다(다른 동작이 되살리지 않는다). Enter 는 규칙이 받은 글(또는 바뀐 것이 없는 칸)에서만 다음 칸으로 가고 받지 않은 글에서는 그 칸에 머문다(N-4).
 줄은 **사진이 지워지기 전까지 같은 부품**이다 — 창이 다시 그릴 때(`apply`) 칸의 글을 덮어쓰지 않고(포커스가 있거나 한도를 넘겨 반영하지 못한 글은 그대로), 클릭한 칸이 사라져 포커스를 잃는 일이 없다.
 글자 수(`12/60`)는 치는 동안 그 자리에서 바뀌고 한도를 넘으면 글(`60자까지만 적을 수 있어요`)로도 알린다(색만으로 알리지 않는다). 모든 눌리는 부품은 키보드(Tab·Enter·Space)로 쓸 수 있고 접근 이름을 가지며 누르는 칸은 36px 이상이다.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ..core import photo_rules as rules
 from ..core import tokens as K
+from ..core.text import T
 from . import components as UI
 
 TONE = {"ok": "green", "warn": "orange", "muted": "slate", "error": "red", "info": "slate"}       # 뷰모델의 상태 말 → 글 색 계열(글이 늘 함께 있다)
@@ -22,6 +24,64 @@ PREVIEW_SIDE = rules.THUMB_SIDE
 def _clean_length(text):
     """칸에 친 글이 규칙의 한 줄 정리(`clean_line`)를 거친 뒤 몇 글자인가 — 글자 수 표시용 근사(공백을 접는다)."""
     return len(" ".join(str(text).split()))
+
+
+# ---- 칩 묶음의 키보드(BLOGSEL-2 의 칩 묶음 키 처리와 같은 규칙 — 합칠 때 이 한 묶음(두 표와 `ChipGroupKeys`)만 바꾸거나 지우면 된다) ----------------------------------
+CHIP_MOVE_KEYS = {Qt.Key_Left: -1, Qt.Key_Up: -1, Qt.Key_Right: 1, Qt.Key_Down: 1}      # 한 칸씩 옮기는 키(끝에서는 반대쪽 끝으로 돈다 — 묶음 밖으로 나가지 않는다)
+CHIP_EDGE_KEYS = {Qt.Key_Home: 0, Qt.Key_End: -1}                                         # 처음·마지막 칩으로 가는 키
+
+
+class ChipGroupKeys(QObject):
+    """칩 한 묶음(종류·장소 분위기·들어갈 곳·자리)의 키보드 규칙 — 묶음에 **Tab 정거장은 하나**(고른 칩, 고른 것이 없으면 첫 칩)이고 나머지 칩은 Tab·Shift+Tab 이 건너뛴다(마우스 클릭은 그대로 된다 — `ClickFocus`).
+    ←↑→↓ 는 묶음 안에서 칩 사이로 포커스를 옮기고(끝에서는 반대쪽 끝으로 돈다) Home·End 는 처음·마지막 칩으로 간다. 고르는 일은 칩이 스스로 한다(Space·Enter). 칩마다 'n개 중 m번째' 를 접근 설명으로 달고 묶음에 접근 이름을 붙인다.
+    글·경로는 다루지 않는다(칩 위젯과 순서뿐)."""
+
+    def __init__(self, host, chips):
+        super().__init__(host)
+        self.chips = list(chips)
+        for number, chip in enumerate(self.chips, 1):
+            chip.installEventFilter(self)
+            chip.setAccessibleDescription(T["pho_chip_hint"].format(n=len(self.chips), m=number))
+        self.sync()
+
+    def stop(self):
+        """지금 Tab 정거장인 칩 — 고른 칩, 고른 것이 없으면 첫 칩."""
+        for chip in self.chips:
+            if chip.isChecked():
+                return chip
+        return self.chips[0] if self.chips else None
+
+    def sync(self):
+        """고른 칩이 바뀌었을 수 있을 때(다시 그릴 때마다) 정거장을 맞춘다 — 정거장만 `StrongFocus`(Tab·클릭), 나머지는 `ClickFocus`(클릭·방향키로만 포커스가 온다)."""
+        stop = self.stop()
+        for chip in self.chips:
+            chip.setFocusPolicy(Qt.StrongFocus if chip is stop else Qt.ClickFocus)
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.KeyPress or watched not in self.chips:
+            return False
+        if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier):
+            return False                                                               # 조합 키는 건드리지 않는다
+        key, here = event.key(), self.chips.index(watched)
+        if key in CHIP_MOVE_KEYS:
+            there = (here + CHIP_MOVE_KEYS[key]) % len(self.chips)
+        elif key in CHIP_EDGE_KEYS:
+            there = CHIP_EDGE_KEYS[key] % len(self.chips)
+        else:
+            return False
+        target = self.chips[there]
+        target.setFocus(Qt.BacktabFocusReason if key in (Qt.Key_Left, Qt.Key_Up, Qt.Key_Home) else Qt.TabFocusReason)
+        self._reveal(target)
+        return True
+
+    @staticmethod
+    def _reveal(widget):
+        """프로그램으로 옮긴 포커스는 스크롤이 따라가지 않는다(Tab 은 Qt 가 따라간다) — 옮겨 간 칩이 화면 밖이면 보이는 곳으로 가져온다."""
+        parent = widget.parentWidget()
+        while parent is not None and not isinstance(parent, QScrollArea):
+            parent = parent.parentWidget()
+        if parent is not None:
+            parent.ensureWidgetVisible(widget)
 
 
 class FieldBox(QWidget):
@@ -68,13 +128,14 @@ class FieldBox(QWidget):
             self.error.setVisible(False)
 
     def _enter(self):
-        """Enter — 글을 규칙에 넘기고(`commit`) 다음 칸으로 간다(대상 칸 → 같은 사진의 메모 칸 → 다음 사진의 대상 칸)."""
-        self.commit()
-        self.sheet.advance(self.photo_id, self.name)
+        """Enter — 글을 규칙에 넘기고(`commit`) 다음 칸으로 간다(대상 칸 → 같은 사진의 메모 칸 → 다음 사진의 대상 칸). 규칙이 글을 받지 않았으면(한도를 넘김·검사에 걸림) 칸을 옮기지 않고 그 칸에 머문다 —
+        이유 문장이 칸 아래에 보이고 쳐 둔 글은 그대로라서, 조용히 안 들어간 글을 두고 다음 칸으로 가는 일이 없다(검증 Q N-4)."""
+        if self.commit() in ("ok", "unchanged"):
+            self.sheet.advance(self.photo_id, self.name)
 
     def commit(self):
         """칸의 글을 한 번 규칙에 넘긴다 — 반영되면 정리한 글로 칸을 다시 채우고(포커스가 옮겨 간 뒤) 거절되면 칸의 글은 그대로 두고 이유만 보인다."""
-        self.sheet.commit_text(self.photo_id, self.name, self.edit.text())
+        return self.sheet.commit_text(self.photo_id, self.name, self.edit.text())
 
     def apply(self, vm):
         self.title.set_text(vm["label"])
@@ -98,26 +159,27 @@ class FieldBox(QWidget):
 
 
 class PhotoRowCard(QWidget):
-    """사진 한 줄 — 미리보기·번호·파일 이름·파일 상태·순서/지우기·종류·장소 분위기·대상·메모·자리 정하기(들어갈 곳·자리·몇 번째·설명 글)·확인 표시."""
+    """사진 한 줄 — 미리보기·번호·파일 이름·파일 상태·순서/지우기 → 대상·메모(바로 아래) → 종류·장소 분위기 → 자리 정하기(들어갈 곳·자리·몇 번째·설명 글) → 확인 표시."""
 
     def __init__(self, sheet, vm):
         super().__init__()
         self.sheet, self.photo_id, self.vm = sheet, vm["photo_id"], vm
         self._chip_keys = {}
+        self._chip_groups = {}                                                         # 칩 묶음(종류별)의 키보드 규칙 — Tab 정거장은 묶음에 하나
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         card, inner = UI.Card((K.SPACE["4"], K.SPACE["3"], K.SPACE["4"], K.SPACE["3"]), kind="plain")
-        inner.setSpacing(K.SPACE["3"])
+        inner.setSpacing(K.SPACE["2"])
         outer.addWidget(card)
         self.card = card
         self.setAccessibleName(vm["a11y"])
         self._build_head(inner, vm)
-        self.types_host = self._host(inner)
-        self.settings_host = self._host(inner)
-        self.subject = FieldBox(sheet, self.photo_id, vm["subject"], "pho:subject")
+        self.subject = FieldBox(sheet, self.photo_id, vm["subject"], "pho:subject")                 # 입력 칸 둘은 미리보기 바로 아래 — 그림과 칸이 한 화면에 함께 보인다(검증 Q N-3)
         self.note = FieldBox(sheet, self.photo_id, vm["note"], "pho:note")
         inner.addWidget(self.subject)
         inner.addWidget(self.note)
+        self.types_host = self._host(inner)
+        self.settings_host = self._host(inner)
         self._build_place(inner, vm)
         self._build_confirm(inner, vm)
         self.apply(vm)
@@ -175,7 +237,8 @@ class PhotoRowCard(QWidget):
     def _build_place(self, inner, vm):
         place = vm["place"]
         self.place_toggle = UI.Button("ghost", place["close_text"] if place["open"] else place["open_text"], size="sm", accessible=place["a11y"], focus_key=f"pho:place:{self.photo_id}")
-        self.place_toggle.clicked.connect(lambda _=False: self.set_place_open(not self.place_body.isVisible()))
+        self.place_toggle.clicked.connect(lambda _=False: self._toggle_place())
+        self._place_user_closed = False                                                # 사용자가 접었다 — 이 줄이 지워질 때까지 다른 동작이 되살리지 않는다
         inner.addWidget(self.place_toggle, 0, Qt.AlignLeft)
         self.place_body = QWidget()
         body = QVBoxLayout(self.place_body)
@@ -242,11 +305,25 @@ class PhotoRowCard(QWidget):
                 chip.setAccessibleName(f"{a11y} {text}")
                 chip.clicked.connect(lambda _=False, chosen=value: handler(chosen))
                 chips[value] = chip
-            layout.addWidget(UI.chip_row(list(chips.values())))
+            row = UI.chip_row(list(chips.values()))
+            row.setAccessibleName(a11y)
+            layout.addWidget(row)
+            old = self._chip_groups.pop(kind, None)
+            if old is not None:
+                old.setParent(None)
+                old.deleteLater()
+            self._chip_groups[kind] = ChipGroupKeys(row, list(chips.values()))
             self._chip_keys[kind] = key
             setattr(self, f"_chips_{kind}", chips)
         for value, chip in getattr(self, f"_chips_{kind}").items():
             chip.setChecked(value == current)
+        self._chip_groups[kind].sync()                                                # 고른 칩이 Tab 정거장이다(고른 것이 없으면 첫 칩)
+
+    def _toggle_place(self):
+        """`자리 정하기` 단추 — 사용자가 펼치거나 접는다. 접은 것은 줄 부품이 기억한다(검증 Q N-3)."""
+        opened = not self.place_body.isVisible()
+        self._place_user_closed = not opened
+        self.set_place_open(opened)
 
     def set_place_open(self, opened):
         self.place_body.setVisible(bool(opened))
@@ -290,8 +367,8 @@ class PhotoRowCard(QWidget):
         self.nth_box.setVisible(bool(place["nth"]["visible"]))
         self.nth_value.set_text(place["nth"]["text"])
         self.caption.apply(vm["caption"])
-        if not self.place_body.isVisible() and place["open"]:
-            self.set_place_open(True)                                                  # 값이 생겼으면 펼친다(접는 것은 사용자가 한다)
+        if place["open"] and not self._place_user_closed and not self.place_body.isVisible():
+            self.set_place_open(True)                                                  # 값이 없다가 생겨 접혀 있는 줄만 저절로 펼친다(값이 있는 줄은 펼친 채 만들어진다) — 접는 것은 사용자가 하고, 접은 줄은 다른 동작(다른 사진의 확인 …)이 되살리지 않는다
         self.confirm_box.blockSignals(True)
         self.confirm_box.setChecked(bool(vm["confirmed"]))
         self.confirm_box.blockSignals(False)
@@ -316,10 +393,10 @@ class PhotoRowCard(QWidget):
         return (self.subject, self.note, self.caption)
 
     def stops(self):
-        """Tab 정거장(화면에 보이는 순서) — 줄 머리의 단추들 → 종류 칩 → 장소 분위기 칩 → 대상 → 메모 → 자리 정하기(펼쳤을 때만 그 안) → 확인했어요. 보이지 않거나 꺼진 것은 Qt 가 건너뛴다."""
+        """Tab 정거장(화면에 보이는 순서) — 줄 머리의 단추들 → 대상 → 메모 → 종류 칩 → 장소 분위기 칩 → 자리 정하기(펼쳤을 때만 그 안) → 확인했어요. 보이지 않거나 꺼진 것은 Qt 가 건너뛴다."""
         chips = [*getattr(self, "_chips_type", {}).values(), *getattr(self, "_chips_setting", {}).values()]
         place = [*getattr(self, "_chips_section", {}).values(), *getattr(self, "_chips_kind", {}).values(), self.nth_less, self.nth_more, self.caption.edit]
-        return [self.relink, self.up, self.down, self.remove, *chips, self.subject.edit, self.note.edit, self.place_toggle, *place, self.confirm_box]
+        return [self.relink, self.up, self.down, self.remove, self.subject.edit, self.note.edit, *chips, self.place_toggle, *place, self.confirm_box]
 
     def pending_fields(self):
         """닫기 전에 마지막으로 규칙에 넘길 글이 든 칸들."""

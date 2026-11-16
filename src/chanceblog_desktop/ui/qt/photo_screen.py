@@ -3,7 +3,7 @@
 색·글꼴·크기·간격은 토큰(`K`·스타일시트)에서만 오고 여기서 인라인으로 정하지 않는다. 이 파일에는 파일을 쓰거나 지우는 호출·네트워크·하위 프로세스·표준 출력이 없다(사진 파일은 `imagecheck` 로 **읽기만** 한다 — 미리보기는 메모리의 `QImage` 로만 만든다).
 
 **몸(제목·안내·사진 줄들·넣지 못한 파일·목록 고치기)은 창이 낮을 때 스크롤되고(`DialogScroll`), 상태 줄(한꺼번에 확인의 확인 줄·안내·되돌리기)과 단추 줄(사진 추가·모두 확인했어요·닫기)은 스크롤 밖 아래에 늘 보인다.**
-미리보기는 한 장씩 차례로(`QTimer.singleShot`) 만들어 창이 멈추지 않게 하고, 파일이 없거나 못 읽는 사진·큰 PNG(1억 화소 초과 — 읽기 전에 막는다)는 그림 대신 글이 보인다. 확인 줄이 뜨면 처음 포커스는 안전한 쪽(그만두기)에 둔다.
+미리보기는 한 장씩 차례로(`QTimer.singleShot`) 만들어 창이 멈추지 않게 하고, 파일이 없거나 못 읽는 사진·큰 PNG(6천만 화소 초과 — 읽기 전에 막는다)는 그림 대신 글이 보인다. 확인 줄이 뜨면 처음 포커스는 안전한 쪽(그만두기)에 둔다.
 """
 from __future__ import annotations
 
@@ -43,6 +43,8 @@ class PhotoSheet(QWidget):
         self._previews = {}                                                       # 사진 번호 → (그때의 위치, 그림 또는 None) — 위치는 비교에만 쓰고 어디에도 보이지 않는다
         self._queue = []
         self._making = False
+        self._rejected_seen = ()                                                  # 마지막으로 그린 못 넣은 파일 목록(같은 목록이면 다시 스크롤하지 않는다 — 검증 Q N-5)
+        self._reveal_rejected_pending = False
         self.confirm_buttons = []
         self.setAccessibleName(T["pho_title"])
         outer = QVBoxLayout(self)
@@ -276,10 +278,13 @@ class PhotoSheet(QWidget):
     def _sync_rejected(self, rejected):
         _empty_layout(self.rejected_rows)
         self.rejected_host.setVisible(bool(rejected))
+        seen, self._rejected_seen = self._rejected_seen, (self.board.rejected if rejected else ())
         if not rejected:
             return
+        if self._rejected_seen is not seen:                                       # 이번 선택으로 새로 생긴 목록이다 — 자리가 잡힌 뒤(`_refit_later`) 그 자리가 보이게 스크롤한다(상태 줄의 안내가 '아래' 라고 한다)
+            self._reveal_rejected_pending = True
         self.rejected_title.set_text(rejected["title"])
-        for item in rejected["rows"]:
+        for item in [*rejected["rows"], *rejected["more"]]:                                  # 이름을 보인 줄(많아야 10) + 개수만 센 한두 줄 — 줄 수는 고른 파일 수와 상관없이 일정하다(검증 S T-2)
             line = UI.label(item["text"], "small", wrap=True)
             line.setAccessibleName(item["a11y"])
             line.set_tone("red")
@@ -404,6 +409,9 @@ class PhotoSheet(QWidget):
     def _refit_later(self):
         try:
             self._refit()
+            if self._reveal_rejected_pending:
+                self._reveal_rejected_pending = False
+                self.scroll.ensureWidgetVisible(self.rejected_host, 0, K.SPACE["2"])
         except RuntimeError:                                                          # 그 사이 대화상자가 닫혀 부품이 지워졌다
             pass
 
@@ -412,6 +420,16 @@ class PhotoSheet(QWidget):
         cards = self.ordered_cards()
         target = cards[0].subject.edit if cards else self.add_button
         target.setFocus(Qt.OtherFocusReason)
+        if cards:                                                                 # 프로그램으로 옮긴 포커스는 스크롤이 따라가지 않는다 — 칸 전체(이름표·입력 칸·글자 수)를 보이게 한다(검증 Q N-3 (c))
+            self._reveal(cards[0].subject)
+            QTimer.singleShot(0, lambda box=cards[0].subject: self._reveal(box))   # 대화상자가 자리를 잡은 뒤의 키로 한 번 더
+
+    def _reveal(self, box):
+        """칸 전체가 몸(스크롤) 안에 보이게 스크롤한다 — 그 사이 닫혀 부품이 지워졌으면 그만둔다."""
+        try:
+            self.scroll.ensureWidgetVisible(box, 0, K.SPACE["2"])
+        except RuntimeError:
+            pass
 
     def focus_confirm(self):
         """확인 줄이 떴을 때 — 안전한 쪽(그만두기)에 포커스를 둔다. 없으면 닫기 단추."""
