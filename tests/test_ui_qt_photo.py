@@ -348,6 +348,14 @@ class SheetTest(PhotoBase):
         self.assertIn("밖으로 보내지 않아요", self.lt(form.intro))
         self.assertEqual(window.dialog.width(), min(photo_screen.DIALOG_WIDTH, int(window.width() * 0.94)))
 
+    def test_reopening_with_photos_puts_the_first_focus_on_the_first_photos_subject_field(self):
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1), fake_path(2))
+        self.assertEqual(window.photos_close(), "closed")
+        self.settle(4)
+        window, again = self.sheet(window)
+        self.assertIs(QApplication.focusWidget(), again.rows["p001"].subject.edit, "사진이 있으면 첫 사진의 대상 칸에서 시작한다(빈 창이면 사진 추가 단추)")
+
     def test_picking_adds_rows_and_lists_what_was_not_added_by_name_and_reason_only(self):
         window, form = self.sheet()
         self.add_photos(form, fake_path(1), fake_path(2, "png"), fake_path(3, "gif"), "relative.jpg")
@@ -788,6 +796,19 @@ class PreviewTest(PhotoBase):
         self.assertEqual(list(again.rows), ["p001", "p002"])
         self.assertIsNot(again, form)
         self.assertEqual(len(self.maker_calls), before + 2, "다시 열면 미리보기를 새로 만든다(그림은 닫을 때 버렸다)")
+
+
+    def test_a_dialog_closed_by_another_path_still_cleans_up_closes_the_board_and_never_warns(self):
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1))
+        form.rows["p001"].note.edit.setText("나" * 301)                                # 닫기 단추였다면 한 번 경고했을 한도 넘은 글
+        self.settle(2)
+        board = window.state.drafts.photos
+        window.close_dialog()                                                         # 닫기 단추·Esc 가 아닌 길 — 다른 창이 대신 열리거나 앱이 정리할 때와 같다
+        self.settle(5)
+        self.assertEqual((window.photo_form, window.dialog.is_open, board.is_open), (None, False, False))
+        self.assertEqual((form.rows, form.board), ({}, None))
+        self.assertEqual(board.count, 1, "사진 목록은 남는다")
 
 
 # ---- 5) 접근성·키보드 ------------------------------------------------------------------------------------------------------------
