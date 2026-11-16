@@ -160,6 +160,11 @@ class ServiceHomeProvider(HomeProvider):
         from .backups_adapter import ServiceBackupsProvider
         return ServiceBackupsProvider(self._data_dir, context_factory=self._factory)
 
+    def references_provider(self):
+        """'참고 글 보관함'(결정 D-490)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 쓰기(올리기·저장·지우기)는 사용자가 단추를 눌렀을 때만 불린다(`ui/references_adapter.py` — 이 앱에서 보관함을 쓰는 유일한 어댑터)."""
+        from .references_adapter import ServiceReferencesProvider
+        return ServiceReferencesProvider(self._data_dir, context_factory=self._factory)
+
     def candidates_provider(self):
         """주제 후보 화면(P4d)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(후보 만들기)는 사용자가 확인창에서 `만들기` 를 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
         from .candidates_adapter import ServiceCandidatesProvider

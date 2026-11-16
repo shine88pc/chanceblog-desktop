@@ -163,6 +163,10 @@ from .backup_text import BACKUP_T  # noqa: E402
 
 T.update(BACKUP_T)                                                   # 설정 화면의 백업·복원 카드(BACKUPUI)의 문구도 새 파일(`backup_text.py`)에 따로 두고 합친다
 
+from .references_text import REF_T  # noqa: E402
+
+T.update(REF_T)                                                      # 참고 글 보관함(결정 D-490)의 문구도 새 파일(`references_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 

@@ -23,6 +23,7 @@ from ..core.drafts_view import STORE_KEY
 from ..core.seeds_view import WRITE_KEY as SEEDS_WRITE_KEY
 from ..core.keys_view import WRITE_KEY as KEYS_WRITE_KEY
 from ..core.clock import SystemClock
+from ..core.references_view import FakeReferencesProvider, ReferenceLibrary
 from ..core.style_view import StyleStudy
 from ..core.text import T
 from ..core.version import read_version
@@ -33,6 +34,8 @@ from .backup_parts import BackupSection
 from .key_parts import KeyDialog, RenameForm
 from .candidate_parts import DetailPane
 from .sidebar import Sidebar
+from .references_dialog import DIALOG_WIDTH as REFERENCES_DIALOG_WIDTH
+from .references_dialog import ReferencesDialog
 from .style_dialog import DIALOG_WIDTH as STYLE_DIALOG_WIDTH
 from .style_dialog import StyleDialog
 from .topbar import TopBar
@@ -80,7 +83,7 @@ def qt_file_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
@@ -195,6 +198,9 @@ class AppShell(QMainWindow):
         self.style_bridge.loaded.connect(self._style_arrived)
         self.style_bridge.failed.connect(self._style_failed)
         self.style_bridge.cancelled.connect(self._style_cancelled)
+        paired_references = getattr(self.state.provider, "references_provider", None)      # 참고 글 보관함(결정 D-490) — 홈 공급자의 짝(같은 데이터 폴더)이 있으면 그것을, 예시 화면 같은 짝이 없으면 메모리 예시를 쓴다
+        self.references = ReferenceLibrary(references or (paired_references() if paired_references else FakeReferencesProvider()))
+        self.references_form = None                                                      # 열려 있는 보관함 대화상자의 안쪽 부품(없으면 None)
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -466,6 +472,9 @@ class AppShell(QMainWindow):
 
     def escape(self):
         if self.dialog.is_open:
+            if self.references_form is not None:                                  # 참고 글 보관함은 Esc 도 닫기 단추와 같은 확인을 거친다(저장 안 한 변경을 조용히 버리지 않는다)
+                self.references_escape()
+                return
             self.close_dialog()
         else:
             self.close_drawer()
@@ -1986,6 +1995,196 @@ class AppShell(QMainWindow):
         except Exception:
             self.notify(T["job_failed"])
 
+    # ---- 참고 글 보관함(결정 D-490) — '내 글 문체 참고값 보기' 대화상자 안의 단추가 여는 대화상자. 글 하나가 파일 하나로 사용자 데이터 폴더의 `references/` 에 남고(어댑터가 서비스를 부른다), 고르기·고치기·지우기를 한다.
+    # 서비스 호출은 빠른 파일 읽기·쓰기라 곧바로 부르고 곧바로 받는다(규칙은 core 의 `ReferenceLibrary` — 세대 번호로 늦게 온 결과를 버릴 수 있다). 저장 안 한 변경은 닫기 단추·Esc·창 닫기(X·Alt+F4)·다른 글 열기·새 글이 모두 같은 확인을 거친다.
+    def references_open(self):
+        """`참고 글 보관함 열기` — 대화상자를 연다(문체 보기 대화상자가 열려 있으면 그것을 닫고 바꿔 연다). 다른 대화상자가 열려 있으면 열지 않는다. 어느 길로든 닫히면 편집 칸·목록을 모두 버린다."""
+        if self.dialog.is_open and self.style_form is None:
+            return None
+        previous_focus = None if self.dialog.is_open else QApplication.focusWidget()
+        self.references.open()
+        form = ReferencesDialog(self, self.references)
+        self.dialog.clear()                                                              # 열려 있던 문체 보기가 있으면 정리 훅(`_style_discard`)이 불린다
+        self.dialog.cleanups.append(self._references_discard)
+        self.dialog.setAccessibleName(T["ref_title"])
+        self.dialog.layout_.addWidget(form)
+        form.show()
+        if previous_focus is not None:
+            self._dialog_return = previous_focus
+        self.dialog.present(REFERENCES_DIALOG_WIDTH)
+        self._trap_focus(True, self.dialog)
+        form.refresh()
+        form.focus_start()
+        self.references_form = form
+        return form
+
+    def _references_discard(self):
+        """대화상자가 닫히거나 바뀔 때 — 편집 칸·목록을 비우고 늦게 오는 결과는 받지 않는다(세대가 달라진다). 여러 번 불러도 같다."""
+        form, self.references_form = self.references_form, None
+        if form is not None:
+            form.discard()
+        self.references.close()
+
+    def _references_live(self):
+        """열려 있는 보관함 대화상자의 안쪽 부품(없으면 None)."""
+        form = self.references_form
+        return form if form is not None and self.references.is_open else None
+
+    def references_close(self):
+        """`닫기` — 저장 안 한 변경이 있으면 먼저 버릴지 묻는다. 없으면 닫는다."""
+        form = self._references_live()
+        if form is None:
+            return None
+        if self.references.leave("close") == "ask":
+            form.refresh()
+            form.focus_confirm()
+            return "ask"
+        self.close_dialog()
+        return "closed"
+
+    def references_escape(self):
+        """Esc — 규칙은 core(`ReferenceLibrary.escape`): 지우기 확인이 있으면 그만두고, 버릴지 묻는 중이면 계속 고치고, 저장 안 한 변경이 있으면 닫기 전에 묻고, 아니면 닫는다."""
+        form = self._references_live()
+        if form is None:
+            return None
+        action = self.references.escape()
+        if action == "cancel_delete":
+            self.references_delete_cancel()
+        elif action == "keep_editing":
+            self.references_discard_no()
+        elif action == "ask_close":
+            form.refresh()
+            form.focus_confirm()
+        elif action == "close":
+            self.close_dialog()
+        return action
+
+    def references_guard_quit(self):
+        """창 닫기(X·Alt+F4)가 왔다 — 보관함에 저장 안 한 변경이 있으면 닫지 않고 버릴지 묻는다 → 막았으면 True. 변경이 없으면 False(그대로 닫는다)."""
+        form = self._references_live()
+        if form is None or self.references.leave("quit") != "ask":
+            return False
+        form.refresh()
+        form.focus_confirm()
+        return True
+
+    def references_select(self, ref_id, discard=False):
+        """목록의 `열기` — 글을 열어 편집 칸에 채운다. 저장 안 한 변경이 있으면 버릴지 먼저 묻는다."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status, opened = self.references.select(ref_id, discard=discard)
+        if opened is not None:
+            form.fill(opened.title, opened.body)
+            opened = None
+        form.refresh()
+        if status == "dirty":
+            form.focus_confirm()
+        elif status == "opened":
+            form.reveal_editor()                                                         # 목록이 길어도 편집 칸이 보이게
+        return status
+
+    def references_reload(self):
+        """`다시 읽기` — 목록을 못 읽었을 때만 보이는 단추. 앞 거절 문장을 거두고 목록을 다시 읽는다(성공하면 포커스는 제목 칸, 또 실패하면 이 단추에 남는다)."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status = self.references.reload()
+        form.refresh()
+        if status == "loaded":
+            form.focus_start()
+        return status
+
+    def references_new(self, discard=False):
+        """`새 글` — 편집 칸을 비우고 새 글 모습으로. 저장 안 한 변경이 있으면 버릴지 먼저 묻는다."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status = self.references.new_post(discard=discard)
+        if status == "ready":
+            form.fill("", "")
+        form.refresh()
+        if status == "dirty":
+            form.focus_confirm()
+        return status
+
+    def references_discard_yes(self):
+        """'버리고 …' — 기다리던 일(다른 글 열기·새 글·닫기·프로그램 닫기)을 변경을 버리고 한다."""
+        form = self._references_live()
+        pending = self.references.take_pending() if form is not None else None
+        if pending is None:
+            return None
+        if pending[0] == "select":
+            return self.references_select(pending[1], discard=True)
+        if pending[0] == "new":
+            return self.references_new(discard=True)
+        self.close_dialog()                                                              # 정리 훅이 편집 칸을 비운다
+        if pending[0] == "quit":
+            self.close()                                                                 # 보관함은 이제 없으므로 앞의 `closeEvent` 가 막지 않는다(초안 확인은 그대로 거친다)
+        return pending[0]
+
+    def references_discard_no(self):
+        """'계속 고치기' — 기다리던 일을 그만두고 편집을 이어 간다."""
+        form = self._references_live()
+        if form is not None:
+            self.references.keep_editing()
+            form.refresh()
+            form.focus_start()
+
+    def references_save(self):
+        """`저장` — 새 글이면 보관, 열린 글이면 덮어쓰기. 편집 칸의 글은 이때 한 번 읽어 값으로 넘기고, 거절되면 칸은 그대로 둔다."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status = self.references.save(form.title_text(), form.body_text())
+        form.refresh()
+        return status
+
+    def references_pick(self):
+        """`파일에서 올리기` — 파일 선택 창(위치만 준다)에서 글 파일 하나를 골라 보관한다. 취소하면(빈 위치) 읽지 않는다. 거절 문장은 대화상자 안에 보이고 경로·파일 이름은 어디에도 되풀이하지 않는다."""
+        form = self._references_live()
+        if form is None:
+            return None
+        path = self._file_picker(self, T["ref_pick_title"], f"{T['ref_pick_filter']} (*.txt *.md)")
+        status = self.references.add_file(path)
+        path = None
+        form.refresh()
+        return status
+
+    def references_delete(self):
+        """`지우기` — 열려 있는 글을 지우려 한다(1단계 확인을 보인다)."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status = self.references.ask_delete()
+        form.refresh()
+        if status == "step1":
+            form.focus_confirm()
+        return status
+
+    def references_delete_next(self):
+        """확인의 `계속`·`지우기` — 1단계면 2단계로, 2단계면 지운다(지우면 편집 칸을 비운다)."""
+        form = self._references_live()
+        if form is None:
+            return None
+        status = self.references.advance_delete()
+        if status == "deleted":
+            form.fill("", "")
+        form.refresh()
+        if status == "step2":
+            form.focus_confirm()
+        elif status in ("deleted", "refused"):
+            form.focus_start()
+        return status
+
+    def references_delete_cancel(self):
+        """`그만두기` — 지우지 않고 그만둔다."""
+        form = self._references_live()
+        if form is not None:
+            self.references.cancel_delete()
+            form.refresh()
+            form.delete_button.setFocus(Qt.OtherFocusReason)
+
     # ---- 설정 화면의 백업·복원 카드(BACKUPUI) — 읽기(목록)는 작업 스레드, 쓰기(지금 백업·복원)는 사용자가 단추를 눌렀을 때만 따로 시작하는 작업이다. 복원은 확인창이 먼저다 ----
     def _backups(self):
         return self.state.backups
@@ -2159,6 +2358,9 @@ class AppShell(QMainWindow):
     def closeEvent(self, event):
         # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(저장하지 않은 고친 내용은 사라진다 — D-281, 저장해 둔 초안은 남는다: D-363). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
         # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
+        if not self._close_confirmed and not QGuiApplication.instance().isSavingSession() and self.references_guard_quit():
+            event.ignore()                                                        # 참고 글 보관함에 저장 안 한 변경이 있다 — 창 닫기(X·Alt+F4)도 같은 확인(버리고 닫기·계속 고치기)이 먼저다
+            return
         if not self._close_confirmed and not QGuiApplication.instance().isSavingSession():
             dialog = self.state.close_guard()                                     # 초안의 고친 내용이 저장되지 않아 앱을 닫으면 사라진다 — 확인창이 먼저다(저장 기능이 있으면 세 갈래, 없으면 처음 포커스가 취소인 두 갈래)
             if dialog is not None:
