@@ -10,19 +10,23 @@ from .core.photo_view import FileState, PhotoProvider
 
 
 class ServicePhotoProvider(PhotoProvider):
-    """사진 파일을 읽기만 한다. `judge`·`probe` 는 시험이 바꿔 끼우는 자리 — 주지 않으면 Qt 이미지 읽기(`imagecheck`)를 늦게 가져와 쓴다."""
+    """사진 파일을 읽기만 한다. `judge`·`probe`·`inspect` 는 시험이 바꿔 끼우는 자리 — 주지 않으면 Qt 이미지 읽기(`imagecheck`)와 서비스의 `inspect_photo` 를 쓴다."""
     sample = False
 
-    def __init__(self, *, judge=None, probe=None):
-        self._judge, self._probe = judge, probe
+    def __init__(self, *, judge=None, probe=None, inspect=None):
+        self._judge, self._probe, self._inspect = judge, probe, inspect
 
     @staticmethod
     def _imagecheck():
         from .qt import imagecheck                                       # 늦게 가져온다(PySide6 가 있는 화면 층에서만 쓴다)
         return imagecheck
 
+    def inspect(self, path):
+        """읽지 않고 쓸 만한 파일인지만 본다(`lstat` — 링크·정션·폴더·내려받지 않은 파일·없음) → `(상태 이름, 고정 문장)`. **`judge`(이미지 읽기)를 부르기 전에** 부른다 — 서비스의 `inspect_photo`(목록 점검과 같은 코드)."""
+        return (self._inspect or service.inspect_photo)(path)
+
     def judge(self, path):
-        """파일 하나의 판정(`imagerules.Verdict`) — 읽기만 한다(원본을 바꾸지 않는다)."""
+        """파일 하나의 판정(`imagerules.Verdict`) — 읽기만 한다(원본을 바꾸지 않는다). 부르기 전에 `inspect` 를 거쳐야 한다."""
         return (self._judge or self._imagecheck().judge)(path)
 
     def check(self, manifest):

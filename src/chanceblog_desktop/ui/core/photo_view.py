@@ -59,6 +59,10 @@ class PhotoProvider:
     """공급자 틀 — 실제는 `ui/photo_adapter.py`(`imagecheck` 와 서비스 `check_files`), 시험·사진은 가짜. 사진 파일을 읽기만 한다(쓰지 않는다)."""
     sample = False
 
+    def inspect(self, path):
+        """읽지 않고 쓸 만한 파일인지만 본다 → `(상태 이름, 고정 문장)`(쓸 만하면 `("ok", "")` — 링크·정션 아래·폴더·내려받지 않은 파일·없음은 `link`·`not_file`·`cloud`·`missing`). `judge`(이미지 읽기)를 부르기 **전에** 부른다."""
+        raise NotImplementedError
+
     def judge(self, path):
         """파일 하나의 판정 → `imagerules.Verdict`."""
         raise NotImplementedError
@@ -76,6 +80,15 @@ class FakePhotoProvider(PhotoProvider):
     def __init__(self, verdicts=None, states=None, fail=()):
         self.verdicts, self.states, self.fail = dict(verdicts or {}), dict(states or {}), set(fail)
         self.calls = []
+
+    def inspect(self, path):
+        self.calls.append("inspect")
+        if "inspect" in self.fail:
+            raise RuntimeError("가짜 점검 실패")
+        state = self.states.get(path, R.OK)
+        if state in rules.LSTAT_STATES:                                                       # 읽지 않고 알 수 있는 상태만(없음·링크·폴더 아님·내려받지 않음)
+            return state, T[rules.BADGE_KEY[state]]
+        return R.OK, ""
 
     def judge(self, path):
         self.calls.append("judge")
@@ -213,6 +226,12 @@ class PhotoBoard:
             return problem
         if pm.path_key(path) in {pm.path_key(item.local_path) for item in self.manifest.photos}:
             return T["pho_rejected_dup"]
+        try:
+            place, message = self.provider.inspect(path)         # 읽기 전에 먼저(`lstat` 뿐) — 링크·정션 아래·폴더·내려받지 않은 파일·없음은 이미지 읽기를 부르지 않고 거절한다(검증 S T-1)
+        except Exception:
+            return T["img_local_unreadable"]
+        if place != R.OK:
+            return message or T[rules.BADGE_KEY.get(place, "pho_file_unknown")]
         try:
             verdict = self.provider.judge(path)
         except Exception:                                   # 읽기 도구가 터져도 이 파일만 못 넣는다
@@ -436,6 +455,13 @@ class PhotoBoard:
         if problem is None and pm.path_key(path) in {pm.path_key(item.local_path) for item in self.manifest.photos if item.photo_id != photo_id}:
             problem = T["pho_rejected_dup"]
         verdict = None
+        if problem is None:
+            try:
+                place, message = self.provider.inspect(path)       # 넣을 때와 같은 길 — 읽기 전에 먼저 본다
+                if place != R.OK:
+                    problem = message or T[rules.BADGE_KEY.get(place, "pho_file_unknown")]
+            except Exception:
+                problem = T["img_local_unreadable"]
         if problem is None:
             try:
                 verdict = self.provider.judge(path)

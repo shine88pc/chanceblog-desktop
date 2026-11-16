@@ -102,6 +102,7 @@ STATE_OK, STATE_MISSING, STATE_LINK, STATE_NOT_FILE, STATE_CLOUD = "ok", "missin
 STATE_UNKNOWN = "unknown"
 BADGE_KEY = {R.OK: "pho_file_ok", STATE_MISSING: "pho_file_missing", STATE_LINK: "pho_file_link", STATE_CLOUD: "pho_file_cloud", R.TOO_BIG: "pho_file_toobig", R.UNSUPPORTED: "pho_file_unsupported",
              R.NOT_IMAGE: "pho_file_notimage", STATE_NOT_FILE: "pho_file_notfile", R.UNREADABLE: "pho_file_unreadable", STATE_UNKNOWN: "pho_file_unknown"}
+LSTAT_STATES = frozenset({STATE_MISSING, STATE_LINK, STATE_NOT_FILE, STATE_CLOUD})                                       # 파일을 열지 않고 `lstat` 만으로 아는 상태(넣을 때·다시 찾을 때 읽기 전에 거른다)
 RELINKABLE = frozenset({STATE_MISSING, STATE_LINK, STATE_NOT_FILE, R.UNSUPPORTED, R.NOT_IMAGE, R.UNREADABLE})      # '다시 찾기' 를 보이는 상태(파일을 바꿔 연결하면 풀릴 수 있는 것)
 TONE = {R.OK: "ok", STATE_UNKNOWN: "muted"}                                                                         # 그 밖의 상태는 모두 'warn'
 

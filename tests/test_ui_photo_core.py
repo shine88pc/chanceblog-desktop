@@ -35,10 +35,13 @@ def path_of(number, ext="jpg"):
     return f"C:/Users/{USER_DIR}/Pictures/{FILE_STEM}-{number:02d}.{ext}"
 
 
-def new_board(count=0, **provider):
+def new_board(count=0, states=None, **provider):
+    """`states`(파일 → 상태)는 사진을 **넣은 뒤**에 정한다 — 넣을 때는 읽기 전에 링크·내려받지 않은 파일·없음을 거르므로(검증 S T-1) 처음부터 그 상태인 파일은 넣어지지 않는다(그 시험은 `FilesAtAddTest`)."""
     board = pv.PhotoBoard(pv.FakePhotoProvider(**provider))
     if count:
         board.add_paths([path_of(number) for number in range(1, count + 1)])
+    if states:
+        board.provider.states.update(states)
     return board
 
 
@@ -410,6 +413,60 @@ class OrderAndRemoveTest(unittest.TestCase):
         self.assertEqual(board.error_of("p001", "user_subject"), "")
         self.assertNotEqual(board.error_of("p002", "user_subject"), "")
         self.assertEqual(board.remove("p001"), "refused")
+
+
+class FilesAtAddTest(unittest.TestCase):
+    """검증 S T-1 — 사진을 넣을 때·다시 찾을 때도 읽기 전에 링크·내려받지 않은 파일·폴더·없음을 거르고, 걸리면 이미지 읽기(`judge`)를 한 번도 부르지 않는다."""
+    STATES = ("link", "cloud", "not_file", "missing")
+
+    def test_a_file_the_light_check_refuses_is_never_read_and_goes_to_the_rejected_list_with_its_fixed_reason(self):
+        for state in self.STATES:
+            with self.subTest(state=state):
+                board = new_board(0, states={path_of(1): state})
+                self.assertEqual(board.add_paths([path_of(1)]), (0, 1))
+                self.assertEqual(board.provider.calls, ["inspect"], "읽기(judge)는 부르지 않았다")
+                self.assertEqual(board.count, 0)
+                self.assertEqual(board.rejected[0].reason, T[rules.BADGE_KEY[state]])
+                self.assertEqual(board.rejected[0].name, f"{FILE_STEM}-01.jpg")
+
+    def test_a_good_file_is_inspected_first_and_then_read_once(self):
+        board = new_board()
+        self.assertEqual(board.add_paths([path_of(1)]), (1, 0))
+        self.assertEqual(board.provider.calls, ["inspect", "judge"])
+
+    def test_a_mixed_choice_reads_only_the_good_files_in_order(self):
+        board = new_board(0, states={path_of(2): "link", path_of(4): "cloud", path_of(5): "missing"})
+        self.assertEqual(board.add_paths([path_of(number) for number in range(1, 6)]), (2, 3))
+        self.assertEqual(board.provider.calls, ["inspect", "judge", "inspect", "inspect", "judge", "inspect", "inspect"], "사진마다 읽기 전에 점검 — 걸린 파일은 점검에서 끝난다")
+        self.assertEqual([photo.local_path for photo in board.manifest.photos], [path_of(1), path_of(3)])
+        self.assertEqual([item.reason for item in board.rejected], [T["pho_file_link"], T["pho_file_cloud"], T["pho_file_missing"]])
+
+    def test_relinking_to_a_refused_file_refuses_without_reading_and_keeps_the_old_path(self):
+        for state in self.STATES:
+            with self.subTest(state=state):
+                board = new_board(1)
+                board.provider.calls.clear()
+                board.provider.states[path_of(9)] = state
+                self.assertEqual(board.relink("p001", path_of(9)), "refused")
+                self.assertEqual(board.provider.calls, ["inspect"])
+                self.assertEqual(board.photo("p001").local_path, path_of(1))
+                self.assertEqual(board.view()["notice"]["text"], T[rules.BADGE_KEY[state]])
+        board = new_board(1)
+        board.provider.calls.clear()
+        self.assertEqual(board.relink("p001", path_of(9)), "ok")
+        self.assertEqual(board.provider.calls, ["inspect", "judge"])
+
+    def test_a_crashing_light_check_only_loses_that_file_and_nothing_is_read(self):
+        board = new_board()
+        board.provider.fail.add("inspect")
+        self.assertEqual(board.add_paths([path_of(1)]), (0, 1))
+        self.assertEqual(board.rejected[0].reason, T["img_local_unreadable"])
+        self.assertEqual(board.provider.calls, ["inspect"])
+        board = new_board(1)
+        board.provider.calls.clear()
+        board.provider.fail.add("inspect")
+        self.assertEqual(board.relink("p001", path_of(9)), "refused")
+        self.assertEqual(board.provider.calls, ["inspect"])
 
 
 class FilesAndRelinkTest(unittest.TestCase):

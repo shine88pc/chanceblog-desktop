@@ -352,6 +352,16 @@ def _inspect_photo(path):
     return OK
 
 
+def inspect_photo(path):
+    """사진 파일 하나가 쓸 만한지 **읽지 않고** 본다(경로 위 폴더마다 `lstat` — 링크·정션·폴더가 아님·내려받지 않은 파일·없음) → `(상태 이름, 고정 문장)`, 쓸 만하면 `("ok", "")`.
+    사진을 넣을 때·다시 찾을 때(이미지 읽기 도구를 부르기 **전에**)와 목록 점검(`check_files`)이 **같은 이 코드**를 쓴다 — 링크 아래 사진을 따라가거나 이 PC 에 내려받지 않은 클라우드 파일을 열어서 내려받게 하지 않으려는 것이다(검증 S T-1). 글이 아니거나 빈 글이면 `missing` 이다."""
+    from ..ui.core import imagerules
+    place = _inspect_photo(path) if isinstance(path, str) and path else MISSING
+    if place == OK:
+        return OK, ""
+    return place, {MISSING: imagerules.T[imagerules.MESSAGES[imagerules.MISSING]], LINK: _C_LINK, NOT_FILE: _C_NOT_FILE, CLOUD: _C_CLOUD}[place]
+
+
 def check_files(manifest, *, probe=None):
     """목록의 사진 파일이 아직 그 자리에 있는지 읽기만 해서 본다 → `(FileCheck, …)`(사진 순서대로). 파일이 사라졌으면 `missing`(화면이 '파일 없음' 으로 보인다).
     `probe` 는 이미지 읽기 도구(`imagerules.Probe` 를 돌려주는 함수 — 화면 층의 `imagecheck.probe`)이고, 주지 않으면 확장자·크기만 본다(`verified=False`)."""
@@ -360,9 +370,8 @@ def check_files(manifest, *, probe=None):
         raise _refuse(_R_FORM)
     results = []
     for photo in manifest.photos:
-        place = _inspect_photo(photo.local_path)
+        place, message = inspect_photo(photo.local_path)
         if place != OK:
-            message = {MISSING: imagerules.T[imagerules.MESSAGES[imagerules.MISSING]], LINK: _C_LINK, NOT_FILE: _C_NOT_FILE, CLOUD: _C_CLOUD}[place]
             results.append(FileCheck(photo.photo_id, place, message))
             continue
         verdict = imagerules.judge(photo.local_path, probe if probe is not None else _extension_probe)
@@ -370,4 +379,4 @@ def check_files(manifest, *, probe=None):
     return tuple(results)
 
 
-__all__ = ["FileCheck", "Listing", "Loaded", "check_files", "delete_manifest", "folder_path", "is_draft_id", "list_manifests", "load_manifest", "orphans", "save_manifest"]
+__all__ = ["FileCheck", "Listing", "Loaded", "check_files", "delete_manifest", "folder_path", "inspect_photo", "is_draft_id", "list_manifests", "load_manifest", "orphans", "save_manifest"]
