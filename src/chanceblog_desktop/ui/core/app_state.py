@@ -25,6 +25,7 @@ from .seeds_view import SeedsController
 from .jobs import JobFailure, JobRunner
 from .keys_view import KeysController
 from .notify import ToastPolicy
+from .photo_view import FakePhotoProvider
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
 from .text import NO_DATA, T, display_text, fmt_demand, fmt_docs
 
@@ -129,7 +130,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None, photos=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -174,6 +175,9 @@ class AppState:
         paired_drafts = getattr(self.provider, "drafts_provider", None)
         self.drafts_provider = drafts if drafts is not None else (paired_drafts() if paired_drafts else FakeDraftsProvider(lambda: tuple(getattr(self.candidates_provider, "candidates", ()))))
         self.drafts = DraftsController(self.drafts_provider, self.runner)
+        # 사진 정리(사진 연동 2단계, D-499) — 사진 파일을 읽기만 하는 짝 공급자(`ui/photo_adapter.py`). 사진 목록은 초안 컨트롤러(`self.drafts.photos`)가 메모리에만 들고 있다. 짝이 없으면(예시 화면·시험) 파일을 읽지 않는 가짜다
+        paired_photos = getattr(self.provider, "photos_provider", None)
+        self.drafts.photos.provider = photos if photos is not None else (paired_photos() if paired_photos else FakePhotoProvider())
 
     # ---- 메뉴 ----
     def leave_guard(self, key):

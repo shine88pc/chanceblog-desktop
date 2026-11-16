@@ -213,6 +213,25 @@ ui/references_adapter.py(ServiceReferencesProvider) → service/references.py(�
 
 문구는 `ui/core/text.py` 의 `T` 가 정본이다. 상태별 동작은 `UI_STATES.md` 5-6d, 화면 규칙은 `UI_DESIGN_SPEC.md` 4-9 에 있다. **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 16절).
 
+## 3-9. 사진 정리 부품 (D-499 — `ui/qt/photo_parts.py`·`photo_screen.py`, 사진 파일은 읽기만 하는 대화상자)
+
+화면은 컨트롤러(`ui/core/photo_view.py` 의 `PhotoBoard`)의 뷰모델을 공통 부품(`UI.label`·`UI.Button`·`UI.FilterChip`·`UI.chip_row`·`UI.TextInput`·`UI.CheckBox`·`UI.Card`·`DialogScroll`)으로 조립하기만 하고 **이 화면 코드에는 파일을 쓰거나 지우는 호출·네트워크·하위 프로세스·표준 출력이 없다**(시험이 소스로 지킨다). 규칙(한도·확인이 풀리는 때·모두 확인의 확인 줄·순서·지우기와 되돌리기·못 넣은 파일·큰 PNG 판정·종류별 예시와 기본 들어갈 곳)은 모두 core 에 있다.
+
+```text
+core/photo_rules.py(규칙표·판정) · core/photo_text.py(문구) · core/photo_view.py(PhotoBoard — 상태·뷰모델, PhotoProvider 틀·FakePhotoProvider)
+  → qt/photo_screen.py(PhotoSheet — 대화상자 안쪽·상태 줄·단추 줄·미리보기 차례 만들기) → qt/photo_parts.py(PhotoRowCard·FieldBox·ChipGroupKeys — 종류·장소 분위기 칩 묶음의 Tab 정거장 하나와 방향키)
+core/drafts_view.py(DraftsController.photos) ← qt/draft_screen.py(`사진` 카드·`사진 넣기(선택)` 줄) · qt/shell.py(photos_open·photos_close·photos_escape·photos_pick·photos_relink)
+ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_files — 읽기만) + qt/imagecheck.py(이미지 읽기 — 늦게 가져온다, PySide6 가 없어도 이 어댑터는 가져온다)
+```
+
+- **줄(`PhotoRowCard`)은 사진이 지워질 때까지 같은 부품**이다 — 창이 다시 그릴 때(`apply`) 칸의 글을 덮어쓰지 않고(포커스가 있거나 한도를 넘겨 반영하지 못한 글은 그대로), 칩은 고를 이름이 바뀐 때만 다시 만들어 클릭한 칸이 사라져 포커스를 잃는 일이 없다.
+- **글 칸(`FieldBox`)**: 치는 동안은 글자 수와 한도 넘음 글만 그 자리에서 바꾸고, 칸을 떠나거나 Enter·닫기·다른 행동 앞에서 한 번 규칙(`PhotoBoard.set_text`)에 넘긴다. 한도를 넘기거나 검사에 걸린 글은 반영하지 않고 이유를 칸 아래에 보인다.
+- **미리보기**는 한 장씩 차례로(`QTimer.singleShot`) 메모리에서만 만들고(`imagecheck.make_thumbnail` → 96px) 큰 PNG·없는 파일은 만들지 않는다. 시험이 `photo_preview_maker` 를 바꿔 끼운다.
+- **파일 선택 창**(`qt_files_picker` — `QFileDialog.getOpenFileNames`)은 위치만 주고 시험은 가짜 선택기를 넣는다. 고른 위치 목록은 쓰고 나서 바로 놓는다(`paths = None`).
+- 눌리는 곳의 `focus_key` 는 `pho:<이름>:<사진 번호>` 꼴이다(예: `pho:type:p001:간판`·`pho:confirm:p003`).
+
+**Tab 순서**와 접근 이름·크기는 `UI_DESIGN_SPEC.md` 4-10 에 있고, 실제로 Tab·Shift+Tab 을 눌러 이 순서와 대화상자 밖으로 새지 않음을 시험이 본다(`tests/test_ui_qt_photo.py`·`test_ui_qt_photo_keys.py`·`test_ui_qt_photo_rows.py`). 상태별 동작은 `UI_STATES.md` 5-6e, **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 18절).
+
 ## 4. 새 부품을 더할 때
 
 ① 색·크기는 `tokens.py` 에 키를 더하고 `theme.py` 스타일시트에서만 쓴다 ② 접근 이름·키보드·포커스 링 ③ `components.py` 에 한 곳으로(그리는 부품은 `gauges.py`, 줄 모양 부품은 `bars.py` — 새 파일도 직접 색·인라인 스타일 시험이 훑는다. 계산은 PySide6 없이 시험하도록 `ui/core/` 의 순수 모듈에 둔다) ④ 시험(접근 이름·36px·직접 색 없음은 자동으로 훑는다) ⑤ 이 표에 한 줄.
