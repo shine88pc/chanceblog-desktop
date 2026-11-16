@@ -214,7 +214,7 @@ class LimitTest(Base):
         self.assertEqual((pm.MAX_PHOTOS, pm.MAX_SUBJECT, pm.MAX_NOTE, pm.MAX_CAPTION, pm.MAX_LABEL, pm.MAX_SECTION), (30, 60, 300, 100, 20, 60))
         self.assertEqual((pm.MAX_OBSERVATIONS, pm.MAX_OBSERVATION_CHARS, pm.MAX_NTH, pm.MAX_NUMBER, pm.MAX_PATH_CHARS, pm.MAX_TEXT_BYTES), (20, 200, 50, 999, 260, 524288))
         self.assertEqual(pm.PLACEMENT_KINDS, ("auto", "top", "after_heading", "after_paragraph", "between_sentences"))
-        self.assertEqual(pm.DEFAULT_SETTINGS, ("실내", "실외", "객실", "야경"))
+        self.assertEqual(pm.DEFAULT_SETTINGS, ("실내", "실외", "테라스", "주차장", "객실", "야경"))
         self.assertEqual((pm.METHOD_MANUAL, pm.DEFAULT_TYPE, pm.SCHEMA), ("manual", "기타", "chanceblog.photo-manifest/1"))
         self.assertEqual(pm.ENVELOPE_KEYS, ("schema", "draft_id", "next_number", "photos"))
         self.assertEqual(pm.ADD_FIELDS, ("setting", "user_subject", "user_note", "preferred_section", "placement", "caption"))
