@@ -297,7 +297,7 @@ QFrame#dhead {{ border-bottom: 1px solid {c['border']}; }}
 QFrame#dfoot {{ border-top: 1px solid {c['border']}; }}
 QWidget#scrim {{ background: {scrim}; }}
 QFrame#dialog {{ background: {c['surface']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
-QLineEdit {{ background: {c['surface']}; border: 1px solid {c['border_strong']}; border-radius: {r['input']}px; padding: 0 12px; selection-background-color: {c['primary']}; selection-color: {c['on_primary']}; }}
+QLineEdit {{ background: {c['surface']}; border: 1px solid {c['border_strong']}; border-radius: {r['input']}px; padding: 0 12px; selection-background-color: {c['primary']}; selection-color: {c['on_primary']}; placeholder-text-color: {c['text_secondary']}; }}
 QLineEdit:focus {{ border: 2px solid {c['border_focus']}; }}
 QLineEdit:disabled {{ background: {c['disabled_bg']}; color: {c['text_disabled']}; }}
 QLineEdit[invalid="true"] {{ border: 2px solid {c['danger']}; }}

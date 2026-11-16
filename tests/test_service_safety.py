@@ -4,7 +4,7 @@
   1) 조용한 실패 금지: 서비스 코드에 맨 `except:` 나 본문이 `pass` 뿐인 `except` 가 없다(오류를 숨기지 않는다). 오류를 일부러 삼키는 곳(`contextlib.suppress`)은 아래 목록의 둘뿐이다.
   2) 로그인·네트워크·셸 자동화 없음: 서비스 코드는 `subprocess`·`socket`·`urllib`·`http`·`ssl`·`webbrowser`·`ctypes` 를 쓰지 않는다(git 은 backend 를 거쳐 `publish/` 모듈이 하고, 네트워크는 주입한 배포 확인뿐이다).
   3) git 을 직접 쓰는 명령은 읽기 전용(`rev-parse`·`rev-list`·`ls-tree`·`cat-file`·`diff-tree`·`log`·`--version`)뿐이다 — commit·push·되돌리기는 모두 `publish/pages.py` 가 한다. 강제 push·`reset --hard` 같은 말은 어디에도 없다.
-  4) 서비스 코드가 파일을 쓰는 곳은 설정·발행 기록·잠금 파일(`context.write_json`·`journal`·`lock` — 글 잠금은 데이터 폴더에, 저장소 잠금은 연결한 저장소의 `.git` 안에 둔다)뿐이다(전체 백업·복원은 아래 `backup_flow.py` 의 함수들, 참고 글 보관함은 쓰기를 모두 `context.write_json` 으로 하고 직접 지우는 곳은 `references.py` 의 `delete_reference` 한 함수뿐이다 — D-489·D-492) — 연결한 저장소에 글 파일은 쓰지 않는다(그건 `publish/pages.py`).
+  4) 서비스 코드가 파일을 쓰는 곳은 설정·발행 기록·잠금 파일(`context.write_json`·`journal`·`lock` — 글 잠금은 데이터 폴더에, 저장소 잠금은 연결한 저장소의 `.git` 안에 둔다)뿐이다(전체 백업·복원은 아래 `backup_flow.py` 의 함수들, 참고 글 보관함은 쓰기를 모두 `context.write_json` 으로 하고 직접 지우는 곳은 `references.py` 의 `delete_reference` 한 함수뿐이다 — D-489·D-492, 사진 Manifest 보관은 쓰기를 `context.write_json`·`context.keep_bad_copy` 로 하고 직접 지우는 곳은 `photo_manifest.py` 의 `delete_manifest` 한 함수뿐이다 — D-496) — 연결한 저장소에 글 파일은 쓰지 않는다(그건 `publish/pages.py`).
      그 허용은 파일 전체가 아니라 **(파일, 함수)** 단위다(`FILE_WRITERS`·`OS_CALLS`) — 같은 파일의 다른 함수에 새로 생긴 쓰기·`os.open`·`os.replace`·`write_text` 도 걸린다(합성 소스로 규칙 자체를 시험한다).
      파일을 **읽기 전용으로 여는** 곳도 한 곳뿐이다(`READ_OPENS` — `own_posts.py` 의 `_read_prefix` 가 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는다. 열기 모드가 글자 `rb` 인 호출만 허용한다).
   5) 키·토큰을 읽지 않는다: 읽는 환경 변수는 데이터 폴더·저장소 폴더 위치뿐이고, 영어 비밀 낱말(`api key`·`secret`·`token`·`password`)이 서비스 코드의 문자열에 없다.
@@ -45,6 +45,9 @@ OS_CALLS["os.replace"] = OS_CALLS["os.replace"] | {("backup_flow.py", "_swap_in"
 # 참고 글 보관함(결정 D-489): `service/references.py` 가 파일을 쓰는 길은 모두 `context.write_json`(위 허용)이고, 직접 파일을 지우는 곳은 **`delete_reference` 의 `unlink` 하나**뿐이다 —
 # 번호 모양(`[a-z0-9]{8}`)을 확인한 뒤 `ref-<번호>.json` 파일 하나만 지운다(`test_service_references.py` 의 SourceRulesTest·DeleteTest 가 소스와 동작으로 못박는다).
 FILE_WRITERS[("references.py", "delete_reference")] = {"unlink"}
+# 사진 Manifest 보관(결정 D-496): `service/photo_manifest.py` 가 파일을 쓰는 길도 모두 `context.write_json`(위 허용)이고 깨진 파일을 옮기는 일은 `context.keep_bad_copy`(위 허용)가 한다. 직접 파일을 지우는 곳은 **`delete_manifest` 의 `unlink` 하나**뿐이다 —
+# 초안 번호 모양(`dd-` + 16진수 20자)을 확인한 뒤 `<초안 번호>.json` 파일 하나와 그 번호의 임시 파일만 지운다(`test_service_photo_manifest.py` 의 SourceRulesTest·DeleteTest 가 소스와 동작으로 못박는다).
+FILE_WRITERS[("photo_manifest.py", "delete_manifest")] = {"unlink"}
 OS_CALLS["os.rename"] = {("backup_flow.py", "_finish_folder")}
 # 파일을 읽기 전용으로 여는 곳(내장 `open`)은 **(파일, 함수)** 하나뿐이다 — 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는 `own_posts.py` 의 `_read_prefix`.
 # 허용은 모드가 글자 `rb` 인 `open(경로, "rb")` 호출에만 걸린다 — 쓰기·덧붙이기·갱신 모드와 모드를 안 적은 호출·`.open` 속성 호출은 그대로 걸린다(합성 소스로 시험한다).

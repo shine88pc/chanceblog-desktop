@@ -167,6 +167,10 @@ from .references_text import REF_T  # noqa: E402
 
 T.update(REF_T)                                                      # 참고 글 보관함(결정 D-490)의 문구도 새 파일(`references_text.py`)에 따로 두고 합친다
 
+from .photo_text import PHOTO_T  # noqa: E402
+
+T.update(PHOTO_T)                                                    # 사진 정리 화면(사진 연동 2단계, 결정 D-499)의 문구도 새 파일(`photo_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 
