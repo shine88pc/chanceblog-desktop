@@ -521,6 +521,8 @@ class AppShell(QMainWindow):
 
     def go(self, key, force=False):
         """화면을 옮긴다. 초안 작성 화면에서 고친 내용이 사라지는 이동이면 확인창이 먼저다(처음 포커스는 취소 — `그래도 이동` 을 눌러야 `force` 로 옮긴다). 고친 곳이 없으면 바로 옮기고 초안은 메모리에서 지운다."""
+        if not force:
+            self._photos_flush()                                                  # 떠나기 질문이 사진 정리 창을 치우기 전에 치는 중인 글을 넘긴다(취소해도 글이 남게 — 검증 S U-10)
         dialog = None if force else self.state.leave_guard(key)
         if dialog is not None:
             self._sync_nav_checks()
@@ -2289,6 +2291,12 @@ class AppShell(QMainWindow):
         form = self.photo_form
         return form if form is not None and self.state.drafts.photos.is_open else None
 
+    def _photos_flush(self):
+        """사진 정리 창이 열려 있으면 칸에 치는 중인 글(Enter·Tab 전)을 먼저 규칙에 넘긴다 — 앱 닫기·떠나기 질문이 뜨며 창을 치우기 전에 부른다(질문에서 취소해도 글이 남게 — 검증 S U-10). 창이 없으면 아무것도 하지 않는다."""
+        form = self._photos_live()
+        if form is not None:
+            form.flush()
+
     def photos_close(self):
         """`닫기` — 아직 규칙에 넘기지 않은 글을 마지막으로 넘기고, 한도를 넘겨 반영하지 못한 글이 남았으면 처음 한 번은 닫지 않고 알린다."""
         form = self._photos_live()
@@ -2522,6 +2530,8 @@ class AppShell(QMainWindow):
     def closeEvent(self, event):
         # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(저장하지 않은 고친 내용은 사라진다 — D-281, 저장해 둔 초안은 남는다: D-363). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
         # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
+        if not self._close_confirmed:
+            self._photos_flush()                                                  # 사진 정리 창에서 치는 중인 글을 먼저 넘긴다 — 아래 질문(참고 글 보관함·초안)이 창을 치우므로 취소해도 글이 남게(검증 S U-10)
         if not self._close_confirmed and not QGuiApplication.instance().isSavingSession() and self.references_guard_quit():
             event.ignore()                                                        # 참고 글 보관함에 저장 안 한 변경이 있다 — 창 닫기(X·Alt+F4)도 같은 확인(버리고 닫기·계속 고치기)이 먼저다
             return
