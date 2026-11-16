@@ -203,6 +203,7 @@ class PhotoSheet(QWidget):
             target = cards[index + 1].subject.edit
         if target is not None:
             target.setFocus(Qt.TabFocusReason)
+            self.scroll.ensureWidgetVisible(target, 0, K.SPACE["4"])                  # 프로그램으로 옮긴 포커스는 스크롤이 따라가지 않는다(Tab 은 Qt 가 따라간다) — 다음 사진이 화면 밖이어도 보이게
 
     def _flip_lists(self):
         opened = not self.lists_body.isVisible()
