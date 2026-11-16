@@ -219,7 +219,7 @@ ui/references_adapter.py(ServiceReferencesProvider) → service/references.py(�
 
 ```text
 core/photo_rules.py(규칙표·판정) · core/photo_text.py(문구) · core/photo_view.py(PhotoBoard — 상태·뷰모델, PhotoProvider 틀·FakePhotoProvider)
-  → qt/photo_screen.py(PhotoSheet — 대화상자 안쪽·상태 줄·단추 줄·미리보기 차례 만들기) → qt/photo_parts.py(PhotoRowCard·FieldBox)
+  → qt/photo_screen.py(PhotoSheet — 대화상자 안쪽·상태 줄·단추 줄·미리보기 차례 만들기) → qt/photo_parts.py(PhotoRowCard·FieldBox·ChipGroupKeys — 종류·장소 분위기 칩 묶음의 Tab 정거장 하나와 방향키)
 core/drafts_view.py(DraftsController.photos) ← qt/draft_screen.py(`사진` 카드·`사진 넣기(선택)` 줄) · qt/shell.py(photos_open·photos_close·photos_escape·photos_pick·photos_relink)
 ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_files — 읽기만) + qt/imagecheck.py(이미지 읽기 — 늦게 가져온다, PySide6 가 없어도 이 어댑터는 가져온다)
 ```
@@ -230,7 +230,7 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 - **파일 선택 창**(`qt_files_picker` — `QFileDialog.getOpenFileNames`)은 위치만 주고 시험은 가짜 선택기를 넣는다. 고른 위치 목록은 쓰고 나서 바로 놓는다(`paths = None`).
 - 눌리는 곳의 `focus_key` 는 `pho:<이름>:<사진 번호>` 꼴이다(예: `pho:type:p001:간판`·`pho:confirm:p003`).
 
-**Tab 순서**와 접근 이름·크기는 `UI_DESIGN_SPEC.md` 4-10 에 있고, 실제로 Tab·Shift+Tab 을 눌러 이 순서와 대화상자 밖으로 새지 않음을 시험이 본다(`tests/test_ui_qt_photo.py`). 상태별 동작은 `UI_STATES.md` 5-6e, **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 18절).
+**Tab 순서**와 접근 이름·크기는 `UI_DESIGN_SPEC.md` 4-10 에 있고, 실제로 Tab·Shift+Tab 을 눌러 이 순서와 대화상자 밖으로 새지 않음을 시험이 본다(`tests/test_ui_qt_photo.py`·`test_ui_qt_photo_keys.py`·`test_ui_qt_photo_rows.py`). 상태별 동작은 `UI_STATES.md` 5-6e, **Qt 부품은 offscreen 으로 띄워 확인했다**(실제 윈도 배율 렌더·한글 입력기·화면 읽기 프로그램은 운영자 PC — `UI_VISUAL_QA.md` 18절).
 
 ## 4. 새 부품을 더할 때
 
