@@ -281,5 +281,69 @@ class DeleteAndRestoreTest(Base):
             self.assertNotIn(marker, shown.replace(MARKER + "-1.jpg", "").replace(MARKER + "-2.jpg", ""), marker)
 
 
+class MakeTest(Base):
+    """진짜 공급자로 초안을 만들 때 확정한 사진이 본문에 들어간다(사진 연동 3단계 — 본문 연결)."""
+
+    def regen(self, controller):
+        results = {}
+        status, job = controller.start_make(on_done=lambda result, _p: results.setdefault("ok", result), on_error=lambda failure, _p: results.setdefault("failed", failure))
+        self.assertEqual(status, "started")
+        job.join(30)
+        self.assertIn("ok", results, results)
+        controller.apply_made(results["ok"])
+
+    def made_with_photos(self):
+        controller = self.made()
+        controller.photos.add_paths(self.paths)
+        controller.photos.set_text("p001", "user_subject", "매장 입구 간판")
+        controller.photos.set_text("p001", "user_note", "주차는 뒤쪽이에요")
+        controller.photos.confirm("p001", True)
+        controller.photos.confirm("p002", True)
+        self.regen(controller)
+        return controller
+
+    def test_a_real_make_places_the_confirmed_photos_and_never_reads_the_picture_files(self):
+        pictures, before = self.picture_state(), ss.tree_snapshot(self.setup.world.tmp)
+        controller = self.made()
+        controller.photos.add_paths(self.paths)
+        controller.photos.confirm("p001", True)
+        self.regen(controller)
+        found = [number for number, _start, _end in pm.find_placeholders(controller.body)]
+        self.assertEqual(found, [1], "확정한 사진 하나만 본문에 들어간다")
+        controller.photos.confirm("p002", True)
+        controller.photos.set_text("p001", "user_subject", "매장 입구 간판")
+        controller.photos.confirm("p001", True)
+        self.assertEqual(controller.photos_card()["remake"], T["pho_card_remake"])
+        self.regen(controller)
+        self.assertEqual(sorted(number for number, _start, _end in pm.find_placeholders(controller.body)), [1, 2])
+        self.assertIn("매장 입구 간판 사진이에요.", controller.body)
+        self.assertEqual(controller.photos_card()["remake"], "")
+        self.assertEqual(self.picture_state(), pictures, "사진 파일은 열지도 바꾸지도 않았다")
+        self.assertEqual(ss.tree_snapshot(self.setup.world.tmp), before, "만들기는 읽기뿐이다 — 폴더 안이 그대로다")
+        shown = controller.body + repr(controller.view()) + repr(self.setup.provider.__dict__)
+        self.assertNotIn(MARKER, shown.replace(MARKER + "-1.jpg", "").replace(MARKER + "-2.jpg", ""))
+        self.assertNotIn(str(self.pictures), controller.body)
+
+    def test_without_confirmed_photos_a_real_make_gives_the_same_body_as_before(self):
+        controller = self.made()
+        first = (controller.title, controller.body)
+        controller.photos.add_paths(self.paths)
+        self.regen(controller)
+        self.assertEqual((controller.title, controller.body), first, "확정하지 않았으면 본문이 같다")
+        self.assertEqual(pm.find_placeholders(controller.body), ())
+
+    def test_the_placed_body_is_saved_and_comes_back_with_its_photos_and_no_remake_note(self):
+        controller = self.made_with_photos()
+        store(controller, "save")
+        draft_id = controller.saved_id
+        again = fresh(self.setup)
+        store(again, "list")
+        store(again, "open", draft_id)
+        self.assertEqual(sorted(number for number, _start, _end in pm.find_placeholders(again.body)), [1, 2])
+        self.assertEqual((again.photos.count, again.photos_card()["remake"]), (2, ""))
+        report = pm.placeholder_report(again.photos.manifest, again.body)
+        self.assertTrue(report.ok, report)
+
+
 if __name__ == "__main__":
     unittest.main()

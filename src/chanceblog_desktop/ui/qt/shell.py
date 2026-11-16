@@ -1503,8 +1503,8 @@ class AppShell(QMainWindow):
 
     def drf_remake_confirmed(self):
         status, _job = self.state.drafts.start_regenerate(**self.drafts_bridge.callbacks())
-        if status == "started":
-            self.render()
+        if status in ("started", "photos"):
+            self.render()                                                          # 만드는 중 모습(또는 사진 정보 검사가 막았다는 알림 줄)으로 다시 그린다
         elif status == "busy":
             self.notify(T["load_busy"])
 

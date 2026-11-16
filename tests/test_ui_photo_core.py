@@ -739,6 +739,7 @@ class SourceRulesTest(unittest.TestCase):
         "content/photo_manifest.py": "1단계 — 사진 정보 규칙", "service/photo_manifest.py": "1단계 — 사진 정보 보관·사진 파일 읽기 확인", "ui/core/photo_rules.py": "2단계 — 화면의 규칙표", "ui/core/photo_text.py": "2단계 — 화면 문구",
         "ui/core/photo_view.py": "2단계 — 사진 정리 컨트롤러", "ui/photo_adapter.py": "2단계 — 실제 사진 공급자(읽기만)", "ui/qt/photo_parts.py": "2단계 — 줄 부품", "ui/qt/photo_screen.py": "2단계 — 사진 정리 창",
         "ui/adapters.py": "홈 공급자의 짝 사진 공급자(읽기만)", "ui/core/app_state.py": "짝 공급자를 초안 컨트롤러의 사진 목록에 연결", "ui/core/drafts_view.py": "초안 컨트롤러가 사진 목록(메모리)을 들고 카드 뷰모델을 낸다",
+        "check/garbage.py": "글 모양 점검이 본문의 정확한 `{{사진 N}}` 자리를 걸지 않는다(3단계 본문 연결) — 다른 모양의 `{{ }}` 와 제목은 그대로 건다", "ui/core/draft_rules.py": "복사 전 확인창(관문)이 사진 자리 어긋남·올릴 사진 줄을 받는다(3단계) — 줄 글은 컨트롤러가 만들고 이 파일은 묶음 이름만 안다",
         "content/draft_body.py": "본문 생성기가 확정한 사진(`DraftPhoto`)을 받아 사진 줄을 끼운다(3단계 본문 연결) — 사진을 안 주면 지금과 같다", "content/photo_flow.py": "사진 줄을 본문 블록에 끼우는 순수 함수(3단계 본문 연결)", "service/draft_engine.py": "엔진 후보로 초안을 만들 때 확정한 사진을 본문 생성기에 넘긴다(3단계 본문 연결)",
         "ui/core/drafts.py": "저장한 초안 공급자의 값(사진 정보 저장·열기·지우기 결과)과 가짜 공급자(3단계)", "ui/drafts_adapter.py": "저장한 초안 공급자가 사진 정보를 함께 저장·열기·사본으로 옮기기·되돌리기·사본 비우기(3단계, 확인 024)",
         "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",

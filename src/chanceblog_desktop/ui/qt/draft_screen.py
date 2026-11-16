@@ -31,6 +31,7 @@ class DraftsUi:
         self.image_state = self.image_button = None
         self.photos_count = self.photos_button = self.photos_unsaved = self.photos_row_button = None        # 사진 정리(2단계) — 오른쪽 '사진' 카드와 '만드는 방법' 칸의 줄
         self.photos_trash_box = self.photos_trash_text = self.photos_restore = self.photos_restore_note = self.photos_clear = None   # 되돌릴 사본(확인 024) — 지운 초안의 사진 정보를 되살리는 안내와 두 단추
+        self.photos_remake = None                                                  # 만든 뒤 사진 정보를 바꿨다 — '다시 만들기' 안내(본문은 몰래 고치지 않는다)
         self.accordions = {}
         self.checks_status = None
         self.back = self.apply = self.actions = self.action_bar = None
@@ -359,6 +360,10 @@ def _photos_card(shell, vm, ui):
     ui.photos_unsaved.set_tone("orange")
     ui.photos_unsaved.setVisible(bool(vm["unsaved"]))
     inner.addWidget(ui.photos_unsaved)
+    ui.photos_remake = UI.label(vm["remake"], "caption", wrap=True)
+    ui.photos_remake.set_tone("orange")
+    ui.photos_remake.setVisible(bool(vm["remake"]))
+    inner.addWidget(ui.photos_remake)
     ui.photos_button = UI.Button("secondary", vm["button"], size="sm", accessible=vm["button_a11y"], focus_key="drf-photos")
     ui.photos_button.clicked.connect(shell.photos_open)
     inner.addWidget(ui.photos_button, 0, Qt.AlignLeft)
@@ -658,6 +663,8 @@ def refresh_photos(page, card):
     ui.photos_count.setAccessibleName(card["a11y"])
     ui.photos_unsaved.set_text(card["unsaved"])
     ui.photos_unsaved.setVisible(bool(card["unsaved"]))
+    ui.photos_remake.set_text(card["remake"])
+    ui.photos_remake.setVisible(bool(card["remake"]))
     for button in (ui.photos_button, ui.photos_row_button):
         if button is not None:
             button.setText(card["button"])

@@ -23,6 +23,7 @@ from . import draft_rules as rules
 from .board_view import time_text
 from .drafts import DraftFailure, DraftRequest, DraftTarget, SaveRequest, review_health
 from .jobs import Job, JobFailure
+from .photo_rules import short_name
 from .photo_view import PhotoBoard
 from .text import T
 
@@ -32,6 +33,7 @@ SAVE_STATES = ("none", "unsaved", "saved", "changed", "saving")
 STATES = ("empty", "loading", "normal", "refused", "notfound", "error")
 FAILURE_TEXT = {"io": "drf_fail_io", "newer": "drf_fail_newer", "corrupt": "drf_fail_corrupt", "invalid": "drf_fail_invalid", "notfound": "drf_fail_notfound", "stopped": "drf_refused_desc", "channel": "drf_channel_desc", "other": "drf_fail_other"}
 IMAGE_STATES = ("before", "skip")
+UPLOAD_LINES = 8                                             # 복사 전 확인창에 보이는 '올릴 사진' 줄의 수(나머지는 외 N건)
 KEYWORD_SEPARATOR = ", "
 
 
@@ -874,11 +876,41 @@ class DraftsController:
             return None
         if self.blocks_for(item):
             return None
+        if item in ("body", "all") and "{{" in text:                                    # 사진 자리표시자는 네이버 편집기에서 사진을 올릴 자리 표시(`[이미지 N]`)로 바꿔 복사한다
+            from ...content import photo_flow
+            return photo_flow.to_copy_text(text)
         return text
+
+    def photo_gate_lines(self, item):
+        """복사 전 확인창에 보일 사진 줄들 → `(어긋남 줄들, 올릴 사진 줄들)` — 본문·전체 복사에만, 사진 번호와 짧은 파일 이름뿐이다(경로·글 없음). 사진도 자리표시자도 없으면 둘 다 비어 있다(지금과 같다)."""
+        if item not in ("body", "all"):
+            return (), ()
+        from ...content import photo_manifest as pm
+        manifest, body = self.photos.manifest, self.body
+        if not manifest.photos and not pm.find_placeholders(body):                         # 사진 기능을 쓰지 않는 글(사진도 정확한 사진 자리도 없다)은 지금과 같다 — 다른 중괄호 글은 글 모양 점검의 몫이다
+            return (), ()
+        report = pm.placeholder_report(manifest, body)
+        join = lambda numbers: ", ".join(str(number) for number in numbers)
+        problems = []
+        for name, key in (("dangling", "pho_gate_dangling"), ("unconfirmed", "pho_gate_unconfirmed"), ("missing", "pho_gate_missing"), ("repeated", "pho_gate_repeated")):
+            numbers = getattr(report, name)
+            if numbers:
+                problems.append(T[key].format(numbers=join(numbers)))
+        if report.order_differs:
+            problems.append(T["pho_gate_order"])
+        if report.stray:
+            problems.append(T["pho_gate_stray"].format(n=report.stray))
+        uploads = []
+        if not problems:
+            for number in dict.fromkeys(report.found):                                  # 본문에 처음 나온 순서
+                photo = manifest.by_number(number)
+                uploads.append(T["pho_gate_upload_line"].format(n=number, name=short_name(photo.local_path) or T["pho_gate_no_name"]))
+        return tuple(problems), tuple(uploads)
 
     def gate(self, item):
         _specific, _common, gate_lines, unknown = self.checks()
-        return rules.gate_for(item, self._inspect_now(), gate_lines, unknown, self.ack, health=self.health_for(item))
+        problems, uploads = self.photo_gate_lines(item)
+        return rules.gate_for(item, self._inspect_now(), gate_lines, unknown, self.ack, health=self.health_for(item), photos=problems, uploads=uploads)
 
     def copy_decision(self, item):
         """복사 단추를 눌렀다 → `(결정, 내용)`: `unavailable`·`blocked`(키 모양·건강 효과 단정 — 내용은 안내창 글)·`confirm`(확인창 글 — 보인 뒤에만 `confirm_copy` 가 글을 준다)·`copy`(복사할 글). **이 함수는 클립보드에 쓰지 않는다.**"""
@@ -931,11 +963,18 @@ class DraftsController:
         """복사 전 확인창의 글 — 묶음마다 머리 한 줄과 항목(앞 셋까지, 나머지는 개수). 취소가 처음 포커스이고 `그래도 복사` 를 눌러야 복사한다."""
         if [name for name, _items in gate.reasons] == ["unchanged"]:                       # 부드러운 안내뿐이면 '확인 권장' 을 읽었나가 아니라 안내 하나만 — 막지 않는다
             return {"title": T["drf_soft_title"], "body": T["drf_soft_body"], "ok": T["drf_gate_ok"], "cancel": T["drf_cancel"], "count": gate.count}
-        heads = {"check": T["drf_gate_checks"], "domain": T["drf_gate_domain"], "claims": T["drf_gate_claims"], "unchanged": T["drf_gate_unchanged_head"]}
+        if [name for name, _items in gate.reasons] == ["uploads"]:                      # 알려 드리는 것뿐이면 '확인 권장' 이 아니라 올릴 사진 순서만 보인다
+            items = gate.reasons[0][1]
+            lines = [T["pho_gate_uploads"].format(n=len(items))] + [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in items[:UPLOAD_LINES]]
+            if len(items) > UPLOAD_LINES:
+                lines.append(T["drf_gate_more"].format(n=len(items) - UPLOAD_LINES))
+            lines.append(T["pho_upload_tail"])
+            return {"title": T["pho_upload_title"], "body": chr(10).join(lines), "ok": T["pho_upload_ok"], "cancel": T["drf_cancel"], "count": 0}
+        heads = {"check": T["drf_gate_checks"], "domain": T["drf_gate_domain"], "claims": T["drf_gate_claims"], "unchanged": T["drf_gate_unchanged_head"], "photos": T["pho_gate_photos"], "uploads": T["pho_gate_uploads"]}
         lines = []
         for name, items in gate.reasons:
             lines.append(heads[name].format(n=len(items)))
-            shown = items[:3]
+            shown = items[:UPLOAD_LINES if name == "uploads" else 3]
             lines += [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in shown]
             if len(items) > len(shown):
                 lines.append(T["drf_gate_more"].format(n=len(items) - len(shown)))

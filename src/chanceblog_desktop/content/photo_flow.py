@@ -199,4 +199,9 @@ def _rebuilt(block, items):
     return dataclasses.replace(block, paragraphs=tuple(texts), generated=tuple(flags))
 
 
-__all__ = ["place_photos", "photo_lines", "subject_sentence", "sentence_ends"]
+def to_copy_text(text):
+    """복사용 글 — 정확한 `{{사진 N}}` 만 `[이미지 N]` 으로 바꾼다(네이버 편집기에서 그 자리에 사진을 올리고 표시 글을 지운다 — 기존 `[이미지 N]` 표시와 같은 모양). 그 밖의 글은 한 글자도 안 바꾼다."""
+    return pm.PLACEHOLDER.sub(lambda found: f"[이미지 {found.group(1)}]", text) if isinstance(text, str) else text
+
+
+__all__ = ["place_photos", "photo_lines", "subject_sentence", "sentence_ends", "to_copy_text"]
