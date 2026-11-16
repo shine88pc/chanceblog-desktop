@@ -122,8 +122,19 @@ class ShapeTest(Base):
                 if keep:
                     self.assertEqual(loaded, manifest)
                 else:
-                    self.assertEqual(loaded, dataclasses.replace(manifest, photos=tuple(dataclasses.replace(p, observed_objects=(), visible_text=()) for p in manifest.photos)))
+                    self.assertEqual(loaded, dataclasses.replace(manifest, photos=tuple(dataclasses.replace(p, observed_objects=(), visible_text=(), analysis_method="manual") for p in manifest.photos)))
         self.assertEqual(pm.PhotoManifest.from_text(build(0).to_text()), build(0))
+
+    def test_when_the_analysis_results_are_not_written_the_method_name_is_written_as_manual_too(self):
+        """남은 결과가 없는데 '분석했다' 는 이름(`local:paddleocr`)만 파일에 남으면 다시 열었을 때 분석한 사진처럼 보인다 — 결과를 안 쓰면 방법도 `manual` 로 쓰고, 결과를 쓰기로 하면 방법도 그대로 쓴다."""
+        manifest, _dropped = pm.set_analysis(build(1), "p001", method="local:paddleocr", texts=["메뉴"])
+        self.assertEqual(manifest.photos[0].analysis_method, "local:paddleocr", "메모리에서는 그대로다")
+        self.assertEqual(manifest.to_dict()["photos"][0]["analysis_method"], "manual")
+        self.assertEqual(json.loads(manifest.to_text())["photos"][0]["analysis_method"], "manual")
+        self.assertEqual(manifest.to_dict(persist_analysis=True)["photos"][0]["analysis_method"], "local:paddleocr")
+        self.assertEqual(pm.PhotoManifest.from_text(manifest.to_text()).photos[0].analysis_method, "manual")
+        empty, _dropped = pm.set_analysis(build(1), "p001", method="local:paddleocr")
+        self.assertEqual(pm.PhotoManifest.from_text(empty.to_text(persist_analysis=True)).photos[0].analysis_method, "local:paddleocr", "분석했지만 아무것도 못 찾은 것도 쓰기로 했으면 남는다")
 
     def test_no_exif_or_other_extra_field_is_ever_written_or_accepted(self):
         data = build(1).to_dict()

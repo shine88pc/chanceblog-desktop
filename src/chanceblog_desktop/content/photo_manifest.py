@@ -17,7 +17,7 @@ preferred_section·placement·confirmed_by_user·caption. 목록 파일에 그 �
     사진 규칙(실제 형식 확인·EXIF 회전 자동 적용·원본 수정 금지·20MB·긴 변 12,000px 경고)은 새로 만들지 않고 그 파일을 쓴다. 같은 파일(경로의 대소문자·구분자 차이 무시)을 두 번 넣을 수 없다. 경로는 어떤 출력(초안 입력·오류·`repr`)에도 나오지 않는다.
   · **종류·위치** — 종류(`photo_type`)·장소 분위기(`setting`)는 사용자가 고르는 짧은 이름이다(목록은 사용자가 고칠 수 있어 이 모듈은 모양만 보고, 목록을 주면 그 안에서만 받는다). `placement` 는 `{kind, nth}` 이고 kind 는
     `auto`(생성기가 정함)·`top`(글 맨 앞)·`after_heading`(소제목 뒤)·`after_paragraph`(n번째 문단 뒤)·`between_sentences`(n번째 문장 뒤)다.
-  · **분석 결과는 기본으로 저장하지 않는다** — `observed_objects`·`visible_text` 는 `{글, 확인 여부}` 항목의 목록이고 메모리에서만 쓴다(`to_dict` 의 기본은 빈 목록 — 켜려면 `persist_analysis=True`). 나중의 로컬 분석 플러그인이 `set_analysis` 로
+  · **분석 결과는 기본으로 저장하지 않는다** — `observed_objects`·`visible_text` 는 `{글, 확인 여부}` 항목의 목록이고 메모리에서만 쓴다(`to_dict` 의 기본은 빈 목록이고 분석 방법도 `manual` 로 쓴다 — 켜려면 `persist_analysis=True`). 나중의 로컬 분석 플러그인이 `set_analysis` 로
     **확인 전** 항목을 채우고, 사용자가 고치고(`edit_item`) 확인해야(`confirm_item`) 한다. 관찰한 대상에서 얼굴·관계·감정·신원을 짐작한 말(`inference_problem`)은 받지 않는다. 읽은 글자도 사용자가 확인하기 전에는 사실이 아니다.
   · **확정한 것만 초안으로** — `draft_inputs` 는 `confirmed_by_user` 가 참인 사진의, 확인한 항목만 `DraftPhoto` 로 뽑는다(순서대로). **경로·파일 이름·`photo_id` 문자열은 담지 않는다**(번호 N 만 — 자리표시자를 만들려면 필요하다).
     사진의 내용(경로·종류·대상·메모·위치·설명 글·분석 항목)을 고치면 확정이 풀린다(`update_photo`·`confirm_item` …) — 확정은 지금 저장된 값에 대한 것이다. 확정은 `set_confirmed` 로만 켠다.
@@ -395,9 +395,10 @@ class Photo:
         return number_of(self.photo_id)
 
     def to_dict(self, persist_analysis=False):
-        """저장하는 모양 — 열네 칸. 분석 결과(`observed_objects`·`visible_text`)는 `persist_analysis` 가 아니면 빈 목록이다(기본으로 저장하지 않는다)."""
+        """저장하는 모양 — 열네 칸. 분석 결과(`observed_objects`·`visible_text`)는 `persist_analysis` 가 아니면 빈 목록이고(기본으로 저장하지 않는다) 그때 분석 방법도 `manual` 로 쓴다 —
+        남은 결과가 없는데 '분석했다' 는 이름만 파일에 남지 않게."""
         keep = bool(persist_analysis)
-        return {"photo_id": self.photo_id, "local_path": self.local_path, "display_order": self.display_order, "photo_type": self.photo_type, "analysis_method": self.analysis_method,
+        return {"photo_id": self.photo_id, "local_path": self.local_path, "display_order": self.display_order, "photo_type": self.photo_type, "analysis_method": self.analysis_method if keep else METHOD_MANUAL,
                 "observed_objects": [item.to_dict() for item in self.observed_objects] if keep else [], "visible_text": [item.to_dict() for item in self.visible_text] if keep else [],
                 "setting": self.setting, "user_subject": self.user_subject, "user_note": self.user_note, "preferred_section": self.preferred_section, "placement": self.placement.to_dict(),
                 "confirmed_by_user": self.confirmed_by_user, "caption": self.caption}
