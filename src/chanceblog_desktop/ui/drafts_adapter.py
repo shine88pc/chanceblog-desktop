@@ -58,7 +58,7 @@ class ServiceDraftsProvider(DraftsProvider):
         ctx = self._context()
         try:
             options = build_options(request.options or {})
-            made = draft_engine.make_body_for_engine(ctx, request.candidate_id, blog=request.blog, post_type=request.post_type, options=options)
+            made = draft_engine.make_body_for_engine(ctx, request.candidate_id, blog=request.blog, post_type=request.post_type, options=options, photos=request.photos)
         except AppError as error:
             raise failure_of(error) from None
         if cancelled():

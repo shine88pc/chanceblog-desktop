@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from ...content.profiles import POST_TYPES
+from ...errors import AppError
 from . import draft_garbage as garbage
 from . import draft_rules as rules
 from .board_view import time_text
@@ -74,6 +75,7 @@ class DraftsController:
         self.pick_asked = None
         self.regen_asked = False
         self.leave_asked = None
+        self.made_photos = ()                                # 이 초안을 만들 때(또는 열었을 때) 본문에 넣은 사진 — 지금 확정한 사진과 다르면 카드가 '다시 만들기' 를 안내한다
         self.saved_id = None                                 # 이 화면의 초안이 저장한 초안이면 그 번호(처음 저장하기 전·새로 만든 초안은 None)
         self.saved_rev = None                                # 저장한 횟수(다른 곳에서 먼저 고친 초안을 덮어쓰지 않으려고 저장할 때 서비스에 돌려준다)
         self.saved_at = ""
@@ -130,7 +132,11 @@ class DraftsController:
             return "refused", None
         if self.busy:
             return "busy", None
-        request = DraftRequest(target.candidate_id, self.blog, self.post_type, rules.options_dict(self.fields))
+        photos = self._photos_to_place()
+        if photos is None:                                   # 사진 정보 검사가 막았다 — 사진을 빼고 몰래 만들지 않는다
+            self.notice = ("error", T["pho_make_blocked"])
+            return "photos", None
+        request = DraftRequest(target.candidate_id, self.blog, self.post_type, rules.options_dict(self.fields), photos)
         provider = self.provider
         job = self.runner.start(DRAFT_KEY, lambda progress, cancelled: provider.make_draft(request, progress, cancelled), on_progress=on_progress, on_done=on_done, on_error=on_error, on_cancel=on_cancel)
         if job is None:
@@ -158,6 +164,7 @@ class DraftsController:
         self.result = result
         self.title, self.body = result.body.selected_title, result.body.body_text
         self.blog, self.post_type = result.blog, request.post_type
+        self.made_photos = tuple(getattr(request, "photos", ()))                       # 본문에 넣은 사진 — 만든 뒤 사진 정보를 바꾸면 카드가 알린다
         self.photos_baseline, self.photos_trash = None, False                # 새 초안이라 사진 정보도 아직 저장하지 않았다(저장하면 이 사진 목록이 새 초안의 것으로 저장된다)
         self.saved_id = self.saved_rev = self.saved_snapshot = None          # 새로 만든 초안은 새 초안이다 — 저장하면 이전에 저장한 초안을 덮어쓰지 않고 새 초안으로 저장된다(앞의 것은 목록에 그대로 있다)
         self.saved_at = ""
@@ -543,6 +550,7 @@ class DraftsController:
         if state == "ok" and manifest is not None:
             self.photos.load(manifest)
             self.photos_baseline = manifest
+            self.made_photos = self._photos_to_place() or ()                    # 연 초안의 본문이 어떤 사진으로 만들어졌는지는 모른다 — 연 순간의 사진과 같다고 본다(그 뒤 바꾸면 알린다)
         notes += [T["pho_open_broken"]] if state == "broken" else ([T["pho_open_unreadable"]] if state == "unreadable" else [])
         self.notice = ("info", " ".join(notes)) if notes else None
         return True
@@ -605,10 +613,20 @@ class DraftsController:
         return True
 
     # ---- 사진 정보 되돌리기·사본 비우기(운영자 확인 024) — 저장한 초안을 지울 때 사진 정보가 되돌릴 사본으로 남는다. 모두 작업 스레드에서 서비스가 하고 한 번에 하나만 돈다 ----
+    def _photos_to_place(self):
+        """본문에 넣을 사진 — 확정한 사진만, 경로·파일 이름 없이(`draft_inputs`). 사진 정보 검사(키·토큰 모양)가 막으면 None."""
+        from ...content.photo_manifest import draft_inputs                       # 무거운 모듈은 쓰는 함수 안에서 늦게 가져온다(이 파일의 규칙)
+        try:
+            return draft_inputs(self.photos.manifest)
+        except AppError:
+            return None
+
     def photos_card(self):
         """오른쪽 '사진' 카드 — 사진 목록의 카드에 '고쳤는데 저장 안 함' 안내와 되돌릴 사본의 단추(되돌리기·비우기)를 더한다. 사진이 있으면 되돌리기는 꺼진다(지금 사진을 덮어쓰지 않는다)."""
         trash = self.can_save and self.saved_id is not None and self.photos_trash
         card = self.photos.card(unsaved=self.photos_unsaved(), trash=trash)
+        current = self._photos_to_place() if self.result is not None else None
+        card["remake"] = T["pho_card_remake"] if current is not None and current != self.made_photos else ""          # 만든 뒤 확정한 사진·자리·글이 바뀌었다 — 본문은 몰래 고치지 않는다
         if card["trash"] is not None:
             card["trash"] = dict(card["trash"], restore_enabled=self.photos.count == 0 and not self.store_busy, clear_enabled=not self.store_busy)
         return card

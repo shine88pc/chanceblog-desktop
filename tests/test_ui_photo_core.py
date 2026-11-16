@@ -639,8 +639,10 @@ class DraftsControllerTest(unittest.TestCase):
         self.assertIsInstance(controller.photos, pv.PhotoBoard)
         normal = controller.view()["normal"]
         self.assertEqual(set(normal["side"]), {"inspect", "garbage", "keywords", "tags", "category", "summary", "photos", "image", "checks"})
-        self.assertEqual(normal["side"]["photos"], controller.photos.card())
-        self.assertEqual(normal["options"]["photos"], controller.photos.card())
+        self.assertEqual(normal["side"]["photos"], controller.photos_card())
+        self.assertEqual(normal["options"]["photos"], controller.photos_card())
+        self.assertEqual({key: value for key, value in normal["side"]["photos"].items() if key != "remake"}, controller.photos.card(), "컨트롤러의 카드는 사진 카드에 '다시 만들기 안내' 한 칸만 더한다")
+        self.assertEqual(normal["side"]["photos"]["remake"], "", "사진을 안 만졌으면 안내가 없다")
         self.assertEqual(set(normal["options"]) - {"photos"}, {"open", "toggle", "title", "note", "blog_title", "blogs", "type_title", "types", "fields", "apply", "pending", "pending_text"})
         self.assertEqual(normal["side"]["photos"]["count"], "넣은 사진이 없어요")
 
@@ -737,6 +739,7 @@ class SourceRulesTest(unittest.TestCase):
         "content/photo_manifest.py": "1단계 — 사진 정보 규칙", "service/photo_manifest.py": "1단계 — 사진 정보 보관·사진 파일 읽기 확인", "ui/core/photo_rules.py": "2단계 — 화면의 규칙표", "ui/core/photo_text.py": "2단계 — 화면 문구",
         "ui/core/photo_view.py": "2단계 — 사진 정리 컨트롤러", "ui/photo_adapter.py": "2단계 — 실제 사진 공급자(읽기만)", "ui/qt/photo_parts.py": "2단계 — 줄 부품", "ui/qt/photo_screen.py": "2단계 — 사진 정리 창",
         "ui/adapters.py": "홈 공급자의 짝 사진 공급자(읽기만)", "ui/core/app_state.py": "짝 공급자를 초안 컨트롤러의 사진 목록에 연결", "ui/core/drafts_view.py": "초안 컨트롤러가 사진 목록(메모리)을 들고 카드 뷰모델을 낸다",
+        "content/draft_body.py": "본문 생성기가 확정한 사진(`DraftPhoto`)을 받아 사진 줄을 끼운다(3단계 본문 연결) — 사진을 안 주면 지금과 같다", "content/photo_flow.py": "사진 줄을 본문 블록에 끼우는 순수 함수(3단계 본문 연결)", "service/draft_engine.py": "엔진 후보로 초안을 만들 때 확정한 사진을 본문 생성기에 넘긴다(3단계 본문 연결)",
         "ui/core/drafts.py": "저장한 초안 공급자의 값(사진 정보 저장·열기·지우기 결과)과 가짜 공급자(3단계)", "ui/drafts_adapter.py": "저장한 초안 공급자가 사진 정보를 함께 저장·열기·사본으로 옮기기·되돌리기·사본 비우기(3단계, 확인 024)",
         "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",
         "ui/core/attribution.py": "기존 — 이미지 출처 표기(사진 정리와 무관)", "ui/qt/components.py": "기존 — 공통 부품 설명(사진 정리와 무관)",

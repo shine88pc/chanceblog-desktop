@@ -63,6 +63,7 @@ class DraftRequest:
     blog: object = None                                      # `naver_a`·`naver_b` 또는 None(후보 기준)
     post_type: object = None                                 # 다섯 글 유형 중 하나 또는 None(후보 기준)
     options: dict = None                                     # {칸 이름: 글} — 비어 있는 칸은 없다(`draft_rules.options_dict`)
+    photos: tuple = ()                                       # 본문에 넣을 사진 — 확정한 것만 담은 `DraftPhoto` 들(경로·파일 이름 없음). 비어 있으면 지금과 같다(사진 연동 3단계)
 
 
 @dataclass(frozen=True)
@@ -353,7 +354,7 @@ class FakeDraftsProvider(DraftsProvider):
         if blog not in BLOG_NAMES:
             raise DraftFailure(T["drf_channel_desc"], code="DRAFT_OPTION_INVALID", kind="channel")
         try:
-            body = generator.build_body(old, None, options, today=SAMPLE_DAY, blog=blog, post_type=request.post_type, channel=PROFILES[blog], safety=report)       # 서비스와 같게: 프로필 파일이 없을 때의 기본 채널 프로필
+            body = generator.build_body(old, None, options, today=SAMPLE_DAY, blog=blog, post_type=request.post_type, channel=PROFILES[blog], safety=report, photos=request.photos)       # 서비스와 같게: 프로필 파일이 없을 때의 기본 채널 프로필
         except AppError as error:
             raise (option_failure(error) if error.code == "DRAFT_OPTION_INVALID" else DraftFailure(T["drf_fail_invalid"], code=error.code, kind="invalid")) from None
         urls = {key: url for key, _name, url in SAMPLE_BLOGS}
