@@ -15,6 +15,7 @@ import re
 import sys
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -1085,6 +1086,25 @@ class DraftsControllerTest(unittest.TestCase):
         controller.photos.add_paths([path_of(1)])
         self.assertEqual(controller.start_open_saved("dd-" + "0" * 20), ("unconfirmed", None))
         self.assertEqual(controller.photos.count, 1)
+
+    def test_a_forced_unsaved_flag_without_any_photo_still_gives_the_usual_dialog_never_the_photo_only_one(self):
+        """합친 앱의 블로그 닫기 확인 시험(`test_ui_qt_blogs_add` — M079 체인)은 `has_unsaved` 만 참으로 바꿔 쓴다(고친 글도 사진도 없다). 사진이 없으면 '사진 정보가 사라져요' 갈래를 타지 않고 지금과 같은 확인창이어야 한다 — 이 시험이 그것을 못박는다(첫 N-2 구현이 놓쳐 그 시험이 깨졌었다)."""
+        controller = self.made(saving=True)
+        self.assertEqual(controller.photos.count, 0)
+        with mock.patch.object(controller, "has_unsaved", return_value=True):
+            leave, close = controller.leave_dialog("leave"), controller.leave_dialog("close")
+        self.assertEqual([choice["key"] for choice in leave["choices"]], ["save", "discard", "stay"], "저장 기능이 있으면 세 갈래")
+        self.assertEqual((leave["title"], leave["body"], close["body"]), (T["drf_leave3_title"], T["drf_leave3_body"], T["drf_close3_body"]))
+        plain = self.made()
+        with mock.patch.object(plain, "has_unsaved", return_value=True):
+            dialog = plain.leave_dialog("leave")
+        self.assertEqual((dialog["title"], dialog["body"], "choices" in dialog), (T["drf_leave_title"], T["drf_leave_body"], False))
+        fresh = dv.DraftsController(drafts.FakeDraftsProvider(lambda: [self.ROW], saving=True), jobs.JobRunner())              # 초안을 만들기 전(결과 없음)에도 같다
+        self.assertIsNone(fresh.result)
+        with mock.patch.object(fresh, "has_unsaved", return_value=True):
+            dialog = fresh.leave_dialog("close")
+        self.assertNotEqual(dialog["title"], T["pho_leave_title"])
+        self.assertEqual(dialog["body"], T["drf_close3_body"] if fresh.can_save else T["drf_close_body"])
 
     def test_the_app_state_guards_follow_the_photos_even_before_a_draft_exists(self):
         from chanceblog_desktop.ui.core import app_state

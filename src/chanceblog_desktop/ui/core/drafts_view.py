@@ -348,7 +348,7 @@ class DraftsController:
         self.leave_asked = kind
         closing = kind == "close"
         photos = self.photos.count
-        if not self.text_unsaved():                         # 사진 정보만 저장되지 않았다 — 초안은 그대로라 '저장' 갈래를 보이지 않는다(저장해도 사진 정보는 저장되지 않는다). 3단계: 사진 정보도 저장되면 이 갈래를 없앤다 — N-2
+        if photos and not self.text_unsaved():              # 사진 정보만 저장되지 않았다(사진이 없으면 이 갈래를 타지 않는다 — 지금과 같다) — 초안은 그대로라 '저장' 갈래를 보이지 않는다(저장해도 사진 정보는 저장되지 않는다). 3단계: 사진 정보도 저장되면 이 갈래를 없앤다 — N-2
             return {"title": T["pho_leave_title"], "body": T["pho_close_body" if closing else "pho_leave_body"].format(n=photos), "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
         note = " " + T["pho_leave_note"].format(n=photos) if photos else ""      # 고친 내용과 사진 정보가 함께 있으면 확인창 글 끝에 사진 정보도 사라진다는 한 문장을 더한다
         if self.can_save:
