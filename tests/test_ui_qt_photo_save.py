@@ -13,6 +13,7 @@ import ast
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -20,11 +21,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_ui_drafts_core import CATALOG  # noqa: E402
 from test_ui_qt_drafts import HAVE, QT_DIR, SIZES  # noqa: E402
 from test_ui_qt_drafts_save import SaveBase, provider  # noqa: E402
-from test_ui_qt_photo import PhotoBase, called_names, fake_path, methods_of  # noqa: E402
+from test_ui_qt_photo import DIR_MARK, FILE_MARK, PhotoBase, called_names, fake_path, methods_of  # noqa: E402
 
 if HAVE:
     from test_ui_qt_drafts import QAbstractButton, QTest, Qt, ui_offscreen  # noqa: E402
 
+from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
+from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.ui.core import drafts, text, tokens  # noqa: E402
 
 T = text.T
@@ -305,6 +308,99 @@ class TrashTest(Base):
                 for button in (restore, clear):
                     self.assertTrue(button.width() >= button.sizeHint().width() - 2, (size, button.text()))
                 window.close()
+
+
+class MakeAndCopyTest(Base):
+    """본문 연결(다시 만들기에 사진 자리가 들어가고, 복사하면 `[이미지 N]` 이 되며, 확인창이 올릴 사진 순서를 알려 준다)."""
+
+    def placed(self):
+        """사진 둘을 넣고 확정한 창(아직 다시 만들지 않았다) → `(창, 가짜 공급자)`."""
+        fake = provider()
+        window = self.drafted(drafts_provider=fake)
+        window, form = self.sheet(window)
+        self.add_photos(form, fake_path(1), fake_path(2))
+        self.commit(form.rows["p001"].subject.edit, "매장 입구 간판")
+        for number in (1, 2):
+            form.rows[f"p{number:03d}"].confirm_box.click()
+            self.settle(3)
+        self.assertEqual(window.photos_close(), "closed")
+        self.settle(4)
+        return window, fake
+
+    def remake(self, window):
+        window.drf_remake()
+        self.assertTrue(self.wait_draft(window))
+        self.settle(4)
+
+    def test_the_card_asks_for_a_remake_and_the_remake_puts_the_slots_in_the_body_then_the_note_goes_away(self):
+        window, _fake = self.placed()
+        ui, controller = self.ui(window), window.state.drafts
+        self.assertTrue(ui.photos_remake.isVisibleTo(window.screen_widget))
+        self.assertEqual(ui.photos_remake.plain_text(), T["pho_card_remake"])
+        self.assertNotIn("{{사진", ui.editor.toPlainText(), "본문은 몰래 고치지 않는다")
+        self.remake(window)
+        ui = self.ui(window)
+        written = ui.editor.toPlainText()
+        self.assertEqual(sorted(number for number, _start, _end in pm.find_placeholders(written)), [1, 2])
+        self.assertIn("매장 입구 간판 사진이에요.", written)
+        self.assertFalse(ui.photos_remake.isVisibleTo(window.screen_widget))
+        self.assertEqual(controller.photos_card()["remake"], "")
+
+    def test_copy_changes_the_slots_to_image_marks_and_the_dialog_lists_the_upload_order_without_a_path(self):
+        window, _fake = self.placed()
+        self.remake(window)
+        self.button(window, "act:body").click()
+        self.settle(3)
+        self.assertTrue(window.dialog.is_open)
+        shown = " ".join(self.texts(window.dialog))
+        for number in (1, 2):
+            self.assertIn(T["pho_gate_upload_line"].format(n=number, name=f"{FILE_MARK}-{number:02d}.jpg"), shown)
+        self.assertIn(T["pho_gate_uploads"].format(n=2), shown)
+        self.assertNotIn(DIR_MARK, shown, "경로는 확인창에도 없다")
+        buttons = self.dialog_buttons(window)
+        ok = buttons.get(T["drf_gate_ok"]) or buttons[T["pho_upload_ok"]]
+        ok.click()
+        self.settle(3)
+        self.assertEqual(len(self.copied), 1)
+        self.assertNotIn("{{", self.copied[0])
+        self.assertIn("[이미지 1]", self.copied[0])
+        self.assertIn("[이미지 2]", self.copied[0])
+        self.assertEqual(self.copied[0], self.ui(window).editor.toPlainText().replace("{{사진 1}}", "[이미지 1]").replace("{{사진 2}}", "[이미지 2]"))
+        self.button(window, "act:body").click()
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "한 번 확인했으면 같은 줄은 다시 묻지 않는다")
+        self.assertEqual(len(self.copied), 2)
+        self.button(window, "act:title").click()
+        self.settle(3)
+        self.assertFalse({T["pho_gate_uploads"].format(n=2)} & set(self.texts(window.dialog)) if window.dialog.is_open else set(), "제목 복사에는 사진 줄이 없다")
+
+    def test_a_copy_with_a_mismatch_lists_numbers_only(self):
+        window, _fake = self.placed()
+        self.remake(window)
+        window, form = self.sheet(window)
+        form.rows["p002"].remove.click()
+        self.settle(3)
+        window.photos_close()
+        self.settle(3)
+        self.button(window, "act:body").click()
+        self.settle(3)
+        shown = " ".join(self.texts(window.dialog))
+        self.assertIn(T["pho_gate_dangling"].format(numbers="2"), shown)
+        self.assertNotIn(FILE_MARK, shown, "어긋남은 번호로만 알린다")
+        self.assertEqual(self.copied, [], "확인하기 전에는 복사하지 않는다")
+
+    def test_a_remake_that_the_photo_check_blocks_shows_the_notice_and_keeps_the_body(self):
+        window, _fake = self.placed()
+        controller = window.state.drafts
+        body = controller.body
+        error = AppError("CONTENT_INVALID", {"항목": "사진"}, detail="비밀-내용")
+        with mock.patch("chanceblog_desktop.content.photo_manifest.draft_inputs", side_effect=error):
+            window.drf_remake()
+            self.settle(4)
+        self.assertEqual(controller.notice, ("error", T["pho_make_blocked"]))
+        self.assertEqual(controller.body, body)
+        self.assertIn(T["pho_make_blocked"], self.texts(window.screen_widget))
+        self.assertNotIn("비밀-내용", " ".join(self.texts(window.screen_widget)))
 
 
 class SourceRulesTest(unittest.TestCase):

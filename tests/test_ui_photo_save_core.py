@@ -167,6 +167,21 @@ class OpenTest(unittest.TestCase):
                 self.assertFalse(controller.photos_unsaved())
 
 
+class LyingProviderTest(unittest.TestCase):
+    def test_a_manifest_that_comes_with_a_state_other_than_ok_is_never_loaded(self):
+        """공급자가 사진 정보를 실어 보내면서 상태를 `ok` 가 아니라고 해도 컨트롤러는 목록을 채우지 않는다(상태가 먼저다 — 깨진 파일 위에 저장하지 않게)."""
+        for state in ("broken", "unreadable", "none"):
+            with self.subTest(state=state):
+                controller, provider = with_photos(2)
+                store(controller, "save")
+                draft_id = saved_id(provider)
+                controller.leave()
+                original = provider.open_saved
+                provider.open_saved = lambda *args, original=original, state=state: dataclasses.replace(original(*args), photos_state=state)
+                store(controller, "open", draft_id)
+                self.assertEqual((controller.photos.count, controller.photos_state, controller.photos_baseline), (0, state, None))
+
+
 class DeleteAndRestoreTest(unittest.TestCase):
     def test_deleting_a_saved_draft_keeps_the_photo_info_as_a_restorable_copy_and_says_so(self):
         controller, provider = with_photos()

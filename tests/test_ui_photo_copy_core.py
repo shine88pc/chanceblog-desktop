@@ -103,6 +103,27 @@ class GateTest(unittest.TestCase):
         self.assertEqual(sum(1 for line in body.splitlines() if line.startswith("· [이미지 ")), 8)
         self.assertIn(T["drf_gate_more"].format(n=4), body)
 
+    def test_when_the_other_reasons_were_already_read_a_new_upload_order_still_opens_the_dialog_once(self):
+        controller, _provider = with_photos()
+        for name, keys in controller.gate("body").keys.items():
+            if name != "uploads":
+                controller.ack.setdefault(name, set()).update(keys)                       # 확인 권장·분야·고친 글 확인은 이미 읽었다
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm", "올릴 사진 순서가 처음이면 그것만으로도 창이 뜬다")
+        self.assertIn(T["pho_gate_uploads"].format(n=2), dialog["body"])
+        self.assertIsNotNone(controller.confirm_copy("body"))
+        self.assertEqual(controller.copy_decision("body")[0], "copy", "한 번 읽었으면 다시 묻지 않는다")
+        confirm_again = with_photos(confirmed=(1,))[0]
+        for name, keys in confirm_again.gate("body").keys.items():
+            if name != "uploads":
+                confirm_again.ack.setdefault(name, set()).update(keys)
+        confirm_again.copy_decision("body")
+        confirm_again.confirm_copy("body")
+        confirm_again.photos.add_paths([path_of(9)])
+        confirm(confirm_again, 4, user_subject="새 사진")
+        drive(confirm_again)
+        self.assertEqual(confirm_again.copy_decision("body")[0], "confirm", "올릴 사진이 달라지면 새 줄이니 한 번 더 알린다")
+
     def test_every_kind_of_mismatch_is_listed_by_number_only(self):
         controller, _provider = with_photos(confirmed=(1, 2, 3))
         self.assertEqual(controller.photo_gate_lines("body")[0], ())

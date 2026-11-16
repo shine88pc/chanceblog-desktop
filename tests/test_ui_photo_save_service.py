@@ -9,6 +9,7 @@ PySide6·네트워크·실제 시크릿 없이 돈다. 사진 파일은 만들�
 """
 import dataclasses
 import os
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -97,6 +98,7 @@ class SaveAndOpenTest(Base):
         controller.set_body(controller.body + " 고침")
         store(controller, "save")
         self.assertFalse(self.folder.exists(), "사진을 안 만졌으면 사진 정보 폴더도 만들지 않는다")
+        self.assertEqual((controller.notice[0], controller.save_state()), ("ok", "saved"), "글만 저장한 것은 사진 정보 실패가 아니다")
         again = fresh(self.setup)
         store(again, "list")
         store(again, "open", again.listing.rows[0].draft_id)
@@ -134,6 +136,7 @@ class SaveAndOpenTest(Base):
         self.assertEqual(applied[0], "saved")
         self.assertEqual(controller.notice[0], "error")
         self.assertTrue(controller.notice[1].startswith(T["pho_save_fail"]))
+        self.assertIn(svc._R_BROKEN, controller.notice[1], "서비스가 정한 고정 이유 문장이 함께 보인다")
         self.assertNotIn(str(self.folder), controller.notice[1])
         self.assertEqual(file.read_bytes(), before, "깨진 파일은 덮어쓰지 않았다")
         self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [file.name], ".bak 도 안 만들었다")
@@ -160,6 +163,23 @@ class SaveAndOpenTest(Base):
             store(again, "open", draft_id)
         self.assertEqual((again.photos_state, again.photos.count), ("unreadable", 0))
         self.assertIn(T["pho_open_unreadable"], again.notice[1])
+
+    def test_a_photo_folder_that_is_not_a_folder_is_noted_as_broken_when_opening_and_nothing_is_changed(self):
+        controller, draft_id = self.saved_with_photos()
+        controller.leave()
+        shutil.rmtree(self.folder)
+        self.folder.write_text("폴더가 아니라 파일이다", encoding="utf-8")                      # 사진 정보 보관 폴더 자리에 파일이 있다 — 읽지도 덮어쓰지도 않는다
+        before = ss.tree_snapshot(self.setup.world.tmp)
+        again = fresh(self.setup)
+        store(again, "list")
+        store(again, "open", draft_id)
+        self.assertEqual((again.photos_state, again.photos.count, again.photos_trash), ("broken", 0, False))
+        self.assertIn(T["pho_open_broken"], again.notice[1])
+        self.assertEqual(ss.tree_snapshot(self.setup.world.tmp), before, "열기는 읽기뿐이다")
+        again.photos.add_paths(self.paths)
+        store(again, "save")
+        self.assertEqual(again.notice[0], "error", "그 위에는 저장하지 않는다")
+        self.assertEqual(self.folder.read_text(encoding="utf-8"), "폴더가 아니라 파일이다")
 
     def test_the_picture_files_are_never_touched(self):
         before = self.picture_state()

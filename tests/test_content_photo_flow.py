@@ -160,6 +160,7 @@ class PlacementTest(unittest.TestCase):
     def test_a_sentence_end_inside_quotes_or_without_a_following_space_is_not_a_cut(self):
         self.assertEqual(pf.sentence_ends("가격은 3.5만원이에요. 좋아요!"), (len("가격은 3.5만원이에요."), len("가격은 3.5만원이에요. 좋아요!")))
         self.assertEqual(pf.sentence_ends("그가 “왔어요.” 라고 했다."), (len("그가 “왔어요.”"), len("그가 “왔어요.” 라고 했다.")))
+        self.assertEqual(pf.sentence_ends("글이 길어요… 그래서요?! 네."), (len("글이 길어요…"), len("글이 길어요… 그래서요?!"), len("글이 길어요… 그래서요?! 네.")), "말줄임표·물음표·느낌표도 문장 끝이다")
         self.assertEqual(pf.sentence_ends("끝이 없는 글"), ())
         self.assertEqual(pf.sentence_ends("점 하나.둘"), ())
 

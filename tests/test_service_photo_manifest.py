@@ -922,11 +922,13 @@ class TrashTest(Base):
                 before = snapshot(self.root)
                 error = self.refuses("CONTENT_INVALID", svc.restore_manifest, self.ctx, DRAFT_A)
                 self.assertNoLeak(error, [self.tmp.name, DRAFT_A])
+                self.assertEqual(error.detail, svc._R_BROKEN, "깨진 사본은 '깨졌다' 고 말한다(지금 못 연다는 말과 다르다)")
                 self.assertEqual(snapshot(self.root), before, "깨진 사본은 그대로 두고 사진 정보 파일도 만들지 않는다")
                 self.trash().unlink()
         self.trash().write_text(good, encoding="utf-8")
         with mock.patch.object(svc, "_pause"), mock.patch.object(own_posts, "_read_prefix", return_value=(None, own_posts._R_MISSING)):
-            self.refuses("CONTENT_INVALID", svc.restore_manifest, self.ctx, DRAFT_A)
+            error = self.refuses("CONTENT_INVALID", svc.restore_manifest, self.ctx, DRAFT_A)
+        self.assertEqual(error.detail, svc._R_UNREADABLE, "지금 못 연 사본은 '잠시 뒤에 다시' 라고 말한다(깨졌다는 말과 다르다)")
         self.assertEqual(self.trash().read_text(encoding="utf-8"), good, "지금 못 연 사본도 그대로")
         self.saved()                                                                   # 이미 사진 정보가 있다
         live, kept = self.file().read_bytes(), self.trash().read_bytes()
@@ -966,6 +968,14 @@ class TrashTest(Base):
         before = snapshot(self.root)
         self.assertEqual(svc.list_trash(self.ctx), (DRAFT_A,), "정확한 이름 모양의 사본만")
         self.assertEqual(snapshot(self.root), before)
+
+    def test_the_copy_list_names_each_draft_once_and_never_a_draft_that_only_has_a_live_file(self):
+        self.saved(DRAFT_A)                                                           # 사진 정보 파일만 있다
+        self.assertEqual(svc.list_trash(self.ctx), ())
+        self.saved(DRAFT_B)
+        svc.trash_manifest(self.ctx, DRAFT_B, confirmed=True)
+        self.saved(DRAFT_B)                                                           # 같은 초안에 사진 정보 파일과 되돌릴 사본이 함께 있다
+        self.assertEqual(svc.list_trash(self.ctx), (DRAFT_B,), "한 번만 — 사진 정보 파일만 있는 초안은 없다")
 
     def test_no_picture_file_is_ever_touched(self):
         pictures = Path(self.tmp.name) / "pics"

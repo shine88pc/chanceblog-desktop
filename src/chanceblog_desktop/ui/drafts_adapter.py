@@ -84,7 +84,7 @@ class ServiceDraftsProvider(DraftsProvider):
 
     @staticmethod
     def _save_photos(ctx, draft_id, manifest):
-        """사진 정보를 함께 저장한다 → `(상태, 고정 문장)` — 상태 `none`(건드리지 않았다·사진이 없다) · `saved` · `failed`. 초안은 이미 저장했으므로 실패해도 초안 저장을 되돌리지 않는다(어긋남은 화면이 '고쳤어요' 로 남겨 다시 저장하게 한다). 같은 `persist_analysis`(기본)로 쓴다."""
+        """사진 정보를 함께 저장한다 → `(상태, 고정 문장)` — 상태 `none`(건드리지 않았다) · `saved`(서비스에 맡겼다 — 목록이 비어 파일을 만들지 않았어도 같다) · `failed`. 초안은 이미 저장했으므로 실패해도 초안 저장을 되돌리지 않는다(어긋남은 화면이 '고쳤어요' 로 남겨 다시 저장하게 한다). 같은 `persist_analysis`(기본)로 쓴다."""
         if manifest is None:
             return "none", ""
         from ..service import photo_manifest
@@ -96,7 +96,7 @@ class ServiceDraftsProvider(DraftsProvider):
             error.__traceback__ = None
         if failure is not None:
             return "failed", T["pho_save_fail"] + (" " + failure.user_message if failure.kind == "invalid" else "")
-        return ("saved" if manifest.photos else "none"), ""
+        return "saved", ""
 
     def list_saved(self, progress, cancelled):
         """저장한 초안 목록 — 읽기뿐이다(보관함이 없으면 빈 목록이고 파일을 만들지 않는다)."""
