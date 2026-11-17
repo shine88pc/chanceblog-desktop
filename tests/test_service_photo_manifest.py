@@ -8,10 +8,13 @@
   5) 깨진 파일 — 읽을 수 없는 파일은 `broken` 으로만 알리고 건드리지 않는다. 덮어쓰려면 `replace_broken=True` 이고 그때도 `.bak` 으로 옮겨 둔다. 목록은 깨진 파일을 건너뛰고 개수만 알린다.
   6) 지우기 — 확인이 있어야 하고 번호가 정한 파일 하나(와 그 번호의 임시 파일)만 지운다. 링크·폴더는 거절한다.
   7) 사진 파일 보기 — 읽기만 한다(원본의 해시·수정 시각·폴더 목록이 그대로). 없음·폴더·링크·클라우드·큰 파일·지원하지 않는 형식·읽지 못함·긴 변 경고를 알리고 경로는 결과에 없다.
-  8) 소스 규칙 — 파일 쓰기는 `write_json`·`keep_bad_copy` 와 `delete_manifest` 의 `unlink` 뿐, 파일을 직접 열지 않고, 화면 층은 늦게 가져온다.
+  8) 소스 규칙 — 파일 쓰기는 `write_json`·`keep_bad_copy` 와 이름 바꾸기(`trash_manifest`·`restore_manifest` 의 `os.replace`)·지우기(`delete_manifest`·`clear_trash`·`trash_manifest` 의 `unlink`)뿐, 파일을 직접 열지 않고, 화면 층은 늦게 가져온다.
+  9) 되돌릴 사본(3단계, 운영자 확인 024) — 초안을 지우면 사진 정보 파일이 한 벌뿐인 사본으로 옮겨지고 되돌리기·비우기가 말한 대로 움직인다. 사진이 0장인 멀쩡한 파일은 사본으로 옮기지 않고 지우며(앞서 둔 사본을 빈 것으로 덮지 않는다)
+     되돌리기는 그런 파일 위에만 덮어쓴다(사진이 있거나 내용을 모르는 파일은 지키고 거절한다). 끝난 뒤 같은 초안 번호의 남은 임시 파일은 치운다(검증 S PS-3·PS-5·PS-10, impl3c).
 CI 는 윈도·리눅스 × 3.10·3.12 네 칸이다 — 진짜 파일을 만드는 시험은 짧은 파일 이름(리눅스 파일 이름 255바이트 한도에 걸리지 않게)을 쓰고, 링크 시험은 만들 수 없는 곳에서 건너뛴다.
 """
 import ast
+import contextlib
 import dataclasses
 import errno
 import hashlib
@@ -876,6 +879,32 @@ class TrashTest(Base):
     def saved(self, draft_id=DRAFT_A, count=2, **fields):
         return svc.save_manifest(self.ctx, draft_id, sample(count, **fields))
 
+    def saved_empty(self, draft_id=DRAFT_A):
+        """사진을 넣어 저장했다가 모두 지우고 다시 저장한 모양 — 디스크에 사진이 0장인 **멀쩡한** 파일이 남는다(저장한 판이 있으면 빈 목록도 쓴다). 그 파일의 바이트를 돌려준다."""
+        self.saved(draft_id, count=1)
+        svc.save_manifest(self.ctx, draft_id, pm.empty_manifest())
+        loaded = svc.load_manifest(self.ctx, draft_id)
+        self.assertEqual((loaded.state, loaded.manifest.photos), ("ok", ()))
+        return self.file(draft_id).read_bytes()
+
+    def reset(self):
+        """폴더 안을 모두 비워 다음 경우를 깨끗하게 시작한다(폴더 자리에 만든 폴더도)."""
+        if not self.folder.exists():
+            return
+        for path in sorted(self.folder.iterdir(), reverse=True):
+            path.rmdir() if path.is_dir() else path.unlink()
+
+    @contextlib.contextmanager
+    def locked(self, draft_id=DRAFT_A):
+        """사진 정보 파일만 '지금 못 연다'(윈도의 공유 위반 — 백신·색인기가 잡은 순간)로 만든다 — 사본 읽기는 그대로 한다. 다시 해 보는 쉬는 시간은 건너뛴다."""
+        real = own_posts._read_prefix
+
+        def read(path, limit, info):
+            return (None, own_posts._R_MISSING) if Path(path).name == f"{draft_id}.json" else real(path, limit, info)
+
+        with mock.patch.object(svc, "_pause"), mock.patch.object(own_posts, "_read_prefix", read):
+            yield
+
     def test_trashing_moves_the_file_byte_for_byte_into_one_copy_and_the_listings_forget_it(self):
         self.saved(user_note=UNIQ_NOTE)
         original = self.file().read_bytes()
@@ -1019,6 +1048,180 @@ class TrashTest(Base):
             error = self.refuses("FILE_WRITE_FAILED", svc.clear_trash, self.ctx, DRAFT_B, confirmed=True)
         self.assertNoLeak(error, [self.tmp.name, DRAFT_B])
         self.assertTrue(self.trash(DRAFT_B).exists())
+
+    # ---- impl3c: 검증 S PS-3 ①②(시험 틈 — 변이 SV20·SV7·SV8) · PS-5(사진이 0장인 사진 정보 파일) · PS-10(남은 임시 파일) ----
+    def test_clearing_the_copy_leaves_the_live_file_of_the_same_draft_alone_in_bytes_and_time(self):
+        self.saved(count=1, user_note="사본이 될 글")
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        self.saved(count=2, user_note=UNIQ_NOTE)                                       # 같은 초안에 사진 정보 파일과 되돌릴 사본이 함께 있다
+        live = self.file()
+        before = (live.read_bytes(), live.stat().st_mtime_ns)
+        svc.clear_trash(self.ctx, DRAFT_A, confirmed=True)
+        self.assertFalse(self.trash().exists(), "사본은 지워졌다")
+        self.assertEqual((live.read_bytes(), live.stat().st_mtime_ns), before, "사본 비우기는 같은 초안의 사진 정보 파일을 바이트도 수정 시각도 건드리지 않는다")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [live.name])
+
+    def test_a_failed_restore_keeps_the_copy_makes_no_live_file_and_hides_every_trace(self):
+        self.saved(user_note=UNIQ_NOTE)
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        kept = self.trash().read_bytes()
+        before = snapshot(self.root)
+        with mock.patch.object(svc.os, "replace", side_effect=PermissionError(errno.EACCES, "denied", str(self.trash()))):
+            error = self.refuses("FILE_WRITE_FAILED", svc.restore_manifest, self.ctx, DRAFT_A)
+        self.assertNoLeak(error, [self.tmp.name, DRAFT_A, UNIQ_DIR, UNIQ_NOTE])
+        self.assertEqual(error.slots.get("경로"), svc._WHERE)
+        self.assertEqual(error.detail, "사진 정보를 되돌리지 못했다", "고정 문장 — OS 오류의 글이 아니다")
+        self.assertEqual(self.trash().read_bytes(), kept, "사본은 바이트 그대로 남는다")
+        self.assertFalse(self.file().exists(), "사진 정보 파일은 안 생겼다")
+        self.assertEqual(snapshot(self.root), before, "폴더 안에 아무것도 늘거나 줄지 않았다(임시 파일도 없다)")
+
+    def test_trashing_a_photo_file_with_no_photos_removes_it_and_never_overwrites_an_earlier_copy(self):
+        self.saved(count=2, user_note=UNIQ_NOTE)
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)                           # 앞서 둔 쓸모 있는 사본(사진 2장)
+        kept = self.trash().read_bytes()
+        self.saved_empty()                                                              # 되살린 뒤 사진을 넣었다 모두 지우고 저장한 사진 0장짜리 파일
+        self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "empty")
+        self.assertFalse(self.file().exists(), "사진 0장짜리 파일은 지워졌다")
+        self.assertEqual(self.trash().read_bytes(), kept, "앞서 둔 사본은 바이트 그대로 — 빈 목록이 덮지 않았다")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [self.trash().name])
+        self.assertEqual((svc.has_trash(self.ctx, DRAFT_A), svc.list_trash(self.ctx), svc.load_manifest(self.ctx, DRAFT_A).state), (True, (DRAFT_A,), "none"))
+
+    def test_trashing_a_photo_file_with_no_photos_and_no_earlier_copy_makes_no_copy(self):
+        self.saved_empty()
+        self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "empty")
+        self.assertEqual(list(self.folder.iterdir()), [], "사본도 사진 정보 파일도 없다 — 쓸모 없는 빈 사본을 만들지 않는다")
+        self.assertEqual((svc.has_trash(self.ctx, DRAFT_A), svc.list_trash(self.ctx)), (False, ()))
+        self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "none", "다시 부르면 이제 없다")
+
+    def test_a_photo_file_with_photos_or_one_that_cannot_be_read_is_still_moved_over_an_earlier_copy(self):
+        for name in ("사진 1장", "사진 2장", "깨진 파일", "지금 못 여는 파일"):
+            with self.subTest(live=name):
+                self.reset()
+                self.saved(count=2, user_note="앞서 둔 사본")
+                svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+                earlier = self.trash().read_bytes()
+                if name == "사진 1장":
+                    self.saved(count=1, user_note=UNIQ_NOTE)
+                elif name == "사진 2장":
+                    self.saved(count=2, user_note=UNIQ_NOTE)
+                elif name == "깨진 파일":
+                    self.write_raw("{ 깨짐 }")
+                else:
+                    self.saved_empty()                                                  # 비어 있어도 지금 못 열면 내용을 모른다 — 지우지 않고 옮긴다
+                live = self.file().read_bytes()
+                self.assertNotEqual(live, earlier)
+                with (self.locked() if name == "지금 못 여는 파일" else contextlib.nullcontext()):
+                    result = svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+                self.assertEqual(result, "moved")
+                self.assertFalse(self.file().exists())
+                self.assertEqual(self.trash().read_bytes(), live, "이 파일이 옛 사본을 덮었다(초안마다 한 벌 — 기존 규칙 그대로)")
+
+    def test_restoring_over_a_photo_file_with_no_photos_replaces_it_with_the_copy(self):
+        saved = self.saved(count=2, user_note=UNIQ_NOTE)
+        original = self.file().read_bytes()
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        self.saved_empty()                                                              # 되살린 초안에서 사진을 넣고 저장했다 모두 지우고 저장했다 — 되돌리기가 막다른 길이면 안 된다
+        loaded = svc.restore_manifest(self.ctx, DRAFT_A)
+        self.assertEqual(loaded, svc.Loaded(saved, "ok"))
+        self.assertEqual(self.file().read_bytes(), original, "사진 0장짜리 파일 자리에 사본이 바이트 그대로 들어왔다")
+        self.assertFalse(self.trash().exists())
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [self.file().name])
+
+    def test_restoring_still_refuses_over_a_file_with_photos_or_one_that_cannot_be_trusted(self):
+        self.saved(count=2, user_note=UNIQ_NOTE)
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        kept = self.trash().read_bytes()
+        cases = (("사진 1장", lambda: self.saved(count=1)), ("사진 2장", lambda: self.saved(count=2)), ("깨진 파일", lambda: self.write_raw("{ 깨짐 }")), ("폴더", lambda: self.file().mkdir()),
+                 ("사진 0장이지만 지금 못 여는 파일", self.saved_empty))
+        for name, make in cases:
+            with self.subTest(live=name):
+                make()
+                is_dir = self.file().is_dir()
+                live = None if is_dir else self.file().read_bytes()
+                try:
+                    with (self.locked() if "못 여는" in name else contextlib.nullcontext()):
+                        error = self.refuses("CONTENT_INVALID", svc.restore_manifest, self.ctx, DRAFT_A)
+                    self.assertEqual(error.detail, svc._R_EXISTS)
+                    self.assertNoLeak(error, [self.tmp.name, DRAFT_A])
+                    self.assertEqual(self.trash().read_bytes(), kept, "사본은 그대로")
+                    self.assertEqual(self.file().is_dir() if is_dir else self.file().read_bytes(), True if is_dir else live, "사진 정보 파일(자리)도 그대로")
+                finally:
+                    path = self.file()
+                    path.rmdir() if path.is_dir() else path.unlink()
+
+    def test_a_photo_file_that_is_gone_when_it_is_read_is_none_and_nothing_is_moved(self):
+        self.saved()
+        with mock.patch.object(svc, "_read_file", return_value=(None, "none")):
+            self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "none")
+        self.assertTrue(self.file().exists(), "사라졌다고 본 것뿐 아무것도 옮기지 않았다")
+        self.assertFalse(self.trash().exists())
+
+    def test_an_empty_photo_file_that_is_gone_when_it_is_removed_still_counts_as_removed(self):
+        self.saved_empty()
+        real = svc._read_file
+
+        def read_then_vanish(path, draft_id):
+            result = real(path, draft_id)
+            Path(path).unlink()                                                         # 다른 쪽이 그 사이 지웠다
+            return result
+
+        with mock.patch.object(svc, "_read_file", read_then_vanish):
+            self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "empty")
+        self.assertEqual(list(self.folder.iterdir()), [])
+
+    def test_a_failed_removal_of_a_photo_file_with_no_photos_is_a_fixed_sentence_and_changes_nothing(self):
+        self.saved(count=2, user_note=UNIQ_NOTE)
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        self.saved_empty()
+        original = Path.unlink
+
+        def failing(self_path, *args, **kwargs):
+            if self_path.name == f"{DRAFT_A}.json":
+                raise PermissionError(errno.EACCES, "denied", str(self_path))
+            return original(self_path, *args, **kwargs)
+
+        before = snapshot(self.root)
+        with mock.patch.object(Path, "unlink", failing):
+            error = self.refuses("FILE_WRITE_FAILED", svc.trash_manifest, self.ctx, DRAFT_A, confirmed=True)
+        self.assertNoLeak(error, [self.tmp.name, DRAFT_A, UNIQ_DIR, UNIQ_NOTE])
+        self.assertEqual((error.slots.get("경로"), error.detail), (svc._WHERE, "사진 정보 파일을 지우지 못했다"))
+        self.assertEqual(snapshot(self.root), before, "아무것도 바뀌지 않았다 — 사본도 사진 정보 파일도 그대로")
+
+    def test_trashing_removes_this_drafts_leftover_temp_files_and_no_others(self):
+        for label, draft in (("moved", DRAFT_A), ("empty", DRAFT_C)):
+            with self.subTest(result=label):
+                if label == "moved":
+                    self.saved(draft, count=2)
+                else:
+                    self.saved_empty(draft)
+                mine = [self.folder / f"{draft}.json.123-abcd1234.tmp", self.folder / f"{draft}.json.tmp"]
+                others = [self.folder / f"{DRAFT_B}.json.123-abcd1234.tmp", self.folder / "notes.txt", self.folder / f"{draft}.json.bak", self.folder / f"{draft}.json.123-abcd1234.tmp.keep"]
+                for path in (*mine, *others):
+                    path.write_text("남은 글 " + UNIQ_NOTE, encoding="utf-8")
+                self.assertEqual(svc.trash_manifest(self.ctx, draft, confirmed=True), label)
+                for path in mine:
+                    self.assertFalse(path.exists(), f"{label}: {path.name} 은 지워져야 한다")
+                for path in others:
+                    self.assertTrue(path.exists(), f"{label}: {path.name} 은 남아야 한다")
+
+    def test_a_leftover_that_cannot_be_found_or_removed_never_fails_the_trash(self):
+        self.saved(count=2)
+        leftover = self.folder / f"{DRAFT_A}.json.123-abcd1234.tmp"
+        leftover.write_text("남은 글", encoding="utf-8")
+        original = Path.unlink
+
+        def failing(self_path, *args, **kwargs):
+            if self_path.name.endswith(".tmp"):
+                raise PermissionError(errno.EACCES, "denied", str(self_path))
+            return original(self_path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", failing):
+            self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "moved", "본 작업은 끝났다 — 임시 파일을 못 지워도 성공이다")
+        self.assertTrue(self.trash().exists() and not self.file().exists() and leftover.exists())
+        self.saved(count=2)
+        with mock.patch.object(svc, "_leftovers", side_effect=PermissionError(errno.EACCES, "denied", str(self.folder))):
+            self.assertEqual(svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True), "moved", "폴더 목록을 못 읽어도 성공이다")
+        self.assertTrue(self.trash().exists() and not self.file().exists())
 
     def test_looking_at_the_copies_reads_names_only_and_makes_nothing(self):
         before = snapshot(self.root)
@@ -1178,7 +1381,7 @@ class SourceRulesTest(unittest.TestCase):
     def tree(self):
         return ast.parse(SOURCE.read_text(encoding="utf-8"))
 
-    def test_the_only_ways_to_write_or_delete_are_the_two_context_functions_and_one_unlink(self):
+    def test_the_only_ways_to_write_or_delete_are_the_two_context_functions_and_the_named_unlinks(self):
         tree = self.tree()
         calls = {}
         for function in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
@@ -1189,7 +1392,7 @@ class SourceRulesTest(unittest.TestCase):
         self.assertEqual(calls.get("write_json"), {"save_manifest"})
         self.assertEqual(calls.get("keep_bad_copy"), {"save_manifest"})
         unlinks = {function for name, functions in calls.items() if name.endswith(".unlink") for function in functions}
-        self.assertEqual(unlinks, {"delete_manifest", "clear_trash"})
+        self.assertEqual(unlinks, {"delete_manifest", "clear_trash", "trash_manifest"}, "지우는 함수는 이 셋뿐이다 — 사진 정보 지우기·사본 비우기·(사진 0장 파일과 남은 임시 파일을 치우는) 사본으로 옮기기")
         self.assertEqual(calls.get("os.replace"), {"trash_manifest", "restore_manifest"}, "이름 바꾸기(되돌릴 사본으로 옮기기·되돌리기)는 이 둘뿐이다")
         for banned in ("open", "io.open", "os.open", "os.write", "os.rename", "os.remove", "os.makedirs", "shutil.copy", "shutil.rmtree", "shutil.move", "print", "os.fsync", "os.chmod"):
             self.assertNotIn(banned, calls)

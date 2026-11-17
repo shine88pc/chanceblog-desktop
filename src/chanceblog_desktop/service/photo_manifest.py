@@ -14,8 +14,9 @@
     그 위에 쓰지 않는다(`broken` 만 덮어쓴다). 더 새로운 판(`STORE_VERSION_UNSUPPORTED`)은 지금은 `broken` 으로 묶인다 — 덮어쓰면 새 판의 글이 `.bak` 으로 옮겨질 뿐 사라지지는 않지만, 3단계 화면은 이 경우 덮어쓰기를 권하지 않는다.
   · **쓴 파일을 못 읽는 상태를 만들지 않는다** — 저장할 글이 `MAX_FILE_BYTES`(512KB)를 넘으면 아무것도 쓰지 않고 거절한다(분석 결과를 쓰는 최악의 경우는 그보다 크고 기본 길은 훨씬 작다).
   · **`orphans` 는 fail closed** — '지금 있는 초안 번호' 가 list·tuple·set 이 아니거나 모양이 틀린 번호가 하나라도 있으면 거절한다. 초안 저장소를 읽지 못했을 때는 부르지 않는다.
-  · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나와 그 번호의 임시 파일의 `unlink` 뿐이다. 되돌릴 수 없다(전체 백업에는 아직 담지 않는다 — 결정 D-496).
-    초안을 지울 때 사진 정보를 함께 지우는 연결은 3단계에서 한다(1단계는 기존 코드를 바꾸지 않는다) — 그 사이에 남은 파일은 `orphans` 로 찾을 수 있다.
+  · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나와 그 번호의 임시 파일의 `unlink` 뿐이다. 되돌릴 수 없다(전체 백업에는 담지 않는다 — 결정 D-496).
+    앱이 저장한 초안을 지울 때는 이 함수가 아니라 `trash_manifest` 를 부른다(3단계, 운영자 확인 024) — 사진 정보 파일을 완전히 지우지 않고 초안마다 한 벌뿐인 되돌릴 사본(`<초안 번호>.json.trash`)으로 옮긴다. 사진이 0장인 파일은 지킬 글이 없어 사본으로 옮기지 않고
+    지운다(빈 목록이 앞서 둔 쓸모 있는 사본을 덮지 않게 — 검증 S PS-5). 사본은 `.json` 만 읽는 `list_manifests`·`orphans` 에 나오지 않고, 앱이 사본을 지우는 길은 같은 번호로 되살린 초안의 `사진 정보 사본 비우기`(`clear_trash`)뿐이다.
   · **사진 파일은 읽기만 본다**(`check_files`) — 경로 위의 폴더까지 링크가 아닌지·보통 파일인지·이 PC 에 내려받은 파일인지(클라우드 '오프라인' 표시면 읽으면 내려받기가 일어나므로 거절)를 `lstat` 으로 보고, 확장자·크기(20MB)·실제 형식·긴 변
     경고는 `ui/core/imagerules.judge` 에 맡긴다(규칙을 새로 만들지 않았다). 이미지 읽기 도구(`probe` — Qt 의 `imagecheck.probe`)를 주지 않으면 확장자만 믿은 점검이라 `verified` 가 거짓이다. 파일을 열거나 쓰거나 바꾸지 않고 복사·썸네일도 만들지 않는다.
   · 오류는 기존 오류 체계의 `CONTENT_INVALID`·`CONTENT_NOT_FOUND`·`CONFIRMATION_REQUIRED`·`FILE_WRITE_FAILED`·`DISK_FULL` 이고 문장은 고정이다 — **글·경로·사진 파일 이름을 오류·로그·`repr` 에 되풀이하지 않는다**.
@@ -330,34 +331,54 @@ def _plain_file(info):
 
 
 def trash_manifest(ctx, draft_id, *, confirmed):
-    """초안을 지울 때(운영자 확인 024) 그 초안의 사진 정보 파일을 완전히 지우지 않고 **초안마다 한 벌뿐인 되돌릴 사본**으로 옮긴다 → 옮겼으면 `moved`, 사진 정보 파일이 없었으면 `none`(아무것도 만들지 않는다).
-    이름만 바꾸는 한 번의 `os.replace` 라 반쯤 옮긴 상태가 없고, 이미 있던 사본은 덮어쓴다(같은 초안을 다시 지우면 최근 것만 남는다). 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`) 폴더·파일·사본 자리가
-    링크이거나 보통 파일이 아니면 거절한다. **사진 파일은 건드리지 않는다**(이 함수는 사진 경로를 받지도 읽지도 않는다). 깨진 파일도 그대로 옮긴다(내용은 되돌릴 때 확인한다)."""
+    """초안을 지울 때(운영자 확인 024) 그 초안의 사진 정보 파일을 완전히 지우지 않고 **초안마다 한 벌뿐인 되돌릴 사본**으로 옮긴다 → 옮겼으면 `moved`, 사진이 0장인 멀쩡한 파일이라 사본으로 옮기지 않고 지웠으면 `empty`
+    (이미 있던 사본은 건드리지 않는다 — 지킬 글이 없는 빈 목록이 쓸모 있는 사본을 덮지 않게, 검증 S PS-5), 사진 정보 파일이 없었으면 `none`(아무것도 만들지 않는다).
+    옮기기는 이름만 바꾸는 한 번의 `os.replace` 라 반쯤 옮긴 상태가 없고, 이미 있던 사본은 덮어쓴다(같은 초안을 다시 지우면 최근 것만 남는다). 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`) 폴더·파일·사본 자리가
+    링크이거나 보통 파일이 아니면 거절한다. **사진 파일은 건드리지 않는다**(이 함수는 사진 경로를 받지 않고 사진 정보 파일의 사진 수만 본다). 깨졌거나 지금 못 연 파일도 그대로 옮긴다(내용은 되돌릴 때 확인한다).
+    끝난 뒤(`moved`·`empty`) 같은 초안 번호의 쓰다 남은 임시 파일은 힘닿는 데까지 지운다 — 실패해도 본 작업은 성공이다(강제 종료로 남은 임시 파일에 사진 정보 글이 평문으로 남지 않게, 검증 S PS-10)."""
     require_confirmation(confirmed, "사진 정보를 되돌릴 사본으로 옮기기")
     if not is_draft_id(draft_id):
         raise _refuse(_R_ID)
     problem = _folder_problem(folder_path(ctx))
     if problem is not None:
         raise problem
+    folder = folder_path(ctx)
     path, target = _file_of(ctx, draft_id), _trash_of(ctx, draft_id)
     info = _lstat(path)
     if info is None:
         return "none"
     if not _plain_file(info) or (_lstat(target) is not None and not _plain_file(_lstat(target))):
         raise _refuse(_R_BROKEN)
+    manifest, state = _read_file(path, draft_id)
+    if state == "none":
+        return "none"                                      # 그 사이 사라졌다 — 옮길 것이 없다
+    empty = state == "ok" and not manifest.photos          # 멀쩡하고 사진이 0장 — 지킬 글이 없다(깨졌거나 지금 못 연 파일은 내용을 모르므로 그대로 옮긴다)
     failed = False
     try:
-        os.replace(path, target)
+        if empty:
+            path.unlink(missing_ok=True)                   # 사본으로 옮기지 않고 이 파일만 지운다 — 앞서 둔 사본은 그대로
+        else:
+            os.replace(path, target)
     except OSError:
         failed = True
     if failed:                                             # `except` 밖에서 낸다 — OS 오류(경로가 든 글)가 따라붙지 않게
-        raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보를 되돌릴 사본으로 옮기지 못했다")
-    return "moved"
+        raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보 파일을 지우지 못했다" if empty else "사진 정보를 되돌릴 사본으로 옮기지 못했다")
+    try:
+        leftovers = _leftovers(folder, draft_id)           # 쓰다 프로세스가 죽어 남은 이 번호의 임시 파일(사진 정보 글이 평문으로 든다) — 본 작업은 끝났으므로 못 찾거나 못 지워도 성공이다
+    except OSError:
+        leftovers = []
+    for temp in leftovers:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            continue
+    return "empty" if empty else "moved"
 
 
 def restore_manifest(ctx, draft_id):
     """되살린 초안에서 `사진 정보 되돌리기` — 되돌릴 사본을 사진 정보 파일 자리로 옮긴다 → `Loaded(목록, "ok")`. 사본이 없으면 `CONTENT_NOT_FOUND`. 사본을 먼저 읽어 이 초안의 멀쩡한 사진 정보인지 확인한다 —
-    깨졌거나(`CONTENT_INVALID`) 지금 못 열면 사본은 그대로 두고 거절한다. 이미 사진 정보 파일이 있으면 덮어쓰지 않고 거절한다(`CONTENT_INVALID` — 두 파일이 다 남는다)."""
+    깨졌거나(`CONTENT_INVALID`) 지금 못 열면 사본은 그대로 두고 거절한다. 이미 사진 정보 파일이 있으면 덮어쓰지 않고 거절한다(`CONTENT_INVALID` — 두 파일이 다 남는다). 단 그 파일이 **멀쩡하고 사진이 0장**이면 지킬 글이 없으므로
+    사본으로 덮어쓴다(저장한 적 있는 빈 사진 정보가 되돌리기를 영원히 막는 막다른 길을 만들지 않는다, 검증 S PS-5·Q PQ-5). 깨졌거나 지금 못 열었거나 링크·폴더인 파일은 내용을 모르므로 덮어쓰지 않는다."""
     if not is_draft_id(draft_id):
         raise _refuse(_R_ID)
     problem = _folder_problem(folder_path(ctx))
@@ -372,7 +393,9 @@ def restore_manifest(ctx, draft_id):
     if state != "ok":
         raise _refuse(_R_BROKEN)
     if _lstat(target) is not None:
-        raise _refuse(_R_EXISTS)
+        live, live_state = _read_file(target, draft_id)
+        if not (live_state == "none" or (live_state == "ok" and not live.photos)):          # 그 사이 사라졌거나 사진이 0장인 멀쩡한 파일만 덮어써도 된다 — 사진이 있거나 내용을 모르는 파일은 그대로 두고 거절한다
+            raise _refuse(_R_EXISTS)
     failed = False
     try:
         os.replace(source, target)
