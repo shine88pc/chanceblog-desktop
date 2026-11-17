@@ -175,7 +175,7 @@ class AppState:
         paired_drafts = getattr(self.provider, "drafts_provider", None)
         self.drafts_provider = drafts if drafts is not None else (paired_drafts() if paired_drafts else FakeDraftsProvider(lambda: tuple(getattr(self.candidates_provider, "candidates", ()))))
         self.drafts = DraftsController(self.drafts_provider, self.runner)
-        # 사진 정리(사진 연동 2단계, D-499) — 사진 파일을 읽기만 하는 짝 공급자(`ui/photo_adapter.py`). 사진 목록은 초안 컨트롤러(`self.drafts.photos`)가 메모리에만 들고 있다. 짝이 없으면(예시 화면·시험) 파일을 읽지 않는 가짜다
+        # 사진 정리(사진 연동 2단계, D-499) — 사진 파일을 읽기만 하는 짝 공급자(`ui/photo_adapter.py`). 사진 목록은 초안 컨트롤러(`self.drafts.photos`)가 들고 있고 저장한 초안을 저장·열기·지우기할 때 초안 공급자가 함께 다룬다(3단계). 짝이 없으면(예시 화면·시험) 파일을 읽지 않는 가짜다
         paired_photos = getattr(self.provider, "photos_provider", None)
         self.drafts.photos.provider = photos if photos is not None else (paired_photos() if paired_photos else FakePhotoProvider())
 

@@ -166,7 +166,7 @@ class ServiceHomeProvider(HomeProvider):
         return ServiceReferencesProvider(self._data_dir, context_factory=self._factory)
 
     def photos_provider(self):
-        """'사진 정리'(사진 연동 2단계, 결정 D-499)의 짝 공급자 — 사진 파일을 **읽기만** 한다(`ui/photo_adapter.py` — 파일을 쓰거나 지우거나 복사하지 않는다. 사진 목록의 저장은 3단계)."""
+        """'사진 정리'(사진 연동 2단계, 결정 D-499)의 짝 공급자 — 사진 파일을 **읽기만** 한다(`ui/photo_adapter.py` — 파일을 쓰거나 지우거나 복사하지 않는다. 사진 목록을 초안과 함께 저장·열기·지우기는 3단계(결정 D-501)에서 초안 어댑터 `ui/drafts_adapter.py` 가 하고 이 공급자는 그 일을 하지 않는다)."""
         from .photo_adapter import ServicePhotoProvider
         return ServicePhotoProvider()
 
