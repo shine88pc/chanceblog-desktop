@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_ui_drafts_save_core import drive, made_saving, saved_id  # noqa: E402
 
+from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
 from chanceblog_desktop.ui.core import drafts, text  # noqa: E402
 
 T = text.T
@@ -40,6 +41,14 @@ def store(controller, op, *args, **kwargs):
 
 def path_of(number):
     return f"C:/Users/UNIQ-USERDIR-s3x1/Pictures/UNIQ-FILE-s3x1-{number:02d}.jpg"
+
+
+def confirm(controller, number, **fields):
+    """사진 하나의 글을 고치고(있으면) 확정한다(`test_ui_photo_make_core.confirm` 과 같다 — 그 모듈이 이 모듈을 가져오므로 여기에 따로 둔다)."""
+    photo_id = pm.photo_id_of(number)
+    for name, value in fields.items():
+        controller.photos.set_text(photo_id, name, value)
+    controller.photos.confirm(photo_id, True)
 
 
 def with_photos(count=2):
@@ -305,6 +314,210 @@ class DeleteAndRestoreTest(unittest.TestCase):
         provider.photo_trash.clear()
         status, applied = store(controller, "clear")
         self.assertEqual((applied, controller.photos_trash, controller.notice), ("notfound", False, ("error", T["pho_trash_clear_fail"])))
+
+
+def opened_with_state(state, photos=2):
+    """저장한 초안을 사진 정보 파일이 깨졌거나(`broken`) 지금 못 열린(`unreadable`) 상태로 연다 — 사진 목록은 비어 있고 저장해 둔 파일(가짜 공급자의 `photo_files`)은 그대로다."""
+    controller, provider = with_photos(photos)
+    store(controller, "save")
+    draft_id = saved_id(provider)
+    controller.leave()
+    original = provider.open_saved
+    provider.open_saved = lambda *args, original=original, state=state: dataclasses.replace(original(*args), photos=None, photos_state=state)
+    store(controller, "open", draft_id)
+    return controller, provider, draft_id
+
+
+class UnsavablePhotoStateTest(unittest.TestCase):
+    """열 때 저장해 둔 사진 정보 파일이 깨졌거나 지금 못 열었으면 이 화면은 그 초안의 사진 정보를 **저장하지 않는다**(검증 S PS-2 — 잠금이 풀린 뒤 멀쩡한 파일을 소리 없이 덮던 길, D-501 ② '그 위에 저장하지 않는다').
+    저장을 시도조차 안 하므로 '다시 저장해 보세요' 가 아무리 해도 안 풀리는 일(PS-11·PQ-11)도 없고, 카드·떠나기 질문이 사실대로 '저장되지 않아요' 라고 말한다."""
+    STATES = (("broken", "pho_card_lost_broken"), ("unreadable", "pho_card_lost_unreadable"))
+
+    def test_photos_put_in_that_state_are_not_in_the_save_request_and_nothing_is_saved_for_them(self):
+        for state, card_key in self.STATES:
+            with self.subTest(state=state):
+                controller, provider, draft_id = opened_with_state(state)
+                kept = provider.photo_files[draft_id]
+                self.assertEqual((controller.photos_savable(), controller.photos_lost(), controller.has_unsaved()), (False, False, False), "사진을 안 넣었으면 잃을 것도 없다")
+                self.assertEqual(controller.photos_card()["unsaved"], "")
+                controller.photos.add_paths([path_of(7)])
+                self.assertEqual((controller.photos_unsaved(), controller.photos_lost(), controller.has_unsaved()), (False, True, True))
+                self.assertIsNone(controller._save_request().photos, "저장 요청에 사진 정보를 싣지 않는다")
+                self.assertEqual(controller.save_state(), "saved", "글은 저장한 판 그대로다")
+                self.assertEqual(controller.photos_card()["unsaved"], T[card_key])
+                status, applied = store(controller, "save")
+                self.assertEqual((status, applied), ("started", ("saved", None)))
+                self.assertIsNone(provider.save_calls[-1].photos, "저장한 요청에도 사진 정보가 없다")
+                self.assertEqual(controller.notice[0], "ok", "저장을 시도하지 않았으니 '다시 저장해 보세요' 실패 알림도 없다")
+                self.assertIs(provider.photo_files[draft_id], kept, "저장해 둔 사진 정보 파일은 건드리지 않았다")
+                self.assertTrue(controller.photos_lost() and controller.has_unsaved(), "저장한 뒤에도 사진 정보는 저장되지 않았다는 안내가 남는다")
+
+    def test_the_card_says_what_is_true_for_each_state(self):
+        broken, unreadable = T["pho_card_lost_broken"], T["pho_card_lost_unreadable"]
+        self.assertIn("읽을 수 없어서", broken)
+        self.assertIn("지금은 열 수 없어서", unreadable)
+        for sentence in (broken, unreadable):
+            self.assertIn("저장", sentence)
+            self.assertIn("이 화면을 떠나면 사라져요", sentence)
+            self.assertNotIn("다시 저장해 보세요", sentence)
+        self.assertIn("초안을 다시 열면", unreadable)
+        self.assertNotIn("초안을 다시 열면", broken, "깨진 파일은 다시 열어도 같다")
+
+    def test_leaving_asks_a_two_way_question_and_with_edited_text_a_three_way_one_that_says_the_photo_info_is_not_saved(self):
+        for state, _key in self.STATES:
+            with self.subTest(state=state):
+                controller, provider, draft_id = opened_with_state(state)
+                controller.photos.add_paths([path_of(7), path_of(8)])
+                dialog = controller.leave_dialog("leave")
+                self.assertEqual((dialog["title"], "choices" in dialog), (T["pho_leave_title"], False), "글은 그대로이고 사진 정보는 저장할 길이 없다 — 사라진다는 두 갈래")
+                self.assertEqual(dialog["body"], T["pho_leave_body"].format(n=2))
+                self.assertEqual(controller.leave_dialog("close")["body"], T["pho_close_body"].format(n=2))
+                controller.discard_leave()
+                controller.set_body(controller.body + " 고침")
+                three = controller.leave_dialog("leave")
+                self.assertEqual([choice["key"] for choice in three["choices"]], ["save", "discard", "stay"])
+                self.assertEqual(three["body"], T["drf_leave3_body"] + " " + T["pho_leave3_lost"], "`저장` 은 글만 저장한다 — 사진 정보는 저장되지 않는다고 사실대로")
+                self.assertEqual(controller.leave_dialog("close")["body"], T["drf_close3_body"] + " " + T["pho_leave3_lost"])
+
+    def test_removing_every_photo_again_leaves_nothing_to_lose(self):
+        controller, provider, draft_id = opened_with_state("broken")
+        controller.photos.add_paths([path_of(7)])
+        self.assertTrue(controller.photos_lost())
+        controller.photos.remove("p001")
+        self.assertEqual((controller.photos_lost(), controller.has_unsaved(), controller.photos_card()["unsaved"]), (False, False, ""))
+        self.assertIsNone(controller.leave_dialog("leave"))
+
+    def test_restoring_the_copy_makes_the_photo_info_savable_again(self):
+        controller, provider = with_photos()
+        store(controller, "save")
+        draft_id = deleted_and_back(controller, provider)
+        controller.photos_state = "broken"                                              # 열 때 깨졌던 것으로 본다(사본을 되돌리면 새로 시작한다)
+        self.assertFalse(controller.photos_savable())
+        status, applied = store(controller, "restore")
+        self.assertEqual((status, applied), ("started", True))
+        self.assertEqual((controller.photos_state, controller.photos_savable()), ("ok", True))
+        controller.photos.add_paths([path_of(9)])
+        self.assertEqual((controller.photos_unsaved(), controller.photos_lost()), (True, False))
+        store(controller, "save")
+        self.assertEqual(len(provider.photo_files[draft_id].photos), 3)
+
+    def test_a_draft_whose_photo_info_is_fine_behaves_as_before(self):
+        for state in ("none", "ok"):
+            with self.subTest(state=state):
+                controller, provider = with_photos(2) if state == "ok" else made_saving()
+                store(controller, "save")
+                draft_id = saved_id(provider)
+                controller.leave()
+                store(controller, "open", draft_id)
+                self.assertEqual(controller.photos_state, state)
+                controller.photos.add_paths([path_of(7)])
+                self.assertEqual((controller.photos_savable(), controller.photos_unsaved(), controller.photos_lost()), (True, True, False))
+                self.assertIsNotNone(controller._save_request().photos)
+                self.assertEqual(controller.photos_card()["unsaved"], T["pho_card_unsaved"])
+                controller.discard_leave()
+                self.assertEqual(controller.leave_dialog("leave")["body"], T["drf_leave3_body"], "글을 안 고쳤으면 세 갈래 본문 그대로")
+                controller.discard_leave()
+                controller.set_body(controller.body + " 고침")
+                self.assertEqual(controller.leave_dialog("leave")["body"], T["drf_leave3_body"], "멀쩡한 상태에서는 '저장되지 않아요' 문장이 안 붙는다")
+
+
+class ZeroPhotoAndRemakeTest(unittest.TestCase):
+    """사진이 0장인 사진 정보(검증 S PS-5·Q PQ-5)와 되돌린 직후의 '다시 만들기' 안내(Q PQ-3) — 가짜 공급자는 서비스와 같은 규칙이다(사진 0장 파일은 지울 때 사본으로 안 옮기고, 되돌리기는 0장 파일 위에 쓴다)."""
+
+    def emptied(self):
+        """사진 정보를 저장했다 지운 상태 — 되살린 초안(사본 있음)에서 사진 1장을 넣어 저장하고 다시 지워 저장해 저장해 둔 사진 정보가 사진 0장이다."""
+        controller, provider = with_photos()
+        store(controller, "save")
+        draft_id = deleted_and_back(controller, provider)
+        controller.photos.add_paths([path_of(9)])
+        store(controller, "save")
+        controller.photos.remove("p001")
+        store(controller, "save")
+        self.assertEqual(provider.photo_files[draft_id].photos, (), "저장해 둔 사진 정보는 사진 0장")
+        return controller, provider, draft_id
+
+    def test_a_photo_info_with_no_photos_is_not_made_a_copy_and_the_earlier_copy_stays(self):
+        controller, provider, draft_id = self.emptied()
+        earlier = provider.photo_trash[draft_id]
+        self.assertEqual(len(earlier.photos), 2)
+        controller.leave()
+        status, applied = delete(controller, draft_id)
+        self.assertEqual((status, applied), ("started", True))
+        self.assertIs(provider.photo_trash[draft_id], earlier, "앞선 사본은 그대로다 — 빈 사진 정보가 덮지 못한다")
+        self.assertNotIn(draft_id, provider.photo_files)
+        self.assertEqual(controller.list_notice, ("ok", T["drf_deleted_notice"]), "사본을 만들지 않았으니 사본 문장이 없다")
+
+    def test_a_zero_photo_info_with_no_earlier_copy_leaves_no_copy_at_all(self):
+        controller, provider = with_photos()
+        store(controller, "save")
+        draft_id = saved_id(provider)
+        controller.photos.remove("p001")
+        controller.photos.remove("p002")
+        store(controller, "save")
+        self.assertEqual(provider.photo_files[draft_id].photos, ())
+        controller.leave()
+        delete(controller, draft_id)
+        self.assertEqual((provider.photo_trash, provider.photo_files, controller.list_notice), ({}, {}, ("ok", T["drf_deleted_notice"])))
+
+    def test_restoring_writes_over_a_saved_photo_info_with_no_photos_so_the_button_is_never_a_dead_end(self):
+        controller, provider, draft_id = self.emptied()
+        self.assertTrue(controller.photos_card()["trash"]["restore_enabled"], "화면에 사진이 없으니 단추가 켜져 있다")
+        status, applied = store(controller, "restore")
+        self.assertEqual((status, applied), ("started", True), "켜진 단추가 영구 거절이 되지 않는다")
+        self.assertEqual((controller.photos.count, controller.photos_trash, controller.notice), (2, False, ("ok", T["pho_restored_notice"])))
+        self.assertEqual(len(provider.photo_files[draft_id].photos), 2)
+        self.assertNotIn(draft_id, provider.photo_trash)
+
+    def test_restoring_never_writes_over_a_saved_photo_info_that_has_photos(self):
+        controller, provider = with_photos()
+        store(controller, "save")
+        draft_id = deleted_and_back(controller, provider)
+        controller.photos.add_paths([path_of(9)])
+        store(controller, "save")
+        saved = provider.photo_files[draft_id]
+        controller.photos.remove("p001")                                                # 저장 전 목록은 비어 단추는 켜지지만 저장해 둔 사진 정보에는 사진이 있다
+        self.assertTrue(controller.photos_card()["trash"]["restore_enabled"])
+        status, applied = store(controller, "restore")
+        self.assertEqual(applied, "invalid")
+        self.assertEqual(controller.notice, ("error", drafts.PHOTO_EXISTS_REASON))
+        self.assertIs(provider.photo_files[draft_id], saved)
+        self.assertIn(draft_id, provider.photo_trash, "사본도 그대로다")
+
+    def test_the_blocked_reason_also_says_a_saved_photo_info_with_photos_blocks_it(self):
+        controller, provider = with_photos()
+        store(controller, "save")
+        deleted_and_back(controller, provider)
+        self.assertEqual(controller.photos_card()["trash"]["restore_note"], "")
+        controller.photos.add_paths([path_of(9)])
+        note = controller.photos_card()["trash"]["restore_note"]
+        self.assertEqual(note, T["pho_restore_blocked"])
+        self.assertIn("사진을 모두 지운 뒤에 되돌려 주세요", note)
+        self.assertIn("저장해 둔 사진 정보에 사진이 있으면 그때도 되돌릴 수 없어요", note)
+
+    def restored_with(self, slots):
+        """사진 둘을 확정해 만들고(slots=True 면 본문에 자리가 들어가게 다시 만든다) 저장·지움·되살림·열기 뒤 `사진 정보 되돌리기` 까지 한 컨트롤러."""
+        controller, provider = made_saving()
+        controller.photos.add_paths([path_of(1), path_of(2)])
+        confirm(controller, 1, user_subject="매장 입구 간판")
+        confirm(controller, 2)
+        if slots:
+            drive(controller)
+        store(controller, "save")
+        deleted_and_back(controller, provider)
+        status, applied = store(controller, "restore")
+        self.assertEqual((status, applied), ("started", True))
+        self.assertEqual(controller.photos.count, 2)
+        return controller
+
+    def test_after_restoring_the_card_does_not_ask_for_a_remake_when_the_body_already_has_the_slots(self):
+        controller = self.restored_with(slots=True)
+        self.assertEqual(controller.photo_gate_lines("body")[0], (), "본문의 자리와 되돌린 사진은 어긋남이 없다")
+        self.assertEqual(controller.photos_card()["remake"], "", "어긋남이 없으면 '다시 만들기' 안내도 없다")
+
+    def test_after_restoring_the_card_still_asks_for_a_remake_when_the_body_has_no_slots_for_the_photos(self):
+        controller = self.restored_with(slots=False)
+        self.assertNotEqual(controller.photo_gate_lines("body")[0], (), "본문에 자리가 없으니 어긋남이 있다")
+        self.assertEqual(controller.photos_card()["remake"], T["pho_card_remake"], "본문에 반영하려면 다시 만들어야 한다")
 
 
 class LeaveWithFailedPhotosTest(unittest.TestCase):

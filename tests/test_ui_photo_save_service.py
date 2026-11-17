@@ -177,9 +177,59 @@ class SaveAndOpenTest(Base):
         self.assertIn(T["pho_open_broken"], again.notice[1])
         self.assertEqual(ss.tree_snapshot(self.setup.world.tmp), before, "열기는 읽기뿐이다")
         again.photos.add_paths(self.paths)
+        self.assertEqual((again.photos_lost(), again.photos_unsaved(), again.photos_card()["unsaved"]), (True, False, T["pho_card_lost_broken"]))
         store(again, "save")
-        self.assertEqual(again.notice[0], "error", "그 위에는 저장하지 않는다")
+        self.assertEqual(again.notice[0], "ok", "그 위에는 저장을 시도하지도 않는다 — 사진 정보는 저장하지 않고 카드가 그렇게 말한다(검증 S PS-2)")
         self.assertEqual(self.folder.read_text(encoding="utf-8"), "폴더가 아니라 파일이다")
+
+    def test_a_photo_file_that_was_unreadable_or_broken_when_opened_is_not_overwritten_by_a_later_save(self):
+        """검증 S PS-2(S 재현 s2_flow.py UnreadableThenOverwrite): 열 때 못 열었거나 깨졌던 파일 위에, 잠금이 풀린 뒤 사진을 넣고 저장해도 멀쩡한 기존 파일을 덮지 않는다."""
+        for state in ("unreadable", "broken"):
+            with self.subTest(state=state):
+                controller, draft_id = self.saved_with_photos()
+                file = self.folder / f"{draft_id}.json"
+                if state == "broken":
+                    file.write_text("{ 깨진 글 }", encoding="utf-8")
+                before = (file.read_bytes(), file.stat().st_mtime_ns)
+                controller.leave()
+                again = fresh(self.setup)
+                store(again, "list")
+                if state == "unreadable":
+                    with mock.patch.object(svc, "_pause"), mock.patch.object(svc.own_posts, "_read_prefix", return_value=(None, svc.own_posts._R_MISSING)):
+                        store(again, "open", draft_id)
+                else:
+                    store(again, "open", draft_id)
+                self.assertEqual((again.photos_state, again.photos.count), (state, 0))
+                again.photos.add_paths(self.paths)                                       # 잠금이 풀린 뒤(막던 것이 없다) 사진을 넣고 글도 고쳐 저장한다
+                again.set_body(again.body + " 글도 고침")
+                self.assertIsNone(again._save_request().photos, "저장 요청에 사진 정보를 싣지 않는다")
+                store(again, "save")
+                self.assertEqual(again.notice[0], "ok", "사진 정보 실패 알림이 아니다 — 저장을 시도하지도 않았다")
+                self.assertEqual((file.read_bytes(), file.stat().st_mtime_ns), before, "저장해 둔 사진 정보 파일은 바이트도 수정 시각도 그대로다")
+                self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [file.name], ".bak 도 안 만들었다")
+                self.assertEqual(draft_store.load_draft(self.setup.ctx, draft_id).body, again.body, "글은 저장됐다")
+                self.assertEqual((again.photos_lost(), again.photos_unsaved(), again.photos_card()["unsaved"]), (True, False, T["pho_card_lost_" + state]))
+
+    def test_the_adapter_never_asks_the_service_to_keep_analysis_results(self):
+        """검증 S PS-3 ④(변이 AD6 = PS-6): 분석 결과 저장 기본 끔은 운영자의 절대 조건이다 — 메모리에 확인 전 분석 항목이 있어도 어댑터는 `persist_analysis` 를 켜지 않고 파일에도 그 글이 없다."""
+        controller = self.with_photos()
+        manifest, dropped = pm.set_analysis(controller.photos.manifest, "p001", method="local:test-plugin", objects=[MARKER + "-obj"], texts=[MARKER + "-txt"])
+        self.assertEqual(dropped, 0)
+        controller.photos.manifest = manifest
+        self.assertEqual(controller.photos.manifest.photo("p001").observed_objects[0].text, MARKER + "-obj", "분석 항목이 메모리에 있다")
+        calls, real = [], svc.save_manifest
+
+        def spy(*args, **kwargs):
+            calls.append(kwargs)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(svc, "save_manifest", side_effect=spy):
+            store(controller, "save")
+        self.assertEqual(len(calls), 1, "사진 정보 저장은 서비스를 한 번 불렀다")
+        self.assertFalse([call for call in calls if call.get("persist_analysis")], "어댑터는 분석 결과를 남기라고 하지 않는다")
+        text = (self.folder / f"{controller.saved_id}.json").read_text(encoding="utf-8")
+        for leaked in (MARKER + "-obj", MARKER + "-txt", "local:test-plugin"):
+            self.assertNotIn(leaked, text)
 
     def test_the_picture_files_are_never_touched(self):
         before = self.picture_state()
@@ -266,6 +316,53 @@ class DeleteAndRestoreTest(Base):
         self.assertEqual(again.notice, ("error", drafts.PHOTO_EXISTS_REASON))
         self.assertEqual(((self.folder / f"{draft_id}.json").read_bytes(), (self.folder / f"{draft_id}.json.trash").read_bytes()), (live, trash))
 
+    def emptied(self):
+        """되살린 초안에서 사진 1장을 넣어 저장하고 다시 지워 저장해, 디스크에 사진 0장짜리 사진 정보 파일이 남은 상태(검증 S 재현 s11_misc.py) — 앞선 2장짜리 사본이 있다."""
+        again, draft_id, original = self.deleted_and_back()
+        again.photos.add_paths(self.paths[:1])
+        store(again, "save")
+        again.photos.remove("p001")
+        store(again, "save")
+        self.assertEqual(svc.load_manifest(self.setup.ctx, draft_id).manifest.photos, (), "디스크에 사진 0장짜리 파일이 남는다")
+        self.assertTrue((self.folder / f"{draft_id}.json").exists())
+        return again, draft_id, original
+
+    def test_a_draft_that_cannot_be_deleted_keeps_its_photo_file_in_place_and_makes_no_copy(self):
+        """검증 S PS-3 ③(변이 AD3·AD7): 초안을 못 지웠는데 사진 정보를 사본으로 옮기면 안 된다."""
+        controller, draft_id = self.saved_with_photos()
+        file = self.folder / f"{draft_id}.json"
+        before = (file.read_bytes(), file.stat().st_mtime_ns)
+        controller.leave()
+        with mock.patch.object(draft_store, "delete_draft", side_effect=AppError("FILE_WRITE_FAILED", {"경로": MARKER}, detail=MARKER)):
+            status, applied = self.delete(controller, draft_id)
+        self.assertEqual((status, applied), ("started", True))
+        self.assertEqual(controller.list_notice, ("error", T["drf_deletefail"]))
+        self.assertNotIn(MARKER, repr(controller.list_notice))
+        self.assertEqual((file.read_bytes(), file.stat().st_mtime_ns), before, "초안을 못 지웠으면 사진 정보는 그대로 둔다")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [file.name], "되돌릴 사본이 안 생겼다")
+        self.assertEqual([entry.draft_id for entry in draft_store.list_drafts(self.setup.ctx).entries], [draft_id], "초안은 그대로 있다")
+
+    def test_restoring_over_a_saved_photo_file_with_no_photos_works_so_the_button_is_never_a_dead_end(self):
+        again, draft_id, original = self.emptied()
+        self.assertTrue(again.photos_card()["trash"]["restore_enabled"], "화면에 사진이 없으니 단추가 켜져 있다")
+        status, applied = store(again, "restore")
+        self.assertEqual((status, applied), ("started", True), "켜진 단추가 영구 거절이 되지 않는다")
+        self.assertEqual((again.photos.count, again.photos_trash, again.notice), (2, False, ("ok", T["pho_restored_notice"])))
+        self.assertEqual((self.folder / f"{draft_id}.json").read_bytes(), original, "사본의 바이트 그대로")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [f"{draft_id}.json"])
+
+    def test_deleting_a_draft_whose_photo_file_has_no_photos_keeps_the_earlier_copy_and_does_not_mention_a_copy(self):
+        again, draft_id, original = self.emptied()
+        trash = self.folder / f"{draft_id}.json.trash"
+        before = (trash.read_bytes(), trash.stat().st_mtime_ns)
+        again.leave()
+        status, applied = self.delete(again, draft_id)
+        self.assertEqual((status, applied), ("started", True))
+        self.assertEqual(again.list_notice, ("ok", T["drf_deleted_notice"]), "사본을 만들지 않았으니 사본 문장이 없다")
+        self.assertEqual((trash.read_bytes(), trash.stat().st_mtime_ns), before, "앞선 사본은 바이트도 수정 시각도 그대로다")
+        self.assertEqual(trash.read_bytes(), original)
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [trash.name], "0장짜리 사진 정보 파일은 지웠다")
+
     def test_the_fake_and_the_real_sentences_agree_for_an_existing_file(self):
         self.assertEqual(svc._R_EXISTS, drafts.PHOTO_EXISTS_REASON)
 
@@ -351,6 +448,27 @@ class MakeTest(Base):
         self.regen(controller)
         self.assertEqual((controller.title, controller.body), first, "확정하지 않았으면 본문이 같다")
         self.assertEqual(pm.find_placeholders(controller.body), ())
+
+    def test_after_restoring_the_copy_the_card_does_not_ask_for_a_remake_when_the_body_already_has_the_slots(self):
+        """검증 Q PQ-3(Q 재현 pure_q10.py): 지운 초안을 되살려 사진 정보를 되돌리면 본문에 이미 그 사진들의 자리가 있고 어긋남도 없다 — 다시 만들라고 하지 않는다."""
+        controller = self.made_with_photos()
+        store(controller, "save")
+        draft_id = controller.saved_id
+        draft = draft_store.load_draft(self.setup.ctx, draft_id)
+        controller.leave()
+        store(controller, "list")
+        controller.delete_dialog(draft_id)
+        store(controller, "delete")
+        draft_store.save_draft(self.setup.ctx, title=draft.title, body=draft.body, blog=draft.blog, post_type=draft.post_type, draft_id=draft_id)          # 백업에서 되살린 것처럼 같은 번호로 다시 생긴다
+        again = fresh(self.setup)
+        store(again, "list")
+        store(again, "open", draft_id)
+        self.assertEqual((again.photos.count, again.photos_trash, again.photos_card()["remake"]), (0, True, ""))
+        status, applied = store(again, "restore")
+        self.assertEqual((status, applied), ("started", True))
+        self.assertEqual(again.photos.count, 2)
+        self.assertTrue(pm.placeholder_report(again.photos.manifest, again.body).ok)
+        self.assertEqual(again.photos_card()["remake"], "", "본문에 이미 그 사진들의 자리가 있고 어긋남이 없다 — 다시 만들라고 하지 않는다")
 
     def test_the_placed_body_is_saved_and_comes_back_with_its_photos_and_no_remake_note(self):
         controller = self.made_with_photos()

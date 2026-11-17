@@ -298,13 +298,25 @@ class DraftsController:
         return self.result is not None and rules.options_dict(self.fields) != dict(self.result.options)
 
     def has_unsaved(self):
-        """떠나거나 닫을 때 확인해야 할 고친 내용이 있는가 — 글(`text_unsaved`)이거나 사진 정보(`photos_unsaved`)."""
-        return self.text_unsaved() or self.photos_unsaved()
+        """떠나거나 닫을 때 확인해야 할 고친 내용이 있는가 — 글(`text_unsaved`)이거나 사진 정보(`photos_unsaved`)이거나 저장할 길 없이 넣어 둔 사진 정보(`photos_lost`)."""
+        return self.text_unsaved() or self.photos_unsaved() or self.photos_lost()
+
+    def photos_savable(self):
+        """이 화면에서 이 초안의 사진 정보를 저장할 수 있는가 — 열 때 저장해 둔 사진 정보 파일이 깨졌거나(`broken`) 지금 못 열었다면(`unreadable`) 그 파일을 덮어쓰지 않으려고 저장하지 않는다(D-501 ② '그 위에 저장하지 않는다' — 잠금이 풀린 뒤
+        멀쩡한 파일을 소리 없이 덮던 길을 막는다, 검증 S PS-2). 저장 요청에 사진 정보를 싣지 않으므로 '다시 저장해 보세요' 가 아무리 해도 안 풀리는 일(PS-11·PQ-11)도 없다."""
+        return self.photos_state not in ("broken", "unreadable")
+
+    def photos_lost(self):
+        """넣어 둔 사진 정보가 이 화면을 떠나면 사라지는데 저장할 길도 없나 — 초안이 아직 없거나(`result is None`) 저장할 수 없는 상태(`photos_savable` 거짓)에서 사진을 넣었다. 사진이 없으면 잃을 것도 없다."""
+        return self.photos.count > 0 and (self.result is None or not self.photos_savable())
 
     def photos_unsaved(self):
-        """사진 정보를 고쳤는데 아직 저장하지 않았나 — 저장한(또는 연) 사진 정보와 다르면 참이다(사진을 한 번도 안 넣었으면 늘 거짓 — 사진이 없으면 초안은 지금과 같다)."""
+        """사진 정보를 고쳤는데 아직 저장하지 않았나 — 저장한(또는 연) 사진 정보와 다르면 참이다(사진을 한 번도 안 넣었으면 늘 거짓 — 사진이 없으면 초안은 지금과 같다). 저장할 수 없는 상태(`photos_savable` 거짓)는 '고쳤는데 저장 안 함' 이 아니라
+        '저장되지 않아요' 라 거짓이다(`photos_lost` 가 알린다 — 저장 요청에도 안 싣는다)."""
         if self.result is None:                             # 초안이 아직 없다(초안을 만들기 전에 사진부터 넣었다) — 사진 정보를 저장할 곳이 없으므로 사진이 하나라도 있으면 떠날 때 사라진다(검증 Q N-2)
             return self.photos.count > 0
+        if not self.photos_savable():
+            return False
         return self.photos.differs_from(self.photos_baseline)
 
     def text_unsaved(self):
@@ -371,11 +383,12 @@ class DraftsController:
             return None
         self.leave_asked = kind
         closing = kind == "close"
-        if self.result is None and self.photos.count:       # 초안이 없어 사진 정보를 저장할 수 없다 — 사진 정보가 사라진다는 두 갈래 확인창(검증 Q N-2 — 사진이 없으면 이 갈래를 타지 않는다)
+        lost = self.photos_lost()
+        if lost and not self.text_unsaved():                # 초안이 없거나 저장할 수 없는 상태라 사진 정보를 저장할 길이 없고 글은 그대로다 — 사진 정보가 사라진다는 두 갈래 확인창(검증 Q N-2 — 사진이 없으면 이 갈래를 타지 않는다)
             return {"title": T["pho_leave_title"], "body": T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count), "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
         if self.can_save:
             discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
-            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"], "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
+            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"] + ((" " + T["pho_leave3_lost"]) if lost else ""), "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
                     "choices": [{"key": "save", "text": T["drf_choice_save"], "kind": "primary"}, {"key": "discard", "text": discard, "kind": "danger"}, {"key": "stay", "text": T["drf_choice_stay"], "kind": "secondary"}],
                     "first": "save", "after": kind}
         return {"title": T["drf_leave_title"], "body": T["drf_close_body"] if closing else T["drf_leave_body"], "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
@@ -649,6 +662,8 @@ class DraftsController:
         """오른쪽 '사진' 카드 — 사진 목록의 카드에 '고쳤는데 저장 안 함' 안내와 되돌릴 사본의 단추(되돌리기·비우기)를 더한다. 사진이 있으면 되돌리기는 꺼진다(지금 사진을 덮어쓰지 않는다)."""
         trash = self.can_save and self.saved_id is not None and self.photos_trash
         card = self.photos.card(unsaved=self.photos_unsaved(), trash=trash)
+        if self.result is not None and self.photos_lost():                              # 저장할 수 없는 상태 — 카드가 '저장되지 않아요' 를 지속 안내로 말한다(깨짐·못 엶 상태별 문장)
+            card["unsaved"] = T["pho_card_lost_" + self.photos_state]
         current = self._photos_to_place() if self.result is not None else None
         card["remake"] = T["pho_card_remake"] if current is not None and current != self.made_photos else ""          # 만든 뒤 확정한 사진·자리·글이 바뀌었다 — 본문은 몰래 고치지 않는다
         if card["trash"] is not None:
