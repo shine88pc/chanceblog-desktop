@@ -887,6 +887,17 @@ class TrashTest(Base):
         self.assertEqual((loaded.state, loaded.manifest.photos), ("ok", ()))
         return self.file(draft_id).read_bytes()
 
+    def emptied(self, draft_id=DRAFT_A, count=6):
+        """사진을 `count` 장까지 넣어 저장했다 모두 지우고 다시 저장한 모양 — 디스크에 사진 0장이고 **사진 번호 예약이 count + 1** 인 멀쩡한 파일이 남는다(지운 번호는 다시 쓰지 않는다). 그 파일의 바이트를 돌려준다."""
+        manifest = sample(count)
+        svc.save_manifest(self.ctx, draft_id, manifest)
+        for number in range(1, count + 1):
+            manifest = pm.remove_photo(manifest, f"p{number:03d}")
+        svc.save_manifest(self.ctx, draft_id, manifest)
+        loaded = svc.load_manifest(self.ctx, draft_id)
+        self.assertEqual((loaded.state, loaded.manifest.photos, loaded.manifest.next_number), ("ok", (), count + 1))
+        return self.file(draft_id).read_bytes()
+
     def reset(self):
         """폴더 안을 모두 비워 다음 경우를 깨끗하게 시작한다(폴더 자리에 만든 폴더도)."""
         if not self.folder.exists():
@@ -1126,6 +1137,54 @@ class TrashTest(Base):
         self.assertEqual(self.file().read_bytes(), original, "사진 0장짜리 파일 자리에 사본이 바이트 그대로 들어왔다")
         self.assertFalse(self.trash().exists())
         self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [self.file().name])
+
+    def test_restoring_over_an_empty_file_that_holds_a_bigger_number_reservation_keeps_the_bigger_number(self):
+        """검증 S PS-14 — 0장 파일(사진 6장까지 넣었다 지움 → 다음 번호 7) 위에 사본(2장, 다음 번호 3)을 되돌리면 번호 예약이 3 으로 돌아가 새 사진이 지운 번호를 물려받았다. 큰 쪽(7)을 쓴다."""
+        copy = self.saved(count=2, user_note=UNIQ_NOTE)
+        self.assertEqual(copy.next_number, 3)
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        self.emptied(count=6)
+        loaded = svc.restore_manifest(self.ctx, DRAFT_A)
+        self.assertEqual((loaded.state, loaded.manifest.photos, loaded.manifest.next_number), ("ok", copy.photos, 7), "사진은 사본의 2장이고 번호 예약은 큰 쪽이다")
+        on_disk = svc.load_manifest(self.ctx, DRAFT_A)
+        self.assertEqual((on_disk.state, on_disk.manifest), ("ok", loaded.manifest), "디스크의 파일도 같다")
+        self.assertFalse(self.trash().exists(), "사본은 사라졌다")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [self.file().name], "임시 파일도 남지 않았다")
+        _added, new_id = pm.add_photo(loaded.manifest, win("new.jpg"), photo_type="음식")
+        self.assertEqual(new_id, "p007", "새 사진은 지운 번호(3~6)를 물려받지 않는다")
+
+    def test_restoring_over_an_empty_file_with_an_equal_or_smaller_reservation_copies_the_copy_byte_for_byte(self):
+        """0장 파일의 번호 예약이 사본의 것과 같거나 작으면 다시 쓰지 않는다 — 사진 정보 파일이 사본의 바이트 그대로다(예전 동작·기존 시험과 같다)."""
+        for name in ("같은 예약(3)", "작은 예약(1)"):
+            with self.subTest(live=name):
+                self.reset()
+                self.saved(count=2, user_note=UNIQ_NOTE)
+                original = self.file().read_bytes()
+                svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+                if name.startswith("같은"):
+                    self.emptied(count=2)                                                 # 2장까지 넣었다 지움 — 다음 번호 3 (사본과 같다)
+                else:
+                    self.saved_empty()                                                    # 1장을 넣었다 지움이 아니라 빈 목록 — 다음 번호 1 (사본의 3 보다 작다)
+                loaded = svc.restore_manifest(self.ctx, DRAFT_A)
+                self.assertEqual((loaded.state, loaded.manifest.next_number, len(loaded.manifest.photos)), ("ok", 3, 2))
+                self.assertEqual(self.file().read_bytes(), original, "사본 바이트 그대로 — 다시 쓰지 않았다")
+                self.assertFalse(self.trash().exists())
+
+    def test_a_failed_rewrite_of_the_number_reservation_leaves_the_restore_done_with_the_copys_bytes(self):
+        """큰 값으로 다시 쓰다 실패해도 되돌리기는 이미 끝났다 — 사진 정보 파일은 사본의 바이트 그대로이고 예약은 사본의 값(알려 둔 한계)이며 실패의 글(경로·표식)은 어디에도 안 남는다."""
+        self.saved(count=2, user_note=UNIQ_NOTE)
+        original = self.file().read_bytes()
+        svc.trash_manifest(self.ctx, DRAFT_A, confirmed=True)
+        self.emptied(count=6)
+        marker = "UNIQ-REWRITE-w5r1"
+        with mock.patch.object(svc, "write_json", side_effect=AppError("FILE_WRITE_FAILED", {"경로": marker}, detail=marker)):
+            loaded = svc.restore_manifest(self.ctx, DRAFT_A)
+        self.assertEqual((loaded.state, loaded.manifest.next_number, len(loaded.manifest.photos)), ("ok", 3, 2), "되돌리기는 끝났다 — 예약은 사본의 값 그대로")
+        self.assertEqual(self.file().read_bytes(), original, "사진 정보 파일은 사본의 바이트 그대로")
+        self.assertFalse(self.trash().exists())
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [self.file().name], "임시 파일도 남지 않았다")
+        self.assertNotIn(marker, repr(loaded))
+        self.assertNotIn(self.tmp.name, repr(loaded))
 
     def test_restoring_still_refuses_over_a_file_with_photos_or_one_that_cannot_be_trusted(self):
         self.saved(count=2, user_note=UNIQ_NOTE)

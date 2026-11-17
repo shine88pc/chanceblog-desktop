@@ -378,7 +378,9 @@ def trash_manifest(ctx, draft_id, *, confirmed):
 def restore_manifest(ctx, draft_id):
     """되살린 초안에서 `사진 정보 되돌리기` — 되돌릴 사본을 사진 정보 파일 자리로 옮긴다 → `Loaded(목록, "ok")`. 사본이 없으면 `CONTENT_NOT_FOUND`. 사본을 먼저 읽어 이 초안의 멀쩡한 사진 정보인지 확인한다 —
     깨졌거나(`CONTENT_INVALID`) 지금 못 열면 사본은 그대로 두고 거절한다. 이미 사진 정보 파일이 있으면 덮어쓰지 않고 거절한다(`CONTENT_INVALID` — 두 파일이 다 남는다). 단 그 파일이 **멀쩡하고 사진이 0장**이면 지킬 글이 없으므로
-    사본으로 덮어쓴다(저장한 적 있는 빈 사진 정보가 되돌리기를 영원히 막는 막다른 길을 만들지 않는다, 검증 S PS-5·Q PQ-5). 깨졌거나 지금 못 열었거나 링크·폴더인 파일은 내용을 모르므로 덮어쓰지 않는다."""
+    사본으로 덮어쓴다(저장한 적 있는 빈 사진 정보가 되돌리기를 영원히 막는 막다른 길을 만들지 않는다, 검증 S PS-5·Q PQ-5). 깨졌거나 지금 못 열었거나 링크·폴더인 파일은 내용을 모르므로 덮어쓰지 않는다.
+    덮어쓴 0장 파일의 사진 번호 예약(`next_number`)이 사본의 것보다 크면 **큰 쪽**을 쓴다 — 사본의 작은 값으로 돌아가면 지운 사진 번호를 새 사진이 물려받아 본문에 남은 옛 `{{사진 N}}` 자리와 겹친다(검증 S PS-14).
+    큰 값으로 다시 쓰다 실패해도 되돌리기는 이미 끝났다(사본의 바이트가 사진 정보 파일이다 — 예약은 사본의 값 그대로)."""
     if not is_draft_id(draft_id):
         raise _refuse(_R_ID)
     problem = _folder_problem(folder_path(ctx))
@@ -392,10 +394,13 @@ def restore_manifest(ctx, draft_id):
         raise _refuse(_R_UNREADABLE)
     if state != "ok":
         raise _refuse(_R_BROKEN)
+    reserve = 0                                            # 덮어쓸 0장 파일이 쥐고 있던 사진 번호 예약(없으면 0)
     if _lstat(target) is not None:
         live, live_state = _read_file(target, draft_id)
         if not (live_state == "none" or (live_state == "ok" and not live.photos)):          # 그 사이 사라졌거나 사진이 0장인 멀쩡한 파일만 덮어써도 된다 — 사진이 있거나 내용을 모르는 파일은 그대로 두고 거절한다
             raise _refuse(_R_EXISTS)
+        if live_state == "ok":
+            reserve = live.next_number
     failed = False
     try:
         os.replace(source, target)
@@ -403,6 +408,16 @@ def restore_manifest(ctx, draft_id):
         failed = True
     if failed:
         raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보를 되돌리지 못했다")
+    if reserve > manifest.next_number:                     # 0장 파일의 예약이 사본의 것보다 크다 — 큰 쪽으로 한 번 더 쓴다(`save_manifest` 의 같은 원자적 쓰기). 다시 쓰기가 실패해도 되돌리기는 끝났으니 사본의 값 그대로 돌려준다
+        merged = dataclasses.replace(manifest, next_number=reserve)
+        rewrite = None
+        try:
+            save_manifest(ctx, draft_id, merged)
+        except AppError as error:
+            rewrite = error.code
+            error.__traceback__ = None                     # 호출 흔적이 붙드는 경로를 놓는다
+        if rewrite is None:
+            manifest = merged
     return Loaded(manifest, "ok")
 
 
