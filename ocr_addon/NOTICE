@@ -1,0 +1,12 @@
+ocr_addon — 글자 읽기 추가 도구 안내문
+
+이 폴더의 소스는 이 프로젝트가 만든 것입니다. 추가 도구를 빌드하면 아래 제3자 구성요소가 묶음에 들어갑니다.
+구성요소 이름·버전·해시는 requirements-ocr.lock 에, 라이선스 표기는 빌드가 만드는 정보 파일(OCR_INFO.json)에 있습니다.
+
+- RapidOCR(Apache-2.0)와 ONNX Runtime(MIT) — 글자를 읽는 엔진
+- PP-OCRv5 한국어 인식 모델과 글자 사전 — 원본은 PaddleOCR 에서 나왔습니다(라이선스 본문은 빌드 전에 따로 확인합니다)
+- OpenCV(headless)·NumPy·Pillow·Shapely·pyclipper 등 — 이미지 처리
+- certifi·tqdm(MPL-2.0) — 고치지 않은 채 묶음에 들어갈 때는 라이선스 전문과 PyPI 에서 소스를 받을 수 있다는 안내를 함께 둡니다
+
+법률 자문이 아닙니다. 현재 채널은 개인 PC 제한 시험용이며, 공개 배포 전에는 구성요소별 고지를 다시 점검합니다.
+빌드가 모아 두는 LICENSES 폴더와 THIRD_PARTY_NOTICES 표는 빌드 흐름을 정하는 단계(B3)에서 연결합니다.
