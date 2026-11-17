@@ -63,6 +63,7 @@ class DraftRequest:
     blog: object = None                                      # `naver_a`·`naver_b` 또는 None(후보 기준)
     post_type: object = None                                 # 다섯 글 유형 중 하나 또는 None(후보 기준)
     options: dict = None                                     # {칸 이름: 글} — 비어 있는 칸은 없다(`draft_rules.options_dict`)
+    photos: tuple = ()                                       # 본문에 넣을 사진 — 확정한 것만 담은 `DraftPhoto` 들(경로·파일 이름 없음). 비어 있으면 지금과 같다(사진 연동 3단계)
 
 
 @dataclass(frozen=True)
@@ -101,14 +102,30 @@ class SaveRequest:
     base: object = None                                      # {"title", "titles", "body", "checks", "domain", "replaced"} 또는 None
     draft_id: object = None
     expected_revision: object = None
+    photos: object = None                                    # 사진 정보(`PhotoManifest`) — None 이면 사진 정보는 건드리지 않는다(사진 정리를 한 번도 안 연 것과 같다)
 
 
 @dataclass(frozen=True)
 class SavedOutcome:
-    """저장이 끝났다 — 저장한 초안의 번호·저장 횟수·고친 시각."""
+    """저장이 끝났다 — 저장한 초안의 번호·저장 횟수·고친 시각. `photos`: 사진 정보를 함께 저장한 결과 — `none`(건드리지 않았다·사진이 없다) · `saved` · `failed`(초안은 저장했고 사진 정보만 못 저장했다 — `photos_problem` 에 고정 문장)."""
     draft_id: str
     revision: int
     updated_at: str
+    photos: str = "none"
+    photos_problem: str = ""
+
+
+@dataclass(frozen=True)
+class DeletedOutcome:
+    """저장한 초안을 지웠다 — 번호와 사진 정보의 처리: `none`(사진 정보가 없었다) · `trash`(되돌릴 사본으로 옮겨 뒀다 — 운영자 확인 024) · `failed`(옮기지 못했다 — 사진 정보 파일은 그대로 남아 있다)."""
+    draft_id: str
+    photos: str = "none"
+
+
+@dataclass(frozen=True)
+class PhotosRestored:
+    """되돌릴 사본에서 사진 정보를 되돌렸다 — 되돌린 사진 정보(`PhotoManifest`)."""
+    manifest: object
 
 
 @dataclass(frozen=True)
@@ -147,6 +164,9 @@ class OpenedResult:
     title: str = ""                                          # 저장한 제목(편집기에 그대로 들어간다)
     body: str = ""                                           # 저장한 본문
     post_type_choice: object = None                          # 저장할 때 화면에서 고른 글 유형(None = 후보 기준)
+    photos: object = None                                    # 저장한 사진 정보(`PhotoManifest`) — 없거나 못 읽었으면 None
+    photos_state: str = "none"                               # `none`(없다) · `ok` · `broken`(깨졌다) · `unreadable`(지금 못 연다)
+    photos_trash: bool = False                               # 되돌릴 사본이 있다(`사진 정보 되돌리기` 를 보인다)
 
 
 @dataclass(frozen=True)
@@ -197,6 +217,22 @@ def save_failure(error):
     return DraftFailure(T[SAVE_SENTENCE_OF_KIND[kind]].format(reason=reason) if kind == "limit" else T[SAVE_SENTENCE_OF_KIND[kind]], code=code, kind=kind, reason=reason)
 
 
+PHOTO_EXISTS_REASON = "이미 사진 정보가 있어서 되돌리지 않았어요"                       # 서비스(`service/photo_manifest.py`)의 고정 문장과 같다(시험이 견준다)
+
+
+def photo_failure(error, fallback_key="pho_restore_fail"):
+    """사진 정보를 되돌리거나 사본을 비우다 난 서비스 오류 → 화면용 실패 — 서비스가 정한 고정 이유 문장(경로·글 없음)이 있으면 그것, 없는 사본이면 `되돌릴 사본이 없어요`, 그 밖은 `fallback_key` 의 쉬운 말이다. 오류의 세부는 화면에 나가지 않는다."""
+    from .photo_view import reason_of
+    code = str(getattr(error, "code", "") or "")
+    if code == "CONTENT_NOT_FOUND":
+        return DraftFailure(T["pho_restore_missing"], code=code, kind="notfound")
+    if code == "CONTENT_INVALID":
+        sentence = reason_of(error)
+        if sentence != T["pho_fail_other"]:
+            return DraftFailure(sentence, code=code, kind="invalid")
+    return DraftFailure(T[fallback_key], code=code, kind=SAVE_KIND_OF_CODE.get(code, "other"))
+
+
 def secret_failure(findings, code="DRAFT_SECRET_FOUND"):
     """키·토큰 모양을 찾았다는 실패 — 안내는 위치(칸·줄)와 종류와 고치는 법뿐이다('만든 초안' 칸에서 찾았으면 전용 문구 — 서비스와 같은 `saved_draft.secret_advice`)."""
     from ...content import saved_draft as sd
@@ -235,6 +271,14 @@ class DraftsProvider:
         raise NotImplementedError
 
     def delete_saved(self, draft_id, progress, cancelled):
+        raise NotImplementedError
+
+    def restore_photos(self, draft_id, progress, cancelled):
+        """되살린 초안에서 `사진 정보 되돌리기` — 되돌릴 사본을 사진 정보로 되돌린다 → `PhotosRestored`."""
+        raise NotImplementedError
+
+    def clear_photos_trash(self, draft_id, progress, cancelled):
+        """`사진 정보 사본 비우기` — 되돌릴 사본을 지운다."""
         raise NotImplementedError
 
 
@@ -280,6 +324,7 @@ class FakeDraftsProvider(DraftsProvider):
         self.calls = []
         self.saving = bool(saving)                                                   # 참이면 `저장`·`저장한 초안` 이 켜진다(메모리에서만 — 앱을 닫으면 사라진다). 기본은 꺼짐
         self.save_fail, self.save_calls, self.saved, self.ticks = save_fail, [], dict(saved or {}), 0
+        self.photo_files, self.photo_trash, self.photo_fail = {}, {}, None                  # 사진 정보(메모리에서만) — 초안 번호 → `PhotoManifest`. `photo_fail` 이 있으면 사진 정보 저장만 그 이유로 실패한다
 
     def make_draft(self, request, progress, cancelled):
         from ...content import candidates as legacy
@@ -309,7 +354,7 @@ class FakeDraftsProvider(DraftsProvider):
         if blog not in BLOG_NAMES:
             raise DraftFailure(T["drf_channel_desc"], code="DRAFT_OPTION_INVALID", kind="channel")
         try:
-            body = generator.build_body(old, None, options, today=SAMPLE_DAY, blog=blog, post_type=request.post_type, channel=PROFILES[blog], safety=report)       # 서비스와 같게: 프로필 파일이 없을 때의 기본 채널 프로필
+            body = generator.build_body(old, None, options, today=SAMPLE_DAY, blog=blog, post_type=request.post_type, channel=PROFILES[blog], safety=report, photos=request.photos)       # 서비스와 같게: 프로필 파일이 없을 때의 기본 채널 프로필
         except AppError as error:
             raise (option_failure(error) if error.code == "DRAFT_OPTION_INVALID" else DraftFailure(T["drf_fail_invalid"], code=error.code, kind="invalid")) from None
         urls = {key: url for key, _name, url in SAMPLE_BLOGS}
@@ -357,7 +402,16 @@ class FakeDraftsProvider(DraftsProvider):
         except AppError as error:
             raise save_failure(error) from None
         self.saved[draft_id] = final
-        return SavedOutcome(final.draft_id, final.revision, final.updated_at)
+        photos, problem = "none", ""
+        if request.photos is not None:
+            if self.photo_fail is not None:
+                photos, problem = "failed", self.photo_fail
+            else:
+                had = draft_id in self.photo_files
+                if request.photos.photos or had:
+                    self.photo_files[draft_id] = request.photos
+                    photos = "saved"
+        return SavedOutcome(final.draft_id, final.revision, final.updated_at, photos, problem)
 
     def list_saved(self, progress, cancelled):
         from ...content import saved_draft as sd
@@ -375,7 +429,9 @@ class FakeDraftsProvider(DraftsProvider):
         candidate = "none" if not draft.candidate_id else ("found" if found else "missing")
         urls = {key: url for key, _name, url in SAMPLE_BLOGS}
         result = restored_result(draft, names=tuple((key, name) for key, name, _url in SAMPLE_BLOGS), blog_url=urls.get(draft.blog, ""), address="profile", sample=True)
-        return OpenedResult(result, draft.draft_id, draft.revision, draft.updated_at, candidate, False, draft.topic, draft.title, draft.body, draft.post_type_choice)
+        photos = self.photo_files.get(draft_id)
+        return OpenedResult(result, draft.draft_id, draft.revision, draft.updated_at, candidate, False, draft.topic, draft.title, draft.body, draft.post_type_choice, photos, "ok" if photos is not None else "none",
+                            draft_id in self.photo_trash)
 
     def delete_saved(self, draft_id, progress, cancelled):
         from ...errors import AppError
@@ -383,8 +439,37 @@ class FakeDraftsProvider(DraftsProvider):
         if draft_id not in self.saved:
             raise save_failure(AppError("CONTENT_NOT_FOUND", {"항목": "저장한 초안"}))
         del self.saved[draft_id]
+        photos = "none"
+        if draft_id in self.photo_files:
+            kept = self.photo_files.pop(draft_id)
+            if kept.photos:                                                                # 사진이 0장인 사진 정보는 사본으로 옮기지 않는다 — 옮기면 앞서 둔 쓸모 있는 사본을 빈 것으로 덮는다(검증 S PS-5, 서비스도 같다)
+                self.photo_trash[draft_id] = kept                                          # 완전히 지우지 않고 초안마다 한 벌뿐인 되돌릴 사본으로(확인 024 — 덮어쓴다)
+                photos = "trash"
+        return DeletedOutcome(draft_id, photos)
+
+    def restore_photos(self, draft_id, progress, cancelled):
+        import dataclasses
+        from ...errors import AppError
+        _pause(self.delay, cancelled)
+        if draft_id not in self.photo_trash:
+            raise photo_failure(AppError("CONTENT_NOT_FOUND", {"항목": "사진 정보"}))
+        live = self.photo_files.get(draft_id)
+        if live is not None and live.photos:                                               # 저장해 둔 사진 정보가 있으면 덮어쓰지 않는다 — 사진이 0장인 것은 지킬 것이 없어 덮어쓴다(서비스도 같다)
+            raise photo_failure(AppError("CONTENT_INVALID", {"항목": "사진 정보 — " + PHOTO_EXISTS_REASON}))
+        restored = self.photo_trash.pop(draft_id)
+        if live is not None and live.next_number > restored.next_number:                   # 0장 파일이 쥐고 있던 사진 번호 예약이 사본의 것보다 크면 큰 쪽을 쓴다(서비스도 같다, 검증 S PS-14)
+            restored = dataclasses.replace(restored, next_number=live.next_number)
+        self.photo_files[draft_id] = restored
+        return PhotosRestored(restored)
+
+    def clear_photos_trash(self, draft_id, progress, cancelled):
+        from ...errors import AppError
+        _pause(self.delay, cancelled)
+        if draft_id not in self.photo_trash:
+            raise photo_failure(AppError("CONTENT_NOT_FOUND", {"항목": "사진 정보"}))
+        del self.photo_trash[draft_id]
         return draft_id
 
 
-__all__ = ["DraftFailure", "DraftRequest", "DraftResult", "DraftTarget", "DraftsProvider", "FakeDraftsProvider", "KINDS_OF_FAILURE", "OpenedResult", "RestoredBody", "SaveRequest", "SavedListing",
-           "SavedOutcome", "SavedRow", "option_failure", "restored_result", "review_health", "save_failure", "secret_failure"]
+__all__ = ["DeletedOutcome", "DraftFailure", "DraftRequest", "DraftResult", "DraftTarget", "DraftsProvider", "FakeDraftsProvider", "KINDS_OF_FAILURE", "OpenedResult", "PHOTO_EXISTS_REASON", "PhotosRestored", "RestoredBody", "SaveRequest", "SavedListing",
+           "SavedOutcome", "SavedRow", "option_failure", "photo_failure", "restored_result", "review_health", "save_failure", "secret_failure"]

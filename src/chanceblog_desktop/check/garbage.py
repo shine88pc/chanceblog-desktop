@@ -337,9 +337,14 @@ _PLACEHOLDERS = (
 )
 
 
+_PHOTO_SLOT = re.compile("\\{\\{사진 [1-9][0-9]{0,2}\\}\\}")                    # 앱이 사진을 넣은 자리 `{{사진 N}}`(사진 연동 3단계) — 정확히 이 모양 하나만 본문에서 걸지 않는다
+
+
 def _placeholders(field, text, starts, ends, hits):
     for sub, pattern in _PLACEHOLDERS:
         for match in pattern.finditer(text):
+            if field == "body" and sub == "double_brace" and _PHOTO_SLOT.fullmatch(match.group()):
+                continue                                                       # 제목에 있거나 모양이 조금이라도 다른 `{{ … }}` 는 그대로 건다
             if not _inside(starts, ends, match.start()):
                 hits.append(("placeholder", sub, field, match.start(), match.end(), _collapsed(match.group()), 0))
 

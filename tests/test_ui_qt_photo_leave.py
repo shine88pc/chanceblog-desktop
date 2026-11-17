@@ -1,7 +1,7 @@
 """'사진 정리'(사진 연동 2단계, 결정 D-499)의 떠나기·닫기 확인과 못 넣은 파일 안내의 PySide6 시험(검증 Q 의 N-2·N-5 — 수정 지시 2).
 
 지키는 것:
-  1) 떠나기·앱 닫기(N-2) — 사진 정보는 저장하지 못해서(저장은 3단계) 사진이 하나라도 있으면 다른 화면으로 가거나 창을 닫기 전에 확인창이 먼저 뜬다. 처음 포커스는 취소이고, 취소하면 그대로(사진 그대로)이며,
+  1) 떠나기·앱 닫기(N-2) — 사진 정보를 고쳤는데 저장하지 않았으면(3단계: 저장한 판과 다를 때, 초안이 아직 없으면 사진이 하나라도 있을 때) 다른 화면으로 가거나 창을 닫기 전에 확인창이 먼저 뜬다. 처음 포커스는 취소이고, 취소하면 그대로(사진 그대로)이며,
      '그래도 이동/닫기' 를 눌러야 떠나고 사진 정보가 비워진다. 사진이 없으면 지금처럼 묻지 않는다.
   2) 넣지 못한 파일(N-5) — 하나라도 못 넣으면 상태 줄이 몇 개를 못 넣었는지와 어디서 이유를 보는지('아래 ‘넣지 못한 파일’')를 알리고, 그 목록이 보이는 자리로 스크롤한다. 같은 목록을 다시 그릴 때는 다시 스크롤하지 않는다.
 `test_ui_qt_photo` 의 도구(`PhotoBase`)만 이어 쓰고 그 모듈의 시험은 가져오지 않는다. **PySide6 가 없으면 통째로 건너뛴다.**
@@ -32,10 +32,10 @@ class LeaveWithPhotosTest(tq.PhotoBase):
         self.settle(3)
         self.assertTrue(window.dialog.is_open)
         self.assertEqual((window.state.page, QApplication.focusWidget().text(), board.count), ("drafts", "취소", 2))
-        self.assertEqual(sorted(self.dialog_buttons(window)), ["그래도 이동", "취소"], "저장해도 사진 정보는 저장되지 않으므로 '저장' 갈래는 없다")
+        self.assertEqual(sorted(self.dialog_buttons(window)), ["그래도 이동", "취소"], "저장 기능이 없는 공급자는 두 갈래 확인창")
         shown = self.texts(window.dialog)
-        self.assertIn("사진 정보가 사라져요", shown)
-        self.assertTrue(any("넣어 둔 사진 2장의 정보는 아직 저장되지 않아서 다른 화면으로 가면 사라져요" in text for text in shown), shown)
+        self.assertIn(T["drf_leave_title"], shown)
+        self.assertTrue(any(T["drf_leave_body"] in text for text in shown), shown)
         self.assertEqual((window.nav_buttons["drafts"].isChecked(), window.nav_buttons["home"].isChecked()), (True, False), "막힌 단추가 눌린 채로 남지 않는다")
         self.dialog_buttons(window)["취소"].click()
         self.settle(3)
@@ -58,7 +58,7 @@ class LeaveWithPhotosTest(tq.PhotoBase):
         self.settle(3)
         self.assertTrue(window.isVisible() and window.dialog.is_open)
         self.assertEqual(sorted(self.dialog_buttons(window)), ["그래도 닫기", "취소"])
-        self.assertTrue(any("앱을 닫으면 사라져요" in text for text in self.texts(window.dialog)))
+        self.assertTrue(any(T["drf_close_body"] in text for text in self.texts(window.dialog)))
         self.dialog_buttons(window)["취소"].click()
         self.settle(3)
         self.assertTrue(window.isVisible())
@@ -72,7 +72,7 @@ class LeaveWithPhotosTest(tq.PhotoBase):
         self.assertEqual((window.dialog.is_open, window.state.page), (False, "topics"))
         self.assertFalse(window.state.drafts.photos_unsaved())
 
-    def test_with_a_saving_provider_a_photo_only_question_has_no_save_choice_and_a_mixed_one_has_three_choices_and_the_photo_sentence(self):
+    def test_with_a_saving_provider_the_photo_only_question_has_three_choices_because_the_photos_are_saved_with_the_draft(self):
         candidates = tq.qd.candidates_with(tq.GENERIC, tq.SOFTWARE, tq.APPLIANCE, tq.STOPPED, tq.OTHER_CHANNEL)
         provider = drafts.FakeDraftsProvider(lambda: tuple(candidates.candidates), saving=True)
         window = self.drafted(candidates=candidates, drafts_provider=provider)
@@ -82,14 +82,14 @@ class LeaveWithPhotosTest(tq.PhotoBase):
         self.settle(4)
         window.nav_buttons["home"].click()
         self.settle(3)
-        self.assertEqual(sorted(self.dialog_buttons(window)), ["그래도 이동", "취소"], "저장해도 사진 정보는 저장되지 않으므로 '저장' 갈래는 없다")
-        self.dialog_buttons(window)["취소"].click()
+        self.assertEqual(sorted(self.dialog_buttons(window)), ["계속 고치기", "저장", "저장 안 하고 나가기"], "3단계: 저장하면 사진 정보도 함께 저장되므로 '저장' 갈래가 있다")
+        self.dialog_buttons(window)["계속 고치기"].click()
         self.settle(3)
         self.edit_body(window, chr(10) * 2 + "고친 문단이에요.")
         window.nav_buttons["home"].click()
         self.settle(3)
         self.assertEqual(sorted(self.dialog_buttons(window)), ["계속 고치기", "저장", "저장 안 하고 나가기"])
-        self.assertTrue(any("넣어 둔 사진 1장의 정보도 저장되지 않고 사라져요" in text for text in self.texts(window.dialog)), self.texts(window.dialog))
+        self.assertTrue(any(T["drf_leave3_body"] in text for text in self.texts(window.dialog)), self.texts(window.dialog))
         self.dialog_buttons(window)["계속 고치기"].click()
         self.settle(3)
         self.assertEqual((window.state.page, window.state.drafts.photos.count), ("drafts", 1))

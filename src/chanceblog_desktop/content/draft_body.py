@@ -30,6 +30,7 @@ from . import body_blocks as blocks
 from . import body_lang as bl
 from . import body_library as lib
 from . import draft_plan as dp
+from . import photo_flow
 from . import post_types as pt
 from .draft_options import LABELS, DraftOptions, squash
 
@@ -600,11 +601,12 @@ def _refuse_stopped(safety):
         raise _invalid(STOP_ITEM, "안전 판정이 자동 초안 중지인 후보라 본문 초안을 만들지 않았다(입력한 글은 적지 않는다)")
 
 
-def build_body(candidate, profile=None, options=None, *, today, blog=None, post_type=None, channel=None, safety=None):
+def build_body(candidate, profile=None, options=None, *, today, blog=None, post_type=None, channel=None, safety=None, photos=()):
     """후보 하나·블로그 프로필(없으면 None)·채널 프로필(없으면 None)·(선택) 사용자 입력·(선택) 안전 판정으로 규칙 기반 초안 한 개를 만든다 — 순수 함수(파일·네트워크·시계·난수 없음).
     사용자 입력이 비어 있어도 초안은 만들어지고, 입력이 있으면 그것이 프로필·기본값보다 먼저 적용된다. 틀린 값은 `build_plan` 과 같은 오류(`CONTENT_INVALID`·`DRAFT_OPTION_INVALID`).
     `safety` 는 주제 엔진의 안전 판정 결과(`topics.safety.check_text` — 속성 `stop`·`stage`·`relationship` 만 읽는다): 자동 초안 중지면 만들지 않고, 근거 확인 필요 단계·협찬 낱말 추정이면 확인 권장 맨 위에 경고를 둔다.
-    서비스(`service.draft_body.make_body`)가 늘 이 판정을 계산해서 준다 — 주지 않으면 이 모듈의 낱말 목록만으로 만든다."""
+    서비스(`service.draft_body.make_body`)가 늘 이 판정을 계산해서 준다 — 주지 않으면 이 모듈의 낱말 목록만으로 만든다.
+    `photos` 는 확정한 사진만 담은 `photo_manifest.DraftPhoto` 들이다(사진 연동 3단계) — 있으면 블록을 만든 직후 `photo_flow.place_photos` 가 `{{사진 N}}` 줄과 사용자 글을 자리에 맞게 끼우고, 못 찾은 자리는 확인 권장에 사진 번호로만 적는다. 비어 있으면 아무것도 바뀌지 않는다(지금과 한 글자도 다르지 않다)."""
     _refuse_stopped(safety)
     original = candidate
     candidate = _tidy_candidate(candidate)
@@ -617,6 +619,10 @@ def build_body(candidate, profile=None, options=None, *, today, blog=None, post_
     writer = _Writer(candidate, profile, channel, options, plan, safety)
     parts = writer.parts()
     block_list = [part.block() for part in parts]
+    photo_notes = ()
+    if photos:
+        placed, photo_notes = photo_flow.place_photos(block_list, photos)
+        block_list = list(placed)
     body_text = render_body(block_list)
     chars, spaced = count_chars(body_text)
     sections = [block for block in block_list if block.kind in (SECTION, EXPERIENCE)]
@@ -625,7 +631,7 @@ def build_body(candidate, profile=None, options=None, *, today, blog=None, post_
     category = writer.category()
     selected = writer.selected_title()
     summary = writer.summary()
-    checks = writer.checks(category, len(sections), chars)
+    checks = tuple(dict.fromkeys([*writer.checks(category, len(sections), chars), *photo_notes]))
     plain_text = selected + NL + NL + body_text
     used = tuple(name for name in USER_ITEMS if getattr(options, name))
     body = DraftBody(plan.blog, plan.keyword, plan.topic, plan.post_type, writer.style, writer.domain, writer.audience, plan.titles, selected, tuple(block_list), (plan.keyword,), aux, tags,

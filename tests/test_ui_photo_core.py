@@ -342,7 +342,7 @@ class ConfirmTest(unittest.TestCase):
         self.assertEqual(board.manifest, before)
         self.assertEqual(board.ask_confirm_all(), "ask")
         view = board.view()
-        self.assertEqual(view["confirm_ask"]["text"], "사진 2장을 모두 ‘확인했어요’ 로 표시할까요? 표시한 사진의 종류·대상·메모는 초안에 쓸 수 있는 내용으로 표시해 둬요(초안에 넣는 일은 다음 단계에서 열려요).")
+        self.assertEqual(view["confirm_ask"]["text"], "사진 2장을 모두 ‘확인했어요’ 로 표시할까요? 표시한 사진의 대상·설명 글·메모가 초안에 쓰여요(‘다시 만들기’ 를 누르면 들어가요).")
         self.assertEqual((view["confirm_ask"]["yes"], view["confirm_ask"]["no"]), ("2장 모두 확인", "그만두기"))
         self.assertFalse(view["confirm_all"]["enabled"], "확인 줄이 떠 있는 동안 처음 단추는 꺼진다")
         self.assertEqual(board.manifest, before, "묻는 것만으로는 바뀌지 않는다")
@@ -676,21 +676,19 @@ class ReviewFixesTest(unittest.TestCase):
     """검증 Q(2단계 재검증)의 고침 — N-1 문구·N-4 닫기 경고·N-5 넣지 못한 파일 안내·N-9(f) 옮기기 입력·N-7 시험 틈(다시 찾기·자리 정하기 펼침)."""
     SRC = ROOT / "src" / "chanceblog_desktop"
 
-    def test_the_three_texts_that_wait_for_stage_three_are_the_only_ones_that_say_so(self):
-        """2단계에는 확인한 사진을 초안으로 뽑는 연결이 없다 — 화면 글이 '초안에 쓰여요/써요' 라고 하면 거짓이다(N-1). 3단계가 끝나면 세 문구를 사실이 되는 글로 되돌리고 이 시험의 기대도 같이 바꾼다."""
+    def test_the_three_texts_say_the_confirmed_photos_are_used_in_the_draft_now_that_stage_three_connects_them(self):
+        """검증 Q N-1 — 2단계 수정은 초안 연결이 없는 동안 세 문구를 '다음 단계에서 열려요' 로 적어 두었다. 3단계(초안 연결)가 열려 세 문구는 사실이 되는 원래 글로 되돌아와 있어야 한다."""
         self.assertEqual(photo_text.STAGE3_RESTORE_KEYS, ("pho_intro", "pho_all_ask", "pho_confirm"))
-        waiting = {"pho_intro": "초안에 넣는 일은 다음 단계에서 열려요", "pho_all_ask": "초안에 넣는 일은 다음 단계에서 열려요", "pho_confirm": "초안에 쓸 수 있게 표시해 둬요"}
+        truth = {"pho_intro": "초안에 쓰여요", "pho_all_ask": "초안에 쓰여요", "pho_confirm": "초안에 써요"}
         for key in photo_text.STAGE3_RESTORE_KEYS:
-            self.assertIn(waiting[key], T[key], key)
-        claims = re.compile(r"초안에 (쓰여요|써요|들어가요|들어갑니다|반영돼요|반영해요|넣어요)")
-        for key, value in photo_text.PHOTO_T.items():
-            self.assertIsNone(claims.search(value), f"{key}: 확인한 사진이 초안에 쓰인다고 말한다 — 그런 연결은 아직 없다")
-        self.assertEqual(sorted(key for key, value in photo_text.PHOTO_T.items() if "다음 단계" in value), ["pho_all_ask", "pho_intro"])
+            self.assertIn(truth[key], T[key], key)
+            self.assertNotIn("다음 단계", T[key], key)
+        self.assertEqual(sorted(key for key, value in photo_text.PHOTO_T.items() if "다음 단계" in value), [], "3단계 뒤에는 '다음 단계에서 열려요' 문구가 남지 않는다")
 
-    def test_nothing_hands_the_confirmed_photos_to_a_draft_yet_so_the_texts_may_not_say_it_does(self):
+    def test_the_stage_three_connection_that_hands_the_confirmed_photos_to_a_draft_exists_so_the_texts_may_say_it(self):
         pattern = re.compile(r"(?<![\w])draft_inputs\(")
         users = [path.relative_to(self.SRC).as_posix() for path in sorted(self.SRC.rglob("*.py")) if path.name != "photo_manifest.py" and pattern.search(path.read_text(encoding="utf-8"))]
-        self.assertEqual(users, [], "3단계가 확인한 사진을 초안으로 뽑는 연결을 더하면 이 시험이 알린다 — `photo_text.STAGE3_RESTORE_KEYS` 의 세 문구를 사실이 되는 글로 되돌리고 위 시험을 고친다")
+        self.assertEqual(users, ["ui/core/drafts_view.py"], "3단계는 확인한 사진을 초안으로 뽑는 연결을 `drafts_view` 에 두었다 — 이 연결이 없어지면 위 세 문구를 다시 '다음 단계에서 열려요' 로 바꿔야 한다(검증 Q N-1)")
 
     def test_the_close_warning_names_the_photo_and_the_field_and_says_what_to_do_whatever_the_reason(self):
         board = new_board(4)
@@ -946,7 +944,7 @@ class ViewTest(unittest.TestCase):
         self.assertEqual(row["place"]["section"]["value"], "도입")
         self.assertTrue(row["place"]["open"], "값이 있으면 자리 정하기를 펼쳐 둔다")
         self.assertFalse(row_of(board, "p002")["place"]["open"])
-        self.assertEqual(row["confirm"]["text"], "확인했어요 — 초안에 쓸 수 있게 표시해 둬요")
+        self.assertEqual(row["confirm"]["text"], "확인했어요 — 이 내용을 초안에 써요")
         self.assertIn("사진 1, 종류 간판", row["a11y"])
         for key in ("type", "setting", "subject", "note", "caption"):
             self.assertIn("사진 1", row[key]["a11y"], key)
@@ -970,7 +968,10 @@ class ViewTest(unittest.TestCase):
         board.confirm("p001", True)
         card = board.card()
         self.assertEqual((card["has"], card["count"], card["button"]), (True, "사진 2장 · 확인 1/2", "사진 정리 열기"))
-        self.assertIn("저장한 초안에 아직 함께 담기지 않아요", card["unsaved"])
+        self.assertEqual((card["unsaved"], card["trash"]), ("", None), "사진을 넣었다고 저장 안내를 보이지는 않는다 — 고쳤는데 저장 안 했을 때만(3단계)")
+        self.assertEqual(board.card(unsaved=True)["unsaved"], "사진 정보를 고쳤어요. 초안을 저장해야 사진 정보도 함께 저장돼요.")
+        trash = board.card(trash=True)["trash"]
+        self.assertEqual((trash["text"], trash["restore"], trash["clear"]), ("지운 초안의 사진 정보를 되돌릴 사본으로 남겨 뒀어요. 사진 파일은 그대로 있어요.", "사진 정보 되돌리기", "사진 정보 사본 비우기"))
         self.assertIn("밖으로 보내지 않아요", card["hint"])
         self.assertEqual(card["row_title"], "사진 넣기(선택)")
 
@@ -996,8 +997,10 @@ class DraftsControllerTest(unittest.TestCase):
         self.assertIsInstance(controller.photos, pv.PhotoBoard)
         normal = controller.view()["normal"]
         self.assertEqual(set(normal["side"]), {"inspect", "garbage", "keywords", "tags", "category", "summary", "photos", "image", "checks"})
-        self.assertEqual(normal["side"]["photos"], controller.photos.card())
-        self.assertEqual(normal["options"]["photos"], controller.photos.card())
+        self.assertEqual(normal["side"]["photos"], controller.photos_card())
+        self.assertEqual(normal["options"]["photos"], controller.photos_card())
+        self.assertEqual({key: value for key, value in normal["side"]["photos"].items() if key != "remake"}, controller.photos.card(), "컨트롤러의 카드는 사진 카드에 '다시 만들기 안내' 한 칸만 더한다")
+        self.assertEqual(normal["side"]["photos"]["remake"], "", "사진을 안 만졌으면 안내가 없다")
         self.assertEqual(set(normal["options"]) - {"photos"}, {"open", "toggle", "title", "note", "blog_title", "blogs", "type_title", "types", "fields", "apply", "pending", "pending_text"})
         self.assertEqual(normal["side"]["photos"]["count"], "넣은 사진이 없어요")
 
@@ -1013,9 +1016,9 @@ class DraftsControllerTest(unittest.TestCase):
         job.join(30)
         controller.apply_made(results["ok"])
         self.assertEqual(controller.photos.count, 2, "다시 만들어도 사진 목록은 남는다")
-        self.assertFalse(controller.text_unsaved(), "사진을 넣어도 글을 '고친 내용' 으로 치지 않는다 — 초안 저장 흐름은 그대로다")
+        self.assertFalse(controller.text_unsaved(), "사진을 넣어도 글은 안 바뀌었다 — 다시 만들기 확인은 글만 본다")
         self.assertIsNone(controller.regen_dialog(), "다시 만들어도 사진 정보는 그대로라 묻지 않는다")
-        self.assertTrue(controller.photos_unsaved() and controller.has_unsaved(), "떠나기·앱 닫기 앞에서는 사진 정보가 있으면 저장되지 않은 내용이다(검증 Q N-2)")
+        self.assertTrue(controller.photos_unsaved() and controller.has_unsaved(), "사진 정보를 고쳤다(저장 전)")
         self.assertEqual(controller.save_state(), self.made().save_state())
 
     def test_a_made_draft_is_the_same_with_or_without_photo_operations(self):
@@ -1037,48 +1040,43 @@ class DraftsControllerTest(unittest.TestCase):
         self.assertEqual((plain.title, plain.body, plain.text_unsaved(), plain.save_state()), (busy.title, busy.body, busy.text_unsaved(), busy.save_state()))
         self.assertEqual((plain.has_unsaved(), busy.has_unsaved()), (False, True), "다른 점은 사진이 있으면 떠날 때 묻는다는 것 하나뿐이다(검증 Q N-2)")
         self.assertEqual(without_photos(plain), without_photos(busy))
+        self.assertEqual((plain.has_unsaved(), busy.has_unsaved()), (False, True), "사진 정보를 고쳤으면 떠나기·닫기 앞에서 묻는다(3단계 — 사진 정보도 저장한다)")
         self.assertEqual(plain.photos.card()["count"], "넣은 사진이 없어요")
         self.assertEqual(busy.photos.card()["count"], "사진 1장 · 확인 0/1")
 
-    def test_photos_count_as_unsaved_for_leaving_and_closing_but_not_for_remaking_and_a_photo_only_question_says_so(self):
-        """검증 Q N-2 — 사진 정보는 저장하지 못해서 사진이 하나라도 있으면 떠나기·앱 닫기가 먼저 묻는다. 사진이 없으면 지금과 같다."""
+    def test_photos_count_as_unsaved_for_leaving_and_closing_but_not_for_remaking(self):
+        """검증 Q N-2 — 사진 정보를 고쳤는데 저장하지 않았으면 떠나기·앱 닫기가 먼저 묻는다(3단계: 저장한 판과 다를 때). 사진이 없으면 지금과 같다."""
         controller = self.made()
         self.assertEqual((controller.has_unsaved(), controller.photos_unsaved(), controller.leave_dialog("leave"), controller.leave_dialog("close")), (False, False, None, None))
         controller.photos.add_paths([path_of(1), path_of(2)])
         self.assertEqual((controller.has_unsaved(), controller.photos_unsaved(), controller.text_unsaved()), (True, True, False))
+        self.assertIsNone(controller.regen_dialog(), "다시 만들어도 사진 정보는 그대로라 묻지 않는다")
         leave, close = controller.leave_dialog("leave"), controller.leave_dialog("close")
-        self.assertEqual((leave["title"], leave["ok"], leave["cancel"], "choices" in leave), ("사진 정보가 사라져요", "그래도 이동", "취소", False))
-        self.assertEqual(leave["body"], "넣어 둔 사진 2장의 정보는 아직 저장되지 않아서 다른 화면으로 가면 사라져요. 사진 파일은 그대로 있어요. 그래도 이동할까요?")
-        self.assertEqual((close["title"], close["ok"], close["cancel"], "choices" in close), ("사진 정보가 사라져요", "그래도 닫기", "취소", False))
-        self.assertEqual(close["body"], "넣어 둔 사진 2장의 정보는 아직 저장되지 않아서 앱을 닫으면 사라져요. 사진 파일은 그대로 있어요. 그래도 닫을까요?")
+        self.assertEqual((leave["title"], leave["ok"], leave["cancel"], "choices" in leave), (T["drf_leave_title"], T["drf_leave_ok"], T["drf_cancel"], False), "저장 기능이 없는 공급자는 두 갈래 확인창")
+        self.assertEqual((leave["body"], close["body"]), (T["drf_leave_body"], T["drf_close_body"]))
         self.assertEqual(controller.leave_asked, "close")
         for text in (leave["body"], close["body"]):
             self.assertNotIn(USER_DIR, text)
             self.assertNotIn(FILE_STEM, text)
         controller.photos.remove("p001")
         controller.photos.remove("p002")
-        self.assertEqual((controller.has_unsaved(), controller.leave_dialog("leave")), (False, None), "사진을 모두 지우면 묻지 않는다")
+        self.assertEqual((controller.has_unsaved(), controller.leave_dialog("leave")), (False, None), "사진을 모두 지우면(저장한 판과 같아지면) 묻지 않는다")
 
-    def test_with_saving_the_photo_only_question_has_no_save_choice_and_a_mixed_one_adds_one_sentence(self):
+    def test_with_saving_the_photo_only_question_has_a_save_choice_because_the_photos_are_saved_with_the_draft(self):
         controller = self.made(saving=True)
         controller.photos.add_paths([path_of(1)])
         photo_only = controller.leave_dialog("leave")
-        self.assertNotIn("choices", photo_only, "저장해도 사진 정보는 저장되지 않으므로 '저장' 갈래를 보이지 않는다")
-        self.assertEqual((photo_only["title"], photo_only["ok"]), ("사진 정보가 사라져요", "그래도 이동"))
+        self.assertEqual([choice["key"] for choice in photo_only["choices"]], ["save", "discard", "stay"], "3단계: 저장하면 사진 정보도 함께 저장되므로 '저장' 갈래가 있다")
+        self.assertEqual(photo_only["body"], T["drf_leave3_body"])
         controller.set_body(controller.body + chr(10) * 2 + "고친 문단이에요.")
         self.assertTrue(controller.text_unsaved())
         mixed, closing = controller.leave_dialog("leave"), controller.leave_dialog("close")
         self.assertEqual([choice["key"] for choice in mixed["choices"]], ["save", "discard", "stay"])
-        note = "넣어 둔 사진 1장의 정보도 저장되지 않고 사라져요. 사진 파일은 그대로 있어요."
-        self.assertEqual(mixed["body"], T["drf_leave3_body"] + " " + note)
-        self.assertEqual(closing["body"], T["drf_close3_body"] + " " + note)
-        controller.photos.remove("p001")
-        self.assertEqual(controller.leave_dialog("leave")["body"], T["drf_leave3_body"], "사진이 없으면 문장이 붙지 않는다 — 지금과 같다")
+        self.assertEqual((mixed["body"], closing["body"]), (T["drf_leave3_body"], T["drf_close3_body"]), "글과 사진이 함께여도 문장은 같다")
         plain = self.made()
         plain.photos.add_paths([path_of(1)])
         plain.set_body(plain.body + chr(10) * 2 + "고친 문단이에요.")
-        self.assertEqual(plain.leave_dialog("leave")["body"], T["drf_leave_body"] + " " + "넣어 둔 사진 1장의 정보도 저장되지 않고 사라져요. 사진 파일은 그대로 있어요.", "저장 기능이 없는 공급자의 두 갈래 확인창에도 같은 문장")
-        self.assertEqual(plain.leave_dialog("close")["body"], T["drf_close_body"] + " " + "넣어 둔 사진 1장의 정보도 저장되지 않고 사라져요. 사진 파일은 그대로 있어요.")
+        self.assertEqual((plain.leave_dialog("leave")["body"], plain.leave_dialog("close")["body"]), (T["drf_leave_body"], T["drf_close_body"]), "저장 기능이 없는 공급자의 두 갈래 확인창")
 
     def test_opening_a_saved_draft_over_photos_asks_first_because_it_would_clear_them(self):
         controller = self.made(saving=True)
@@ -1207,6 +1205,9 @@ class SourceRulesTest(unittest.TestCase):
         "content/photo_manifest.py": "1단계 — 사진 정보 규칙", "service/photo_manifest.py": "1단계 — 사진 정보 보관·사진 파일 읽기 확인", "ui/core/photo_rules.py": "2단계 — 화면의 규칙표", "ui/core/photo_text.py": "2단계 — 화면 문구",
         "ui/core/photo_view.py": "2단계 — 사진 정리 컨트롤러", "ui/photo_adapter.py": "2단계 — 실제 사진 공급자(읽기만)", "ui/qt/photo_parts.py": "2단계 — 줄 부품", "ui/qt/photo_screen.py": "2단계 — 사진 정리 창",
         "ui/adapters.py": "홈 공급자의 짝 사진 공급자(읽기만)", "ui/core/app_state.py": "짝 공급자를 초안 컨트롤러의 사진 목록에 연결", "ui/core/drafts_view.py": "초안 컨트롤러가 사진 목록(메모리)을 들고 카드 뷰모델을 낸다",
+        "check/garbage.py": "글 모양 점검이 본문의 정확한 `{{사진 N}}` 자리를 걸지 않는다(3단계 본문 연결) — 다른 모양의 `{{ }}` 와 제목은 그대로 건다", "ui/core/draft_rules.py": "복사 전 확인창(관문)이 사진 자리 어긋남·올릴 사진 줄을 받는다(3단계) — 줄 글은 컨트롤러가 만들고 이 파일은 묶음 이름만 안다",
+        "content/draft_body.py": "본문 생성기가 확정한 사진(`DraftPhoto`)을 받아 사진 줄을 끼운다(3단계 본문 연결) — 사진을 안 주면 지금과 같다", "content/photo_flow.py": "사진 줄을 본문 블록에 끼우는 순수 함수(3단계 본문 연결)", "service/draft_engine.py": "엔진 후보로 초안을 만들 때 확정한 사진을 본문 생성기에 넘긴다(3단계 본문 연결)",
+        "ui/core/drafts.py": "저장한 초안 공급자의 값(사진 정보 저장·열기·지우기 결과)과 가짜 공급자(3단계)", "ui/drafts_adapter.py": "저장한 초안 공급자가 사진 정보를 함께 저장·열기·사본으로 옮기기·되돌리기·사본 비우기(3단계, 확인 024)",
         "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",
         "ui/core/attribution.py": "기존 — 이미지 출처 표기(사진 정리와 무관)", "ui/qt/components.py": "기존 — 공통 부품 설명(사진 정리와 무관)",
     }
@@ -1217,7 +1218,7 @@ class SourceRulesTest(unittest.TestCase):
         found = sorted(path.relative_to(src).as_posix() for path in src.rglob("*.py") if "photo" in path.read_text(encoding="utf-8").lower())
         self.assertEqual(found, sorted(self.PHOTO_FILES), "사진을 새로 말하는 파일은 이유와 함께 PHOTO_FILES 에 더한다")
         self.assertTrue(all(reason.strip() for reason in self.PHOTO_FILES.values()))
-        for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py", "ui/core/drafts.py", "ui/drafts_adapter.py"):
+        for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py"):
             if (src / untouched).exists():
                 self.assertNotIn("photo", (src / untouched).read_text(encoding="utf-8").lower(), untouched)
 
@@ -1261,6 +1262,33 @@ class SourceRulesTest(unittest.TestCase):
         rules_source = (UI_CORE / "photo_rules.py").read_text(encoding="utf-8")
         for needle in ("pm.DEFAULT_PHOTO_TYPES", "pm.DEFAULT_SETTINGS", "pm.MAX_SUBJECT", "pm.MAX_NOTE", "pm.MAX_CAPTION", "pm.NEEDS_NTH"):
             self.assertIn(needle, rules_source, needle)
+
+
+class CheckedSentenceTest(unittest.TestCase):
+    """검증 Q PQ-4·PQ-7·PQ-10·PQ-12 — 화면 글이 사실과 어긋나지 않게(보이지 않는 단추를 가리키지 않고, 글에 안 쓰이는 것을 쓰인다고 하지 않고, 센 것을 센 대로 말한다)."""
+
+    def test_the_remake_note_names_the_toggle_that_opens_the_button_it_points_at(self):
+        note = T["pho_card_remake"]
+        self.assertIn(T["drf_options_open"], note, "‘다시 만들기’ 단추는 접힌 '만드는 방법' 칸 안에 있다 — 먼저 그 칸을 여는 단추를 말한다")
+        self.assertIn(T["drf_remake"], note)
+        self.assertLess(note.index(T["drf_options_open"]), note.index(T["drf_remake"]), "여는 순서대로 말한다")
+
+    def test_the_confirm_all_line_names_what_really_goes_into_the_body(self):
+        ask = T["pho_all_ask"]
+        self.assertNotIn("종류", ask, "종류는 본문에 글로 안 들어간다")
+        for word in ("대상", "설명 글", "메모", "초안에 쓰여요", "다시 만들기"):
+            self.assertIn(word, ask)
+
+    def test_the_stray_brace_line_counts_braces_not_marks(self):
+        self.assertIn("괄호가 {n}개", T["pho_gate_stray"])
+        self.assertNotIn("곳", T["pho_gate_stray"])
+        self.assertIn("괄호가 2개", T["pho_gate_stray"].format(n=2))
+
+    def test_the_delete_notice_says_the_copy_comes_back_when_this_draft_is_restored_from_a_backup(self):
+        notice = T["pho_deleted_trash"]
+        for word in ("되돌릴 사본", "이 초안을", "백업"):
+            self.assertIn(word, notice)
+        self.assertNotIn("번호", notice, "사용자 눈에 안 보이는 초안 번호를 말하지 않는다(검증 Q PQ-20)")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """'사진 정리' 창의 화면 쪽 규칙(사진 연동 초안 2단계, 결정 D-499) — 사진 목록 다루기·종류·장소 분위기·들어갈 곳·자리·글자 수·확인(확정)·'모두 확인했어요' 의 확인 줄·순서 ↑↓·지우기와 한 번 되돌리기·못 넣은 파일 목록·30장 한도·파일 상태 배지·
 미리보기를 만들지 말아야 하는 큰 PNG 판정·뷰모델. PySide6·파일·서비스를 모른다(그래서 CI 에서 시험한다). 사진 정보의 규칙(한도·경로·번호·확정)은 `content/photo_manifest.py`(1단계)가 정하고 이 파일은 그것을 부르기만 한다.
 
-**저장하지 않는다** — 사진 목록(`PhotoManifest`)은 이 컨트롤러의 메모리에만 있다. 초안을 저장하거나 불러오는 일과 이어지는 것은 3단계다(초안 저장 코드·스키마·`draft_store` 는 건드리지 않았다). 새 초안·화면 떠남·저장한 초안 열기에서 비워진다(`clear` — `DraftsController._clear_draft` 가 부른다).
+**이 컨트롤러는 저장하지 않는다** — 사진 목록(`PhotoManifest`)은 이 컨트롤러의 메모리에만 있다. 저장하고 여는 일은 초안 컨트롤러(`drafts_view.py` 의 `DraftsController`)가 초안과 함께 한다(3단계 — 저장한 판과 다를 때만 저장하고 열면 `load` 로 채운다. 초안 저장 코드·스키마·`draft_store` 는 바뀌지 않았다). 새 초안·화면 떠남·저장한 초안 열기에서 먼저 비워진다(`clear` — `DraftsController._clear_draft` 가 부른다. 열기는 이어서 `load`).
 **글(대상·메모·설명 글)은 이 파일의 어떤 상태·오류·뷰모델 값에도 되풀이되지 않는다** — 입력 칸이 쥐고 있다가 `set_text` 로 값으로만 넘어오고, 검사에 걸린 글은 이유 문장만 남기고 이 객체가 따로 쥐지 않는다(입력 칸이 그대로 보인다). 파일 **경로**는 어떤 뷰모델에도 없다 —
 목록 줄에는 파일 이름(폴더 없이, 비밀 모양을 가린 한 줄)만 보이고 못 넣은 파일도 이름과 고정 이유 문장만 있다. 이 파일은 파일·네트워크·로그·시계를 쓰지 않는다. 사진 파일을 읽는 일(판정·상태 확인)은 공급자가 한다(어댑터가 `imagecheck`·서비스를 부른다).
 
@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 
 from ...content import photo_manifest as pm
@@ -125,7 +126,7 @@ class FakePhotoProvider(PhotoProvider):
         return tuple(found)
 
 
-def _reason_of(error):
+def reason_of(error):
     """사진 정보 규칙(`content/photo_manifest.py`)이 낸 `CONTENT_INVALID` 의 이유 문장(고정 해요체 — 글·경로·파일 이름이 없다). 그 밖의 오류는 고정 안내문이다."""
     item = str(error.slots.get("항목", "")) if error.code == "CONTENT_INVALID" else ""
     head, separator, reason = item.partition(" — ")
@@ -158,6 +159,19 @@ class PhotoBoard:
         self.close_warned = False
         self.is_open = False
         self.generation += 1
+
+    def load(self, manifest):
+        """저장한 초안을 열었다 — 저장해 둔 사진 정보(`PhotoManifest`)로 목록을 채운다(그 밖의 임시 상태는 `clear` 와 같이 비운다). 사진 파일이 아직 있는지는 창을 열 때 다시 읽는다. 모양이 틀린 값은 받지 않는다."""
+        self.clear()
+        if isinstance(manifest, pm.PhotoManifest):
+            self.manifest = manifest
+        return self.count
+
+    def differs_from(self, baseline):
+        """저장한(또는 연) 사진 정보(`baseline` — 없으면 빈 목록)와 다른가 — 초안 번호 칸은 견주지 않는다(저장할 때 서비스가 채운다)."""
+        if not isinstance(baseline, pm.PhotoManifest):
+            return bool(self.manifest.photos)                                          # 저장한 사진 정보가 없다 — 지금 목록이 비어 있으면(넣었다 지운 뒤 포함) 저장할 것이 없다(서비스도 빈 목록은 파일을 만들지 않는다)
+        return dataclasses.replace(self.manifest, draft_id="") != dataclasses.replace(baseline, draft_id="")        # 저장한 판이 있으면 번호 예약(`next_number`)까지 견준다 — 지운 사진 번호를 새 사진이 물려받지 않게
 
     # ---- 읽기 ----
     @property
@@ -262,7 +276,7 @@ class PhotoBoard:
         try:
             self.manifest, photo_id = pm.add_photo(self.manifest, path, photo_type=self._default_type())
         except AppError as error:
-            reason = _reason_of(error)
+            reason = reason_of(error)
             error.__traceback__ = None
         if reason:
             return reason
@@ -324,7 +338,7 @@ class PhotoBoard:
         try:
             updated = pm.update_photo(self.manifest, photo_id, photo_types=self.types, **changes)
         except AppError as error:
-            reason = _reason_of(error)
+            reason = reason_of(error)
             error.__traceback__ = None
         if reason:
             self._flag("error", reason)
@@ -570,11 +584,12 @@ class PhotoBoard:
         return "ok"
 
     # ---- 뷰모델 ----
-    def card(self):
-        """초안 작성 화면의 '사진' 카드 — 장수·확인 수·단추. 사진 정보가 저장한 초안에 함께 담기지 않는다는 안내(3단계 전)를 사진이 있을 때 보인다."""
+    def card(self, *, unsaved=False, trash=False):
+        """초안 작성 화면의 '사진' 카드 — 장수·확인 수·단추. `unsaved`: 사진 정보를 고쳤는데 아직 저장하지 않았다(안내를 보인다) · `trash`: 지운 초안의 사진 정보가 되돌릴 사본으로 남아 있다(되돌리기·비우기 단추를 보인다)."""
         count, confirmed = self.count, self.confirmed_count
         return {"title": T["pho_card_title"], "has": count > 0, "count": T["pho_card_count"].format(n=count, c=confirmed) if count else T["pho_card_none"],
-                "a11y": T["pho_card_count_a11y"].format(n=count, c=confirmed) if count else T["pho_card_none"], "hint": T["pho_card_hint"], "unsaved": T["pho_card_unsaved"] if count else "",
+                "a11y": T["pho_card_count_a11y"].format(n=count, c=confirmed) if count else T["pho_card_none"], "hint": T["pho_card_hint"], "unsaved": T["pho_card_unsaved"] if unsaved else "", "trash": {"text": T["pho_card_trash"], "restore": T["pho_restore_btn"], "restore_a11y": T["pho_restore_btn_a11y"], "clear": T["pho_trash_clear_btn"], "clear_a11y": T["pho_trash_clear_btn_a11y"],
+                  "restore_note": T["pho_restore_blocked"] if count else ""} if trash else None,
                 "button": T["pho_card_open"] if count else T["pho_card_add"], "button_a11y": T["pho_card_open_a11y"] if count else T["pho_card_add_a11y"],
                 "row_title": T["pho_row_title"], "row_desc": T["pho_row_desc"]}
 

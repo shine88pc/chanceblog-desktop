@@ -48,6 +48,12 @@ FILE_WRITERS[("references.py", "delete_reference")] = {"unlink"}
 # 사진 Manifest 보관(결정 D-496): `service/photo_manifest.py` 가 파일을 쓰는 길도 모두 `context.write_json`(위 허용)이고 깨진 파일을 옮기는 일은 `context.keep_bad_copy`(위 허용)가 한다. 직접 파일을 지우는 곳은 **`delete_manifest` 의 `unlink` 하나**뿐이다 —
 # 초안 번호 모양(`dd-` + 16진수 20자)을 확인한 뒤 `<초안 번호>.json` 파일 하나와 그 번호의 임시 파일만 지운다(`test_service_photo_manifest.py` 의 SourceRulesTest·DeleteTest 가 소스와 동작으로 못박는다).
 FILE_WRITERS[("photo_manifest.py", "delete_manifest")] = {"unlink"}
+# 사진 정보의 되돌릴 사본(운영자 확인 024, 사진 연동 3단계): 초안을 지울 때 사진 정보 파일을 `<초안 번호>.json.trash` 로 **이름만 바꿔 옮기고**(`trash_manifest` — 이미 있던 사본은 덮어쓴다) 되살린 초안에서 도로 옮기며(`restore_manifest` — 먼저 읽어 멀쩡한지·이미 사진 정보가 없는지 본다),
+# 사용자가 사본 비우기를 누르면 그 사본 하나만 지운다(`clear_trash` 의 `unlink` — 확인 필요). 셋 모두 초안 번호 모양을 확인하고 폴더·파일이 링크·폴더이면 거절하며 사진 **파일**은 건드리지 않는다(`test_service_photo_manifest.py` 의 TrashTest·SourceRulesTest 가 못박는다).
+# `trash_manifest` 의 `unlink` 둘(검증 S PS-5·PS-10, impl3c): ① 사진이 0장인 멀쩡한 사진 정보 파일은 사본으로 옮기지 않고 그 파일 하나만 지운다(앞서 둔 사본을 빈 것으로 덮지 않으려고) ② 끝난 뒤 같은 초안 번호의 쓰다 남은 임시 파일만 힘닿는 데까지 지운다.
+FILE_WRITERS[("photo_manifest.py", "clear_trash")] = {"unlink"}
+FILE_WRITERS[("photo_manifest.py", "trash_manifest")] = {"unlink"}
+OS_CALLS["os.replace"] = OS_CALLS["os.replace"] | {("photo_manifest.py", "trash_manifest"), ("photo_manifest.py", "restore_manifest")}
 OS_CALLS["os.rename"] = {("backup_flow.py", "_finish_folder")}
 # 파일을 읽기 전용으로 여는 곳(내장 `open`)은 **(파일, 함수)** 하나뿐이다 — 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는 `own_posts.py` 의 `_read_prefix`.
 # 허용은 모드가 글자 `rb` 인 `open(경로, "rb")` 호출에만 걸린다 — 쓰기·덧붙이기·갱신 모드와 모드를 안 적은 호출·`.open` 속성 호출은 그대로 걸린다(합성 소스로 시험한다).

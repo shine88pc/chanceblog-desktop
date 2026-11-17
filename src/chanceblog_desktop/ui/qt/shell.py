@@ -411,7 +411,7 @@ class AppShell(QMainWindow):
         self.dialog.clear()
         self.dialog.setAccessibleName(title)
         self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
-        self.dialog.layout_.addWidget(UI.label(body, "body", wrap=True))
+        self.dialog.layout_.addWidget(UI.DialogBody(body))                          # 본문은 창에 다 들어가면 그대로, 낮은 창에서만 스크롤(검증 Q PQ-16)
         row = QHBoxLayout()
         row.addStretch(1)
         no = None
@@ -440,7 +440,7 @@ class AppShell(QMainWindow):
         self.dialog.clear()
         self.dialog.setAccessibleName(title)
         self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
-        self.dialog.layout_.addWidget(UI.label(body, "body", wrap=True))
+        self.dialog.layout_.addWidget(UI.DialogBody(body))                          # 본문은 창에 다 들어가면 그대로, 낮은 창에서만 스크롤(검증 Q PQ-16)
         row = QHBoxLayout()
         row.addStretch(1)
         buttons = {}
@@ -1526,8 +1526,8 @@ class AppShell(QMainWindow):
 
     def drf_remake_confirmed(self):
         status, _job = self.state.drafts.start_regenerate(**self.drafts_bridge.callbacks())
-        if status == "started":
-            self.render()
+        if status in ("started", "photos"):
+            self.render()                                                          # 만드는 중 모습(또는 사진 정보 검사가 막았다는 알림 줄)으로 다시 그린다
         elif status == "busy":
             self.notify(T["load_busy"])
 
@@ -1637,6 +1637,12 @@ class AppShell(QMainWindow):
         elif op == "delete":
             if controller.apply_deleted(result):
                 self._start_saved_list()
+        elif op == "restore_photos":
+            if controller.apply_photos_restored(result):
+                self._photos_after_store()
+        elif op == "clear_photos_trash":
+            if controller.apply_trash_cleared(result):
+                self._photos_after_store()
 
     def _show_store_failed(self, failure):
         controller = self.state.drafts
@@ -1655,13 +1661,25 @@ class AppShell(QMainWindow):
         elif op == "delete":
             if controller.apply_delete_failed(failure):
                 self._start_saved_list()
+        elif op == "restore_photos":
+            if controller.apply_restore_photos_failed(failure) != "left":
+                self._photos_after_store()
+        elif op == "clear_photos_trash":
+            if controller.apply_clear_trash_failed(failure) != "left":
+                self._photos_after_store()
 
     def _after_save(self, status, after):
-        """저장이 끝났다 — 저장 상태 줄·단추를 그 자리에서 바꾸고 알림(저장했어요 · 시각)을 띄운다. 확인창에서 `저장` 을 골랐다면 이어서 나가거나 닫는다."""
+        """저장이 끝났다 — 저장 상태 줄·단추를 그 자리에서 바꾸고 알림(저장했어요 · 시각)을 띄운다. 확인창에서 `저장` 을 골랐다면 이어서 나가거나 닫는다. 단 **사진 정보만** 저장하지 못했으면(`photos_failed`) 나가지 않고 글 저장 실패와
+        같은 경고창을 먼저 띄운다(저장 안 하고 나가기 / 계속 고치기 — 그냥 나가면 고친 사진 정보가 사라진다)."""
+        if status == "photos_failed":
+            self.photos_card_refresh()
+            self._after_save_failed(self.state.drafts.take_save_problem(), "photos", after)
+            return
         if status != "saved":
             return
         controller = self.state.drafts
         self._live_drafts(save=True)
+        self.photos_card_refresh()                                                    # 사진 정보도 함께 저장했으면 카드의 '고쳤어요' 안내가 사라진다
         self.notify(controller.notice[1] if controller.notice else "")
         if after is not None:
             self._continue_after(after)
@@ -2277,7 +2295,7 @@ class AppShell(QMainWindow):
             form.refresh()
             form.delete_button.setFocus(Qt.OtherFocusReason)
 
-    # ---- 사진 정리(사진 연동 2단계, 결정 D-499) — 초안 작성 화면의 '사진 넣기(선택)' 줄과 '사진' 카드가 여는 창. 사진 목록은 초안 컨트롤러의 `photos`(`PhotoBoard`)가 메모리에만 들고 있고 저장하지 않는다(3단계). 사진 파일은 읽기만 한다 ----
+    # ---- 사진 정리(사진 연동 2단계, 결정 D-499) — 초안 작성 화면의 '사진 넣기(선택)' 줄과 '사진' 카드가 여는 창. 사진 목록은 초안 컨트롤러의 `photos`(`PhotoBoard`)가 메모리에서 고치고, 초안을 `저장` 할 때 저장한 판과 다르면 사진 정보도 함께 저장한다(3단계 — 아래 `_after_save`·되돌릴 사본). 사진 파일은 읽기만 한다 ----
     def photos_open(self, _checked=False):
         """`사진 정리 열기`·`사진 넣기` — 창을 연다. 다른 대화상자가 열려 있으면 열지 않는다. 어느 길로든 닫히면 칸·미리보기·대기열을 비운다(사진 목록은 남는다)."""
         if self.dialog.is_open:
@@ -2368,7 +2386,39 @@ class AppShell(QMainWindow):
         page = self._drafts_screen()
         if page is not None:
             from . import draft_screen as ds
-            ds.refresh_photos(page, self.state.drafts.photos.card())
+            ds.refresh_photos(page, self.state.drafts.photos_card())
+            self._live_drafts(save=True)                                              # 사진 정보를 고치면 저장 상태 줄도 '고친 내용이 있어요' 로 바뀐다
+
+    # ---- 되돌릴 사본(사진 연동 3단계, 운영자 확인 024) — 저장한 초안을 지울 때 남긴 사진 정보 사본을 되돌리거나 비운다. 둘 다 사용자가 단추를 눌렀을 때만 시작하는 작업이다(사진 파일은 건드리지 않는다) ----
+    def photos_restore(self, _checked=False):
+        """`사진 정보 되돌리기` — 되돌릴 사본을 사진 정보로 되돌린다(지금 사진이 있으면 덮어쓰지 않으므로 단추가 꺼져 있다)."""
+        status, _job = self.state.drafts.start_restore_photos(**self.store_bridge.callbacks())
+        if status == "started":
+            self.photos_card_refresh()                                                # 작업이 도는 동안 두 단추를 끈다(저장·목록·열기·지우기와 한 번에 하나)
+        elif status == "busy":
+            self.notify(T["load_busy"])
+        return status
+
+    def photos_trash_clear(self, _checked=False):
+        """`사진 정보 사본 비우기` — 확인창이 먼저다(처음 포커스는 취소). 비우면 되돌릴 수 없다. 사진 파일은 그대로다."""
+        controller = self.state.drafts
+        dialog = controller.trash_clear_dialog()
+        if dialog is not None:
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._photos_trash_clear_confirmed, danger=True, safe_focus=True, on_cancel=controller.discard_trash_clear)
+        return dialog
+
+    def _photos_trash_clear_confirmed(self):
+        status, _job = self.state.drafts.start_clear_trash(**self.store_bridge.callbacks())
+        if status == "started":
+            self.photos_card_refresh()
+        elif status == "busy":
+            self.notify(T["load_busy"])
+
+    def _photos_after_store(self):
+        """되돌리기·사본 비우기가 끝났다(성공이든 실패든) — 카드를 지금 상태로 바꾸고 결과 문장을 알린다. 열려 있는 사진 정리 창은 없다(카드의 단추는 창 밖에 있다)."""
+        controller = self.state.drafts
+        self.photos_card_refresh()
+        self.notify(controller.notice[1] if controller.notice else "")
 
     # ---- 설정 화면의 백업·복원 카드(BACKUPUI) — 읽기(목록)는 작업 스레드, 쓰기(지금 백업·복원)는 사용자가 단추를 눌렀을 때만 따로 시작하는 작업이다. 복원은 확인창이 먼저다 ----
     def _backups(self):
