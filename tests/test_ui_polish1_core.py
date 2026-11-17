@@ -2,9 +2,10 @@
 
 지키는 것:
   1) 개수가 붙는 칩의 글 모양 — 이름이 숫자로 끝나면(`네이버 블로그 1`) 개수가 그 숫자에 붙어 읽히지 않게 가운뎃점·쉼표로 가른다(Q2-8). 문장 속 줄(Seed 가져오기·일괄 바꾸기 확인창)은 이름 뒤에 쌍점을 둔다.
-  2) 주 화면의 채널 칩·요약·거르기에 보이는 이름은 `CHIP_LIMIT`(20자)까지만 — 넘으면 …, 전체 이름은 접근 이름과 툴팁(`tip`)에 둔다(Q3-2). 서랍의 12자(`DRAWER_LIMIT`)와는 다른 값이다.
+  2) 주 화면의 채널 칩·요약·거르기에 보이는 이름은 `CHANNEL_CHIP_LIMIT`(20자)까지만 — 넘으면 …, 전체 이름은 접근 이름과 툴팁(`tip`)에 둔다(Q3-2). 서랍의 12자(`DRAWER_LIMIT`)와는 다른 값이다. Seed 칩 이름 함수(`scope_chip_name`·`channel_chip_name`)는 모르는 소속·열쇠를 오류로 내고, 후보 채널 칩은 다섯 채널 밖 열쇠도 같은 한도로 줄인다(독립 검증 뒤 더한 시험 — Q QP-2).
 실제 블로그 이름·아이디·주소는 이 시험에 없다(예시 값뿐).
 """
+import dataclasses
 import sys
 import unittest
 from pathlib import Path
@@ -19,7 +20,7 @@ import test_ui_photo_core as pc  # noqa: E402
 import test_ui_photo_save_core as psc  # noqa: E402
 import test_ui_seeds_core as sc  # noqa: E402
 
-from chanceblog_desktop.ui.core import channel_names as cn, drafts_view as dv, part_rules, photo_rules as rules, seed_form as sf, text  # noqa: E402
+from chanceblog_desktop.ui.core import candidate_rules, channel_names as cn, drafts_view as dv, part_rules, photo_rules as rules, seed_form as sf, text  # noqa: E402
 
 T = text.T
 LONG30 = ("가나다라마바사아자차카타파하" * 3)[:30]                                      # 한도(30자) 가득한 별명
@@ -51,6 +52,8 @@ class ChipCaptionTest(unittest.TestCase):
     def test_the_count_is_kept_as_it_is_even_when_zero(self):
         self.assertEqual(part_rules.chip_caption("Blogger 1", 0), "Blogger 1 · 0")
         self.assertEqual(part_rules.chip_caption("전체", 0), "전체  0")
+        self.assertEqual(part_rules.chip_accessible("Blogger 1", 0), "Blogger 1, 0", "개수 0 도 접근 이름에 그대로 — 화면 읽기 프로그램은 `0개` 를 읽는다(0 을 감추면 `Blogger 1` 만 남아 개수가 없는 칩과 같아진다)")
+        self.assertEqual(part_rules.chip_accessible("전체", 0), "전체 0")
 
 
 class SentenceRowTest(unittest.TestCase):
@@ -84,10 +87,12 @@ class ChipLimitTest(unittest.TestCase):
         cn.use(cn.labels(items))
 
     def test_the_chip_limit_is_its_own_constant_wider_than_the_drawer_and_inside_the_service_alias_limit(self):
-        self.assertEqual(cn.CHIP_LIMIT, 20)
-        self.assertGreater(cn.CHIP_LIMIT, cn.DRAWER_LIMIT, "주 화면은 서랍(폭 420)보다 넓다")
-        self.assertLess(cn.CHIP_LIMIT, cn.LIMIT, "서른 자 별명은 칩에서 줄어든다")
+        self.assertEqual(cn.CHANNEL_CHIP_LIMIT, 20)
+        self.assertGreater(cn.CHANNEL_CHIP_LIMIT, cn.DRAWER_LIMIT, "주 화면은 서랍(폭 420)보다 넓다")
+        self.assertLess(cn.CHANNEL_CHIP_LIMIT, cn.LIMIT, "서른 자 별명은 칩에서 줄어든다")
         self.assertEqual(cn.DRAWER_LIMIT, 12, "서랍의 한도는 그대로다")
+        self.assertFalse(hasattr(cn, "CHIP_LIMIT"), "카드 칩의 `candidate_rules.CHIP_LIMIT`(14자)와 이름이 같은 다른 상수가 되지 않게 채널 이름 쪽은 `CHANNEL_CHIP_LIMIT` 하나뿐이다")
+        self.assertEqual(candidate_rules.CHIP_LIMIT, 14, "카드 칩의 한도는 그대로다")
 
     def test_the_chip_name_is_the_whole_name_when_it_fits_and_a_cut_name_with_an_ellipsis_when_it_does_not(self):
         self.assertEqual([cn.chip_label(key) for key in cn.ORDER], [cn.label(key) for key in cn.ORDER], "기본 이름은 줄지 않는다")
@@ -95,7 +100,7 @@ class ChipLimitTest(unittest.TestCase):
         self.assertEqual(cn.chip_label("naver_b"), "예시 가게", "스무 자 안쪽은 그대로")
         for key in ("naver_a", "blogger_ko"):
             shown = cn.chip_label(key)
-            self.assertLessEqual(len(shown), cn.CHIP_LIMIT, key)
+            self.assertLessEqual(len(shown), cn.CHANNEL_CHIP_LIMIT, key)
             self.assertTrue(shown.endswith("…"), key)
             self.assertTrue(cn.label(key).startswith(shown[:-1]), key)
             self.assertEqual(cn.full_if_cut(key, shown), cn.label(key), "줄였으면 전체 이름이 툴팁·접근 이름이다")
@@ -106,9 +111,9 @@ class ChipLimitTest(unittest.TestCase):
         full = cn.current()
         self.assertGreater(len(full["naver_a"]), 40, "같은 별명 둘을 가른 이름은 마흔 자를 넘는다(이 시험의 전제)")
         shorts = {key: cn.chip_label(key) for key in cn.ORDER}
-        self.assertTrue(all(len(value) <= cn.CHIP_LIMIT for value in shorts.values()), shorts)
+        self.assertTrue(all(len(value) <= cn.CHANNEL_CHIP_LIMIT for value in shorts.values()), shorts)
         self.assertEqual(len({value.casefold() for value in shorts.values()}), 5, shorts)
-        self.assertEqual(shorts, cn.short_names(full, cn.CHIP_LIMIT), "줄이는 규칙은 서랍과 같은 `short_names` 이고 길이만 다르다")
+        self.assertEqual(shorts, cn.short_names(full, cn.CHANNEL_CHIP_LIMIT), "줄이는 규칙은 서랍과 같은 `short_names` 이고 길이만 다르다")
         self.assertNotEqual(shorts, cn.short_names(full), "서랍(열두 자)과는 다른 글이다")
 
     def test_the_cut_never_touches_the_stored_alias_or_the_full_label_or_the_drawer_label(self):
@@ -180,14 +185,46 @@ class ChipLimitTest(unittest.TestCase):
         self.assertEqual(blogs["naver_a"]["a11y"], T["drf_blog_a11y"].format(name=LONG30))
         self.assertEqual((blogs["naver_b"]["label"], blogs["naver_b"]["tip"]), ("예시 가게", ""))
 
+    def test_the_seed_chip_name_functions_raise_for_an_unknown_scope_or_channel_like_the_full_and_drawer_name_functions(self):
+        """독스트링이 약속한 동작 — 이름 규칙(`cn.label`·`short_label`·`chip_label`)은 모르는 열쇠를 그대로 돌려주므로 오류는 함수 첫머리의 검증 줄이 낸다. 그 줄을 지워도 옛 시험은 통과했다(검증 Q QP-2)."""
+        for function in (sf.scope_name, sf.scope_short_name, sf.scope_chip_name, sf.channel_name, sf.channel_short_name, sf.channel_chip_name):
+            with self.subTest(function.__name__), self.assertRaises(KeyError):
+                function("모르는 열쇠")
+        self.assertEqual(cn.chip_label("모르는 열쇠"), "모르는 열쇠", "이름 규칙 자체는 모르는 열쇠를 그대로 돌려준다 — 오류를 내는 것은 위 함수들의 검증 줄이다")
+
+    def test_the_seed_chip_names_are_the_cut_names_of_the_five_channels_and_the_common_scope_is_left_as_it_is(self):
+        self.names(MIXED)
+        self.assertEqual(sf.scope_chip_name("common"), sf.scope_name("common"), "공통은 그대로")
+        for key in cn.ORDER:
+            self.assertEqual(sf.scope_chip_name(key), cn.chip_label(key), key)
+            self.assertEqual(sf.channel_chip_name(key), cn.chip_label(key), key)
+        self.assertNotEqual(sf.scope_chip_name("naver_a"), sf.scope_name("naver_a"), "서른 자 별명은 칩 이름에서 줄어든다")
+        self.assertLessEqual(len(sf.channel_chip_name("naver_a")), cn.CHANNEL_CHIP_LIMIT)
+        self.assertGreater(len(sf.channel_chip_name("naver_a")), cn.DRAWER_LIMIT, "서랍의 열두 자가 아니라 주 화면의 스무 자 기준이다")
+        self.assertEqual((sf.scope_chip_name("naver_b"), sf.channel_chip_name("naver_b")), ("예시 가게", "예시 가게"))
+
+    def test_a_channel_outside_the_five_gets_its_chip_name_cut_at_the_same_limit_and_keeps_its_full_name_as_the_tip(self):
+        """채널 칩을 만드는 쪽(`candidates_view._chip_name`)은 다섯 채널이 아닌 열쇠도 같은 한도로 줄인다 — 지금 화면에서는 닿기 어려운 길이지만 독스트링이 약속한 동작이다(검증 Q QP-2·S SP-3: 한도를 서른으로 바꿔도 시험이 통과했다)."""
+        provider = cc.cd.FakeCandidatesProvider()
+        data = provider.load_candidates(cc.SAFE, cc.NEVER)
+        data = dataclasses.replace(data, channels=(*data.channels, cc.cd.ChannelInfo("extra_channel", LONG30, None, True)))
+        controller = cc.new_controller(provider, data)
+        chips = {chip["key"]: chip for chip in controller.view()["filters"]["channel"]}
+        chip = chips["extra_channel"]
+        self.assertEqual(len(chip["label"]), cn.CHANNEL_CHIP_LIMIT, chip)
+        self.assertTrue(chip["label"].endswith("…") and LONG30.startswith(chip["label"][:-1]), chip)
+        self.assertEqual(chip["tip"], LONG30, "줄였으면 전체 이름이 툴팁")
+        self.assertEqual(chip["a11y"], T["cand_filter_channel_a11y"].format(name=LONG30, n=chip["count"]), "접근 이름은 전체 이름")
+        self.assertEqual(list(chips)[-1], "extra_channel", "다섯 채널 뒤에 놓인다")
+
     def test_the_twin_names_never_make_a_chip_longer_than_the_limit_on_the_three_main_screens(self):
         self.names(TWIN)
         seeds_view = sc.new_controller().view()
         widest = max(len(row["chip"]["text"].split(" · ")[0]) for row in seeds_view["summary"]["channels"]["rows"])
-        self.assertLessEqual(widest, cn.CHIP_LIMIT, "Seed 요약 칩의 이름")
-        self.assertLessEqual(max(len(chip["label"]) for chip in seeds_view["filters"]["scope"]), cn.CHIP_LIMIT, "Seed 소속 칩")
-        self.assertLessEqual(max(len(chip["label"]) for chip in cc.new_controller().view()["filters"]["channel"]), cn.CHIP_LIMIT, "후보 채널 칩")
-        self.assertLessEqual(max(len(item["label"]) for item in dc.made(dc.GENERIC).view()["normal"]["options"]["blogs"]), cn.CHIP_LIMIT, "초안 블로그 칩")
+        self.assertLessEqual(widest, cn.CHANNEL_CHIP_LIMIT, "Seed 요약 칩의 이름")
+        self.assertLessEqual(max(len(chip["label"]) for chip in seeds_view["filters"]["scope"]), cn.CHANNEL_CHIP_LIMIT, "Seed 소속 칩")
+        self.assertLessEqual(max(len(chip["label"]) for chip in cc.new_controller().view()["filters"]["channel"]), cn.CHANNEL_CHIP_LIMIT, "후보 채널 칩")
+        self.assertLessEqual(max(len(item["label"]) for item in dc.made(dc.GENERIC).view()["normal"]["options"]["blogs"]), cn.CHANNEL_CHIP_LIMIT, "초안 블로그 칩")
 
 
 class PlaceFoldRuleTest(unittest.TestCase):

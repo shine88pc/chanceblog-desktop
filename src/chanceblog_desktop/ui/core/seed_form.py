@@ -269,7 +269,7 @@ def channel_short_name(code):
 
 
 def scope_chip_name(scope):
-    """주 화면(소속 거르기 칩)에 보이는 소속 이름 — 아주 긴 별명은 `channel_names.CHIP_LIMIT` 자로 줄인다(POLISH-1 Q3-2). 공통은 그대로. 모르는 소속은 오류(`scope_name` 과 같다)."""
+    """주 화면(소속 거르기 칩)에 보이는 소속 이름 — 아주 긴 별명은 `channel_names.CHANNEL_CHIP_LIMIT` 자로 줄인다(POLISH-1 Q3-2). 공통은 그대로. 모르는 소속은 오류(`scope_name` 과 같다)."""
     if scope == "common":
         return wording.SCOPE_KO[scope]
     wording.CHANNEL_KO[scope]
@@ -277,7 +277,7 @@ def scope_chip_name(scope):
 
 
 def channel_chip_name(code):
-    """주 화면(Seed 요약 칩)에 보이는 채널 이름 — 아주 긴 별명은 `channel_names.CHIP_LIMIT` 자로 줄인다(POLISH-1 Q3-2). 모르는 열쇠는 오류(`channel_name` 과 같다)."""
+    """주 화면(Seed 요약 칩)에 보이는 채널 이름 — 아주 긴 별명은 `channel_names.CHANNEL_CHIP_LIMIT` 자로 줄인다(POLISH-1 Q3-2). 모르는 열쇠는 오류(`channel_name` 과 같다)."""
     wording.CHANNEL_KO[code]
     return cn.chip_label(code)
 

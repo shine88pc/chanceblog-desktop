@@ -366,8 +366,8 @@ class CandidatesController:
         return [{"key": key, "label": labels[key], "count": counts[key], "active": key == current, "tip": names[key] if names[key] != labels[key] else "", "a11y": T[a11y_key].format(name=names[key], n=counts[key])} for key in keys]
 
     def _chip_name(self, key):
-        """채널 칩에 보이는 이름 — 다섯 채널은 `channel_names.chip_label`(아주 긴 별명만 `CHIP_LIMIT` 자로 줄어든다), 그 밖은 `CHIP_LIMIT` 자까지."""
-        return cn.chip_label(key) if key in cn.ORDER else rules.shown(self.channel_info(key)["name"], cn.CHIP_LIMIT)
+        """채널 칩에 보이는 이름 — 다섯 채널은 `channel_names.chip_label`(아주 긴 별명만 `CHANNEL_CHIP_LIMIT` 자로 줄어든다), 그 밖은 `CHANNEL_CHIP_LIMIT` 자까지."""
+        return cn.chip_label(key) if key in cn.ORDER else rules.shown(self.channel_info(key)["name"], cn.CHANNEL_CHIP_LIMIT)
 
     def _filters(self, data, found):
         rows = data.rows

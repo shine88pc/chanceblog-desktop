@@ -15,7 +15,7 @@ from .text import T
 
 LIMIT = 30                                                   # 화면 이름 길이 상한 — 서비스의 별명 한도(`ch.MAX_ALIAS`)와 같다
 DRAWER_LIMIT = 12                                            # 서랍처럼 좁은 자리(폭 420)에 보이는 이름의 길이 상한 — 한글 열두 자면 배지·단추·칩이 서랍 안에 든다(검증 Q2-1: 별명이 길면 서랍이 넘쳤다). 전체 이름은 툴팁·접근 이름에 둔다
-CHIP_LIMIT = 20                                              # 주 화면(후보·Seed·초안 작성)의 채널 칩·요약·거르기에 보이는 이름의 길이 상한 — 서랍의 열두 자(`DRAWER_LIMIT`)와 다른 값이다. 넘으면 …로 줄이고 전체 이름은 툴팁·접근 이름에 둔다(POLISH-1 Q3-2 — 같은 서른 자 별명 둘이면 이름이 마흔두 자라 좁은 창에서 가로 스크롤이 생겼다)
+CHANNEL_CHIP_LIMIT = 20                                      # 주 화면(후보·Seed·초안 작성)의 채널 칩·요약·거르기에 보이는 이름의 길이 상한 — 서랍의 열두 자(`DRAWER_LIMIT`)와 다른 값이다. 넘으면 …로 줄이고 전체 이름은 툴팁·접근 이름에 둔다(POLISH-1 Q3-2 — 같은 서른 자 별명 둘이면 이름이 마흔두 자라 좁은 창에서 가로 스크롤이 생겼다)
 ORDER = bf.DISPLAY_ORDER                                     # 종류별 채움 순서: naver_a·naver_b·blogger_ko·blogger_en·github_pages
 HOME_KEYS = {"A": "naver_a", "B": "naver_b"}                 # 홈의 채널 열쇠(A·B)가 가리키는 슬롯
 
@@ -132,8 +132,8 @@ def short_home_label(letter, limit=DRAWER_LIMIT):
 
 
 def chip_label(key):
-    """주 화면의 채널 칩·요약·거르기에 보일 이름(`CHIP_LIMIT` 자까지, 넘으면 …) — 줄이는 규칙은 서랍과 같은 `short_label` 이고 길이만 다르다. 줄이지 않았으면 화면 이름 그대로다. 모르는 열쇠는 그대로."""
-    return short_label(key, CHIP_LIMIT)
+    """주 화면의 채널 칩·요약·거르기에 보일 이름(`CHANNEL_CHIP_LIMIT` 자까지, 넘으면 …) — 줄이는 규칙은 서랍과 같은 `short_label` 이고 길이만 다르다. 줄이지 않았으면 화면 이름 그대로다. 모르는 열쇠는 그대로."""
+    return short_label(key, CHANNEL_CHIP_LIMIT)
 
 
 def full_if_cut(key, short):
@@ -153,4 +153,4 @@ def avatar_letter(key):
     return "?"
 
 
-__all__ = ["CHIP_LIMIT", "COMMON_SCOPE", "DEFAULT", "DRAWER_LIMIT", "RESERVED", "button_text", "chip_label", "display_order", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]
+__all__ = ["CHANNEL_CHIP_LIMIT", "COMMON_SCOPE", "DEFAULT", "DRAWER_LIMIT", "RESERVED", "button_text", "chip_label", "display_order", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]

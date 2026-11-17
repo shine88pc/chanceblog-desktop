@@ -24,7 +24,7 @@ if HAVE:
     import ui_offscreen
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QAbstractButton, QLabel, QWidget
+    from PySide6.QtWidgets import QAbstractButton, QLabel, QToolTip, QWidget
     from chanceblog_desktop.ui.qt import components as UI
 
 SEVEN = ((1920, 1080), (1600, 960), (1366, 768), (1280, 720), (1093, 614), (910, 512), (900, 560))
@@ -49,6 +49,20 @@ def read_names(window):
 
 def chips_of(root, prefix):
     return {str(button.property("focus_key")).split(":")[-1]: button for button in root.findChildren(QAbstractButton) if str(button.property("focus_key")).startswith(prefix)}
+
+
+def assert_keyboard_tooltips(test, chips, wanted):
+    """칩마다 Tab 포커스를 주고 키보드 포커스로 뜬 툴팁을 본다 — `wanted` 는 {열쇠: 툴팁 글 또는 None(툴팁 없음)}. 포커스를 옮기면 앞 칩의 툴팁은 사라진다."""
+    for key, text in wanted.items():
+        QToolTip.hideText()
+        chips[key].setFocus(Qt.TabFocusReason)
+        test.settle(6)
+        test.assertTrue(chips[key].hasFocus(), key)
+        if text is None:
+            test.assertFalse(QToolTip.isVisible(), f"{key}: 이름이 다 보이는 칩은 키보드 포커스에도 툴팁이 없다")
+        else:
+            test.assertTrue(QToolTip.isVisible(), f"{key}: 줄인 칩은 키보드 포커스로 툴팁이 뜬다")
+            test.assertEqual(QToolTip.text(), text, key)
 
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
@@ -88,6 +102,17 @@ class SeedScreenChipsTest(SeedsBase):
         self.assertIn(LONG30, long_badge.toolTip(), "요약 칩의 툴팁은 전체 이름이 든 칩 글")
         short_badge = next(label for name, label in badges.items() if "예시 가게" in name)
         self.assertEqual(short_badge.toolTip(), "")
+
+    def test_a_cut_scope_chip_shows_its_full_name_as_a_tooltip_when_the_keyboard_focus_comes_to_it_and_a_chip_that_fits_shows_none(self):
+        """툴팁 글이 있다는 것만이 아니라 Tab 으로 포커스가 올 때 실제로 뜬다(검증 Q QP-1 — `with_tooltip` 을 일반 툴팁으로 바꿔도 글 시험은 통과했다). 요약 칩은 포커스를 받지 않는 배지라 마우스를 올릴 때만 뜬다."""
+        window = self.make()
+        cn.use(cn.labels(listed(LONG30, "예시 가게")))
+        self.open_filters(window)
+        self.activate(window)
+        scope = chips_of(window.screen_widget, "seeds:scope:")
+        assert_keyboard_tooltips(self, scope, {"naver_a": LONG30, "naver_b": None})
+        badge = next(label for label in window.screen_widget.findChildren(QLabel) if label.property("badge") and LONG30 in label.accessibleName())
+        self.assertEqual(badge.focusPolicy(), Qt.NoFocus, "요약 칩(배지)은 Tab 정거장이 아니다 — 키보드 툴팁이 없는 까닭")
 
     def test_a_name_that_ends_with_a_digit_is_split_from_the_count_by_a_dot_in_the_chip_text_and_a_comma_in_the_accessible_name(self):
         window = self.make()
@@ -136,6 +161,14 @@ class CandidateScreenChipsTest(CandidatesBase):
         self.assertNotIn(LONG30, cut.text())
         self.assertIn("예시 가게", whole.accessibleName())
 
+    def test_a_cut_channel_chip_shows_its_full_name_as_a_tooltip_when_the_keyboard_focus_comes_to_it_and_a_chip_that_fits_shows_none(self):
+        window = self.make()
+        cn.use(cn.labels(listed(LONG30, "예시 가게")))
+        window.render()
+        self.settle(8)
+        self.activate(window)
+        assert_keyboard_tooltips(self, chips_of(window.screen_widget, "cand:channel:"), {"naver_a": LONG30, "naver_b": None})
+
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
 class DraftScreenChipsTest(DraftsBase):
@@ -169,6 +202,15 @@ class DraftScreenChipsTest(DraftsBase):
         self.assertIn(LONG30, cut.accessibleName())
         self.assertNotIn(LONG30, cut.text())
         self.assertEqual(whole.text(), "예시 가게")
+
+    def test_a_cut_blog_chip_shows_its_full_name_as_a_tooltip_when_the_keyboard_focus_comes_to_it_and_a_chip_that_fits_shows_none(self):
+        window = self.drafted()
+        window.drf_toggle_options()
+        cn.use(cn.labels(listed(LONG30, "예시 가게")))
+        window.render()
+        self.settle(8)
+        self.activate(window)
+        assert_keyboard_tooltips(self, self.ui(window).blog_chips, {"naver_a": LONG30, "naver_b": None})
 
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
@@ -350,6 +392,44 @@ class ToastLevelTest(SeedsBase):
         self.assertEqual(window.toast.property("level"), "", "다른 안내가 떠 있던 자리를 바꾸면 수준도 새 안내의 것이다")
         window.notify("다음 안내", "warning")
         self.assertEqual(window.toast.property("level"), "", "같은 안내가 또 오면 시간만 늘린다 — 모양은 그대로")
+
+    @staticmethod
+    def edge_colors(window):
+        """토스트를 실제로 그려서 가운데 높이의 왼쪽 가장자리 픽셀 색(`#rrggbb`)을 줄 두께 + 2 개 읽는다 → (색 목록, 줄 두께 픽셀 수). 스타일시트의 4px 는 화면 배율만큼 굵어진다."""
+        from PySide6.QtGui import QColor
+        window.toast.adjustSize()
+        image = window.toast.grab().toImage()
+        line = max(1, round(4 * image.devicePixelRatio()))
+        row = image.height() // 2
+        return [QColor(image.pixelColor(x, row)).name() for x in range(line + 2)], line
+
+    def test_the_left_edge_of_a_shown_toast_is_painted_in_the_state_color_and_a_toast_without_a_level_has_no_line_even_right_after_one_with_a_level(self):
+        """속성·스타일시트 글만 보는 위 두 시험은 `repolish` 를 지워도 통과한다 — 속성은 바뀌어도 스타일이 다시 계산되지 않아 줄이 안 그려지는데 그 일은 글로는 안 보인다(검증 S SP-1·Q QP-1). 여기서는 실제로 그려 본다."""
+        from PySide6.QtGui import QColor
+
+        from chanceblog_desktop.ui.qt import theme
+        window = self.make()
+        colors = theme.colors()
+        plain = QColor(colors["inverse_bg"]).name()
+        for level, token in (("info", "info"), ("warning", "warning"), ("error", "danger")):
+            window.toast._expire()
+            window.notify(f"수준 {level}", level)
+            self.settle(4)
+            edge, line = self.edge_colors(window)
+            wanted = QColor(colors[token]).name()
+            self.assertEqual(edge[:line], [wanted] * line, f"{level}: 왼쪽 {line}px 가 상태색 {wanted} 이어야 한다 — {edge}")
+            self.assertEqual(edge[line:], [plain, plain], f"{level}: 줄 오른쪽은 토스트 바탕색이어야 한다 — {edge}")
+        for level in (None, "ok"):                                                    # 수준이 있던 안내 다음에 수준 없는 안내가 오면 이전 안내의 줄이 남지 않는다
+            window.toast._expire()
+            window.notify(f"먼저 안내 {level}", "error")
+            self.settle(3)
+            edge, line = self.edge_colors(window)
+            self.assertEqual(edge[:line], [QColor(colors["danger"]).name()] * line, "먼저 뜬 안내에는 줄이 있다")
+            window.toast._expire()
+            window.notify(f"다음 일반 안내 {level}", level)
+            self.settle(4)
+            edge, line = self.edge_colors(window)
+            self.assertEqual(edge, [plain] * (line + 2), f"수준 없는 안내({level!r})에는 줄이 없다 — {edge}")
 
 
 if __name__ == "__main__":

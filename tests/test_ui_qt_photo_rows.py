@@ -169,6 +169,59 @@ class PlaceFoldTest(tq.PhotoBase):
         self.assertFalse(back.place_body.isVisibleTo(back), "기본 들어갈 곳뿐인 줄은 되돌려도 접힌 채다")
         self.assertEqual(back.place_toggle.text(), "들어갈 곳: 도입 ▸")
 
+    def test_a_section_text_with_an_ampersand_is_shown_as_plain_text_in_the_folded_button_and_never_becomes_an_alt_shortcut(self):
+        """접힌 단추는 `들어갈 곳: <소제목> ▸` 로 요약한다 — 나중 단계가 적은 소제목 글에 `&` 가 있으면(`Q&A 코너`) Qt 가 `&A` 를 Alt 단축키로 읽어 글자가 사라지고 단추에 단축키가 붙으므로 `&&` 로 써야 한다(검증 S SP-10). 접근 이름은 앱이 만든 글 그대로다."""
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1), fake_path(2))
+        board = window.state.drafts.photos
+        board.set_type("p001", "기타")
+        self.assertEqual(board._apply("p001", preferred_section="Q&A 코너"), "ok", "저장된 초안이나 나중 단계가 적은 소제목 글은 이런 값으로 들어온다")
+        form.refresh()
+        self.settle(6)
+        card, other = form.rows["p001"], form.rows["p002"]
+        self.assertTrue(card.place_body.isVisibleTo(card), "기본값이 아닌 들어갈 곳은 줄을 펼친다")
+        card.place_toggle.click()                                                         # 사용자가 접는다 → 접힌 단추가 한 줄 요약
+        self.settle(4)
+        wanted = "들어갈 곳: Q&&A 코너 ▸"
+        self.assertEqual(card.place_toggle.text(), wanted, "`&` 하나는 단축키 표시가 된다 — `&&` 로 써야 글자 `&` 가 보인다")
+        self.assertTrue(card.place_toggle.shortcut().isEmpty(), "단축키가 붙으면 안 된다")
+        self.assertEqual(card.place_toggle.accessibleName(), board.view()["rows"][0]["place"]["a11y"], "접근 이름은 앱이 만든 글 그대로")
+        self.assertIn("Q&A 코너", card.place_toggle.accessibleName(), "접근 이름에는 `&` 하나가 그대로 있다")
+        form.refresh()                                                                    # 줄을 다시 그려도 접힌 단추 글은 같다
+        self.settle(4)
+        self.assertEqual(card.place_toggle.text(), wanted)
+        card.place_toggle.click()                                                         # 펼쳤다 다시 접어도 같다
+        self.settle(3)
+        card.place_toggle.click()
+        self.settle(3)
+        self.assertEqual(card.place_toggle.text(), wanted)
+        self.assertTrue(card.place_toggle.shortcut().isEmpty())
+        self.assertEqual(other.place_toggle.text(), board.view()["rows"][1]["place"]["open_text"], "소제목 글이 없는 다른 줄은 처음 글 그대로")
+
+    def test_a_row_that_is_created_open_has_the_open_button_text_from_the_start_and_not_the_folded_summary(self):
+        """줄 부품은 화면에 보이기 전에 만들어진다(그때 `isVisible()` 은 아직 거짓이다) — 접혔는지는 보이는지가 아니라 숨겼는지(`isHidden`)로 가려야 한다. 사용자가 고른 값이 있어 펼친 채 새로 만들어진 줄(지운 사진을 되돌린 줄)의 단추는 처음부터 `자리 정하기 ▾` 이고 접힌 요약(`들어갈 곳: … ▸`)이 아니다(검증 Q QP-1)."""
+        window, form = self.sheet()
+        self.add_photos(form, fake_path(1), fake_path(2))
+        board = window.state.drafts.photos
+        card = form.rows["p001"]
+        self.chip(form, "type", "p001", "간판").click()
+        self.settle(3)
+        self.open_and_choose(form, card, "p001", "마무리")
+        place = board.view()["rows"][0]["place"]
+        self.assertEqual(card.place_toggle.text(), place["close_text"], "펼친 줄의 단추는 `자리 정하기 ▾`")
+        card.remove.click()
+        self.settle(4)
+        form.undo_button.click()
+        self.settle(5)
+        again = form.rows["p001"]
+        self.assertIsNot(again, card, "되돌리면 줄 부품이 새로 만들어진다")
+        self.assertTrue(again.place_body.isVisibleTo(again), "사용자가 고른 값이 있는 새 줄은 펼친 채 만들어진다")
+        self.assertEqual(again.place_toggle.text(), place["close_text"], "새로 만들어진 펼친 줄의 단추도 `자리 정하기 ▾` — 접힌 요약이면 펼친 줄이 접힌 줄처럼 읽힌다")
+        self.assertNotIn("▸", again.place_toggle.text())
+        again.place_toggle.click()                                                        # 사용자가 접으면 그때 요약이 된다
+        self.settle(3)
+        self.assertEqual(again.place_toggle.text(), "들어갈 곳: 마무리 ▸")
+
 
 class FirstFocusTest(tq.PhotoBase):
     def visible_inside(self, form, box):

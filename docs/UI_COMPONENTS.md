@@ -276,7 +276,7 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 
 | 부품 | 바뀐 것 | 규칙의 자리 |
 |---|---|---|
-| `FilterChip(text, count, active, focus_key, full=None)` | 개수가 있는 칩은 이름이 숫자로 끝나면 `이름 · 개수`(접근 이름 `이름, 개수`), 아니면 `이름  개수` 그대로. `full`(줄이기 전의 전체 이름)을 주면 접근 이름과 툴팁이 그것을 쓴다(키보드 포커스에도 툴팁이 보인다) | `core/part_rules.py` 의 `chip_caption`·`chip_accessible`(순수) |
+| `FilterChip(text, count, active, focus_key, full=None)` | 개수가 있는 칩은 이름이 숫자로 끝나면 `이름 · 개수`(접근 이름 `이름, 개수`), 아니면 `이름  개수` 그대로. `full`(줄이기 전의 전체 이름)을 주면 접근 이름과 툴팁이 그것을 쓴다(`FilterChip` 은 Tab 으로 포커스가 닿으므로 키보드 포커스에도 툴팁이 보인다) | `core/part_rules.py` 의 `chip_caption`·`chip_accessible`(순수) |
 | `Toast.show_message(text, level=None)` | `level` 이 `info`·`warning`·`error` 면 토스트 왼쪽에 그 상태색 줄이 보인다(`level` 속성 + 스타일시트 `QLabel#toast[level=…]` — 상태색 토큰 `info`·`warning`·`danger` 만). 수준이 없거나 `ok` 거나 모르는 값이면 예전 모양 그대로. 셸의 `notify(message, level=None)` 가 넘긴다 | `qt/components.py`·`qt/theme.py` |
 | `Dialog.present` | 열린 확인창을 닫지 않고 바꿔 열 때만, 부품이 보이게 된 다음 차례에 틀을 한 번 더 놓는다(새로 여는 확인창은 그대로) — 옛 동작은 새 확인창이 44px 로 접혔다 | `qt/components.py` |
-| 주 화면 채널 칩의 이름 | `channel_names.chip_label(key)` — 스무 자(`CHIP_LIMIT`)까지, 줄이는 규칙은 서랍(`short_label` 열두 자)과 같은 `short_names`. 줄이면 뷰모델이 `tip`(전체 이름)을 싣고 화면이 `FilterChip(full=…)`·툴팁으로 보인다 | `ui/core/channel_names.py` |
+| 주 화면 채널 칩의 이름 | `channel_names.chip_label(key)` — 스무 자(`CHANNEL_CHIP_LIMIT`)까지, 줄이는 규칙은 서랍(`short_label` 열두 자)과 같은 `short_names`. 줄이면 뷰모델이 `tip`(전체 이름)을 싣고 화면이 `FilterChip(full=…)` 이나 툴팁으로 보인다. Seed 요약 칩은 포커스를 받지 않는 `Badge` 라 마우스를 올릴 때만 툴팁이 나온다(접근 이름은 전체 이름) | `ui/core/channel_names.py` |

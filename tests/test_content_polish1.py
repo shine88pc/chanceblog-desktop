@@ -2,7 +2,7 @@
 
 지키는 것:
   1) 문장 끝을 찾는 정규식(`content/photo_flow.SENTENCE_END`)은 글이 길어도 **글자 수에 비례한 시간**이다 — 구두점이 아주 길게 이어진 뒤 공백이 아닌 글자가 오는 글(마침표 2만 개 + `x`)에서 제곱 시간이던 것(옛 코드는 약 9초). 찾는 결과는 옛 정규식과 한 건도 다르지 않다.
-  2) 글 모양 점검은 정확한 사진 자리 `{{사진 N}}` 만 걸지 않는다 — 닫는 중괄호가 하나 더 붙은 `{{사진 1}}}` 는 다른 `{{ … }}` 자리표시처럼 걸러 낸다(옛 점검은 정확한 모양 뒤에 붙은 `}` 를 못 봐 통과시켰다 — main 은 걸었다). 복사는 이 규칙과 상관없이 저장 형식 규칙(`photo_manifest.find_placeholders`)이 알아보는 자리만 `[이미지 N]` 으로 바꾼다 — 복사와 관문이 어긋나지 않는다.
+  2) 글 모양 점검은 정확한 사진 자리 `{{사진 N}}` 만 걸지 않는다 — 닫는 중괄호가 하나 더 붙은 `{{사진 1}}}` 는 다른 `{{ … }}` 자리표시처럼 걸러 낸다(옛 점검은 정확한 모양 뒤에 붙은 `}` 를 못 봐 통과시켰다 — 사진 자리 예외를 넣기 전, 곧 M082 이전에는 걸렸고 M082 가 만든 틈을 이번에 막는다). 복사는 이 규칙과 상관없이 저장 형식 규칙(`photo_manifest.find_placeholders`)이 알아보는 자리만 `[이미지 N]` 으로 바꾼다 — 복사와 관문이 어긋나지 않는다.
 """
 import random
 import re
@@ -32,10 +32,14 @@ class SentenceEndTest(unittest.TestCase):
 
     def test_the_time_grows_about_with_the_length_not_with_its_square(self):
         def seconds(count):
-            started = time.perf_counter()
+            """세 번 재서 가장 짧은 값 — 다른 프로그램이 CPU 를 잠깐 가져가 한 번 느려진 값에 시험이 흔들리지 않는다(제곱 시간이면 세 번 모두 느리다)."""
+            best = None
             for _ in range(3):
+                started = time.perf_counter()
                 pf.sentence_ends("." * count + "x")
-            return time.perf_counter() - started
+                took = time.perf_counter() - started
+                best = took if best is None else min(best, took)
+            return best
         small, large = seconds(6000), seconds(12000)
         self.assertLess(large, small * 3.0 + 0.05, f"두 배로 늘렸더니 시간이 {large / max(small, 1e-9):.1f}배다 — 제곱이면 4배")
 
