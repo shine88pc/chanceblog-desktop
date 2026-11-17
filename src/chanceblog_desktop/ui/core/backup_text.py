@@ -8,7 +8,7 @@ from __future__ import annotations
 BACKUP_T = {
     # 카드 머리·안내
     "backup_title": "백업·복원", "backup_sample_tag": "예시", "backup_a11y": "백업·복원, 만들어 둔 백업 {n}개",
-    "backup_desc": "글·저장한 초안·주제 후보·Seed·프로필·설정을 한 묶음으로 저장해 둬요. 키는 백업에 들어가지 않아요.",
+    "backup_desc": "글·저장한 초안·주제 후보·Seed·프로필·설정을 한 묶음으로 저장해 둬요. 키와 사진 정보는 백업에 들어가지 않아요.",
     "backup_sample_note": "지금 보이는 백업은 모두 예시예요. 이 화면에서는 아무것도 저장하거나 바꾸지 않아요.",
     "backup_now": "지금 백업", "backup_now_a11y": "지금 전체 백업 만들기",
     "backup_location": "백업 위치: {path}",

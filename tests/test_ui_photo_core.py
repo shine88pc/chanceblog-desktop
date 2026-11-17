@@ -342,7 +342,7 @@ class ConfirmTest(unittest.TestCase):
         self.assertEqual(board.manifest, before)
         self.assertEqual(board.ask_confirm_all(), "ask")
         view = board.view()
-        self.assertEqual(view["confirm_ask"]["text"], "사진 2장을 모두 ‘확인했어요’ 로 표시할까요? 표시한 사진의 종류·대상·메모가 초안에 쓰여요.")
+        self.assertEqual(view["confirm_ask"]["text"], "사진 2장을 모두 ‘확인했어요’ 로 표시할까요? 표시한 사진의 대상·설명 글·메모가 초안에 쓰여요(‘다시 만들기’ 를 누르면 들어가요).")
         self.assertEqual((view["confirm_ask"]["yes"], view["confirm_ask"]["no"]), ("2장 모두 확인", "그만두기"))
         self.assertFalse(view["confirm_all"]["enabled"], "확인 줄이 떠 있는 동안 처음 단추는 꺼진다")
         self.assertEqual(board.manifest, before, "묻는 것만으로는 바뀌지 않는다")

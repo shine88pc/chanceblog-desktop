@@ -674,6 +674,9 @@ class DraftsController:
             return False
         self.photos.load(outcome.manifest)
         self.photos_baseline, self.photos_trash, self.photos_state = outcome.manifest, False, "ok"
+        from ...content import photo_manifest as pm                              # 무거운 모듈은 쓰는 함수 안에서 늦게 가져온다(이 파일의 규칙)
+        if pm.placeholder_report(self.photos.manifest, self.body).ok:              # 본문에 이미 그 사진들의 자리가 있고 어긋남이 없다 — 열 때와 같은 규칙으로 '본문을 만든 사진' 으로 본다(어긋나면 그대로 둬 '다시 만들기' 안내가 남는다, 검증 Q PQ-3)
+            self.made_photos = self._photos_to_place() or ()
         self.notice = ("ok", T["pho_restored_notice"])
         return True
 

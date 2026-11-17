@@ -441,8 +441,10 @@ class FakeDraftsProvider(DraftsProvider):
         del self.saved[draft_id]
         photos = "none"
         if draft_id in self.photo_files:
-            self.photo_trash[draft_id] = self.photo_files.pop(draft_id)                    # 완전히 지우지 않고 초안마다 한 벌뿐인 되돌릴 사본으로(확인 024 — 덮어쓴다)
-            photos = "trash"
+            kept = self.photo_files.pop(draft_id)
+            if kept.photos:                                                                # 사진이 0장인 사진 정보는 사본으로 옮기지 않는다 — 옮기면 앞서 둔 쓸모 있는 사본을 빈 것으로 덮는다(검증 S PS-5, 서비스도 같다)
+                self.photo_trash[draft_id] = kept                                          # 완전히 지우지 않고 초안마다 한 벌뿐인 되돌릴 사본으로(확인 024 — 덮어쓴다)
+                photos = "trash"
         return DeletedOutcome(draft_id, photos)
 
     def restore_photos(self, draft_id, progress, cancelled):
@@ -450,7 +452,7 @@ class FakeDraftsProvider(DraftsProvider):
         _pause(self.delay, cancelled)
         if draft_id not in self.photo_trash:
             raise photo_failure(AppError("CONTENT_NOT_FOUND", {"항목": "사진 정보"}))
-        if draft_id in self.photo_files:
+        if draft_id in self.photo_files and self.photo_files[draft_id].photos:             # 저장해 둔 사진 정보가 있으면 덮어쓰지 않는다 — 사진이 0장인 것은 지킬 것이 없어 덮어쓴다(서비스도 같다)
             raise photo_failure(AppError("CONTENT_INVALID", {"항목": "사진 정보 — " + PHOTO_EXISTS_REASON}))
         self.photo_files[draft_id] = self.photo_trash.pop(draft_id)
         return PhotosRestored(self.photo_files[draft_id])
