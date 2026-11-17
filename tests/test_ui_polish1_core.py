@@ -15,10 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import test_ui_candidates_core as cc  # noqa: E402
 import test_ui_drafts_core as dc  # noqa: E402
+import test_ui_photo_core as pc  # noqa: E402
 import test_ui_photo_save_core as psc  # noqa: E402
 import test_ui_seeds_core as sc  # noqa: E402
 
-from chanceblog_desktop.ui.core import channel_names as cn, drafts_view as dv, part_rules, seed_form as sf, text  # noqa: E402
+from chanceblog_desktop.ui.core import channel_names as cn, drafts_view as dv, part_rules, photo_rules as rules, seed_form as sf, text  # noqa: E402
 
 T = text.T
 LONG30 = ("가나다라마바사아자차카타파하" * 3)[:30]                                      # 한도(30자) 가득한 별명
@@ -187,6 +188,86 @@ class ChipLimitTest(unittest.TestCase):
         self.assertLessEqual(max(len(chip["label"]) for chip in seeds_view["filters"]["scope"]), cn.CHIP_LIMIT, "Seed 소속 칩")
         self.assertLessEqual(max(len(chip["label"]) for chip in cc.new_controller().view()["filters"]["channel"]), cn.CHIP_LIMIT, "후보 채널 칩")
         self.assertLessEqual(max(len(item["label"]) for item in dc.made(dc.GENERIC).view()["normal"]["options"]["blogs"]), cn.CHIP_LIMIT, "초안 블로그 칩")
+
+
+class PlaceFoldRuleTest(unittest.TestCase):
+    """POLISH-1 M-2 — 종류를 고르면 기본 '들어갈 곳' 이 생겨 접힌 `자리 정하기` 가 저절로 펼쳐지고 한 줄이 749px 가 되던 것: 종류가 정한 기본값은 펼치지 않고 한 줄 요약(`들어갈 곳: … ▸`)만 보이게, 사용자가 직접 고른 값·설명 글이 있을 때만 펼친다."""
+
+    def board(self):
+        return pc.new_board(1)
+
+    def place(self, board, photo_id="p001"):
+        return pc.row_of(board, photo_id)["place"]
+
+    def test_choosing_a_type_never_opens_the_place_part_and_the_folded_button_summarises_the_default_place(self):
+        expected = {"간판": "들어갈 곳: 도입 ▸", "건물 외관": "들어갈 곳: 도입 ▸", "메뉴판": "들어갈 곳: 내용 소제목 ▸", "대표 메뉴": "들어갈 곳: 내용 소제목 ▸", "음식": "들어갈 곳: 내용 소제목 ▸",
+                    "반찬": "들어갈 곳: 내용 소제목 ▸", "인테리어": "들어갈 곳: 분위기 소제목 ▸", "지도 캡처": T["pho_place_open"], "기타": T["pho_place_open"]}
+        self.assertEqual(set(expected), set(rules.TYPES), "아홉 종류 모두")
+        for label, summary in expected.items():
+            with self.subTest(label):
+                board = self.board()
+                board.set_type("p001", label)
+                place = self.place(board)
+                self.assertFalse(place["open"], label)
+                self.assertEqual(place["open_text"], summary, label)
+                self.assertEqual(place["close_text"], T["pho_place_close"])
+
+    def test_a_place_the_user_chose_opens_the_part_and_a_value_equal_to_the_default_does_not(self):
+        board = self.board()
+        board.set_type("p001", "간판")
+        self.assertEqual(board.set_section("p001", "마무리"), "ok")
+        place = self.place(board)
+        self.assertTrue(place["open"], "기본값(도입)이 아닌 들어갈 곳은 사용자가 고른 값이다")
+        self.assertEqual(place["open_text"], "들어갈 곳: 마무리 ▸")
+        board.set_section("p001", "도입")
+        self.assertFalse(self.place(board)["open"], "기본값과 같으면 사용자가 고른 것으로 보지 않는다")
+        board.set_section("p001", "")
+        place = self.place(board)
+        self.assertTrue(place["open"], "간판에서 직접 '자동' 을 골랐다 — 기본값(도입)과 다르다")
+        self.assertEqual(place["open_text"], "들어갈 곳: 자동 ▸", "자동도 요약에 나온다")
+        board.set_type("p001", "기타")
+        self.assertFalse(self.place(board)["open"], "기타의 기본값은 자동이라 비어 있으면 사용자가 고른 것이 아니다")
+        self.assertEqual(self.place(board)["open_text"], T["pho_place_open"])
+
+    def test_a_chosen_place_stays_when_the_type_changes_and_keeps_the_part_open(self):
+        board = self.board()
+        board.set_type("p001", "간판")
+        board.set_section("p001", "마무리")
+        board.set_type("p001", "음식")
+        place = self.place(board)
+        self.assertEqual(place["section"]["value"], "마무리", "사용자가 고른 들어갈 곳은 종류를 바꿔도 그대로다")
+        self.assertTrue(place["open"])
+
+    def test_a_caption_or_a_chosen_position_opens_the_part_whatever_the_type_default_is(self):
+        for act, label in ((lambda board: board.set_text("p001", "caption", "기본 반찬"), "설명 글"), (lambda board: board.set_placement("p001", "top"), "자리")):
+            with self.subTest(label):
+                board = self.board()
+                board.set_type("p001", "음식")
+                self.assertFalse(self.place(board)["open"], "기본값만 있을 때")
+                act(board)
+                self.assertTrue(self.place(board)["open"], label)
+
+    def test_the_accessible_name_of_the_button_says_the_current_place_only_when_there_is_one(self):
+        board = self.board()
+        self.assertEqual(self.place(board)["a11y"], T["pho_place_a11y"].format(n=1))
+        board.set_type("p001", "인테리어")
+        self.assertEqual(self.place(board)["a11y"], T["pho_place_a11y_now"].format(n=1, section="분위기 소제목"))
+        self.assertIn("지금은 분위기 소제목", self.place(board)["a11y"])
+
+    def test_a_section_text_the_later_stage_wrote_is_shown_cut_and_masked_in_the_summary(self):
+        board = self.board()
+        board.set_type("p001", "기타")
+        self.assertEqual(board._apply("p001", preferred_section="가" * 40), "ok", "나중 단계가 적은 소제목 글은 이미 있는 값으로만 들어온다 — 시험은 규칙 안쪽 길로 넣는다")
+        place = self.place(board)
+        self.assertTrue(place["open"])
+        self.assertEqual(place["open_text"], T["pho_place_summary"].format(section=rules.section_text("가" * 40)))
+        self.assertLessEqual(len(rules.section_text("가" * 40)), 30)
+        self.assertEqual((rules.section_text(""), rules.section_text("도입")), (T["pho_section_auto"], T["pho_section_intro"]))
+
+    def test_the_row_keys_are_the_same_so_the_screen_has_nothing_new_to_read(self):
+        board = self.board()
+        row = pc.row_of(board)
+        self.assertEqual(set(row["place"]), {"open", "open_text", "close_text", "a11y", "section", "kind", "nth"})
 
 
 class LeaveAndSaveWordingTest(unittest.TestCase):

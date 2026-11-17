@@ -66,7 +66,7 @@ PHOTO_T = {
     "pho_subject": "이 사진은 무엇인가요?", "pho_subject_a11y": "사진 {n} 대상 — 이 사진은 무엇인가요", "pho_subject_example": "예: {example}",
     "pho_note": "한마디 메모(선택)", "pho_note_a11y": "사진 {n} 한마디 메모", "pho_note_example": "예: 비 오는 날 갔어요. 사진 앞뒤에 넣고 싶은 말을 적어요.",
     "pho_count_text": "{n}/{limit}", "pho_over": "{limit}자까지만 적을 수 있어요. 지금 {n}자예요.",
-    "pho_place_open": "자리 정하기 ▸", "pho_place_close": "자리 정하기 ▾", "pho_place_a11y": "사진 {n} 들어갈 곳과 자리 정하기",
+    "pho_place_open": "자리 정하기 ▸", "pho_place_close": "자리 정하기 ▾", "pho_place_a11y": "사진 {n} 들어갈 곳과 자리 정하기", "pho_place_summary": "들어갈 곳: {section} ▸", "pho_place_a11y_now": "사진 {n} 들어갈 곳과 자리 정하기, 지금은 {section}",
     "pho_section": "들어갈 곳", "pho_section_a11y": "사진 {n} 들어갈 곳", "pho_section_auto": "자동", "pho_section_intro": "도입", "pho_section_content": "내용 소제목", "pho_section_mood": "분위기 소제목", "pho_section_closing": "마무리",
     "pho_place": "자리", "pho_place_kind_a11y": "사진 {n} 자리", "pho_place_auto": "자동", "pho_place_top": "글 맨 앞", "pho_place_after_heading": "소제목 바로 뒤", "pho_place_after_paragraph": "문단 뒤", "pho_place_between_sentences": "문장 사이",
     "pho_nth": "몇 번째", "pho_nth_less": "−", "pho_nth_less_a11y": "사진 {n} 몇 번째 하나 줄이기", "pho_nth_more": "+", "pho_nth_more_a11y": "사진 {n} 몇 번째 하나 늘리기", "pho_nth_value": "{k}번째",

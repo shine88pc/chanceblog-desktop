@@ -271,3 +271,12 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 - 머리의 `저장한 초안` 단추(`DraftsUi.saved_list`, 포커스 키 `drf-saved-list`)와 아래 행동 줄의 `저장`(`act:save` — 공통 부품 `bars.ActionBar` 의 보조 단추).
 - `AppShell.show_choice_dialog(제목, 본문, 선택들, first=열쇠, on_cancel=…)`: 여러 갈래 확인창의 한 곳 — 선택 `(열쇠, 글, 종류, 함수)`, 함수가 없는 선택(`계속 고치기`)은 취소·Esc 와 같다. 떠나기·`← 주제 후보`·`저장한 초안`·앱 닫기 앞의 세 갈래는 모두 `_show_leave_choices` 를 거친다(시험이 확인한다). 기존 `show_dialog`(두 갈래)는 그대로다.
 - 홈: `screens._posts` 가 작성 중인 초안 구역의 머리 개수(`count_text`)와 `저장한 초안 보기`(`link`, 포커스 키 `home-drafts-link`)를 그린다 — 뷰모델에 `link` 가 있을 때만(전체 개수를 알고 그 개수가 1 이상인 공급자 — 그 단추가 부르는 셸 함수 `home_saved_drafts` 가 화면을 요청하는 호출 한 곳이고 화면 부품은 `go` 를 직접 부르지 않는다).
+
+## 9. 후속 정리(POLISH-1, D-504·D-505)로 바뀐 공통 부품
+
+| 부품 | 바뀐 것 | 규칙의 자리 |
+|---|---|---|
+| `FilterChip(text, count, active, focus_key, full=None)` | 개수가 있는 칩은 이름이 숫자로 끝나면 `이름 · 개수`(접근 이름 `이름, 개수`), 아니면 `이름  개수` 그대로. `full`(줄이기 전의 전체 이름)을 주면 접근 이름과 툴팁이 그것을 쓴다(키보드 포커스에도 툴팁이 보인다) | `core/part_rules.py` 의 `chip_caption`·`chip_accessible`(순수) |
+| `Toast.show_message(text, level=None)` | `level` 이 `info`·`warning`·`error` 면 토스트 왼쪽에 그 상태색 줄이 보인다(`level` 속성 + 스타일시트 `QLabel#toast[level=…]` — 상태색 토큰 `info`·`warning`·`danger` 만). 수준이 없거나 `ok` 거나 모르는 값이면 예전 모양 그대로. 셸의 `notify(message, level=None)` 가 넘긴다 | `qt/components.py`·`qt/theme.py` |
+| `Dialog.present` | 열린 확인창을 닫지 않고 바꿔 열 때만, 부품이 보이게 된 다음 차례에 틀을 한 번 더 놓는다(새로 여는 확인창은 그대로) — 옛 동작은 새 확인창이 44px 로 접혔다 | `qt/components.py` |
+| 주 화면 채널 칩의 이름 | `channel_names.chip_label(key)` — 스무 자(`CHIP_LIMIT`)까지, 줄이는 규칙은 서랍(`short_label` 열두 자)과 같은 `short_names`. 줄이면 뷰모델이 `tip`(전체 이름)을 싣고 화면이 `FilterChip(full=…)`·툴팁으로 보인다 | `ui/core/channel_names.py` |

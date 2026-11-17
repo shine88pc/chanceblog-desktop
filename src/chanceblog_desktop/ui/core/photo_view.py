@@ -611,7 +611,8 @@ class PhotoBoard:
         types = list(self.types) + ([photo.photo_type] if photo.photo_type not in self.types else [])
         settings = [("", T["pho_setting_none"])] + [(item, item) for item in self.settings] + ([(photo.setting, photo.setting)] if photo.setting and photo.setting not in self.settings else [])
         placement = photo.placement
-        opened = bool(photo.preferred_section or placement.kind != "auto" or photo.caption)
+        opened = bool(rules.section_chosen_by_user(photo.photo_type, photo.preferred_section) or placement.kind != "auto" or photo.caption)          # 사용자가 직접 고른 값·설명 글이 있을 때만 펼친다 — 종류가 정한 기본 들어갈 곳은 펼치지 않고 한 줄 요약만 보인다(POLISH-1 M-2)
+        summary = bool(photo.preferred_section) or rules.section_chosen_by_user(photo.photo_type, photo.preferred_section)                             # 들어갈 곳이 정해져 있으면(기본값이든 직접 고른 값이든) 접힌 단추가 그것을 보인다
         confirm_text = T["pho_row_confirmed"] if photo.confirmed_by_user else T["pho_row_unconfirmed"]
         return {
             "photo_id": photo.photo_id, "number": number, "label": T["pho_row_label"].format(n=number), "file_name": rules.short_name(photo.local_path), "a11y": T["pho_row_a11y"].format(n=number, type=photo.photo_type, confirm=confirm_text),
@@ -620,7 +621,8 @@ class PhotoBoard:
             "subject": self._text_vm(photo, "user_subject", "pho_subject", "pho_subject_a11y", T["pho_subject_example"].format(example=rules.example_for(photo.photo_type))),
             "note": self._text_vm(photo, "user_note", "pho_note", "pho_note_a11y", T["pho_note_example"]),
             "caption": self._text_vm(photo, "caption", "pho_caption", "pho_caption_a11y", T["pho_caption_example"]),
-            "place": {"open": opened, "open_text": T["pho_place_open"], "close_text": T["pho_place_close"], "a11y": T["pho_place_a11y"].format(n=number),
+            "place": {"open": opened, "open_text": T["pho_place_summary"].format(section=rules.section_text(photo.preferred_section)) if summary else T["pho_place_open"], "close_text": T["pho_place_close"],
+                      "a11y": T["pho_place_a11y_now"].format(n=number, section=rules.section_text(photo.preferred_section)) if summary else T["pho_place_a11y"].format(n=number),
                       "section": {"label": T["pho_section"], "a11y": T["pho_section_a11y"].format(n=number), "value": photo.preferred_section, "choices": rules.section_choices(photo.preferred_section)},
                       "kind": {"label": T["pho_place"], "a11y": T["pho_place_kind_a11y"].format(n=number), "value": placement.kind, "choices": rules.placement_choices()},
                       "nth": {"visible": rules.needs_nth(placement.kind), "label": T["pho_nth"], "value": placement.nth, "text": T["pho_nth_value"].format(k=placement.nth) if placement.nth else "",

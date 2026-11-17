@@ -25,6 +25,7 @@ if HAVE:
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QLabel, QWidget
+    from chanceblog_desktop.ui.qt import components as UI
 
 SEVEN = ((1920, 1080), (1600, 960), (1366, 768), (1280, 720), (1093, 614), (910, 512), (900, 560))
 LONG30 = ("가나다라마바사아자차카타파하" * 3)[:30]
@@ -240,6 +241,115 @@ class CandidateSearchBoxTest(CandidatesBase):
         read_names(window)
         self.settle(6)
         self.assertIsNot(window.screen_widget, screen, "포커스가 검색 칸에 없으면 바로 다시 그린다")
+
+
+SHORT_BODY = "짧은 본문이에요."
+MEDIUM_BODY = "본문 한 줄이 꽤 길어서 줄이 바뀌어요. " * 5
+LONG_BODY = "긴 본문이에요. 낮은 창에서는 스크롤이 생겨요. " * 40
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class ReplacedDialogTest(SeedsBase):
+    """검증 Q PQ-19(옛 문제): 열린 확인창을 닫지 않고 다른 확인창으로 바꾸면 새 확인창이 44px 로 접혀 제목·본문 높이가 0 이고 단추 윗부분만 보였다. 바꿔 연 확인창은 새로 연 확인창과 틀·제목·본문·단추 자리가 같다."""
+
+    def snapshot(self, window):
+        dialog = window.dialog
+        body = dialog.findChildren(UI.DialogBody)
+        title = [label for label in dialog.findChildren(QLabel) if label.property("role") == "h2"]
+        buttons = [(button.text(), button.geometry().x(), button.geometry().y(), button.geometry().width(), button.geometry().height()) for button in dialog.findChildren(QAbstractButton) if button.isVisibleTo(dialog)]
+        return {"dialog": [dialog.x(), dialog.y(), dialog.width(), dialog.height()], "body": [item.height() for item in body], "title": [item.height() for item in title], "buttons": buttons}
+
+    def open_second(self, window, kind, text):
+        if kind == "dialog":
+            window.show_dialog("둘째 확인창", text, ok="그래도 하기", cancel="취소")
+        else:
+            window.show_choice_dialog("둘째 선택창", text, [("a", "저장", "primary", lambda: None), ("b", "저장 안 하고 나가기", "danger", lambda: None), ("c", "계속 고치기", "secondary", None)], first="a")
+
+    def test_a_dialog_opened_over_an_open_dialog_has_the_same_frame_as_one_opened_fresh(self):
+        for size in ((1366, 768), (900, 560)):
+            window = self.make(size=size)
+            for kind in ("dialog", "choice"):
+                for label, text in (("짧은", SHORT_BODY), ("보통", MEDIUM_BODY), ("긴", LONG_BODY)):
+                    where = f"{size} {kind} {label} 본문"
+                    window.close_dialog()
+                    self.settle(3)
+                    self.open_second(window, kind, text)
+                    self.settle(6)
+                    fresh = self.snapshot(window)
+                    window.close_dialog()
+                    self.settle(3)
+                    window.show_dialog("첫째 확인창", "첫째 본문이에요.", ok="확인", cancel="취소")
+                    self.settle(6)
+                    self.open_second(window, kind, text)                                   # 닫지 않고 바꾼다
+                    self.settle(6)
+                    replaced = self.snapshot(window)
+                    self.assertEqual(replaced, fresh, f"{where}: 바꿔 연 확인창의 모양이 새로 연 것과 다르다")
+                    self.assertGreater(replaced["dialog"][3], 120, f"{where}: 틀이 접혔다(44px)")
+                    self.assertTrue(all(height > 0 for height in replaced["title"] + replaced["body"]), f"{where}: 제목·본문 높이 0")
+                    self.assertTrue(all(y + height <= replaced["dialog"][3] for _name, _x, y, _w, height in replaced["buttons"]), f"{where}: 단추가 틀 밖이다")
+                    self.assertLessEqual(replaced["dialog"][3], window.height() - 16, f"{where}: 틀이 창보다 크다")
+                    window.close_dialog()
+                    self.settle(3)
+
+    def test_replacing_three_times_in_a_row_and_replacing_a_choice_dialog_by_a_plain_one_keeps_the_frame(self):
+        window = self.make(size=(1366, 768))
+        self.open_second(window, "choice", MEDIUM_BODY)
+        self.settle(6)
+        self.open_second(window, "dialog", MEDIUM_BODY)
+        self.settle(6)
+        self.open_second(window, "choice", SHORT_BODY)
+        self.settle(6)
+        self.open_second(window, "dialog", LONG_BODY)
+        self.settle(6)
+        replaced = self.snapshot(window)
+        window.close_dialog()
+        self.settle(3)
+        self.open_second(window, "dialog", LONG_BODY)
+        self.settle(6)
+        self.assertEqual(replaced, self.snapshot(window))
+
+    def test_the_old_buttons_never_stay_behind_when_a_dialog_is_replaced_and_the_default_button_takes_the_focus(self):
+        window = self.make(size=(1366, 768))
+        window.show_dialog("첫째 확인창", "첫째 본문이에요.", ok="첫째 확인", cancel="첫째 취소")
+        self.settle(6)
+        self.open_second(window, "dialog", MEDIUM_BODY)
+        self.settle(6)
+        names = sorted(button.text() for button in window.dialog.findChildren(QAbstractButton) if button.isVisibleTo(window.dialog))
+        self.assertEqual(names, ["그래도 하기", "취소"])
+        self.assertIs(window.dialog_default, next(button for button in window.dialog.findChildren(QAbstractButton) if button.text() == "그래도 하기"))
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class ToastLevelTest(SeedsBase):
+    """검증 Q PQ-25: 저장 알림이 안내(info)로 바뀌었지만 토스트는 색 없는 어두운 상자뿐이라 안내색이 안 보였다 — 수준이 있으면 토스트 왼쪽에 그 상태색 줄이 보인다(새 색 없이 상태색 토큰만)."""
+
+    def test_a_toast_with_a_level_carries_the_level_and_the_style_sheet_draws_a_line_in_the_state_color_while_others_keep_the_old_look(self):
+        from PySide6.QtWidgets import QApplication
+
+        from chanceblog_desktop.ui.qt import theme
+        window = self.make()
+        sheet = QApplication.instance().styleSheet()
+        colors = theme.colors()
+        for level, token in (("info", "info"), ("warning", "warning"), ("error", "danger")):
+            self.assertIn('QLabel#toast[level="%s"] { border-left: 4px solid %s; }' % (level, colors[token]), sheet, level)
+            window.toast._expire()
+            window.notify(f"수준 {level}", level)
+            self.assertEqual(window.toast.property("level"), level)
+            self.assertTrue(window.toast.isVisible())
+        window.toast._expire()
+        for level in (None, "ok", "엉뚱한 수준", ""):
+            window.notify(f"수준 없는 안내 {level}", level)
+            self.assertEqual(window.toast.property("level"), "", repr(level))
+            window.toast._expire()
+
+    def test_the_toast_keeps_the_level_of_the_message_that_is_shown_not_the_one_before(self):
+        window = self.make()
+        window.notify("첫 안내", "error")
+        self.assertEqual(window.toast.property("level"), "error")
+        window.notify("다음 안내")
+        self.assertEqual(window.toast.property("level"), "", "다른 안내가 떠 있던 자리를 바꾸면 수준도 새 안내의 것이다")
+        window.notify("다음 안내", "warning")
+        self.assertEqual(window.toast.property("level"), "", "같은 안내가 또 오면 시간만 늘린다 — 모양은 그대로")
 
 
 if __name__ == "__main__":

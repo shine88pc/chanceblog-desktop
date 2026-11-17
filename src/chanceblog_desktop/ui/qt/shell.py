@@ -508,9 +508,10 @@ class AppShell(QMainWindow):
             self.toast.place()
 
     # ---- 동작 ----
-    def notify(self, message):
+    def notify(self, message, level=None):
+        """안내(토스트)를 보인다 — `level` 이 `info`·`warning`·`error` 면 토스트에 그 상태색 줄이 함께 보인다(POLISH-1 PQ-25). 그 밖에는 예전 모양이다."""
         if message:
-            self.toast.show_message(message)
+            self.toast.show_message(message, level)
 
     def notify_soon(self, name):
         self.notify(self.state.soon(name))
@@ -1682,7 +1683,7 @@ class AppShell(QMainWindow):
         controller = self.state.drafts
         self._live_drafts(save=True)
         self.photos_card_refresh()                                                    # 사진 정보도 함께 저장했으면 카드의 '고쳤어요' 안내가 사라진다
-        self.notify(controller.notice[1] if controller.notice else "")
+        self.notify(controller.notice[1] if controller.notice else "", controller.notice[0] if controller.notice else None)          # 사진 정보는 저장하지 않았다는 안내(info)는 토스트에도 그 색 줄이 보인다(POLISH-1 PQ-25) — 평소 저장 알림(ok)은 예전 모양 그대로
         if after is not None:
             self._continue_after(after)
 

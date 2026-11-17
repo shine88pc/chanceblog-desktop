@@ -448,7 +448,9 @@ class SheetTest(PhotoBase):
             self.assertEqual(card.subject.edit.placeholderText(), example, kind)
             self.assertTrue(card.subject.edit.isVisibleTo(form) and card.note.edit.isVisibleTo(form))
         self.assertEqual(form.rows["p002"].subject.edit.placeholderText(), "예: " + rules.example_for("기타"), "다른 줄의 예시는 그대로")
-        self.assertTrue(card.place_body.isVisibleTo(form), "간판은 기본 들어갈 곳(도입)이 생겨 자리 정하기가 펼쳐진다")
+        self.assertFalse(card.place_body.isVisibleTo(form), "간판은 기본 들어갈 곳(도입)이 생기지만 종류가 정한 값이라 자리 정하기를 펼치지 않는다(POLISH-1 M-2 — 옛 시험은 펼쳐진다고 못박았다)")
+        self.assertEqual(card.place_toggle.text(), "들어갈 곳: 도입 ▸", "접힌 단추가 기본 들어갈 곳을 한 줄로 요약한다")
+        self.assertIn("지금은 도입", card.place_toggle.accessibleName())
         self.assertTrue(self.chip(form, "section", "p001", "도입").isChecked())
 
     def test_the_default_place_follows_the_type_unless_the_user_chose_one(self):

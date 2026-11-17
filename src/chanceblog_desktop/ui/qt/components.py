@@ -789,11 +789,14 @@ class Toast(QLabel):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._expire)
 
-    def show_message(self, text):
+    def show_message(self, text, level=None):
+        """안내를 보인다. `level`(`info`·`warning`·`error` — 알림 줄의 수준과 같은 말)이 있으면 토스트 왼쪽에 그 상태색 줄이 함께 보인다(POLISH-1 PQ-25: 색 없는 어두운 상자뿐이라 안내색이 안 보였다). 수준이 없거나 `ok` 면 예전 모양 그대로다."""
         action, text = self.policy.offer(text)
         if action == "ignore":
             return
         if action == "show":
+            self.setProperty("level", level if level in ("info", "warning", "error") else "")
+            repolish(self)
             self.setText(text)
             self.setAccessibleName(text)
             self.place()
@@ -1002,12 +1005,19 @@ class Dialog(QFrame):
 
     def present(self, width=None):
         self._width = width or K.LAYOUT["dialog"]
+        replacing = self.is_open
         self.scrim.show()
         self.scrim.raise_()
         self.show()
         self.raise_()
         self.is_open = True
         self.place()
+        if replacing:                                             # 열린 확인창을 닫지 않고 바꿔 열면 새 부품이 아직 '숨김' 이라 위의 높이가 44px 로 잡힌다 — 부품이 보이게 된 다음 차례에 한 번 더 놓는다(POLISH-1 PQ-19). 새로 여는 확인창은 그대로다
+            QTimer.singleShot(0, self._replace_settled)
+
+    def _replace_settled(self):
+        if self.is_open:                                          # 그 사이 닫혔으면 아무것도 안 한다
+            self.place()
 
     def dismiss(self):
         self.run_cleanups()
