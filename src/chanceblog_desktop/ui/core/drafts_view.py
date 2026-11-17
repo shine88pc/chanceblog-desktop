@@ -178,6 +178,7 @@ class DraftsController:
         self.blog, self.post_type = result.blog, request.post_type
         self.made_photos = tuple(getattr(request, "photos", ()))                       # 본문에 넣은 사진 — 만든 뒤 사진 정보를 바꾸면 카드가 알린다
         self.photos_baseline, self.photos_trash = None, False                # 새 초안이라 사진 정보도 아직 저장하지 않았다(저장하면 이 사진 목록이 새 초안의 것으로 저장된다)
+        self.photos_state = "none"                                           # 새 초안은 새 번호라 저장해 둔 사진 정보 파일이 없다 — 열 때 깨졌거나 못 열렸던 파일의 상태를 이어받으면 새 초안의 사진 정보가 영영 저장되지 않는다(검증 S PS-12·Q PQ-17)
         self.saved_id = self.saved_rev = self.saved_snapshot = None          # 새로 만든 초안은 새 초안이다 — 저장하면 이전에 저장한 초안을 덮어쓰지 않고 새 초안으로 저장된다(앞의 것은 목록에 그대로 있다)
         self.saved_at = ""
         self.ack, self.copied, self.inspection, self.inspected_for = {}, set(), None, None
@@ -385,7 +386,8 @@ class DraftsController:
         closing = kind == "close"
         lost = self.photos_lost()
         if lost and not self.text_unsaved():                # 초안이 없거나 저장할 수 없는 상태라 사진 정보를 저장할 길이 없고 글은 그대로다 — 사진 정보가 사라진다는 두 갈래 확인창(검증 Q N-2 — 사진이 없으면 이 갈래를 타지 않는다)
-            return {"title": T["pho_leave_title"], "body": T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count), "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
+            body = T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count) + ((" " + T["pho_leave3_lost"]) if self.result is not None else "")          # 초안이 있는데 저장할 수 없는 상태면 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20)
+            return {"title": T["pho_leave_title"], "body": body, "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
         if self.can_save:
             discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
             return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"] + ((" " + T["pho_leave3_lost"]) if lost else ""), "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
@@ -470,6 +472,8 @@ class DraftsController:
         self.saved_snapshot = (request.title, request.body)
         self.save_problem = None
         self.notice = ("ok", T["drf_saved_notice"].format(when=time_text(outcome.updated_at)))
+        if self.photos_lost():                                                       # 깨졌거나 못 열린 사진 정보 파일 위라 넣은 사진 정보는 이 저장에 안 들어갔다 — 알림이 글만 저장했다고 사실대로 말한다(검증 S PS-15 — 사진 정보 저장이 실패한 길과 다르다)
+            self.notice = ("info", self.notice[1] + " " + T["pho_saved_without_photos"])
         photos = getattr(outcome, "photos", "none")
         if getattr(request, "photos", None) is not None and photos != "failed":
             self.photos_baseline = request.photos                                    # 사진 정보도 저장했다 — 이 목록이 저장한 판이다(저장하지 못했으면 기준을 그대로 둬 '고쳤어요' 가 남는다)
@@ -667,7 +671,10 @@ class DraftsController:
         current = self._photos_to_place() if self.result is not None else None
         card["remake"] = T["pho_card_remake"] if current is not None and current != self.made_photos else ""          # 만든 뒤 확정한 사진·자리·글이 바뀌었다 — 본문은 몰래 고치지 않는다
         if card["trash"] is not None:
-            card["trash"] = dict(card["trash"], restore_enabled=self.photos.count == 0 and not self.store_busy, clear_enabled=not self.store_busy)
+            savable = self.photos_savable()
+            card["trash"] = dict(card["trash"], restore_enabled=self.photos.count == 0 and not self.store_busy and savable, clear_enabled=not self.store_busy)
+            if not savable:                                                          # 저장해 둔 사진 정보 파일이 깨졌거나 못 열렸다 — 되돌리기는 그 파일 때문에 늘 거절된다(서비스의 안전한 거절): 켜 두지 않고 까닭을 사실대로 말한다(검증 S PS-13)
+                card["trash"]["restore_note"] = T["pho_restore_blocked_file"]
         return card
 
     def start_restore_photos(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):

@@ -1284,10 +1284,11 @@ class CheckedSentenceTest(unittest.TestCase):
         self.assertNotIn("곳", T["pho_gate_stray"])
         self.assertIn("괄호가 2개", T["pho_gate_stray"].format(n=2))
 
-    def test_the_delete_notice_says_the_copy_comes_back_with_the_same_numbered_draft_restored_from_a_backup(self):
+    def test_the_delete_notice_says_the_copy_comes_back_when_this_draft_is_restored_from_a_backup(self):
         notice = T["pho_deleted_trash"]
-        for word in ("되돌릴 사본", "같은 번호", "백업"):
+        for word in ("되돌릴 사본", "이 초안을", "백업"):
             self.assertIn(word, notice)
+        self.assertNotIn("번호", notice, "사용자 눈에 안 보이는 초안 번호를 말하지 않는다(검증 Q PQ-20)")
 
 
 if __name__ == "__main__":

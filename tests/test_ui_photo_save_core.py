@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_ui_drafts_save_core import drive, made_saving, saved_id  # noqa: E402
+from test_ui_drafts_save_core import drive, made_saving, saved_id, saving  # noqa: E402
 
 from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
 from chanceblog_desktop.ui.core import drafts, text  # noqa: E402
@@ -348,7 +348,9 @@ class UnsavablePhotoStateTest(unittest.TestCase):
                 status, applied = store(controller, "save")
                 self.assertEqual((status, applied), ("started", ("saved", None)))
                 self.assertIsNone(provider.save_calls[-1].photos, "저장한 요청에도 사진 정보가 없다")
-                self.assertEqual(controller.notice[0], "ok", "저장을 시도하지 않았으니 '다시 저장해 보세요' 실패 알림도 없다")
+                self.assertEqual(controller.notice[0], "info", "사진 정보 실패(error)가 아니라 안내(info)다 — 저장을 시도하지도 않았다")
+                self.assertTrue(controller.notice[1].endswith(" " + T["pho_saved_without_photos"]), "글만 저장했다고 사실대로 말한다(검증 S PS-15)")
+                self.assertNotIn(T["pho_save_fail"], controller.notice[1], "'다시 저장해 보세요' 실패 알림은 아니다")
                 self.assertIs(provider.photo_files[draft_id], kept, "저장해 둔 사진 정보 파일은 건드리지 않았다")
                 self.assertTrue(controller.photos_lost() and controller.has_unsaved(), "저장한 뒤에도 사진 정보는 저장되지 않았다는 안내가 남는다")
 
@@ -370,8 +372,8 @@ class UnsavablePhotoStateTest(unittest.TestCase):
                 controller.photos.add_paths([path_of(7), path_of(8)])
                 dialog = controller.leave_dialog("leave")
                 self.assertEqual((dialog["title"], "choices" in dialog), (T["pho_leave_title"], False), "글은 그대로이고 사진 정보는 저장할 길이 없다 — 사라진다는 두 갈래")
-                self.assertEqual(dialog["body"], T["pho_leave_body"].format(n=2))
-                self.assertEqual(controller.leave_dialog("close")["body"], T["pho_close_body"].format(n=2))
+                self.assertEqual(dialog["body"], T["pho_leave_body"].format(n=2) + " " + T["pho_leave3_lost"], "초안은 있는데 저장할 길이 막혔다 — 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20)")
+                self.assertEqual(controller.leave_dialog("close")["body"], T["pho_close_body"].format(n=2) + " " + T["pho_leave3_lost"])
                 controller.discard_leave()
                 controller.set_body(controller.body + " 고침")
                 three = controller.leave_dialog("leave")
@@ -419,6 +421,87 @@ class UnsavablePhotoStateTest(unittest.TestCase):
                 controller.discard_leave()
                 controller.set_body(controller.body + " 고침")
                 self.assertEqual(controller.leave_dialog("leave")["body"], T["drf_leave3_body"], "멀쩡한 상태에서는 '저장되지 않아요' 문장이 안 붙는다")
+
+    def test_remaking_the_draft_makes_a_new_draft_whose_photo_info_can_be_saved(self):
+        """검증 S PS-12·Q PQ-17: 열 때 깨졌거나 못 열렸던 사진 정보 파일의 상태가 `다시 만들기` 로 만든 새 초안(새 번호)에 이어지면 새 초안의 사진 정보가 영영 저장되지 않고 카드 안내가 거짓이 됐다 — 새 초안은 저장해 둔 파일이 없다."""
+        for state, _key in self.STATES:
+            with self.subTest(state=state):
+                controller, provider, draft_id = opened_with_state(state)
+                kept = provider.photo_files[draft_id]
+                controller.photos.add_paths([path_of(7), path_of(8)])
+                self.assertTrue(controller.photos_lost())
+                self.assertIsNone(controller.regen_dialog(), "글을 안 고쳤으니 다시 만들기 확인은 없다")
+                self.assertEqual(drive(controller, controller.start_regenerate), "started")
+                self.assertIsNone(controller.saved_id, "새 초안이다")
+                self.assertEqual((controller.photos_state, controller.photos_savable(), controller.photos_lost()), ("none", True, False))
+                self.assertEqual(controller.photos.count, 2, "사진 목록은 다시 만들어도 남는다")
+                self.assertEqual(controller.photos_card()["unsaved"], T["pho_card_unsaved"], "카드 안내가 새 초안에 거짓말을 하지 않는다")
+                self.assertEqual(controller._save_request().photos, controller.photos.manifest, "저장 요청에 사진 정보가 실린다")
+                dialog = controller.leave_dialog("leave")
+                self.assertEqual((dialog["body"], [choice["key"] for choice in dialog["choices"]]), (T["drf_leave3_body"], ["save", "discard", "stay"]), "평소 세 갈래 질문이다")
+                controller.discard_leave()
+                status, applied = store(controller, "save")
+                self.assertEqual((status, applied), ("started", ("saved", None)))
+                new_id = controller.saved_id
+                self.assertNotEqual(new_id, draft_id)
+                self.assertEqual(len(provider.photo_files[new_id].photos), 2, "새 초안의 사진 정보가 저장됐다")
+                self.assertIs(provider.photo_files[draft_id], kept, "옛 초안의 사진 정보는 그대로다")
+                self.assertEqual((controller.notice[0], controller.photos_unsaved(), controller.save_state()), ("ok", False, "saved"))
+                self.assertNotIn(T["pho_saved_without_photos"], controller.notice[1])
+
+    def test_restoring_is_switched_off_with_a_true_reason_when_the_saved_photo_info_cannot_be_read(self):
+        """검증 S PS-13: 깨졌거나 못 열린 사진 정보 파일이 있으면 `사진 정보 되돌리기` 는 그 파일 때문에 늘 거절된다 — 켜 두고 누르게 하지 않고 까닭을 사실대로 말한다. `사본 비우기` 는 그대로다."""
+        controller, provider = with_photos()
+        store(controller, "save")
+        deleted_and_back(controller, provider)                                       # 사본이 있는 되살린 초안 — 사진 목록은 비어 있다
+        for state in ("none", "ok"):
+            controller.photos_state = state
+            trash = controller.photos_card()["trash"]
+            self.assertEqual((trash["restore_enabled"], trash["restore_note"], trash["clear_enabled"]), (True, "", True), state)
+        for state, _key in self.STATES:
+            with self.subTest(state=state):
+                controller.photos_state = state
+                trash = controller.photos_card()["trash"]
+                self.assertEqual((trash["restore_enabled"], trash["restore_note"], trash["clear_enabled"]), (False, T["pho_restore_blocked_file"], True))
+                controller.photos.add_paths([path_of(9)])                          # 사진이 있어도 까닭은 파일이다(사진을 지워도 풀리지 않는다)
+                photo_id = controller.photos.manifest.photos[-1].photo_id
+                trash = controller.photos_card()["trash"]
+                self.assertEqual((trash["restore_enabled"], trash["restore_note"]), (False, T["pho_restore_blocked_file"]))
+                controller.photos.remove(photo_id)
+        self.assertIn("읽을 수 없는 상태", T["pho_restore_blocked_file"])
+        self.assertNotIn("이미 사진 정보가", T["pho_restore_blocked_file"])
+
+    def test_saving_in_that_state_says_that_only_the_text_was_saved(self):
+        """검증 S PS-15: 저장할 수 없는 상태에서 `저장` 을 눌러도 알림이 '초안을 저장했어요' 뿐이면 사진 정보도 저장된 줄 안다 — 글만 저장했다고 사실대로 말한다(저장 상태 줄은 글만 본다 — D-503)."""
+        for state, _key in self.STATES:
+            with self.subTest(state=state):
+                controller, provider, draft_id = opened_with_state(state)
+                controller.photos.add_paths([path_of(7)])
+                controller.set_body(controller.body + " 고침")
+                status, applied = store(controller, "save")
+                self.assertEqual((status, applied), ("started", ("saved", None)))
+                level, message = controller.notice
+                self.assertEqual(level, "info")
+                self.assertTrue(message.startswith(T["drf_saved_notice"].split("{")[0]), message)
+                self.assertTrue(message.endswith(" " + T["pho_saved_without_photos"]), message)
+                self.assertNotIn(T["pho_save_fail"], message)
+                self.assertEqual(controller.save_state(), "saved", "저장 상태 줄은 글만 본다")
+        controller, provider = with_photos()
+        store(controller, "save")
+        self.assertEqual(controller.notice[0], "ok", "멀쩡한 상태의 저장 알림은 그대로다")
+        self.assertNotIn(T["pho_saved_without_photos"], controller.notice[1])
+        controller, provider, draft_id = opened_with_state("broken")
+        controller.set_body(controller.body + " 고침")
+        store(controller, "save")
+        self.assertEqual(controller.notice[0], "ok", "사진을 안 넣었으면(잃을 것이 없다) 알림도 그대로다")
+        self.assertNotIn(T["pho_saved_without_photos"], controller.notice[1])
+
+    def test_the_two_way_question_without_a_draft_has_no_unsavable_sentence(self):
+        """검증 Q PQ-20: 초안은 있는데 저장할 길이 막힌 상태의 두 갈래 질문에는 이유를 덧붙이지만, 초안이 아직 없는 두 갈래는 지금 그대로다."""
+        controller, provider = saving()
+        controller.photos.add_paths([path_of(1)])
+        self.assertEqual(controller.leave_dialog("leave")["body"], T["pho_leave_body"].format(n=1))
+        self.assertEqual(controller.leave_dialog("close")["body"], T["pho_close_body"].format(n=1))
 
 
 class ZeroPhotoAndRemakeTest(unittest.TestCase):

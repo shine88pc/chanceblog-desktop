@@ -85,7 +85,8 @@ class UnsavableStateTest(Base):
                 window = self.put_photo_in(window)
                 self.press_save(window)
                 controller = window.state.drafts
-                self.assertEqual(controller.notice[0], "ok", "사진 정보 실패 알림이 아니다 — 저장을 시도하지도 않았다")
+                self.assertEqual(controller.notice[0], "info", "사진 정보 실패(error)가 아니라 안내(info)다 — 저장을 시도하지도 않았고 글만 저장했다고 말한다(검증 S PS-15)")
+                self.assertTrue(controller.notice[1].endswith(T["pho_saved_without_photos"]))
                 self.assertIsNone(fake.save_calls[-1].photos)
                 self.assertIs(fake.photo_files[draft_id], kept, "저장해 둔 사진 정보는 그대로다")
                 self.assertEqual(self.ui(window).photos_unsaved.plain_text(), T["pho_card_lost_" + state], "저장한 뒤에도 '저장되지 않아요' 안내가 남는다")

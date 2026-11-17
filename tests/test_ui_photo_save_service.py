@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 from test_ui_drafts_save_service import fresh, make, store as base_store  # noqa: E402
-from test_ui_drafts_service import Setup  # noqa: E402
+from test_ui_drafts_service import Setup, drive_regenerate  # noqa: E402
 
 from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
@@ -179,7 +179,8 @@ class SaveAndOpenTest(Base):
         again.photos.add_paths(self.paths)
         self.assertEqual((again.photos_lost(), again.photos_unsaved(), again.photos_card()["unsaved"]), (True, False, T["pho_card_lost_broken"]))
         store(again, "save")
-        self.assertEqual(again.notice[0], "ok", "그 위에는 저장을 시도하지도 않는다 — 사진 정보는 저장하지 않고 카드가 그렇게 말한다(검증 S PS-2)")
+        self.assertEqual(again.notice[0], "info", "그 위에는 저장을 시도하지도 않는다 — 사진 정보는 저장하지 않고 알림과 카드가 그렇게 말한다(검증 S PS-2·PS-15)")
+        self.assertTrue(again.notice[1].endswith(T["pho_saved_without_photos"]))
         self.assertEqual(self.folder.read_text(encoding="utf-8"), "폴더가 아니라 파일이다")
 
     def test_a_photo_file_that_was_unreadable_or_broken_when_opened_is_not_overwritten_by_a_later_save(self):
@@ -204,11 +205,47 @@ class SaveAndOpenTest(Base):
                 again.set_body(again.body + " 글도 고침")
                 self.assertIsNone(again._save_request().photos, "저장 요청에 사진 정보를 싣지 않는다")
                 store(again, "save")
-                self.assertEqual(again.notice[0], "ok", "사진 정보 실패 알림이 아니다 — 저장을 시도하지도 않았다")
+                self.assertEqual(again.notice[0], "info", "사진 정보 실패 알림이 아니다 — 저장을 시도하지도 않았고 글만 저장했다고 말한다(검증 S PS-15)")
+                self.assertTrue(again.notice[1].endswith(T["pho_saved_without_photos"]))
                 self.assertEqual((file.read_bytes(), file.stat().st_mtime_ns), before, "저장해 둔 사진 정보 파일은 바이트도 수정 시각도 그대로다")
                 self.assertEqual(sorted(path.name for path in self.folder.iterdir()), [file.name], ".bak 도 안 만들었다")
                 self.assertEqual(draft_store.load_draft(self.setup.ctx, draft_id).body, again.body, "글은 저장됐다")
                 self.assertEqual((again.photos_lost(), again.photos_unsaved(), again.photos_card()["unsaved"]), (True, False, T["pho_card_lost_" + state]))
+
+    def test_remaking_a_draft_that_was_opened_with_an_unreadable_or_broken_photo_file_saves_the_new_drafts_photo_info(self):
+        """검증 S PS-12(S 재현 s2c_remake_stale.py)·Q PQ-17(pure_q30.py): 열 때 못 읽었던 사진 정보 파일의 상태가 다시 만들기로 만든 새 초안(새 번호)에 이어지면 새 초안의 사진 정보가 영영 저장되지 않았다 — 새 번호는 새 파일이다."""
+        for state in ("unreadable", "broken"):
+            with self.subTest(state=state):
+                controller, draft_id = self.saved_with_photos()
+                file = self.folder / f"{draft_id}.json"
+                if state == "broken":
+                    file.write_text("{ 깨진 글 }", encoding="utf-8")
+                before = (file.read_bytes(), file.stat().st_mtime_ns)
+                controller.leave()
+                again = fresh(self.setup)
+                store(again, "list")
+                if state == "unreadable":
+                    with mock.patch.object(svc, "_pause"), mock.patch.object(svc.own_posts, "_read_prefix", return_value=(None, svc.own_posts._R_MISSING)):
+                        store(again, "open", draft_id)
+                else:
+                    store(again, "open", draft_id)
+                self.assertEqual((again.photos_state, again.photos.count), (state, 0))
+                again.photos.add_paths(self.paths)
+                self.assertTrue(again.photos_lost())
+                self.assertEqual(drive_regenerate(again), "started")
+                self.assertEqual((again.photos_state, again.photos_savable(), again.photos_lost(), again.saved_id), ("none", True, False, None), "새 초안은 새 번호라 저장해 둔 파일이 없다")
+                self.assertEqual(again.photos_card()["unsaved"], T["pho_card_unsaved"], "카드 안내가 새 초안에 거짓말을 하지 않는다")
+                again.set_body(again.body + " 다시 만든 글")                                  # 번호는 저장 시각·글의 지문이라(시험의 시계는 고정) 글이 같으면 번호도 같다 — 실제로는 시각이 달라 늘 새 번호다
+                status, applied = store(again, "save")
+                self.assertEqual((status, applied), ("started", ("saved", None)))
+                new_id = again.saved_id
+                self.assertNotEqual(new_id, draft_id)
+                self.assertEqual((again.notice[0], again.photos_unsaved()), ("ok", False))
+                self.assertNotIn(T["pho_saved_without_photos"], again.notice[1])
+                loaded = svc.load_manifest(self.setup.ctx, new_id)
+                self.assertEqual((loaded.state, len(loaded.manifest.photos)), ("ok", 2), "새 번호의 사진 정보 파일이 생겼다")
+                self.assertEqual((file.read_bytes(), file.stat().st_mtime_ns), before, "옛 사진 정보 파일은 바이트도 수정 시각도 그대로다")
+                self.assertTrue({file.name, f"{new_id}.json"} <= {path.name for path in self.folder.iterdir()})
 
     def test_the_adapter_never_asks_the_service_to_keep_analysis_results(self):
         """검증 S PS-3 ④(변이 AD6 = PS-6): 분석 결과 저장 기본 끔은 운영자의 절대 조건이다 — 메모리에 확인 전 분석 항목이 있어도 어댑터는 `persist_analysis` 를 켜지 않고 파일에도 그 글이 없다."""
