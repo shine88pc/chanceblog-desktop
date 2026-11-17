@@ -39,7 +39,7 @@ class SeedDrawerUi:
 def _chips(items, focus_prefix, on_click):
     group = []
     for item in items:
-        chip = UI.FilterChip(item["label"], item["count"], item["active"], focus_key=f"{focus_prefix}:{item['key']}")
+        chip = UI.FilterChip(item["label"], item["count"], item["active"], focus_key=f"{focus_prefix}:{item['key']}", full=item.get("tip") or None)
         chip.clicked.connect(lambda _=False, key=item["key"]: on_click(key))
         group.append(chip)
     return UI.chip_row(group)
@@ -71,6 +71,8 @@ def _overview_card(shell, vm, ui):
     for row in channels["rows"]:
         badge = UI.Badge(row["chip"]["tone"], row["chip"]["text"])
         badge.setAccessibleName(row["a11y"])
+        if row["chip"].get("tip"):
+            UI.with_tooltip(badge, row["chip"]["tip"])                                  # 아주 긴 별명은 칩에서 줄였다 — 전체 이름이 툴팁에 있다(POLISH-1 Q3-2)
         chips.append(badge)
     inner.addWidget(UI.chip_row(chips))
     inner.addWidget(UI.label(channels["caption"], "caption", wrap=True))

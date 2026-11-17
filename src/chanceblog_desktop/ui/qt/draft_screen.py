@@ -228,7 +228,7 @@ def _choice_row(title, items, ui_map, handler, focus_prefix):
     row.addWidget(label, 0, Qt.AlignTop)
     chips = []
     for item in items:
-        chip = UI.FilterChip(item["label"], None, item["active"], focus_key=f"{focus_prefix}:{item['key']}")
+        chip = UI.FilterChip(item["label"], None, item["active"], focus_key=f"{focus_prefix}:{item['key']}", full=item.get("tip") or None)
         chip.setAccessibleName(item["a11y"])
         chip.clicked.connect(lambda _=False, key=item["key"]: handler(key))
         ui_map[item["key"]] = chip

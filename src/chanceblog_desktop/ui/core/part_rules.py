@@ -23,6 +23,22 @@ def clip_text(text, max_chars):
     return flat[:max_chars - 1].rstrip() + "…"
 
 
+def chip_caption(text, count):
+    """개수가 있는 거르기 칩의 보이는 글 — 평소에는 `이름  개수`(두 칸). 이름이 숫자로 끝나면(`네이버 블로그 1`) 개수가 그 숫자에 붙어 `네이버 블로그 16` 처럼 읽히므로 가운뎃점으로 가른다(`네이버 블로그 1 · 6`). 개수가 없으면 이름뿐이다(POLISH-1 Q2-8)."""
+    text = str(text)
+    if count is None:
+        return text
+    return f"{text} · {count}" if text[-1:].isdigit() else f"{text}  {count}"
+
+
+def chip_accessible(text, count):
+    """같은 칩의 접근 이름 — 평소에는 `이름 개수`, 이름이 숫자로 끝나면 쉼표로 가른다(`네이버 블로그 1, 6` — 화면 읽기 프로그램이 `네이버 블로그 16` 으로 읽지 않게). 개수가 없으면 이름뿐이다."""
+    text = str(text)
+    if count is None:
+        return text
+    return f"{text}, {count}" if text[-1:].isdigit() else f"{text} {count}"
+
+
 def check_actions(kinds):
     """행동 줄 구성이 규칙을 지키는지 — 주요 1개·보조 최대 3개·위험 최대 1개·모르는 종류 없음. 어기면 ValueError(코드 실수를 드러낸다)."""
     kinds = list(kinds)

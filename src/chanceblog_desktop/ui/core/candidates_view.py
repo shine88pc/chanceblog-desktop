@@ -360,14 +360,21 @@ class CandidatesController:
                 "icon": icon, "tone": tone, "image_state": T["cand_image_state"], "sample": sample, "sample_tag": T["cand_card_sample"] if sample else "", "selected": selected,
                 "a11y": spoken + (", " + T["cand_card_sample"] if sample else ""), "desc": hint + (", " + T["cand_card_selected"] if selected else "")}
 
-    def _chips(self, keys, labels, counts, current, a11y_key):
-        return [{"key": key, "label": labels[key], "count": counts[key], "active": key == current, "a11y": T[a11y_key].format(name=labels[key], n=counts[key])} for key in keys]
+    def _chips(self, keys, labels, counts, current, a11y_key, full=None):
+        """거르기 칩들 — `labels` 는 칩에 보이는 글, `full`(있으면)은 줄이기 전 전체 이름이고 접근 이름과 툴팁(`tip` — 줄였을 때만)이 그것을 쓴다(POLISH-1 Q3-2)."""
+        names = full or labels
+        return [{"key": key, "label": labels[key], "count": counts[key], "active": key == current, "tip": names[key] if names[key] != labels[key] else "", "a11y": T[a11y_key].format(name=names[key], n=counts[key])} for key in keys]
+
+    def _chip_name(self, key):
+        """채널 칩에 보이는 이름 — 다섯 채널은 `channel_names.chip_label`(아주 긴 별명만 `CHIP_LIMIT` 자로 줄어든다), 그 밖은 `CHIP_LIMIT` 자까지."""
+        return cn.chip_label(key) if key in cn.ORDER else rules.shown(self.channel_info(key)["name"], cn.CHIP_LIMIT)
 
     def _filters(self, data, found):
         rows = data.rows
         channels = self._channels_shown()
         channel_counts = rules.counts_by(rows, lambda item: item.channel, [item.key for item in channels])
-        channel_labels = {"all": T["cand_all"], **{item.key: self.channel_info(item.key)["name"] for item in channels}}
+        channel_full = {"all": T["cand_all"], **{item.key: self.channel_info(item.key)["name"] for item in channels}}
+        channel_labels = {"all": T["cand_all"], **{item.key: self._chip_name(item.key) for item in channels}}                 # 칩에는 줄인 이름, 전체 이름은 접근 이름·툴팁(POLISH-1 Q3-2)
         status_counts = rules.counts_by(rows, lambda item: item.work_status, rules.STATUS_KEYS[1:])
         status_labels = {"all": T["cand_all"], **{key: rules.status_name(key) for key in rules.STATUS_KEYS[1:]}}
         band_counts = rules.counts_by(rows, rules.band_key, rules.BAND_KEYS)
@@ -378,7 +385,7 @@ class CandidatesController:
         more_open = self.more_filters or self.cluster != "all" or self.band != "all"                    # 점수 구간·주제 묶음 칩은 `더 거르기` 뒤에 있고 조건이 걸려 있으면 열린 채다(첫 화면에서 카드가 더 보이게 — 1366×768)
         shown = min(len(found), self.limit)
         return {"a11y": T["cand_filter_a11y"],
-                "channel_title": T["cand_filter_channel"], "channel": self._chips(("all", *[item.key for item in channels]), channel_labels, channel_counts, self.channel, "cand_filter_channel_a11y"),
+                "channel_title": T["cand_filter_channel"], "channel": self._chips(("all", *[item.key for item in channels]), channel_labels, channel_counts, self.channel, "cand_filter_channel_a11y", full=channel_full),
                 "status_title": T["cand_filter_status"], "status": self._chips(rules.STATUS_KEYS, status_labels, status_counts, self.status, "cand_filter_status_a11y"),
                 "band_title": T["cand_filter_band"], "band": self._chips(("all", *rules.BAND_KEYS), band_labels, band_counts, self.band, "cand_filter_band_a11y"),
                 "cluster_title": T["cand_filter_cluster"], "cluster": self._chips(("all", *clusters), cluster_labels, cluster_counts, self.cluster, "cand_filter_cluster_a11y"),

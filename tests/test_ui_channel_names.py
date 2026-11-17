@@ -112,7 +112,8 @@ class ReservedTextTest(unittest.TestCase):
         from chanceblog_desktop.topics import wording
         self.assertEqual(cn.COMMON_SCOPE, wording.SCOPE_KO["common"], "서비스의 소속 이름 `공통` 과 같다")
         self.assertEqual({T["cand_all"], T["seeds_all"], T["seeds_scope_all"]}, {"전체", "모든 소속"}, "채널 칩 곁의 거르기 `전체`·`모든 소속` 이 바뀌면 이 시험이 빨개진다")
-        self.assertEqual(cn.RESERVED, frozenset({"공통", "전체", "모든소속"}), "공백을 없앤 모양")
+        self.assertEqual({T["seeds_status_proposed"], T["seeds_status_active"], T["seeds_status_inactive"]}, {"승인 전", "사용 중", "쉬는 중"}, "Seed 상태 칩의 낱말이 바뀌면 이 시험이 빨개진다(POLISH-1 Q4-2)")
+        self.assertEqual(cn.RESERVED, frozenset({"공통", "전체", "모든소속", "승인전", "사용중", "쉬는중"}), "공백을 없앤 모양")
 
     def test_the_fold_ignores_every_space_and_the_case(self):
         self.assertEqual(cn._fold(" 공 통 "), cn._fold("공통"))
@@ -132,6 +133,38 @@ class ReservedTextTest(unittest.TestCase):
     def test_the_kind_names_and_the_default_names_never_read_like_a_fixed_chip_text(self):
         self.assertTrue(set(cn.DEFAULT.values()).isdisjoint(cn.RESERVED))
         self.assertTrue({cn._fold(value) for value in cn.DEFAULT.values()}.isdisjoint(cn.RESERVED))
+
+    def test_an_alias_that_reads_like_a_status_chip_word_of_the_seed_summary_gets_the_kind_and_number_added(self):
+        """POLISH-1 Q4-2 — Seed 요약 줄에서 채널 칩 곁에 서는 상태 칩의 낱말(`사용 중`·`쉬는 중`·`승인 전`)과 같은 별명은 같은 글로 읽혔다(`사용 중 5개` 곁에 `사용 중 3개 · 후보 생성 켜짐`). 낱말은 문구 표에서 읽어 온다."""
+        for word in (T["seeds_status_active"], T["seeds_status_inactive"], T["seeds_status_proposed"]):
+            for alias in (word, word.replace(" ", ""), " ".join(word.replace(" ", "")), f" {word} "):
+                labels = cn.labels({"naver_a": (alias, True), "naver_b": ("", True)})
+                self.assertEqual(labels["naver_a"], f"{bf.clean_line(alias)} (네이버 블로그 1)", repr(alias))
+                self.assertNotIn(cn._fold(labels["naver_a"]), cn.RESERVED, repr(alias))
+                self.assertEqual(len({value.casefold() for value in labels.values()}), 5, repr(alias))
+        near = cn.labels({"naver_a": ("사용 중인 블로그", True), "naver_b": ("쉬는 중 메모", True), "blogger_ko": ("승인", True)})
+        self.assertEqual((near["naver_a"], near["naver_b"], near["blogger_ko"]), ("사용 중인 블로그", "쉬는 중 메모", "승인"), "낱말과 같을 때만 덧붙인다 — 비슷한 글은 그대로")
+
+    def test_the_status_words_in_the_reserved_set_are_read_from_the_wording_table_not_typed_again(self):
+        """글자를 새로 박지 않는다 — 문구 표의 상태 낱말을 바꾸면 가름 목록도 따라간다(소스에 낱말이 없다)."""
+        source = Path(cn.__file__).read_text(encoding="utf-8")
+        for word in ("승인 전", "사용 중", "쉬는 중"):
+            self.assertNotIn(word, source.split("RESERVED = ", 1)[1].split("\n", 1)[0].split("#", 1)[0], word)
+        for key in ("seeds_status_proposed", "seeds_status_active", "seeds_status_inactive"):
+            self.assertIn(f'T["{key}"]', source, key)
+
+    def test_a_kind_with_one_slot_adds_no_number_to_the_kind_it_appends_while_a_kind_with_two_slots_does(self):
+        """POLISH-1 Q4-3 — 한 자리뿐인 종류(GitHub Pages)는 `전체 (GitHub Pages 1)` 이 아니라 `전체 (GitHub Pages)`(기본 이름 `_kind_name` 과 같은 규칙). 자리가 둘인 종류는 번호까지(`공통 (네이버 블로그 1)`)."""
+        for alias in ("전체", "모든 소속", "공통", "사용 중"):
+            labels = cn.labels({"github_pages": (alias, True)})
+            self.assertEqual(labels["github_pages"], f"{alias} (GitHub Pages)", alias)
+            self.assertNotIn("GitHub Pages 1", labels["github_pages"], alias)
+        two = cn.labels({"naver_a": ("전체", True), "naver_b": ("전체", True), "blogger_ko": ("공통", True), "blogger_en": ("모든 소속", True), "github_pages": ("전체", True)})
+        self.assertEqual(two, {"naver_a": "전체 (네이버 블로그 1)", "naver_b": "전체 (네이버 블로그 2)", "blogger_ko": "공통 (Blogger 1)", "blogger_en": "모든 소속 (Blogger 2)", "github_pages": "전체 (GitHub Pages)"})
+        same = cn.labels({"blogger_en": ("맛집", True), "github_pages": ("맛집", True)})                     # 같은 이름 가르기도 같은 규칙이다
+        self.assertEqual((same["blogger_en"], same["github_pages"]), ("맛집 (Blogger 2)", "맛집 (GitHub Pages)"))
+        self.assertEqual(len({value.casefold() for value in same.values()}), 5)
+        self.assertEqual(cn.labels({"github_pages": ("", True)})["github_pages"], "GitHub Pages 1", "카드 윗줄은 그대로 — 별명이 없으면 제안 이름(번호 포함)이다")
 
 
 class RegistryTest(unittest.TestCase):

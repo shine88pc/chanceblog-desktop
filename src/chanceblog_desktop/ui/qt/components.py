@@ -16,7 +16,7 @@ from ..core import tokens as K
 from ..core.attribution import UTM_SOURCE, check_url, with_utm
 from ..core.channel_names import button_text as ampersand_safe_text                        # `StateCard` 의 매개변수 `button_text` 가 가리지 않게 다른 이름으로 가져온다(검증 S3-4)
 from ..core.notify import ToastPolicy
-from ..core.part_rules import BADGE_MAX_CHARS, clip_text, drawer_width
+from ..core.part_rules import BADGE_MAX_CHARS, chip_accessible, chip_caption, clip_text, drawer_width
 from ..core.text import T
 from . import theme
 
@@ -191,16 +191,18 @@ def LinkButton(text, accessible=None):
 
 
 # ---- 칩·배지 ------------------------------------------------------------------------------------------------------------------
-def FilterChip(text, count, active, focus_key=None):
-    """칩 — 보이는 높이 34, 누르는 칸 36."""
-    chip = QPushButton(ampersand_safe_text(f"{text}  {count}" if count is not None else text))                      # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3), 접근 이름은 아래에서 그대로
+def FilterChip(text, count, active, focus_key=None, full=None):
+    """칩 — 보이는 높이 34, 누르는 칸 36. 개수가 있으면 `이름  개수`, 이름이 숫자로 끝나면 `이름 · 개수`(`part_rules.chip_caption` — POLISH-1 Q2-8). `full` 은 줄이기 전의 전체 이름 — 줄였으면 접근 이름과 툴팁이 그것을 쓴다(POLISH-1 Q3-2)."""
+    chip = QPushButton(ampersand_safe_text(chip_caption(text, count)))                                              # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3), 접근 이름은 아래에서 그대로
     chip.setAutoDefault(True)
     chip.setProperty("chip", True)
     chip.setCheckable(True)
     chip.setChecked(bool(active))
     chip.setMinimumHeight(K.SIZE["hit"])
     chip.setCursor(Qt.PointingHandCursor)
-    chip.setAccessibleName(f"{text} {count}" if count is not None else text)
+    chip.setAccessibleName(chip_accessible(full or text, count))
+    if full and full != text:
+        with_tooltip(chip, full)
     if focus_key:
         chip.setProperty("focus_key", focus_key)
     return chip

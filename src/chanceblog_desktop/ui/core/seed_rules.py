@@ -72,9 +72,9 @@ def usable_counts(seeds, override=None):
 
 
 def channel_rows(seeds, generation):
-    """채널마다 한 줄: 이름·쓸 수 있는 수·후보 생성 켜짐 여부(켜짐 True·꺼짐 False·읽지 못함 None)."""
+    """채널마다 한 줄: 이름(전체 이름·칩에 보이는 줄인 이름)·쓸 수 있는 수·후보 생성 켜짐 여부(켜짐 True·꺼짐 False·읽지 못함 None)."""
     counts, flags = usable_counts(seeds), dict(generation)
-    return [{"key": code, "name": sf.channel_name(code), "count": counts[code], "generation": flags.get(code)} for code in sf.DISPLAY_CHANNELS]            # 화면 순서(블로그 관리와 같다 — 검증 Q2-4)
+    return [{"key": code, "name": sf.channel_name(code), "chip_name": sf.channel_chip_name(code), "count": counts[code], "generation": flags.get(code)} for code in sf.DISPLAY_CHANNELS]            # 화면 순서(블로그 관리와 같다 — 검증 Q2-4). `chip_name` 은 요약 칩에 보이는 줄인 이름(아주 긴 별명만 줄어든다 — POLISH-1 Q3-2)
 
 
 def generation_text(flag):

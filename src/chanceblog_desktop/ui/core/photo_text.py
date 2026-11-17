@@ -37,7 +37,7 @@ PHOTO_T = {
     "pho_card_lost_unreadable": "저장해 둔 사진 정보 파일을 지금은 열 수 없어서 사진 정보를 저장하지 않아요. 지금 넣은 사진 정보는 이 화면을 떠나면 사라져요. 초안을 다시 열면 저장할 수 있게 될 수 있어요.",
     "pho_leave3_lost": "넣어 둔 사진 정보는 저장해 둔 사진 정보 파일을 읽을 수 없어서 저장되지 않아요.",
     "pho_restore_blocked_file": "저장해 둔 사진 정보 파일을 읽을 수 없는 상태라서 지금은 되돌릴 수 없어요.",
-    "pho_saved_without_photos": "사진 정보는 저장하지 않았어요.",
+    "pho_saved_without_photos": "사진 정보는 저장하지 않았어요.", "pho_saved_with_note": "{saved} · {note}",
     "pho_open_broken": "저장한 사진 정보 파일을 읽을 수 없어요. 파일은 그대로 두었어요.", "pho_open_unreadable": "저장한 사진 정보 파일을 지금은 열 수 없어요. 잠시 뒤에 다시 열어 주세요.",
     "pho_row_title": "사진 넣기(선택)", "pho_row_desc": "글에 넣을 사진을 고르고 사진마다 한마디를 적어 두면 돼요.",
     # 창 머리

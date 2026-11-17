@@ -3,7 +3,7 @@
 규칙(블로그 관리 화면의 카드 윗줄과 같은 말이다):
   · 카드로 보이는 슬롯(등록했거나 내용이 있거나 새로 연결 중 — `blog_form.is_listed`)은 **사용자가 정한 별명**, 별명이 없으면 종류 + 번호 제안(`네이버 블로그 1`).
   · 카드가 아닌 슬롯(아직 연결하지 않은 자리)은 **종류 이름**(`네이버 블로그 1` 처럼 번호가 있는 종류는 번호까지 — 같은 종류 두 자리를 가르려면 필요하다. 한 자리뿐인 `GitHub Pages` 는 종류 이름 그대로).
-  · 별명은 키·토큰 모양을 가리고 길면 자른다(`blog_form.shown` — 서비스의 별명 한도 30자). 같은 글이 둘 이상이면 각각 `(종류 + 번호)` 를 덧붙여 가른다.
+  · 별명은 키·토큰 모양을 가리고 길면 자른다(`blog_form.shown` — 서비스의 별명 한도 30자). 같은 글이 둘 이상이면 각각 `(종류 + 번호)` 를 덧붙여 가른다(한 자리뿐인 종류는 번호 없이 종류 이름만 — `(GitHub Pages)`).
 화면에 보이는 글만 바꾼다 — 엔진·저장 파일·채널 열쇠(`naver_a` 등)는 그대로다. 이 모듈은 PySide6 도 파일도 시계도 모른다.
 
 화면 틀이 쓰는 방법: `AppState` 가 블로그 관리가 읽은 자료로 `labels(...)` 를 만들어 `use(...)` 로 켜 두면, 다른 화면의 뷰모델이 `label(열쇠)` 를 부른다(켜 둔 것이 없으면 별명 없는 기본 이름 — 옛 고정 이름이 아니다).
@@ -15,6 +15,7 @@ from .text import T
 
 LIMIT = 30                                                   # 화면 이름 길이 상한 — 서비스의 별명 한도(`ch.MAX_ALIAS`)와 같다
 DRAWER_LIMIT = 12                                            # 서랍처럼 좁은 자리(폭 420)에 보이는 이름의 길이 상한 — 한글 열두 자면 배지·단추·칩이 서랍 안에 든다(검증 Q2-1: 별명이 길면 서랍이 넘쳤다). 전체 이름은 툴팁·접근 이름에 둔다
+CHIP_LIMIT = 20                                              # 주 화면(후보·Seed·초안 작성)의 채널 칩·요약·거르기에 보이는 이름의 길이 상한 — 서랍의 열두 자(`DRAWER_LIMIT`)와 다른 값이다. 넘으면 …로 줄이고 전체 이름은 툴팁·접근 이름에 둔다(POLISH-1 Q3-2 — 같은 서른 자 별명 둘이면 이름이 마흔두 자라 좁은 창에서 가로 스크롤이 생겼다)
 ORDER = bf.DISPLAY_ORDER                                     # 종류별 채움 순서: naver_a·naver_b·blogger_ko·blogger_en·github_pages
 HOME_KEYS = {"A": "naver_a", "B": "naver_b"}                 # 홈의 채널 열쇠(A·B)가 가리키는 슬롯
 
@@ -25,7 +26,7 @@ def _fold(text):
 
 
 COMMON_SCOPE = "공통"                                         # Seed 소속 칩 곁의 고정 글(서비스의 `SCOPE_KO["common"]` — 시험이 같은지 본다)
-RESERVED = frozenset(_fold(text) for text in (COMMON_SCOPE, T["cand_all"], T["seeds_all"], T["seeds_scope_all"]))      # 채널 칩 곁에 보이는 고정 글 — Seed 소속 `공통`·`모든 소속`, 거르기 `전체`(후보·Seed)
+RESERVED = frozenset(_fold(text) for text in (COMMON_SCOPE, T["cand_all"], T["seeds_all"], T["seeds_scope_all"], T["seeds_status_proposed"], T["seeds_status_active"], T["seeds_status_inactive"]))      # 채널 칩 곁에 보이는 고정 글 — Seed 소속 `공통`·`모든 소속`, 거르기 `전체`(후보·Seed), Seed 상태 칩의 낱말 `승인 전`·`사용 중`·`쉬는 중`(POLISH-1 Q4-2 — 글은 문구 표에서 읽어 온다)
 
 
 def _kind_name(key):
@@ -47,8 +48,8 @@ def labels(items=None, limit=LIMIT):
     for key in ORDER:
         alias, listed = items.get(key, ("", False))
         name = bf.shown(bf.card_title(key, alias) if listed else _kind_name(key), limit)
-        if _fold(name) in RESERVED:                           # 별명이 칩 곁의 고정 글(`공통`·`전체` …)과 같으면 서로 다른 칩이 같은 글이 된다 — `(종류 + 번호)` 를 덧붙인다(검증 S3-1)
-            name = bf.shown(f"{name} ({bf.suggest_alias(key)})", limit + 20)
+        if _fold(name) in RESERVED:                           # 별명이 칩 곁의 고정 글(`공통`·`전체` …)과 같으면 서로 다른 칩이 같은 글이 된다 — `(종류 + 번호)` 를 덧붙인다(검증 S3-1). 한 자리뿐인 종류는 번호 없이 종류 이름만(`_kind_name` 과 같은 규칙 — POLISH-1 Q4-3)
+            name = bf.shown(f"{name} ({_kind_name(key)})", limit + 20)
         out[key] = name
     seen = {}
     for key in ORDER:
@@ -57,7 +58,7 @@ def labels(items=None, limit=LIMIT):
         if len(group) > 1:                                    # 같은 이름이 둘 이상이면 (종류 + 번호) 를 덧붙여 가른다 — 이미 그 슬롯의 제안 이름이면 그대로 둔다
             for key in group:
                 if out[key] != bf.suggest_alias(key):
-                    out[key] = bf.shown(f"{out[key]} ({bf.suggest_alias(key)})", limit + 20)
+                    out[key] = bf.shown(f"{out[key]} ({_kind_name(key)})", limit + 20)
     again = {}
     for key in ORDER:
         again.setdefault(out[key].casefold(), []).append(key)
@@ -130,6 +131,11 @@ def short_home_label(letter, limit=DRAWER_LIMIT):
     return short_label(key, limit) if key else ""
 
 
+def chip_label(key):
+    """주 화면의 채널 칩·요약·거르기에 보일 이름(`CHIP_LIMIT` 자까지, 넘으면 …) — 줄이는 규칙은 서랍과 같은 `short_label` 이고 길이만 다르다. 줄이지 않았으면 화면 이름 그대로다. 모르는 열쇠는 그대로."""
+    return short_label(key, CHIP_LIMIT)
+
+
 def full_if_cut(key, short):
     """좁은 자리용 이름(`short`)이 줄인 글이면 전체 이름(툴팁·접근 이름용), 아니면 빈 글 — 줄이지 않았으면 뷰모델에 따로 싣지 않는다."""
     full = label(key)
@@ -147,4 +153,4 @@ def avatar_letter(key):
     return "?"
 
 
-__all__ = ["COMMON_SCOPE", "DEFAULT", "DRAWER_LIMIT", "RESERVED", "button_text", "display_order", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]
+__all__ = ["CHIP_LIMIT", "COMMON_SCOPE", "DEFAULT", "DRAWER_LIMIT", "RESERVED", "button_text", "chip_label", "display_order", "HOME_KEYS", "LIMIT", "ORDER", "avatar_letter", "current", "entries", "full_if_cut", "home_label", "label", "labels", "short_home_label", "short_label", "short_names", "use"]
