@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from chanceblog_desktop import capabilities  # noqa: E402
 
-_PATCHERS = {"EXTERNAL_WRITE": [], "BLOGGER_OAUTH_INPUT": []}
+_PATCHERS = {"EXTERNAL_WRITE": [], "BLOGGER_OAUTH_INPUT": [], "LOCAL_OCR": []}
 
 
 def _on(name):
@@ -39,3 +39,12 @@ def blogger_input_on():
 
 def blogger_input_off():
     _off("BLOGGER_OAUTH_INPUT")
+
+
+def local_ocr_on():
+    """글자 읽기 작업자 관문(`LOCAL_OCR`, 결정 D-512)을 시험에서만 임시로 연다 — 켠 채 다른 시험에 새지 않게 `local_ocr_off` 로 되돌린다."""
+    _on("LOCAL_OCR")
+
+
+def local_ocr_off():
+    _off("LOCAL_OCR")
