@@ -393,15 +393,17 @@ def _photos_trash(shell, trash, ui):
 
 
 def _apply_trash(ui, trash):
-    """되돌릴 사본 줄의 글·꺼짐·보임을 뷰모델에 맞춘다. 단추가 사라지는 순간 포커스가 거기 있었다면 같은 카드의 `사진 정리 열기` 로 옮긴다(포커스를 잃지 않게)."""
+    """되돌릴 사본 줄의 글·꺼짐·보임을 뷰모델에 맞춘다. 단추가 **꺼지거나 사라지기 전에** 포커스가 거기 있었다면 같은 카드의 `사진 정리 열기` 로 먼저 옮긴다(포커스를 잃지 않게). 누른 직후 작업이 도는 동안 두 단추가 꺼지는데,
+    꺼진 뒤에 옮기면 Qt 가 이미 포커스를 다음 정거장(오른쪽 칸의 엉뚱한 단추)으로 던져 끝나도 돌아오지 않는다(검증 Q PQ-2 — 작업이 단추를 끄기 전에 끝나 버리는 가짜 공급자의 우연에 기댄 옛 시험은 못 봤다)."""
     box = ui.photos_trash_box
     if box is None:
         return
-    had_focus = ui.photos_restore.hasFocus() or ui.photos_clear.hasFocus()
+    focused = ui.photos_restore if ui.photos_restore.hasFocus() else ui.photos_clear if ui.photos_clear.hasFocus() else None
+    off = trash is None or (focused is ui.photos_restore and not trash["restore_enabled"]) or (focused is ui.photos_clear and not trash["clear_enabled"])          # 포커스가 있는 단추가 사라지거나(사본이 없다) 꺼진다(작업이 도는 동안은 둘 다 꺼진다) — 다른 단추만 꺼질 때는 제자리
+    if focused is not None and off and ui.photos_button is not None:
+        ui.photos_button.setFocus(Qt.OtherFocusReason)
     box.setVisible(trash is not None)
     if trash is None:
-        if had_focus and ui.photos_button is not None:
-            ui.photos_button.setFocus(Qt.OtherFocusReason)
         return
     ui.photos_trash_text.set_text(trash["text"])
     ui.photos_restore.setText(trash["restore"])

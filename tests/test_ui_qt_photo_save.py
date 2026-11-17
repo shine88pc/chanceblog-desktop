@@ -5,9 +5,10 @@
 지키는 것:
   1) 사진 정보를 고치면 저장 상태 줄이 '저장한 뒤 고쳤어요' 로 바뀌고(글은 안 바뀌어도) 카드에 안내가 보이며, `저장` 한 번이 글과 사진 정보를 함께 저장하면 안내가 사라진다. 사진 정보만 고친 채 떠나려 하면 세 갈래 확인창이 먼저다.
   2) 지운 초안이 되살아나 열리면 카드에 되돌릴 사본의 안내와 두 단추가 보인다. `사진 정보 되돌리기` 는 사진 목록을 되살리고(지금 사진이 있으면 꺼지고 까닭을 글로 말한다), `사진 정보 사본 비우기` 는 확인창(처음 포커스는 `그만두기`)을 거친 뒤에만 사본을 지운다.
-  3) 두 단추의 이름·크기·Tab 순서·포커스(단추가 사라질 때 같은 카드의 `사진 정리 열기` 로)·모든 크기에서 잘림 없음. 실패하면 고정 문장으로 알리고 단추는 그대로다.
+  3) 두 단추의 이름·크기·Tab 순서·포커스(작업이 도는 동안 두 단추가 꺼질 때와 끝난 뒤 같은 카드의 `사진 정리 열기` 로 — 마우스·Space·Enter 모두, `TrashFocusTest`)·모든 크기에서 잘림 없음. 실패하면 고정 문장으로 알리고 단추는 그대로다.
   4) 저장한 초안을 지우면 '사진 정보는 되돌릴 사본으로 남겨 뒀어요' 가 목록 알림에 함께 보인다.
   5) 새 셸 함수는 공급자·파일·네트워크를 직접 부르지 않고 컨트롤러만 부른다.
+  6) `저장` 을 골라 나가려는데 사진 정보만 저장하지 못하면(다른 메뉴·`저장한 초안`·앱 닫기의 진짜 `window.close()`) 나가지도 닫히지도 않고 경고창이 먼저다(`LeaveWithFailedPhotoSaveTest`).
 """
 import ast
 import sys
@@ -35,11 +36,19 @@ T = text.T
 
 
 class HoldingRestore(drafts.FakeDraftsProvider):
-    """사진 정보 되돌리기가 시험이 문을 열어 줄 때까지 기다리는 가짜 공급자 — 시간에 기대지 않고 '도는 중' 을 확실히 본다."""
+    """사진 정보 되돌리기·사본 비우기가 시험이 문을 열어 줄 때까지 기다리는 가짜 공급자 — 시간에 기대지 않고 '도는 중' 을 확실히 본다."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.gate, self.entered, self.holding, self.restore_calls = threading.Event(), threading.Event(), False, 0
+        self.gate, self.entered, self.holding, self.restore_calls, self.clear_calls = threading.Event(), threading.Event(), False, 0, 0
+
+    def clear_photos_trash(self, draft_id, progress, cancelled):
+        self.clear_calls += 1
+        if self.holding:
+            self.entered.set()
+            if not self.gate.wait(30):
+                raise AssertionError("시험이 문을 열어 주지 않았다")
+        return super().clear_photos_trash(draft_id, progress, cancelled)
 
     def restore_photos(self, draft_id, progress, cancelled):
         self.restore_calls += 1
@@ -48,6 +57,17 @@ class HoldingRestore(drafts.FakeDraftsProvider):
             if not self.gate.wait(30):
                 raise AssertionError("시험이 문을 열어 주지 않았다")
         return super().restore_photos(draft_id, progress, cancelled)
+
+
+class HoldingFailingRestore(HoldingRestore):
+    """되돌리기가 문 앞에서 기다렸다가 실패하는 가짜 공급자 — 실패해도 도는 동안 두 단추가 꺼졌던 것을 시간에 기대지 않고 본다."""
+
+    def restore_photos(self, draft_id, progress, cancelled):
+        self.restore_calls += 1
+        self.entered.set()
+        if not self.gate.wait(30):
+            raise AssertionError("시험이 문을 열어 주지 않았다")
+        raise drafts.DraftFailure(T["pho_restore_fail"], code="FILE_WRITE_FAILED", kind="io")
 
 
 class FailingTrash(drafts.FakeDraftsProvider):
@@ -326,6 +346,223 @@ class TrashTest(Base):
                 for button in (restore, clear):
                     self.assertTrue(button.width() >= button.sizeHint().width() - 2, (size, button.text()))
                 window.close()
+
+
+class TrashFocusTest(Base):
+    """되돌리기·사본 비우기를 누르면 작업이 도는 동안 두 단추가 꺼진다 — 그때 포커스는 오른쪽 칸의 엉뚱한 단추가 아니라 같은 카드의 `사진 정리 열기` 에 있고 끝난 뒤에도 거기 있다(검증 Q PQ-2).
+    옛 시험은 작업이 단추를 끄기 전에 끝나 버리는 가짜 공급자의 우연에 기대어 통과했다 — 여기서는 작업이 문 앞에서 기다리게 해 '도는 동안' 을 본다. 마우스·Space·Enter 모두."""
+    HOWS = ("mouse", "space", "enter")
+
+    def held(self):
+        return self.deleted_and_back(fake=HoldingRestore(lambda: CATALOG, saving=True))
+
+    def focus_key(self):
+        widget = self.app.focusWidget()
+        return widget.property("focus_key") if widget is not None else None
+
+    def press(self, window, button, how):
+        self.activate(window)
+        button.setFocus(Qt.TabFocusReason)
+        self.settle(1)
+        self.assertTrue(button.hasFocus(), "시험의 전제: 누르기 전에 그 단추에 포커스가 있다")
+        if how == "mouse":
+            button.setFocus(Qt.MouseFocusReason)
+            button.click()
+        else:
+            QTest.keyClick(button, Qt.Key_Space if how == "space" else Qt.Key_Return)
+
+    def test_restoring_keeps_the_focus_on_the_card_button_while_the_job_runs_and_after_it(self):
+        for how in self.HOWS:
+            with self.subTest(how=how):
+                window, fake, draft_id = self.held()
+                ui, box, restore, clear = self.trash_ui(window)
+                fake.holding = True
+                self.press(window, restore, how)
+                self.assertTrue(fake.entered.wait(10), "되돌리기 작업이 시작됐다")
+                self.settle(3)
+                self.assertEqual((restore.isEnabled(), clear.isEnabled()), (False, False), "도는 동안 두 단추가 꺼진다")
+                self.assertEqual(self.focus_key(), "drf-photos", "도는 동안 포커스가 같은 카드의 '사진 정리 열기' 에 있다(오른쪽 칸의 엉뚱한 단추가 아니다)")
+                self.assertTrue(ui.photos_button.hasFocus())
+                fake.gate.set()
+                self.assertTrue(self.wait_store(window))
+                self.settle(3)
+                self.assertEqual((window.state.drafts.photos.count, box.isVisibleTo(window.screen_widget)), (2, False), "되돌렸고 사본 줄은 사라졌다")
+                self.assertEqual(self.focus_key(), "drf-photos", "끝난 뒤에도 거기 있다")
+                self.assertTrue(ui.photos_button.hasFocus())
+                window.state.drafts.leave()
+                window.close()
+
+    def test_clearing_the_copy_keeps_the_focus_on_the_card_button_while_the_job_runs_and_after_it(self):
+        for how in self.HOWS:
+            with self.subTest(how=how):
+                window, fake, draft_id = self.held()
+                ui, box, restore, clear = self.trash_ui(window)
+                self.press(window, clear, how)
+                self.settle(3)
+                self.assertTrue(window.dialog.is_open, "사본 비우기는 확인창이 먼저다")
+                fake.holding = True
+                if how == "mouse":
+                    self.dialog_buttons(window)[T["pho_trash_clear_yes"]].click()
+                else:
+                    QTest.keyClick(self.app.focusWidget(), Qt.Key_Tab)                          # 처음 포커스 `그만두기` 에서 `사본 비우기` 로
+                    self.settle(1)
+                    self.assertEqual(self.app.focusWidget().text(), T["pho_trash_clear_yes"])
+                    QTest.keyClick(self.app.focusWidget(), Qt.Key_Space if how == "space" else Qt.Key_Return)
+                self.assertTrue(fake.entered.wait(10), "사본 비우기 작업이 시작됐다")
+                self.settle(3)
+                self.assertEqual((restore.isEnabled(), clear.isEnabled()), (False, False), "도는 동안 두 단추가 꺼진다")
+                self.assertEqual(self.focus_key(), "drf-photos", "도는 동안 포커스가 같은 카드의 '사진 정리 열기' 에 있다")
+                fake.gate.set()
+                self.assertTrue(self.wait_store(window))
+                self.settle(3)
+                self.assertEqual((window.state.drafts.photos_trash, box.isVisibleTo(window.screen_widget), fake.clear_calls), (False, False, 1), "사본을 비웠고 줄은 사라졌다")
+                self.assertEqual(self.focus_key(), "drf-photos", "끝난 뒤에도 거기 있다")
+                window.state.drafts.leave()
+                window.close()
+
+    def test_a_refresh_moves_the_focus_only_when_the_button_that_has_it_goes_off(self):
+        """사진이 생기면 되돌리기만 꺼진다(지금 사진을 덮어쓰지 않는다) — 포커스가 켜져 있는 `사본 비우기` 에 있으면 제자리이고, 꺼지는 `되돌리기` 에 있었다면 카드 단추로 간다."""
+        window, fake, draft_id = self.deleted_and_back()
+        ui, box, restore, clear = self.trash_ui(window)
+        controller = window.state.drafts
+        self.activate(window)
+        clear.setFocus(Qt.TabFocusReason)
+        self.settle(1)
+        self.assertTrue(clear.hasFocus())
+        controller.photos.add_paths([fake_path(7)])
+        window.photos_card_refresh()
+        self.settle(2)
+        self.assertEqual((restore.isEnabled(), clear.isEnabled()), (False, True), "사진이 있으니 되돌리기만 꺼진다")
+        self.assertTrue(clear.hasFocus(), "켜져 있는 단추의 포커스는 제자리다")
+        controller.photos.remove("p001")
+        window.photos_card_refresh()
+        self.settle(2)
+        self.assertEqual((restore.isEnabled(), clear.isEnabled()), (True, True))
+        restore.setFocus(Qt.TabFocusReason)
+        self.settle(1)
+        self.assertTrue(restore.hasFocus())
+        controller.photos.add_paths([fake_path(8)])
+        window.photos_card_refresh()
+        self.settle(2)
+        self.assertEqual((restore.isEnabled(), ui.photos_button.hasFocus()), (False, True), "꺼지는 단추에 포커스가 있었다면 카드 단추로 간다")
+
+    def test_after_a_failed_restore_the_buttons_are_back_and_the_focus_is_still_on_the_card_button(self):
+        window, fake, draft_id = self.deleted_and_back(fake=HoldingFailingRestore(lambda: CATALOG, saving=True))
+        ui, box, restore, clear = self.trash_ui(window)
+        fake.holding = True
+        self.press(window, restore, "space")
+        self.assertTrue(fake.entered.wait(10))
+        self.settle(3)
+        self.assertEqual((restore.isEnabled(), clear.isEnabled(), self.focus_key()), (False, False, "drf-photos"), "도는 동안 두 단추가 꺼지고 포커스는 카드 단추에 있다")
+        fake.gate.set()
+        self.assertTrue(self.wait_store(window))
+        self.settle(3)
+        self.assertEqual(window.state.drafts.notice, ("error", T["pho_restore_fail"]))
+        self.assertTrue(box.isVisibleTo(window.screen_widget) and restore.isEnabled() and clear.isEnabled(), "실패해도 단추는 다시 켜진다")
+        self.assertEqual(self.focus_key(), "drf-photos", "포커스를 잃지 않는다 — 다시 누르려면 Tab 한 번")
+
+
+class LeaveWithFailedPhotoSaveTest(Base):
+    """`저장` 을 골라 나가려는데 **사진 정보만** 저장하지 못하면(검증 S PS-1·Q PQ-1) 나가지도 닫히지도 않고 경고창이 먼저다 — 그냥 나가면 고친 사진 정보가 조용히 사라진다(앱 닫기에서는 알림을 볼 수조차 없다).
+    다른 메뉴·`저장한 초안`·앱 닫기(진짜 `window.close()`) 셋 모두 — 컨트롤러의 `photos_failed` 를 셸 `_after_save` 가 글 저장 실패와 같은 경고창으로 잇는다."""
+    HOWS = ("topics", "saved_list", "close")
+
+    def prepared(self):
+        fake = provider()
+        window = self.drafted(drafts_provider=fake)
+        window, form = self.sheet(window)
+        self.add_photos(form, fake_path(1), fake_path(2))
+        self.assertEqual(window.photos_close(), "closed")
+        self.settle(4)
+        fake.photo_fail = T["pho_save_fail"]                                          # 사진 정보 저장만 실패한다(글 저장은 된다)
+        return window, fake
+
+    def ask(self, window, how):
+        """나가기·닫기를 눌러 세 갈래 확인창을 연다 → 그 단추들."""
+        if how == "topics":
+            window.go("topics")
+        elif how == "saved_list":
+            self.button(window, "drf-saved-list").click()
+        else:
+            self.assertFalse(window.close(), "사진 정보가 저장되지 않았으니 닫기를 막고 먼저 묻는다")
+        self.settle(3)
+        buttons = self.dialog_buttons(window)
+        self.assertEqual(list(buttons), [T["drf_choice_save"], T["drf_choice_discard_close" if how == "close" else "drf_choice_discard_leave"], T["drf_choice_stay"]])
+        return buttons
+
+    def warned(self, window, how):
+        """세 갈래 창에서 `저장` 을 눌러 사진 정보 경고창이 뜰 때까지 → 경고창의 단추들."""
+        self.ask(window, how)[T["drf_choice_save"]].click()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.dialog.is_open and T["pho_savefail_leave_title"] in self.texts(window.dialog), 10), "경고창이 떠야 한다")
+        self.settle()
+        return self.dialog_buttons(window)
+
+    def here(self, window, how):
+        """아직 나가지도 닫히지도 않았다."""
+        if how == "close":
+            return window.isVisible()
+        return window.state.page == "drafts" and window.state.drafts.state == "normal"
+
+    def gone(self, window, how):
+        if how == "close":
+            return ui_offscreen.wait_until(self.app, lambda: not window.isVisible(), 10)
+        if how == "topics":
+            return ui_offscreen.wait_until(self.app, lambda: window.state.page == "topics", 10)
+        return ui_offscreen.wait_until(self.app, lambda: window.state.drafts.state == "empty" and window.state.drafts.listing is not None, 10)
+
+    def test_saving_to_leave_stops_with_a_warning_and_keep_editing_keeps_everything(self):
+        for how in self.HOWS:
+            with self.subTest(how=how):
+                window, fake = self.prepared()
+                controller, ui = window.state.drafts, self.ui(window)
+                buttons = self.warned(window, how)
+                closing = how == "close"
+                self.assertEqual(list(buttons), [T["drf_choice_stay"], T["pho_choice_discard_close" if closing else "pho_choice_discard_leave"]])
+                self.assertTrue(buttons[T["drf_choice_stay"]].hasFocus(), "처음 포커스는 계속 고치기")
+                shown = " ".join(self.texts(window.dialog))
+                self.assertIn(T["pho_save_fail"], shown)
+                self.assertIn(T["pho_savefail_leave_tail"], shown)
+                self.assertNotIn(T["drf_savefail_leave_tail"], shown, "글이 아니라 사진 정보의 경고다")
+                self.assertTrue(self.here(window, how), "나가지도 닫히지도 않았다")
+                self.assertEqual((len(fake.saved), len(fake.photo_files), controller.photos.count), (1, 0, 2), "글은 저장됐고 사진 정보는 못 저장했고 사진 목록은 그대로다")
+                buttons[T["drf_choice_stay"]].click()
+                self.settle(3)
+                self.assertFalse(window.dialog.is_open)
+                self.assertTrue(self.here(window, how))
+                self.assertEqual((controller.photos.count, controller.photos_unsaved(), controller.leave_asked), (2, True, None), "사진 정보는 아직 저장되지 않았고 질문은 잊었다")
+                self.assertTrue(ui.photos_unsaved.isVisibleTo(window.screen_widget), "카드의 '고쳤어요' 안내가 남아 있다")
+                fake.photo_fail = None                                                       # 이제 사진 정보도 저장된다 — 같은 길로 다시 나가면 이번에는 나간다
+                self.ask(window, how)[T["drf_choice_save"]].click()
+                self.assertTrue(self.gone(window, how), "사진 정보도 저장돼 이번에는 나갔다")
+                self.assertEqual(len(fake.photo_files), 1)
+                window.state.drafts.leave()
+                window.close()
+
+    def test_leaving_anyway_after_the_warning_leaves_or_closes_and_the_photo_info_is_gone(self):
+        for how in self.HOWS:
+            with self.subTest(how=how):
+                window, fake = self.prepared()
+                buttons = self.warned(window, how)
+                buttons[T["pho_choice_discard_close" if how == "close" else "pho_choice_discard_leave"]].click()
+                self.assertTrue(self.gone(window, how), "경고를 읽고 그래도 나가겠다고 해서야 나갔다")
+                self.assertEqual((len(fake.saved), len(fake.photo_files)), (1, 0), "글은 저장돼 있고 사진 정보는 저장되지 않았다(경고가 그렇게 말했다)")
+                window.state.drafts.leave()
+                window.close()
+
+    def test_escape_on_the_warning_is_keep_editing(self):
+        window, fake = self.prepared()
+        self.warned(window, "topics")
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.settle(3)
+        self.assertEqual((window.dialog.is_open, window.state.page, window.state.drafts.photos.count, window.state.drafts.leave_asked), (False, "drafts", 2, None))
+
+    def test_the_photo_card_note_and_the_save_status_still_say_it_is_not_saved_behind_the_warning(self):
+        window, fake = self.prepared()
+        controller = window.state.drafts
+        self.warned(window, "topics")
+        self.assertEqual(controller.save_state(), "changed", "글은 저장됐지만 사진 정보 때문에 '저장한 뒤 고쳤어요'")
+        self.assertEqual(self.saved_status(window), T["drf_state_changed"])
+        self.assertTrue(self.ui(window).photos_unsaved.isVisibleTo(window.screen_widget))
 
 
 class MakeAndCopyTest(Base):

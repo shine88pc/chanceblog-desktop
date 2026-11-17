@@ -411,7 +411,7 @@ class AppShell(QMainWindow):
         self.dialog.clear()
         self.dialog.setAccessibleName(title)
         self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
-        self.dialog.layout_.addWidget(UI.label(body, "body", wrap=True))
+        self.dialog.layout_.addWidget(UI.DialogBody(body))                          # 본문은 창에 다 들어가면 그대로, 낮은 창에서만 스크롤(검증 Q PQ-16)
         row = QHBoxLayout()
         row.addStretch(1)
         no = None
@@ -440,7 +440,7 @@ class AppShell(QMainWindow):
         self.dialog.clear()
         self.dialog.setAccessibleName(title)
         self.dialog.layout_.addWidget(UI.label(title, "h2", wrap=True))
-        self.dialog.layout_.addWidget(UI.label(body, "body", wrap=True))
+        self.dialog.layout_.addWidget(UI.DialogBody(body))                          # 본문은 창에 다 들어가면 그대로, 낮은 창에서만 스크롤(검증 Q PQ-16)
         row = QHBoxLayout()
         row.addStretch(1)
         buttons = {}
@@ -2295,7 +2295,7 @@ class AppShell(QMainWindow):
             form.refresh()
             form.delete_button.setFocus(Qt.OtherFocusReason)
 
-    # ---- 사진 정리(사진 연동 2단계, 결정 D-499) — 초안 작성 화면의 '사진 넣기(선택)' 줄과 '사진' 카드가 여는 창. 사진 목록은 초안 컨트롤러의 `photos`(`PhotoBoard`)가 메모리에만 들고 있고 저장하지 않는다(3단계). 사진 파일은 읽기만 한다 ----
+    # ---- 사진 정리(사진 연동 2단계, 결정 D-499) — 초안 작성 화면의 '사진 넣기(선택)' 줄과 '사진' 카드가 여는 창. 사진 목록은 초안 컨트롤러의 `photos`(`PhotoBoard`)가 메모리에서 고치고, 초안을 `저장` 할 때 저장한 판과 다르면 사진 정보도 함께 저장한다(3단계 — 아래 `_after_save`·되돌릴 사본). 사진 파일은 읽기만 한다 ----
     def photos_open(self, _checked=False):
         """`사진 정리 열기`·`사진 넣기` — 창을 연다. 다른 대화상자가 열려 있으면 열지 않는다. 어느 길로든 닫히면 칸·미리보기·대기열을 비운다(사진 목록은 남는다)."""
         if self.dialog.is_open:

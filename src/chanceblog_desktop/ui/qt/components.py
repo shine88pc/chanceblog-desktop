@@ -892,6 +892,61 @@ class Drawer(QFrame):
         QTimer.singleShot(K.MOTION_MS["panel"] + 20, lambda: None if self.is_open else self.hide())
 
 
+class DialogBody(QScrollArea):
+    """확인창의 본문 글 — 창에 다 들어가면 지금까지와 똑같이 보이고(틀·여백·스크롤 막대 없음, 높이는 글이 필요한 만큼) 창이 낮아 다 못 보일 때만 본문이 세로로 스크롤된다(검증 Q PQ-16 — 확인 권장과 올릴 사진 줄이 함께 뜨는 복사 확인창은
+    낮은 창에서 끝줄이 잘리고 스크롤도 없었다). 제목과 단추 줄은 스크롤 밖에 그대로 있어 단추는 늘 창 안에 보인다.
+    줄바꿈 글의 높이는 폭이 정해져야 알 수 있어 `heightForWidth` 로 알려 준다(`Dialog.place` 가 예전과 같은 높이를 얻는다). `minimumSizeHint` 가 0 이라 높이가 모자라면 이 칸이 먼저 줄어든다.
+    스크롤이 있을 때만 Tab 정거장이 되어(방향키·PageUp·PageDown·Home·End 로 읽는다 — 스크롤 영역도 Tab 정거장이라 이름이 있어야 한다는 서랍의 규칙과 같다) 평소의 Tab 순서는 그대로다. 접근 이름은 본문 글이다."""
+
+    def __init__(self, text):
+        super().__init__()
+        self.setObjectName("dialog_body")
+        self.setFrameShape(QFrame.NoFrame)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.label = label(text, "body", wrap=True)
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        column.addWidget(self.label)
+        column.addStretch(1)                                                       # 칸이 글보다 커도 글은 위에 붙는다(가운데로 뜨지 않는다)
+        self.setWidget(holder)
+        policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.verticalScrollBar().rangeChanged.connect(self._range_changed)
+
+    def plain_text(self):
+        return self.label.plain_text()
+
+    def heightForWidth(self, width):
+        return self.widget().layout().totalHeightForWidth(max(0, width))
+
+    def sizeHint(self):
+        hint = self.widget().sizeHint()
+        return QSize(hint.width(), self.heightForWidth(hint.width()))
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
+
+    def keyPressEvent(self, event):
+        """방향키·PageUp·PageDown 은 스크롤 영역의 기본 동작이고, 긴 글을 읽는 키보드 사용자를 위해 Home(맨 위)·End(맨 아래)도 받는다."""
+        bar = self.verticalScrollBar()
+        if event.key() in (Qt.Key_Home, Qt.Key_End) and not event.modifiers():
+            bar.setValue(bar.minimum() if event.key() == Qt.Key_Home else bar.maximum())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _range_changed(self, low, high):
+        scrolling = high > low
+        self.setFocusPolicy(Qt.StrongFocus if scrolling else Qt.NoFocus)
+        self.setAccessibleName(self.label.plain_text() if scrolling else "")
+
+
 class Dialog(QFrame):
     """가운데 뜨는 대화상자 — 뒤를 어둡게(scrim) 덮고 안의 위젯만 Tab 으로 돈다. 창 위에 겹쳐 놓는다(별도 창을 만들지 않는다)."""
 
