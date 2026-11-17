@@ -25,6 +25,7 @@ PROCESS_NAMES = {"QProcess", "ProcessPoolExecutor"}
 # (파일, 쓰는 것) → 이유. 이 표가 앱이 바깥과 닿는 길의 전부다.
 ALLOWED = {
     ("publish/gitrepo.py", "subprocess"): "git 하위 프로세스를 띄우는 유일한 곳(`run_command`) — 외부 Write 관문(`capabilities.require_external_write`)이 첫 줄이라 이 빌드에서는 한 번도 띄우지 않는다",
+    ("ui/ocr_adapter.py", "subprocess"): "이 PC 의 글자 읽기 작업자를 띄우는 유일한 곳(`_launch`) — `LOCAL_OCR` 관문이 첫 줄이고 인자는 고정, 셸 없음, 소켓·인터넷 코드 없음, 바깥에 쓰지 않는다(이 PC 안의 계산, 결정 D-512)",
     ("ui/qt/shell.py", "QDesktopServices"): "`qt_open_url` — 네이버 글쓰기 주소를 기본 브라우저로 연다(주소만 연다 — 로그인·입력·발행은 사용자가 브라우저에서 직접, 앱은 연결하지 않는다)",
     ("ui/qt/components.py", "QDesktopServices"): "이미지 출처 링크 열기(`check_url` 로 주소 모양을 거른 뒤 기본 브라우저가 연다) — 앱은 연결하지 않는다",
 }
@@ -83,9 +84,15 @@ class OutgoingCallSitesTest(unittest.TestCase):
         for key, reason in ALLOWED.items():
             self.assertGreater(len(reason), 20, key)
 
-    def test_only_one_allowed_place_can_write_to_the_outside_and_it_sits_behind_the_gate(self):
-        writers = [key for key in ALLOWED if key[1] in ("subprocess", "socket", "http", "urllib", "ssl")]
-        self.assertEqual(writers, [("publish/gitrepo.py", "subprocess")])
+    def test_one_place_writes_to_the_outside_and_one_place_starts_the_local_worker_each_behind_its_own_gate(self):
+        """결정 D-512(설계 3-8 (2)) — '바깥에 쓰는 곳은 하나' 가 '바깥에 쓰는 곳 하나 + 이 PC 안 계산 작업자 하나' 가 됐다. 옛 단언보다 약하지 않다: 하위 프로세스·소켓·웹 모듈이 허용 목록에 이 둘 말고는 없고,
+        글자 읽기 쪽은 네트워크 모듈을 하나도 가져오지 않는다(어댑터의 바깥 이름은 `subprocess` 하나)."""
+        external_writers = [("publish/gitrepo.py", "subprocess")]
+        local_workers = [("ui/ocr_adapter.py", "subprocess")]
+        process_like = sorted(key for key in ALLOWED if key[1] in ("subprocess", "socket", "http", "urllib", "ssl", "multiprocessing", "QProcess", "ProcessPoolExecutor") or key[1].startswith("os."))
+        self.assertEqual(process_like, sorted(external_writers + local_workers))
+        self.assertEqual([key for key in ALLOWED if key[1] in ("socket", "http", "urllib", "ssl")], [], "네트워크 모듈은 어느 허용에도 없다")
+        self.assertEqual(sorted(key for key in found_outgoing() if key[0] == "ui/ocr_adapter.py"), local_workers, "어댑터가 바깥과 닿는 이름은 subprocess 하나뿐이다")
 
     def test_urllib_parse_is_the_only_urllib_use_outside_the_allowed_list(self):
         for path in sorted(SRC.rglob("*.py")):

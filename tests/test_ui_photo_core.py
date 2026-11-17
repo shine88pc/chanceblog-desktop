@@ -1213,6 +1213,7 @@ class SourceRulesTest(unittest.TestCase):
         "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",
         "ui/core/attribution.py": "기존 — 이미지 출처 표기(사진 정리와 무관)", "ui/qt/components.py": "기존 — 공통 부품 설명(사진 정리와 무관)",
         "content/photo_ocr.py": "글자 읽기(결정 D-512) — 작업자가 읽은 줄을 확인 전 후보로 다듬는 순수 규칙(읽은 글은 저장하지 않는다)",
+        "ui/ocr_adapter.py": "글자 읽기 작업자를 띄우는 유일한 곳(결정 D-512) — 이미 줄인 RGB 바이트만 받고 사진 경로·번호·메모는 받지도 보내지도 않는다(LOCAL_OCR 관문 안)",
         "ui/core/photo_ocr_view.py": "글자 읽기 컨트롤러(결정 D-512) — 사진 한 장의 상태 기계·대기열·세대 번호·줄 확인·고침·빼기·합치기. 사진 목록(PhotoBoard)에 붙고 저장하지 않는다",
     }
 

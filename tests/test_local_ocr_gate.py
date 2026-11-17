@@ -26,7 +26,8 @@ from chanceblog_desktop.service.context import Settings  # noqa: E402
 SRC = ss.ROOT / "src" / "chanceblog_desktop"
 ADAPTER = SRC / "ui" / "ocr_adapter.py"
 GATE_NAMES = ("capabilities.require_local_ocr", "require_local_ocr")
-LAUNCH_CALLS = ("subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output")
+LAUNCH_CALLS = ("subprocess.Popen",)
+OTHER_CALLS = ("subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output", "os.system", "os.popen")
 
 
 def src_files():
@@ -179,6 +180,15 @@ class NoWayToTurnItOnTest(unittest.TestCase):
 
 
 class EntryPointGateTest(unittest.TestCase):
+    @unittest.skipUnless(ADAPTER.exists(), "ui/ocr_adapter.py 가 아직 없다")
+    def test_the_only_other_process_call_in_the_adapter_is_the_taskkill_that_ends_a_tree(self):
+        tree = ast.parse(ADAPTER.read_text(encoding="utf-8"))
+        others = [call for call in ast.walk(tree) if isinstance(call, ast.Call) and ast.unparse(call.func) in OTHER_CALLS]
+        self.assertTrue(others)
+        for call in others:
+            first = call.args[0] if call.args else None
+            self.assertTrue(isinstance(first, ast.List) and first.elts and isinstance(first.elts[0], ast.Constant) and first.elts[0].value == "taskkill", ast.unparse(call)[:80])
+
     @unittest.skipUnless(ADAPTER.exists(), "ui/ocr_adapter.py 가 아직 없다")
     def test_every_function_that_launches_a_process_in_the_adapter_starts_with_the_gate(self):
         tree = ast.parse(ADAPTER.read_text(encoding="utf-8"))

@@ -232,8 +232,12 @@ class EntryPointGateTest(unittest.TestCase):
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.Call) and ast.unparse(node.func) in ("subprocess.Popen", "subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output", "os.system", "os.popen"):
                     launches.append((path.relative_to(SRC).as_posix(), ast.unparse(node.func)))
-        self.assertEqual(sorted(launches), [("publish/gitrepo.py", "subprocess.Popen"), ("publish/gitrepo.py", "subprocess.run")],
-                         "하위 프로세스를 띄우는 곳은 gitrepo.py 의 run_command(관문 안)와 시간 초과 때 그 자식을 끄는 taskkill 뿐이다")
+        self.assertEqual(sorted(launches), [("publish/gitrepo.py", "subprocess.Popen"), ("publish/gitrepo.py", "subprocess.run"), ("ui/ocr_adapter.py", "subprocess.Popen"), ("ui/ocr_adapter.py", "subprocess.run")],
+                         "하위 프로세스를 띄우는 곳은 gitrepo.py 의 run_command(외부 쓰기 관문 안)와 시간 초과 때 그 자식을 끄는 taskkill, 그리고 글자 읽기 작업자(이 PC 안 계산, LOCAL_OCR 관문 안 — 결정 D-512)와 그 트리를 끄는 taskkill 뿐이다")
+        adapter = parse("ui/ocr_adapter.py")
+        launch = statements(function_node(adapter, "OcrAdapter._launch"))
+        self.assertEqual(ast.unparse(launch[0].value.func), "capabilities.require_local_ocr", "글자 읽기 작업자를 띄우는 함수의 첫 문장은 LOCAL_OCR 관문이다")
+        self.assertIn("taskkill", ast.unparse(function_node(adapter, "kill_tree")))
         tree = parse("publish/gitrepo.py")
         for node in ast.walk(function_node(tree, "run_command")):
             if isinstance(node, ast.Call) and ast.unparse(node.func) == "subprocess.Popen":
