@@ -1212,6 +1212,7 @@ class SourceRulesTest(unittest.TestCase):
         "ui/core/drafts.py": "저장한 초안 공급자의 값(사진 정보 저장·열기·지우기 결과)과 가짜 공급자(3단계)", "ui/drafts_adapter.py": "저장한 초안 공급자가 사진 정보를 함께 저장·열기·사본으로 옮기기·되돌리기·사본 비우기(3단계, 확인 024)",
         "ui/core/text.py": "문구 합치기(PHOTO_T)", "ui/qt/draft_screen.py": "'사진' 카드와 '사진 넣기(선택)' 줄", "ui/qt/shell.py": "사진 정리 창 열기·닫기·Esc",
         "ui/core/attribution.py": "기존 — 이미지 출처 표기(사진 정리와 무관)", "ui/qt/components.py": "기존 — 공통 부품 설명(사진 정리와 무관)",
+        "content/photo_ocr.py": "글자 읽기(결정 D-512) — 작업자가 읽은 줄을 확인 전 후보로 다듬는 순수 규칙(읽은 글은 저장하지 않는다)",
     }
 
     def test_only_the_listed_source_files_mention_photos_so_saving_making_exporting_and_backup_are_untouched(self):

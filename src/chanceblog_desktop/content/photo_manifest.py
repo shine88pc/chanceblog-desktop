@@ -8,7 +8,7 @@
 preferred_section·placement·confirmed_by_user·caption. 목록 파일에 그 밖의 칸(EXIF·촬영 위치·기기·썸네일 …)이 있으면 읽지 않고 거절한다 — 이 모듈은 이미지 파일을 열지도 않는다.
 
 규칙(모두 fail closed — 의심스러우면 만들지 않고 고정 문장으로 거절한다):
-  · **한도** — 한 글에 사진 최대 `MAX_PHOTOS`(30)장, 대상 `MAX_SUBJECT`(60)자·메모 `MAX_NOTE`(300)자·설명 글 `MAX_CAPTION`(100)자, 종류·장소 분위기 20자·들어갈 위치 60자, 분석 결과 항목 한 칸에 20개·한 개 200자.
+  · **한도** — 한 글에 사진 최대 `MAX_PHOTOS`(30)장, 대상 `MAX_SUBJECT`(60)자·메모 `MAX_NOTE`(300)자·설명 글 `MAX_CAPTION`(100)자, 종류·장소 분위기 20자·들어갈 위치 60자, 분석 결과 항목 한 개 200자·한 칸에 관찰한 대상 `MAX_OBJECT_ITEMS`(20)개·읽은 글자 `MAX_TEXT_ITEMS`(60)개(결정 D-512 — 영수증 한 장이 50줄 안팎이라 글자 칸만 올렸다).
     글칸은 한 줄로 정리하고(`clean_line`) 눈에 안 보이거나 빈칸처럼 보이는 글자·겹쳐 쌓인 결합 문자·HTML·`{{ }}` 같은 템플릿 표기·키·토큰 모양·결과를 약속하는 표현·주민등록번호나 카드 번호 모양은 거절한다(선택 입력 `DraftOptions` 와 같은 검사기).
   · **사진 번호** — `photo_id` 는 앱이 만든 `p001`…`p999` 이고 사용자가 준 글자가 아니다. 한 목록 안에서 다시 쓰지 않는다(`next_number` 가 늘기만 한다) — 지운 사진의 번호를 새 사진이 물려받아 본문 속 `{{사진 3}}` 이 엉뚱한
     사진을 가리키는 일이 없게. 본문에는 `{{사진 N}}`(N = 이 번호의 숫자)만 쓴다. 순서(`display_order`, 1부터 빈틈없이)를 바꾸거나 사진을 지워도 번호와 본문은 바뀌지 않는다 — 앱은 본문을 몰래 고치지 않고 어긋남만 알린다(`placeholder_report`).
@@ -52,7 +52,9 @@ MAX_PATH_CHARS = 260
 MAX_LABEL = 20
 MAX_SECTION = 60
 MAX_SUBJECT, MAX_NOTE, MAX_CAPTION = 60, 300, 100
-MAX_OBSERVATIONS, MAX_OBSERVATION_CHARS = 20, 200
+MAX_OBJECT_ITEMS, MAX_TEXT_ITEMS = 20, 60                  # 분석 결과 한 칸의 항목 수 — 관찰한 대상 칸은 20개, 읽은 글자 칸은 60개(글자 읽기 결과가 20줄을 자주 넘는다 — 결정 D-512)
+MAX_OBSERVATIONS = MAX_OBJECT_ITEMS                         # 옛 이름(관찰한 대상 칸의 한도) — 이름만 남겼다. 글자 칸의 한도는 `MAX_TEXT_ITEMS`
+MAX_OBSERVATION_CHARS = 200
 MAX_NTH = 50
 MAX_TEXT_BYTES = 512 * 1024
 DEFAULT_PHOTO_TYPES = ("간판", "건물 외관", "메뉴판", "인테리어", "대표 메뉴", "반찬", "음식", "지도 캡처", "기타")
@@ -353,9 +355,14 @@ def _observation(value, number=None):
     raise _invalid(_R_FORM, number)
 
 
+def item_limit(kind):
+    """분석 결과 한 칸에 둘 수 있는 항목 수 — 읽은 글자 칸(`visible_text`)은 `MAX_TEXT_ITEMS`, 관찰한 대상 칸은 `MAX_OBJECT_ITEMS`."""
+    return MAX_TEXT_ITEMS if kind == TEXTS else MAX_OBJECT_ITEMS
+
+
 def _observations(values, kind, number):
-    if not isinstance(values, (list, tuple)) or len(values) > MAX_OBSERVATIONS:
-        raise _invalid(_R_FORM if not isinstance(values, (list, tuple)) else f"분석 결과는 한 칸에 {MAX_OBSERVATIONS}개까지만 둘 수 있어요", number)
+    if not isinstance(values, (list, tuple)) or len(values) > item_limit(kind):
+        raise _invalid(_R_FORM if not isinstance(values, (list, tuple)) else f"분석 결과는 한 칸에 {item_limit(kind)}개까지만 둘 수 있어요", number)
     items = tuple(_observation(value, number) for value in values)
     if kind == OBJECTS and any(inference_problem(item.text) for item in items):
         raise _invalid(_R_INFERENCE, number)
@@ -681,7 +688,7 @@ def _kind(kind):
 
 def set_analysis(manifest, photo_id, *, method, objects=(), texts=()):
     """(나중의 로컬 분석 플러그인이 쓴다) 분석 결과를 **확인 전** 항목으로 채운다 → `(새 목록, 거른 항목 수)`. 글이 아니거나 모양·한도·비밀·개인 번호 검사에 걸린 항목, 관찰한 대상에서 얼굴·관계·감정·신원을 짐작한 말은 버리고,
-    한 칸에 20개가 넘는 것도 버린다. 분석 방법 이름은 `local:이름` 이어야 하고, 이전 결과는 모두 대체되며 확정은 풀린다. 플러그인의 출력은 믿지 않는다 — 여기서 다시 검사한다."""
+    한 칸의 한도(`item_limit` — 읽은 글자 60개·관찰한 대상 20개)가 넘는 것도 버린다. 분석 방법 이름은 `local:이름` 이어야 하고, 이전 결과는 모두 대체되며 확정은 풀린다. 플러그인의 출력은 믿지 않는다 — 여기서 다시 검사한다."""
     if not isinstance(method, str) or _METHOD.fullmatch(method) is None or method == METHOD_MANUAL:
         raise _invalid(_R_METHOD)
     old = manifest.photo(photo_id)
@@ -691,7 +698,7 @@ def set_analysis(manifest, photo_id, *, method, objects=(), texts=()):
         items = []
         for value in (raw if isinstance(raw, (list, tuple)) else ()):
             clean, reason = check_text("observation", value)
-            if reason is not None or (kind == OBJECTS and inference_problem(clean)) or len(items) >= MAX_OBSERVATIONS:
+            if reason is not None or (kind == OBJECTS and inference_problem(clean)) or len(items) >= item_limit(kind):
                 dropped += 1
                 continue
             items.append(Observation(clean, False))
@@ -721,6 +728,38 @@ def confirm_item(manifest, photo_id, kind, index, confirmed=True):
 def edit_item(manifest, photo_id, kind, index, text):
     """사용자가 분석 결과 항목의 글을 고친다 — 고친 항목은 다시 **확인 전**이 된다(확인은 `confirm_item`). 새 글도 같은 검사를 거친다(관찰한 대상이면 짐작한 말 거절 포함)."""
     return _with_item(manifest, photo_id, kind, index, lambda item: Observation(text, False))
+
+
+def _checked_index(old, items, index):
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(items):
+        raise _invalid(_R_ITEM, old.number)
+
+
+def remove_item(manifest, photo_id, kind, index):
+    """분석 결과 항목 하나를 목록에서 뺀다(글자 읽기에서 틀린 줄 빼기) — 사진의 확정이 풀린다(내용이 바뀌었으니). 저장 모양은 그대로다. 되돌리기는 화면 쪽 규칙이 이전 목록을 한 번 쥐고 있다가 한다.
+    번호(`index`, 0부터)가 목록 밖이면 `CONTENT_INVALID`."""
+    old = manifest.photo(photo_id)
+    items = list(getattr(old, _kind(kind)))
+    _checked_index(old, items, index)
+    del items[index]
+    return _swap(manifest, photo_id, replace(old, **{kind: tuple(items)}, confirmed_by_user=False))
+
+
+def merge_items(manifest, photo_id, kind, index):
+    """`index` 번째 항목과 바로 아래(`index + 1`) 항목을 공백 하나로 이어 **새 확인 전 항목** 하나로 만든다(메뉴 이름과 가격이 두 줄로 쪼개진 것을 잇는 용도) — 사진의 확정이 풀린다.
+    이은 글도 같은 입구 검사(길이·보이지 않는 글자·비밀 모양·개인 번호 모양 …)를 거치고, 걸리면 `CONTENT_INVALID`(두 줄은 그대로). 아래 줄이 없으면 `CONTENT_INVALID`."""
+    old = manifest.photo(photo_id)
+    items = list(getattr(old, _kind(kind)))
+    _checked_index(old, items, index)
+    if index + 1 >= len(items):
+        raise _invalid(_R_ITEM, old.number)
+    joined, reason = check_text("observation", f"{items[index].text} {items[index + 1].text}")
+    if reason is None and kind == OBJECTS and inference_problem(joined):
+        reason = _R_INFERENCE
+    if reason is not None:
+        raise _invalid(reason, old.number)
+    items[index:index + 2] = [Observation(joined, False)]
+    return _swap(manifest, photo_id, replace(old, **{kind: tuple(items)}, confirmed_by_user=False))
 
 
 # ---- 초안으로 보내는 정보 · 본문과 견주기 ------------------------------------------------------------------------------------------------------
@@ -758,7 +797,7 @@ def placeholder_report(manifest, text):
                              tuple(number for number in sent if number not in appearing), tuple(number for number in appearing if counts[number] > 1), actual != expected, stray_braces(text))
 
 
-__all__ = ["ADD_FIELDS", "ANALYSIS_KINDS", "DEFAULT_PHOTO_TYPES", "DEFAULT_SETTINGS", "DRAFT_KEYS", "DraftPhoto", "EDIT_FIELDS", "ENVELOPE_KEYS", "FIELDS", "MAX_PHOTOS", "Observation", "PLACEMENT_KINDS",
+__all__ = ["ADD_FIELDS", "ANALYSIS_KINDS", "DEFAULT_PHOTO_TYPES", "DEFAULT_SETTINGS", "DRAFT_KEYS", "DraftPhoto", "EDIT_FIELDS", "ENVELOPE_KEYS", "FIELDS", "MAX_OBJECT_ITEMS", "MAX_PHOTOS", "MAX_TEXT_ITEMS", "Observation", "PLACEMENT_KINDS",
            "PLACEHOLDER", "Photo", "PhotoManifest", "Placement", "PlaceholderReport", "SCHEMA", "accepted_extensions", "add_photo", "check_text", "confirm_item", "draft_inputs", "edit_item", "empty_manifest",
-           "find_placeholders", "inference_problem", "is_photo_id", "lost_confirmation", "move_photo", "number_of", "path_key", "path_problem", "personal_number_problem", "photo_id_of", "placeholder", "placeholder_report",
-           "remove_photo", "reorder", "set_analysis", "set_confirmed", "stray_braces", "update_photo"]
+           "find_placeholders", "inference_problem", "is_photo_id", "item_limit", "lost_confirmation", "merge_items", "move_photo", "number_of", "path_key", "path_problem", "personal_number_problem", "photo_id_of", "placeholder", "placeholder_report",
+           "remove_item", "remove_photo", "reorder", "set_analysis", "set_confirmed", "stray_braces", "update_photo"]

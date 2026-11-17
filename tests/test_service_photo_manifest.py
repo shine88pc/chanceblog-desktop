@@ -1507,6 +1507,7 @@ class SourceRulesTest(unittest.TestCase):
         "content/draft_body.py": "본문 생성기의 머리 설명이 `DraftPhoto`(확정한 사진만 담은 값)를 말하고 `photo_flow.place_photos` 를 부른다 — 사진 파일·경로를 모른다(3단계 본문 연결)",
         "content/photo_flow.py": "사진 줄을 본문 블록에 끼우는 순수 함수(3단계 본문 연결) — `DraftPhoto`·자리표시자 만들기만 가져온다",
         "ui/core/drafts_view.py": "초안 컨트롤러가 만들 때 확정한 사진만 `draft_inputs` 로 뽑아 요청에 싣고 만든 뒤 바뀌었는지 견준다(3단계 본문 연결) — 경로·파일 이름은 뽑히지 않는다",
+        "content/photo_ocr.py": "글자 읽기(결정 D-512)가 돌려준 줄을 확인 전 후보로 다듬는 순수 규칙 — 기존 입구 검사(`check_text`)와 `set_analysis` 를 부를 뿐 새 검사·새 칸을 만들지 않는다",
     }
 
     def test_only_the_listed_source_files_use_the_photo_manifest_modules(self):
