@@ -61,7 +61,7 @@ class DraftsController:
         self.list_notice = None                              # 목록 위의 알림 한 줄 `(level, 글)` — 지웠다·열지 못했다
         self.store_pending = None                            # 도는 저장 작업 하나 `{"op": save|list|open|delete, …}`
         self.save_problem = None                             # 마지막 저장 실패(`DraftFailure`) — 화면이 한 번 알리고 거둔다
-        self.photos = PhotoBoard()                           # 사진 정리(사진 연동 2단계, D-499) — 사진 목록은 메모리에만 있고 새 초안·떠남·저장한 초안 열기에서 비워진다(저장·불러오기는 3단계)
+        self.photos = PhotoBoard()                           # 사진 정리(사진 연동 2단계, D-499) — 사진 목록은 이 화면의 메모리에 있고 초안을 저장할 때 사진 정보 파일로 함께 저장되며(3단계 `start_save`·`apply_opened`) 새 초안·떠남·저장한 초안 열기에서 비워진다
         self._clear_draft()
         self.state = "empty"
 
@@ -663,7 +663,7 @@ class DraftsController:
         trash = self.can_save and self.saved_id is not None and self.photos_trash
         card = self.photos.card(unsaved=self.photos_unsaved(), trash=trash)
         if self.result is not None and self.photos_lost():                              # 저장할 수 없는 상태 — 카드가 '저장되지 않아요' 를 지속 안내로 말한다(깨짐·못 엶 상태별 문장)
-            card["unsaved"] = T["pho_card_lost_" + self.photos_state]
+            card["unsaved"] = T["pho_card_lost_broken" if self.photos_state == "broken" else "pho_card_lost_unreadable"]
         current = self._photos_to_place() if self.result is not None else None
         card["remake"] = T["pho_card_remake"] if current is not None and current != self.made_photos else ""          # 만든 뒤 확정한 사진·자리·글이 바뀌었다 — 본문은 몰래 고치지 않는다
         if card["trash"] is not None:
