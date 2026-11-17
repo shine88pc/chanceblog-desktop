@@ -143,6 +143,7 @@ class PhotoBoard:
         self.types = list(rules.TYPES)
         self.settings = list(rules.SETTINGS)
         self.lists_notice = None
+        self.ocr = None                                     # 글자 읽기 컨트롤러(`photo_ocr_view.OcrBoard`)가 붙을 자리 — 없으면 아래 훅은 모두 아무 일도 하지 않는다(결정 D-512)
         self.clear()
 
     def clear(self):
@@ -159,6 +160,8 @@ class PhotoBoard:
         self.close_warned = False
         self.is_open = False
         self.generation += 1
+        if self.ocr is not None:
+            self.ocr.reset()                                # 새 초안·떠남·저장한 초안 열기 — 글자 읽기 상태·대기열을 비우고 진행 중 요청을 취소한다(늦게 온 결과는 버려진다)
 
     def load(self, manifest):
         """저장한 초안을 열었다 — 저장해 둔 사진 정보(`PhotoManifest`)로 목록을 채운다(그 밖의 임시 상태는 `clear` 와 같이 비운다). 사진 파일이 아직 있는지는 창을 열 때 다시 읽는다. 모양이 틀린 값은 받지 않는다."""
@@ -190,6 +193,10 @@ class PhotoBoard:
     def photo(self, photo_id):
         found = [item for item in self.manifest.photos if item.photo_id == photo_id]
         return found[0] if found else None
+
+    def is_reading(self, photo_id):
+        """이 사진의 글자를 기다리는 중이거나 읽는 중인가(글자 읽기 컨트롤러가 붙어 있을 때만 참이 될 수 있다)."""
+        return self.ocr is not None and self.ocr.is_busy(photo_id)
 
     def local_path(self, photo_id):
         """미리보기를 읽을 때만 쓰는 파일 위치(없으면 빈 글) — **뷰모델에는 없다.** 화면 층이 이미지 읽기 도구(`imagecheck`)에 넘기려고 부르고 화면에 보이지도 어디에 적지도 않는다."""
@@ -231,6 +238,8 @@ class PhotoBoard:
             return CLOSE_WARNED
         self.is_open = False
         self.generation += 1
+        if self.ocr is not None:
+            self.ocr.on_close()                             # 창을 닫으면 기다리는·읽는 중인 요청은 취소한다(이미 읽은 글은 목록에 남는다)
         self.rejected, self.undo, self.confirm_all_asked, self.notice, self.close_warned = (), None, 0, None, False
         self.rejected_more = RejectedMore()
         self.errors = {}
@@ -426,6 +435,8 @@ class PhotoBoard:
             return self._refuse("pho_bad_photo")
         if not isinstance(on, bool):
             return self._refuse()
+        if on and self.is_reading(photo_id):
+            return "busy"                                   # 읽는 중·기다리는 사진은 확인하지 않는다 — 결과가 와서 확정이 풀리는 놀람을 막는다(설계 2-3)
         before = self.manifest
         self.manifest = pm.set_confirmed(self.manifest, photo_id, on)
         self.notes.pop(photo_id, None)
@@ -437,7 +448,7 @@ class PhotoBoard:
 
     def ask_confirm_all(self):
         """'모두 확인했어요' 1단계 — 확인하지 않은 사진 수를 확인 줄에 보인다(바꾸지 않는다). 없으면 안내만."""
-        waiting = sum(1 for photo in self.manifest.photos if not photo.confirmed_by_user)
+        waiting = sum(1 for photo in self.manifest.photos if not photo.confirmed_by_user and not self.is_reading(photo.photo_id))
         if not waiting:
             self.confirm_all_asked = 0
             self._flag("info", T["pho_all_none"])
@@ -451,7 +462,7 @@ class PhotoBoard:
             return "refused"
         done = 0
         for photo in self.manifest.photos:
-            if not photo.confirmed_by_user:
+            if not photo.confirmed_by_user and not self.is_reading(photo.photo_id):          # 읽는 중·기다리는 사진은 건너뛴다
                 self.manifest = pm.set_confirmed(self.manifest, photo.photo_id, True)
                 self.notes.pop(photo.photo_id, None)
                 done += 1
@@ -486,6 +497,8 @@ class PhotoBoard:
             return self._refuse("pho_bad_photo")
         snapshot, number = self.manifest, photo.number
         self.manifest = pm.remove_photo(self.manifest, photo_id)
+        if self.ocr is not None:
+            self.ocr.on_photo_changed(photo_id)             # 그 사진의 글자 읽기 요청은 취소하고 늦게 온 결과는 버린다(되돌려도 '읽는 중' 은 되살리지 않는다)
         self.states.pop(photo_id, None)
         for key in [key for key in self.errors if key[0] == photo_id]:
             self.errors.pop(key)
@@ -531,6 +544,8 @@ class PhotoBoard:
             self._flag("error", problem)
             return "refused"
         status = self._apply(photo_id, local_path=path)
+        if status == "ok" and self.ocr is not None:
+            self.ocr.on_photo_changed(photo_id)             # 다른 파일로 이어 붙였다 — 읽은 글은 이미 비워졌고(1단계 규칙) 진행 중 요청은 버린다
         if status in ("ok", "unchanged"):
             self.states[photo_id] = FileState(photo_id, R.OK, "", verdict.warning, verdict.width, verdict.height, verdict.format, verified=True)
             self._flag("info", T["pho_relinked"])
