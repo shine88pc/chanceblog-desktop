@@ -442,20 +442,20 @@ class Gate:
         return self.new and bool(self.reasons)
 
 
-GATE_GROUPS = ("check", "domain", "claims", "unchanged", "photos", "uploads")      # 확인창에 보이는 묶음 순서
-INFO_GATE_GROUPS = ("uploads",)                                # 확인할 것이 아니라 알려 드리는 것(올릴 사진 순서) — 제목의 '확인 권장 N건' 에 세지 않는다
+GATE_GROUPS = ("check", "domain", "claims", "unchanged", "photos", "uploads", "paths")      # 확인창에 보이는 묶음 순서
+INFO_GATE_GROUPS = ("uploads", "paths")                                # 확인할 것이 아니라 알려 드리는 것(올릴 사진 순서) — 제목의 '확인 권장 N건' 에 세지 않는다
 
 
-def gate_for(item, inspection, specific_lines, domain_unknown, acknowledged, health=None, *, photos=(), uploads=()):
+def gate_for(item, inspection, specific_lines, domain_unknown, acknowledged, health=None, *, photos=(), uploads=(), notes=()):
     """`item`(`title`·`body`·`all`) 을 복사하기 전 관문. `acknowledged`(묶음 이름 → 이미 확인한 항목 집합)에 있는 것은 다시 묻지 않고 새로 생긴 것만 다시 묻는다(새 것이 있으면 확인창에는 지금의 모든 항목이 보인다).
     키 모양과 **건강 효과 단정**(`health` — 이 복사할 글의 `HealthReview` 가 중지 단계)은 확인이 아니라 **막음**이다. 제목만 복사할 때는 본문의 '거의 고치지 않았어요' 안내를 붙이지 않는다."""
     if item not in GATED:
         raise ValueError("관문은 제목·본문·전체 복사에만 있다")
     found = {"check": tuple(specific_lines), "domain": (T["drf_chk_domain"],) if domain_unknown else (),
              "claims": tuple(dict.fromkeys(f"{note.label}: {note.preview}" for note in inspection.claims)),
-             "unchanged": (T["drf_gate_unchanged"],) if inspection.unchanged and item in SOFT_UNCHANGED else (), "photos": tuple(photos), "uploads": tuple(uploads)}
+             "unchanged": (T["drf_gate_unchanged"],) if inspection.unchanged and item in SOFT_UNCHANGED else (), "photos": tuple(photos), "uploads": tuple(uploads), "paths": tuple(notes)}
     keys = {"check": set(found["check"]), "domain": set(found["domain"]), "claims": {note.pair for note in inspection.claims}, "unchanged": set(found["unchanged"]),
-            "photos": set(found["photos"]), "uploads": set(found["uploads"])}
+            "photos": set(found["photos"]), "uploads": set(found["uploads"]), "paths": set(found["paths"])}
     new = any(keys[name] - set(acknowledged.get(name, ())) for name in GATE_GROUPS)
     reasons = tuple((name, found[name]) for name in GATE_GROUPS if found[name])
     blocks = []

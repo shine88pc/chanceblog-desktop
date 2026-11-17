@@ -1264,5 +1264,31 @@ class SourceRulesTest(unittest.TestCase):
             self.assertIn(needle, rules_source, needle)
 
 
+class CheckedSentenceTest(unittest.TestCase):
+    """검증 Q PQ-4·PQ-7·PQ-10·PQ-12 — 화면 글이 사실과 어긋나지 않게(보이지 않는 단추를 가리키지 않고, 글에 안 쓰이는 것을 쓰인다고 하지 않고, 센 것을 센 대로 말한다)."""
+
+    def test_the_remake_note_names_the_toggle_that_opens_the_button_it_points_at(self):
+        note = T["pho_card_remake"]
+        self.assertIn(T["drf_options_open"], note, "‘다시 만들기’ 단추는 접힌 '만드는 방법' 칸 안에 있다 — 먼저 그 칸을 여는 단추를 말한다")
+        self.assertIn(T["drf_remake"], note)
+        self.assertLess(note.index(T["drf_options_open"]), note.index(T["drf_remake"]), "여는 순서대로 말한다")
+
+    def test_the_confirm_all_line_names_what_really_goes_into_the_body(self):
+        ask = T["pho_all_ask"]
+        self.assertNotIn("종류", ask, "종류는 본문에 글로 안 들어간다")
+        for word in ("대상", "설명 글", "메모", "초안에 쓰여요", "다시 만들기"):
+            self.assertIn(word, ask)
+
+    def test_the_stray_brace_line_counts_braces_not_marks(self):
+        self.assertIn("괄호가 {n}개", T["pho_gate_stray"])
+        self.assertNotIn("곳", T["pho_gate_stray"])
+        self.assertIn("괄호가 2개", T["pho_gate_stray"].format(n=2))
+
+    def test_the_delete_notice_says_the_copy_comes_back_with_the_same_numbered_draft_restored_from_a_backup(self):
+        notice = T["pho_deleted_trash"]
+        for word in ("되돌릴 사본", "같은 번호", "백업"):
+            self.assertIn(word, notice)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -71,6 +71,7 @@ _PHOTO_ID = re.compile(r"p([0-9]{3})")
 _METHOD = re.compile(r"manual|local:[a-z0-9][a-z0-9._-]{0,39}")
 PLACEHOLDER = re.compile(r"\{\{사진 ([1-9][0-9]{0,2})\}\}")
 _BRACES = re.compile(r"\{\{|\}\}")
+_PATH_SHAPES = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]|(?<!\\)\\\\[^\s\\/]+[\\/]|file:///", re.IGNORECASE)      # 드라이브 경로(`C:\…`·`c:/…`)·`\\서버\공유`·`file:///` — `http://`·`10:30/11:00`·`Note:/` 는 아니다
 _WIN_ABS = re.compile(r"[A-Za-z]:[\\/]")
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]+:")
 _DRIVE = re.compile(r"[A-Za-z]:")
@@ -179,6 +180,11 @@ def stray_braces(text):
         if not (index < len(spans) and spans[index][0] <= found.start() < spans[index][1]):
             count += 1
     return count
+
+
+def looks_like_path(text):
+    """글에 파일 경로(드라이브 경로·`\\\\서버\\공유`·`file:///`)처럼 보이는 부분이 있나 — 사진 메모·대상·설명 글에 붙여 넣은 경로가 본문과 복사된 글에 그대로 들어가는 것을 복사 확인창이 한 줄로 알리려는 순수 규칙이다(글은 되풀이하지 않는다 — 참·거짓뿐)."""
+    return isinstance(text, str) and _PATH_SHAPES.search(text) is not None
 
 
 # ---- 경로 ---------------------------------------------------------------------------------------------------------------------------------

@@ -840,6 +840,40 @@ class PlaceholderTest(Base):
         self.assertEqual(removed.by_number(3).display_order, 2, "순서만 다시 매기고 번호는 그대로다")
 
 
+class LooksLikePathTest(unittest.TestCase):
+    """복사 확인창이 알리는 '파일 경로처럼 보이는 글' 규칙(검증 S PS-4) — 드라이브 경로·네트워크 위치(UNC)·`file:///` 는 참, 인터넷 주소·시각·문장 속 `글자:` 는 거짓이다. 참·거짓만 돌려주고 글은 되풀이하지 않는다."""
+    BS = chr(92)
+
+    def test_paths_that_look_like_files_are_found_anywhere_in_a_sentence(self):
+        bs = self.BS
+        cases = (("원본은 C:" + bs + "Users" + bs + "홍길동" + bs + "Pictures" + bs + "간판.jpg 예요", "드라이브 경로(역슬래시)"), ("원본은 d:/photos/a.jpg 예요", "드라이브 경로(슬래시·소문자)"), ("(C:/x)", "괄호 바로 뒤"),
+                 ("사진C:" + bs + "a.jpg", "한글 바로 뒤"), (bs * 2 + "서버" + bs + "공유" + bs + "사진.jpg", "네트워크 위치(한글 서버)"), ("위치 " + bs * 2 + "nas/photos", "네트워크 위치(슬래시)"),
+                 ("file:///C:/a.jpg", "file 주소"), ("FILE:///a", "file 주소(대문자)"))
+        for text, what in cases:
+            with self.subTest(what):
+                self.assertIs(pm.looks_like_path(text), True)
+
+    def test_things_that_only_resemble_a_path_are_not_found(self):
+        bs = self.BS
+        cases = (("https://blog.naver.com/x", "https 주소"), ("http://x", "http 주소"), ("오전 10:30/11:00 에 갔어요", "시각"), ("Note:/ 참고", "문장 속 글자와 콜론"), ("C: 드라이브", "슬래시 없음"), ("C:file", "슬래시 없음 2"),
+                 (bs * 2 + "서버", "슬래시 없는 역슬래시 둘"), (bs + "n 줄바꿈 글자", "역슬래시 하나"), ("그냥 맛있는 집이에요", "일반 문장"), ("", "빈 글"))
+        for text, what in cases:
+            with self.subTest(what):
+                self.assertIs(pm.looks_like_path(text), False)
+
+    def test_anything_that_is_not_text_is_not_a_path(self):
+        for value in (None, 0, 3.5, b"C:/a", ("C:/a",), ["C:/a"]):
+            with self.subTest(repr(value)):
+                self.assertIs(pm.looks_like_path(value), False)
+
+    def test_long_texts_without_a_path_are_checked_in_linear_time(self):
+        import time
+        for text in ("가나다 " * 50000, "a:" * 100000, chr(92) * 200000, "http://" * 50000):
+            started = time.perf_counter()
+            self.assertIs(pm.looks_like_path(text), False)
+            self.assertLess(time.perf_counter() - started, 3.0)
+
+
 class StrictReadTest(Base):
     def good(self):
         return json.loads(confirmed(build(2, user_note="메모"), "p001").to_text())

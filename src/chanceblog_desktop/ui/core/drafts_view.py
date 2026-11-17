@@ -947,10 +947,20 @@ class DraftsController:
                 uploads.append(T["pho_gate_upload_line"].format(n=number, name=short_name(photo.local_path) or T["pho_gate_no_name"]))
         return tuple(problems), tuple(uploads)
 
+    def photo_gate_notes(self, item):
+        """복사 전 확인창에 알릴 것(막지 않는다) → 튜플 — 본문에 파일 경로처럼 보이는 글이 있으면 한 줄(사진 메모·대상·설명에 붙여 넣은 경로가 복사된 글에 그대로 들어간다, 검증 S PS-4). 경로 글 자체는 어디에도 보이지 않는다.
+        사진 기능을 쓰는 글(사진이 있거나 정확한 사진 자리가 있다 — `photo_gate_lines` 와 같은 문)에만 — 사진 없는 글은 지금과 같다."""
+        if item not in ("body", "all"):
+            return ()
+        from ...content import photo_manifest as pm
+        if not self.photos.manifest.photos and not pm.find_placeholders(self.body):
+            return ()
+        return (T["pho_gate_paths"],) if pm.looks_like_path(self.body) else ()
+
     def gate(self, item):
         _specific, _common, gate_lines, unknown = self.checks()
         problems, uploads = self.photo_gate_lines(item)
-        return rules.gate_for(item, self._inspect_now(), gate_lines, unknown, self.ack, health=self.health_for(item), photos=problems, uploads=uploads)
+        return rules.gate_for(item, self._inspect_now(), gate_lines, unknown, self.ack, health=self.health_for(item), photos=problems, uploads=uploads, notes=self.photo_gate_notes(item))
 
     def copy_decision(self, item):
         """복사 단추를 눌렀다 → `(결정, 내용)`: `unavailable`·`blocked`(키 모양·건강 효과 단정 — 내용은 안내창 글)·`confirm`(확인창 글 — 보인 뒤에만 `confirm_copy` 가 글을 준다)·`copy`(복사할 글). **이 함수는 클립보드에 쓰지 않는다.**"""
@@ -1003,21 +1013,32 @@ class DraftsController:
         """복사 전 확인창의 글 — 묶음마다 머리 한 줄과 항목(앞 셋까지, 나머지는 개수). 취소가 처음 포커스이고 `그래도 복사` 를 눌러야 복사한다."""
         if [name for name, _items in gate.reasons] == ["unchanged"]:                       # 부드러운 안내뿐이면 '확인 권장' 을 읽었나가 아니라 안내 하나만 — 막지 않는다
             return {"title": T["drf_soft_title"], "body": T["drf_soft_body"], "ok": T["drf_gate_ok"], "cancel": T["drf_cancel"], "count": gate.count}
-        if [name for name, _items in gate.reasons] == ["uploads"]:                      # 알려 드리는 것뿐이면 '확인 권장' 이 아니라 올릴 사진 순서만 보인다
-            items = gate.reasons[0][1]
-            lines = [T["pho_gate_uploads"].format(n=len(items))] + [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in items[:UPLOAD_LINES]]
-            if len(items) > UPLOAD_LINES:
-                lines.append(T["drf_gate_more"].format(n=len(items) - UPLOAD_LINES))
-            lines.append(T["pho_upload_tail"])
-            return {"title": T["pho_upload_title"], "body": chr(10).join(lines), "ok": T["pho_upload_ok"], "cancel": T["drf_cancel"], "count": 0}
+        names = [name for name, _items in gate.reasons]
+        if names and all(name in rules.INFO_GATE_GROUPS for name in names):             # 알려 드리는 것뿐(올릴 사진 순서·파일 경로 안내)이면 '확인 권장' 이 아니라 그것만 보인다 — 막지 않는다
+            reasons = dict(gate.reasons)
+            lines = []
+            if "uploads" in reasons:
+                items = reasons["uploads"]
+                lines += [T["pho_gate_uploads"].format(n=len(items))] + [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in items[:UPLOAD_LINES]]
+                if len(items) > UPLOAD_LINES:
+                    lines.append(T["drf_gate_more"].format(n=len(items) - UPLOAD_LINES))
+            lines += reasons.get("paths", ())                                           # 파일 경로처럼 보이는 글이 있다는 한 줄(경로 글 자체는 없다)
+            if "uploads" in reasons:
+                lines.append(T["pho_upload_tail"])
+            return {"title": T["pho_upload_title" if "uploads" in reasons else "pho_paths_title"], "body": chr(10).join(lines), "ok": T["pho_upload_ok"], "cancel": T["drf_cancel"], "count": 0}
         heads = {"check": T["drf_gate_checks"], "domain": T["drf_gate_domain"], "claims": T["drf_gate_claims"], "unchanged": T["drf_gate_unchanged_head"], "photos": T["pho_gate_photos"], "uploads": T["pho_gate_uploads"]}
         lines = []
         for name, items in gate.reasons:
+            if name == "paths":                                                         # 알려 드리는 한 줄 — 건수 머리 없이 그대로(경로 글 자체는 없다)
+                lines += list(items)
+                continue
             lines.append(heads[name].format(n=len(items)))
             shown = items[:UPLOAD_LINES if name == "uploads" else 3]
             lines += [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in shown]
             if len(items) > len(shown):
                 lines.append(T["drf_gate_more"].format(n=len(items) - len(shown)))
+        if any(name == "uploads" for name, _items in gate.reasons):                    # 섞인 창에서도 `[이미지 N]` 이 무엇인지 한 줄(검증 Q PQ-9)
+            lines.append(T["pho_upload_tail"])
         lines.append(T["drf_gate_tail"])
         return {"title": T["drf_gate_title"].format(n=gate.count), "body": chr(10).join(lines), "ok": T["drf_gate_ok"], "cancel": T["drf_cancel"], "count": gate.count}
 

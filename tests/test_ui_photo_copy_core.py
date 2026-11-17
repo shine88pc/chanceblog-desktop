@@ -7,6 +7,7 @@
 """
 import dataclasses
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,26 @@ def with_photos(confirmed=(1, 2), count=3):
         confirm(controller, number, user_subject=f"대상 {number}")
     drive(controller)
     return controller, provider
+
+
+BS = chr(92)
+WINUSER = "UNIQ-WINUSER-cy41"
+PATH = "C:" + BS + "Users" + BS + WINUSER + BS + "Pictures" + BS + "간판.jpg"
+
+
+def name_of(number):
+    return f"UNIQ-FILE-s3x1-{number:02d}.jpg"
+
+
+def with_note(note, count=2):
+    """첫 사진의 메모에 `note` 를 적고 확정한 사진 `count` 장으로 다시 만든 글."""
+    controller, _provider = made_saving()
+    controller.photos.add_paths([path_of(number) for number in range(1, count + 1)])
+    confirm(controller, 1, user_subject="매장 입구 간판", user_note=note)
+    for number in range(2, count + 1):
+        confirm(controller, number, user_subject=f"대상 {number}")
+    drive(controller)
+    return controller
 
 
 def copied(controller, item):
@@ -185,6 +206,171 @@ class GateTest(unittest.TestCase):
         decision, _content = controller.copy_decision("body")
         self.assertEqual(decision, "blocked")
         self.assertIsNone(controller.final_text("body"))
+
+
+class PathNoteTest(unittest.TestCase):
+    """메모·대상·설명 글에 붙여 넣은 파일 경로(검증 S PS-4, 설계 부록 3) — 막지 않고 복사 확인창에 한 줄로 알린다. 경로 글은 창 어디에도 안 보이고, 사진을 안 쓰는 글은 지금과 같다."""
+
+    def test_a_path_pasted_into_a_memo_gets_one_info_line_in_the_dialog_and_the_path_is_not_in_the_dialog(self):
+        controller = with_note("원본 위치 " + PATH)
+        self.assertIn(PATH, controller.body, "메모가 본문에 그대로 들어간다(이 시험의 전제)")
+        self.assertEqual(controller.photo_gate_notes("body"), (T["pho_gate_paths"],))
+        self.assertEqual(controller.photo_gate_notes("all"), (T["pho_gate_paths"],))
+        self.assertEqual(controller.photo_gate_notes("title"), (), "제목 복사에는 없다")
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm")
+        self.assertEqual(dialog["body"].count(T["pho_gate_paths"]), 1)
+        for leak in (PATH, WINUSER, "Pictures", "간판.jpg"):
+            self.assertNotIn(leak, dialog["title"] + dialog["body"], "경로 글은 창에 되풀이하지 않는다")
+
+    def test_a_memo_that_is_an_experience_sentence_gets_the_line_too(self):
+        controller = with_note("비 오는 날 직접 찍었어요 " + PATH)
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm")
+        self.assertIn(T["pho_gate_paths"], dialog["body"])
+
+    def test_the_line_is_for_information_so_it_is_not_counted_in_the_title_and_is_asked_only_once(self):
+        controller = with_note("원본 위치 " + PATH)
+        gate = controller.gate("body")
+        self.assertIn("paths", [name for name, _items in gate.reasons])
+        self.assertEqual(gate.count, sum(len(items) for name, items in gate.reasons if name not in ("uploads", "paths")), "알려 드리는 줄은 '확인 권장 N건' 에 세지 않는다")
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(dialog["title"], T["drf_gate_title"].format(n=gate.count))
+        self.assertIsNotNone(controller.confirm_copy("body"))
+        self.assertEqual(controller.copy_decision("body")[0], "copy", "한 번 알렸으면 다시 묻지 않는다")
+        self.assertEqual(controller.copy_decision("all")[0], "copy", "전체 복사도 같은 확인을 쓴다")
+
+    def test_the_copy_is_not_blocked_and_the_path_goes_into_the_copied_text_as_typed(self):
+        controller = with_note("원본 위치 " + PATH)
+        self.assertIn(PATH, copied(controller, "body"), "막지도 지우지도 않는다 — 알리기만 한다")
+
+    def test_a_memo_without_a_path_gets_no_line(self):
+        controller = with_note("원본 위치는 따로 없어요")
+        self.assertEqual(controller.photo_gate_notes("body"), ())
+        self.assertNotIn("paths", [name for name, _items in controller.gate("body").reasons])
+
+    def test_a_draft_without_photos_is_what_it_was_even_with_a_path_in_the_text(self):
+        controller, _provider = made_saving()
+        before = [name for name, _items in controller.gate("body").reasons]
+        controller.set_body(controller.body + chr(10) * 2 + "원본 위치 " + PATH)
+        self.assertEqual(controller.photo_gate_notes("body"), ())
+        self.assertEqual([name for name, _items in controller.gate("body").reasons], before, "사진 기능을 안 쓰는 글의 관문은 지금과 같다")
+        self.assertEqual(controller.final_text("body"), controller.body)
+
+    def test_a_listed_photo_that_is_not_placed_yet_still_counts_as_using_the_photo_feature(self):
+        controller, _provider = made_saving()
+        controller.photos.add_paths([path_of(1)])
+        controller.set_body(controller.body + chr(10) * 2 + "원본 위치 " + PATH)
+        self.assertEqual(controller.photo_gate_notes("body"), (T["pho_gate_paths"],))
+
+
+class InfoDialogTest(unittest.TestCase):
+    """알려 드리는 줄(올릴 사진 순서·경로 안내)만 있는 창은 부드러운 안내창이고, 섞인 창에는 경로 줄이 건수 머리 없이 한 줄이며 `[이미지 N]` 설명이 끝 안내 앞에 있다(검증 Q PQ-9)."""
+
+    def info_gate(self, *names):
+        groups = {"uploads": tuple(T["pho_gate_upload_line"].format(n=number, name="a.jpg") for number in (1, 2)), "paths": (T["pho_gate_paths"],)}
+        return rules.Gate(False, tuple((name, groups[name]) for name in names), True, {name: set(groups[name]) for name in names})
+
+    def test_the_upload_order_with_the_path_line_is_one_soft_dialog_and_the_line_comes_before_the_mark_explanation(self):
+        controller, _provider = with_photos()
+        dialog = controller.gate_dialog("body", self.info_gate("uploads", "paths"))
+        self.assertEqual((dialog["title"], dialog["ok"], dialog["cancel"], dialog["count"]), (T["pho_upload_title"], T["pho_upload_ok"], T["drf_cancel"], 0))
+        lines = dialog["body"].splitlines()
+        self.assertEqual(lines[0], T["pho_gate_uploads"].format(n=2))
+        self.assertEqual(lines[-2:], [T["pho_gate_paths"], T["pho_upload_tail"]])
+
+    def test_the_path_line_alone_is_a_soft_dialog_with_its_own_title(self):
+        controller, _provider = with_photos()
+        dialog = controller.gate_dialog("body", self.info_gate("paths"))
+        self.assertEqual(dialog, {"title": T["pho_paths_title"], "body": T["pho_gate_paths"], "ok": T["pho_upload_ok"], "cancel": T["drf_cancel"], "count": 0})
+
+    def test_the_upload_order_alone_keeps_its_own_dialog(self):
+        controller, _provider = with_photos()
+        dialog = controller.gate_dialog("body", self.info_gate("uploads"))
+        self.assertEqual(dialog["title"], T["pho_upload_title"])
+        self.assertNotIn(T["pho_gate_paths"], dialog["body"])
+        self.assertEqual(dialog["body"].splitlines()[-1], T["pho_upload_tail"])
+
+    def test_in_the_mixed_dialog_the_path_line_has_no_head_and_the_image_marks_are_explained_before_the_closing_line(self):
+        controller = with_note("원본 위치 " + PATH)
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm")
+        lines = dialog["body"].splitlines()
+        self.assertTrue(set(name for name, _items in controller.gate("body").reasons) - {"uploads", "paths"}, "확인 권장이 함께 뜨는 섞인 창이다")
+        self.assertTrue(lines[lines.index(T["pho_gate_paths"]) - 1].startswith("· [이미지 "), "경로 줄은 올릴 사진 줄 바로 뒤에 머리 없이 한 줄이다")
+        self.assertEqual(lines[-3:], [T["pho_gate_paths"], T["pho_upload_tail"], T["drf_gate_tail"]])
+
+    def test_a_mixed_dialog_without_an_upload_order_has_no_image_mark_explanation(self):
+        controller, _provider = with_photos()
+        confirm(controller, 3)                                                              # 확정했는데 본문에 자리가 없다 → 어긋남이 있어 올릴 사진 순서는 숨는다
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm")
+        self.assertNotIn("uploads", [name for name, _items in controller.gate("body").reasons])
+        self.assertNotIn(T["pho_upload_tail"], dialog["body"])
+        self.assertEqual(dialog["body"].splitlines()[-1], T["drf_gate_tail"])
+
+
+class GateGroupTest(unittest.TestCase):
+    def inspection(self):
+        return types.SimpleNamespace(unchanged=False, claims=(), secret=False, places=())
+
+    def test_notes_become_the_paths_group_which_is_info_only_and_asked_once(self):
+        gate = rules.gate_for("body", self.inspection(), (), False, {}, notes=("줄",))
+        self.assertEqual((gate.reasons, gate.count, gate.needs_dialog, gate.blocked), ((("paths", ("줄",)),), 0, True, False))
+        again = rules.gate_for("body", self.inspection(), (), False, dict(gate.keys), notes=("줄",))
+        self.assertEqual((again.reasons, again.needs_dialog), ((("paths", ("줄",)),), False), "확인했으면 같은 줄은 다시 묻지 않는다")
+        self.assertEqual(rules.gate_for("body", self.inspection(), (), False, {}).reasons, (), "알릴 것이 없으면 그룹도 없다")
+        self.assertEqual((rules.GATE_GROUPS[-2:], rules.INFO_GATE_GROUPS), (("uploads", "paths"), ("uploads", "paths")))
+
+
+class UploadLinesTest(unittest.TestCase):
+    """검증 Q PQ-6 — 복사 확인창의 '올릴 사진' 줄이 가장 흔한 창(확인 권장이 함께 뜨는 섞인 창)에서 시험되지 않았다."""
+
+    def lines_of(self, dialog):
+        return [line for line in dialog["body"].splitlines() if line.startswith("· [이미지 ")]
+
+    def test_ten_photos_in_the_mixed_dialog_show_exactly_eight_lines_and_the_rest_as_a_count(self):
+        controller, _provider = with_photos(confirmed=tuple(range(1, 11)), count=10)
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm")
+        self.assertTrue({name for name, _items in controller.gate("body").reasons} - {"uploads"}, "확인 권장이 함께 뜨는 섞인 창이다")
+        lines = self.lines_of(dialog)
+        self.assertEqual(len(lines), 8)
+        self.assertEqual(lines[0], "· " + T["pho_gate_upload_line"].format(n=1, name=name_of(1)))
+        self.assertEqual(lines[-1], "· " + T["pho_gate_upload_line"].format(n=8, name=name_of(8)))
+        self.assertIn(T["pho_gate_uploads"].format(n=10), dialog["body"])
+        self.assertIn(T["drf_gate_more"].format(n=2), dialog["body"])
+
+    def test_with_no_photo_listed_the_slots_left_in_the_body_are_pointed_out(self):
+        controller, _provider = with_photos()
+        for photo_id in ("p001", "p002", "p003"):
+            controller.photos.remove(photo_id)
+        self.assertEqual(controller.photos.count, 0)
+        self.assertEqual(sorted(number for number, _s, _e in pm.find_placeholders(controller.body)), [1, 2])
+        self.assertEqual(controller.photo_gate_lines("body")[0], (T["pho_gate_dangling"].format(numbers="1, 2"),))
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(decision, "confirm")
+        self.assertIn(T["pho_gate_photos"].format(n=1), dialog["body"])
+        self.assertIn(T["pho_gate_dangling"].format(numbers="1, 2"), dialog["body"])
+
+    def test_the_upload_order_follows_the_body_not_the_numbers(self):
+        controller, _provider = with_photos(confirmed=(1, 2, 3), count=3)
+        controller.photos.move("p003", -1)
+        controller.photos.move("p003", -1)                                                  # 목록 순서 3·1·2 — 번호는 그대로
+        drive(controller)
+        self.assertEqual([number for number, _s, _e in pm.find_placeholders(controller.body)], [3, 1, 2])
+        expected = tuple(T["pho_gate_upload_line"].format(n=number, name=name_of(number)) for number in (3, 1, 2))
+        self.assertEqual(controller.photo_gate_lines("body"), ((), expected))
+
+    def test_a_mismatch_counts_in_the_dialog_title(self):
+        controller, _provider = with_photos()
+        confirm(controller, 3)
+        gate = controller.gate("body")
+        self.assertIn("photos", [name for name, _items in gate.reasons])
+        self.assertEqual(gate.count, sum(len(items) for name, items in gate.reasons if name != "uploads"), "어긋남 묶음은 '확인 권장 N건' 에 센다")
+        decision, dialog = controller.copy_decision("body")
+        self.assertEqual(dialog["title"], T["drf_gate_title"].format(n=gate.count))
+        self.assertGreaterEqual(gate.count, len(dict(gate.reasons)["photos"]))
 
 
 if __name__ == "__main__":
