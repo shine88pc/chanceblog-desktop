@@ -5,7 +5,7 @@
 지키는 것:
   1) 본문이 창에 다 들어가면 지금까지와 똑같다 — 본문 칸의 높이는 글이 필요한 만큼이고 스크롤 막대·Tab 정거장·접근 이름이 따로 생기지 않는다(일곱 크기 모두).
   2) 창이 낮아 안 들어갈 때만 본문이 세로로 스크롤된다 — 제목과 단추는 스크롤 밖에 그대로 있어 단추가 늘 창 안에 있고, 맨 아래까지 내리면 끝줄이 보이며, 가로 스크롤은 없다.
-  3) 스크롤이 있을 때는 키보드로도 읽는다 — 그때만 Tab 정거장이 되고(접근 이름은 본문 글) 방향키·PageUp·PageDown·Home·End 로 움직이며 Tab 은 창 안에서만 돈다.
+  3) 스크롤이 있을 때는 키보드로도 읽는다 — 그때만 Tab 정거장이 되고(접근 이름은 본문 글) 방향키·PageUp·PageDown·Home·End 로 움직이며 Tab 은 창 안에서만 돈다. 마우스로 본문을 눌러도(휠도) 포커스가 단추에서 옮겨 오지 않는다(검증 Q PQ-22 — Enter 가 단추를 그대로 누른다).
   4) 확정한 사진 10장의 복사 확인창이 일곱 크기에서 잘림 없이 보이고 단추가 창 안에 있다(사진 3장도 같다).
 `show_dialog`·`show_choice_dialog` 둘 다 같은 본문 칸을 쓴다.
 """
@@ -25,6 +25,9 @@ from test_ui_qt_photo_save import Base as PhotoSaveBase  # noqa: E402
 
 if HAVE:
     from test_ui_qt_drafts import QAbstractButton, QTest, Qt, ui_offscreen
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
     from chanceblog_desktop.ui.qt import components as UI
 
 from chanceblog_desktop.ui.core import text  # noqa: E402
@@ -88,8 +91,10 @@ class SourceRulesTest(unittest.TestCase):
         self.assertEqual([ast.unparse(base) for base in cls.bases], ["QScrollArea"])
         self.assertTrue({"heightForWidth", "sizeHint", "minimumSizeHint", "keyPressEvent", "_range_changed"} <= {node.name for node in cls.body if isinstance(node, ast.FunctionDef)})
         source = ast.unparse(cls)
-        for needed in ("setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)", "setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)", "setWidgetResizable(True)", "QSize(0, 0)", "Qt.StrongFocus if scrolling else Qt.NoFocus"):
+        for needed in ("setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)", "setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)", "setWidgetResizable(True)", "QSize(0, 0)", "Qt.TabFocus if scrolling else Qt.NoFocus"):
             self.assertIn(needed, source, needed)
+        for forbidden in ("StrongFocus", "ClickFocus", "WheelFocus"):
+            self.assertNotIn(forbidden, source, f"{forbidden}: 본문을 마우스로 눌렀을 때 포커스가 단추에서 옮겨 오면 Enter 가 단추를 못 누른다(검증 Q PQ-22) — 본문 칸은 Tab 으로만 닿는다")
         places = [ast.unparse(node) for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "place" and "self.layout_" in ast.unparse(node)]
         self.assertEqual(len(places), 1, "확인창의 `place` 는 하나")
         self.assertIn("max(120, parent.height() - 32)", places[0], "확인창 높이는 창 높이로 자른다 — 넘치는 글은 본문 칸이 스크롤로 받는다")
@@ -172,7 +177,7 @@ class ScrollBehaviorTest(BodyHelpers, DraftsBase):
         self.settle(4)
         body = self.body_of(window)
         bar = body.verticalScrollBar()
-        self.assertEqual((body.focusPolicy(), body.accessibleName()), (Qt.StrongFocus, body.label.plain_text()), "스크롤이 있으면 키보드로 읽을 수 있게 Tab 정거장이고 이름은 본문 글이다")
+        self.assertEqual((body.focusPolicy(), body.accessibleName()), (Qt.TabFocus, body.label.plain_text()), "스크롤이 있으면 키보드로 읽을 수 있게 Tab 정거장이고 이름은 본문 글이다 — Tab 으로만 닿는다")
         body.setFocus(Qt.TabFocusReason)
         self.settle(1)
         self.assertTrue(body.hasFocus())
@@ -201,10 +206,91 @@ class ScrollBehaviorTest(BodyHelpers, DraftsBase):
         self.settle(4)
         body = self.body_of(window)
         self.assertGreater(body.verticalScrollBar().maximum(), 0, "낮은 창에서는 스크롤된다")
-        self.assertEqual(body.focusPolicy(), Qt.StrongFocus)
+        self.assertEqual(body.focusPolicy(), Qt.TabFocus)
         window.resize(1920, 1080)
         self.settle(8)
         self.assertEqual((body.verticalScrollBar().maximum(), body.focusPolicy(), body.accessibleName()), (0, Qt.NoFocus, ""), "다 들어가면 막대·정거장·이름이 다시 사라진다")
+        window.close_dialog()
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class BodyFocusTest(BodyHelpers, DraftsBase):
+    """검증 Q PQ-22 — 스크롤이 있는 확인창의 본문 칸은 Tab 으로만 닿는다(`Qt.TabFocus`). 마우스로 본문을 눌러도·휠을 돌려도 포커스가 단추에서 옮겨 오지 않아 Enter 가 그 단추를 그대로 누른다
+    (예전엔 `StrongFocus` 라 한 번 누르면 포커스가 본문으로 가서 Enter 가 아무것도 안 눌렀다). 작게 넘칠 때(사진 3장·1093×614 에서 10px — PQ-18)도 키보드로 읽는 정거장이 있다."""
+
+    def open_long(self, window, **kwargs):
+        window.show_dialog("제목", long_body(), ok="확인", cancel="취소", safe_focus=True, **kwargs)
+        self.settle(4)
+        body = self.body_of(window)
+        self.assertGreater(body.verticalScrollBar().maximum(), 0, "이 시험은 스크롤이 있는 확인창에서 한다")
+        first = self.dialog_buttons(window)["취소"]
+        self.assertIs(self.app.focusWidget(), first, "처음 포커스는 취소다(safe_focus)")
+        return body, first
+
+    def wheel_down(self, body, notches=2):
+        pos = QPointF(60, 60)
+        event = QWheelEvent(pos, body.viewport().mapToGlobal(pos), QPoint(0, 0), QPoint(0, -120 * notches), Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+        QApplication.sendEvent(body.viewport(), event)
+        self.settle(2)
+
+    def test_pressing_the_body_with_the_mouse_keeps_the_focus_on_the_button_and_enter_still_presses_it(self):
+        window = self.make(size=(900, 560))
+        confirmed = []
+        body, first = self.open_long(window, on_ok=lambda: confirmed.append("ok"))
+        QTest.mouseClick(body.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(40, 40))
+        self.settle(2)
+        self.assertIs(self.app.focusWidget(), first, "본문을 눌러도 포커스는 단추에 그대로다")
+        self.assertFalse(body.hasFocus())
+        QTest.keyClick(self.app.focusWidget(), Qt.Key_Return)
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "Enter 가 취소 단추를 눌러 확인창을 닫는다")
+        self.assertEqual(confirmed, [], "확인(on_ok)은 눌리지 않았다")
+
+    def test_the_mouse_wheel_scrolls_the_body_without_taking_the_focus(self):
+        """휠은 본문을 스크롤하고 포커스를 안 옮긴다. (직접 만든 휠 이벤트는 Qt 가 '정책에 따른 포커스 주기' 를 거치지 않는 비자발 이벤트라 휠 포커스 자체는 위 클릭 시험과 정책 단언(`TabFocus` 뿐)이 지킨다.)"""
+        window = self.make(size=(900, 560))
+        body, first = self.open_long(window)
+        bar = body.verticalScrollBar()
+        before = bar.value()
+        self.wheel_down(body)
+        self.assertGreater(bar.value(), before, "휠로 본문이 스크롤된다")
+        self.assertIs(self.app.focusWidget(), first, "휠은 포커스를 안 뺏는다")
+        self.assertFalse(body.hasFocus())
+        window.close_dialog()
+
+    def test_tab_still_reaches_the_body_and_shift_tab_gives_the_focus_back_to_a_button(self):
+        window = self.make(size=(900, 560))
+        body, first = self.open_long(window)
+        self.assertEqual(body.focusPolicy(), Qt.TabFocus, "Tab 으로만 닿는다(클릭·휠로는 안 닿는다)")
+        reached = False
+        for _ in range(4):
+            QTest.keyClick(self.app.focusWidget(), Qt.Key_Tab)
+            self.settle(1)
+            if self.app.focusWidget() is body:
+                reached = True
+                break
+        self.assertTrue(reached, "Tab 으로 본문 칸에 닿는다")
+        QTest.keyClick(body, Qt.Key_PageDown)
+        self.assertGreater(body.verticalScrollBar().value(), 0, "닿은 뒤에는 키로 읽는다")
+        QTest.keyClick(self.app.focusWidget(), Qt.Key_Backtab)
+        self.settle(1)
+        focus = self.app.focusWidget()
+        self.assertTrue(focus is not None and focus is not body and window.dialog.isAncestorOf(focus) and isinstance(focus, QAbstractButton), "Shift+Tab 으로 본문에서 단추로 돌아간다")
+        window.close_dialog()
+
+    def test_even_a_tiny_overflow_makes_the_body_a_named_tab_stop(self):
+        """작게 넘쳐도(여기서는 6px 쯤) 키보드 사용자가 잘린 줄을 읽을 수 있게 정거장·이름이 생긴다 — 문턱은 없다(스크롤 범위가 0 보다 크면 생긴다)."""
+        window = self.make(size=(900, 1400))
+        window.show_dialog("제목", "\n".join(f"{number}. 확인창 본문 줄" for number in range(1, 31)), ok="확인", cancel="취소")
+        self.settle(4)
+        body = self.body_of(window)
+        bar = body.verticalScrollBar()
+        self.assertEqual((bar.maximum(), body.focusPolicy(), body.accessibleName()), (0, Qt.NoFocus, ""), "큰 창에서는 다 들어가 막대·정거장·이름이 없다")
+        needed = window.dialog.layout_.totalHeightForWidth(window.dialog.width())
+        window.resize(900, needed + 32 - 6)
+        self.settle(8)
+        self.assertTrue(0 < bar.maximum() <= 14, f"6px 쯤 넘쳐야 한다(실제 {bar.maximum()}px)")
+        self.assertEqual((body.focusPolicy(), body.accessibleName()), (Qt.TabFocus, body.label.plain_text()), "조금 넘쳐도 키보드로 읽을 정거장이고 이름은 본문 글이다")
         window.close_dialog()
 
 
@@ -274,6 +360,29 @@ class CopyDialogFitTest(BodyHelpers, PhotoSaveBase):
         self.assertIn(T["pho_gate_upload_line"].format(n=8, name=f"{FILE_MARK}-08.jpg"), shown, "여덟째 사진 줄까지 보이고")
         self.assertIn(T["drf_gate_more"].format(n=2), shown, "나머지는 개수로 알린다")
         self.assertIn(T["drf_gate_tail"], shown, "끝 안내(그래도 복사 안내)가 맨 아래에 있다")
+
+    def test_pressing_the_scrolling_copy_dialog_body_does_not_move_the_focus_and_enter_closes_it_without_copying(self):
+        """검증 Q 의 재현(`exp_q24`) — 사진 10장·900×560 복사 확인창(처음 포커스 `취소`)에서 본문을 눌러도 포커스는 `취소` 에 그대로이고 Enter 가 확인창을 닫는다(복사 0건)."""
+        window = self.prepared(10)
+        window.resize(900, 560)
+        self.settle(8)
+        self.activate(window)                                                           # 화면 없는 환경에서는 창이 저절로 활성이 되지 않아 포커스가 안 간다 — 크기를 바꾼 뒤 활성으로 만든다
+        self.button(window, "act:body").click()
+        self.settle(4)
+        self.assertTrue(window.dialog.is_open, "복사 확인창이 떠야 한다")
+        body = self.body_of(window)
+        self.assertGreater(body.verticalScrollBar().maximum(), 0)
+        cancel = self.dialog_buttons(window)[T["drf_cancel"]]
+        self.assertIs(self.app.focusWidget(), cancel, "처음 포커스는 취소다")
+        QTest.mouseClick(body.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(40, 40))
+        self.settle(2)
+        self.assertIs(self.app.focusWidget(), cancel, "본문을 눌러도 포커스는 취소에 그대로다")
+        QTest.keyClick(self.app.focusWidget(), Qt.Key_Return)
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "Enter 가 취소를 눌러 확인창을 닫는다")
+        self.assertEqual(self.copied, [], "아무것도 복사되지 않았다")
+        window.state.drafts.leave()
+        window.close()
 
 
 if __name__ == "__main__":

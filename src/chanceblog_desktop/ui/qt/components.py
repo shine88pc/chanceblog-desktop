@@ -896,7 +896,7 @@ class DialogBody(QScrollArea):
     """확인창의 본문 글 — 창에 다 들어가면 지금까지와 똑같이 보이고(틀·여백·스크롤 막대 없음, 높이는 글이 필요한 만큼) 창이 낮아 다 못 보일 때만 본문이 세로로 스크롤된다(검증 Q PQ-16 — 확인 권장과 올릴 사진 줄이 함께 뜨는 복사 확인창은
     낮은 창에서 끝줄이 잘리고 스크롤도 없었다). 제목과 단추 줄은 스크롤 밖에 그대로 있어 단추는 늘 창 안에 보인다.
     줄바꿈 글의 높이는 폭이 정해져야 알 수 있어 `heightForWidth` 로 알려 준다(`Dialog.place` 가 예전과 같은 높이를 얻는다). `minimumSizeHint` 가 0 이라 높이가 모자라면 이 칸이 먼저 줄어든다.
-    스크롤이 있을 때만 Tab 정거장이 되어(방향키·PageUp·PageDown·Home·End 로 읽는다 — 스크롤 영역도 Tab 정거장이라 이름이 있어야 한다는 서랍의 규칙과 같다) 평소의 Tab 순서는 그대로다. 접근 이름은 본문 글이다."""
+    스크롤이 있을 때만 Tab 정거장이 되어(**Tab 으로만** 닿는다 — 마우스로 본문을 눌러도·휠을 돌려도 포커스가 단추에서 옮겨 오지 않아 Enter 가 그 단추를 그대로 누른다, 검증 Q PQ-22 · 방향키·PageUp·PageDown·Home·End 로 읽는다 — 스크롤 영역도 Tab 정거장이라 이름이 있어야 한다는 서랍의 규칙과 같다) 평소의 Tab 순서는 그대로다. 접근 이름은 본문 글이다."""
 
     def __init__(self, text):
         super().__init__()
@@ -943,7 +943,7 @@ class DialogBody(QScrollArea):
 
     def _range_changed(self, low, high):
         scrolling = high > low
-        self.setFocusPolicy(Qt.StrongFocus if scrolling else Qt.NoFocus)
+        self.setFocusPolicy(Qt.TabFocus if scrolling else Qt.NoFocus)
         self.setAccessibleName(self.label.plain_text() if scrolling else "")
 
 
