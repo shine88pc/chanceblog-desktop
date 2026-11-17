@@ -508,9 +508,10 @@ class AppShell(QMainWindow):
             self.toast.place()
 
     # ---- 동작 ----
-    def notify(self, message):
+    def notify(self, message, level=None):
+        """안내(토스트)를 보인다 — `level` 이 `info`·`warning`·`error` 면 토스트에 그 상태색 줄이 함께 보인다(POLISH-1 PQ-25). 그 밖에는 예전 모양이다."""
         if message:
-            self.toast.show_message(message)
+            self.toast.show_message(message, level)
 
     def notify_soon(self, name):
         self.notify(self.state.soon(name))
@@ -845,7 +846,9 @@ class AppShell(QMainWindow):
         self.state.blogs.start_load(**self.blogs_bridge.callbacks())
 
     def _typing_would_be_lost(self):
-        """다시 그리면 입력 중인 칸이 사라지는 화면인가 — 고친 초안이 있는 초안 작성 화면, 입력이 든 Seed 서랍(새 Seed·고치는 중). 이름은 다음에 그릴 때 바뀐다(검증 S2-6 — 시작 직후 늦게 도착한 읽기가 입력을 끊지 않게)."""
+        """다시 그리면 입력 중인 칸이 사라지는 화면인가 — 고친 초안이 있는 초안 작성 화면, 입력이 든 Seed 서랍(새 Seed·고치는 중), 포커스가 글 검색 칸에 있는 Seed 관리·주제 후보 화면(다시 그리면 새 칸이 만들어져 조합 중인 한글·커서가 끊긴다 — POLISH-1 S3-3). 이름은 다음에 그릴 때 바뀐다(검증 S2-6 — 시작 직후 늦게 도착한 읽기가 입력을 끊지 않게)."""
+        if (self.state.page, self._focus_key()) in (("seed", "seeds-query"), ("topics", "cand-query")):
+            return True
         if self.state.page == "drafts":
             return self.state.drafts.has_unsaved()
         if self.state.page == "seed" and self.state.seeds.drawer is not None:
@@ -1680,7 +1683,7 @@ class AppShell(QMainWindow):
         controller = self.state.drafts
         self._live_drafts(save=True)
         self.photos_card_refresh()                                                    # 사진 정보도 함께 저장했으면 카드의 '고쳤어요' 안내가 사라진다
-        self.notify(controller.notice[1] if controller.notice else "")
+        self.notify(controller.notice[1] if controller.notice else "", controller.notice[0] if controller.notice else None)          # 사진 정보는 저장하지 않았다는 안내(info)는 토스트에도 그 색 줄이 보인다(POLISH-1 PQ-25) — 평소 저장 알림(ok)은 예전 모양 그대로
         if after is not None:
             self._continue_after(after)
 

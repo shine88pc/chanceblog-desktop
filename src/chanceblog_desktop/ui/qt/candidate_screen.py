@@ -32,7 +32,7 @@ class CandidatesUi:
 def _chips(items, focus_prefix, on_click):
     group = []
     for item in items:
-        chip = UI.FilterChip(item["label"], item["count"], item["active"], focus_key=f"{focus_prefix}:{item['key']}")
+        chip = UI.FilterChip(item["label"], item["count"], item["active"], focus_key=f"{focus_prefix}:{item['key']}", full=item.get("tip") or None)
         chip.setAccessibleName(item["a11y"] if item["key"] != "all" else f"{item['label']} {item['count']}")
         chip.clicked.connect(lambda _=False, key=item["key"]: on_click(key))
         group.append(chip)

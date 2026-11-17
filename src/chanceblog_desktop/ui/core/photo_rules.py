@@ -48,6 +48,17 @@ def default_section(type_label):
     return DEFAULT_SECTION_BY_TYPE.get(type_label, SECTION_AUTO)
 
 
+def section_text(value):
+    """'들어갈 곳' 값 → 보이는 글 — 고정 다섯은 문구 표의 글(빈 글은 `자동`), 그 밖의 글(나중 단계가 적은 소제목 등)은 가려서 줄인 글."""
+    key = SECTION_TEXT_KEY.get(value)
+    return T[key] if key else display_text(value, 30)
+
+
+def section_chosen_by_user(type_label, section):
+    """사용자가 직접 정한 '들어갈 곳' 인가 — 그 종류의 기본값(`default_section`)과 다르면 참이다. 종류를 고르면 저절로 생기는 기본값은 사용자가 고른 것이 아니라서 거짓이다(POLISH-1 M-2: 기본값이 접힌 `자리 정하기` 를 저절로 펼쳐 한 줄이 749px 가 되던 것)."""
+    return section != default_section(type_label)
+
+
 def section_choices(current):
     """'들어갈 곳' 선택 목록 — 고정 다섯 가지에, 지금 값이 그 밖의 글이면(나중 단계가 적은 소제목 글 등) 그 글을 하나 더해 조용히 지우지 않는다. [(값, 보이는 글), …]"""
     items = [(value, T[SECTION_TEXT_KEY[value]]) for value in SECTION_CHOICES]

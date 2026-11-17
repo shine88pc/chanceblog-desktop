@@ -305,6 +305,9 @@ QLineEdit[invalid="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QPlainTextEdit[editor="true"] {{ background: {c['surface']}; border: 1px solid {c['border_strong']}; border-radius: {r['input']}px; padding: 10px 12px; selection-background-color: {c['primary']}; selection-color: {c['on_primary']}; }}
 QPlainTextEdit[editor="true"]:focus {{ border: 2px solid {c['border_focus']}; }}
 QLabel#toast {{ background: {c['inverse_bg']}; color: {c['inverse_text']}; padding: 12px 18px; border-radius: {r['button']}px; font-weight: 600; font-size: {px('body')}px; }}
+QLabel#toast[level="info"] {{ border-left: 4px solid {c['info']}; }}
+QLabel#toast[level="warning"] {{ border-left: 4px solid {c['warning']}; }}
+QLabel#toast[level="error"] {{ border-left: 4px solid {c['danger']}; }}
 QPlainTextEdit[mono="true"], QLabel[mono="true"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; padding: 10px 12px; color: {c['text_primary']}; }}
 QLabel[semantic] {{ border-radius: {r['badge']}px; padding: 0 {sp('3')}px; font-size: {px('caption')}px; font-weight: 600; }}
 {_semantic(c)}

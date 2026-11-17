@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_ui_drafts_core import CATALOG  # noqa: E402
 from test_ui_qt_drafts import HAVE, SIZES  # noqa: E402
 from test_ui_qt_photo import fake_path  # noqa: E402
+from test_ui_photo_save_core import before_the_question  # noqa: E402
 from test_ui_qt_photo_save import Base  # noqa: E402
 
 if HAVE:
@@ -86,7 +87,8 @@ class UnsavableStateTest(Base):
                 self.press_save(window)
                 controller = window.state.drafts
                 self.assertEqual(controller.notice[0], "info", "사진 정보 실패(error)가 아니라 안내(info)다 — 저장을 시도하지도 않았고 글만 저장했다고 말한다(검증 S PS-15)")
-                self.assertTrue(controller.notice[1].endswith(T["pho_saved_without_photos"]))
+                self.assertTrue(controller.notice[1].endswith(" · " + T["pho_saved_without_photos"]), "시각과 둘째 문장이 가운뎃점으로 갈린다(POLISH-1 PQ-26)")
+                self.assertEqual(window.toast.property("level"), "info", "토스트에도 안내색 줄이 보인다(POLISH-1 PQ-25)")
                 self.assertIsNone(fake.save_calls[-1].photos)
                 self.assertIs(fake.photo_files[draft_id], kept, "저장해 둔 사진 정보는 그대로다")
                 self.assertEqual(self.ui(window).photos_unsaved.plain_text(), T["pho_card_lost_" + state], "저장한 뒤에도 '저장되지 않아요' 안내가 남는다")
@@ -98,7 +100,8 @@ class UnsavableStateTest(Base):
         window.nav_buttons["home"].click()
         self.settle(3)
         self.assertEqual(sorted(self.dialog_buttons(window)), sorted([T["drf_leave_ok"], T["drf_cancel"]]), "글은 그대로이고 사진 정보는 저장할 길이 없다 — 두 갈래")
-        self.assertTrue(any(T["pho_leave_body"].format(n=1) in line for line in self.texts(window.dialog)), self.texts(window.dialog))
+        expected = before_the_question(T["pho_leave_body"].format(n=1), T["pho_leave3_lost"])             # 초안은 있는데 저장할 길이 막혔다 — 이유 문장이 맨 끝 물음 앞에 있다(POLISH-1 PQ-24, 옛 시험은 `본문` 이 통째로 들어 있는지만 봤다)
+        self.assertTrue(any(expected in line for line in self.texts(window.dialog)), self.texts(window.dialog))
         self.dialog_buttons(window)[T["drf_cancel"]].click()
         self.settle(3)
         self.assertEqual((window.state.page, window.state.drafts.photos.count), ("drafts", 1))

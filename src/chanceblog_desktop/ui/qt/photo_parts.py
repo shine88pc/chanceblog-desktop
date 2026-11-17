@@ -3,7 +3,7 @@
 이 파일에는 파일을 읽거나 쓰는 호출·네트워크·하위 프로세스·표준 출력이 없다(미리보기 그림은 창(`photo_screen.py`)이 `imagecheck` 로 메모리에서만 만들어 넘긴다).
 
 **입력 칸(이 사진은 무엇인가요? · 한마디 메모)은 접지 않고 늘 보인다**(운영자 요구) — 줄 머리(미리보기) 바로 아래에 두어 그림과 칸이 한 화면에 함께 보인다(검증 Q N-3). 종류·장소 분위기 칩은 그 아래에 늘 보이고, 들어갈 곳·자리·설명 글만 '자리 정하기' 로 접는다 —
-값이 없다가 생겼을 때만 저절로 펼치고 사용자가 접은 줄은 그 줄이 지워질 때까지 접힌 채 둔다(다른 동작이 되살리지 않는다). Enter 는 규칙이 받은 글(또는 바뀐 것이 없는 칸)에서만 다음 칸으로 가고 받지 않은 글에서는 그 칸에 머문다(N-4).
+사용자가 직접 고른 값(기본값이 아닌 들어갈 곳·자리·설명 글)이 있을 때만 펼치고(종류가 정한 기본 들어갈 곳은 접힌 단추에 `들어갈 곳: 도입 ▸` 로 한 줄 요약만 보인다 — POLISH-1 M-2), 사용자가 접은 줄은 그 줄이 지워질 때까지 접힌 채 둔다(다른 동작이 되살리지 않는다). Enter 는 규칙이 받은 글(또는 바뀐 것이 없는 칸)에서만 다음 칸으로 가고 받지 않은 글에서는 그 칸에 머문다(N-4).
 줄은 **사진이 지워지기 전까지 같은 부품**이다 — 창이 다시 그릴 때(`apply`) 칸의 글을 덮어쓰지 않고(포커스가 있거나 한도를 넘겨 반영하지 못한 글은 그대로), 클릭한 칸이 사라져 포커스를 잃는 일이 없다.
 글자 수(`12/60`)는 치는 동안 그 자리에서 바뀌고 한도를 넘으면 글(`60자까지만 적을 수 있어요`)로도 알린다(색만으로 알리지 않는다). 모든 눌리는 부품은 키보드(Tab·Enter·Space)로 쓸 수 있고 접근 이름을 가지며 누르는 칸은 36px 이상이다.
 """
@@ -329,8 +329,13 @@ class PhotoRowCard(QWidget):
 
     def set_place_open(self, opened):
         self.place_body.setVisible(bool(opened))
+        self._sync_place_toggle()
+
+    def _sync_place_toggle(self):
+        """접힌 단추는 들어갈 곳을 한 줄로 요약하고(`들어갈 곳: 도입 ▸`), 펼친 단추는 `자리 정하기 ▾` 다 — 줄을 다시 그릴 때마다(종류·들어갈 곳을 고르면) 요약도 따라 바뀐다(POLISH-1 M-2). 요약에 들어가는 글의 `&` 는 글자 그대로 보인다."""
         place = self.vm["place"]
-        self.place_toggle.setText(place["close_text"] if opened else place["open_text"])
+        self.place_toggle.setText(UI.ampersand_safe_text(place["close_text"] if not self.place_body.isHidden() else place["open_text"]))
+        self.place_toggle.setAccessibleName(place["a11y"])
 
     def apply(self, vm):
         """뷰모델에 맞게 줄을 바꾼다 — 칸의 글은 `FieldBox.apply` 가 지키고, 칩·배지·단추만 그 자리에서 바꾼다."""
@@ -370,7 +375,8 @@ class PhotoRowCard(QWidget):
         self.nth_value.set_text(place["nth"]["text"])
         self.caption.apply(vm["caption"])
         if place["open"] and not self._place_user_closed and not self.place_body.isVisible():
-            self.set_place_open(True)                                                  # 값이 없다가 생겨 접혀 있는 줄만 저절로 펼친다(값이 있는 줄은 펼친 채 만들어진다) — 접는 것은 사용자가 하고, 접은 줄은 다른 동작(다른 사진의 확인 …)이 되살리지 않는다
+            self.set_place_open(True)                                                  # 사용자가 직접 고른 값·설명 글이 없다가 생겨 접혀 있는 줄만 저절로 펼친다(종류가 정한 기본 들어갈 곳은 펼치지 않는다 — POLISH-1 M-2, 값이 있는 줄은 펼친 채 만들어진다) — 접는 것은 사용자가 하고, 접은 줄은 다른 동작(다른 사진의 확인 …)이 되살리지 않는다
+        self._sync_place_toggle()                                                      # 접힌 단추의 한 줄 요약(들어갈 곳)을 지금 값에 맞춘다
         self.confirm_box.blockSignals(True)
         self.confirm_box.setChecked(bool(vm["confirmed"]))
         self.confirm_box.blockSignals(False)

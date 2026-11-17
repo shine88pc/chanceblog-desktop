@@ -414,8 +414,8 @@ class ReadAndFilterTest(unittest.TestCase):
         self.assertEqual(summary["proposed"]["text"], "승인 전 9개 — 승인하기 전에는 후보 생성에 쓰이지 않습니다")
         self.assertEqual([chip["text"] for chip in summary["chips"]], ["사용 중 5개", "쉬는 중 2개", "전체 16개"])
         rows = {row["key"]: row for row in summary["channels"]["rows"]}
-        self.assertEqual(rows["naver_a"]["chip"]["text"], "네이버 블로그 1 3개 · 후보 생성 켜짐")
-        self.assertEqual(rows["github_pages"]["chip"]["text"], "GitHub Pages 0개 · 후보 생성 꺼짐")
+        self.assertEqual(rows["naver_a"]["chip"]["text"], "네이버 블로그 1 · 3개 · 후보 생성 켜짐")
+        self.assertEqual(rows["github_pages"]["chip"]["text"], "GitHub Pages · 0개 · 후보 생성 꺼짐")
         self.assertEqual((rows["naver_a"]["generation"]["text"], rows["github_pages"]["generation"]["text"]), ("후보 생성 켜짐", "후보 생성 꺼짐"))
         self.assertEqual((rows["naver_a"]["chip"]["tone"], rows["github_pages"]["chip"]["tone"]), ("ok", "muted"))
         self.assertIn("쓸 수 있는 Seed 3개", rows["naver_a"]["a11y"])
@@ -1069,8 +1069,28 @@ class ImportTest(unittest.TestCase):
         self.assertIn("파일 안 Seed 4개 · 새로 등록할 Seed 3개 · 이미 있어 건너뜀 1개 · 읽을 수 없어 뺀 Seed 0개(지금 등록된 Seed 16개)", dialog["body"], "파일 안 개수 = 새로 + 건너뜀 + 읽을 수 없어 뺌")
         self.assertIn("‘EX001’ 같은 씨앗 번호가 이미 등록되어 있어 건너뜁니다(덮어쓰지 않습니다)", dialog["body"])
         self.assertIn("새로 등록하는 Seed 는 모두 승인 전이에요. 승인하기 전에는 후보 생성에 쓰이지 않아요.", dialog["body"])
-        self.assertIn("네이버 블로그 1 2개(후보 생성 켜짐)", dialog["body"])
-        self.assertIn("github_pages" if False else "GitHub Pages 0개(후보 생성 꺼짐)", dialog["body"])
+        self.assertIn("네이버 블로그 1: 2개(후보 생성 켜짐)", dialog["body"])
+        self.assertIn("github_pages" if False else "GitHub Pages: 0개(후보 생성 꺼짐)", dialog["body"])
+
+    def test_the_channel_counts_line_of_the_import_dialog_follows_the_card_order_like_every_other_channel_list(self):
+        """POLISH-1 Q4-1·S4-1 — 가져오기 확인창의 채널별 수 줄이 서비스가 주는 채널 순서(GitHub Pages 부터)가 아니라 블로그 관리의 카드 순서(네이버 1·2 → Blogger 1·2 → GitHub Pages)다. 표시 전용 — 읽어 온 값(`per_channel`)의 순서는 그대로다."""
+        controller, _status, _outcome = self.preview()
+        service_order = [code for code, _number, _enabled in controller.import_info.per_channel]
+        self.assertEqual(service_order, list(ch.CHANNELS), "읽어 온 값은 서비스 순서 그대로(이 시험의 전제)")
+        self.assertNotEqual(service_order, list(cn.ORDER), "서비스 순서와 카드 순서가 같으면 이 시험은 아무것도 못 본다")
+        body = controller.import_dialog()["body"]
+        names = [cn.label(code) for code in cn.ORDER]
+        positions = [body.index(name) for name in names]
+        self.assertEqual(positions, sorted(positions), f"채널 이름이 카드 순서로 나온다: {names}")
+        self.assertEqual([code for code, _n, _e in controller.import_info.per_channel], service_order, "화면 글을 만들어도 읽어 온 값의 순서는 안 바뀐다")
+        cn.use(cn.labels({"naver_a": ("예시 가게", True), "naver_b": ("예시 카페", True), "blogger_ko": ("", True), "blogger_en": ("", False), "github_pages": ("", False)}))
+        try:
+            body = controller.import_dialog()["body"]
+        finally:
+            cn.use(None)
+        row = body[body.index(T["seeds_imp_channels"].split("{")[0]):]
+        order = [row.index(name) for name in ("예시 가게", "예시 카페", "Blogger 1", "Blogger 2", "GitHub Pages")]
+        self.assertEqual(order, sorted(order), "별명이 있어도 카드 순서다")
 
     def test_without_the_dialog_nothing_is_registered_and_with_it_every_new_seed_is_proposed(self):
         controller, _status, _outcome = self.preview()

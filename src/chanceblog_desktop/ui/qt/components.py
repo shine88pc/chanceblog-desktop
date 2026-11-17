@@ -16,7 +16,7 @@ from ..core import tokens as K
 from ..core.attribution import UTM_SOURCE, check_url, with_utm
 from ..core.channel_names import button_text as ampersand_safe_text                        # `StateCard` 의 매개변수 `button_text` 가 가리지 않게 다른 이름으로 가져온다(검증 S3-4)
 from ..core.notify import ToastPolicy
-from ..core.part_rules import BADGE_MAX_CHARS, clip_text, drawer_width
+from ..core.part_rules import BADGE_MAX_CHARS, chip_accessible, chip_caption, clip_text, drawer_width
 from ..core.text import T
 from . import theme
 
@@ -191,16 +191,18 @@ def LinkButton(text, accessible=None):
 
 
 # ---- 칩·배지 ------------------------------------------------------------------------------------------------------------------
-def FilterChip(text, count, active, focus_key=None):
-    """칩 — 보이는 높이 34, 누르는 칸 36."""
-    chip = QPushButton(ampersand_safe_text(f"{text}  {count}" if count is not None else text))                      # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3), 접근 이름은 아래에서 그대로
+def FilterChip(text, count, active, focus_key=None, full=None):
+    """칩 — 보이는 높이 34, 누르는 칸 36. 개수가 있으면 `이름  개수`, 이름이 숫자로 끝나면 `이름 · 개수`(`part_rules.chip_caption` — POLISH-1 Q2-8). `full` 은 줄이기 전의 전체 이름 — 줄였으면 접근 이름과 툴팁이 그것을 쓴다(POLISH-1 Q3-2)."""
+    chip = QPushButton(ampersand_safe_text(chip_caption(text, count)))                                              # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3), 접근 이름은 아래에서 그대로
     chip.setAutoDefault(True)
     chip.setProperty("chip", True)
     chip.setCheckable(True)
     chip.setChecked(bool(active))
     chip.setMinimumHeight(K.SIZE["hit"])
     chip.setCursor(Qt.PointingHandCursor)
-    chip.setAccessibleName(f"{text} {count}" if count is not None else text)
+    chip.setAccessibleName(chip_accessible(full or text, count))
+    if full and full != text:
+        with_tooltip(chip, full)
     if focus_key:
         chip.setProperty("focus_key", focus_key)
     return chip
@@ -787,11 +789,14 @@ class Toast(QLabel):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._expire)
 
-    def show_message(self, text):
+    def show_message(self, text, level=None):
+        """안내를 보인다. `level`(`info`·`warning`·`error` — 알림 줄의 수준과 같은 말)이 있으면 토스트 왼쪽에 그 상태색 줄이 함께 보인다(POLISH-1 PQ-25: 색 없는 어두운 상자뿐이라 안내색이 안 보였다). 수준이 없거나 `ok` 면 예전 모양 그대로다."""
         action, text = self.policy.offer(text)
         if action == "ignore":
             return
         if action == "show":
+            self.setProperty("level", level if level in ("info", "warning", "error") else "")
+            repolish(self)
             self.setText(text)
             self.setAccessibleName(text)
             self.place()
@@ -1000,12 +1005,19 @@ class Dialog(QFrame):
 
     def present(self, width=None):
         self._width = width or K.LAYOUT["dialog"]
+        replacing = self.is_open
         self.scrim.show()
         self.scrim.raise_()
         self.show()
         self.raise_()
         self.is_open = True
         self.place()
+        if replacing:                                             # 열린 확인창을 닫지 않고 바꿔 열면 새 부품이 아직 '숨김' 이라 위의 높이가 44px 로 잡힌다 — 부품이 보이게 된 다음 차례에 한 번 더 놓는다(POLISH-1 PQ-19). 새로 여는 확인창은 그대로다
+            QTimer.singleShot(0, self._replace_settled)
+
+    def _replace_settled(self):
+        if self.is_open:                                          # 그 사이 닫혔으면 아무것도 안 한다
+            self.place()
 
     def dismiss(self):
         self.run_cleanups()
