@@ -942,8 +942,10 @@ class ViewTest(unittest.TestCase):
         self.assertEqual(row["setting"]["choices"][0], ("", "정하지 않음"))
         self.assertEqual((row["type"]["value"], row["setting"]["value"]), ("간판", "야경"))
         self.assertEqual(row["place"]["section"]["value"], "도입")
-        self.assertTrue(row["place"]["open"], "값이 있으면 자리 정하기를 펼쳐 둔다")
+        self.assertFalse(row["place"]["open"], "종류가 정한 기본 들어갈 곳(도입)은 자리 정하기를 펼치지 않는다 — 접힌 단추의 한 줄 요약뿐이다(POLISH-1 M-2, 옛 시험은 펼친다고 못박았다)")
+        self.assertEqual((row["place"]["open_text"], row["place"]["close_text"]), ("들어갈 곳: 도입 ▸", "자리 정하기 ▾"))
         self.assertFalse(row_of(board, "p002")["place"]["open"])
+        self.assertEqual(row_of(board, "p002")["place"]["open_text"], "자리 정하기 ▸", "들어갈 곳이 없으면 요약 없이 처음 글")
         self.assertEqual(row["confirm"]["text"], "확인했어요 — 이 내용을 초안에 써요")
         self.assertIn("사진 1, 종류 간판", row["a11y"])
         for key in ("type", "setting", "subject", "note", "caption"):

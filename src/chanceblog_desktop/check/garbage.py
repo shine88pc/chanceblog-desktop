@@ -343,8 +343,8 @@ _PHOTO_SLOT = re.compile("\\{\\{사진 [1-9][0-9]{0,2}\\}\\}")                  
 def _placeholders(field, text, starts, ends, hits):
     for sub, pattern in _PLACEHOLDERS:
         for match in pattern.finditer(text):
-            if field == "body" and sub == "double_brace" and _PHOTO_SLOT.fullmatch(match.group()):
-                continue                                                       # 제목에 있거나 모양이 조금이라도 다른 `{{ … }}` 는 그대로 건다
+            if field == "body" and sub == "double_brace" and _PHOTO_SLOT.fullmatch(match.group()) and text[match.end():match.end() + 1] != "}":
+                continue                                                       # 제목에 있거나 모양이 조금이라도 다른 `{{ … }}` 는 그대로 건다 — 정확한 모양 바로 뒤에 `}` 가 더 붙은 `{{사진 1}}}` 도(POLISH-1 PS-10)
             if not _inside(starts, ends, match.start()):
                 hits.append(("placeholder", sub, field, match.start(), match.end(), _collapsed(match.group()), 0))
 

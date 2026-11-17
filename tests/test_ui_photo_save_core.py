@@ -26,6 +26,12 @@ OPS = {"save": ("start_save", "apply_saved", "apply_save_failed"), "list": ("sta
        "restore": ("start_restore_photos", "apply_photos_restored", "apply_restore_photos_failed"), "clear": ("start_clear_trash", "apply_trash_cleared", "apply_clear_trash_failed")}
 
 
+def before_the_question(plain, reason):
+    """확인창 글(`plain`)의 맨 끝 물음 문장 바로 앞에 이유(`reason`)를 끼운 글 — 이유는 물음 뒤가 아니라 앞이다(POLISH-1 PQ-24). 맨 끝 문장은 마지막 `. ` 다음부터다."""
+    question = plain.rpartition(". ")[2]
+    return plain[:len(plain) - len(question)] + reason + " " + question
+
+
 def store(controller, op, *args, **kwargs):
     starter, ok, failed = (getattr(controller, name) for name in OPS[op])
     results = {}
@@ -372,14 +378,16 @@ class UnsavablePhotoStateTest(unittest.TestCase):
                 controller.photos.add_paths([path_of(7), path_of(8)])
                 dialog = controller.leave_dialog("leave")
                 self.assertEqual((dialog["title"], "choices" in dialog), (T["pho_leave_title"], False), "글은 그대로이고 사진 정보는 저장할 길이 없다 — 사라진다는 두 갈래")
-                self.assertEqual(dialog["body"], T["pho_leave_body"].format(n=2) + " " + T["pho_leave3_lost"], "초안은 있는데 저장할 길이 막혔다 — 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20)")
-                self.assertEqual(controller.leave_dialog("close")["body"], T["pho_close_body"].format(n=2) + " " + T["pho_leave3_lost"])
+                self.assertEqual(dialog["body"], before_the_question(T["pho_leave_body"].format(n=2), T["pho_leave3_lost"]), "초안은 있는데 저장할 길이 막혔다 — 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20) — 이유는 맨 끝 물음 앞에 둔다(POLISH-1 PQ-24, 옛 시험은 `본문 + 이유` 순서를 못박았다)")
+                self.assertTrue(dialog["body"].endswith("그래도 이동할까요?") and dialog["body"].count("?") == 1, "물음이 맨 끝이다")
+                self.assertEqual(controller.leave_dialog("close")["body"], before_the_question(T["pho_close_body"].format(n=2), T["pho_leave3_lost"]))
                 controller.discard_leave()
                 controller.set_body(controller.body + " 고침")
                 three = controller.leave_dialog("leave")
                 self.assertEqual([choice["key"] for choice in three["choices"]], ["save", "discard", "stay"])
-                self.assertEqual(three["body"], T["drf_leave3_body"] + " " + T["pho_leave3_lost"], "`저장` 은 글만 저장한다 — 사진 정보는 저장되지 않는다고 사실대로")
-                self.assertEqual(controller.leave_dialog("close")["body"], T["drf_close3_body"] + " " + T["pho_leave3_lost"])
+                self.assertEqual(three["body"], before_the_question(T["drf_leave3_body"], T["pho_leave3_lost"]), "`저장` 은 글만 저장한다 — 사진 정보는 저장되지 않는다고 사실대로, 이유는 물음 앞에(POLISH-1 PQ-24)")
+                self.assertTrue(three["body"].endswith("저장하고 이동할까요?") and three["body"].count("?") == 1, "물음이 맨 끝이다")
+                self.assertEqual(controller.leave_dialog("close")["body"], before_the_question(T["drf_close3_body"], T["pho_leave3_lost"]))
 
     def test_removing_every_photo_again_leaves_nothing_to_lose(self):
         controller, provider, draft_id = opened_with_state("broken")

@@ -484,7 +484,7 @@ class SeedsController:
         else:
             title, ok, cancel = T["seeds_imp_title"], T["seeds_imp_ok"], T["seeds_imp_cancel"]
             lines.append(T["seeds_imp_all_proposed"])
-            lines.append(T["seeds_imp_channels"].format(rows=" · ".join(T["seeds_imp_channel_row"].format(name=sf.channel_name(code), n=number, gen=rules.generation_text(enabled)) for code, number, enabled in info.per_channel)))
+            lines.append(T["seeds_imp_channels"].format(rows=" · ".join(T["seeds_imp_channel_row"].format(name=sf.channel_name(code), n=number, gen=rules.generation_text(enabled)) for code, number, enabled in cn.display_order(info.per_channel, key=lambda row: row[0]))))      # 화면 순서(블로그 관리 카드 순서 — POLISH-1 Q4-1·S4-1: 서비스가 주는 채널 순서(GitHub Pages 부터)로 나오던 한 줄)
         self.import_asked = can
         return {"title": title, "body": "\n".join(lines), "ok": ok, "cancel": cancel, "can_apply": can}
 
@@ -728,10 +728,12 @@ class SeedsController:
 
     @staticmethod
     def _channel_chip(row):
-        """채널 한 곳의 칩 — '네이버 A 3개 · 후보 생성 켜짐'(색은 바탕뿐이고 글자가 늘 함께 있다)."""
+        """채널 한 곳의 칩 — '네이버 블로그 1 · 3개 · 후보 생성 켜짐'(색은 바탕뿐이고 글자가 늘 함께 있다). 아주 긴 별명은 칩 글에서 줄이고(`chip_name`) 전체 이름은 접근 이름(`a11y`)과 툴팁(`chip.tip` — 줄였을 때만)에 둔다(POLISH-1 Q3-2)."""
         gen = rules.generation_text(row["generation"])
+        cut = row["chip_name"] != row["name"]
         return {"key": row["key"], "count": row["count"], "generation": {"tone": "ok" if row["generation"] is True else "muted" if row["generation"] is False else "warning", "text": gen},
-                "chip": {"tone": "ok" if row["generation"] is True else "muted" if row["generation"] is False else "warning", "text": T["seeds_channel_chip"].format(name=row["name"], n=row["count"], gen=gen)},
+                "chip": {"tone": "ok" if row["generation"] is True else "muted" if row["generation"] is False else "warning", "text": T["seeds_channel_chip"].format(name=row["chip_name"], n=row["count"], gen=gen),
+                         "tip": T["seeds_channel_chip"].format(name=row["name"], n=row["count"], gen=gen) if cut else ""},
                 "a11y": T["seeds_channel_a11y"].format(name=row["name"], n=row["count"], gen=gen)}
 
     def _filters(self, data, found):
@@ -739,15 +741,16 @@ class SeedsController:
         scope_counts = rules.facet_counts(data.seeds, "scope", sf.SCOPE_ORDER)
         importance_counts = rules.facet_counts(data.seeds, "seed_type", sd.SEED_TYPES)
         status_labels = {"all": T["seeds_all"], "proposed": T["seeds_status_proposed"], "active": T["seeds_status_active"], "inactive": T["seeds_status_inactive"]}
-        scope_labels = {"all": T["seeds_scope_all"], **{code: sf.scope_name(code) for code in sf.SCOPE_ORDER}}
+        scope_labels = {"all": T["seeds_scope_all"], **{code: sf.scope_chip_name(code) for code in sf.SCOPE_ORDER}}          # 칩에는 줄인 이름(아주 긴 별명만 — POLISH-1 Q3-2), 전체 이름은 툴팁·접근 이름(`tip`)
+        scope_tips = {code: sf.scope_name(code) for code in sf.SCOPE_ORDER if sf.scope_name(code) != scope_labels[code]}
         importance_labels = {"all": T["seeds_importance_all"], **{kind: sf.importance_name(kind) for kind in sd.SEED_TYPES}}
-        chips = lambda keys, labels, counts, current: [{"key": key, "label": labels[key], "count": counts[key], "active": key == current} for key in keys]    # noqa: E731
+        chips = lambda keys, labels, counts, current, tips=None: [{"key": key, "label": labels[key], "count": counts[key], "active": key == current, "tip": (tips or {}).get(key, "")} for key in keys]    # noqa: E731
         more_open = self.more_filters or self.scope != "all" or self.importance != "all"
         shown = min(len(found), self.limit)
         return {"a11y": T["seeds_filter_a11y"], "status_title": T["seeds_filter_status"], "status": chips(rules.STATUS_KEYS, status_labels, status_counts, self.status),
                 "query": {"label": T["seeds_search_label"], "placeholder": T["seeds_search_placeholder"], "value": self.query},
                 "more": {"text": T["seeds_filter_less" if more_open else "seeds_filter_more"], "open": more_open},
-                "scope_title": T["seeds_filter_scope"], "scope": chips(("all", *sf.DISPLAY_SCOPES), scope_labels, scope_counts, self.scope),
+                "scope_title": T["seeds_filter_scope"], "scope": chips(("all", *sf.DISPLAY_SCOPES), scope_labels, scope_counts, self.scope, scope_tips),
                 "importance_title": T["seeds_filter_importance"], "importance": chips(("all", *sd.SEED_TYPES), importance_labels, importance_counts, self.importance),
                 "result": T["seeds_filter_result"].format(shown=shown, found=len(found), total=len(data.seeds)), "active": self.filters_active(), "reset": T["seeds_filter_reset"]}
 

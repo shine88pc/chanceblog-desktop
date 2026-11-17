@@ -36,6 +36,12 @@ def _blog_label(key, names, limit=30, empty=None):
     name = rules.shown(dict(names).get(key) or "", limit)
     return name or (key if empty is None else empty)
 
+def _reason_before_question(body, reason):
+    """확인창 글의 맨 끝 물음 앞에 이유 문장을 끼운다 — 물음이 늘 맨 끝이다(POLISH-1 PQ-24: 이유가 `…이동할까요?` 뒤에 붙으면 답을 고른 뒤의 말처럼 읽혔다). 맨 끝 문장은 마지막 `. ` 다음부터이고, 그런 자리가 없으면 이유를 앞에 둔다."""
+    head, dot, question = body.rpartition(". ")
+    return f"{head}. {reason} {question}" if dot else f"{reason} {body}"
+
+
 DRAFT_KEY = "drafts-make"                                    # 초안을 만드는 작업의 이름(후보·홈·설정 읽기와 따로 돈다)
 STORE_KEY = "drafts-store"                                   # 저장한 초안의 저장·목록·열기·지우기 작업의 이름 — 넷은 한 번에 하나만 돈다(서로 겹쳐 보관함을 두 번 쓰지 않는다)
 SAVE_STATES = ("none", "unsaved", "saved", "changed", "saving")
@@ -386,11 +392,14 @@ class DraftsController:
         closing = kind == "close"
         lost = self.photos_lost()
         if lost and not self.text_unsaved():                # 초안이 없거나 저장할 수 없는 상태라 사진 정보를 저장할 길이 없고 글은 그대로다 — 사진 정보가 사라진다는 두 갈래 확인창(검증 Q N-2 — 사진이 없으면 이 갈래를 타지 않는다)
-            body = T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count) + ((" " + T["pho_leave3_lost"]) if self.result is not None else "")          # 초안이 있는데 저장할 수 없는 상태면 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20)
+            body = T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count)
+            if self.result is not None:                     # 초안이 있는데 저장할 수 없는 상태면 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20) — 물음 앞에(POLISH-1 PQ-24)
+                body = _reason_before_question(body, T["pho_leave3_lost"])
             return {"title": T["pho_leave_title"], "body": body, "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
         if self.can_save:
             discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
-            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"] + ((" " + T["pho_leave3_lost"]) if lost else ""), "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
+            body = T["drf_close3_body" if closing else "drf_leave3_body"]
+            return {"title": T["drf_leave3_title"], "body": _reason_before_question(body, T["pho_leave3_lost"]) if lost else body, "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
                     "choices": [{"key": "save", "text": T["drf_choice_save"], "kind": "primary"}, {"key": "discard", "text": discard, "kind": "danger"}, {"key": "stay", "text": T["drf_choice_stay"], "kind": "secondary"}],
                     "first": "save", "after": kind}
         return {"title": T["drf_leave_title"], "body": T["drf_close_body"] if closing else T["drf_leave_body"], "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
@@ -473,7 +482,7 @@ class DraftsController:
         self.save_problem = None
         self.notice = ("ok", T["drf_saved_notice"].format(when=time_text(outcome.updated_at)))
         if self.photos_lost():                                                       # 깨졌거나 못 열린 사진 정보 파일 위라 넣은 사진 정보는 이 저장에 안 들어갔다 — 알림이 글만 저장했다고 사실대로 말한다(검증 S PS-15 — 사진 정보 저장이 실패한 길과 다르다)
-            self.notice = ("info", self.notice[1] + " " + T["pho_saved_without_photos"])
+            self.notice = ("info", T["pho_saved_with_note"].format(saved=self.notice[1], note=T["pho_saved_without_photos"]))          # 시각과 둘째 문장이 붙어 읽히지 않게 ` · ` 로 가른다(POLISH-1 PQ-26)
         photos = getattr(outcome, "photos", "none")
         if getattr(request, "photos", None) is not None and photos != "failed":
             self.photos_baseline = request.photos                                    # 사진 정보도 저장했다 — 이 목록이 저장한 판이다(저장하지 못했으면 기준을 그대로 둬 '고쳤어요' 가 남는다)
@@ -1129,7 +1138,7 @@ class DraftsController:
     def _options(self):
         result = self.result
         names = dict(result.blog_names)
-        blogs = [{"key": key, "label": _blog_label(key, names), "active": key == (self.blog or result.blog), "a11y": T["drf_blog_a11y"].format(name=_blog_label(key, names))} for key in rules.BLOG_NAMES]
+        blogs = [{"key": key, "label": cn.chip_label(key), "tip": cn.full_if_cut(key, cn.chip_label(key)), "active": key == (self.blog or result.blog), "a11y": T["drf_blog_a11y"].format(name=_blog_label(key, names))} for key in rules.BLOG_NAMES]       # 칩에는 줄인 이름(아주 긴 별명만 — POLISH-1 Q3-2), 전체 이름은 접근 이름·툴팁(`tip` — 줄였을 때만)
         kinds = [{"key": None, "label": T["drf_type_auto"], "active": self.post_type is None, "a11y": T["drf_type_a11y"].format(name=T["drf_type_auto"])},
                  *({"key": kind, "label": kind, "active": self.post_type == kind, "a11y": T["drf_type_a11y"].format(name=kind)} for kind in POST_TYPES)]
         pending = self.options_pending()

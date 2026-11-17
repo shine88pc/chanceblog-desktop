@@ -27,7 +27,7 @@ CAND_T = {
     # 거르기
     "cand_filter_a11y": "후보 거르기", "cand_filter_channel": "채널", "cand_filter_status": "작업 상태", "cand_filter_band": "점수 구간", "cand_filter_cluster": "주제 묶음",
     "cand_all": "전체", "cand_band_none": "점수 계산 전", "cand_filter_more": "더 거르기", "cand_filter_less": "더 거르기 닫기",
-    "cand_filter_channel_a11y": "채널 {name} {n}개", "cand_filter_status_a11y": "작업 상태 {name} {n}개", "cand_filter_band_a11y": "점수 구간 {name} {n}개", "cand_filter_cluster_a11y": "주제 묶음 {name} {n}개",
+    "cand_filter_channel_a11y": "채널 {name}, {n}개", "cand_filter_status_a11y": "작업 상태 {name} {n}개", "cand_filter_band_a11y": "점수 구간 {name} {n}개", "cand_filter_cluster_a11y": "주제 묶음 {name} {n}개",
     "cand_search_label": "후보 찾기", "cand_search_placeholder": "제목이나 키워드로 찾아요", "cand_filter_result": "{shown}장을 보여 줘요(조건에 맞는 후보 {found}개 · 전체 {total}개)",
     "cand_filter_reset": "거르기 풀기", "cand_more": "{n}개 더 보기", "cand_more_a11y": "후보 {n}개 더 보기", "cand_grid_a11y": "후보 카드 목록",
     # 카드
