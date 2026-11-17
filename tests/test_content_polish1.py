@@ -2,7 +2,7 @@
 
 지키는 것:
   1) 문장 끝을 찾는 정규식(`content/photo_flow.SENTENCE_END`)은 글이 길어도 **글자 수에 비례한 시간**이다 — 구두점이 아주 길게 이어진 뒤 공백이 아닌 글자가 오는 글(마침표 2만 개 + `x`)에서 제곱 시간이던 것(옛 코드는 약 9초). 찾는 결과는 옛 정규식과 한 건도 다르지 않다.
-  2) 정확한 사진 자리 `{{사진 N}}` 만 사진 자리다 — 닫는 중괄호가 하나 더 붙은 `{{사진 1}}}`(앞에 여는 중괄호가 하나 더 붙은 `{{{사진 1}}` 도)는 복사할 때 `[이미지 1]` 로 바뀌지 않고(`[이미지 1]}` 가 되던 것), 글 모양 점검이 `{{ … }}` 자리표시로 걸러 낸다(옛 점검은 정확한 모양 뒤에 붙은 `}` 를 못 봤다).
+  2) 글 모양 점검은 정확한 사진 자리 `{{사진 N}}` 만 걸지 않는다 — 닫는 중괄호가 하나 더 붙은 `{{사진 1}}}` 는 다른 `{{ … }}` 자리표시처럼 걸러 낸다(옛 점검은 정확한 모양 뒤에 붙은 `}` 를 못 봐 통과시켰다 — main 은 걸었다). 복사는 이 규칙과 상관없이 저장 형식 규칙(`photo_manifest.find_placeholders`)이 알아보는 자리만 `[이미지 N]` 으로 바꾼다 — 복사와 관문이 어긋나지 않는다.
 """
 import random
 import re
@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import garbage_samples as S  # noqa: E402
 
 from chanceblog_desktop.content import photo_flow as pf  # noqa: E402
+from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
 
 OLD_SENTENCE_END = re.compile(r"[.!?…]+[\"'”’)\]]*(?=\s|$)")                       # 고치기 전의 정규식 — 결과가 같은지 견주는 기준
 
@@ -64,20 +65,34 @@ class SentenceEndTest(unittest.TestCase):
 
 
 class CopyTextTest(unittest.TestCase):
-    def test_only_the_exact_slot_becomes_an_image_mark_and_a_slot_with_one_more_brace_is_left_as_it_is(self):
+    """복사는 정확한 `{{사진 N}}` 만 `[이미지 N]` 으로 바꾸고 그 밖의 글은 안 바꾼다 — 바꾸는 자리가 저장 형식 규칙(`photo_manifest.find_placeholders`)이 알아보는 자리와 늘 같다(복사 확인창이 말하는 '올릴 사진' 과 복사된 글이 어긋나지 않는다). 정확한 자리 바깥에 붙은 중괄호는 남은 글자다."""
+
+    def test_only_the_exact_slot_becomes_an_image_mark_and_the_text_around_it_is_not_touched(self):
         self.assertEqual(pf.to_copy_text("{{사진 1}}"), "[이미지 1]")
         self.assertEqual(pf.to_copy_text("앞 {{사진 12}} 뒤"), "앞 [이미지 12] 뒤")
         self.assertEqual(pf.to_copy_text("x{{사진 3}}y"), "x[이미지 3]y", "글자가 바로 붙어도 정확한 자리는 바뀐다")
-        for text in ("{{사진 1}}}", "{{{사진 1}}", "{{사진 1}}}}", "{{{사진 1}}}", "앞 {{사진 2}}} 뒤"):
-            self.assertEqual(pf.to_copy_text(text), text, repr(text))
-        self.assertEqual(pf.to_copy_text("앞 {{사진 1}} 뒤 {{사진 2}}} 끝 {{사진 3}}"), "앞 [이미지 1] 뒤 {{사진 2}}} 끝 [이미지 3]")
+        self.assertEqual(pf.to_copy_text("보통 글 {중괄호} {{이름}} {{사진 0}} {{사진 1000}} [이미지 1]"), "보통 글 {중괄호} {{이름}} {{사진 0}} {{사진 1000}} [이미지 1]", "정확한 자리가 아닌 글은 한 글자도 안 바뀐다")
+        self.assertEqual(pf.to_copy_text(None), None)
+
+    def test_braces_stuck_to_an_exact_slot_stay_as_leftover_characters_like_the_manifest_rules_count_them(self):
+        self.assertEqual(pf.to_copy_text("{{사진 1}}}"), "[이미지 1]}")
+        self.assertEqual(pf.to_copy_text("{{{사진 1}}"), "{[이미지 1]")
+        self.assertEqual(pf.to_copy_text("{{{{사진 1}}"), "{{[이미지 1]", "저장 형식 규칙도 이 글에서 자리 하나와 남은 `{{` 하나(stray 1)를 센다")
+        self.assertEqual(pm.stray_braces("{{{{사진 1}}"), 1)
+
+    def test_the_slots_the_copy_changes_are_exactly_the_slots_the_manifest_rules_find_on_random_texts(self):
+        rng = random.Random(20261117)
+        parts = ["{{", "}}", "{{사진 1}}", "{{사진 22}}", "{{사진 0}}", "{{사진 1 }}", "{", "}", "가", " ", "{{{", "}}}", "{{사진 7}}{{", "}", "{{사진 999}}"]
+        for _ in range(3000):
+            text = "".join(rng.choice(parts) for _ in range(rng.randint(0, 20)))
+            found = [number for number, _start, _end in pm.find_placeholders(text)]
+            copied = pf.to_copy_text(text)
+            self.assertEqual([int(number) for number in re.findall(r"\[이미지 (\d+)\]", copied)], found, repr(text))
+            self.assertEqual(len(pm.find_placeholders(copied)), 0, "복사된 글에는 정확한 자리표시자가 남지 않는다")
 
     def test_the_slots_the_app_puts_in_are_always_exact_so_they_still_all_turn_into_image_marks(self):
-        from chanceblog_desktop.content import photo_manifest as pm
         for number in (1, 9, 10, 99, 100, 999):
             self.assertEqual(pf.to_copy_text(pm.placeholder(number)), f"[이미지 {number}]")
-        self.assertEqual(pf.to_copy_text("보통 글 {중괄호} {{이름}} [이미지 1]"), "보통 글 {중괄호} {{이름}} [이미지 1]", "그 밖의 글은 한 글자도 안 바뀐다")
-        self.assertEqual(pf.to_copy_text(None), None)
 
 
 class GarbageSlotTest(unittest.TestCase):

@@ -27,7 +27,6 @@ SECTION_INTRO, SECTION_CONTENT, SECTION_MOOD, SECTION_CLOSING = "도입", "내�
 MOOD_WORD = "분위기"
 KIND_ALIASES = {"주의": CAUTIONS, "경험": EXPERIENCE, "intro": INTRO, "closing": CLOSING, "cautions": CAUTIONS, "experience": EXPERIENCE}
 SENTENCE_END = re.compile(r"(?<![.!?…])[.!?…]+[\"'”’)\]]*(?=\s|$)")                # 부호 덩어리의 맨 앞에서만 시작한다 — 덩어리 가운데서 다시 시작하면 구두점이 아주 길게 이어진 글에서 제곱 시간이었다(POLISH-1 PS-10, 마침표 2만 개 + 글자 하나 → 약 9초). 찾는 결과는 같다
-_EXACT_SLOT = re.compile(r"(?<!\{)(?:" + pm.PLACEHOLDER.pattern + r")(?!\})")        # 정확한 사진 자리 — 앞뒤에 중괄호가 하나 더 붙은 `{{{사진 1}}`·`{{사진 1}}}` 는 사진 자리가 아니다(POLISH-1 PS-10)
 SENTENCE_FORMS = ("에요", "예요", "입니다", "습니다", "해요", "어요", "아요")                      # 이미 문장으로 끝난 대상 — `사진이에요.` 를 더 붙이지 않는다
 FRAME = "{subject} 사진이에요."
 NOTE_SECTION = "사진 {n}번은 고른 들어갈 곳을 찾지 못해 내용 소제목에 넣었어요."
@@ -201,8 +200,8 @@ def _rebuilt(block, items):
 
 
 def to_copy_text(text):
-    """복사용 글 — 정확한 `{{사진 N}}` 만 `[이미지 N]` 으로 바꾼다(네이버 편집기에서 그 자리에 사진을 올리고 표시 글을 지운다 — 기존 `[이미지 N]` 표시와 같은 모양). 그 밖의 글은 한 글자도 안 바꾼다 — 닫는 중괄호가 하나 더 붙은 `{{사진 1}}}` 도 그대로 둔다(`[이미지 1]}` 로 바뀌지 않는다 — POLISH-1 PS-10)."""
-    return _EXACT_SLOT.sub(lambda found: f"[이미지 {found.group(1)}]", text) if isinstance(text, str) else text
+    """복사용 글 — 정확한 `{{사진 N}}` 만 `[이미지 N]` 으로 바꾼다(네이버 편집기에서 그 자리에 사진을 올리고 표시 글을 지운다 — 기존 `[이미지 N]` 표시와 같은 모양). 그 밖의 글은 한 글자도 안 바꾼다. 정확한 자리 바깥에 붙은 중괄호는 저장 형식 규칙(`photo_manifest.find_placeholders`·`stray_braces`)처럼 남은 글자로 보고 건드리지 않는다 — 그런 글(`{{사진 1}}}`)은 글 모양 점검이 `{{ … }}` 자리표시로 걸러 낸다(POLISH-1 PS-10)."""
+    return pm.PLACEHOLDER.sub(lambda found: f"[이미지 {found.group(1)}]", text) if isinstance(text, str) else text
 
 
 __all__ = ["place_photos", "photo_lines", "subject_sentence", "sentence_ends", "to_copy_text"]

@@ -687,7 +687,7 @@ class ImportFlowTest(Base):
         names = self.labels(window.dialog)
         self.assertIn("제안 파일을 불러올까요?", names)
         body = next(name for name in names if "새로 등록하는 Seed 는 모두 승인 전이에요" in name)
-        for part in ("파일 안 Seed 4개 · 새로 등록할 Seed 3개", "승인하기 전에는 후보 생성에 쓰이지 않아요", "GitHub Pages 0개(후보 생성 꺼짐)"):
+        for part in ("파일 안 Seed 4개 · 새로 등록할 Seed 3개", "승인하기 전에는 후보 생성에 쓰이지 않아요", "GitHub Pages: 0개(후보 생성 꺼짐)"):
             self.assertIn(part, body)
         buttons = self.buttons(window.dialog)
         self.assertEqual(sorted(buttons), ["승인 전으로 등록", "취소"])
