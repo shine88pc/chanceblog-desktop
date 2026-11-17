@@ -271,13 +271,14 @@ class InfoDialogTest(unittest.TestCase):
         groups = {"uploads": tuple(T["pho_gate_upload_line"].format(n=number, name="a.jpg") for number in (1, 2)), "paths": (T["pho_gate_paths"],)}
         return rules.Gate(False, tuple((name, groups[name]) for name in names), True, {name: set(groups[name]) for name in names})
 
-    def test_the_upload_order_with_the_path_line_is_one_soft_dialog_and_the_line_comes_before_the_mark_explanation(self):
+    def test_the_upload_order_with_the_path_line_is_one_soft_dialog_and_the_mark_explanation_follows_the_list_directly(self):
         controller, _provider = with_photos()
         dialog = controller.gate_dialog("body", self.info_gate("uploads", "paths"))
         self.assertEqual((dialog["title"], dialog["ok"], dialog["cancel"], dialog["count"]), (T["pho_upload_title"], T["pho_upload_ok"], T["drf_cancel"], 0))
         lines = dialog["body"].splitlines()
         self.assertEqual(lines[0], T["pho_gate_uploads"].format(n=2))
-        self.assertEqual(lines[-2:], [T["pho_gate_paths"], T["pho_upload_tail"]])
+        self.assertEqual(lines[-2:], [T["pho_upload_tail"], T["pho_gate_paths"]], "`[이미지 N]` 설명은 올릴 사진 목록 바로 뒤이고 경로 줄은 그 뒤다(검증 Q PQ-20)")
+        self.assertTrue(lines[lines.index(T["pho_upload_tail"]) - 1].startswith("· [이미지 "), "설명 바로 앞은 올릴 사진 줄이다")
 
     def test_the_path_line_alone_is_a_soft_dialog_with_its_own_title(self):
         controller, _provider = with_photos()
@@ -297,8 +298,8 @@ class InfoDialogTest(unittest.TestCase):
         self.assertEqual(decision, "confirm")
         lines = dialog["body"].splitlines()
         self.assertTrue(set(name for name, _items in controller.gate("body").reasons) - {"uploads", "paths"}, "확인 권장이 함께 뜨는 섞인 창이다")
-        self.assertTrue(lines[lines.index(T["pho_gate_paths"]) - 1].startswith("· [이미지 "), "경로 줄은 올릴 사진 줄 바로 뒤에 머리 없이 한 줄이다")
-        self.assertEqual(lines[-3:], [T["pho_gate_paths"], T["pho_upload_tail"], T["drf_gate_tail"]])
+        self.assertTrue(lines[lines.index(T["pho_upload_tail"]) - 1].startswith("· [이미지 "), "`[이미지 N]` 설명은 올릴 사진 줄 바로 뒤다(검증 Q PQ-20)")
+        self.assertEqual(lines[-3:], [T["pho_upload_tail"], T["pho_gate_paths"], T["drf_gate_tail"]], "경로 줄은 설명 뒤에 머리 없이 한 줄이고 끝 안내가 마지막이다")
 
     def test_a_mixed_dialog_without_an_upload_order_has_no_image_mark_explanation(self):
         controller, _provider = with_photos()

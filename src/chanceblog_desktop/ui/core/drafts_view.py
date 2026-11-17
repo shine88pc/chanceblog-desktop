@@ -1029,9 +1029,8 @@ class DraftsController:
                 lines += [T["pho_gate_uploads"].format(n=len(items))] + [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in items[:UPLOAD_LINES]]
                 if len(items) > UPLOAD_LINES:
                     lines.append(T["drf_gate_more"].format(n=len(items) - UPLOAD_LINES))
-            lines += reasons.get("paths", ())                                           # 파일 경로처럼 보이는 글이 있다는 한 줄(경로 글 자체는 없다)
-            if "uploads" in reasons:
-                lines.append(T["pho_upload_tail"])
+                lines.append(T["pho_upload_tail"])                                      # `[이미지 N]` 이 무엇인지 — 올릴 사진 목록 바로 뒤(검증 Q PQ-20)
+            lines += reasons.get("paths", ())                                           # 파일 경로처럼 보이는 글이 있다는 한 줄(경로 글 자체는 없다) — 그 설명 뒤
             return {"title": T["pho_upload_title" if "uploads" in reasons else "pho_paths_title"], "body": chr(10).join(lines), "ok": T["pho_upload_ok"], "cancel": T["drf_cancel"], "count": 0}
         heads = {"check": T["drf_gate_checks"], "domain": T["drf_gate_domain"], "claims": T["drf_gate_claims"], "unchanged": T["drf_gate_unchanged_head"], "photos": T["pho_gate_photos"], "uploads": T["pho_gate_uploads"]}
         lines = []
@@ -1044,8 +1043,8 @@ class DraftsController:
             lines += [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in shown]
             if len(items) > len(shown):
                 lines.append(T["drf_gate_more"].format(n=len(items) - len(shown)))
-        if any(name == "uploads" for name, _items in gate.reasons):                    # 섞인 창에서도 `[이미지 N]` 이 무엇인지 한 줄(검증 Q PQ-9)
-            lines.append(T["pho_upload_tail"])
+            if name == "uploads":                                                       # 섞인 창에서도 `[이미지 N]` 이 무엇인지 한 줄 — 올릴 사진 목록 바로 뒤(검증 Q PQ-9·PQ-20), 경로 줄은 그 뒤다
+                lines.append(T["pho_upload_tail"])
         lines.append(T["drf_gate_tail"])
         return {"title": T["drf_gate_title"].format(n=gate.count), "body": chr(10).join(lines), "ok": T["drf_gate_ok"], "cancel": T["drf_cancel"], "count": gate.count}
 
