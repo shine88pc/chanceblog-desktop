@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 from ...content.profiles import POST_TYPES
+from ...errors import AppError
 from . import draft_garbage as garbage
 from . import channel_names as cn
 from . import draft_rules as rules
 from .board_view import time_text
 from .drafts import DraftFailure, DraftRequest, DraftTarget, SaveRequest, review_health
 from .jobs import Job, JobFailure
+from .photo_rules import short_name
 from .photo_view import PhotoBoard
 from .text import T
 
@@ -40,6 +42,8 @@ SAVE_STATES = ("none", "unsaved", "saved", "changed", "saving")
 STATES = ("empty", "loading", "normal", "refused", "notfound", "error")
 FAILURE_TEXT = {"io": "drf_fail_io", "newer": "drf_fail_newer", "corrupt": "drf_fail_corrupt", "invalid": "drf_fail_invalid", "notfound": "drf_fail_notfound", "stopped": "drf_refused_desc", "channel": "drf_channel_desc", "other": "drf_fail_other"}
 IMAGE_STATES = ("before", "skip")
+PHOTO_SAVE_CODE = "PHOTO_SAVE_FAILED"                        # 사진 정보만 저장하지 못했을 때 `save_problem` 의 진단 코드 — `save_failure_dialog` 가 이 코드로 사진 정보용 경고창을 고른다
+UPLOAD_LINES = 8                                             # 복사 전 확인창에 보이는 '올릴 사진' 줄의 수(나머지는 외 N건)
 KEYWORD_SEPARATOR = ", "
 
 
@@ -57,7 +61,7 @@ class DraftsController:
         self.list_notice = None                              # 목록 위의 알림 한 줄 `(level, 글)` — 지웠다·열지 못했다
         self.store_pending = None                            # 도는 저장 작업 하나 `{"op": save|list|open|delete, …}`
         self.save_problem = None                             # 마지막 저장 실패(`DraftFailure`) — 화면이 한 번 알리고 거둔다
-        self.photos = PhotoBoard()                           # 사진 정리(사진 연동 2단계, D-499) — 사진 목록은 메모리에만 있고 새 초안·떠남·저장한 초안 열기에서 비워진다(저장·불러오기는 3단계)
+        self.photos = PhotoBoard()                           # 사진 정리(사진 연동 2단계, D-499) — 사진 목록은 이 화면의 메모리에 있고 초안을 저장할 때 사진 정보 파일로 함께 저장되며(3단계 `start_save`·`apply_opened`) 새 초안·떠남·저장한 초안 열기에서 비워진다
         self._clear_draft()
         self.state = "empty"
 
@@ -83,6 +87,7 @@ class DraftsController:
         self.pick_asked = None
         self.regen_asked = False
         self.leave_asked = None
+        self.made_photos = ()                                # 이 초안을 만들 때(또는 열었을 때) 본문에 넣은 사진 — 지금 확정한 사진과 다르면 카드가 '다시 만들기' 를 안내한다
         self.saved_id = None                                 # 이 화면의 초안이 저장한 초안이면 그 번호(처음 저장하기 전·새로 만든 초안은 None)
         self.saved_rev = None                                # 저장한 횟수(다른 곳에서 먼저 고친 초안을 덮어쓰지 않으려고 저장할 때 서비스에 돌려준다)
         self.saved_at = ""
@@ -90,7 +95,11 @@ class DraftsController:
         self.opening = None                                  # 여는 중인 저장한 초안의 번호
         self.delete_asked = None                             # 지우기 확인창을 보인 저장한 초안의 번호
         self._cancel_garbage()                               # 새 초안·떠남 — 도는 글 모양 점검의 답은 받지 않고 결과·무시 기억을 지운다(저장하지 않는다)
-        self.photos.clear()                                  # 새 초안·떠남·저장한 초안 열기 — 사진 목록도 비운다(저장하지 않는다)
+        self.photos.clear()                                  # 새 초안·떠남·저장한 초안 열기 — 사진 목록도 비운다
+        self.photos_baseline = None                          # 저장한(또는 연) 사진 정보 — 지금 사진 목록이 이것과 다르면 '사진 정보를 고쳤어요'(None = 비어 있는 것)
+        self.photos_state = "none"                           # 연 초안의 사진 정보 파일 상태: none · ok · broken(깨졌다 — 건드리지 않는다) · unreadable(지금 못 연다)
+        self.photos_trash = False                            # 이 초안에 되돌릴 사본이 남아 있다(확인 024 — 지운 뒤 되살린 초안)
+        self.trash_asked = False                             # 사진 정보 사본 비우기 확인창을 보였다
 
     # ---- 읽기(파일·폴더를 만들지 않는다) ----
     @property
@@ -135,7 +144,11 @@ class DraftsController:
             return "refused", None
         if self.busy:
             return "busy", None
-        request = DraftRequest(target.candidate_id, self.blog, self.post_type, rules.options_dict(self.fields))
+        photos = self._photos_to_place()
+        if photos is None:                                   # 사진 정보 검사가 막았다 — 사진을 빼고 몰래 만들지 않는다
+            self.notice = ("error", T["pho_make_blocked"])
+            return "photos", None
+        request = DraftRequest(target.candidate_id, self.blog, self.post_type, rules.options_dict(self.fields), photos)
         provider = self.provider
         job = self.runner.start(DRAFT_KEY, lambda progress, cancelled: provider.make_draft(request, progress, cancelled), on_progress=on_progress, on_done=on_done, on_error=on_error, on_cancel=on_cancel)
         if job is None:
@@ -163,6 +176,9 @@ class DraftsController:
         self.result = result
         self.title, self.body = result.body.selected_title, result.body.body_text
         self.blog, self.post_type = result.blog, request.post_type
+        self.made_photos = tuple(getattr(request, "photos", ()))                       # 본문에 넣은 사진 — 만든 뒤 사진 정보를 바꾸면 카드가 알린다
+        self.photos_baseline, self.photos_trash = None, False                # 새 초안이라 사진 정보도 아직 저장하지 않았다(저장하면 이 사진 목록이 새 초안의 것으로 저장된다)
+        self.photos_state = "none"                                           # 새 초안은 새 번호라 저장해 둔 사진 정보 파일이 없다 — 열 때 깨졌거나 못 열렸던 파일의 상태를 이어받으면 새 초안의 사진 정보가 영영 저장되지 않는다(검증 S PS-12·Q PQ-17)
         self.saved_id = self.saved_rev = self.saved_snapshot = None          # 새로 만든 초안은 새 초안이다 — 저장하면 이전에 저장한 초안을 덮어쓰지 않고 새 초안으로 저장된다(앞의 것은 목록에 그대로 있다)
         self.saved_at = ""
         self.ack, self.copied, self.inspection, self.inspected_for = {}, set(), None, None
@@ -282,17 +298,30 @@ class DraftsController:
     def options_pending(self):
         return self.result is not None and rules.options_dict(self.fields) != dict(self.result.options)
 
-    def photos_unsaved(self):
-        """사진 정보가 있는가 — 사진 정보는 저장하지 못해서(저장은 3단계) 하나라도 있으면 화면을 떠나거나 앱을 닫을 때 사라진다. 사진이 없으면 거짓이라 지금과 같다.
-        3단계: 저장한 판과 다를 때만 참이 되게 바꾼다(`photos_unsaved` 로 대체 — N-2)."""
-        return self.photos.count > 0
-
     def has_unsaved(self):
-        """떠나기·앱 닫기·저장한 초안 열기가 묻는 기준 — 고친 내용이 있거나(`text_unsaved`) 사진 정보가 있다(`photos_unsaved`). 다시 만들기·제목 바꾸기는 사진을 잃지 않아서 `text_unsaved` 만 본다."""
-        return self.text_unsaved() or self.photos_unsaved()
+        """떠나거나 닫을 때 확인해야 할 고친 내용이 있는가 — 글(`text_unsaved`)이거나 사진 정보(`photos_unsaved`)이거나 저장할 길 없이 넣어 둔 사진 정보(`photos_lost`)."""
+        return self.text_unsaved() or self.photos_unsaved() or self.photos_lost()
+
+    def photos_savable(self):
+        """이 화면에서 이 초안의 사진 정보를 저장할 수 있는가 — 열 때 저장해 둔 사진 정보 파일이 깨졌거나(`broken`) 지금 못 열었다면(`unreadable`) 그 파일을 덮어쓰지 않으려고 저장하지 않는다(D-501 ② '그 위에 저장하지 않는다' — 잠금이 풀린 뒤
+        멀쩡한 파일을 소리 없이 덮던 길을 막는다, 검증 S PS-2). 저장 요청에 사진 정보를 싣지 않으므로 '다시 저장해 보세요' 가 아무리 해도 안 풀리는 일(PS-11·PQ-11)도 없다."""
+        return self.photos_state not in ("broken", "unreadable")
+
+    def photos_lost(self):
+        """넣어 둔 사진 정보가 이 화면을 떠나면 사라지는데 저장할 길도 없나 — 초안이 아직 없거나(`result is None`) 저장할 수 없는 상태(`photos_savable` 거짓)에서 사진을 넣었다. 사진이 없으면 잃을 것도 없다."""
+        return self.photos.count > 0 and (self.result is None or not self.photos_savable())
+
+    def photos_unsaved(self):
+        """사진 정보를 고쳤는데 아직 저장하지 않았나 — 저장한(또는 연) 사진 정보와 다르면 참이다(사진을 한 번도 안 넣었으면 늘 거짓 — 사진이 없으면 초안은 지금과 같다). 저장할 수 없는 상태(`photos_savable` 거짓)는 '고쳤는데 저장 안 함' 이 아니라
+        '저장되지 않아요' 라 거짓이다(`photos_lost` 가 알린다 — 저장 요청에도 안 싣는다)."""
+        if self.result is None:                             # 초안이 아직 없다(초안을 만들기 전에 사진부터 넣었다) — 사진 정보를 저장할 곳이 없으므로 사진이 하나라도 있으면 떠날 때 사라진다(검증 Q N-2)
+            return self.photos.count > 0
+        if not self.photos_savable():
+            return False
+        return self.photos.differs_from(self.photos_baseline)
 
     def text_unsaved(self):
-        """고친 내용이 있는가 — 저장한 판이 있으면 **그 판과 다른 제목·본문**, 없으면 만든 초안에서 제목·본문을 고쳤거나, 선택 입력을 적고 아직 반영하지 않았다. 있으면 사라지는 일(다시 만들기·떠나기·닫기) 전에 확인창이 먼저다.
+        """고친 글이 있는가 — 저장한 판이 있으면 **그 판과 다른 제목·본문**, 없으면 만든 초안에서 제목·본문을 고쳤거나, 선택 입력을 적고 아직 반영하지 않았다. 있으면 사라지는 일(다시 만들기·떠나기·닫기) 전에 확인창이 먼저다.
         저장한 글은 저장해 둔 것이라 그대로 두고 나가도 사라지지 않는다(저장한 초안 목록에 있다)."""
         if self.result is None:
             return False
@@ -330,7 +359,7 @@ class DraftsController:
 
     # ---- 다시 만들기 ----
     def regen_dialog(self):
-        """고친 내용이 사라지면 확인창의 글, 아니면 None(바로 만들어도 된다). 다시 만들어도 사진 정보는 그대로라 `text_unsaved` 만 본다."""
+        """고친 내용이 사라지면 확인창의 글, 아니면 None(바로 만들어도 된다). 사진 목록은 다시 만들어도 남으므로 글만 본다."""
         if not self.text_unsaved():
             return None
         self.regen_asked = True
@@ -349,23 +378,22 @@ class DraftsController:
 
     # ---- 화면을 떠나거나 앱을 닫기 ----
     def leave_dialog(self, kind="leave"):
-        """고친 내용이 있거나 사진 정보가 있으면(`has_unsaved` — 사진 정보는 저장하지 못한다) 확인창의 글(`leave`: 다른 화면으로 — 후보를 바꾸러 가는 것도 같다 · `close`: 앱 닫기), 없으면 None.
-        저장 기능이 있으면 **세 갈래**다(`choices`: `save` 저장 · `discard` 저장 안 하고 나가기/닫기 · `stay` 계속 고치기 — Esc 는 `stay`, 처음 포커스는 `save`). 없으면 예전의 두 갈래(그래도 이동·취소)다.
-        **사진 정보만** 저장되지 않았으면(초안은 그대로) 저장 기능이 있어도 두 갈래이고 글이 사진 정보가 사라진다는 말이다(저장해도 사진 정보는 저장되지 않는다). 고친 내용과 사진이 함께면 위 글 끝에 사진 문장 한 줄을 더한다(검증 Q N-2)."""
+        """고친 내용이 있으면 확인창의 글(`leave`: 다른 화면으로 — 후보를 바꾸러 가는 것도 같다 · `close`: 앱 닫기), 없으면 None.
+        저장 기능이 있으면 **세 갈래**다(`choices`: `save` 저장 · `discard` 저장 안 하고 나가기/닫기 · `stay` 계속 고치기 — Esc 는 `stay`, 처음 포커스는 `save`). 없으면 예전의 두 갈래(그래도 이동·취소)다."""
         if not self.has_unsaved():
             return None
         self.leave_asked = kind
         closing = kind == "close"
-        photos = self.photos.count
-        if photos and not self.text_unsaved():              # 사진 정보만 저장되지 않았다(사진이 없으면 이 갈래를 타지 않는다 — 지금과 같다) — 초안은 그대로라 '저장' 갈래를 보이지 않는다(저장해도 사진 정보는 저장되지 않는다). 3단계: 사진 정보도 저장되면 이 갈래를 없앤다 — N-2
-            return {"title": T["pho_leave_title"], "body": T["pho_close_body" if closing else "pho_leave_body"].format(n=photos), "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
-        note = " " + T["pho_leave_note"].format(n=photos) if photos else ""      # 고친 내용과 사진 정보가 함께 있으면 확인창 글 끝에 사진 정보도 사라진다는 한 문장을 더한다
+        lost = self.photos_lost()
+        if lost and not self.text_unsaved():                # 초안이 없거나 저장할 수 없는 상태라 사진 정보를 저장할 길이 없고 글은 그대로다 — 사진 정보가 사라진다는 두 갈래 확인창(검증 Q N-2 — 사진이 없으면 이 갈래를 타지 않는다)
+            body = T["pho_close_body" if closing else "pho_leave_body"].format(n=self.photos.count) + ((" " + T["pho_leave3_lost"]) if self.result is not None else "")          # 초안이 있는데 저장할 수 없는 상태면 곧 저장될 것처럼 읽히지 않게 이유를 덧붙인다(검증 Q PQ-20)
+            return {"title": T["pho_leave_title"], "body": body, "ok": T["drf_close_ok" if closing else "drf_leave_ok"], "cancel": T["drf_cancel"]}
         if self.can_save:
             discard = T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"]
-            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"] + note, "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
+            return {"title": T["drf_leave3_title"], "body": T["drf_close3_body" if closing else "drf_leave3_body"] + ((" " + T["pho_leave3_lost"]) if lost else ""), "ok": T["drf_choice_save"], "cancel": T["drf_choice_stay"],
                     "choices": [{"key": "save", "text": T["drf_choice_save"], "kind": "primary"}, {"key": "discard", "text": discard, "kind": "danger"}, {"key": "stay", "text": T["drf_choice_stay"], "kind": "secondary"}],
                     "first": "save", "after": kind}
-        return {"title": T["drf_leave_title"], "body": (T["drf_close_body"] if closing else T["drf_leave_body"]) + note, "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
+        return {"title": T["drf_leave_title"], "body": T["drf_close_body"] if closing else T["drf_leave_body"], "ok": T["drf_close_ok"] if closing else T["drf_leave_ok"], "cancel": T["drf_cancel"]}
 
     def discard_leave(self):
         self.leave_asked = None
@@ -399,7 +427,7 @@ class DraftsController:
             return "saving"
         if self.saved_snapshot is None:
             return "unsaved"
-        return "saved" if (self.title, self.body) == self.saved_snapshot else "changed"
+        return "saved" if (self.title, self.body) == self.saved_snapshot and not self.photos_unsaved() else "changed"
 
     def _start_store(self, op, work, callbacks, **fields):
         """저장 작업 하나를 시작한다 — 진행 정보(`store_pending`)를 **먼저** 적고 시작한다(작업이 곧바로 끝나도 답이 받을 곳을 안다). 이미 도는 작업이 있으면 None."""
@@ -418,7 +446,7 @@ class DraftsController:
                 "replaced": tuple(replaced) if replaced else None}
         return SaveRequest(self.title, self.body, tuple(body.core_keywords), tuple(body.sub_keywords), tuple(body.tags), body.category or "", body.summary or "",
                            getattr(result, "candidate_id", "") or (target.candidate_id if target is not None else ""), getattr(body, "topic", "") or "", self.blog or result.blog,
-                           self.post_type, result.post_type, dict(result.options or {}), base, self.saved_id, self.saved_rev)
+                           self.post_type, result.post_type, dict(result.options or {}), base, self.saved_id, self.saved_rev, self.photos.manifest if self.photos_unsaved() else None)
 
     def start_save(self, on_progress=None, on_done=None, on_error=None, on_cancel=None, *, after=None):
         """`저장`(Ctrl+S) — 지금 편집기의 글을 작업 스레드에서 저장한다. `(상태, 작업)`: `unavailable`(저장 기능이 없다·초안이 없다) · `making`(새 초안을 만드는 중) · `busy`(다른 저장 작업이 도는 중) · `started`.
@@ -435,7 +463,7 @@ class DraftsController:
         return ("started", job) if job is not None else ("busy", None)
 
     def apply_saved(self, outcome):
-        """저장이 끝났다 → `(상태, 이어서 할 일)`: `saved` 또는 `left`(그 사이 화면을 떠났다 — 저장은 됐고 이 화면에는 아무것도 하지 않는다). 저장한 글을 기억해 '저장됨' 이 된다(저장하는 동안 더 친 글은 '저장한 뒤 고쳤어요')."""
+        """저장이 끝났다 → `(상태, 이어서 할 일)`: `saved` · `photos_failed`(글은 저장했는데 **사진 정보만** 저장하지 못했고 저장하고 나가려던 중이다 — 부른 쪽이 나가지 말고 `save_failure_dialog` 로 먼저 경고한다: 그냥 나가면 고친 사진 정보가 조용히 사라진다, 검증 S PS-1·Q PQ-1) · `left`(그 사이 화면을 떠났다 — 저장은 됐고 이 화면에는 아무것도 하지 않는다). 저장한 글을 기억해 '저장됨' 이 된다(저장하는 동안 더 친 글은 '저장한 뒤 고쳤어요')."""
         pending, self.store_pending = self.store_pending, None
         if pending is None or pending.get("op") != "save" or self.result is None:
             return "left", None
@@ -444,6 +472,18 @@ class DraftsController:
         self.saved_snapshot = (request.title, request.body)
         self.save_problem = None
         self.notice = ("ok", T["drf_saved_notice"].format(when=time_text(outcome.updated_at)))
+        if self.photos_lost():                                                       # 깨졌거나 못 열린 사진 정보 파일 위라 넣은 사진 정보는 이 저장에 안 들어갔다 — 알림이 글만 저장했다고 사실대로 말한다(검증 S PS-15 — 사진 정보 저장이 실패한 길과 다르다)
+            self.notice = ("info", self.notice[1] + " " + T["pho_saved_without_photos"])
+        photos = getattr(outcome, "photos", "none")
+        if getattr(request, "photos", None) is not None and photos != "failed":
+            self.photos_baseline = request.photos                                    # 사진 정보도 저장했다 — 이 목록이 저장한 판이다(저장하지 못했으면 기준을 그대로 둬 '고쳤어요' 가 남는다)
+        if photos == "failed":
+            message = getattr(outcome, "photos_problem", "") or T["pho_save_fail"]
+            self.notice = ("error", message)
+            after = pending.get("after")
+            if after is not None:                                                    # 확인창에서 `저장` 을 골라 나가려는데 사진 정보만 못 저장했다 — 이어서 나가면 고친 사진 정보가 사라지므로 글 저장 실패와 같은 경고창이 먼저다
+                self.save_problem = DraftFailure(message, code=PHOTO_SAVE_CODE, kind="other")
+                return "photos_failed", after
         return "saved", pending.get("after")
 
     def apply_save_failed(self, failure):
@@ -467,13 +507,16 @@ class DraftsController:
     def save_failure_dialog(self, failure, after=None):
         """저장 실패를 알리는 창의 글. `after` 가 없으면(`저장` 단추) 키·토큰 모양일 때만 창(확인 하나)이고 나머지는 알림 줄이라 None. `after` 가 있으면(확인창에서 `저장` 을 골랐다) **나가기를 막지 않되 경고**한다 —
         `ok`(저장 안 하고 나가기/닫기)·`cancel`(계속 고치기, 처음 포커스)이고 위치·종류 안내(있다면)와 '그래도 나가면 사라져요' 가 본문이다. 찾은 글은 어디에도 없다."""
-        secret = failure.kind == "keyshape"
+        secret, photos = failure.kind == "keyshape", failure.code == PHOTO_SAVE_CODE
         reason = "\n".join(line for line in (failure.user_message, failure.advice) if line)
         if after is None:
             if not secret:
                 return None
             return {"title": T["drf_savefail_secret_title"], "body": reason, "ok": T["drf_savefail_secret_ok"], "cancel": None}
         closing = after[0] == "close"
+        if photos:                                                                   # 글은 저장했고 사진 정보만 못 저장했다 — 그래도 나가면 고친 사진 정보가 사라진다(단추도 글은 저장됐음을 숨기지 않는다)
+            return {"title": T["pho_savefail_leave_title"], "body": reason + "\n\n" + T["pho_savefail_leave_tail"], "ok": T["pho_choice_discard_close" if closing else "pho_choice_discard_leave"],
+                    "cancel": T["drf_choice_stay"], "after": after}
         return {"title": T["drf_savefail_secret_title" if secret else "drf_savefail_leave_title"], "body": reason + "\n\n" + T["drf_savefail_leave_tail"],
                 "ok": T["drf_choice_discard_close" if closing else "drf_choice_discard_leave"], "cancel": T["drf_choice_stay"], "after": after}
 
@@ -542,6 +585,14 @@ class DraftsController:
         self.saved_snapshot = (opened.title, opened.body)
         self.state, self.failure, self.pending = "normal", None, None
         notes = ([T["drf_open_nocandidate"]] if opened.candidate != "found" else []) + ([T["drf_open_context_problem"]] if opened.context_problem else [])
+        state = getattr(opened, "photos_state", "none")
+        manifest = getattr(opened, "photos", None)
+        self.photos_state, self.photos_trash = state, bool(getattr(opened, "photos_trash", False))
+        if state == "ok" and manifest is not None:
+            self.photos.load(manifest)
+            self.photos_baseline = manifest
+            self.made_photos = self._photos_to_place() or ()                    # 연 초안의 본문이 어떤 사진으로 만들어졌는지는 모른다 — 연 순간의 사진과 같다고 본다(그 뒤 바꾸면 알린다)
+        notes += [T["pho_open_broken"]] if state == "broken" else ([T["pho_open_unreadable"]] if state == "unreadable" else [])
         self.notice = ("info", " ".join(notes)) if notes else None
         return True
 
@@ -590,7 +641,9 @@ class DraftsController:
         pending, self.store_pending = self.store_pending, None
         if pending is None or pending.get("op") != "delete":
             return False
-        self.list_notice = ("ok", T["drf_deleted_notice"])
+        photos = getattr(outcome, "photos", "none")
+        text = T["drf_deleted_notice"] + (" " + T["pho_deleted_trash"] if photos == "trash" else (" " + T["pho_deleted_trash_fail"] if photos == "failed" else ""))
+        self.list_notice = ("error" if photos == "failed" else "ok", text)
         return True
 
     def apply_delete_failed(self, failure):
@@ -599,6 +652,107 @@ class DraftsController:
             return False
         self.list_notice = ("error", T["drf_deletefail"])
         return True
+
+    # ---- 사진 정보 되돌리기·사본 비우기(운영자 확인 024) — 저장한 초안을 지울 때 사진 정보가 되돌릴 사본으로 남는다. 모두 작업 스레드에서 서비스가 하고 한 번에 하나만 돈다 ----
+    def _photos_to_place(self):
+        """본문에 넣을 사진 — 확정한 사진만, 경로·파일 이름 없이(`draft_inputs`). 사진 정보 검사(키·토큰 모양)가 막으면 None."""
+        from ...content.photo_manifest import draft_inputs                       # 무거운 모듈은 쓰는 함수 안에서 늦게 가져온다(이 파일의 규칙)
+        try:
+            return draft_inputs(self.photos.manifest)
+        except AppError:
+            return None
+
+    def photos_card(self):
+        """오른쪽 '사진' 카드 — 사진 목록의 카드에 '고쳤는데 저장 안 함' 안내와 되돌릴 사본의 단추(되돌리기·비우기)를 더한다. 사진이 있으면 되돌리기는 꺼진다(지금 사진을 덮어쓰지 않는다)."""
+        trash = self.can_save and self.saved_id is not None and self.photos_trash
+        card = self.photos.card(unsaved=self.photos_unsaved(), trash=trash)
+        if self.result is not None and self.photos_lost():                              # 저장할 수 없는 상태 — 카드가 '저장되지 않아요' 를 지속 안내로 말한다(깨짐·못 엶 상태별 문장)
+            card["unsaved"] = T["pho_card_lost_broken" if self.photos_state == "broken" else "pho_card_lost_unreadable"]
+        current = self._photos_to_place() if self.result is not None else None
+        card["remake"] = T["pho_card_remake"] if current is not None and current != self.made_photos else ""          # 만든 뒤 확정한 사진·자리·글이 바뀌었다 — 본문은 몰래 고치지 않는다
+        if card["trash"] is not None:
+            savable = self.photos_savable()
+            card["trash"] = dict(card["trash"], restore_enabled=self.photos.count == 0 and not self.store_busy and savable, clear_enabled=not self.store_busy)
+            if not savable:                                                          # 저장해 둔 사진 정보 파일이 깨졌거나 못 열렸다 — 되돌리기는 그 파일 때문에 늘 거절된다(서비스의 안전한 거절): 켜 두지 않고 까닭을 사실대로 말한다(검증 S PS-13)
+                card["trash"]["restore_note"] = T["pho_restore_blocked_file"]
+        return card
+
+    def start_restore_photos(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """`사진 정보 되돌리기` — 되돌릴 사본을 사진 정보로 되돌린다. `(상태, 작업)`: `unavailable`(되돌릴 사본이 없거나 저장한 초안이 아니다) · `occupied`(지금 사진이 있다 — 덮어쓰지 않는다) · `busy` · `started`."""
+        if not (self.can_save and self.result is not None and self.saved_id is not None and self.photos_trash):
+            return "unavailable", None
+        if self.photos.count:
+            return "occupied", None
+        if self.store_busy:
+            return "busy", None
+        draft_id, provider = self.saved_id, self.provider
+        job = self._start_store("restore_photos", lambda progress, cancelled: provider.restore_photos(draft_id, progress, cancelled), {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel},
+                                draft_id=draft_id)
+        return ("started", job) if job is not None else ("busy", None)
+
+    def apply_photos_restored(self, outcome):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "restore_photos" or self.result is None or self.saved_id != pending.get("draft_id"):
+            return False
+        self.photos.load(outcome.manifest)
+        self.photos_baseline, self.photos_trash, self.photos_state = outcome.manifest, False, "ok"
+        from ...content import photo_manifest as pm                              # 무거운 모듈은 쓰는 함수 안에서 늦게 가져온다(이 파일의 규칙)
+        if pm.placeholder_report(self.photos.manifest, self.body).ok:              # 본문에 이미 그 사진들의 자리가 있고 어긋남이 없다 — 열 때와 같은 규칙으로 '본문을 만든 사진' 으로 본다(어긋나면 그대로 둬 '다시 만들기' 안내가 남는다, 검증 Q PQ-3)
+            self.made_photos = self._photos_to_place() or ()
+        self.notice = ("ok", T["pho_restored_notice"])
+        return True
+
+    def apply_restore_photos_failed(self, failure):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "restore_photos" or self.result is None:
+            return "left"
+        kind = failure.kind if isinstance(failure, DraftFailure) else "other"
+        if kind == "notfound":
+            self.photos_trash = False                         # 사본이 이미 없다 — 단추도 거둔다
+        self.notice = ("error", failure.user_message if isinstance(failure, DraftFailure) else T["pho_restore_fail"])
+        return kind
+
+    def trash_clear_dialog(self):
+        """`사진 정보 사본 비우기` 확인창의 글 — 사본이 없으면 None. 비우면 되돌릴 수 없다(사진 파일은 그대로)."""
+        if not (self.can_save and self.saved_id is not None and self.photos_trash):
+            return None
+        self.trash_asked = True
+        return {"title": T["pho_trash_clear_btn"], "body": T["pho_trash_clear_ask"], "ok": T["pho_trash_clear_yes"], "cancel": T["pho_trash_clear_no"]}
+
+    def discard_trash_clear(self):
+        self.trash_asked = False
+
+    def start_clear_trash(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
+        """확인창에서 `사본 비우기` 를 눌렀다 — 확인창을 보이지 않았으면 아무것도 하지 않는다(`unconfirmed`). `(상태, 작업)`: `unconfirmed` · `busy` · `started`."""
+        if not self.trash_asked or self.saved_id is None or not self.photos_trash or not self.can_save:
+            return "unconfirmed", None
+        if self.store_busy:
+            return "busy", None
+        draft_id, provider = self.saved_id, self.provider
+        job = self._start_store("clear_photos_trash", lambda progress, cancelled: provider.clear_photos_trash(draft_id, progress, cancelled), {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel},
+                                draft_id=draft_id)
+        if job is None:
+            return "busy", None
+        self.trash_asked = False
+        return "started", job
+
+    def apply_trash_cleared(self, outcome):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "clear_photos_trash" or self.result is None or self.saved_id != pending.get("draft_id"):
+            return False
+        self.photos_trash = False
+        self.notice = ("ok", T["pho_trash_cleared_notice"])
+        return True
+
+    def apply_clear_trash_failed(self, failure):
+        pending, self.store_pending = self.store_pending, None
+        if pending is None or pending.get("op") != "clear_photos_trash" or self.result is None:
+            return "left"
+        kind = failure.kind if isinstance(failure, DraftFailure) else "other"
+        if kind == "notfound":
+            self.photos_trash = False
+        self.notice = ("error", T["pho_trash_clear_fail"])
+        return kind
 
     # ---- 점검 ----
     def inspect(self):
@@ -769,11 +923,51 @@ class DraftsController:
             return None
         if self.blocks_for(item):
             return None
+        if item in ("body", "all") and "{{" in text:                                    # 사진 자리표시자는 네이버 편집기에서 사진을 올릴 자리 표시(`[이미지 N]`)로 바꿔 복사한다
+            from ...content import photo_flow
+            return photo_flow.to_copy_text(text)
         return text
+
+    def photo_gate_lines(self, item):
+        """복사 전 확인창에 보일 사진 줄들 → `(어긋남 줄들, 올릴 사진 줄들)` — 본문·전체 복사에만, 사진 번호와 짧은 파일 이름뿐이다(경로·글 없음). 사진도 자리표시자도 없으면 둘 다 비어 있다(지금과 같다)."""
+        if item not in ("body", "all"):
+            return (), ()
+        from ...content import photo_manifest as pm
+        manifest, body = self.photos.manifest, self.body
+        if not manifest.photos and not pm.find_placeholders(body):                         # 사진 기능을 쓰지 않는 글(사진도 정확한 사진 자리도 없다)은 지금과 같다 — 다른 중괄호 글은 글 모양 점검의 몫이다
+            return (), ()
+        report = pm.placeholder_report(manifest, body)
+        join = lambda numbers: ", ".join(str(number) for number in numbers)
+        problems = []
+        for name, key in (("dangling", "pho_gate_dangling"), ("unconfirmed", "pho_gate_unconfirmed"), ("missing", "pho_gate_missing"), ("repeated", "pho_gate_repeated")):
+            numbers = getattr(report, name)
+            if numbers:
+                problems.append(T[key].format(numbers=join(numbers)))
+        if report.order_differs:
+            problems.append(T["pho_gate_order"])
+        if report.stray:
+            problems.append(T["pho_gate_stray"].format(n=report.stray))
+        uploads = []
+        if not problems:
+            for number in dict.fromkeys(report.found):                                  # 본문에 처음 나온 순서
+                photo = manifest.by_number(number)
+                uploads.append(T["pho_gate_upload_line"].format(n=number, name=short_name(photo.local_path) or T["pho_gate_no_name"]))
+        return tuple(problems), tuple(uploads)
+
+    def photo_gate_notes(self, item):
+        """복사 전 확인창에 알릴 것(막지 않는다) → 튜플 — 본문에 파일 경로처럼 보이는 글이 있으면 한 줄(사진 메모·대상·설명에 붙여 넣은 경로가 복사된 글에 그대로 들어간다, 검증 S PS-4). 경로 글 자체는 어디에도 보이지 않는다.
+        사진 기능을 쓰는 글(사진이 있거나 정확한 사진 자리가 있다 — `photo_gate_lines` 와 같은 문)에만 — 사진 없는 글은 지금과 같다."""
+        if item not in ("body", "all"):
+            return ()
+        from ...content import photo_manifest as pm
+        if not self.photos.manifest.photos and not pm.find_placeholders(self.body):
+            return ()
+        return (T["pho_gate_paths"],) if pm.looks_like_path(self.body) else ()
 
     def gate(self, item):
         _specific, _common, gate_lines, unknown = self.checks()
-        return rules.gate_for(item, self._inspect_now(), gate_lines, unknown, self.ack, health=self.health_for(item))
+        problems, uploads = self.photo_gate_lines(item)
+        return rules.gate_for(item, self._inspect_now(), gate_lines, unknown, self.ack, health=self.health_for(item), photos=problems, uploads=uploads, notes=self.photo_gate_notes(item))
 
     def copy_decision(self, item):
         """복사 단추를 눌렀다 → `(결정, 내용)`: `unavailable`·`blocked`(키 모양·건강 효과 단정 — 내용은 안내창 글)·`confirm`(확인창 글 — 보인 뒤에만 `confirm_copy` 가 글을 준다)·`copy`(복사할 글). **이 함수는 클립보드에 쓰지 않는다.**"""
@@ -826,14 +1020,31 @@ class DraftsController:
         """복사 전 확인창의 글 — 묶음마다 머리 한 줄과 항목(앞 셋까지, 나머지는 개수). 취소가 처음 포커스이고 `그래도 복사` 를 눌러야 복사한다."""
         if [name for name, _items in gate.reasons] == ["unchanged"]:                       # 부드러운 안내뿐이면 '확인 권장' 을 읽었나가 아니라 안내 하나만 — 막지 않는다
             return {"title": T["drf_soft_title"], "body": T["drf_soft_body"], "ok": T["drf_gate_ok"], "cancel": T["drf_cancel"], "count": gate.count}
-        heads = {"check": T["drf_gate_checks"], "domain": T["drf_gate_domain"], "claims": T["drf_gate_claims"], "unchanged": T["drf_gate_unchanged_head"]}
+        names = [name for name, _items in gate.reasons]
+        if names and all(name in rules.INFO_GATE_GROUPS for name in names):             # 알려 드리는 것뿐(올릴 사진 순서·파일 경로 안내)이면 '확인 권장' 이 아니라 그것만 보인다 — 막지 않는다
+            reasons = dict(gate.reasons)
+            lines = []
+            if "uploads" in reasons:
+                items = reasons["uploads"]
+                lines += [T["pho_gate_uploads"].format(n=len(items))] + [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in items[:UPLOAD_LINES]]
+                if len(items) > UPLOAD_LINES:
+                    lines.append(T["drf_gate_more"].format(n=len(items) - UPLOAD_LINES))
+                lines.append(T["pho_upload_tail"])                                      # `[이미지 N]` 이 무엇인지 — 올릴 사진 목록 바로 뒤(검증 Q PQ-20)
+            lines += reasons.get("paths", ())                                           # 파일 경로처럼 보이는 글이 있다는 한 줄(경로 글 자체는 없다) — 그 설명 뒤
+            return {"title": T["pho_upload_title" if "uploads" in reasons else "pho_paths_title"], "body": chr(10).join(lines), "ok": T["pho_upload_ok"], "cancel": T["drf_cancel"], "count": 0}
+        heads = {"check": T["drf_gate_checks"], "domain": T["drf_gate_domain"], "claims": T["drf_gate_claims"], "unchanged": T["drf_gate_unchanged_head"], "photos": T["pho_gate_photos"], "uploads": T["pho_gate_uploads"]}
         lines = []
         for name, items in gate.reasons:
+            if name == "paths":                                                         # 알려 드리는 한 줄 — 건수 머리 없이 그대로(경로 글 자체는 없다)
+                lines += list(items)
+                continue
             lines.append(heads[name].format(n=len(items)))
-            shown = items[:3]
+            shown = items[:UPLOAD_LINES if name == "uploads" else 3]
             lines += [T["drf_gate_line"].format(text=rules.shown(text, 120)) for text in shown]
             if len(items) > len(shown):
                 lines.append(T["drf_gate_more"].format(n=len(items) - len(shown)))
+            if name == "uploads":                                                       # 섞인 창에서도 `[이미지 N]` 이 무엇인지 한 줄 — 올릴 사진 목록 바로 뒤(검증 Q PQ-9·PQ-20), 경로 줄은 그 뒤다
+                lines.append(T["pho_upload_tail"])
         lines.append(T["drf_gate_tail"])
         return {"title": T["drf_gate_title"].format(n=gate.count), "body": chr(10).join(lines), "ok": T["drf_gate_ok"], "cancel": T["drf_cancel"], "count": gate.count}
 
@@ -924,7 +1135,7 @@ class DraftsController:
         pending = self.options_pending()
         return {"open": self.options_open, "toggle": T["drf_options_close" if self.options_open else "drf_options_open"], "title": T["drf_options_title"], "note": T["drf_options_note"],
                 "blog_title": T["drf_blog_label"], "blogs": blogs, "type_title": T["drf_type_label"], "types": kinds, "fields": self._fields(),
-                "apply": {"text": T["drf_remake"], "tip": T["drf_remake_tip"], "enabled": not self.busy}, "pending": pending, "pending_text": T["drf_options_pending"] if pending else "", "photos": self.photos.card()}
+                "apply": {"text": T["drf_remake"], "tip": T["drf_remake_tip"], "enabled": not self.busy}, "pending": pending, "pending_text": T["drf_options_pending"] if pending else "", "photos": self.photos_card()}
 
     def title_picks(self):
         """제목 후보 셋의 줄 — 지금 제목 칸의 글과 같은 후보가 선택으로 보인다(글을 칠 때마다 이것만 다시 만들어 보인다)."""
@@ -979,7 +1190,7 @@ class DraftsController:
             "tags": {"title": T["drf_side_tags"], "items": [rules.shown(item, 40) for item in body.tags], "copy": self._copy_button("tags", T["drf_copy_tags"])},
             "category": {"title": T["drf_side_category"], "text": rules.shown(body.category, 60) if body.category else T["drf_category_none"], "missing": not body.category},
             "summary": {"title": T["drf_side_summary"], "text": rules.shown(body.summary, 200), "copy": self._copy_button("summary", T["drf_copy_summary"])},
-            "photos": self.photos.card(),
+            "photos": self.photos_card(),
             "image": {"title": T["drf_side_image"], "state": self.image_state, "state_text": T["drf_image_skip" if self.image_state == "skip" else "drf_image_before"], "desc": T["drf_image_desc"],
                       "button": T["drf_image_undo" if self.image_state == "skip" else "drf_image_btn"], "button_a11y": T["drf_image_undo_a11y" if self.image_state == "skip" else "drf_image_btn_a11y"]},
             "checks": {"title": T["drf_side_checks"], "status": self._source_status(specific, common), "open_text": T["conn_group_open"], "closed_text": T["conn_group_closed"], "specific": {"key": "specific", "title": T["drf_chk_specific"], "lines": list(specific), "open": True, "empty": T["drf_chk_specific_none"], "chip": T["drf_chk_count"].format(n=len(specific)), "tone": "warning" if specific else "muted"},

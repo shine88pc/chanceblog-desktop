@@ -89,7 +89,7 @@ def _refuse_stop(row, legacy):
     return report
 
 
-def make_body_for_engine(ctx, candidate_id, *, blog=None, post_type=None, options=None):
+def make_body_for_engine(ctx, candidate_id, *, blog=None, post_type=None, options=None, photos=()):
     """엔진 후보(번호 전체)로 규칙 기반 초안 한 개를 만든다. 읽기만 한다. 오류는 `make_body` 와 같은 코드(`CONTENT_INVALID`·`DRAFT_OPTION_INVALID`·`CANDIDATE_INVALID` …)이고 후보가 없으면 `TOPIC_CANDIDATE_NOT_FOUND` 다."""
     options = options if options is not None else do.DraftOptions()
     draft.refuse_long_tokens(options)
@@ -101,7 +101,7 @@ def make_body_for_engine(ctx, candidate_id, *, blog=None, post_type=None, option
     snapshot = blog_profiles.read_snapshot(ctx)
     channel = next(item for item in snapshot.profiles if item.key == chosen)
     names = tuple((item.key, item.display_name) for item in snapshot.profiles if item.key in ("naver_a", "naver_b"))
-    body = db.build_body(legacy, profile, options, today=draft.today_kst(ctx), blog=chosen, post_type=post_type, channel=channel, safety=report)
+    body = db.build_body(legacy, profile, options, today=draft.today_kst(ctx), blog=chosen, post_type=post_type, channel=channel, safety=report, photos=photos)
     old_url = getattr(profile, "blog_url", "") if profile is not None else ""
     blog_url, address = (old_url, "profile") if old_url else channel_address(channel.blog_ref)           # 옛 네이버 프로필에 주소가 있으면 지금까지와 같다 — 없을 때만 채널 프로필(블로그 관리 화면)에서 얻는다
     return EngineBody(row.candidate.candidate_id, row.ordinal, row.candidate.channel, chosen, body.post_type, body, options, row.candidate.work_status == cd.REJECTED, found, snapshot.state == tf.STATE_OK,

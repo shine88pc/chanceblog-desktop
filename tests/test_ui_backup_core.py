@@ -161,6 +161,12 @@ class ProviderShapeTest(unittest.TestCase):
 
 
 class TextTest(unittest.TestCase):
+    def test_the_backup_description_says_the_keys_and_the_photo_info_are_not_in_it(self):
+        """검증 Q PQ-12 — 사진 정보(사진 파일도 아니다)는 백업에 들어가지 않는다(운영자 확인 023·024). 사용자가 백업에서 되살려도 사진 목록이 없는 까닭을 화면이 말한다."""
+        self.assertIn("키", T["backup_desc"])
+        self.assertIn("사진 정보", T["backup_desc"])
+        self.assertIn("들어가지 않아요", T["backup_desc"])
+
     def test_every_backup_text_key_is_in_the_table_and_obeys_the_text_rules(self):
         from chanceblog_desktop.ui.core.backup_text import BACKUP_T
         self.assertGreater(len(BACKUP_T), 100)

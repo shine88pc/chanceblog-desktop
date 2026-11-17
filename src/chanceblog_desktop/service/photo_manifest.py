@@ -14,8 +14,9 @@
     그 위에 쓰지 않는다(`broken` 만 덮어쓴다). 더 새로운 판(`STORE_VERSION_UNSUPPORTED`)은 지금은 `broken` 으로 묶인다 — 덮어쓰면 새 판의 글이 `.bak` 으로 옮겨질 뿐 사라지지는 않지만, 3단계 화면은 이 경우 덮어쓰기를 권하지 않는다.
   · **쓴 파일을 못 읽는 상태를 만들지 않는다** — 저장할 글이 `MAX_FILE_BYTES`(512KB)를 넘으면 아무것도 쓰지 않고 거절한다(분석 결과를 쓰는 최악의 경우는 그보다 크고 기본 길은 훨씬 작다).
   · **`orphans` 는 fail closed** — '지금 있는 초안 번호' 가 list·tuple·set 이 아니거나 모양이 틀린 번호가 하나라도 있으면 거절한다. 초안 저장소를 읽지 못했을 때는 부르지 않는다.
-  · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나와 그 번호의 임시 파일의 `unlink` 뿐이다. 되돌릴 수 없다(전체 백업에는 아직 담지 않는다 — 결정 D-496).
-    초안을 지울 때 사진 정보를 함께 지우는 연결은 3단계에서 한다(1단계는 기존 코드를 바꾸지 않는다) — 그 사이에 남은 파일은 `orphans` 로 찾을 수 있다.
+  · **지우기는 파일 하나만 정확히 지운다** — 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`), 번호가 정한 파일 하나와 그 번호의 임시 파일의 `unlink` 뿐이다. 되돌릴 수 없다(전체 백업에는 담지 않는다 — 결정 D-496).
+    앱이 저장한 초안을 지울 때는 이 함수가 아니라 `trash_manifest` 를 부른다(3단계, 운영자 확인 024) — 사진 정보 파일을 완전히 지우지 않고 초안마다 한 벌뿐인 되돌릴 사본(`<초안 번호>.json.trash`)으로 옮긴다. 사진이 0장인 파일은 지킬 글이 없어 사본으로 옮기지 않고
+    지운다(빈 목록이 앞서 둔 쓸모 있는 사본을 덮지 않게 — 검증 S PS-5). 사본은 `.json` 만 읽는 `list_manifests`·`orphans` 에 나오지 않고, 앱이 사본을 지우는 길은 같은 번호로 되살린 초안의 `사진 정보 사본 비우기`(`clear_trash`)뿐이다.
   · **사진 파일은 읽기만 본다**(`check_files`) — 경로 위의 폴더까지 링크가 아닌지·보통 파일인지·이 PC 에 내려받은 파일인지(클라우드 '오프라인' 표시면 읽으면 내려받기가 일어나므로 거절)를 `lstat` 으로 보고, 확장자·크기(20MB)·실제 형식·긴 변
     경고는 `ui/core/imagerules.judge` 에 맡긴다(규칙을 새로 만들지 않았다). 이미지 읽기 도구(`probe` — Qt 의 `imagecheck.probe`)를 주지 않으면 확장자만 믿은 점검이라 `verified` 가 거짓이다. 파일을 열거나 쓰거나 바꾸지 않고 복사·썸네일도 만들지 않는다.
   · 오류는 기존 오류 체계의 `CONTENT_INVALID`·`CONTENT_NOT_FOUND`·`CONFIRMATION_REQUIRED`·`FILE_WRITE_FAILED`·`DISK_FULL` 이고 문장은 고정이다 — **글·경로·사진 파일 이름을 오류·로그·`repr` 에 되풀이하지 않는다**.
@@ -49,6 +50,8 @@ READ_RETRY_WAITS = (0.03, 0.06)                          # 파일을 못 열었�
 OK, MISSING, LINK, NOT_FILE, CLOUD = "ok", "missing", "link", "not_file", "cloud"
 
 _NAME = re.compile(r"(dd-[0-9a-f]{20})\.json")
+TRASH_SUFFIX = ".json.trash"                             # 되돌릴 사본의 이름 끝(`<초안 번호>.json.trash` — 목록·고아 찾기는 `.json` 만 읽으므로 사본을 모른다)
+_TRASH_NAME = re.compile("(dd-[0-9a-f]{20})[.]json[.]trash")
 _TEMP = re.compile(r"(dd-[0-9a-f]{20})\.json\.(?:\d+-[0-9a-f]{8}\.)?tmp")
 _WHERE = "사진 정보 폴더"                                  # 쓰기 실패 문장에 실제 경로 대신 쓰는 고정 이름
 
@@ -59,6 +62,7 @@ _R_BROKEN = "보관된 사진 정보 파일이 올바르지 않아 열지 않았
 _R_UNREADABLE = "보관된 사진 정보 파일을 지금은 열 수 없어요. 잠시 뒤에 다시 해 주세요"
 _R_TOO_BIG = "사진 정보가 너무 커서 저장할 수 없어요. 사진 수나 분석 결과를 줄여 주세요"
 _R_KNOWN = "지금 있는 초안 번호 목록이 올바르지 않아요"
+_R_EXISTS = "이미 사진 정보가 있어서 되돌리지 않았어요"
 _R_SECRET = "그 부분을 지운 뒤 다시 저장해 주세요 — 앱은 글을 자동으로 지우거나 바꾸지 않아요"          # 앞에 위치와 유형(`scan.describe` — 칸·줄·종류뿐 글 내용 없음)이 붙는다
 _R_FORM = "사진 정보의 모양이 올바르지 않아요"
 _NOT_FOUND = "사진 정보"
@@ -139,7 +143,7 @@ def _folder_problem(folder):
     return None
 
 
-def _scan_names(folder):
+def _scan_names(folder, pattern=None):
     """폴더 안에서 정확한 이름 모양(`<초안 번호>.json`)인 파일들의 초안 번호(정렬) → `(번호들, None)` 또는 `(None, 오류 객체)` — 폴더가 없으면 빈 목록이다."""
     problem = _folder_problem(folder)
     if problem is not None:
@@ -154,7 +158,8 @@ def _scan_names(folder):
         names = None
     if names is None:                                      # `except` 밖에서 만든다 — OS 오류(경로가 든 글)가 따라붙지 않게
         return None, _refuse(_R_FOLDER_READ)
-    return sorted(found.group(1) for found in (_NAME.fullmatch(name) for name in names) if found), None
+    shape = pattern or _NAME
+    return sorted(found.group(1) for found in (shape.fullmatch(name) for name in names) if found), None
 
 
 def _pause(seconds):
@@ -316,6 +321,149 @@ def delete_manifest(ctx, draft_id, *, confirmed):
         raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보 파일을 지우지 못했다")
 
 
+def _trash_of(ctx, draft_id):
+    return folder_path(ctx) / f"{draft_id}{TRASH_SUFFIX}"
+
+
+def _plain_file(info):
+    """링크·폴더가 아닌 보통 파일의 상태 정보인가."""
+    return info is not None and stat.S_ISREG(info.st_mode) and not own_posts._link_like(info)
+
+
+def trash_manifest(ctx, draft_id, *, confirmed):
+    """초안을 지울 때(운영자 확인 024) 그 초안의 사진 정보 파일을 완전히 지우지 않고 **초안마다 한 벌뿐인 되돌릴 사본**으로 옮긴다 → 옮겼으면 `moved`, 사진이 0장인 멀쩡한 파일이라 사본으로 옮기지 않고 지웠으면 `empty`
+    (이미 있던 사본은 건드리지 않는다 — 지킬 글이 없는 빈 목록이 쓸모 있는 사본을 덮지 않게, 검증 S PS-5), 사진 정보 파일이 없었으면 `none`(아무것도 만들지 않는다).
+    옮기기는 이름만 바꾸는 한 번의 `os.replace` 라 반쯤 옮긴 상태가 없고, 이미 있던 사본은 덮어쓴다(같은 초안을 다시 지우면 최근 것만 남는다). 확인(`confirmed=True`)이 있어야 하고(아니면 `CONFIRMATION_REQUIRED`) 폴더·파일·사본 자리가
+    링크이거나 보통 파일이 아니면 거절한다. **사진 파일은 건드리지 않는다**(이 함수는 사진 경로를 받지 않고 사진 정보 파일의 사진 수만 본다). 깨졌거나 지금 못 연 파일도 그대로 옮긴다(내용은 되돌릴 때 확인한다).
+    끝난 뒤(`moved`·`empty`) 같은 초안 번호의 쓰다 남은 임시 파일은 힘닿는 데까지 지운다 — 실패해도 본 작업은 성공이다(강제 종료로 남은 임시 파일에 사진 정보 글이 평문으로 남지 않게, 검증 S PS-10)."""
+    require_confirmation(confirmed, "사진 정보를 되돌릴 사본으로 옮기기")
+    if not is_draft_id(draft_id):
+        raise _refuse(_R_ID)
+    problem = _folder_problem(folder_path(ctx))
+    if problem is not None:
+        raise problem
+    folder = folder_path(ctx)
+    path, target = _file_of(ctx, draft_id), _trash_of(ctx, draft_id)
+    info = _lstat(path)
+    if info is None:
+        return "none"
+    if not _plain_file(info) or (_lstat(target) is not None and not _plain_file(_lstat(target))):
+        raise _refuse(_R_BROKEN)
+    manifest, state = _read_file(path, draft_id)
+    if state == "none":
+        return "none"                                      # 그 사이 사라졌다 — 옮길 것이 없다
+    empty = state == "ok" and not manifest.photos          # 멀쩡하고 사진이 0장 — 지킬 글이 없다(깨졌거나 지금 못 연 파일은 내용을 모르므로 그대로 옮긴다)
+    failed = False
+    try:
+        if empty:
+            path.unlink(missing_ok=True)                   # 사본으로 옮기지 않고 이 파일만 지운다 — 앞서 둔 사본은 그대로
+        else:
+            os.replace(path, target)
+    except OSError:
+        failed = True
+    if failed:                                             # `except` 밖에서 낸다 — OS 오류(경로가 든 글)가 따라붙지 않게
+        raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보 파일을 지우지 못했다" if empty else "사진 정보를 되돌릴 사본으로 옮기지 못했다")
+    try:
+        leftovers = _leftovers(folder, draft_id)           # 쓰다 프로세스가 죽어 남은 이 번호의 임시 파일(사진 정보 글이 평문으로 든다) — 본 작업은 끝났으므로 못 찾거나 못 지워도 성공이다
+    except OSError:
+        leftovers = []
+    for temp in leftovers:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            continue
+    return "empty" if empty else "moved"
+
+
+def restore_manifest(ctx, draft_id):
+    """되살린 초안에서 `사진 정보 되돌리기` — 되돌릴 사본을 사진 정보 파일 자리로 옮긴다 → `Loaded(목록, "ok")`. 사본이 없으면 `CONTENT_NOT_FOUND`. 사본을 먼저 읽어 이 초안의 멀쩡한 사진 정보인지 확인한다 —
+    깨졌거나(`CONTENT_INVALID`) 지금 못 열면 사본은 그대로 두고 거절한다. 이미 사진 정보 파일이 있으면 덮어쓰지 않고 거절한다(`CONTENT_INVALID` — 두 파일이 다 남는다). 단 그 파일이 **멀쩡하고 사진이 0장**이면 지킬 글이 없으므로
+    사본으로 덮어쓴다(저장한 적 있는 빈 사진 정보가 되돌리기를 영원히 막는 막다른 길을 만들지 않는다, 검증 S PS-5·Q PQ-5). 깨졌거나 지금 못 열었거나 링크·폴더인 파일은 내용을 모르므로 덮어쓰지 않는다.
+    덮어쓴 0장 파일의 사진 번호 예약(`next_number`)이 사본의 것보다 크면 **큰 쪽**을 쓴다 — 사본의 작은 값으로 돌아가면 지운 사진 번호를 새 사진이 물려받아 본문에 남은 옛 `{{사진 N}}` 자리와 겹친다(검증 S PS-14).
+    큰 값으로 다시 쓰다 실패해도 되돌리기는 이미 끝났다(사본의 바이트가 사진 정보 파일이다 — 예약은 사본의 값 그대로)."""
+    if not is_draft_id(draft_id):
+        raise _refuse(_R_ID)
+    problem = _folder_problem(folder_path(ctx))
+    if problem is not None:
+        raise problem
+    source, target = _trash_of(ctx, draft_id), _file_of(ctx, draft_id)
+    manifest, state = _read_file(source, draft_id)
+    if state == "none":
+        raise _not_found()
+    if state == "unreadable":
+        raise _refuse(_R_UNREADABLE)
+    if state != "ok":
+        raise _refuse(_R_BROKEN)
+    reserve = 0                                            # 덮어쓸 0장 파일이 쥐고 있던 사진 번호 예약(없으면 0)
+    if _lstat(target) is not None:
+        live, live_state = _read_file(target, draft_id)
+        if not (live_state == "none" or (live_state == "ok" and not live.photos)):          # 그 사이 사라졌거나 사진이 0장인 멀쩡한 파일만 덮어써도 된다 — 사진이 있거나 내용을 모르는 파일은 그대로 두고 거절한다
+            raise _refuse(_R_EXISTS)
+        if live_state == "ok":
+            reserve = live.next_number
+    failed = False
+    try:
+        os.replace(source, target)
+    except OSError:
+        failed = True
+    if failed:
+        raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보를 되돌리지 못했다")
+    if reserve > manifest.next_number:                     # 0장 파일의 예약이 사본의 것보다 크다 — 큰 쪽으로 한 번 더 쓴다(`save_manifest` 의 같은 원자적 쓰기). 다시 쓰기가 실패해도 되돌리기는 끝났으니 사본의 값 그대로 돌려준다
+        merged = dataclasses.replace(manifest, next_number=reserve)
+        rewrite = None
+        try:
+            save_manifest(ctx, draft_id, merged)
+        except AppError as error:
+            rewrite = error.code
+            error.__traceback__ = None                     # 호출 흔적이 붙드는 경로를 놓는다
+        if rewrite is None:
+            manifest = merged
+    return Loaded(manifest, "ok")
+
+
+def clear_trash(ctx, draft_id, *, confirmed):
+    """`사진 정보 사본 비우기` — 되돌릴 사본 파일 하나만 지운다(확인 `confirmed=True` 가 있어야 하고, 사진 정보 파일·다른 초안의 사본·사진 파일은 건드리지 않는다). 사본이 없으면 `CONTENT_NOT_FOUND`, 링크·폴더면 거절한다."""
+    require_confirmation(confirmed, "사진 정보 사본 비우기")
+    if not is_draft_id(draft_id):
+        raise _refuse(_R_ID)
+    problem = _folder_problem(folder_path(ctx))
+    if problem is not None:
+        raise problem
+    path = _trash_of(ctx, draft_id)
+    info = _lstat(path)
+    if info is None:
+        raise _not_found()
+    if not _plain_file(info):
+        raise _refuse(_R_BROKEN)
+    state = "gone"
+    try:
+        path.unlink()
+        state = "done"
+    except FileNotFoundError:
+        state = "gone"
+    except OSError:
+        state = "failed"
+    if state == "gone":
+        raise _not_found()
+    if state == "failed":
+        raise AppError("FILE_WRITE_FAILED", {"경로": _WHERE}, detail="사진 정보 사본을 지우지 못했다")
+
+
+def has_trash(ctx, draft_id):
+    """그 초안에 되돌릴 사본이 있는가(읽기만 — `사진 정보 되돌리기` 단추를 보일지 정한다). 번호 모양이 틀리거나 폴더가 링크면 거짓이다."""
+    if not is_draft_id(draft_id) or _folder_problem(folder_path(ctx)) is not None:
+        return False
+    return _plain_file(_lstat(_trash_of(ctx, draft_id)))
+
+
+def list_trash(ctx):
+    """되돌릴 사본이 있는 초안 번호들(정렬 — 읽기만, 파일을 열지 않고 이름만 본다). 폴더가 없으면 빈 목록이고 아무것도 만들지 않는다."""
+    found, problem = _scan_names(folder_path(ctx), _TRASH_NAME)
+    if problem is not None:
+        raise problem
+    return tuple(draft_id for draft_id in found if _plain_file(_lstat(_trash_of(ctx, draft_id))))
+
+
 def list_manifests(ctx):
     """보관한 사진 정보들의 초안 번호(정렬) — 읽기만 한다. 읽을 수 없는 파일은 건너뛰고 개수만 `skipped` 로 알린다. 폴더가 없으면 빈 목록이고 아무것도 만들지 않는다."""
     found, problem = _scan_names(folder_path(ctx))
@@ -397,4 +545,4 @@ def check_files(manifest, *, probe=None):
     return tuple(results)
 
 
-__all__ = ["FileCheck", "Listing", "Loaded", "check_files", "delete_manifest", "folder_path", "inspect_photo", "is_draft_id", "list_manifests", "load_manifest", "orphans", "save_manifest"]
+__all__ = ["FileCheck", "Listing", "Loaded", "check_files", "clear_trash", "delete_manifest", "has_trash", "list_trash", "restore_manifest", "trash_manifest", "folder_path", "inspect_photo", "is_draft_id", "list_manifests", "load_manifest", "orphans", "save_manifest"]

@@ -320,6 +320,20 @@ class PlaceholderTest(unittest.TestCase):
     def test_an_unclosed_opening_is_normal(self):
         self.assertEqual(S.found("{{ 열림만 있어요 {% 이것도 ${ 그리고 {# 도", "placeholder"), [])
 
+    def test_the_photo_slot_the_app_puts_in_the_body_is_normal_and_any_other_shape_is_still_caught(self):
+        """사진 연동 3단계 — 앱이 사진을 넣은 자리 `{{사진 N}}`(정확히 이 모양)은 본문에서 걸지 않는다. 모양이 조금이라도 다르거나 제목에 있으면 그대로 건다."""
+        for number in ("1", "9", "10", "30", "999"):
+            with self.subTest(number):
+                self.assertEqual(S.found("앞 문단\n\n{{사진 " + number + "}}\n\n뒤 문단", "placeholder"), [])
+        for shape in ("{{사진}}", "{{사진 0}}", "{{사진 1000}}", "{{사진 01}}", "{{ 사진 1 }}", "{{사진 1 }}", "{{사진  1}}", "{{사진 1a}}", "{{사진 -1}}", "{{사진 ١}}", "{{그림 1}}", "{{사진 1}} {{이름}}"):
+            with self.subTest(shape):
+                self.assertEqual(len(S.found(shape, "placeholder")), 1, shape)
+        self.assertEqual(len(S.found("제목은 아무거나", "placeholder", title="{{사진 1}} 제목")), 1, "제목에 있는 사진 자리는 걸린다")
+
+    def test_photo_slots_do_not_hide_other_findings_next_to_them(self):
+        text = "{{사진 1}}\n\n안녕 {{이름}} 님\n\n{{사진 2}}\n\n[이름] 님"
+        self.assertEqual([S.caught(text, item) for item in S.found(text, "placeholder")], [["{{이름}}"], ["[이름]"]])
+
     def test_the_double_brace_limit_is_eighty_characters_inside(self):
         self.assertEqual(len(S.found("{{" + "x" * 80 + "}}", "placeholder")), 1)
         self.assertEqual(S.found("{{" + "x" * 81 + "}}", "placeholder"), [])
