@@ -69,7 +69,14 @@ class SameLettersTest(unittest.TestCase):
     def test_the_same_responses_pass_and_the_same_ones_are_refused(self):
         samples = [good_result(), dict(good_result(), id=8), dict(good_result(), extra=1), {"t": "error", "id": 7, "code": "decode"}, {"t": "error", "id": 7, "code": "zzz"},
                    dict(good_result(), lines=[{"text": "a" * 401, "cx": 0.1, "cy": 0.1, "h": 0.1}]), dict(good_result(), lines=[{"text": "a", "cx": 1.5, "cy": 0.1, "h": 0.1}]),
-                   dict(good_result(), lines=[{"text": "a", "cx": 0.1, "cy": 0.1, "h": 0.1, "score": 0.9}]), dict(good_result(), net_attempts=True), dict(good_result(), ms={"det": -1}), [], "x"]
+                   dict(good_result(), lines=[{"text": "a", "cx": 0.1, "cy": 0.1, "h": 0.1, "score": 0.9}]), dict(good_result(), net_attempts=True), dict(good_result(), ms={"det": -1}), [], "x",
+                   dict(good_result(), lines=[{"text": 5, "cx": 0.1, "cy": 0.1, "h": 0.1}]), dict(good_result(), lines=[{"text": None, "cx": 0.1, "cy": 0.1, "h": 0.1}]),
+                   dict(good_result(), lines=[{"text": "a", "cy": 0.1, "h": 0.1}]), dict(good_result(), lines=[{"text": "a", "cx": True, "cy": 0.1, "h": 0.1}]),
+                   dict(good_result(), lines=[{"text": "a", "cx": -0.1, "cy": 0.1, "h": 0.1}]), dict(good_result(), lines=[{"text": "a", "cx": 0.1, "cy": 2, "h": 0.1}]),
+                   dict(good_result(), lines=[{"text": "a", "cx": 0.1, "cy": 0.1, "h": "0.1"}]), dict(good_result(), lines="x"), dict(good_result(), lines=[5]),
+                   dict(good_result(), ms=[1]), dict(good_result(), ms={"det": 1.5}), dict(good_result(), ms={"det": True}), dict(good_result(), net_attempts=-1), dict(good_result(), net_attempts=1.5),
+                   dict(good_result(), net_attempts="0"), {"t": "bye"}, {"t": "ready"}, {"id": 7}, {"t": "result"}, {"t": "error", "id": 7, "code": "decode", "extra": 1}, {"t": "error", "id": 7},
+                   dict(good_result(), trunc=True, dropped=3), dict(good_result(), lines=[])]
         for sample in samples:
             outcomes = []
             for module in (app_side, worker_side):
@@ -87,6 +94,26 @@ class SameLettersTest(unittest.TestCase):
                     module.loads_strict(raw)
             with self.assertRaises(ValueError):
                 module.dumps_line({"x": float("nan")})
+
+    def test_both_sides_turn_a_too_deeply_nested_json_into_a_plain_format_error(self):
+        """라운드 2 — 겹침이 너무 깊은 JSON 은 파이썬이 RecursionError 를 내는데, 그것이 밖으로 새면 응답을 버리고 작업자를 정리하는 길을 건너뛴다. 두 사본 모두 ValueError 로 바꿔 '형식이 틀림' 으로 같게 거절한다."""
+        deep = b"[" * 100000
+        for module in (app_side, worker_side):
+            with self.assertRaises(ValueError):
+                module.loads_strict(deep)
+            with self.assertRaises(ValueError):
+                module.loads_strict(deep.decode("ascii"))
+            with self.assertRaises(module.ProtocolError) as caught:
+                module.parse_header(b"[" * 1500)
+            self.assertEqual(caught.exception.code, "proto")
+            with self.assertRaises(module.ProtocolError):
+                module.validate_result(None, 1)                    # 객체가 아닌 응답도 같은 오류다
+
+    def test_the_header_parser_never_lets_a_non_format_exception_out(self):
+        for module in (app_side, worker_side):
+            for raw in (b"[" * 1500, b"{" * 1500, b'{"t": ' * 300, b"\xff\xfe\x00", b"", b"null", b"1", b'"x"', b"[]", b"{}", b'{"t": 5}', b'{"t": "ocr"}'):
+                with self.assertRaises(module.ProtocolError):
+                    module.parse_header(raw)
 
 
 class FilesAreSafeTest(unittest.TestCase):

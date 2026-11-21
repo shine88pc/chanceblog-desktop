@@ -52,7 +52,10 @@ def loads_strict(raw):
     """바이트/문자열 -> JSON 값. NaN·Infinity·-Infinity 는 거절한다."""
     if isinstance(raw, (bytes, bytearray)):
         raw = bytes(raw).decode("utf-8")
-    return json.loads(raw, parse_constant=_bad_constant)
+    try:
+        return json.loads(raw, parse_constant=_bad_constant)
+    except RecursionError:
+        raise ValueError("JSON 이 너무 깊게 겹쳐 있다") from None
 
 
 def _num_default(o):

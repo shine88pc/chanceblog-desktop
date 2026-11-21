@@ -148,10 +148,11 @@ class OcrAdapter(pov.OcrProvider):
     """글자 읽기 작업자 공급자 — 한 번에 한 요청(`read_rgb` 는 부르는 쪽이 한 스레드에서 차례로 부른다. `cancel`·`shutdown` 은 다른 스레드에서 불러도 된다)."""
 
     def __init__(self, command, *, prepare=None, verify=None, clock=time.monotonic, prepare_timeout=pov.PREPARE_TIMEOUT_S, read_timeout=pov.READ_TIMEOUT_S, cancel_wait=pov.CANCEL_WAIT_S,
-                 idle_exit=pov.IDLE_EXIT_S, work_dir=None, parent_env=None):
+                 idle_exit=pov.IDLE_EXIT_S, work_dir=None, parent_env=None, priority_class=BELOW_NORMAL):
         self.command, self.prepare, self.verify, self.clock = list(command), prepare, verify, clock
+        self.priority_class = priority_class                        # 윈도 우선순위 — 기본은 낮음(BELOW_NORMAL: 사용자가 읽는 동안 기다리고 앱 화면이 우선). 시험이 아주 바쁜 PC 에서 굶지 않게 0 을 줄 수 있다(값만 바꿀 뿐 다른 안전 장치와 무관)
         self.prepare_timeout, self.read_timeout, self.cancel_wait, self.idle_exit = prepare_timeout, read_timeout, cancel_wait, idle_exit
-        self.work_dir = work_dir
+        self.work_dir = work_dir if work_dir is not None else os.path.dirname(os.path.abspath(self.command[0]))       # 작업 폴더는 작업자 폴더(설계 3-6 1겹 — 작업자 폴더의 DLL 이 먼저 잡히고 앱의 작업 폴더에 기대지 않게)
         self.parent_env = parent_env if parent_env is not None else dict(os.environ)
         self.process, self.job, self.temp_dir = None, None, None
         self.lines = queue.Queue()
@@ -181,12 +182,18 @@ class OcrAdapter(pov.OcrProvider):
     def _launch(self):
         capabilities.require_local_ocr("글자 읽기 작업자 시작")
         if self.verify is not None:
-            problem = self.verify()
+            try:
+                problem = self.verify()
+            except Exception:                                       # 확인하다 터졌다 — 확인하지 못한 도구는 띄우지 않는다
+                problem = "verify failed"
             if problem:
                 raise AdapterError("addon_invalid")
-        self.temp_dir = tempfile.mkdtemp(prefix="cbd-ocr-")
+        try:
+            self.temp_dir = tempfile.mkdtemp(prefix="cbd-ocr-")
+        except OSError:
+            raise AdapterError("engine") from None                  # 전용 임시 폴더를 못 만들면 띄우지 않는다
         env = build_environment(self.parent_env, self.temp_dir, self.work_dir)
-        options = {"creationflags": NO_WINDOW | BELOW_NORMAL} if os.name == "nt" else {"start_new_session": True}
+        options = {"creationflags": NO_WINDOW | self.priority_class} if os.name == "nt" else {"start_new_session": True}
         try:
             process = subprocess.Popen(self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=self.work_dir, shell=False, **options)
         except OSError:
@@ -224,8 +231,8 @@ class OcrAdapter(pov.OcrProvider):
         except Exception:
             pass
 
-    def _next(self, deadline):
-        """다음 응답 한 줄 -> 바이트 또는 `_EOF`·`_OVERSIZE`·None(시간이 다 됨). 취소 표시가 있으면 `cancel_wait` 안에서만 기다린다."""
+    def _next(self, deadline, failure=None):
+        """다음 응답 한 줄 -> 바이트 또는 `_EOF`·`_OVERSIZE`·None(시간이 다 됨). 취소 표시가 있으면 `cancel_wait` 안에서만 기다린다. `failure`(요청을 쓰는 스레드의 실패 표시)가 차면 작업자가 떠난 것으로 본다."""
         cancel_deadline = None
         while True:
             if self.cancel_event.is_set() and cancel_deadline is None:
@@ -237,20 +244,30 @@ class OcrAdapter(pov.OcrProvider):
             try:
                 return self.lines.get(timeout=min(0.05, remaining))
             except queue.Empty:
-                if self.process is not None and self.process.poll() is not None and self.lines.empty():
+                process = self.process                              # 다른 스레드가 `_stop` 으로 비울 수 있어 한 번만 읽어 쓴다
+                if failure or (process is not None and process.poll() is not None and self.lines.empty()):
                     return _EOF
 
     def _wait_ready(self):
         got = self._next(self.clock() + self.prepare_timeout)
         if got is None:
-            raise AdapterError("timeout")
+            raise AdapterError("cancelled" if self.cancel_event.is_set() else "timeout")
         if got is _EOF:
             raise AdapterError("died")
         if got is _OVERSIZE:
             raise AdapterError("proto")
         try:
-            proto.validate_ready(proto.loads_strict(got))
-        except (proto.ProtocolError, ValueError):
+            message = proto.loads_strict(got)
+        except Exception:                                           # JSON 이 아니거나 NaN·너무 깊은 겹침 — 모두 약속 위반
+            raise AdapterError("proto") from None
+        if isinstance(message, dict) and message.get("t") == "error":
+            code = message.get("code")                              # 시작 때 작업자가 준비 대신 보내는 오류 줄(모델 확인 실패·엔진 만들기 실패·불러오는 중 네트워크 시도)
+            if set(message) <= {"t", "id", "code"} and message.get("id") is None and code in proto.ERROR_CODES:
+                raise AdapterError(code if code in ("net_blocked", "proto") else "engine")
+            raise AdapterError("proto")
+        try:
+            proto.validate_ready(message)
+        except proto.ProtocolError:
             raise AdapterError("proto") from None
 
     def _ensure_started(self):
@@ -273,10 +290,32 @@ class OcrAdapter(pov.OcrProvider):
                 self._stop(kill=True)
                 return pov.OcrOutcome(error="unavailable" if error.code == "OCR_UNAVAILABLE" else "engine")
 
+    @staticmethod
+    def _check_request(width, height, pixels, size_name):
+        """요청을 만들기 전에 경계에서 먼저 거른다 — 크기 이름·너비·높이(정수·양수·긴 변 1600 이하)·픽셀 길이가 맞아야 작업자를 띄우고 보낸다(나쁜 요청 때문에 작업자를 띄우지 않는다)."""
+        if size_name not in pov.SIZES or type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+            raise AdapterError("decode")
+        if max(width, height) > proto.MAX_LONG_SIDE:
+            raise AdapterError("too_big")
+        try:
+            right_length = len(pixels) == width * height * 3
+        except TypeError:
+            right_length = False
+        if not right_length or not isinstance(pixels, (bytes, bytearray, memoryview)):
+            raise AdapterError("decode")
+
+    @staticmethod
+    def _write_request(process, data, failure):
+        """요청 바이트를 작업자 표준 입력에 쓴다(별도 스레드) — 작업자가 안 읽으면 파이프가 차서 쓰기가 막히므로, 읽는 쪽이 사진 한 장의 시간 초과와 취소를 그대로 지킬 수 있게 따로 쓴다. 실패는 `failure` 에 표시만 한다."""
+        try:
+            process.stdin.write(data)
+            process.stdin.flush()
+        except (OSError, ValueError):
+            failure.append(True)
+
     def _read_locked(self, width, height, pixels, size_name):
         self.cancel_event.clear()
-        if size_name not in pov.SIZES:
-            raise AdapterError("decode")
+        self._check_request(width, height, pixels, size_name)
         try:
             self._ensure_started()
         except AdapterError:
@@ -290,12 +329,11 @@ class OcrAdapter(pov.OcrProvider):
             data = proto.encode_request(req_id, width, height, pixels, size_name)
         except (ValueError, TypeError):
             raise AdapterError("decode") from None
-        try:
-            self.process.stdin.write(data)
-            self.process.stdin.flush()
-        except (OSError, ValueError):
-            raise AdapterError("died") from None
-        got = self._next(self.clock() + self.read_timeout)
+        deadline = self.clock() + self.read_timeout                  # 사진 한 장의 시간은 쓰기 전부터 센다(쓰기가 막혀도 시간 초과는 지켜진다)
+        failure = []
+        writer = threading.Thread(target=self._write_request, args=(self.process, data, failure), daemon=True)
+        writer.start()
+        got = self._next(deadline, failure)
         self.last_activity = self.clock()
         if got is None:
             raise AdapterError("cancelled" if self.cancel_event.is_set() else "timeout")
@@ -303,11 +341,14 @@ class OcrAdapter(pov.OcrProvider):
             raise AdapterError("died")
         if got is _OVERSIZE:
             raise AdapterError("proto")
+        writer.join(self.cancel_wait)
+        if writer.is_alive():
+            raise AdapterError("proto")                              # 요청을 다 읽기도 전에 응답했다 — 약속 위반
         if self.cancel_event.is_set():
             return pov.OcrOutcome(error="cancelled")                 # 취소했는데 끝났다 — 결과는 쓰지 않는다(작업자는 쉰다)
         try:
             message = proto.validate_result(proto.loads_strict(got), req_id)
-        except (proto.ProtocolError, ValueError):
+        except Exception:                                            # 약속 위반(ProtocolError)·JSON 이 아님·NaN·너무 깊은 겹침 — 무엇이든 응답 전체를 버린다
             raise AdapterError("proto") from None
         if message["t"] == "error":
             code = message["code"]
@@ -325,11 +366,15 @@ class OcrAdapter(pov.OcrProvider):
 
     def maybe_idle_exit(self):
         """마지막 읽기 뒤 `idle_exit` 초를 쉬었으면 작업자를 끝낸다 -> 끝냈으면 True(화면 쪽 타이머가 가끔 부른다)."""
-        with self.lock:
+        if not self.lock.acquire(blocking=False):
+            return False                                            # 지금 읽는 중이다 — 쉬는 것이 아니다(화면 스레드의 타이머가 부르므로 기다리지 않는다)
+        try:
             if self.process is not None and self.last_activity is not None and self.clock() - self.last_activity >= self.idle_exit:
                 self._stop(kill=False)
                 return True
             return False
+        finally:
+            self.lock.release()
 
     def _remove_temp(self):
         if self.temp_dir:
@@ -342,12 +387,16 @@ class OcrAdapter(pov.OcrProvider):
         self.process = None
         if process is not None:
             if not kill:
-                try:
-                    process.stdin.write(proto.dumps_line({"t": "bye"}))
-                    process.stdin.flush()
-                    process.wait(timeout=2)
-                except Exception:
-                    pass
+                def polite():
+                    try:
+                        process.stdin.write(proto.dumps_line({"t": "bye"}))
+                        process.stdin.flush()
+                        process.wait(timeout=2)
+                    except Exception:
+                        pass
+                helper = threading.Thread(target=polite, daemon=True)         # 작업자가 안 읽어 파이프가 찼어도 여기서 매달리지 않는다
+                helper.start()
+                helper.join(3)
             if process.poll() is None or kill:
                 kill_tree(process)
             for handle in (process.stdin, process.stdout, process.stderr):
@@ -364,8 +413,12 @@ class OcrAdapter(pov.OcrProvider):
     def shutdown(self):
         """앱 종료 — 작업자를 끝낸다(못 끝내면 트리를 끄고, Job 개체가 마지막 안전망). 여러 번 불러도 같다."""
         self.cancel_event.set()
-        with self.lock:
-            self._stop(kill=False)
+        got = self.lock.acquire(timeout=self.cancel_wait + 3)       # 읽는 중이면 취소 표시를 보고 곧 나온다 — 그래도 못 잡으면 잠금 없이 트리를 끈다(앱 종료가 매달리지 않게)
+        try:
+            self._stop(kill=not got)
+        finally:
+            if got:
+                self.lock.release()
         self.cancel_event.clear()
 
 

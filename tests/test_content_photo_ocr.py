@@ -339,6 +339,48 @@ class DiffersFromTest(unittest.TestCase):
         self.assertTrue(self.board_with(build(1)).differs_from(None))
         self.assertTrue(self.board_with(build(1)).differs_from("x"))
 
+    def test_without_any_analysis_the_new_rule_gives_exactly_the_old_answer_for_random_lists(self):
+        """동작 불변(라운드 2) — 분석 칸이 없는 목록끼리는 새 규칙(저장하는 모양끼리)과 옛 규칙(데이터클래스 같음)의 답이 늘 같다. 글자 읽기를 안 쓰면 '저장 안 한 변경' 판정이 한 글자도 안 바뀐다. 씨앗을 고정한 무작위 300쌍."""
+        import dataclasses
+        import random
+        rng = random.Random(20261122)
+        kinds = ("메뉴판", "간판", "음식", "기타")
+        seen = {True: 0, False: 0}
+        for _ in range(300):
+            base = pm.empty_manifest()
+            for number in range(1, rng.randint(0, 4) + 1):
+                base, _id = pm.add_photo(base, path_of(number), photo_type=rng.choice(kinds), user_note=rng.choice(("", "메모", "다른 메모")))
+            other = base
+            fresh = [20]                                                                      # 새로 넣는 사진의 파일 번호(겹치지 않게 늘기만 한다)
+            for _step in range(rng.randint(0, 3)):
+                if not other.photos:
+                    other, _id = pm.add_photo(other, path_of(fresh[0]), photo_type=rng.choice(kinds))
+                    fresh[0] += 1
+                    continue
+                photo_id = rng.choice(other.photos).photo_id
+                action = rng.choice(("note", "confirm", "remove", "type", "setting", "move", "add"))
+                if action == "note":
+                    other = pm.update_photo(other, photo_id, user_note=rng.choice(("", "메모", "새 메모")))
+                elif action == "confirm":
+                    other = pm.set_confirmed(other, photo_id, rng.choice((True, False)))
+                elif action == "remove":
+                    other = pm.remove_photo(other, photo_id)
+                elif action == "type":
+                    other = pm.update_photo(other, photo_id, photo_type=rng.choice(kinds))
+                elif action == "setting":
+                    other = pm.update_photo(other, photo_id, setting=rng.choice(("", "실내", "야경")))
+                elif action == "move" and len(other.photos) > 1:
+                    other = pm.move_photo(other, photo_id, rng.randint(1, len(other.photos)))
+                elif action == "add" and len(other.photos) < 6:
+                    other, _id = pm.add_photo(other, path_of(fresh[0]), photo_type=rng.choice(kinds))
+                    fresh[0] += 1
+            old_answer = dataclasses.replace(other, draft_id="") != dataclasses.replace(base, draft_id="")
+            board = pv.PhotoBoard()
+            board.load(other)
+            self.assertEqual(board.differs_from(base), old_answer)
+            seen[old_answer] += 1
+        self.assertTrue(seen[True] > 30 and seen[False] > 30, f"표본이 한쪽으로 치우쳤다: {seen}")
+
     def test_the_draft_number_is_still_not_compared(self):
         saved = build(1)
         board = self.board_with(saved)

@@ -21,6 +21,11 @@
 - `build_ocr_addon.py` 는 a 단계 폴더 배치를 전제로 한 경로 상수(`STAGEA`·`PHOTOLAB`·`ASSETS`)가 그대로 있습니다. 저장소 배치에 맞추는 일은 빌드 흐름을 정하는 단계(B3)에서 합니다. B1 에서는 고치지 않았습니다.
 - 앱은 `LOCAL_OCR = False` 이므로 이 도구가 없거나 있어도 작업자를 띄우지 않습니다.
 
+## 시험
+
+- `tests/ocr_worker_probe.py`(시험 전용 실행기 — 앱 묶음·동결 작업자에는 없다)가 이 폴더의 `worker_main.py`·`netguard.py`·`protocol.py` 를 **파이썬 소스 그대로** 띄우고 엔진 만들기·모델 파일 확인 이름만 가짜로 바꿔 끼운다. `tests/test_ocr_worker_guard.py` 가 그것으로 소켓 가드(바깥 시도는 막혀 `net_blocked`·루프백은 통과)·가드 적재 순서·실패하면 시작하지 않음·진짜 `serve` 의 약속 처리를 시험한다. 시험이 만드는 바깥 시도는 패킷이 나갈 수 없는 주소(`0.0.0.1`)뿐이다.
+- 이 폴더의 소스를 고치면(특히 `protocol.py`) 앱 쪽 사본 `src/chanceblog_desktop/ui/core/ocr_protocol.py` 도 같은 글자로 고친다 — `tests/test_ocr_protocol_same.py` 가 견준다.
+
 ## 약속(요약)
 
 - 요청(앱 -> 작업자): 머리 한 줄(JSON) + 픽셀 바이트. 사진 경로·파일 이름·사진 번호·종류·메모·`Exif` 는 한 글자도 넣지 않습니다.
