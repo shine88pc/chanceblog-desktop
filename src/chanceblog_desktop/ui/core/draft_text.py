@@ -59,7 +59,7 @@ DRAFT_T = {
     # 확인 권장
     "drf_side_checks": "확인 권장", "drf_chk_specific": "이 글에만 해당", "drf_chk_specific_none": "이 글에만 해당하는 확인 권장은 없어요.", "drf_chk_common": "모든 글 공통", "drf_chk_count": "{n}건",
     "drf_chk_domain": "주제의 분야를 읽지 못했어요 — 일반적인 확인 순서만 담았으니 글이 주제에 맞는지 읽어 보세요.",
-    "drf_chk_replaced": "후보의 ‘{old}’ 형식은 ‘{new}’ 으로 바꿔 구성했어요 — 경험을 지어내지 않아요.",
+    "drf_chk_replaced": "후보의 ‘{old}’ 형식은 ‘{new}’ 형태로 바꿔 구성했어요 — 경험을 지어내지 않아요.",
     "drf_chk_profile": "이 블로그의 프로필이 아직 없어 공통 기본값으로 만들었어요 — 블로그 관리에서 프로필을 정하면 그 값이 먼저 적용돼요.",
     # 출처와 확인 필요 상태(P4e 완료 조건 ⑭) — 확인 권장 카드 맨 위 한 줄: 이 글이 기대는 출처(규칙 기반이라 외부 자료는 없고, 사용자가 적은 참고 주소만 있다)와 확인할 줄 수
     "drf_chk_status": "출처: {source} · 확인 필요 {total}건(이 글에만 해당 {specific}건)",
@@ -156,8 +156,8 @@ DRAFT_T = {
     "drf_open_context_problem": "블로그 이름과 글쓰기 주소는 읽지 못했어요(설정 파일 문제). 글은 그대로 열었어요.",
     "drf_openfail_notfound": "저장한 초안을 찾지 못했어요. 목록을 다시 읽었어요.", "drf_openfail_corrupt": "이 저장한 초안은 읽을 수 없어요. 파일은 고치거나 지우지 않았어요. 목록에서 지울 수 있어요.",
     "drf_openfail_other": "저장한 초안을 열지 못했어요. 잠시 뒤에 다시 시도해 주세요.",
-    "drf_delete_title": "저장한 초안을 지울까요?", "drf_delete_body": "‘{title}’ 을 지워요. 지우기 직전 상태를 백업해 두지만, 되돌리려면 백업에서 복구해야 해요.", "drf_delete_ok": "지우기",
-    "drf_delete_unreadable_body": "읽을 수 없는 초안 {number} 을 지워요. 지우기 직전 상태를 백업해 둬요.", "drf_deleted_notice": "저장한 초안을 지웠어요. 지우기 직전 상태는 백업해 두었어요.",
+    "drf_delete_title": "저장한 초안을 지울까요?", "drf_delete_body": "‘{title}’ 초안을 지워요. 지우기 직전 상태를 백업해 두지만, 되돌리려면 백업에서 복구해야 해요.", "drf_delete_ok": "지우기",
+    "drf_delete_unreadable_body": "읽을 수 없는 초안({number})을 지워요. 지우기 직전 상태를 백업해 둬요.", "drf_deleted_notice": "저장한 초안을 지웠어요. 지우기 직전 상태는 백업해 두었어요.",
     "drf_deletefail": "저장한 초안을 지우지 못했어요. 아무것도 지우지 않았어요. 디스크 공간이나 파일 권한을 확인하고 다시 시도해 주세요.",
     # 떠나기·후보 바꾸기·앱 닫기 앞의 세 갈래 확인창 — 저장 / 저장 안 하고 나가기 / 계속 고치기
     "drf_leave3_title": "저장하지 않은 내용이 있어요", "drf_leave3_body": "이 초안에 고친 내용이 저장되지 않았어요. 저장하고 이동할까요?",
