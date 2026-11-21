@@ -126,6 +126,8 @@ def broken_text(problem):
 
 
 class BackupController:
+    restore_gate = None                                      # 복원이 바꾸는 파일에 쓰는 다른 일이 도는 중이면 참을 돌려주는 함수 — `AppState` 가 이어 준다(F030: 그런 일이 도는 동안은 복원을 시작하지 않는다)
+
     def __init__(self, provider, runner):
         self.provider, self.runner = provider, runner
         self.data = None                                     # 읽은 목록(`BackupsData`)
@@ -149,6 +151,11 @@ class BackupController:
     def busy(self):
         """쓰는 중이다(백업·복원) — 단추가 꺼진다."""
         return self.runner.running(WRITE_KEY)
+
+    @property
+    def restoring(self):
+        """복원(또는 멈춘 복원을 안전 사본으로 되돌리기)이 도는 중이다 — 이 동안 다른 화면의 저장은 시작하지 않는다(`AppState.save_blocked`, F030). 지금 백업(만들기)은 읽기만 해서 세지 않는다."""
+        return self.busy and (self.pending or {}).get("kind") == "restore"
 
     @property
     def loading(self):
@@ -209,8 +216,13 @@ class BackupController:
         row = self.row(name)
         return bool(self.writable and not self.busy and row is not None and status_of(row) != "broken")
 
+    def writing_elsewhere(self):
+        """복원이 바꾸는 파일에 쓰는 다른 일(저장·복제·삭제·등록·후보 만들기)이 도는 중이다 — 복원은 그 일이 끝난 뒤에 시작한다(F030). 짝(`restore_gate`)을 이어 주지 않은 컨트롤러는 아니다."""
+        gate = self.restore_gate
+        return bool(gate is not None and gate())
+
     def restore_dialog(self, name):
-        """복원 확인창의 글 — 무엇이 바뀌는지·안전 사본 위치·되돌리는 법(처음 포커스는 취소). 복원할 수 없는 줄이면 None."""
+        """복원 확인창의 글 —무엇이 바뀌는지·안전 사본 위치·되돌리는 법(처음 포커스는 취소). 복원할 수 없는 줄이면 None."""
         row = self.row(name)
         if row is None or not self.can_restore(name):
             return None
@@ -222,13 +234,15 @@ class BackupController:
         return {"title": T["backup_restore_title"], "body": body, "ok": T["backup_restore_ok"], "cancel": T["backup_restore_cancel"]}
 
     def start_restore(self, name, *, confirmed, **callbacks):
-        """복원 — **확인(`confirmed is True`)이 먼저**다. `(상태, 작업)`: `("unconfirmed", None)` · `("unavailable", None)`(없는 줄·깨진 백업·읽기 전용) · `("busy", None)` · `("started", 작업)`."""
+        """복원 — **확인(`confirmed is True`)이 먼저**다. `(상태, 작업)`: `("unconfirmed", None)` · `("unavailable", None)`(없는 줄·깨진 백업·읽기 전용) · `("writing", None)`(다른 화면의 저장이 도는 중 — F030) · `("busy", None)` · `("started", 작업)`."""
         if confirmed is not True:
             return "unconfirmed", None
         if self.busy:
             return "busy", None
         if not self.can_restore(name):
             return "unavailable", None
+        if self.writing_elsewhere():
+            return "writing", None
         writer = self.provider
         return self._start("restore", name, lambda progress, cancelled: writer.restore_backup(name, progress, cancelled), callbacks)
 
@@ -252,13 +266,15 @@ class BackupController:
         return {"title": T["backup_revert_title"], "body": T["backup_revert_body"].format(when=when, where=self.location_text()), "ok": T["backup_revert_ok"], "cancel": T["backup_restore_cancel"]}
 
     def start_revert(self, *, confirmed, **callbacks):
-        """멈춘 복원을 안전 사본으로 되돌린다 — 복원처럼 **확인(`confirmed is True`)이 먼저**다. `(상태, 작업)`: `("unconfirmed", None)` · `("busy", None)` · `("unavailable", None)`(흔적·안전 사본 없음·읽기 전용) · `("started", 작업)`."""
+        """멈춘 복원을 안전 사본으로 되돌린다 — 복원처럼 **확인(`confirmed is True`)이 먼저**다. `(상태, 작업)`: `("unconfirmed", None)` · `("busy", None)` · `("unavailable", None)`(흔적·안전 사본 없음·읽기 전용) · `("writing", None)`(다른 화면의 저장이 도는 중 — F030) · `("started", 작업)`."""
         if confirmed is not True:
             return "unconfirmed", None
         if self.busy:
             return "busy", None
         if not self.can_revert():
             return "unavailable", None
+        if self.writing_elsewhere():
+            return "writing", None
         writer, name = self.provider, self.interrupted.safety
         return self._start("restore", name, lambda progress, cancelled: writer.revert_interrupted(progress, cancelled), callbacks)
 

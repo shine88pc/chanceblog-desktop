@@ -18,9 +18,10 @@ from __future__ import annotations
 from . import blog_form as bf
 from .blogs import BlogFailure
 from .jobs import JobFailure
+from .save_gate import blocked_while_restoring
 from .text import T
 
-LOAD_KEY = "blogs-load"                                      # 프로필을 읽는 작업의 이름(홈·설정 읽기와 따로 돈다)
+LOAD_KEY = "blogs-load"                                     # 프로필을 읽는 작업의 이름(홈·설정 읽기와 따로 돈다)
 WRITE_KEY = "blogs-write"                                    # 저장·복제·삭제 작업의 이름 — 한 번에 하나(중복 클릭은 거절)
 DEFAULT_SELECTED = "naver_a"
 LIST_STATES = ("loading", "normal", "error")
@@ -29,6 +30,8 @@ FAILURE_TEXT = {"conflict": "blogs_fail_conflict", "busy": "blogs_fail_busy", "i
 
 
 class BlogsController:
+    save_gate = None                                         # 복원이 도는 중이면 참을 돌려주는 함수 — `AppState` 가 이어 준다(F030: 복원 중에는 저장·복제·삭제를 시작하지 않는다)
+
     def __init__(self, provider, runner):
         self.provider, self.runner = provider, runner
         self.state = "loading"
@@ -378,8 +381,9 @@ class BlogsController:
             found.setdefault(name, problem)
         return found
 
+    @blocked_while_restoring
     def start_save(self, **callbacks):
-        """저장 — `(상태, 내용)`: `("busy", None)` 이미 쓰는 중 · `("nothing", None)` 바뀐 것이 없음 · `("invalid", 문제들)` 칸에 문제가 있어 서비스를 부르지 않음(그 칸들을 보이게 한다) · `("started", 작업)`."""
+        """저장 — `(상태, 내용)`: `("busy", None)` 이미 쓰는 중· `("nothing", None)` 바뀐 것이 없음 · `("invalid", 문제들)` 칸에 문제가 있어 서비스를 부르지 않음(그 칸들을 보이게 한다) · `("started", 작업)`."""
         key = self.selected
         if self.data is None or self.busy or key is None:
             return "busy", None
@@ -407,6 +411,7 @@ class BlogsController:
             return False, T["blogs_clone_unsaved"], target
         return allowed, reason, target
 
+    @blocked_while_restoring
     def start_clone(self, **callbacks):
         key = self.selected
         allowed, _reason, target = self.clone_info(key)
@@ -426,6 +431,7 @@ class BlogsController:
         who = T["blogs_del_named"].format(name=bf.shown(named, 30)) if named else T["blogs_del_unnamed"]        # 이름이 없으면 `이 블로그` — `‘이름 없는 블로그’ 블로그` 처럼 '블로그' 가 두 번 읽히지 않는다
         return {"title": T["blogs_del_title"], "body": T["blogs_del_body"].format(who=who), "ok": T["blogs_del_ok"], "cancel": T["blogs_del_cancel"]}
 
+    @blocked_while_restoring
     def start_clear(self, **callbacks):
         """삭제(슬롯 비우기) — 확인창에서 '지우기' 를 눌렀을 때만 불린다. 서비스에는 확인 표시가 진짜 `True` 로 간다."""
         key = self.selected

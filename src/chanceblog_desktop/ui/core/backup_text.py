@@ -33,6 +33,9 @@ BACKUP_T = {
     "backup_restore": "복원", "backup_restore_a11y": "{title}(으)로 복원",
     "backup_busy_create": "백업하는 중이에요. 끝나면 눌러 주세요.", "backup_busy_restore": "복원하는 중이에요. 끝나면 눌러 주세요.", "backup_busy": "처리하는 중이에요. 끝나면 눌러 주세요.",
     "backup_no_write": "이 화면에서는 읽기만 할 수 있어요.", "backup_restore_broken": "깨진 백업이라 복원할 수 없어요.",
+    # 복원과 저장이 겹치지 않게(F030, D-534) — 한 줄 안내(토스트)
+    "backup_blocks_save": "복원하는 중이라 지금은 저장할 수 없어요. 복원이 끝난 뒤에 다시 눌러 주세요. 입력한 내용은 그대로예요.",
+    "backup_wait_save": "저장하는 일이 아직 끝나지 않아 지금은 복원을 시작할 수 없어요. 저장이 끝난 뒤에 다시 눌러 주세요.",
     # 상태 화면
     "backup_loading": "백업 목록을 읽는 중이에요…", "backup_loading_a11y": "백업 목록을 읽는 중",
     "backup_empty_title": "아직 만든 백업이 없어요.", "backup_empty_desc": "‘지금 백업’ 을 누르면 지금 데이터를 한 묶음으로 저장해요.",
