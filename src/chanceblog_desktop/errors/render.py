@@ -15,6 +15,7 @@ from .table import UNEXPECTED, lookup
 
 UNKNOWN_SLOT = "알 수 없음"
 MAX_SLOT_CHARS = 160
+CLI_TAIL_LABEL = "명령줄·개발자 안내:"   # '하실 일' 칸에서 명령줄 사용자·개발자만 읽는 꼬리를 시작하는 이름표(docs/TROUBLESHOOTING.md 의 약속). 앞부분은 누구나 읽는 쉬운 말이다
 
 _SLOT = re.compile(r"「([^」]+)」")
 # 제어 문자·줄/문단 구분자와, 글자 방향을 뒤집거나 보이지 않게 만드는 문자(U+202E 등)가 값에 섞여 화면의 문구를 속이지 못하게 공백으로 바꾼다
@@ -33,6 +34,15 @@ def clean_slot(value):
     return text
 
 
+def card_action(action):
+    """화면 카드에 싣는 '하실 일' — 명령줄 꼬리(`CLI_TAIL_LABEL` 부터 끝까지)를 뺀 앞부분. 이름표가 없으면 글 전체다.
+    이름표 앞이 비어 있으면(앞부분이 없는 행) 빈 안내를 내지 않도록 전체를 그대로 돌려준다 — 시험이 모든 행에 앞부분이 있음을 지킨다."""
+    head, found, _tail = action.partition(CLI_TAIL_LABEL)
+    if not found:
+        return action
+    return head.rstrip() or action
+
+
 @dataclass(frozen=True)
 class Rendered:
     code: str
@@ -41,6 +51,7 @@ class Rendered:
     retry_kind: str
     retry_max: int | None
     retry_text: str
+    card_action: str = ""     # 화면 카드용 하실 일(명령줄 꼬리 없음) — 명령줄 출력은 `action` 전체를 쓴다
 
 
 MASK_UNAVAILABLE = "(가릴 수 없어 생략)"
@@ -69,7 +80,7 @@ def render(code, slots=None):
     """코드와 자리표시자 값 → 화면에 보일 문구. 모르는 코드는 UNEXPECTED_ERROR 문구."""
     info = lookup(code)
     values = dict(slots or {})
-    return Rendered(info.code, _fill(info.message, values), _fill(info.action, values), info.retry_kind, info.retry_max, info.retry)
+    return Rendered(info.code, _fill(info.message, values), _fill(info.action, values), info.retry_kind, info.retry_max, info.retry, _fill(card_action(info.action), values))
 
 
 class AppError(Exception):
@@ -115,4 +126,4 @@ class AppError(Exception):
         return f"{self.code}: {shown.message}"
 
 
-__all__ = ["AppError", "Rendered", "UNEXPECTED", "UNKNOWN_SLOT", "clean_slot", "render"]
+__all__ = ["AppError", "CLI_TAIL_LABEL", "Rendered", "UNEXPECTED", "UNKNOWN_SLOT", "card_action", "clean_slot", "render"]

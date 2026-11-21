@@ -263,7 +263,7 @@ class RegistryTest(Base):
         doc = (ss.ROOT / "docs" / "TROUBLESHOOTING.md").read_text(encoding="utf-8")
         row = next(line for line in doc.splitlines() if line.startswith("| `KEY_FAILOVER_TERMS_REQUIRED`"))
         self.assertIn(c.TERMS_NOTICE, row)
-        for phrase in ("약관", "본인 소유의 정당한 키", "이 프로그램에 없습니다"):
+        for phrase in ("약관", "본인 소유의 정당한 키", "이 프로그램에 없어요"):
             self.assertIn(phrase, c.TERMS_NOTICE)
 
     def test_the_github_repository_purpose_takes_no_key_and_says_why_without_any_value(self):

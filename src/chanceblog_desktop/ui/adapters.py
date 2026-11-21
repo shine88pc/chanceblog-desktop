@@ -82,7 +82,7 @@ def failure_from(error):
     if error.code in WRITE_WORDED_CODES:
         return ServiceFailure(T["data_unreadable"], code=error.code, retryable=True)
     shown_text = render(error.code, {name: mask(value) for name, value in error.slots.items()})
-    return ServiceFailure(f"{shown_text.message} {shown_text.action}".strip(), code=error.code, retryable=True)
+    return ServiceFailure(f"{shown_text.message} {shown_text.card_action}".strip(), code=error.code, retryable=True)             # 카드에는 명령줄 꼬리(`명령줄·개발자 안내:`)를 싣지 않는다(F028)
 
 
 def engine_failure(error):
