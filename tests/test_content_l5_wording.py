@@ -1,8 +1,9 @@
-"""규칙 기반 초안의 '공식 자료' 표기(F117)와 어색한 문장(F116) 고치기(결정 D-549에서 D-553)를 못박는 시험 — 순수 함수라 네트워크·파일·PySide6 없이 돈다.
+"""규칙 기반 초안의 '공식 자료' 표기(F117)와 어색한 문장(F116) 고치기(결정 D-549에서 D-552)를 못박는 시험 — 순수 함수라 네트워크·파일·PySide6 없이 돈다.
 
 지키는 것:
   1) **바뀐 문장 표**(`CHANGES`·`UI_CHANGES`): 고친 문장 스물한 곳과 화면 문구 셋의 옛 글이 지금 표에 한 군데도 없고 새 글이 정확히 한 번 있다. 새 글은 숫자·물결표·주소·평가 단정·1인칭 체험 없이
-     `check/claims.py` 검사를 모든 분야·두 말투로 통과하고, 옛 글과 **공백 뺀 글자 수·공백 수가 같다**(해요체·합니다체 모두) — 본문 분량 맞추기(`draft_body._fit`)가 고치지 않은 선택 문장을 켜고 끄지 않게 하려는 것이다.
+     `check/claims.py` 검사와 입구 검사(주제 엔진 `check_text` 의 안전 단계·사용자 글칸 `photo_manifest.check_text`)를 모든 분야·두 말투로 통과하고, 옛 글과 **공백 뺀 글자 수·공백 수가 같다**(해요체·합니다체 모두) —
+     본문 분량 맞추기(`draft_body._fit`)가 고치지 않은 선택 문장을 켜고 끄지 않게 하려는 것이다.
   2) **공식 자료 표기**: 확인할 곳(W) 목록에는 판매 페이지·예약 페이지·지도 앱·전문 업체처럼 공식이 아닌 곳이 있다 — W 자리가 든 문장은 그곳을 '공식 자료'·'공식 안내'라고 부르지 않고 '기준' 으로 삼으라고도 하지 않는다.
      '공식' 은 곳이 아니라 내용(공식 순서)에만 붙는다. 어떤 분야·어느 항목이 들어가도 마찬가지다.
   3) **조사**: 장소 글의 한 줄 요약은 '…에 가기 전에는' 이고, 확인 권장의 `「낱말」 이/가` 는 받침에 맞으며, 화면 문구는 값의 받침을 읽지 않는 고정 낱말로 받는다.
@@ -25,6 +26,7 @@ from chanceblog_desktop.content import body_bank as bb  # noqa: E402
 from chanceblog_desktop.content import body_blocks as blk  # noqa: E402
 from chanceblog_desktop.content import body_lang as bl  # noqa: E402
 from chanceblog_desktop.content import body_library  # noqa: E402
+from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
 from chanceblog_desktop.content import draft_body as db  # noqa: E402
 from chanceblog_desktop.content import draft_plan as dp  # noqa: E402
 from chanceblog_desktop.content import photo_flow as pf  # noqa: E402
@@ -44,22 +46,22 @@ NON_OFFICIAL_W = ("판매 페이지의 상세 안내", "예약 페이지의 안�
 CHANGES = (
     ("F117-1", "template", "{c3:은/는} {w1} 같은 공식 자료에서 확인하는 것이 기본이에요.", "{c3:은/는} {w1} 같은 곳에서 꼼꼼히 확인하는 것이 기본이에요."),
     ("F117-2", "template", "다른 글에 적힌 내용과 다르면 {w2:을/를} 기준으로 삼아요.", "다른 글에 적힌 내용과 다르면 {w2:을/를} 정확히 확인해요."),
-    ("F117-3", "template", "{w1} 같은 공식 자료에서 확인할 수 있는 항목부터 보면 시간이 줄어요.", "{w1}에서 곧바로 확인할 수 있는 항목을 먼저 보면 시간이 한결 줄어요."),
+    ("F117-3", "template", "{w1} 같은 공식 자료에서 확인할 수 있는 항목부터 보면 시간이 줄어요.", "{w1}에서 곧바로 확인할 수 있는 항목을 우선 보면 시간이 많이 줄어요."),
     ("F117-4", "template", "조건이 적혀 있지 않으면 {w1} 같은 공식 자료에서 확인해요.", "조건이 적혀 있지 않으면 {w1} 같은 곳에서 꼼꼼히 확인해요."),
     ("F117-5", "template", "조건이 적혀 있지 않으면 {w1} 같은 공식 자료에서 확인하세요.", "표에 조건이 빠져 있다면 {w1} 같은 곳에서 곧바로 확인하세요."),
     ("F117-6", "template", "{w1} 같은 공식 자료에 적힌 순서가 있다면 그것을 먼저 따라요.", "{w1} 같은 곳에 공식 순서가 적혀 있다면 그것을 먼저 따라가요."),
     ("F117-7", "template", "조건과 호환 여부는 {w1} 같은 공식 자료에 나와 있어요.", "조건과 호환 여부는 {w1} 같은 곳에서 알아볼 수 있어요."),
-    ("F117-8", "template", "운영 시간과 휴무는 {w1} 같은 공식 자료에서 확인해요.", "운영 시간과 휴무는 {w1} 같은 곳에서 꼼꼼히 확인해요."),
+    ("F117-8", "template", "운영 시간과 휴무는 {w1} 같은 공식 자료에서 확인해요.", "운영 시간과 휴무는 {w1} 같은 곳에서 정확히 확인해요."),
     ("F117-9", "template", "글을 읽는 때의 공식 안내를 {w1} 같은 곳에서 한 번 더 확인하세요.", "혹시 달라진 점이 없는지 {w1} 같은 곳에서 한 번 더 확인해 보세요."),
-    ("F117-10", "template", "{W:을/를} 기준으로 삼으면 돼요.", "{W}에서 먼저 살펴보면 돼요."),
+    ("F117-10", "template", "{W:을/를} 기준으로 삼으면 돼요.", "{W}에서 한번 살펴보면 돼요."),
     ("F117-11", "template", "기준으로 삼은 곳이 한 곳뿐이라면 가능하면 두 곳에서 같은 내용인지 대조해요.", "확인했던 곳이 한 곳뿐이라면 가능하면 두 곳에서 같은 내용인지 서로 대조해요."),
     ("F116-1", "template", "{kw:을/를} 가기 전에는 위치, 이용 방법, 운영 정보, 예약 방식을 확인해요.", "{kw}에 가기 전에는 위치, 이용 방법, 운영 정보, 예약 방식을 확인해요."),
     ("F116-2", "template", "{b2:은/는} 어떤 작업을 하든 시작하기 전에 먼저 챙겨 두세요.", "{b2:은/는} 어떤 방법을 쓰든 빠뜨리지 말고 먼저 챙겨 두세요."),
     ("F116-3", "template", "어디서부터 들어야 할지 막막해지기 쉬운 주제예요.", "어디부터 시작해야 할지 막막해지기 쉬운 주제예요."),
     ("F116-4", "template", "{c1:은/는} 처한 환경에 따라, {c2:은/는} 하는 방식에 따라 중요도가 달라져요.", "{c1:은/는} 처한 환경에 따라, {c2:은/는} 세운 목적에 따라 중요도가 달라져요."),
     ("F116-5", "template", "추측으로 채운 기능 목록은 선택을 흐려요.", "추측으로 채운 기능 목록은 판단을 흐려요."),
-    ("F116-6", "template", "예약과 취소 규정은 예약을 정하기 전에 읽어 두는 것이 안전해요.", "예약과 취소 규정은 예약하기 전에 미리 읽어 두는 것이 안전해요."),
-    ("F116-7", "template", "글을 읽는 때의 정보를 {w1} 같은 곳에서 확인하세요.", "달라진 게 없는지 {w1} 같은 곳에서 직접 확인하세요."),
+    ("F116-6", "template", "예약과 취소 규정은 예약을 정하기 전에 읽어 두는 것이 안전해요.", "예약과 취소 규정은 예약을 잡기 전에는 읽어 두는 것이 안전해요."),
+    ("F116-7", "template", "글을 읽는 때의 정보를 {w1} 같은 곳에서 확인하세요.", "달라진 게 없는지 {w1} 같은 곳에서 한번 확인하세요."),
     ("F116-8a", "item", "케이스 크기와 전원 용량을 놓치는 것", "케이스 크기와 전원 용량을 모르는 것"),
     ("F116-8b", "item", "주차나 대중교통 정보를 놓치는 것", "주차나 대중교통 정보를 모르는 것"),
     ("F116-9", "constant", "값은 바뀔 수 있으니 올리는 날 한 번 더 확인해 주세요.", "값은 바뀔 수 있으니 이용 전에 한 번 더 확인해 주세요."),
@@ -187,6 +189,21 @@ class ChangeTableTest(unittest.TestCase):
                     self.assertLessEqual(order.index(safety.check_text([after]).stage), order.index(safety.check_text([before]).stage))
         self.assertGreater(checked, 600)
 
+    def test_the_new_sentences_pass_the_entrance_check_the_users_own_texts_pass(self):
+        """사용자가 적는 글칸의 입구 검사(`photo_manifest.check_text` — 보이지 않는 글자·마크업·키 모양·개인 번호·결과를 약속하는 표현)를 새 문장도 그대로 통과하고 글이 바뀌지 않는다."""
+        checked = 0
+        for name, kind, _old, new in CHANGES:
+            texts = [new]
+            if kind == "template":
+                texts = [*fills(new), *(bl.tidy(bl.in_style(sentence, bl.STYLE_HAPSYO)) for sentence in fills(new))]
+            for text in texts:
+                checked += 1
+                with self.subTest(change=name, text=text):
+                    clean, reason = pm.check_text("user_note", text)
+                    self.assertIsNone(reason)
+                    self.assertEqual(clean, text)
+        self.assertGreater(checked, 600)
+
     def test_the_screen_texts_changed_as_listed(self):
         for key, old, new in UI_CHANGES:
             with self.subTest(key=key):
@@ -240,13 +257,13 @@ class OfficialLabelTest(unittest.TestCase):
 
     def test_the_official_info_section_of_a_place_post_lists_the_places_without_making_one_the_standard(self):
         paragraph = body_library.LIBRARY[PLACE]["official"][0]
-        self.assertEqual(paragraph[1], "{W}에서 먼저 살펴보면 돼요.")
+        self.assertEqual(paragraph[1], "{W}에서 한번 살펴보면 돼요.")
         self.assertNotIn("기준으로 삼", " ".join(paragraph))
         for body in (body_of(make(*CANDIDATES[7])), body_of(make(*CANDIDATES[8]), blog="naver_b")):
             official = next(block for block in body.blocks if block.key == "official")
             text = " ".join(official.paragraphs)
             self.assertNotIn("기준으로 삼", text)
-            self.assertIn("에서 먼저 살펴보면 돼요.", text)
+            self.assertIn("에서 한번 살펴보면 돼요.", text)
 
 
 class ParticleTest(unittest.TestCase):
