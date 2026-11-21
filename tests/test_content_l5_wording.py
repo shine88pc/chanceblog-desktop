@@ -29,6 +29,7 @@ from chanceblog_desktop.content import draft_body as db  # noqa: E402
 from chanceblog_desktop.content import draft_plan as dp  # noqa: E402
 from chanceblog_desktop.content import photo_flow as pf  # noqa: E402
 from chanceblog_desktop.content.draft_options import DraftOptions  # noqa: E402
+from chanceblog_desktop.topics import safety  # noqa: E402
 from chanceblog_desktop.ui.core import draft_rules as rules  # noqa: E402
 from chanceblog_desktop.ui.core import draft_text  # noqa: E402
 from test_content_body_library import BANNED, FIRST_PERSON, KEYWORDS, TYPES, all_templates, flat_items, sample_values  # noqa: E402
@@ -169,6 +170,22 @@ class ChangeTableTest(unittest.TestCase):
                 converted = bl.split_ending(hapsyo(bl.fill(new, {slot: "표본" for slot in bl.slots_of(new)})))[0]
                 if converted.endswith("요"):
                     self.assertTrue(converted.endswith(("세요", "까요")), converted[-6:])
+
+    def test_the_new_sentences_never_raise_the_safety_stage_of_the_sentence_they_replace(self):
+        """주제 엔진의 입구 검사(`topics.safety.check_text`)는 복사 관문(`ui/core/drafts.review_health`)이 쓰는 판정기다 — 같은 값으로 채운 옛·새 문장을 견줘 단계가 오르지 않는다."""
+        order = safety.HEALTH_STAGES
+        checked = 0
+        for name, kind, old, new in CHANGES:
+            if kind == "template":
+                pairs = list(zip(fills(old), fills(new)))
+                self.assertEqual(len(fills(old)), len(fills(new)), name)
+            else:
+                pairs = [(old, new)]
+            for before, after in pairs:
+                checked += 1
+                with self.subTest(change=name, before=before):
+                    self.assertLessEqual(order.index(safety.check_text([after]).stage), order.index(safety.check_text([before]).stage))
+        self.assertGreater(checked, 600)
 
     def test_the_screen_texts_changed_as_listed(self):
         for key, old, new in UI_CHANGES:
@@ -321,6 +338,15 @@ class WordingTest(unittest.TestCase):
                 with self.subTest(keyword=keyword, type=post_type, blog=blog, sentence=sentence):
                     self.assertFalse("놓치는 것" in sentence and "놓치는 부분" in sentence, sentence)
         self.assertGreater(count, 8000)
+
+    def test_no_template_filled_from_the_lists_turns_the_same_mistake_around(self):
+        """모든 문장 틀 x 분야 x 목록 항목 자리(전수) — '자주 놓치는 부분은 …놓치는 것이에요' 꼴이 어느 조합에도 없다."""
+        count = 0
+        for template in live_templates():
+            for sentence in fills(template):
+                count += 1
+                self.assertFalse("놓치는 것" in sentence and "놓치는 부분" in sentence, sentence)
+        self.assertGreater(count, 9000)
 
     def test_a_post_with_a_price_ends_that_paragraph_with_a_sentence_a_reader_can_follow(self):
         options = DraftOptions(price_date=("2026-11-01 기준 가격 1만원",))
