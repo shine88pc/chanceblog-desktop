@@ -57,7 +57,9 @@ OS_CALLS["os.replace"] = OS_CALLS["os.replace"] | {("photo_manifest.py", "trash_
 OS_CALLS["os.rename"] = {("backup_flow.py", "_finish_folder")}
 # 파일을 읽기 전용으로 여는 곳(내장 `open`)은 **(파일, 함수)** 하나뿐이다 — 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는 `own_posts.py` 의 `_read_prefix`.
 # 허용은 모드가 글자 `rb` 인 `open(경로, "rb")` 호출에만 걸린다 — 쓰기·덧붙이기·갱신 모드와 모드를 안 적은 호출·`.open` 속성 호출은 그대로 걸린다(합성 소스로 시험한다).
-READ_OPENS = {("own_posts.py", "_read_prefix")}
+# 글자 읽기 추가 도구 폴더 확인(결정 D-512, 설계 3-10 (7)): `service/ocr_addon.py` 는 추가 도구 폴더의 정보 파일·모델·DLL 을 해시로 확인하려고 읽기만 한다 — 파일을 여는 곳은 **`_open_read` 한 함수**(열기 모드는 글자 `rb`)이고 나머지 함수는 이 함수를 거친다.
+# 허용은 (파일, 함수) 단위이고 모드 검사도 그대로다(쓰기·덧붙이기·갱신 모드나 다른 함수의 `open` 은 걸린다 — 합성 소스로 시험한다). 이 서비스는 어떤 파일도 쓰지 않는다(`test_service_ocr_addon.py` 가 소스 모양도 본다).
+READ_OPENS = {("own_posts.py", "_read_prefix"), ("ocr_addon.py", "_open_read")}
 WRITE_CALLS = {"write_text", "write_bytes", "write", "unlink", "mkdir", "rmdir", "replace", "rename", "remove", "rmtree", "copy", "copy2", "copyfile", "copytree", "move", "touch", "open", "makedirs", "chmod"}
 ENV_NAMES = {"CHANCEBLOG_DESKTOP_DATA", "CHANCEBLOG_LOCAL_REPO", "LOCALAPPDATA", "XDG_DATA_HOME", "APPDATA", "USERPROFILE"}      # 뒤의 둘은 PCSEC1 M1 — 데이터 폴더가 사용자 프로필 안인지 문자열로 견주려고 위치만 읽는다(값을 쓰지 않는다)
 OTHER_NAMES = {"VERSION", "O_BINARY"}           # 파일 이름(프로그램 버전을 적은 파일) · 잠금 파일을 만들 때 Windows 에서 쓰는 열기 표시(os.O_BINARY)
@@ -258,14 +260,35 @@ class SourceRulesTest(unittest.TestCase):
             ("own_posts.py", "def _read_prefix(p):\n    p.open('rb')\n", True), ("own_posts.py", "def _read_prefix(p):\n    os.open(p, 0)\n", True), ("own_posts.py", "def other(p):\n    open(p, 'rb')\n", True),
             ("projects.py", "def _read_prefix(p):\n    open(p, 'rb')\n", True), ("cli.py", "def _read_prefix(p):\n    open(p, 'rb')\n", True), ("own_posts.py", "def _read_prefix(p):\n    open(p, 'rb')\n    p.write_bytes(b'')\n", True),
             ("own_posts.py", "def _read_prefix(p, f):\n    open(p, 'rb', opener=f)\n", True), ("own_posts.py", "def _read_prefix(p):\n    io.open(p, 'rb')\n", True),
+            # 글자 읽기 추가 도구 확인(결정 D-512) — `_open_read` 의 `rb` 한 줄만 되고, 쓰기 모드·다른 함수·다른 파일·이름 붙은 인자는 걸린다
+            ("ocr_addon.py", "def _open_read(p):\n    return open(p, 'rb')\n", False),
+            ("ocr_addon.py", "def _open_read(p):\n    return open(p, 'wb')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return open(p, 'ab')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return open(p, 'rb+')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return open(p)\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return open(p, mode='rb')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return io.open(p, 'rb')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return p.open('rb')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    return os.open(p, 0)\n", True),
+            ("ocr_addon.py", "def verify(p):\n    return open(p, 'rb')\n", True),
+            ("ocr_addon.py", "def _sha256(p):\n    open(p, 'rb')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    p.write_bytes(b'')\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    p.unlink()\n", True),
+            ("ocr_addon.py", "def _open_read(p):\n    shutil.copyfile(p, p)\n", True),
+            ("projects.py", "def _open_read(p):\n    return open(p, 'rb')\n", True),
+            ("cli.py", "def _open_read(p):\n    return open(p, 'rb')\n", True),
         )
         for file_name, source, violated in cases:
             with self.subTest(file=file_name, source=source.replace("\n", " ; ")[:60]):
                 self.assertEqual(bool(write_violations(file_name, ast.parse(source))), violated, source)
 
-    def test_the_read_only_open_allowance_is_exactly_one_function_in_one_file(self):
-        """읽기 전용 열기 허용(`READ_OPENS`)을 몰래 넓히면(함수를 하나 더 넣는 것 등) 여기서 걸린다 — 허용은 `own_posts.py` 의 `_read_prefix` 하나뿐이다(독립 검증의 변이 S07, OWNFIX D4)."""
-        self.assertEqual(READ_OPENS, {("own_posts.py", "_read_prefix")})
+    def test_the_read_only_open_allowance_is_exactly_the_two_known_functions(self):
+        """읽기 전용 열기 허용(`READ_OPENS`)을 몰래 넓히면(함수를 하나 더 넣는 것 등) 여기서 걸린다 — 허용은 `own_posts.py` 의 `_read_prefix` 와 `ocr_addon.py` 의 `_open_read`(결정 D-512 — 글자 읽기 추가 도구를 해시로 확인하려고 읽기만 한다) 둘뿐이다
+        (독립 검증의 변이 S07, OWNFIX D4 — 예전에는 `_read_prefix` 하나였다. 하나 늘린 것이 T3 허용 +1 이고 모드 검사는 그대로다)."""
+        self.assertEqual(READ_OPENS, {("own_posts.py", "_read_prefix"), ("ocr_addon.py", "_open_read")})
+        function = next(node for node in parse(SERVICE / "ocr_addon.py").body if isinstance(node, ast.FunctionDef) and node.name == "_open_read")
+        body = [node for node in function.body if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
+        self.assertEqual([ast.unparse(node) for node in body], ["return open(path, 'rb')"], "`_open_read` 는 읽기 전용으로 여는 한 줄뿐이다")
 
     def test_only_the_known_environment_variables_are_named_and_no_secret_words_appear(self):
         secret_words = re.compile(r"(?i)\b(api[_ -]?key|secret|token|passw(?:or)?d|credential)s?\b")
@@ -356,6 +379,62 @@ class StoreDraftWritersTest(unittest.TestCase):
         names = [arg.arg for arg in delete.args.kwonlyargs]
         self.assertIn("confirmed", names)
         self.assertIsNone(delete.args.kw_defaults[names.index("confirmed")], "확인에는 기본값이 없다(빠뜨리면 TypeError)")
+
+
+NL = chr(10)                                     # 합성 소스의 줄바꿈(시험 소스에 백슬래시 글자를 쓰지 않으려고)
+# 글자 읽기 어댑터(`ui/ocr_adapter.py`, 결정 D-512, 설계 3-10 (7))가 파일 시스템을 건드리는 곳 — **함수 이름 -> 그 함수에서 불러도 되는 이름**. 어댑터가 하는 파일 일은 작업자 전용 임시 폴더를 만들고(`_launch` 의 `mkdtemp`) 끝나면 지우는 것(`_remove_temp` 의 `rmtree`)뿐이다.
+# 이유: 작업자의 `TEMP`·`TMP` 를 사용자의 임시 폴더에서 떼어 빈 폴더로 주려는 것이고(설계 3-6 의 1겹) 어댑터는 사진·결과를 파일로 쓰지 않는다. 그 밖의 파일 열기·쓰기·지우기·옮기기는 허용하지 않는다(서비스 쪽 `FILE_WRITERS`·`READ_OPENS` 와 같은 방식으로 (함수) 단위로 못박는다 — 예전에는 이 파일이 아무 시험에도 걸리지 않았다).
+ADAPTER_FILE_USE = {"_launch": {"mkdtemp"}, "_remove_temp": {"rmtree"}}
+ADAPTER_FILE_NAMES = WRITE_CALLS | {"mkdtemp", "mkstemp", "NamedTemporaryFile", "TemporaryDirectory", "TemporaryFile", "SpooledTemporaryFile", "symlink", "link", "truncate", "fdopen", "read_text", "read_bytes", "listdir", "scandir", "walk", "glob", "rglob", "iterdir", "FileIO"}
+
+
+def adapter_violations(tree):
+    """어댑터 소스에서 허용 밖의 파일 시스템 호출을 모은다 — 작업자의 표준 입력(파이프)에 쓰는 `...stdin.write` 는 파일이 아니라서 빼고, 나머지는 (함수, 이름) 이 `ADAPTER_FILE_USE` 에 없으면 걸린다."""
+    found = []
+    for node, function in calls_with_function(tree):
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else (node.func.id if isinstance(node.func, ast.Name) else "")
+        full = ast.unparse(node.func)
+        if name == "write" and full.endswith("stdin.write"):
+            continue
+        if name in ADAPTER_FILE_NAMES and name not in ADAPTER_FILE_USE.get(function, set()):
+            found.append(f"{node.lineno} {function or '(함수 밖)'}: {full}")
+    return found
+
+
+class OcrAdapterFileUseTest(unittest.TestCase):
+    ADAPTER = ss.ROOT / "src" / "chanceblog_desktop" / "ui" / "ocr_adapter.py"
+
+    def test_the_adapter_touches_the_file_system_only_to_make_and_remove_its_own_temp_folder(self):
+        self.assertEqual(adapter_violations(parse(self.ADAPTER)), [], "어댑터가 파일을 열거나 쓰거나 지우는 곳은 임시 폴더를 만드는 `_launch` 와 지우는 `_remove_temp` 뿐이다")
+
+    def test_the_two_allowed_calls_really_exist_where_the_list_says(self):
+        """허용 목록이 빈 약속이 되지 않게 — 허용한 호출이 그 함수에 실제로 있다."""
+        seen = {}
+        for node, function in calls_with_function(parse(self.ADAPTER)):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+            if name in ("mkdtemp", "rmtree"):
+                seen.setdefault(function, set()).add(name)
+        self.assertEqual(seen, ADAPTER_FILE_USE)
+
+    def test_the_rule_fires_on_a_new_file_use_anywhere_else(self):
+        cases = (
+            ("def _launch(p):" + NL + "    tempfile.mkdtemp()" + NL, False), ("def _remove_temp(p):" + NL + "    shutil.rmtree(p)" + NL, False),
+            ("def _launch(p):" + NL + "    shutil.rmtree(p)" + NL, True), ("def _remove_temp(p):" + NL + "    tempfile.mkdtemp()" + NL, True), ("def other(p):" + NL + "    tempfile.mkdtemp()" + NL, True),
+            ("def other(p):" + NL + "    shutil.rmtree(p)" + NL, True), ("def other(p):" + NL + "    open(p, 'rb')" + NL, True), ("def _launch(p):" + NL + "    open(p, 'wb')" + NL, True),
+            ("def other(p):" + NL + "    p.write_text('x')" + NL, True), ("def other(p):" + NL + "    p.write_bytes(b'')" + NL, True), ("def other(p):" + NL + "    p.unlink()" + NL, True),
+            ("def other(p):" + NL + "    p.mkdir()" + NL, True), ("def other(p):" + NL + "    os.remove(p)" + NL, True), ("def other(p):" + NL + "    os.replace(p, p)" + NL, True),
+            ("def other(p):" + NL + "    tempfile.NamedTemporaryFile()" + NL, True), ("def other(p):" + NL + "    tempfile.mkstemp()" + NL, True), ("def other(p):" + NL + "    tempfile.TemporaryDirectory()" + NL, True),
+            ("def other(p):" + NL + "    os.fdopen(1, 'w')" + NL, True), ("def other(p):" + NL + "    shutil.copyfile(p, p)" + NL, True), ("def other(p):" + NL + "    p.read_text()" + NL, True),
+            ("def other(p):" + NL + "    os.listdir(p)" + NL, True), ("def other(p):" + NL + "    os.walk(p)" + NL, True), ("def other(p):" + NL + "    io.FileIO(p)" + NL, True),
+            ("def other(p):" + NL + "    self.process.stdin.write(b'x')" + NL, False), ("def other(p):" + NL + "    process.stdin.write(b'x')" + NL, False), ("def other(p):" + NL + "    handle.write(b'x')" + NL, True),
+            ("def other(p):" + NL + "    sys.stdout.write('x')" + NL, True), ("def other(p):" + NL + "    p.stdout.write(b'x')" + NL, True),
+        )
+        for source, violated in cases:
+            with self.subTest(source=source.replace(NL, " ; ")[:70]):
+                self.assertEqual(bool(adapter_violations(ast.parse(source))), violated, source)
+
+    def test_the_allowance_is_pinned_to_exactly_two_functions(self):
+        self.assertEqual(ADAPTER_FILE_USE, {"_launch": {"mkdtemp"}, "_remove_temp": {"rmtree"}})
 
 
 def setUpModule():

@@ -52,9 +52,14 @@ def worker_command(folder):
     return [os.path.join(folder, WORKER_NAME)]
 
 
+def _open_read(path):
+    """추가 도구 폴더의 파일을 **읽기 전용(`rb`)으로 여는 유일한 곳** — 이 서비스는 어떤 파일도 쓰지 않는다. `tests/test_service_safety.py` 의 `READ_OPENS` 가 이 함수 하나만 허용하고 열기 모드가 글자 `rb` 인지 소스에서 확인한다."""
+    return open(path, "rb")
+
+
 def _sha256(path):
     digest = hashlib.sha256()
-    with open(path, "rb") as handle:
+    with _open_read(path) as handle:
         for chunk in iter(lambda: handle.read(_CHUNK), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -81,7 +86,7 @@ def read_info(folder):
         return None
     if os.path.getsize(path) > MAX_INFO_BYTES:
         raise ValueError("info too big")
-    with open(path, "rb") as handle:
+    with _open_read(path) as handle:
         info = json.loads(handle.read().decode("utf-8"))
     if not isinstance(info, dict):
         raise ValueError("info shape")
@@ -145,4 +150,4 @@ def verify_problem(folder):
     return None if status.ok else (",".join(status.problems) or status.state)
 
 
-__all__ = ["ABSENT", "AddonStatus", "EMBEDDED_FILES", "FOLDER_NAME", "INFO_NAME", "INVALID", "OK", "WORKER_NAME", "addon_folder", "read_info", "verify", "verify_problem", "worker_command"]
+__all__ = ["AddonStatus", "addon_folder", "read_info", "verify", "verify_problem", "worker_command"]       # 상수(ABSENT·OK·INVALID·EMBEDDED_FILES …)는 모듈 이름으로 쓴다 — 서비스 안전 시험이 대문자 글자 상수를 오류 코드나 허용 이름만 받기 때문이다
