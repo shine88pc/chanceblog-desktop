@@ -319,7 +319,7 @@ class AddEntryTest(Base):
     def test_a_second_key_without_the_confirmation_is_refused_and_nothing_is_stored(self):
         self.add()
         error = self.assert_rejected("KEY_FAILOVER_TERMS_REQUIRED", "image_provider", name="예비", fields=values("image_provider", "b"))
-        self.assertEqual(error.rendered().message, "「이미지 공급자」에 둘째 키를 더하려면 약관 확인이 필요해 아직 저장하지 않았습니다.")
+        self.assertEqual(error.rendered().message, "「이미지 공급자」에 둘째 키를 더하려면 약관 확인이 필요해 아직 저장하지 않았어요.")
         self.assertIn("--i-understand-terms", error.rendered().action)
         self.assertIn(c.TERMS_NOTICE, error.rendered().action)
         for flag in (False, None, 0, ""):
@@ -378,7 +378,7 @@ class AddEntryTest(Base):
         for index, name in enumerate(("기본", "예비", "셋째"), start=1):
             self.add(name=name, seed=str(index))
         error = self.assert_rejected("KEY_ENTRY_LIMIT", "image_provider", name="넷째", fields=values("image_provider", "d"), terms_ack=True)
-        self.assertEqual(error.rendered().message, "「이미지 공급자」에는 키 항목을 「3」개까지만 둘 수 있습니다.")
+        self.assertEqual(error.rendered().message, "「이미지 공급자」에는 키 항목을 「3」개까지만 둘 수 있어요.")
         self.assertEqual(len(c.load(self.ctx).entries), 3)
         other = self.add("naver_apihub")                                         # 한도는 용도마다 따로다
         self.assertEqual(other.entry.order, 1)
@@ -763,7 +763,7 @@ class FileFormatTest(Base):
         error = ss.code_of(c.load, self.ctx)
         self.assertEqual(error.code, "CONNECTIONS_FILE_INVALID", label)
         self.assertEqual(self.file_bytes(), before, label)
-        self.assertEqual(error.rendered().message, "연결 설정 파일을 읽을 수 없습니다: 「connections.json」.")
+        self.assertEqual(error.rendered().message, "연결 설정 파일을 읽을 수 없어요: 「connections.json」.")
         for text in surfaces(error):
             for marker in self.markers:
                 self.assertNotIn(marker, text, label)

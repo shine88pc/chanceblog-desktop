@@ -255,7 +255,7 @@ class SwitchRulesTest(GuardCase):
                         self.assertEqual(first.request.closed, result.action in (q.ACT_DONE, q.ACT_STOP))
 
     def test_the_five_non_switch_outcomes_give_a_plain_action_and_never_a_retry(self):
-        expected = {q.AUTH_FAILED: "키가 잘못됐거나 권한이 없습니다", q.BAD_REQUEST: "요청 내용이 올바르지 않습니다", q.POLICY_BLOCKED: "서비스 정책으로 차단됐습니다", q.CONTENT_BLOCKED: "서비스 정책으로 차단됐습니다"}
+        expected = {q.AUTH_FAILED: "키가 잘못됐거나 권한이 없어요", q.BAD_REQUEST: "요청 내용이 올바르지 않습니다", q.POLICY_BLOCKED: "서비스 정책으로 차단됐습니다", q.CONTENT_BLOCKED: "서비스 정책으로 차단됐습니다"}
         for outcome, words in expected.items():
             with self.subTest(outcome=outcome):
                 self.setUp()
@@ -391,7 +391,7 @@ class SwitchRulesTest(GuardCase):
         for _ in range(3):
             denied = self.denied()
             self.assertEqual(denied.code, "auth_failed")
-            self.assertIn("키가 잘못됐거나 권한이 없습니다", denied.reason)
+            self.assertIn("키가 잘못됐거나 권한이 없어요", denied.reason)
         self.assertEqual(self.guard.purpose_status("naver_openapi", keystore=self.ctx.keystore), cn.AUTH_ERROR)
         cn.set_state(self.ctx, first.entry_id[:8], cn.OFF)                                 # 사용자가 직접 끄면 그다음 항목이 첫 항목이 된다
         self.assertEqual(self.lease().entry_id, second.entry_id)
@@ -701,7 +701,7 @@ class StateFileTest(GuardCase):
                 path.write_text(broken, encoding="utf-8")
                 view = self.guard.usage("naver_openapi")[0]
                 self.assertEqual(view.rows[0].used, 12500)
-                self.assertIn("오늘 한도의 절반을 이미 쓴 것으로 가정했습니다", view.notice)
+                self.assertIn("오늘 한도의 절반을 이미 쓴 것으로 가정했어요", view.notice)
                 self.assertEqual(path.read_text(encoding="utf-8"), broken, "읽기만 하는 usage 는 깨진 파일을 건드리지 않는다")
                 self.lease()
                 self.assertTrue(path.with_name(path.name + ".bak").exists())
@@ -722,7 +722,7 @@ class StateFileTest(GuardCase):
         for case in cases:
             with self.subTest(case=str(case)[:60]):
                 self.ctx.workspace.quota_path.write_text(json.dumps(case), encoding="utf-8")
-                self.assertIn("가정했습니다", self.guard.usage("naver_openapi")[0].notice)
+                self.assertIn("가정했어요", self.guard.usage("naver_openapi")[0].notice)
 
     def test_reading_the_usage_creates_nothing(self):
         self.naver(1, ack=False)

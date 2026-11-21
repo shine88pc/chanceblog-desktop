@@ -245,7 +245,7 @@ class EngineRowsTest(unittest.TestCase):
         self.assertEqual(text.T["board_err_newer"], "더 새로운 버전의 프로그램이 만든 후보 보관함이라 열지 않았어요. 프로그램을 최신 버전으로 업데이트해 주세요.")
         self.assertEqual(text.T["board_err_locked"], "후보 보관함을 다른 곳에서 쓰고 있어 잠시 열지 못했어요. 끝난 뒤 다시 읽어 주세요.")
         other = adapters.engine_failure(AppError("DATA_DIR_UNSAFE", {"경로": "가" * 100 + " " + KEY}))
-        self.assertIn("데이터를 둘 폴더가 안전하지 않습니다", other.user_message)
+        self.assertIn("데이터를 둘 폴더가 안전하지 않아요", other.user_message)
         self.assertEqual(leaks(other.user_message, KEY, 5), [])                                              # 카탈로그 문장은 폴더 경로를 싣지만 그 속의 키 모양은 가려진다
 
     def test_real_engine_errors_for_a_newer_store_and_a_bad_profile_file_are_told_with_their_own_sentences(self):
