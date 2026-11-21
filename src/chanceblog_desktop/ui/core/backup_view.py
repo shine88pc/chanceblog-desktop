@@ -299,6 +299,8 @@ class BackupController:
         if isinstance(failure, BackupFailure):
             left = tuple(_shown(line, 240) for line in failure.notes) if kind == "restore" else ()
             reason = (T["backup_restore_reason_" + failure.reason],) if kind == "restore" and failure.reason in ("disk", "io", "corrupt", "busy", "other") else ()
+            if kind == "invalid" and failure.reason == "structure":                          # 조작했을 수 있는 백업 — 왜 거절했는지 쉬운 한 줄(L8, D-554)
+                reason = (T["backup_invalid_structure"],)
             lines = tuple(_shown(line, 240) for line in failure.summary) if kind == "blocked" else reason + left
         text = T["backup_fail_restore_left" if kind == "restore" and left else "backup_fail_" + kind] if kind in ("blocked", "nothing", "busy", "invalid", "newer", "disk", "io", "restore", "other") else T["backup_fail_other"]
         self.notice = ("error", text, lines)

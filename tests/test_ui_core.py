@@ -1062,13 +1062,13 @@ class DocsStayHonestTest(unittest.TestCase):
     MASKED = {"구글 AIza": "AI" + "za" + "SyD" + "x" * 32, "GitHub ghp_": "gh" + "p_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8", "AWS AKIA": "AK" + "IA" + "ABCDEFGHJKLMNPQR",
               "sk-proj-": "s" + "k-" + "proj-" + "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2Haiu8Ney", "sk-ant-api03-": "s" + "k-" + "ant-" + "api03-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3F",
               "sk-or-v1-": "s" + "k-" + "or-v1-" + "3HZt4FUj4CNaq8Sbn3Jbjv9PfzAMarAJUgwEYhu9Qhr3FVm7G",
-              "Slack xoxp-": "xo" + "xp-" + "1234567890-" + "AbCdEfGhIjKlMnOp"}
-    UNMASKED = {"AWS ASIA": "AS" + "IA" + "ABCDEFGHJKLMNPQR", "sk_live_": "s" + "k_live_" + "Xm5PYjyFYgs6Lcw7JXn7FRdt", "glpat-": "gl" + "pat-" + "euCWfs7NfpzDTj5ERevE",
-                "16진 40자": "3a18f6d4b2907e5c" * 2 + "3a18f6d4", "영숫자 40자": "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2", "base64 모양": "AQg2BNbsBKVhxFZivARis4GWn8HUhyHRbp5Mfq3GXqyA==",
-                "임의 접두어": "n" + "aver-" + "HXp9JVizJScq6Ngr4HYrzBPdvFQbq7QY",
-                "Slack xapp-": "xap" + "p-1-A0123456789-1234567890123-" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"}
-    LIMIT_WORDS = ("ASIA", "sk_live_", "glpat-", "16진", "영숫자", "base64", "접두어", "AKIA", "xapp-")                # 한계 목록에 있어야 하는 말(스펙 §9 와 D-32 (o) 둘 다)
-    NOW_MASKED_WORDS = ("sk-proj-", "sk-ant-api03-", "sk-or-v1-")                                       # 'c3' 병합으로 이제 가려진다고 적어야 하는 말
+              "Slack xoxp-": "xo" + "xp-" + "1234567890-" + "AbCdEfGhIjKlMnOp",
+              "AWS ASIA": "AS" + "IA" + "ABCDEFGHJKLMNPQR", "sk_live_": "s" + "k_live_" + "Xm5PYjyFYgs6Lcw7JXn7FRdt", "glpat-": "gl" + "pat-" + "euCWfs7NfpzDTj5ERevE",
+              "Slack xapp-": "xap" + "p-1-A0123456789-1234567890123-" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"}               # L8(D-557)가 더해 이제 가려지는 것 — 예전에는 UNMASKED 에 있었다
+    UNMASKED = {"16진 40자": "3a18f6d4b2907e5c" * 2 + "3a18f6d4", "영숫자 40자": "uASkv8Mcv5FThzKUfuBUcn2GYs3ETi3BMZp7Ram2", "base64 모양": "AQg2BNbsBKVhxFZivARis4GWn8HUhyHRbp5Mfq3GXqyA==",
+                "임의 접두어": "n" + "aver-" + "HXp9JVizJScq6Ngr4HYrzBPdvFQbq7QY"}
+    LIMIT_WORDS = ("16진", "영숫자", "base64", "접두어")                                                   # 한계 목록에 남아 있어야 하는 말(스펙 §9 와 D-32 (o) 둘 다) — L8(D-557)이 ASIA·sk_live_·glpat-·xapp- 을 이 목록에서 뺐다
+    NOW_MASKED_WORDS = ("sk-proj-", "sk-ant-api03-", "sk-or-v1-", "AKIA", "ASIA", "sk_live_", "glpat-", "xapp-")      # 이제 가려진다고 적어야 하는 말('c3' 병합이 앞 셋, L8 이 뒤 넷을 더했다 — 문서에 그대로 있어야 한다)
 
     @staticmethod
     def doc(name):

@@ -20,6 +20,7 @@ KIND_OF_CODE = {"FULL_BACKUP_BLOCKED": "blocked", "CONTENT_NOT_FOUND": "nothing"
                 "TOPIC_STORE_VERSION_UNSUPPORTED": "newer", "STORE_LOCKED": "busy", "TOPIC_STORE_LOCKED": "busy", "DISK_FULL": "disk", "FILE_WRITE_FAILED": "io", "FILE_IN_USE": "io",
                 "FILE_PATH_TOO_LONG": "io", "DATA_DIR_UNSAFE": "io", "RESTORE_FAILED": "restore"}      # 서비스 오류 코드 → 화면이 다르게 다룰 종류(나머지는 `other`)
 RESTORE_REASONS = ("disk", "io", "corrupt", "busy", "other")                                   # 복원 중 문제의 이유 이름 — 문장은 `ui/core/backup_text.py` 의 `backup_restore_reason_…`
+STRUCTURE_REASON = "structure"                                                                  # 되돌릴 백업의 보관함에 앱이 만들지 않는 구조(트리거·뷰 …)가 있어 거절한 이유 — 문장은 `backup_invalid_structure`(L8, D-554)
 
 
 def file_info(line):
@@ -43,7 +44,8 @@ def failure_of(error):
         kind = "nothing"
     summary = tuple(line for line in getattr(error, "summary", "").split("\n") if line) if kind == "blocked" else ()
     notes = tuple(getattr(error, "notes", ())) if kind == "restore" else ()
-    return make_failure(kind, error.code, summary=summary, notes=notes, reason=reason if kind == "restore" and reason in RESTORE_REASONS else "")
+    shown_reason = reason if (kind == "restore" and reason in RESTORE_REASONS) or (kind == "invalid" and reason == STRUCTURE_REASON) else ""
+    return make_failure(kind, error.code, summary=summary, notes=notes, reason=shown_reason)
 
 
 class ServiceBackupsProvider(BackupsProvider, BackupsWriter):
