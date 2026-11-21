@@ -30,6 +30,7 @@ from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.publish import pages  # noqa: E402
 from chanceblog_desktop.security import mask as mk  # noqa: E402
 from chanceblog_desktop.security import scan  # noqa: E402
+from chanceblog_desktop.ui.core import draft_rules  # noqa: E402
 
 use_vendored_core()
 from pipeline.secret_patterns import find_secrets  # noqa: E402
@@ -289,6 +290,30 @@ class NormalTextTest(unittest.TestCase):
                 with self.subTest(file=path.relative_to(ROOT).as_posix()):
                     self.assertEqual(new_patterns_hit(path.read_text(encoding="utf-8", errors="replace")), [])
         self.assertGreater(checked, 150)
+
+
+class CopyGateTest(unittest.TestCase):
+    """복사 관문(`ui/core/draft_rules.py`)은 주소 안에서는 알려진 키 모양만 본다 — 새 모양이 목록에 없으면 주소 속 키가 복사를 통과했다(탐침: 옛 코드는 일곱 모양 모두 통과)."""
+    ADDRESSES = ("참고: https://example.com/page?x={}&y=1 입니다", "참고: https://example.com/files/{}/index.html 입니다", "이미지 https://cdn.example.com/a/{}.png", "[링크](https://example.com/?q={})")
+
+    def test_every_new_shape_inside_a_web_address_blocks_the_copy_without_repeating_the_key(self):
+        for label in SAMPLES:
+            token = sample(label)
+            for template in self.ADDRESSES:
+                with self.subTest(label=label, address=template[:24]):
+                    text = template.format(token)
+                    self.assertTrue(draft_rules.has_secret(text))
+                    places = draft_rules.secret_places(("본문", text))
+                    self.assertTrue(places)
+                    self.assertFalse(any(token[-16:] in place for place in places), "막은 자리의 미리보기에 키 글자를 되풀이하지 않는다")
+
+    def test_the_same_shapes_in_plain_text_still_block_and_ordinary_addresses_still_pass(self):
+        for label in SAMPLES:
+            self.assertTrue(draft_rules.has_secret("키는 " + sample(label) + " 입니다"), label)
+        for text in ("참고: https://example.com/page?x=1&y=2 입니다", "https://example.com/blog/very-long-article-slug-about-travel-and-food/", "https://example.com/files/" + pc.SHA256 + ".pdf",
+                     "https://github.com/example/project/pull/49", "hf_ 로 시작하는 토큰 이야기"):
+            with self.subTest(text=text[:40]):
+                self.assertFalse(draft_rules.has_secret(text))
 
 
 class PathologicalInputTest(unittest.TestCase):

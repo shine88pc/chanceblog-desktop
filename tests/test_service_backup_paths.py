@@ -1,10 +1,12 @@
-"""조작한 백업의 설정(`settings.json`)이 '연결한 폴더' 자리에 남의 서버를 가리키는 경로를 몰래 넣지 못하게 하는 시험 — 전체 백업 복원(`service/backup_flow.py`)의 `_repo_path_problem` (L8, 결정 D-554).
+"""조작한 백업의 설정(`settings.json`)이 '연결한 폴더' 자리에 남의 서버를 가리키는 경로를 몰래 넣지 못하게 하는 시험 — 전체 백업 복원(`service/backup_flow.py`)의 `_repo_path_problem`과 JSON·설정의 크기 상한 (L8, 결정 D-554).
 
 위협: 설정의 `repo_path` 는 어떤 글이든 받았다. 복원이 끝나면 앱은 그 경로가 폴더인지 알아보려고 열어 본다(복원 직후의 안내·이후의 점검). 조작한 백업이 네트워크 경로(UNC)를 넣으면 이 PC 가 그 서버에 접속하며 윈도 로그인 정보를 보낼 수 있다.
 지키는 것:
   1) 보통 폴더 경로 모양(빈 글·드라이브 경로·상대 경로·홈 폴더 약식 경로·한글 이름·공백)은 그대로 받고, 네트워크 경로(역슬래시·슬래시 둘로 시작하는 서버 경로·확장·장치 경로)·주소(`://`)·제어 문자(보이지 않는 글자 포함)·1024자를 넘는 글은 거절한다 — 경계(1024자)가 정확하다.
   2) 조작한 설정이 든 백업은 **바꾸기 전에** 거절한다(`FULL_BACKUP_INVALID` 이유 `content` — 지금 데이터·안전 사본 폴더·표지·잠금이 그대로) 이 PC 는 그 경로를 열어 보지도 않는다(경로 확인 호출을 감시한다). 문구·오류 세부에 경로 글이 없다.
   3) 정상 백업(연결한 폴더가 이 PC 의 폴더)은 그대로 되돌려지고 백업을 만드는 쪽은 바뀌지 않았다(UNC 경로가 든 설정도 백업은 만들어지고 복원만 거절한다 — 문서의 한계).
+  4) 설정 파일에 넣을 수 있는 이상한 글(깊이 겹친 JSON·NaN·무한대·문자 아닌 경로·덜 짝맞춘 서로게이트·NUL·BOM·UTF-8 아닌 바이트·빈 파일·모르는 칸)은 모두 쉬운 거절이다 — 예전에는 깊이 겹친 JSON 에서 `RecursionError` 가 그대로 새어 나갔다.
+  5) JSON·설정 파일은 앱이 백업을 만들 때 쓰는 상한(8MB)을 넘으면 읽기 전에 거절한다(정확히 8MB 는 받는다). 보관함 파일에는 이 묶음이 상한을 정하지 않았다.
 네트워크·실제 시계·실제 자격 증명 관리자 없이 돈다. 가짜 서버 이름에는 `CANARY` 글자를 넣는다.
 """
 import hashlib
@@ -19,6 +21,7 @@ import backup_support as bs  # noqa: E402
 import test_service_backup_restore as tr  # noqa: E402
 
 from chanceblog_desktop.service import backup_flow as bf  # noqa: E402
+from chanceblog_desktop.topics import layout  # noqa: E402
 
 BS = chr(92)                                                                         # 역슬래시 — 소스에 이스케이프를 쓰지 않는다
 HOST = "CANARY_host.example"
@@ -56,7 +59,9 @@ class RuleTest(unittest.TestCase):
             self.assertNotIn(HOST, word)
 
 
-class RestoreTest(tr.Base):
+class ForgedBackup(tr.Base):
+    """백업을 하나 만들어 두고 그 폴더의 파일을 조작한 뒤 목록의 크기·해시를 다시 계산하는(조작한 사람이 하는 일) 틀."""
+
     def setUp(self):
         super().setUp()
         self.outcome = self.world.backup()
@@ -64,16 +69,26 @@ class RestoreTest(tr.Base):
         tr.change_everything(self.world)
         self.before = tr.state_of(self.world)
 
-    def forge_settings(self, repo_path):
-        path = self.folder / "settings.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["repo_path"] = repo_path
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    def forge_bytes(self, name, raw):
+        (self.folder / name).write_bytes(raw)
         manifest = json.loads((self.folder / bf.MANIFEST_NAME).read_text(encoding="utf-8"))
-        raw = path.read_bytes()
-        manifest["files"]["settings.json"].update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+        manifest["files"][name].update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
         bs.write_manifest(self.folder, manifest)
 
+    def forge_settings(self, repo_path):
+        data = json.loads((self.folder / "settings.json").read_text(encoding="utf-8"))
+        data["repo_path"] = repo_path
+        self.forge_bytes("settings.json", (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + chr(10)).encode("utf-8"))
+
+    def assert_refused_before_anything_changed(self, reason="content"):
+        error = bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True)
+        self.assertIsNotNone(error, "거절돼야 한다")
+        self.assertEqual((error.code, error.reason), ("FULL_BACKUP_INVALID", reason), error.detail)
+        self.assert_untouched(self.before)
+        return error
+
+
+class RestoreTest(ForgedBackup):
     def test_a_backup_whose_settings_point_at_a_foreign_path_is_refused_before_anything_changes_and_the_path_is_never_opened(self):
         for word, texts in BAD.items():
             for text in texts:
@@ -89,14 +104,11 @@ class RestoreTest(tr.Base):
                     try:
                         self.forge_settings(text)
                         with mock.patch.object(Path, "is_dir", spy):
-                            error = bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True)
-                        self.assertIsNotNone(error)
-                        self.assertEqual((error.code, error.reason), ("FULL_BACKUP_INVALID", "content"), error.detail)
+                            error = self.assert_refused_before_anything_changed()
                         self.assertIn("settings.json", error.detail)
                         self.assertIn(f"({word})", error.detail, "이유의 고정 낱말")
                         self.assertNotIn(HOST, str(error) + error.log_line() + error.detail, "경로 글을 되풀이하지 않는다")
                         self.assertFalse([item for item in opened if HOST in item], "그 경로는 열어 보지도 않는다")
-                        self.assert_untouched(self.before)
                     finally:
                         (self.folder / "settings.json").write_bytes(original[0])
                         (self.folder / bf.MANIFEST_NAME).write_bytes(original[1])
@@ -120,6 +132,77 @@ class RestoreTest(tr.Base):
         with mock.patch.object(bf, "_flow_lock", side_effect=AssertionError("잠금을 잡기 전에 거절해야 한다")):
             error = bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True)
         self.assertEqual(error.code, "FULL_BACKUP_INVALID")
+
+
+class AdversarialTest(ForgedBackup):
+    """설정 파일에 넣을 수 있는 이상한 글 — 모두 쉬운 거절이다(예외가 그대로 새지 않는다). 깊이 겹친 JSON 은 예전에 `RecursionError` 가 새어 나갔다."""
+
+    def payloads(self):
+        ok = '{"schema": 1, "repo_path": %s, "naver_profiles": {}}'
+        return {
+            "deep lists": b"[" * 100_000 + b"]" * 100_000,
+            "deep dicts": b'{"a":' * 100_000 + b"1" + b"}" * 100_000,
+            "NaN schema": b'{"schema": NaN, "repo_path": "", "naver_profiles": {}}',
+            "NaN path": (ok % "NaN").encode(),
+            "Infinity path": (ok % "Infinity").encode(),
+            "number path": (ok % "12345").encode(),
+            "list path": (ok % '["C:/x"]').encode(),
+            "null path": (ok % "null").encode(),
+            "dict path": (ok % '{"a": 1}').encode(),
+            "bool path": (ok % "true").encode(),
+            "huge int schema": b'{"schema": ' + b"9" * 5000 + b', "repo_path": "", "naver_profiles": {}}',
+            "lone surrogate path": (ok % ('"' + BS + 'ud800"')).encode(),
+            "nul path": (ok % ('"a' + BS + 'u0000b"')).encode(),
+            "bom": bytes([0xEF, 0xBB, 0xBF]) + (ok % '""').encode(),
+            "not utf8": bytes([0xFF, 0xFE, 0xFA]),
+            "empty": b"",
+            "json null": b"null",
+            "text garbage": b"x" * 100_000,
+            "unknown field": b'{"schema": 1, "repo_path": "", "naver_profiles": {}, "extra": 1}',
+        }
+
+    def test_every_adversarial_settings_file_is_refused_gracefully_before_anything_changes(self):
+        for label, raw in self.payloads().items():
+            with self.subTest(label=label):
+                saved = (self.folder / "settings.json").read_bytes(), (self.folder / bf.MANIFEST_NAME).read_bytes()
+                try:
+                    self.forge_bytes("settings.json", raw)
+                    self.assert_refused_before_anything_changed()
+                finally:
+                    (self.folder / "settings.json").write_bytes(saved[0])
+                    (self.folder / bf.MANIFEST_NAME).write_bytes(saved[1])
+
+    def test_a_settings_or_json_file_over_the_size_cap_is_refused_before_it_is_even_read(self):
+        for name in ("settings.json", layout.SEEDS_FILE):
+            with self.subTest(name=name):
+                original = (self.folder / name).read_bytes(), (self.folder / bf.MANIFEST_NAME).read_bytes()
+                try:
+                    self.forge_bytes(name, original[0] + b" " * (bf.MAX_JSON_BYTES + 1 - len(original[0])))
+                    real = bf._sha256_file
+                    read = []
+
+                    def watch(path):
+                        read.append(Path(path).name)
+                        return real(path)
+
+                    with mock.patch.object(bf, "_sha256_file", watch):
+                        error = self.assert_refused_before_anything_changed()
+                    self.assertNotIn(name, read, "그 파일은 읽기 전에 거절했다")
+                    self.assertIn("너무 크다", error.detail)
+                    self.assertIn(name, error.detail)
+                finally:
+                    (self.folder / name).write_bytes(original[0])
+                    (self.folder / bf.MANIFEST_NAME).write_bytes(original[1])
+
+    def test_a_settings_file_exactly_at_the_cap_is_still_accepted(self):
+        original = (self.folder / "settings.json").read_bytes()
+        self.forge_bytes("settings.json", original + b" " * (bf.MAX_JSON_BYTES - len(original)))
+        self.assertEqual(self.restore(self.outcome.row.name).status, bf.STATUS_COMPLETE)
+
+    def test_the_cap_is_the_one_the_backup_side_already_uses(self):
+        from chanceblog_desktop.topicdb.backup import MAX_JSON_BYTES
+        self.assertEqual(bf.MAX_JSON_BYTES, MAX_JSON_BYTES)
+        self.assertEqual(bf.MAX_JSON_BYTES, 8 * 1024 * 1024)
 
 
 if __name__ == "__main__":

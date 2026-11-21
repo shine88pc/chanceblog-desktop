@@ -887,6 +887,8 @@ def _verify_folder(folder):
     if set(entries) != set(manifest["files"]) | {MANIFEST_NAME} or any(entry.is_symlink() or not entry.is_file() for entry in entries.values()):
         raise _invalid(folder, "files")
     for name, info in manifest["files"].items():
+        if BY_NAME[name].kind in (JSON_FILE, SETTINGS) and info["size"] > MAX_JSON_BYTES:                  # 앱이 만드는 JSON·설정은 이 크기를 넘지 않는다(백업을 만들 때 같은 상한으로 거절한다) — 읽기 전에 거절한다(L8, D-554)
+            raise _invalid(folder, "content", detail=f"{name}: 파일이 너무 크다(최대 {MAX_JSON_BYTES // (1024 * 1024)}MB)")
         try:
             same = entries[name].stat().st_size == info["size"] and _sha256_file(entries[name]) == info["sha256"]
         except OSError:

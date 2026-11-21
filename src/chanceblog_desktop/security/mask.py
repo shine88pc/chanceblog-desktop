@@ -3,6 +3,7 @@
 규칙의 정본은 chanceblog 의 `pipeline/secret_patterns.py` 이고(`vendor/` 로 원본 그대로 가져온 것), 여기서는 그 패턴을 그대로 써서 글 속 비밀 모양을
 `[가림: <이름>]` 으로 바꾼다. 거기에 이 앱이 다루는 글에서 더 필요한 세 가지를 더한다: 주소 속 `사용자:토큰@`(비밀번호에 `@` 가 들어 있어도),
 주소의 `?access_token=…` 같은 인자, `Bearer <토큰>`. 정본의 `sk-` 패턴이 못 알아보는 붙임표·밑줄이 든 새 키 모양(OpenAI `sk-proj-…`·Anthropic `sk-ant-api03-…`·OpenRouter `sk-or-v1-…`과 그 밖의 `sk-` 긴 모양)도 가린다. 어떤 입력이 와도 예외를 내지 않고(없는 값은 빈 글), 이미 가린 글을 다시 가려도 같다.
+L8(D-557)이 정본·옛 모양에 없던 최근 키·토큰 모양 열여덟(`_RECENT_PATTERNS` — Stripe·GitLab·Hugging Face·Groq·NVIDIA 같은 것)과 글 끝까지 보는 `has_key_shape_anywhere` 를 더했다.
 PCSEC1 H1 로 더한 것: 이름 목록 확장(serviceKey·authKey·appKey·secretKey·clientSecret·X-Api-Key·Ocp-Apim-Subscription-Key …), `Authorization`·`Proxy-Authorization`·`Cookie`·`Set-Cookie` 줄(쿠키는 이름 불문 모든 값), 전각·키릴 동형 문자·퍼센트로 쓴 이름과 이스케이프 JSON, XML 태그·`--옵션 값`·`Key=값`, base64 로 감싼 값, 쪼갠 값 — 아래 `_hidden_forms` 에 모였다(원문 규칙 뒤에 돈다).
 """
 from __future__ import annotations
@@ -144,7 +145,7 @@ def mask(value):
 
 
 def has_key_shape(value):
-    """글에 키·토큰 모양(정본 패턴과 그 ASCII 경계 판·이 모듈의 JWT·Bearer·npm·Slack 웹훅·개인 키 블록)이 들어 있는가. `이름=값` 꼴(주소 인자·대입)은 보지 않는다 — 어떤 입력에도 예외를 내지 않는다."""
+    """글에 키·토큰 모양(정본 패턴과 그 ASCII 경계 판·이 모듈의 JWT·Bearer·npm·Slack 웹훅·개인 키 블록·최근에 생긴 모양 `_RECENT_PATTERNS`)이 들어 있는가. 앞 20만 자만 본다(끝까지는 `has_key_shape_anywhere`). `이름=값` 꼴(주소 인자·대입)은 보지 않는다 — 어떤 입력에도 예외를 내지 않는다."""
     try:
         text = value if isinstance(value, str) else str(value)
     except Exception:
