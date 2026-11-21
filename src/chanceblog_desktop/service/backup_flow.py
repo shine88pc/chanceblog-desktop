@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 import time
+import unicodedata
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from pathlib import Path
 
 from ..content import schema_guard
 from ..content.store import SCHEMA_STATEMENTS, Store, _read_only_uri
+from ..content.store import SCHEMA_VERSION as STORE_SCHEMA_VERSION
 from ..errors import AppError
 from ..security import scan
 from ..security.backup_note import CREDENTIAL_NOTE, EXCLUDED, RESTORE_NOTE
@@ -59,6 +61,7 @@ RETRY_TRIES = 5                                                          # 다�
 RETRY_WAIT = 0.2                                                         # 다시 하기 전에 쉬는 시간(초)
 COPY_SECONDS = 30.0                                                       # 지금 보관함을 복사하는 동안 계속 잠겨 있어도 기다리는 가장 긴 시간
 MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_REPO_PATH = 1024                                                      # 되돌릴 설정의 '연결한 폴더' 글의 가장 긴 길이(윈도 보통 경로의 한계는 260자)
 MAX_NOTE_CHARS = 2000                                                     # 목록의 자유 글 칸(`credential_excluded_note`·담지 않은 것의 이유) 하나의 가장 긴 길이
 STATUS_COMPLETE, STATUS_PARTIAL, STATUS_BROKEN = "complete", "partial", "broken"
 LINE_SAVED, LINE_MISSING, LINE_SKIPPED = "saved", "missing", "skipped"        # 백업 파일 줄의 상태: 담았다 · 아직 없다 · 담지 못했다
@@ -907,11 +910,15 @@ def _verify_backup(folder):
     return manifest
 
 
-def _foreign_in(component, path):
-    """보관함 파일 하나(읽기 전용으로 연다)에 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …)가 있나 → `schema_guard` 의 종류 이름들(없으면 빈 튜플). 파일을 읽을 수 없으면 그 보관함의 깨짐 오류 코드(AppError)."""
-    statements = SCHEMA_STATEMENTS if component.kind == STORE else TopicStore.SCHEMA
+def _foreign_in(component, path, *, defer_newer=False):
+    """보관함 파일 하나(읽기 전용으로 연다)에 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …)가 있나 → `schema_guard` 의 종류 이름들(없으면 빈 튜플). 파일을 읽을 수 없으면 그 보관함의 깨짐 오류 코드(AppError).
+    `defer_newer` 는 되돌릴 백업을 확인할 때만 준다 — 이 앱보다 새로운 판의 파일은 구조를 보지 않고 빈 튜플로 두는데, 그런 파일은 곧 이어지는 내용 확인(`_check_content`)이 '더 새로운 프로그램의 데이터' 로 거절하기 때문이다
+    (새 판이 더한 표를 '앱이 만들지 않는 구조' 라고 잘못 거절하지 않는다 — 복원은 어차피 못 한다)."""
+    statements, supported = (SCHEMA_STATEMENTS, STORE_SCHEMA_VERSION) if component.kind == STORE else (TopicStore.SCHEMA, TopicStore.SCHEMA_VERSION)
     try:
         with closing(sqlite3.connect(_read_only_uri(path), uri=True, timeout=BUSY_SECONDS)) as db:
+            if defer_newer and db.execute("PRAGMA user_version").fetchone()[0] > supported:
+                return ()
             return schema_guard.foreign_kinds(db, statements)
     except sqlite3.Error:
         raise AppError(DAMAGED_CODE[component.kind], {"파일": component.name} if component.kind == STORE else None, detail="구조를 훑다가 읽을 수 없었다") from None
@@ -923,21 +930,37 @@ def _check_structure(folder, name):
     if component.kind not in (STORE, ENGINE):
         return
     try:
-        foreign = _foreign_in(component, folder / name)
+        foreign = _foreign_in(component, folder / name, defer_newer=True)
     except AppError as error:
         raise _invalid(folder, "content", detail=f"{name}: {error.code}") from None
     if foreign:
         raise _invalid(folder, "structure", detail=f"{name}: 앱이 만들지 않는 구조({schema_guard.describe(foreign)})")
 
 
+def _repo_path_problem(text):
+    """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554).
+    네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로 포함)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검), 조작한 백업이 남의 서버를 가리키면
+    이 PC 가 그 서버에 접속하면서 윈도 로그인 정보를 보낼 수 있다. 빈 글(연결 안 함)·드라이브 경로·상대 경로·홈 폴더 약식으로 쓴 경로는 그대로 받는다."""
+    if len(text) > MAX_REPO_PATH:
+        return "length"
+    if any(unicodedata.category(char) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") for char in text):
+        return "control"
+    if text.replace("/", "\\").startswith("\\\\"):
+        return "network"
+    if "://" in text:
+        return "url"
+    return ""
+
+
 def _check_content(folder, name):
     component = BY_NAME[name]
     path = folder / name
+    problem = ""
     try:
         if component.kind in (STORE, ENGINE):
             _check_database(component.kind, path)
         elif component.kind == SETTINGS:
-            Settings(path)._read()
+            problem = _repo_path_problem(Settings(path)._read()["repo_path"])
         else:
             check_json_bytes(name, path.read_bytes())
     except AppError as error:
@@ -946,6 +969,8 @@ def _check_content(folder, name):
         raise _invalid(folder, "content", detail=f"{name}: {error.code}") from None
     except OSError as error:
         raise _invalid(folder, "content", detail=f"{name}: {type(error).__name__}") from None
+    if problem:                                                          # 경로 글은 되풀이하지 않는다 — 고정 낱말뿐(L8, D-554)
+        raise _invalid(folder, "content", detail=f"{name}: 연결한 폴더 글이 보통 폴더 경로 모양이 아니다({problem})")
 
 
 def _folders(root, pattern=FULL_NAME):

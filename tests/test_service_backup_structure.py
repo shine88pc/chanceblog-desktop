@@ -133,6 +133,39 @@ class RefusalTest(Base):
             bf._verify_backup(self.folder)
         self.assertEqual(caught.exception.reason, "structure")
 
+    def test_a_newer_version_database_with_new_tables_is_reported_as_newer_not_as_a_foreign_structure(self):
+        """새 판이 더한 표를 '앱이 만들지 않는 구조' 로 잘못 거절하지 않는다 — 판이 새로우면 내용 확인이 '더 새로운 프로그램' 으로 거절한다(안내가 '프로그램을 업데이트하세요' 로 맞다)."""
+        for name in DBS:
+            with self.subTest(database=name):
+                saved = self.snapshot_folder()
+                try:
+                    forge(self.folder, name, "CREATE TABLE brand_new_table (x TEXT)", "PRAGMA user_version = 99")
+                    error = bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True)
+                    self.assertEqual((error.code, error.reason), ("STORE_VERSION_UNSUPPORTED", "newer"), error.detail)
+                    self.assert_untouched(self.before)
+                finally:
+                    self.restore_folder(saved)
+
+    def test_the_same_extra_table_in_a_database_of_the_current_version_is_a_foreign_structure(self):
+        for name in DBS:
+            with self.subTest(database=name):
+                saved = self.snapshot_folder()
+                try:
+                    forge(self.folder, name, "CREATE TABLE brand_new_table (x TEXT)")
+                    self.assert_clean_refusal(bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True))
+                finally:
+                    self.restore_folder(saved)
+
+    def test_the_newer_version_deferral_is_only_for_the_backup_check_and_never_for_the_after_check(self):
+        component = bf.BY_NAME["chanceblog.db"]
+        path = self.folder / "chanceblog.db"
+        with contextlib.closing(sqlite3.connect(str(path))) as database:
+            database.execute("CREATE TABLE brand_new_table (x TEXT)")
+            database.execute("PRAGMA user_version = 99")
+            database.commit()
+        self.assertEqual(bf._foreign_in(component, path, defer_newer=True), ())
+        self.assertEqual(bf._foreign_in(component, path), ("table",), "바꾼 뒤 확인은 판에 상관없이 본다")
+
     def test_the_listing_still_shows_the_backup_because_listing_never_opens_the_databases(self):
         forge(self.folder, "chanceblog.db", *tampering("chanceblog.db")["view"])
         rows = bf.list_full_backups(self.ctx).rows

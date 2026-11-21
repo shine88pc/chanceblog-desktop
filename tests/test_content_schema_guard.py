@@ -252,6 +252,7 @@ class TableAndIndexTest(Base):
             for statement in SCHEMA_STATEMENTS:
                 db.execute(statement)
             base = db.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0]
+        self.assertEqual(sg.MAX_OBJECTS, 128, "문서·결정 기록이 128개라고 적었다")
         self.assertLess(base * 4, sg.MAX_OBJECTS)
         room = sg.MAX_OBJECTS - base
         at_limit = self.file(SCHEMA_STATEMENTS, *[f"CREATE VIEW w{number} AS SELECT 1" for number in range(room)])

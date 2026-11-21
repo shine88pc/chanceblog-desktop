@@ -404,6 +404,8 @@ class PublishGateTest(unittest.TestCase):
     def test_the_names_in_the_error_come_from_the_known_lists_and_never_from_the_text(self):
         google = cat("AI", "za", body(35, B64URL))
         self.assertEqual(pages.secret_labels("키 " + google), {"Google API 키"}, "정본과 검사기가 같은 이름을 쓴다")
+        telegram = cat("123456789", ":AA", body(33, B64URL))
+        self.assertEqual(pages.secret_labels("키 " + telegram), {"Telegram 봇 토큰"}, "정본이 이름을 아는 모양은 정본의 이름 그대로")
         self.assertEqual(pages.secret_labels("키 " + sample("Groq 키")), {"키·토큰 모양"}, "이름 없이 가리기 목록만 아는 모양은 고정된 이름 하나")
         self.assertEqual(pages.secret_labels("키 " + cat("sk", "-proj-", body(60, B64URL))), {"키·토큰 모양"})
 
