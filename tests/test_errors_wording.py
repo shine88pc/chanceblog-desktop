@@ -70,6 +70,8 @@ SUBCOMMANDS = re.compile(r"(?<![\w-])(?:publish-pages|check-deploy|naver-profile
 FILE_NAME = re.compile(r"[\w.-]+\.(?:json|bak|md|log|lock|py|db|exe)(?![\w])")
 ENV_NAME = re.compile(r"[A-Z]{2,}_[A-Z_]{2,}")
 DEV_WORDS = ("명령줄", "프롬프트", "터미널", "python", "세부", "다시 실행", "명령")
+# 카드 글에 남아도 되는 영어 낱말(소문자) — 제품·서비스 이름(blogger·github·git·windows·onedrive·vpn·csv·json·html·utf-8·ai·pc·releases 와 'Git for Windows' 의 for),
+# 폴더·저장소 이름(chanceblog·logs·backups·main·vendor), 머리글자(a·b·id: '네이버 A 와 B'·'블로그 ID'). 새 낱말은 이유를 읽고 여기에 더한다.
 ALLOWED_ENGLISH = frozenset((
     "a", "ai", "b", "backups", "blogger", "chanceblog", "csv", "for", "git", "github", "html", "id", "json", "logs", "main", "onedrive", "pc",
     "releases", "utf-8", "vendor", "vpn", "windows",
@@ -279,11 +281,15 @@ class CardActionTest(unittest.TestCase):
         self.assertNotIn(CLI_TAIL_LABEL, shown.card_action)
 
     def test_a_slot_value_that_looks_like_the_label_does_not_cut_the_card_text(self):
-        """카드용 글은 값을 넣기 **전** 문장에서 자른다 — 값이 이름표를 흉내 내도 카드 글이 중간에서 잘리지 않는다."""
-        shown = render("PAGES_LOCAL_REPO_NOT_MAIN", {"브랜치": f"x {CLI_TAIL_LABEL} y"})
+        """카드용 글은 값을 넣기 **전** 문장에서 자른다 — 값이 이름표를 흉내 내도 카드 글이 중간에서 잘리지 않는다.
+        (하실 일 칸에 자리표시자가 있는 코드는 `TOPIC_CANDIDATE_AMBIGUOUS` 뿐이다 — 값을 넣은 뒤에 자르면 값 속 이름표에서 잘린다.)"""
+        self.assertEqual([code for code in sorted(CARD_CODES) if "「" in CATALOG[code].action], ["TOPIC_CANDIDATE_AMBIGUOUS"], "하실 일에 자리표시자가 있는 코드가 바뀌었다 — 이 시험의 코드를 고른다")
+        value = f"x {CLI_TAIL_LABEL} y"
+        shown = render("TOPIC_CANDIDATE_AMBIGUOUS", {"항목": value})
+        self.assertIn(f"「{value}」 뒤에 순번과 번호로 나옵니다.", shown.card_action)
+        self.assertEqual(shown.card_action, shown.action, "꼬리가 없는 행의 카드 글은 전체 글이다")
+        shown = render("PAGES_LOCAL_REPO_NOT_MAIN", {"브랜치": value})
         self.assertEqual(shown.card_action, "그 폴더에서 main 브랜치로 바꾼 뒤 다시 시도해 주세요. 앱은 브랜치를 마음대로 바꾸지 않아요.")
-        shown = render("DATA_DIR_UNSAFE", {"경로": f"C:{BS}a {CLI_TAIL_LABEL} b"})
-        self.assertTrue(shown.card_action.endswith("앱을 다시 열어 주세요."))
 
     def test_the_command_line_output_prints_the_whole_action_with_the_tail(self):
         """명령줄(`error_lines`)은 카드와 달리 전체 하실 일을 그대로 찍는다 — 카드만 줄이고 명령줄 사용자의 안내는 그대로다."""
