@@ -20,7 +20,7 @@ import test_ui_qt_backup as tqb  # noqa: E402
 import test_ui_qt_drafts_save as tqd  # noqa: E402
 import test_ui_qt_seeds as tqs  # noqa: E402
 
-from chanceblog_desktop.ui.core import clock as clock_rules, drafts, seeds, services, text  # noqa: E402
+from chanceblog_desktop.ui.core import clock as clock_rules, seeds, services, text  # noqa: E402
 
 HAVE = tqs.HAVE and tqb.HAVE
 T = text.T
