@@ -8,7 +8,7 @@
 앱이 갑자기 꺼져 남은 임시 폴더와 낡은 잠금은 다음 백업·복원 때(그리고 목록을 보여 줄 때 치울 흔적이 보이면) 치운다 — 살아 있는 다른 백업·복원의 것은 건드리지 않는다.
 결과는 **완료**(지금 있는 것을 모두 담았다) · **부분**(일부는 담지 못했다 — 이유가 파일마다 있다) · **실패**(만들지 않았다 — 오류) 한 가지다.
 
-복원(`restore_full_backup`): ① 확인 표시가 있어야 하고 ② 바꾸기 전에 백업을 읽기만 해서 모두 확인한다(목록 모양·파일 이름·크기·해시·보관함 이름표·판·점검·JSON 모양·키 모양 — 틀리면 아무것도 바꾸지 않는다, 더 새로운 앱의 백업은 거절)
+복원(`restore_full_backup`): ① 확인 표시가 있어야 하고 ② 바꾸기 전에 백업을 읽기만 해서 모두 확인한다(목록 모양·파일 이름·크기·해시·보관함 이름표·판·점검·앱이 만들지 않는 구조(트리거·뷰·모르는 표 …)·JSON 모양·키 모양 — 틀리면 아무것도 바꾸지 않는다, 더 새로운 앱의 백업은 거절)
 ③ 이 PC 의 지금 데이터를 `before-restore/` 에 같은 모양의 안전 사본으로 먼저 남기고(남길 수 없으면 시작하지 않는다 — 안전 사본도 같은 방법으로 되돌릴 수 있다) ④ 설정·JSON 은 임시 이름으로 쓴 뒤 제자리로, 보관함은 SQLite 백업 방식으로 한 번에 바꾸며
 ⑤ 어느 단계에서 실패해도 지금까지 바꾼 것을 안전 사본으로 원래대로 돌린다(되돌리지 못한 것은 이름을 알린다). 깨져 있던 지금 파일은 지우지 않고 옆(`.bad-날짜-시각`)으로 옮긴다. 키·`connections.json` 은 건드리지 않는다.
 백업과 복원은 같은 잠금(`locks/full-backup.lock`)을 써서 한 번에 하나만 돈다.
@@ -27,12 +27,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..content.store import Store, _read_only_uri
+from ..content import schema_guard
+from ..content.store import SCHEMA_STATEMENTS, Store, _read_only_uri
 from ..errors import AppError
 from ..security import scan
 from ..security.backup_note import CREDENTIAL_NOTE, EXCLUDED, RESTORE_NOTE
 from ..topicdb.backup import MAX_JSON_BYTES, check_json_bytes
-from ..topicdb.store import open_for_write, open_read_only
+from ..topicdb.store import TopicStore, open_for_write, open_read_only
 from ..topics import layout
 from . import topic_files as tf
 from .context import Settings, _write_durably
@@ -71,6 +72,7 @@ INVALID_REASONS = {
     "files": "백업 폴더의 파일이 목록과 달라요(빠졌거나 모르는 파일이 있어요)",
     "hash": "파일의 크기나 해시가 목록과 달라요(바뀌었거나 깨졌어요)",
     "content": "안의 보관함이나 설정 파일이 온전하지 않아요",
+    "structure": "안의 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있어요",
 }
 DAMAGED_CODE = {STORE: "STORE_CORRUPT", ENGINE: "TOPIC_STORE_CORRUPT", JSON_FILE: "TOPIC_FILE_INVALID", SETTINGS: "SETTINGS_INVALID"}      # 읽을 수 없는 지금 파일을 '깨짐' 으로 알릴 때의 코드
 STORE_NEWER = frozenset({"STORE_VERSION_UNSUPPORTED", "TOPIC_STORE_VERSION_UNSUPPORTED"})
@@ -895,12 +897,37 @@ def _verify_backup(folder):
     """되돌릴 백업을 읽기만 해서 끝까지 확인한다 → 목록. ① 목록 모양·파일·크기·해시 ② **키·토큰 모양 훑기**(엄격한 읽기보다 먼저 — 그 읽기가 키 모양 글을 '틀린 모양' 으로 거절해도 이유가 '키 모양' 으로 알려지게. 읽을 수 없는 파일은
     훑지 못한 채 ③ 으로 넘어간다) ③ 안의 보관함·JSON·설정이 이 프로그램이 읽는 방법 그대로 온전한가."""
     manifest = _verify_folder(folder)
+    for name in manifest["files"]:
+        _check_structure(folder, name)                                   # 조작한 보관함의 트리거·뷰·모르는 표가 통째 복사로 들어오지 못하게 — 내용을 읽기 전에 구조부터(D-554)
     found = scan_folder(folder, list(manifest["files"]), lenient=frozenset(manifest["files"]))
     if found:
         raise _blocked(found, "복원", inside_backup=True)
     for name in manifest["files"]:
         _check_content(folder, name)
     return manifest
+
+
+def _foreign_in(component, path):
+    """보관함 파일 하나(읽기 전용으로 연다)에 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …)가 있나 → `schema_guard` 의 종류 이름들(없으면 빈 튜플). 파일을 읽을 수 없으면 그 보관함의 깨짐 오류 코드(AppError)."""
+    statements = SCHEMA_STATEMENTS if component.kind == STORE else TopicStore.SCHEMA
+    try:
+        with closing(sqlite3.connect(_read_only_uri(path), uri=True, timeout=BUSY_SECONDS)) as db:
+            return schema_guard.foreign_kinds(db, statements)
+    except sqlite3.Error:
+        raise AppError(DAMAGED_CODE[component.kind], {"파일": component.name} if component.kind == STORE else None, detail="구조를 훑다가 읽을 수 없었다") from None
+
+
+def _check_structure(folder, name):
+    """되돌릴 백업 안의 보관함이 앱이 만드는 구조뿐인지 읽기만 해서 본다 — 아니면 FULL_BACKUP_INVALID(이유 `structure`). JSON·설정은 해당 없다(칸 모양은 `_check_content` 의 엄격한 읽기가 본다)."""
+    component = BY_NAME[name]
+    if component.kind not in (STORE, ENGINE):
+        return
+    try:
+        foreign = _foreign_in(component, folder / name)
+    except AppError as error:
+        raise _invalid(folder, "content", detail=f"{name}: {error.code}") from None
+    if foreign:
+        raise _invalid(folder, "structure", detail=f"{name}: 앱이 만들지 않는 구조({schema_guard.describe(foreign)})")
 
 
 def _check_content(folder, name):
@@ -1142,6 +1169,8 @@ def _after_check(ctx, component, manifest):
     path = _component_path(ctx, component)
     if component.kind in (STORE, ENGINE):
         _check_database(component.kind, path)
+        if _foreign_in(component, path):                                 # 바꾼 뒤에도 구조를 한 번 더 — 복사하는 사이 원본이 바뀌었어도 여기서 걸러 원래대로 돌린다(D-554)
+            raise AppError(DAMAGED_CODE[component.kind], {"파일": component.name} if component.kind == STORE else None, detail="바꾼 보관함에 앱이 만들지 않는 구조가 있다")
     elif _sha256_bytes(path.read_bytes()) != manifest["files"][component.name]["sha256"]:
         raise AppError("FILE_WRITE_FAILED", {"경로": path.name}, detail="바꾼 파일의 해시가 백업과 다르다")
 

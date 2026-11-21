@@ -34,6 +34,7 @@ from pathlib import Path, PureWindowsPath
 
 from ..echo import shown_ref
 from ..errors import AppError
+from . import schema_guard
 from .candidates import STAMP_FORMAT, STATUS_KO, TRANSITIONS, Candidate, keyword_key, parse_stamp, short_id
 from .candidates import STATUSES as CANDIDATE_STATUSES
 from .candidates import _invalid as candidate_invalid
@@ -78,6 +79,8 @@ _SCHEMA = (
     "CREATE TABLE drafts (project_id TEXT PRIMARY KEY, text TEXT NOT NULL, saved_at TEXT NOT NULL)",
     *_V2_CANDIDATES,
 )
+
+SCHEMA_STATEMENTS = _SCHEMA          # 새 파일을 만드는 문장들 — 되돌릴 파일의 구조 검사(`schema_guard`)의 기준이다(L8, D-554)
 
 # 판마다 있어야 하는 표와 열(차례대로). 이름표(application_id·user_version)만 맞고 표가 없거나 열이 다른 깨진 파일은 올리기 전에 거절하려고 본다. 앞 판의 표는 뒤 판에도 그대로 있다.
 _SHAPES = {1: {"projects": ("project_id", "title", "revision", "created_at", "updated_at", "data"),
@@ -971,10 +974,13 @@ class Store:
                     raise AppError("STORE_VERSION_UNSUPPORTED", {"파일": backup.name}, detail=f"백업 버전 {version} > 지원 {SCHEMA_VERSION}")
                 try:
                     shape = _shape_problem(source, version) if version >= MIN_SCHEMA_VERSION else f"백업 버전 {version} 은 이 프로그램이 만든 적이 없다"
+                    foreign = schema_guard.foreign_kinds(source, SCHEMA_STATEMENTS)         # 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …) — 통째로 복사되기 전에 본다(D-554)
                 except sqlite3.Error as error:
                     raise store_error(error, backup) from None
                 if shape:                                # 바꾸기 전에 거절한다 — 바꾼 뒤 열기 검사에서 걸리면 이미 지금 저장소가 그 백업으로 덮인 뒤다
                     raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: {shape}")
+                if foreign:                              # 조작한 백업의 트리거·뷰가 지금 저장소로 들어와 저장할 때마다 도는 일을 막는다 — 바꾸기 전에 거절한다
+                    raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: 앱이 만들지 않는 구조가 들어 있다({schema_guard.describe(foreign)})")
                 if safety_folder is not None:
                     self.backup(safety_folder)
                 try:
