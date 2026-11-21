@@ -272,6 +272,27 @@ class CloseQuestionTest(Base):
             self.settle(3)
             self.assertFalse(window.isVisible())
 
+    def test_the_close_question_fits_the_window_at_every_required_size(self):
+        for size in tqs.SIZES:
+            with self.subTest(size=size):
+                window = self.make(size=size)
+                self.edit_seed(window)
+                window.close()
+                self.settle(6)
+                dialog = window.dialog
+                self.assertTrue(dialog.is_open and window.isVisible())
+                self.assertTrue(all(label.height() > 0 for label in dialog.findChildren(tqs.UI.Label)), f"{size}: 제목·본문 높이가 0 이다")
+                self.assertGreater(dialog.height(), 120, f"{size}: 틀이 접히지 않았다")
+                self.assertLessEqual(dialog.height(), window.height() - 16, f"{size}: 틀이 창보다 크지 않다")
+                buttons = [button for button in dialog.findChildren(QAbstractButton) if button.isVisibleTo(dialog)]
+                self.assertEqual(len(buttons), 2, size)
+                for button in buttons:
+                    corners = (button.mapTo(dialog, button.rect().topLeft()), button.mapTo(dialog, button.rect().bottomRight()))
+                    self.assertTrue(all(dialog.rect().contains(point) for point in corners), f"{size}: 단추가 틀 안에 있다")
+                self.assertEqual(window.scroll.horizontalScrollBar().maximum(), 0, f"{size}: 가로 스크롤이 없다")
+                self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+                self.settle(3)
+
     def test_the_two_buttons_have_names_a_big_enough_hit_area_and_tab_stays_inside_the_dialog(self):
         window = self.make()
         self.edit_seed(window)
