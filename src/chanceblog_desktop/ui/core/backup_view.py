@@ -222,7 +222,7 @@ class BackupController:
         return bool(gate is not None and gate())
 
     def restore_dialog(self, name):
-        """복원 확인창의 글 —무엇이 바뀌는지·안전 사본 위치·되돌리는 법(처음 포커스는 취소). 복원할 수 없는 줄이면 None."""
+        """복원 확인창의 글 — 무엇이 바뀌는지·안전 사본 위치·되돌리는 법(처음 포커스는 취소). 복원할 수 없는 줄이면 None."""
         row = self.row(name)
         if row is None or not self.can_restore(name):
             return None

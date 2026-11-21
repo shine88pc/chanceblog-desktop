@@ -280,3 +280,19 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 | `Toast.show_message(text, level=None)` | `level` 이 `info`·`warning`·`error` 면 토스트 왼쪽에 그 상태색 줄이 보인다(`level` 속성 + 스타일시트 `QLabel#toast[level=…]` — 상태색 토큰 `info`·`warning`·`danger` 만). 수준이 없거나 `ok` 거나 모르는 값이면 예전 모양 그대로. 셸의 `notify(message, level=None)` 가 넘긴다 | `qt/components.py`·`qt/theme.py` |
 | `Dialog.present` | 열린 확인창을 닫지 않고 바꿔 열 때만, 부품이 보이게 된 다음 차례에 틀을 한 번 더 놓는다(새로 여는 확인창은 그대로) — 옛 동작은 새 확인창이 44px 로 접혔다 | `qt/components.py` |
 | 주 화면 채널 칩의 이름 | `channel_names.chip_label(key)` — 스무 자(`CHANNEL_CHIP_LIMIT`)까지, 줄이는 규칙은 서랍(`short_label` 열두 자)과 같은 `short_names`. 줄이면 뷰모델이 `tip`(전체 이름)을 싣고 화면이 `FilterChip(full=…)` 이나 툴팁으로 보인다. Seed 요약 칩은 포커스를 받지 않는 `Badge` 라 마우스를 올릴 때만 툴팁이 나온다(접근 이름은 전체 이름) | `ui/core/channel_names.py` |
+
+## 10. 앱 묶음 L2(D-534·D-535)로 더한 규칙 — Seed 닫기 질문과 복원 중 저장 막기(새 화면 부품은 없다)
+
+새 위젯은 없다. 확인창은 기존 `show_dialog`(두 갈래, 처음 포커스는 취소)를 그대로 쓰고 안내는 기존 토스트(`notify`)를 쓴다 — `ui/qt/components.py` 는 고치지 않았다.
+
+| 규칙 | 하는 일 | 자리 |
+|---|---|---|
+| `SeedsController.unsaved_targets()`·`has_unsaved()`·`close_dialog()` | 저장하지 않은 Seed 입력(고친 씨앗 `("seed", 번호)`·새 Seed 폼 `("new", None)`)을 센다. 서랍이 닫혀 있어도 센다. 지금 저장하는 중인 씨앗(또는 새 Seed 등록)은 세지 않고, 무슨 일인지 모르는 쓰기나 읽은 내용이 없어 견줄 수 없는 초안은 센다. `close_dialog()` 는 입력이 있을 때만 `{title, body, ok, cancel, seeds: True}`(두 갈래) | `ui/core/seeds_view.py` |
+| `AppState.close_guard()` | 초안 → 블로그 관리 → Seed 관리 순서로 처음 만난 확인창의 글을 돌려준다. 화면 이동(`leave_guard`)은 초안만 묻는다 | `ui/core/app_state.py` |
+| `AppShell._close_next(kinds)`·`_close_after_drafts`·`_close_after_blogs` | 앞의 확인(`저장 안 하고 닫기`·`닫기`)을 넘기면 남은 확인(블로그 → Seed)을 지금도 물을 입력이 있을 때만 이어서 띄우고, 없으면 닫는다. 처음 포커스는 늘 취소다 | `ui/qt/shell.py` |
+| `save_gate.blocked_while_restoring` | 파일에 쓰는 일을 시작하는 컨트롤러 메서드(블로그 `start_save`·`start_clone`·`start_clear`, Seed `start_save`·`start_state`·`start_bulk`·`start_create`·`start_import_apply`, 후보 `start_make`, 초안 `start_save`·`start_delete`)에 붙는 데코레이터. 그 컨트롤러의 `save_gate()` 가 참(복원이 도는 중)이면 메서드를 부르지 않고 `("restoring", None)` 을 돌려준다. 읽기 시작 함수(`start_load`·`start_preview`·`start_import_preview`·`start_list` …)와 복원이 바꾸는 파일에 쓰지 않는 사진 되돌리기·사본 비우기에는 붙이지 않는다 | `ui/core/save_gate.py` |
+| `BackupController.restoring` | 복원(또는 되돌리기)이 도는 중인가. `지금 백업` 은 세지 않는다 | `ui/core/backup_view.py` |
+| `BackupController.writing_elsewhere()`·`start_restore`·`start_revert` 의 `("writing", None)` | 다른 화면의 저장이 도는 중이면(`restore_gate` = `AppState.writers_busy`) 복원을 시작하지 않는다 | `ui/core/backup_view.py`·`app_state.py` |
+| `AppShell._notify_restoring()` | `restoring` 상태를 한 줄(`backup_blocks_save`)로 알린다. 확인창이 먼저인 일은 확인창을 띄우기 전에, 확인창이 떠 있는 사이에 복원이 시작됐으면 `확인` 뒤에 같은 줄을 보이고 '확인창을 보였다' 표시도 거둔다 | `ui/qt/shell.py` |
+
+문구는 쉬운 한국어(해요체)로 `seed_text.py`(`seeds_close_title`·`seeds_close_body`·`seeds_close_ok`·`seeds_close_cancel`)와 `backup_text.py`(`backup_blocks_save`·`backup_wait_save`)의 문구 표에 더했다.

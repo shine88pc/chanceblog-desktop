@@ -81,7 +81,7 @@ SEED_T = {
     "seeds_close_body": "Seed 관리에서 고치거나 새로 입력한 내용을 아직 저장하지 않았어요. 지금 닫으면 그 내용은 사라져요. ‘계속 고치기’ 를 누르면 입력한 내용이 그대로 남아 있어요.",
     "seeds_close_ok": "저장 안 하고 닫기", "seeds_close_cancel": "계속 고치기",
     # 결과·실패
-    "seeds_saved": "저장했어요.","seeds_unchanged": "바뀐 내용이 없어요.", "seeds_approved": "승인했어요. 이제 후보 생성에 쓰여요.", "seeds_rested": "쉬게 했어요. 후보 생성에서 빠져요.", "seeds_resumed": "다시 쓰기로 했어요.",
+    "seeds_saved": "저장했어요.", "seeds_unchanged": "바뀐 내용이 없어요.", "seeds_approved": "승인했어요. 이제 후보 생성에 쓰여요.", "seeds_rested": "쉬게 했어요. 후보 생성에서 빠져요.", "seeds_resumed": "다시 쓰기로 했어요.",
     "seeds_bulk_done_activate": "{n}개를 사용 중으로 바꿨어요.", "seeds_bulk_done_rest": "{n}개를 쉬는 중으로 바꿨어요.",
     "seeds_created": "승인 전 Seed 로 등록했어요. 승인하기 전에는 후보 생성에 쓰이지 않아요.", "seeds_imported": "{n}개를 승인 전 Seed 로 등록했어요. 항목마다 승인하기 전에는 후보 생성에 쓰이지 않아요.",
     "seeds_stale_reloaded": "다른 곳에서 바뀐 내용을 다시 불러왔어요. 입력한 내용은 그대로 두었어요. 확인한 뒤 다시 해 주세요.",

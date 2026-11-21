@@ -234,6 +234,15 @@ class SeedCloseRuleTest(unittest.TestCase):
         self.assertIsNone(state.seeds.data)
         self.assertEqual(state.seeds.unsaved_targets(), [("seed", "EX001")], "읽은 내용이 없어 같은지 견줄 수 없는 입력은 묻는 쪽이 안전하다")
 
+    def test_a_failed_reload_does_not_hide_the_input_from_the_question(self):
+        state = seed_state()
+        state.seeds.open_detail("EX001")
+        state.seeds.edit("reason", "고친 이유")
+        state.seeds.apply_load_failed(jobs.JobFailure(T["job_failed"], code="SAMPLE"), None)
+        self.assertEqual(state.seeds.state, "error", "읽기 오류 화면에서도")
+        self.assertEqual(state.seeds.unsaved_targets(), [("seed", "EX001")], "숨은 입력도 앱을 닫으면 사라진다 — 묻는다")
+        self.assertIsNotNone(state.close_guard())
+
     def test_moving_to_another_screen_never_asks_because_the_input_stays_in_the_controller(self):
         state = seed_state()
         state.nav("seed")
@@ -246,6 +255,18 @@ class SeedCloseRuleTest(unittest.TestCase):
         self.assertEqual(state.seeds.unsaved_targets(), [("seed", "EX001"), ("new", None)], "서랍은 닫혀도 고친 값·쓰던 값은 그대로다")
         self.assertTrue(state.nav("seed"))
         self.assertEqual(state.seeds.values(state.seeds.by_id()["EX001"])["reason"], "고친 이유")
+
+    def test_moving_away_from_the_blog_screen_never_asks_either_and_the_blog_input_stays(self):
+        state = seed_state()
+        load_blogs(state.blogs)
+        state.nav("blogs")
+        state.blogs.edit("intro", "저장 전 소개")
+        self.assertIsNone(state.leave_guard("home"), "블로그 입력은 화면 이동에 사라지지 않는다 — 묻지 않는다")
+        self.assertTrue(state.nav("home"))
+        self.assertTrue(state.blogs.has_unsaved())
+        self.assertTrue(state.nav("blogs"))
+        self.assertEqual(state.blogs.values(state.blogs.selected)["intro"], "저장 전 소개")
+        self.assertTrue(state.close_guard()["blogs"], "앱 닫기에는 블로그 질문이 이미 있다(이번에 바꾸지 않았다)")
 
     def test_the_close_guard_goes_drafts_then_blogs_then_seeds(self):
         state = seed_state()

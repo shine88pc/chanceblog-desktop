@@ -21,7 +21,7 @@ from .jobs import JobFailure
 from .save_gate import blocked_while_restoring
 from .text import T
 
-LOAD_KEY = "blogs-load"                                     # 프로필을 읽는 작업의 이름(홈·설정 읽기와 따로 돈다)
+LOAD_KEY = "blogs-load"                                      # 프로필을 읽는 작업의 이름(홈·설정 읽기와 따로 돈다)
 WRITE_KEY = "blogs-write"                                    # 저장·복제·삭제 작업의 이름 — 한 번에 하나(중복 클릭은 거절)
 DEFAULT_SELECTED = "naver_a"
 LIST_STATES = ("loading", "normal", "error")
@@ -383,7 +383,7 @@ class BlogsController:
 
     @blocked_while_restoring
     def start_save(self, **callbacks):
-        """저장 — `(상태, 내용)`: `("busy", None)` 이미 쓰는 중· `("nothing", None)` 바뀐 것이 없음 · `("invalid", 문제들)` 칸에 문제가 있어 서비스를 부르지 않음(그 칸들을 보이게 한다) · `("started", 작업)`."""
+        """저장 — `(상태, 내용)`: `("busy", None)` 이미 쓰는 중 · `("nothing", None)` 바뀐 것이 없음 · `("invalid", 문제들)` 칸에 문제가 있어 서비스를 부르지 않음(그 칸들을 보이게 한다) · `("started", 작업)`."""
         key = self.selected
         if self.data is None or self.busy or key is None:
             return "busy", None

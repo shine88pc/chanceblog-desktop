@@ -296,7 +296,7 @@ class CandidatesController:
 
     @blocked_while_restoring
     def start_make(self, **callbacks):
-        """확인창에서 `만들기` 를 눌렀을 때만 —확인창을 보이지 않았거나 만들 후보가 없으면 아무것도 하지 않는다(`unconfirmed`·`unavailable`). 이미 도는 중이면 새로 시작하지 않는다(`busy`)."""
+        """확인창에서 `만들기` 를 눌렀을 때만 — 확인창을 보이지 않았거나 만들 후보가 없으면 아무것도 하지 않는다(`unconfirmed`·`unavailable`). 이미 도는 중이면 새로 시작하지 않는다(`busy`)."""
         preview = self.preview
         if self.data is None or preview is None or not preview.can_make:
             return "unavailable", None
