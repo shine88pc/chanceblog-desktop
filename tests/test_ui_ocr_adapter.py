@@ -91,6 +91,18 @@ def hard_kill(process):
         pass
 
 
+def kill_and_reap(process):
+    """시험이 직접 띄운 보조 프로세스를 끝내고 거둔다(wait) — kill 만 하고 거두지 않으면 객체가 사라질 때 '아직 돌고 있다' 는 경고가 난다."""
+    try:
+        process.kill()
+    except OSError:
+        pass
+    try:
+        process.wait(timeout=30)
+    except Exception:
+        pass
+
+
 def kill_pid(pid):
     """손자 프로세스를 PID 로 직접 끝낸다 — 어댑터의 트리 종료가 망가진 변이에서도 시험이 프로세스를 흘리지 않게 하는 안전망."""
     try:
@@ -713,13 +725,13 @@ class JobObjectTest(unittest.TestCase):
         self.addCleanup(job.close)
         self.assertTrue(job.ok)
         child = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(30)"], creationflags=oa.NO_WINDOW)
-        self.addCleanup(child.kill)
+        self.addCleanup(kill_and_reap, child)
         self.assertTrue(job.assign(child))
 
     def test_closing_the_job_handle_ends_the_process_like_an_app_that_died(self):
         job = oa.JobObject()
         child = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"], creationflags=oa.NO_WINDOW)
-        self.addCleanup(child.kill)
+        self.addCleanup(kill_and_reap, child)
         self.assertTrue(job.assign(child))
         self.assertIsNone(child.poll())
         job.close()
