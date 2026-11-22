@@ -26,6 +26,7 @@ from .drafts import DraftFailure, DraftRequest, DraftTarget, SaveRequest, review
 from .jobs import Job, JobFailure
 from .photo_rules import short_name
 from .photo_view import PhotoBoard
+from .save_gate import blocked_while_restoring
 from .text import T
 
 
@@ -54,6 +55,8 @@ KEYWORD_SEPARATOR = ", "
 
 
 class DraftsController:
+    save_gate = None                                         # 복원이 도는 중이면 참을 돌려주는 함수 — `AppState` 가 이어 준다(F030: 복원 중에는 저장한 초안의 저장·지우기를 시작하지 않는다)
+
     def __init__(self, provider, runner):
         self.provider, self.runner = provider, runner
         self.target = None
@@ -457,6 +460,7 @@ class DraftsController:
                            getattr(result, "candidate_id", "") or (target.candidate_id if target is not None else ""), getattr(body, "topic", "") or "", self.blog or result.blog,
                            self.post_type, result.post_type, dict(result.options or {}), base, self.saved_id, self.saved_rev, self.photos.manifest if self.photos_unsaved() else None)
 
+    @blocked_while_restoring
     def start_save(self, on_progress=None, on_done=None, on_error=None, on_cancel=None, *, after=None):
         """`저장`(Ctrl+S) — 지금 편집기의 글을 작업 스레드에서 저장한다. `(상태, 작업)`: `unavailable`(저장 기능이 없다·초안이 없다) · `making`(새 초안을 만드는 중) · `busy`(다른 저장 작업이 도는 중) · `started`.
         `after` 는 저장이 끝난 뒤 이어서 할 일(`("leave", 화면 열쇠)`·`("close", None)` — 확인창에서 `저장` 을 골랐을 때)이고 `apply_saved` 가 돌려준다. 키·토큰 모양이 있으면 서비스가 저장하지 않는다."""
@@ -631,6 +635,7 @@ class DraftsController:
     def discard_delete(self):
         self.delete_asked = None
 
+    @blocked_while_restoring
     def start_delete(self, on_progress=None, on_done=None, on_error=None, on_cancel=None):
         """확인창에서 `지우기` 를 눌렀다 — 확인창을 보이지 않았으면 아무것도 하지 않는다(`unconfirmed`). 지우기 직전 상태는 서비스가 백업해 둔다. `(상태, 작업)`: `unconfirmed` · `busy` · `started`."""
         draft_id = self.delete_asked

@@ -76,6 +76,10 @@ SEED_T = {
     "seeds_saving": "저장하는 중이에요…", "seeds_save_invalid": "입력한 값 중에 확인할 곳이 있어요. 표시된 칸을 고쳐 주세요.",
     # 새 Seed 서랍
     "seeds_new_title": "새 Seed 등록", "seeds_new_a11y": "새 Seed 등록 입력", "seeds_new_note": "등록한 Seed 는 승인 전으로 시작해요. 승인하기 전에는 후보 생성에 쓰이지 않아요. 번호는 프로그램이 정해요.",
+    # 앱 닫기 확인(F025, D-535) — 저장하지 않은 입력이 있을 때만(두 갈래, 처음 포커스는 계속 고치기)
+    "seeds_close_title": "저장하지 않은 Seed 입력이 있어요. 닫을까요?",
+    "seeds_close_body": "Seed 관리에서 고치거나 새로 입력한 내용을 아직 저장하지 않았어요. 지금 닫으면 그 내용은 사라져요. ‘계속 고치기’ 를 누르면 입력한 내용이 그대로 남아 있어요.",
+    "seeds_close_ok": "저장 안 하고 닫기", "seeds_close_cancel": "계속 고치기",
     # 결과·실패
     "seeds_saved": "저장했어요.", "seeds_unchanged": "바뀐 내용이 없어요.", "seeds_approved": "승인했어요. 이제 후보 생성에 쓰여요.", "seeds_rested": "쉬게 했어요. 후보 생성에서 빠져요.", "seeds_resumed": "다시 쓰기로 했어요.",
     "seeds_bulk_done_activate": "{n}개를 사용 중으로 바꿨어요.", "seeds_bulk_done_rest": "{n}개를 쉬는 중으로 바꿨어요.",
