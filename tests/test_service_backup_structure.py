@@ -156,6 +156,22 @@ class RefusalTest(Base):
                 finally:
                     self.restore_folder(saved)
 
+    def test_an_extra_or_renamed_column_in_a_known_table_is_still_refused_by_the_old_shape_check(self):
+        """보존 시험(옛 코드에서도 초록) — 알 수 없는 칸(열)은 구조 검사가 아니라 옛 모양 확인(`_shape_problem`)이 거절한다. 구조 검사가 들어와도 그 거절이 그대로이고 바꾸기 전에 일어나며
+        열 이름 글은 오류에 되풀이되지 않음을 못박는다(적대 입력 목록의 '알 수 없는 칸')."""
+        for name in DBS:
+            table, column = TARGET[name]
+            attacks = {"extra column": f"ALTER TABLE {table} ADD COLUMN {CANARY}_c TEXT DEFAULT ''", "renamed column": f"ALTER TABLE {table} RENAME COLUMN {column} TO {CANARY}_r"}
+            for label, statement in attacks.items():
+                with self.subTest(database=name, kind=label):
+                    saved = self.snapshot_folder()
+                    try:
+                        forge(self.folder, name, statement)
+                        self.assertEqual(self.foreign_in(self.folder / name, name), (), "개체는 그대로다 — 구조 검사의 몫이 아니다")
+                        self.assert_clean_refusal(bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True), "content")
+                    finally:
+                        self.restore_folder(saved)
+
     def test_the_newer_version_deferral_is_only_for_the_backup_check_and_never_for_the_after_check(self):
         component = bf.BY_NAME["chanceblog.db"]
         path = self.folder / "chanceblog.db"

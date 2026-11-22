@@ -5,6 +5,7 @@
   2) 보안 문서의 새 절이 코드의 사실과 같다 — 구조 검사의 고정 이름 아홉이 모두 적혀 있고, 새 모양 표의 이름이 `_RECENT_PATTERNS` 와 정확히 같으며(모양 하나를 더하거나 빼면 문서도 고쳐야 한다), 거절 이유 문구·지시서의 예가 이미 막혀 있었다는 사실과 한계가 적혀 있다.
   3) 가림 규칙의 '알려 둔 한계' 목록(`UI_DESIGN_SPEC.md` 9절·`D-32` (o))이 L8 이 닫은 네 모양을 더는 한계로 적지 않는다(시험 `test_ui_core` 가 코드와 맞는지 따로 본다).
   4) 변경 이력의 마지막 항목이 이 묶음을 알린다.
+  5) 한 번 잰 탐침의 숫자(모양 서른세 가지 중 옛 코드가 막은 수와 고친 코드가 막은 수)가 보안 문서·결정 D-556·D-558·변경 이력 네 곳에서 같다.
 네트워크·실제 비밀 없이 돈다.
 """
 import re
@@ -133,6 +134,31 @@ class SecuritySectionTest(unittest.TestCase):
         for word in ("github_pat_", "ghs_", "gho_", "텔레그램", "AIza", "xox", "개인 키 머리말", "이미 막는", "되풀이해 더하지 않았다", "7개", "33개", "64편", "오탐", "한계(사실대로)"):
             with self.subTest(word=word):
                 self.assertIn(word, section)
+
+    def test_the_probe_numbers_agree_in_every_place_that_states_them(self):
+        """모양 서른세 가지를 진짜 `check_post` 에 넣어 본 탐침의 숫자(옛 코드가 막은 수·고친 코드가 막은 수)는 네 곳에 적혀 있다 —
+        보안 문서·결정 D-556·결정 D-558·변경 이력. 한 곳만 고치면 어긋나므로 모두 같은 값인지 본다."""
+        sentence = r"옛 코드는 (?:지시서의 예 )?(\d+)개만 막았고(?:\(나머지 (\d+)개는 통과\))? 고친 코드는 (\d+)개를 모두 막았다"
+        places = {"보안 문서": self.section(), "D-556": row_of("D-556")[0][1], "D-558": row_of("D-558")[0][1]}
+        old_values, total_values = set(), set()
+        for name, text in places.items():
+            with self.subTest(place=name):
+                found = re.findall(sentence, text)
+                self.assertEqual(len(found), 1, f"{name}: 탐침 문장은 정확히 하나")
+                old, missed, total = found[0]
+                old_values.add(int(old))
+                total_values.add(int(total))
+                if missed:
+                    self.assertEqual(int(old) + int(missed), int(total), f"{name}: 막은 수 + 통과한 수 = 넣어 본 수")
+        last = read("CHANGELOG.md").rstrip().splitlines()[-1]
+        found = re.findall(r"모양 (\d+)개 중 옛 (\d+)개 → (\d+)개", last)
+        self.assertEqual(len(found), 1, "변경 이력의 탐침 문장은 정확히 하나")
+        total, old, fixed = (int(number) for number in found[0])
+        old_values.add(old)
+        total_values.update((total, fixed))
+        self.assertEqual(len(old_values), 1, f"옛 코드가 막은 수가 곳마다 다르다: {sorted(old_values)}")
+        self.assertEqual(len(total_values), 1, f"넣어 본 모양의 수가 곳마다 다르다: {sorted(total_values)}")
+        self.assertLess(min(old_values), min(total_values))
 
     def test_the_section_has_no_tilde_no_link_and_no_complete_key(self):
         section = self.section()
