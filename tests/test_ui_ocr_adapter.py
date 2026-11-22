@@ -114,13 +114,16 @@ def kill_pid(pid):
         pass
 
 
-def wait_dead(pid, seconds=10.0):
+def wait_dead(pid, seconds=30.0):
+    """프로세스가 끝나길 기다린다. 마지막 판정은 늘 '기한이 지난 뒤에 시작한 확인' 이다 — CPU 가 아주 바쁜 PC 에서는 확인(tasklist) 한 번이 기한보다 오래 걸려, 확인 도중 끝난 프로세스를 '남았다' 고 잘못 판정하던 틈(3.10 전체 훑기에서 한 번)을 막는다."""
     end = time.monotonic() + seconds
-    while time.monotonic() < end:
+    while True:
+        expired = time.monotonic() >= end
         if not pid_alive(pid):
             return True
+        if expired:
+            return False
         time.sleep(0.1)
-    return False
 
 
 class AdapterCase(unittest.TestCase):
