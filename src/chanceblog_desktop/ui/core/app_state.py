@@ -26,6 +26,8 @@ from .seeds_view import SeedsController
 from .jobs import JobFailure, JobRunner
 from .keys_view import KeysController
 from .notify import ToastPolicy
+from .photo_ocr_panel import OcrPanel
+from .photo_ocr_view import OcrBoard
 from .photo_view import FakePhotoProvider
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
 from .text import NO_DATA, T, display_text, fmt_demand, fmt_docs
@@ -131,7 +133,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None, photos=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None, photos=None, ocr=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -184,6 +186,12 @@ class AppState:
             controller.save_gate = self.save_blocked
         if self.backups is not None:
             self.backups.restore_gate = self.writers_busy
+
+        # 글자 읽기(선택 기능, D-513) — 짝 공급자(`ui/ocr_provider.py`)는 `LOCAL_OCR` 가 켜졌고 추가 도구가 확인을 통과했을 때만 만들어진다. 없으면(기본·시험) 컨트롤러도 화면 규칙도 만들지 않아 사진 정리 창은 지금과 같다
+        paired_ocr = getattr(self.provider, "ocr_provider", None)
+        reader = ocr if ocr is not None else (paired_ocr() if paired_ocr else None)
+        self.ocr = OcrBoard(self.drafts.photos, reader) if reader is not None else None
+        self.ocr_panel = OcrPanel(self.ocr) if self.ocr is not None else None
 
     # ---- 메뉴 ----
     def leave_guard(self, key):

@@ -36,6 +36,7 @@ from .candidate_parts import DetailPane
 from .sidebar import Sidebar
 from .references_dialog import DIALOG_WIDTH as REFERENCES_DIALOG_WIDTH
 from .references_dialog import ReferencesDialog
+from .ocr_runner import OcrRunner
 from .photo_screen import DIALOG_WIDTH as PHOTO_DIALOG_WIDTH
 from .photo_screen import PhotoSheet
 from .style_dialog import DIALOG_WIDTH as STYLE_DIALOG_WIDTH
@@ -91,14 +92,15 @@ def qt_files_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None, environment=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None, environment=None, ocr=None, ocr_options=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups, photos=photos)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups, photos=photos, ocr=ocr)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.ocr_runner = OcrRunner(self.state.ocr_panel, parent=self, **(ocr_options or {})) if self.state.ocr_panel is not None else None      # 글자 읽기(선택 기능, D-513) — 도구가 없거나 `LOCAL_OCR` 가 꺼져 있으면 없다(사진 정리 창은 지금과 같다)
         self._clipboard = clipboard or qt_clipboard_set
         self._environment = environment or self._read_environment                        # 진단 정보 복사에 넣을 이 PC 의 값(윈도 빌드 번호·화면 배율 — `{"windows_build": 정수, "scale_percent": 정수}`)을 읽는 함수(시험은 가짜를 주입한다)
         self._url_opener = url_opener or qt_open_url                                     # 네이버 글쓰기 주소를 여는 함수(시험·사진은 가짜 열기 함수를 주입한다 — 주소만 연다)
@@ -2390,6 +2392,8 @@ class AppShell(QMainWindow):
         if form is not None:
             form.discard()
         self.state.drafts.photos.shutdown()
+        if self.ocr_runner is not None:
+            self.ocr_runner.sync()                                                    # 창을 닫으면 기다리는·읽는 중인 글자 읽기 요청은 취소된다 — 읽는 쪽에 알린다
         self.photos_card_refresh()
 
     def _photos_live(self):
@@ -2423,6 +2427,8 @@ class AppShell(QMainWindow):
         if board.confirm_all_asked:
             form.act("cancel_confirm_all")
             return "cancel_confirm"
+        if form.escape_ocr():                                                         # 글자 읽기 칸에서 할 일이 있으면(고치기·확인 줄·읽는 중 취소) 그것을 하고 창은 닫지 않는다
+            return "cancel_ocr"
         return self.photos_close()
 
     def photos_pick(self):
@@ -2731,6 +2737,8 @@ class AppShell(QMainWindow):
             job = self.state.runner.job(STORE_KEY)
             if job is not None:
                 job.join(WRITE_CLOSE_WAIT)
+        if self.ocr_runner is not None:
+            self.ocr_runner.shutdown()                                            # 글자 읽기 작업자도 끝낸다(오래 걸려도 화면을 붙잡지 않는다 — 마지막 안전망은 Job 개체)
         self.state.drafts.shutdown()                                              # 도는 글 모양 점검의 답은 버린다 — 작업자 종료를 기다리지 않는다(끝난 스레드의 답은 어디에도 보이지 않는다)
         self.state.runner.cancel_all()
         self.state.runner.join_all(1.0)

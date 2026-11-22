@@ -224,6 +224,10 @@ QFrame[notice="warning"] QLabel {{ color: {c['warning_text']}; font-weight: 600;
 QFrame[card="warm"] {{ background: {c['success_100']}; border: 1px solid {c['border']}; border-radius: {r['card']}px; }}
 QFrame[card="plain"] {{ background: {c['surface_2']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
 QFrame[card="quiet"] {{ background: {c['disabled_bg']}; border: 1px solid {c['border']}; border-radius: {r['badge']}px; }}
+QFrame[ocrline] {{ background: {c['surface']}; border: 1px dashed {c['border_strong']}; border-radius: {r['input']}px; }}
+QFrame[ocrline="done"] {{ background: {c['success_100']}; border: 1px solid {c['success']}; }}
+QFrame[ocrline][current="true"] {{ border-color: {c['primary']}; }}
+QFrame[ocrline][current="true"][focused="true"] {{ border: {K.FOCUS_RING_PX}px solid {c['border_focus']}; }}
 QPushButton {{ font-size: {px('button')}px; font-weight: {ty['button'].weight}; outline: none; }}
 QPushButton[nav="true"] {{ background: transparent; border: 2px solid transparent; border-radius: {r['nav']}px; text-align: left; padding: 0 12px; color: {c['text_secondary']}; font-weight: 600; }}
 QPushButton[nav="true"]:hover {{ background: {c['surface_hover']}; }}

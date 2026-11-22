@@ -170,6 +170,14 @@ class ServiceHomeProvider(HomeProvider):
         from .photo_adapter import ServicePhotoProvider
         return ServicePhotoProvider()
 
+    def ocr_provider(self):
+        """글자 읽기(선택 기능, 결정 D-513)의 짝 공급자 — `LOCAL_OCR` 가 켜졌고 추가 도구가 설치돼 확인을 통과했을 때만 작업자 어댑터를 돌려주고 아니면 None(화면에 글자 읽기 칸이 붙지 않는다). 이 메서드는 하위 프로세스를 띄우지 않는다(어댑터는 첫 읽기 때 띄운다)."""
+        from .ocr_provider import default_provider
+        try:
+            return default_provider()
+        except Exception:                                                      # 무슨 일이 있어도 선택 기능이 앱 시작을 막지 않는다 — 글자 읽기 칸이 없는 앱으로 시작한다
+            return None
+
     def candidates_provider(self):
         """주제 후보 화면(P4d)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 이 공급자의 쓰기(후보 만들기)는 사용자가 확인창에서 `만들기` 를 눌렀을 때만 불린다(홈·설정 읽기는 그대로 읽기뿐)."""
         from .candidates_adapter import ServiceCandidatesProvider
