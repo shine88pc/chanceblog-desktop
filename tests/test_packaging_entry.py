@@ -489,6 +489,19 @@ class CapabilitiesCheckTest(unittest.TestCase):
     def test_both_gates_false_passes(self):
         self.assertEqual(ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False)).status, "ok")
 
+    def test_the_local_ocr_gate_is_an_information_line_and_never_a_failure(self):
+        """결정 D-512(설계 3-8 (5-2)) — 글자 읽기 작업자 관문은 정보 줄이다. 켜져 있어도 실패가 아니고, 없는 옛 모듈도 그대로 통과한다. 외부 쓰기 두 관문은 그대로 실패 조건이다."""
+        off = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False, LOCAL_OCR=False))
+        self.assertEqual(off.status, "ok")
+        self.assertIn("LOCAL_OCR=False", off.text)
+        on = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False, LOCAL_OCR=True))
+        self.assertEqual(on.status, "ok")
+        self.assertIn("LOCAL_OCR=True", on.text)
+        absent = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False))
+        self.assertEqual((absent.status, "LOCAL_OCR" in absent.text), ("ok", False))
+        still_fails = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=True, BLOGGER_OAUTH_INPUT=False, LOCAL_OCR=False))
+        self.assertEqual(still_fails.status, "fail")
+
     def test_a_missing_module_fails_with_the_sentence_the_build_looks_for(self):
         def missing(name):
             raise ModuleNotFoundError(f"No module named '{name}'", name=name)

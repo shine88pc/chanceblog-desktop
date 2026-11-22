@@ -621,7 +621,7 @@ def build_body(candidate, profile=None, options=None, *, today, blog=None, post_
     block_list = [part.block() for part in parts]
     photo_notes = ()
     if photos:
-        placed, photo_notes = photo_flow.place_photos(block_list, photos)
+        placed, photo_notes = photo_flow.place_photos(block_list, photos, style=writer.style)          # 글의 문체를 넘겨 확정한 글자 문단의 틀 문장이 합니다체 글에서도 어울리게 한다(결정 D-520)
         block_list = list(placed)
     body_text = render_body(block_list)
     chars, spaced = count_chars(body_text)
