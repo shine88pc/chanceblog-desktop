@@ -610,16 +610,16 @@ class _Planner:
                 hits.setdefault(found, []).append(what)
         for (term, who), places in hits.items():
             where = "이 블로그 프로필의 제외 주제" if who == "profile" else "제외할 내용"
-            checks.append(f"{where} 「{self.quotable(term)}」 이(가) 후보의 {'·'.join(places)}에 있습니다 — " + ("이 블로그에 맞는 후보인지 확인해 주세요." if who == "profile" else "제목에는 그대로 두었습니다."))
+            checks.append(f"{where} 「{self.quotable(term)}」 {particle(self.quotable(term), '이', '가')} 후보의 {'·'.join(places)}에 있습니다 — " + ("이 블로그에 맞는 후보인지 확인해 주세요." if who == "profile" else "제목에는 그대로 두었습니다."))
         for label, text in (("직접 전달하고 싶은 내용", options.message), ("개인 의견", options.opinion), ("실제 사용 경험", options.experience), ("최종 결론", options.conclusion), ("반드시 포함할 문장", " ".join(options.must_include))):
             found = self.excluder.hit(text) if text else None
             if found:
-                checks.append(f"제외할 내용 「{self.quotable(found[0])}」 이(가) 입력하신 ‘{label}’ 에 들어 있습니다 — 입력하신 내용은 그대로 두었습니다.")
+                checks.append(f"제외할 내용 「{self.quotable(found[0])}」 {particle(self.quotable(found[0]), '이', '가')} 입력하신 ‘{label}’ 에 들어 있습니다 — 입력하신 내용은 그대로 두었습니다.")
         if self.forbidden:
             for what, text in (("핵심 키워드", keyword), ("주제", topic)):
                 hit = _forbidden_hit(text, self.forbidden)
                 if hit:
-                    checks.append(f"이 블로그의 금지 표현 「{self.quotable(hit)}」 이(가) 후보의 {what}에 있습니다 — 제목에 쓰기 전에 확인해 주세요.")
+                    checks.append(f"이 블로그의 금지 표현 「{self.quotable(hit)}」 {particle(self.quotable(hit), '이', '가')} 후보의 {what}에 있습니다 — 제목에 쓰기 전에 확인해 주세요.")
         if candidate.duplicate:
             checks.append("후보에 ‘기존 글과 겹칠 수 있음’ 으로 표시되어 있습니다 — 이미 쓴 글과 겹치지 않는지 확인해 주세요.")
         if candidate.data_date:
