@@ -200,7 +200,7 @@ class InfoViewModelTest(unittest.TestCase):
 
     def test_the_rest_of_the_info_group_is_unchanged(self):
         view = sv.info_vm(None, True, None, VersionInfo("v1", "file", "abcdef0", "알림"))
-        self.assertEqual(set(view), {"key", "title", "open", "chips", "summary", "a11y", "version", "diag"})
+        self.assertEqual(set(view), {"key", "title", "open", "chips", "summary", "a11y", "version", "diag", "copy"})         # 의도적 갱신(L3, D-539): `진단 정보 복사` 단추의 글 칸 `copy` 가 더해졌다 — 그 밖의 칸은 그대로다
         self.assertEqual((view["key"], view["title"], view["open"], view["chips"]), ("info", "정보", True, []))
 
     def test_the_view_never_contains_more_than_seven_commit_characters(self):

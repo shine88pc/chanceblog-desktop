@@ -384,7 +384,7 @@ class AccessibilityTest(Base):
         self.assertEqual(sum(1 for w in seen if w.property("nav")), 6)                                    # 의도적 갱신(P4e, D-282): 초안 작성이 더해져 여섯 / 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
-        """의도적 갱신(UI-C1b): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 단추 하나만 는다(옛 '고급' 영역의 단추가 옮겨 온 것)."""
+        """의도적 갱신(UI-C1b → L3 D-539): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 와 '진단 정보 복사' 단추 둘이 는다(보기는 옛 '고급' 영역의 단추가 옮겨 온 것이고 복사는 L3 에서 더했다)."""
         window = self.make()
         before = len(self.interactive(window))
         for key, accordion in self.accordions(window).items():
@@ -394,9 +394,11 @@ class AccessibilityTest(Base):
         self.assertEqual(len(self.interactive(window)), before)                                           # 서비스 묶음을 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드)
         self.accordions(window)["info"].flip()
         self.settle()
-        self.assertEqual(len(self.interactive(window)), before + 1)                                       # 정보를 펴면 '진단 정보 보기' 하나만
+        self.assertEqual(len(self.interactive(window)), before + 2)                                       # 의도적 갱신(L3, D-539): 정보를 펴면 '진단 정보 보기' 하나였는데 '진단 정보 복사' 단추가 정보 카드에 더해져 둘이다
         card_buttons = [w for w in window.screen_widget.findChildren(QAbstractButton) if not w.property("acc") and w.isVisible()]
-        self.assertTrue(all(w.accessibleName() in (text.T["conn_refresh"], text.T["diag_show"], "예시 데이터", text.T["style_entry_open_a11y"]) for w in card_buttons), [w.accessibleName() for w in card_buttons])        # 의도적 갱신(N-3a, D-330): 맨 아래의 '내 글 문체 참고값 보기' 카드의 `열기` 단추 하나가 더해졌다(읽기 전용 대화상자만 연다)
+        self.assertTrue(all(w.accessibleName() in (text.T["conn_refresh"], text.T["diag_show"], text.T["diag_copy"], "예시 데이터", text.T["style_entry_open_a11y"]) for w in card_buttons), [w.accessibleName() for w in card_buttons])        # 의도적 갱신(N-3a, D-330): 맨 아래의 '내 글 문체 참고값 보기' 카드의 `열기` 단추 하나가 더해졌다(읽기 전용 대화상자만 연다) / 의도적 갱신(L3, D-539): `진단 정보 복사` 가 허용 이름에 더해졌다
+        names = [w.accessibleName() for w in card_buttons]
+        self.assertEqual((names.count(text.T["diag_show"]), names.count(text.T["diag_copy"])), (1, 1))     # 새로 더한 단추는 하나이고 진단 정보 보기도 하나 그대로다
 
     def test_the_card_groups_have_a_name_a_screen_reader_can_read(self):
         window = self.make()

@@ -388,8 +388,8 @@ class SingleKeyRuleTest(unittest.TestCase):
         self.assertEqual(set(view), {"title", "sub", "sample", "sample_tag", "state", "fetched", "banners", "refresh", "section", "groups", "keys_note", "info", "loading", "empty", "error",
                                      "writable", "notice", "busy"})         # 의도적 갱신(UI-C1b): 옛 칸 `advanced`(고급 > 진단 정보) 가 '정보' 묶음 `info`(버전 + 진단 정보)로 옮겨 갔다 · 의도적 갱신(P4f, D-251): 키 행동 칸 셋(`writable`·`notice`·`busy`)이 더해졌다 — 읽기 전용 공급자에서는 거짓·None·거짓이다
         self.assertEqual((view["writable"], view["notice"], view["busy"]), (False, None, False))
-        self.assertEqual(set(view["info"]), {"key", "title", "open", "chips", "summary", "a11y", "version", "diag"})
-        self.assertEqual((set(view["info"]["version"]), set(view["info"]["diag"])), ({"label", "text"}, {"show", "hide", "note", "text"}))
+        self.assertEqual(set(view["info"]), {"key", "title", "open", "chips", "summary", "a11y", "version", "diag", "copy"})         # 의도적 갱신(L3, D-539): `진단 정보 복사` 단추의 글 칸 `copy` 가 더해졌다(복사되는 글은 이 뷰모델에 없다 — 누를 때 만든다)
+        self.assertEqual((set(view["info"]["version"]), set(view["info"]["diag"]), set(view["info"]["copy"])), ({"label", "text"}, {"show", "hide", "note", "text"}, {"text", "note"}))
         usage = cards_of(view_of(info("naver_apihub", usage=services.UsageInfo((("오늘", 1, 100),), True, 30000))))["naver_apihub"]["usage"]
         self.assertEqual({tuple(sorted(row)) for row in usage["rows"]}, {("bar", "note", "tag", "text")})          # 한도 줄의 칸도 글·꼬리표·작은 글 여부·막대 숫자뿐이다(동작 칸 없음)
         self.assertEqual(set(usage["rows"][0]["bar"]), {"title", "used", "limit", "unit"})

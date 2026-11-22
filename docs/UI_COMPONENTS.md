@@ -280,3 +280,13 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 | `Toast.show_message(text, level=None)` | `level` 이 `info`·`warning`·`error` 면 토스트 왼쪽에 그 상태색 줄이 보인다(`level` 속성 + 스타일시트 `QLabel#toast[level=…]` — 상태색 토큰 `info`·`warning`·`danger` 만). 수준이 없거나 `ok` 거나 모르는 값이면 예전 모양 그대로. 셸의 `notify(message, level=None)` 가 넘긴다 | `qt/components.py`·`qt/theme.py` |
 | `Dialog.present` | 열린 확인창을 닫지 않고 바꿔 열 때만, 부품이 보이게 된 다음 차례에 틀을 한 번 더 놓는다(새로 여는 확인창은 그대로) — 옛 동작은 새 확인창이 44px 로 접혔다 | `qt/components.py` |
 | 주 화면 채널 칩의 이름 | `channel_names.chip_label(key)` — 스무 자(`CHANNEL_CHIP_LIMIT`)까지, 줄이는 규칙은 서랍(`short_label` 열두 자)과 같은 `short_names`. 줄이면 뷰모델이 `tip`(전체 이름)을 싣고 화면이 `FilterChip(full=…)` 이나 툴팁으로 보인다. Seed 요약 칩은 포커스를 받지 않는 `Badge` 라 마우스를 올릴 때만 툴팁이 나온다(접근 이름은 전체 이름) | `ui/core/channel_names.py` |
+
+## 진단 정보 복사 단추와 정보 카드 (L3 — `ui/qt/screens.py` 의 `info_card`·`ui/qt/shell.py` 의 `copy_diagnostics`, 결정 D-539 에서 D-541)
+
+| 부품 | 바뀐 것 · 규칙 | 규칙의 자리 |
+|---|---|---|
+| `info_card(info, shell=None, with_diag=True)` | 버전 줄(+시험 안내) 아래에 접어 둔 진단 정보와 안내(`with_diag` 가 참일 때), 그 아래 `진단 정보 복사` 단추(`Button("ghost", …, "copy", size="sm", focus_key="diag-copy")`)와 담기는 것 안내 한 줄(`UI.label(…, "caption", wrap=True)`). 앱 틀(`shell`)이 없으면 단추와 안내가 없다 — 눌러도 할 일이 없는 단추는 만들지 않는다 | `qt/screens.py` |
+| 설정 화면의 오류 상태 | 오류 카드(`StateCard`) 바로 아래에 `info_card(info, shell, with_diag=False)` — 접이식(`Accordion`)이 아니라 바로 보이는 카드 하나. 진단 정보 접이식·안내는 오류 카드의 것 하나뿐이다(한 화면에 `진단 정보 보기` 가 둘이 되지 않는다) | `qt/screens.py` |
+| `AppShell.copy_diagnostics()` | `AppState.diagnostic_report(윈도 빌드, 배율)` 를 누르는 순간 만들어 기존 복사 길 `self.copy(text)` 로 클립보드에 쓰고 토스트를 보인다(성공: 평소 모양, 실패: 오류 색 줄). 윈도 빌드와 배율은 `_read_environment()` 가 읽는다 — 주입할 수 있는 `environment=` 인자(시험은 가짜): 이 창이 놓인 화면의 `devicePixelRatio` 와 `sys.getwindowsversion`. 못 읽으면 그 줄만 `unknown` | `qt/shell.py` |
+| 뷰모델 `info["copy"]` | `{"text": 단추 글, "note": 담기는 것 안내}` 두 칸뿐 — 복사되는 글은 뷰모델에 없다. 오류 상태·데이터 없음에서도 칸이 있다 | `core/settings_view.py` |
+| 키보드 · 접근 이름 · 크기 | 접근 이름 = 보이는 글(`진단 정보 복사`), Tab 정거장은 `진단 정보 보기` 다음, Space·Enter 로 눌린다, 누르는 칸 36 이상. 복사되는 글은 어느 위젯의 글·툴팁·접근 이름에도 없다. `copy_diagnostics` 는 이 단추를 누를 때만 불린다 — 소스 규칙 시험이 가리키는 곳(부름·이름 붙이기 포함)이 `src/` 전체에서 한 곳뿐이고 단추의 눌림 처리 안임을 PySide6 가 없는 CI 에서도 지킨다 | 시험 `tests/test_ui_qt_diagnostics.py`·`tests/test_source_rules_diagnostics.py` |

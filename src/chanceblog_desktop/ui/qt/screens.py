@@ -284,8 +284,10 @@ def purpose_card(card, shell=None):
     return frame
 
 
-def info_card(info):
-    """'정보' 묶음의 몸 — 버전 한 줄 + 접어 둔 진단 정보(+ '키와 입력한 글은 담기지 않아요' 안내). 읽기만 하는 카드라 누르는 것은 진단 정보 단추 하나뿐이다(UI-C1b)."""
+def info_card(info, shell=None, with_diag=True):
+    """'정보' 묶음의 몸 — 버전 한 줄 + 접어 둔 진단 정보(+ '키와 입력한 글은 담기지 않아요' 안내) + `진단 정보 복사` 단추와 담기는 것 안내 한 줄. 누르는 것은 진단 정보 단추와 복사 단추 둘뿐이다(UI-C1b, L3 D-539).
+    복사 단추와 그 안내는 앱 틀(`shell`)을 받았을 때만 있다 — 눌러도 할 일이 없는 단추는 만들지 않는다. `with_diag` 가 거짓이면 접어 둔 진단 정보와 그 안내가 없다: 설정 화면이 오류 상태일 때는 위의 오류 카드가
+    이미 자기 진단 정보(오류 코드·시각)를 가져서, 한 화면에 '진단 정보 보기' 가 둘이 되지 않게 한다(D-540)."""
     frame, inner = UI.Card((18, 16, 18, 16))
     inner.setSpacing(6)
     row = QHBoxLayout()
@@ -296,15 +298,22 @@ def info_card(info):
     inner.addLayout(row)
     if info["version"].get("notice"):                                              # 개인 PC 제한 시험용 묶음의 안내 한 줄(미서명 표시) — 개발 화면에는 없다
         inner.addWidget(UI.label(info["version"]["notice"], "caption", wrap=True))
-    inner.addWidget(UI.Disclosure(info["diag"]["show"], info["diag"]["hide"], info["diag"]["text"], left=True))
-    inner.addWidget(UI.label(info["diag"]["note"], "caption", wrap=True))
+    if with_diag:
+        inner.addWidget(UI.Disclosure(info["diag"]["show"], info["diag"]["hide"], info["diag"]["text"], left=True))
+        inner.addWidget(UI.label(info["diag"]["note"], "caption", wrap=True))
+    if shell is not None:
+        copy = UI.Button("ghost", info["copy"]["text"], "copy", size="sm", focus_key="diag-copy")                 # 앱 버전·빌드 정보·윈도 빌드 번호·화면 배율·마지막 오류 코드뿐인 글을 기존 복사 길로 복사한다(`AppShell.copy_diagnostics`)
+        copy.clicked.connect(lambda _=False: shell.copy_diagnostics())
+        inner.addWidget(copy, 0, Qt.AlignLeft)
+        inner.addWidget(UI.label(info["copy"]["note"], "caption", wrap=True))
     inner.addStretch(1)
     return frame
 
 
 def settings_screen(shell, vm):
     """설정 — ① 연결 관리(접이식 다섯 묶음: 데이터 Provider·이미지·AI 보조·발행·연결·정보) ② 안내 한 줄. 읽기만 한다(키 입력 창은 다음 묶음). 홈과 같은 여섯 상태 틀을 쓴다.
-    '정보' 묶음(버전 + 접어 둔 진단 정보)은 옛 '고급 > 진단 정보' 가 옮겨 온 것이다(UI-C1b) — 구조는 아코디언 그대로이고 묶음이 6개 이상이 되면 2단 전환을 검토한다(D-182)."""
+    '정보' 묶음(버전 + 접어 둔 진단 정보)은 옛 '고급 > 진단 정보' 가 옮겨 온 것이다(UI-C1b) — 구조는 아코디언 그대로이고 묶음이 6개 이상이 되면 2단 전환을 검토한다(D-182).
+    정보 카드에는 `진단 정보 복사` 단추가 있고(L3, D-539), 연결 설정을 못 읽은 오류 상태에서도 접이식 없이 오류 카드 바로 아래에 같은 카드(버전·커밋·복사 단추)가 보인다(F022·F040, D-540)."""
     page = QWidget()
     outer = QVBoxLayout(page)
     margin = K.LAYOUT["page_margin"]
@@ -341,6 +350,8 @@ def settings_screen(shell, vm):
         box.addWidget(diag)
         box.addWidget(UI.label(T["diag_note"], "caption", wrap=True))
         inner.addWidget(UI.StateCard("alert", "red", vm["error"]["title"], vm["error"]["user"] or vm["error"]["desc"], vm["error"]["button"], shell.reload_connections, holder))
+        info = vm["info"]                                                           # 연결 설정을 못 읽어도 버전·`진단 정보 복사` 는 보인다(L3 F022·F040, D-540) — 접힌 묶음이 아니라 오류 카드 바로 아래의 카드 하나, 진단 정보(코드·시각)는 위 오류 카드의 것 하나뿐
+        inner.addWidget(info_card(info, shell, with_diag=False))
     else:
         for group in vm["groups"]:
             grid = FlowGrid([purpose_card(card, shell) for card in group["cards"]], (2, 1), 440)
@@ -348,7 +359,7 @@ def settings_screen(shell, vm):
             accordion.toggled.connect(shell.set_group_open)                         # 펴고 접은 것은 기억만 한다(다시 그리지 않는다)
             inner.addWidget(accordion)
         info = vm["info"]                                                           # 마지막 줄 '정보' — 버전 + 접어 둔 진단 정보
-        accordion = UI.Accordion(info["key"], info["title"], info["chips"], FlowGrid([info_card(info)], (2, 1), 440), info["open"], T["conn_group_open"], T["conn_group_closed"], info["summary"])
+        accordion = UI.Accordion(info["key"], info["title"], info["chips"], FlowGrid([info_card(info, shell)], (2, 1), 440), info["open"], T["conn_group_open"], T["conn_group_closed"], info["summary"])
         accordion.toggled.connect(shell.set_group_open)
         inner.addWidget(accordion)
     outer.addWidget(section)
