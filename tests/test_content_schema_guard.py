@@ -243,6 +243,25 @@ class TableAndIndexTest(Base):
                 path = self.file((*base, statement))
                 self.assertEqual(self.kinds(path, SCHEMA_STATEMENTS), ("hidden_column",))
 
+    def test_a_generated_column_added_to_any_known_table_of_either_store_is_found(self):
+        """독립 검증 Q 의 QG1 — 숨은(생성) 열 확인은 정본의 표마다 한다. 마지막 표 하나만 보면 다른 표의 생성 열이 통과했다(위 시험은 `drafts` 하나만 보았다). 표마다 `ALTER TABLE … ADD COLUMN … AS (…)` 로 더해 본다."""
+        for label, statements, at_least in (("content", SCHEMA_STATEMENTS, 4), ("engine", TopicStore.SCHEMA, 7)):
+            with contextlib.closing(sqlite3.connect(":memory:")) as reference:
+                for statement in statements:
+                    reference.execute(statement)
+                tables = [row[0] for row in reference.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")]
+            self.assertGreaterEqual(len(tables), at_least, f"시험의 전제 — {label} 정본의 표를 모두 찾았다")
+            for table in tables:
+                with self.subTest(store=label, table=table):
+                    path = self.file(statements, f"ALTER TABLE {table} ADD COLUMN hidden_g TEXT AS (1)")
+                    with contextlib.closing(read_only(path)) as db:
+                        self.assertTrue(db.execute("SELECT 1 FROM pragma_table_xinfo(?) WHERE hidden != 0", (table,)).fetchone(), "시험의 전제 — 숨은 열이 정말 생겼다")
+                    self.assertEqual(self.kinds(path, statements), ("hidden_column",))
+
+    def test_a_generated_column_in_each_of_two_tables_at_once_is_still_one_finding(self):
+        path = self.file(SCHEMA_STATEMENTS, "ALTER TABLE projects ADD COLUMN hidden_a TEXT AS (1)", "ALTER TABLE candidates ADD COLUMN hidden_b TEXT AS (2)")
+        self.assertEqual(self.kinds(path, SCHEMA_STATEMENTS), ("hidden_column",))
+
     def test_too_many_objects_stop_the_check_without_listing_them(self):
         path = self.file(SCHEMA_STATEMENTS, *[f"CREATE TABLE t{number} (x)" for number in range(sg.MAX_OBJECTS + 5)])
         self.assertEqual(self.kinds(path, SCHEMA_STATEMENTS), ("too_many",))
@@ -264,6 +283,88 @@ class TableAndIndexTest(Base):
         path = self.file(SCHEMA_STATEMENTS, "CREATE TABLE evil (x)", "CREATE VIEW v AS SELECT 1", "CREATE INDEX extra ON drafts (text)", "CREATE TRIGGER t AFTER INSERT ON drafts BEGIN SELECT 1; END")
         self.assertEqual(self.kinds(path, SCHEMA_STATEMENTS), ("trigger", "view", "table", "index"))
         self.assertEqual(sg.KIND_ORDER[:2], ("trigger", "view"), "가장 위험한 것이 먼저다")
+
+
+class Listing:
+    """개체 목록을 읽는 문장의 결과를 감싸 돌려준 줄들을 적는다."""
+
+    def __init__(self, cursor, sink):
+        self.cursor, self.sink = cursor, sink
+
+    def fetchall(self):
+        rows = self.cursor.fetchall()
+        self.sink.append(rows)
+        return rows
+
+    def fetchone(self):
+        return self.cursor.fetchone()
+
+    def __iter__(self):
+        return iter(self.cursor)
+
+
+class Recording:
+    """진짜 연결을 감싸 실행한 문장과 개체 목록이 돌려준 줄을 적는다 — 읽는 양의 상한(줄 수·SQL 글 길이)을 센다. 나머지 질문은 진짜 연결이 그대로 답한다."""
+
+    def __init__(self, real):
+        self.real, self.statements, self.listings = real, [], []
+
+    def execute(self, sql, params=()):
+        self.statements.append((sql, tuple(params)))
+        cursor = self.real.execute(sql, params)
+        return Listing(cursor, self.listings) if "FROM sqlite_master" in sql else cursor
+
+
+HEAD_CHARS = 40                                                                       # 줄마다 읽는 SQL 글의 머리 길이 — 이 값이면 `CREATE VIRTUAL TABLE` 같은 머리를 알아보기에 넉넉하다
+
+
+class ReadLimitTest(Base):
+    """독립 검증 Q 의 QG2·QG3 — 개체가 수십만 개이거나 SQL 글이 수십 MB 여도 읽는 양은 정해져 있다: 줄은 상한 + 1 줄까지만, 줄마다 SQL 은 머리 40자까지만. 옛 시험은 결과만 보아 이 상한이 빠져도 통과했다."""
+
+    def hostile(self):
+        padding = "x" * 200_000
+        return self.file(SCHEMA_STATEMENTS, f"CREATE VIEW big_one AS SELECT 1 /* {padding} */", *[f"CREATE VIEW v{number} AS SELECT 1" for number in range(600)], f"CREATE TABLE evil_big (a /* {padding} */)")
+
+    def record(self, path, statements=SCHEMA_STATEMENTS):
+        with contextlib.closing(read_only(path)) as real:
+            recorder = Recording(real)
+            return recorder, sg.foreign_kinds(recorder, statements)
+
+    def test_the_object_list_is_read_only_up_to_the_limit_plus_one_row_and_then_the_check_stops(self):
+        recorder, found = self.record(self.hostile())
+        self.assertEqual(found, ("too_many",))
+        self.assertEqual(len(recorder.listings), 1, "개체 목록은 한 번만 읽는다")
+        self.assertEqual(len(recorder.listings[0]), sg.MAX_OBJECTS + 1, "상한 + 1 줄까지만 읽는다 — 개체가 600개 넘게 있어도 더 읽지 않는다")
+        self.assertEqual(recorder.statements[0][1], (sg.MAX_OBJECTS + 1,), "읽는 줄 수의 상한이 문장에 실려 간다")
+        self.assertEqual(len(recorder.statements), 1, "상한을 넘으면 개체를 하나씩 더 훑지 않는다")
+
+    def test_each_sql_text_is_read_only_to_its_head_even_when_it_is_huge(self):
+        recorder, _found = self.record(self.hostile())
+        lengths = [len(row[3] or "") for row in recorder.listings[0]]
+        self.assertEqual(max(lengths), HEAD_CHARS, "80만 글자짜리 SQL 도 머리 40자까지만 읽어 온다")
+        self.assertTrue(any(length == HEAD_CHARS for length in lengths))
+        big = next(row for row in recorder.listings[0] if row[1] == "big_one")
+        self.assertEqual(len(big[3]), HEAD_CHARS)
+        self.assertTrue(big[3].startswith("CREATE VIEW big_one"))
+
+    def test_below_the_limit_every_object_is_listed_and_looked_at_once(self):
+        path = self.file(SCHEMA_STATEMENTS, *[f"CREATE VIEW w{number} AS SELECT 1" for number in range(5)])
+        recorder, found = self.record(path)
+        self.assertEqual(found, ("view",))
+        with contextlib.closing(read_only(path)) as db:
+            total = db.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0]
+        self.assertLess(total, sg.MAX_OBJECTS)
+        self.assertEqual(len(recorder.listings[0]), total, "상한 아래면 모든 개체를 읽는다")
+        names = {row[1] for row in recorder.listings[0]}
+        self.assertTrue({f"w{number}" for number in range(5)} <= names, "상한 아래면 모든 개체를 읽는다")
+        self.assertGreater(len(recorder.statements), 1, "상한 아래면 개체마다 이어서 본다")
+
+    def test_the_recorder_itself_passes_everything_through(self):
+        """시험 도구가 결과를 바꾸지 않는다 — 감싼 연결과 감싸지 않은 연결의 답이 같다."""
+        path = self.file(SCHEMA_STATEMENTS, "CREATE TRIGGER t AFTER INSERT ON drafts BEGIN SELECT 1; END", "CREATE VIEW v AS SELECT 1", "CREATE INDEX extra ON drafts (text)")
+        recorder, found = self.record(path)
+        self.assertEqual(found, self.kinds(path, SCHEMA_STATEMENTS))
+        self.assertEqual(found, ("trigger", "view", "index"))
 
 
 class FakeRows:

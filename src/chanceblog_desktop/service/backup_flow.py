@@ -9,7 +9,7 @@
 결과는 **완료**(지금 있는 것을 모두 담았다) · **부분**(일부는 담지 못했다 — 이유가 파일마다 있다) · **실패**(만들지 않았다 — 오류) 한 가지다.
 
 복원(`restore_full_backup`): ① 확인 표시가 있어야 하고 ② 바꾸기 전에 백업을 읽기만 해서 모두 확인한다(목록 모양·파일 이름·크기·해시·보관함 이름표·판·점검·앱이 만들지 않는 구조(트리거·뷰·모르는 표 …)·JSON 모양·키 모양 — 틀리면 아무것도 바꾸지 않는다, 더 새로운 앱의 백업은 거절)
-③ 이 PC 의 지금 데이터를 `before-restore/` 에 같은 모양의 안전 사본으로 먼저 남기고(남길 수 없으면 시작하지 않는다 — 안전 사본도 같은 방법으로 되돌릴 수 있다) ④ 설정·JSON 은 임시 이름으로 쓴 뒤 제자리로, 보관함은 SQLite 백업 방식으로 한 번에 바꾸며
+③ 이 PC 의 지금 데이터를 `before-restore/` 에 같은 모양의 안전 사본으로 먼저 남기고(남길 수 없으면 시작하지 않는다 — 안전 사본도 같은 방법으로 되돌릴 수 있다. 지금 보관함에 앱이 만들지 않는 구조가 있어 그 사본이 구조 검사에 걸릴 때도 시작하지 않는다, L8b D-570) ④ 설정·JSON 은 임시 이름으로 쓴 뒤 제자리로, 보관함은 SQLite 백업 방식으로 한 번에 바꾸며
 ⑤ 어느 단계에서 실패해도 지금까지 바꾼 것을 안전 사본으로 원래대로 돌린다(되돌리지 못한 것은 이름을 알린다). 깨져 있던 지금 파일은 지우지 않고 옆(`.bad-날짜-시각`)으로 옮긴다. 키·`connections.json` 은 건드리지 않는다.
 백업과 복원은 같은 잠금(`locks/full-backup.lock`)을 써서 한 번에 하나만 돈다.
 """
@@ -77,6 +77,8 @@ INVALID_REASONS = {
     "content": "안의 보관함이나 설정 파일이 온전하지 않아요",
     "structure": "안의 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있어요",
 }
+LIVE_STRUCTURE = "live_structure"                                        # 복원을 시작하지 않은 이유 — 지금 보관함에 앱이 만들지 않는 구조가 있어 '복원 직전 사본' 으로 되돌릴 수 없다(RESTORE_FAILED 의 `reason`, L8b D-570)
+LIVE_STRUCTURE_TEXT = "지금 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 있어 '복원 직전 사본' 으로 되돌릴 수 없어서 시작하지 않았어요"
 DAMAGED_CODE = {STORE: "STORE_CORRUPT", ENGINE: "TOPIC_STORE_CORRUPT", JSON_FILE: "TOPIC_FILE_INVALID", SETTINGS: "SETTINGS_INVALID"}      # 읽을 수 없는 지금 파일을 '깨짐' 으로 알릴 때의 코드
 STORE_NEWER = frozenset({"STORE_VERSION_UNSUPPORTED", "TOPIC_STORE_VERSION_UNSUPPORTED"})
 STORE_BUSY = frozenset({"STORE_LOCKED", "TOPIC_STORE_LOCKED"})
@@ -939,6 +941,25 @@ def _check_structure(folder, name):
         raise _invalid(folder, "structure", detail=f"{name}: 앱이 만들지 않는 구조({schema_guard.describe(foreign)})")
 
 
+def _refuse_if_undo_impossible(ctx, names, live):
+    """이 복원이 바꿀 **지금 보관함**이 '복원 직전 사본' 으로 되돌릴 수 있는 모양인지 시작 전에 읽기만 해서 본다(L8b, D-570). 안전 사본은 지금 파일을 그대로 담으므로 지금 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표·색인 …)가 있으면
+    그 사본에도 있고, 복원은 그런 백업을 거절하므로(D-554) 확인창이 약속한 '잘못 복원했다면 그 사본으로 다시 복원' 이 안 된다 — 그런 보관함은 바꾸기 전에 멈춘다(RESTORE_FAILED 이유 `live_structure`).
+    안전 사본·표지·임시 파일을 만들기 전이라 아무것도 바뀌지 않고, 검사를 끄는 길은 없다. 보는 것은 이 복원이 안전 사본에 담고 바꿀 보관함(`live` 가 `ok` 인 것)뿐이다 — 깨져서 옆으로 옮길 파일·없는 파일·0바이트 파일은
+    안전 사본에 담지 않고, 백업에 없는 보관함은 건드리지 않는다. 읽을 수 없으면 건너뛴다(안전 사본을 만드는 다음 단계가 같은 파일을 읽다가 멈춘다 — 잠겨 있으면 거기서 '다른 곳에서 쓰는 중' 으로 알린다)."""
+    found = []
+    for component in names:
+        if component.kind not in (STORE, ENGINE) or live[component.name] != "ok":
+            continue
+        try:
+            foreign = _foreign_in(component, _component_path(ctx, component), defer_newer=True)
+        except AppError:
+            continue
+        if foreign:
+            found.append(f"{component.name}: {schema_guard.describe(foreign)}")
+    if found:
+        raise FlowError("RESTORE_FAILED", {"이유": LIVE_STRUCTURE_TEXT}, detail="지금 보관함에 앱이 만들지 않는 구조가 있다 — " + "; ".join(found), reason=LIVE_STRUCTURE)
+
+
 def _repo_path_problem(text):
     """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554).
     네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로 포함)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검), 조작한 백업이 남의 서버를 가리키면
@@ -1241,6 +1262,7 @@ def _restore_locked(ctx, folder, manifest, step):
     moment = ctx.now()
     names = [component for component in COMPONENTS if component.name in manifest["files"]]
     live = {component.name: _live_state(ctx, component) for component in names}
+    _refuse_if_undo_impossible(ctx, names, live)                         # 되돌릴 수 없는 보관함이면 안전 사본을 만들기 전에 멈춘다(L8b, D-570)
     safe = [component.name for component in names if live[component.name] == "ok"]
     safety = None
     if safe:
