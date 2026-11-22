@@ -43,9 +43,14 @@ def own_section(text):
     return rest.split("\n## ", 1)[0]
 
 
-def changelog_entry():
-    """변경 이력에서 이 묶음의 항목(결정 D-554 와 L8 이 든 줄) — 맨 끝 줄이어야 하는 것이 아니다. 정확히 하나여야 한다."""
-    found = [line for line in read("CHANGELOG.md").splitlines() if line.startswith("- ") and "D-554" in line and "L8" in line]
+ENTRY_MARK = "(자체 개선 L8 — "                                                       # 이 묶음의 변경 이력 줄이 여는 말 — 다른 갈래(이 묶음의 후속 `L8b` 포함)의 줄은 이렇게 열지 않는다
+
+
+def changelog_entry(text=None):
+    """변경 이력에서 이 묶음의 항목('(자체 개선 L8 — ' 로 열리는 줄) — 맨 끝 줄이어야 하는 것이 아니고, 뒤에 덧붙은 다른 갈래의 줄이 D-554 나 L8 을 되풀이해 말해도(예: 이 묶음의 후속) 헷갈리지 않는다.
+    정확히 하나여야 한다. `text` 를 주면 그 글에서 찾는다(찾는 방법 자체를 시험하려고 — `FindersStayStableTest`)."""
+    lines = (read("CHANGELOG.md") if text is None else text).splitlines()
+    found = [line for line in lines if line.startswith("- ") and ENTRY_MARK in line and "D-554" in line]
     if len(found) != 1:
         raise AssertionError(f"변경 이력에 이 묶음의 항목이 정확히 하나여야 한다: {len(found)}")
     return found[0]
@@ -196,6 +201,51 @@ class LimitListTest(unittest.TestCase):
         self.assertIn("L8 묶음", rest)
         decision = next(line for line in decision_lines() if line.startswith("| D-32 |"))
         self.assertIn("L8 묶음", decision)
+
+
+class FindersStayStableTest(unittest.TestCase):
+    """독립 검증 Q 의 QP-5 — 이 시험이 문서에서 '이 묶음의 것' 을 찾는 방법은 다른 갈래가 문서 끝에 덧붙여도(또는 앞에 끼워 넣어도) 흔들리지 않는다. 옛 시험은 '마지막 줄' 을 찾아 L4 가 뒤에 병합되면 빨개졌고,
+    그 뒤 고친 '결정 번호와 L8 이 든 줄' 은 이 묶음의 후속이 D-554 와 L8 을 되풀이해 말하면 줄이 둘로 보여 빨개질 수 있었다 — 이제 이 묶음이 여는 말로 찾는다. 이 시험은 **찾는 방법**을 만든 글로 본다(진짜 문서는 건드리지 않는다)."""
+
+    LATER = ("- 다른 갈래의 항목(L5 — 결정 D-549)", "- 이 묶음의 후속(자체 개선 L8b — 결정 D-570, 앞 묶음 L8 의 D-554 를 이어받음)", "- L8 과 D-554 만 적은 줄", "- (자체 개선 L8b — 결정 D-554 도 말하는 줄)",
+             "- 자체 개선 L8 이라고만 적고 닫는 말이 없는 줄 D-554")
+
+    def test_lines_appended_after_or_inserted_before_the_entry_never_change_which_line_is_found(self):
+        base = read("CHANGELOG.md")
+        found = changelog_entry(base)
+        self.assertIn(ENTRY_MARK, found)
+        self.assertEqual(changelog_entry(base.rstrip("\n") + "\n" + "\n".join(self.LATER) + "\n"), found, "뒤에 덧붙인 줄")
+        self.assertEqual(changelog_entry("\n".join(self.LATER) + "\n" + base), found, "앞에 끼워 넣은 줄")
+        for line in self.LATER:
+            with self.subTest(line=line[:30]):
+                self.assertEqual(changelog_entry(base + line + "\n"), found)
+
+    def test_a_second_entry_of_this_work_or_a_missing_one_is_an_error(self):
+        base = read("CHANGELOG.md")
+        found = changelog_entry(base)
+        with self.assertRaises(AssertionError):
+            changelog_entry(base.rstrip("\n") + "\n" + found + "\n")
+        with self.assertRaises(AssertionError):
+            changelog_entry("- 아무 항목\n" + "\n".join(self.LATER))
+        with self.assertRaises(AssertionError):
+            changelog_entry(found.replace(ENTRY_MARK, "(자체 개선 L9 — ") + "\n")
+
+    def test_a_section_appended_after_the_security_section_does_not_change_it(self):
+        text = read("docs/SECURITY.md")
+        section = own_section(text)
+        later = "\n## 다른 갈래의 절(설계 D-570 과 D-999)\n\n본문에 D-570 이 있다. 물결표나 링크가 있어도 이 묶음의 절이 아니다\n\n### 소절\n\n더 있다\n"
+        self.assertEqual(own_section(text.rstrip("\n") + "\n" + later), section)
+        self.assertNotIn("D-999", section)
+        self.assertTrue(section.startswith(HEADING))
+
+    def test_the_decision_rows_are_found_by_their_numbers_wherever_other_rows_stand(self):
+        """결정 기록 행은 번호로 찾는다 — 앞뒤에 다른 갈래의 행이 얼마나 있든 같다."""
+        lines = decision_lines()
+        for number in NUMBERS:
+            found = row_of(number)
+            self.assertEqual(len(found), 1)
+            self.assertTrue(found[0][1].startswith(f"| {number} |"))
+        self.assertGreater(len(lines), 100)
 
 
 class ChangelogTest(unittest.TestCase):

@@ -311,14 +311,19 @@ class BackupController:
         """쓰기가 실패했다 — 문장은 종류별로 정해진 쉬운 말뿐이다. 키 모양이 발견됐으면 위치(유형 포함)를 줄로 붙인다. 되돌리지 못한 것이 있으면 그 이름을 붙인다."""
         work, self.pending = self.pending or {"kind": "", "name": ""}, None
         kind = failure.kind if isinstance(failure, BackupFailure) else "other"
-        lines, left = (), ()
+        lines, left, unstarted = (), (), False
         if isinstance(failure, BackupFailure):
             left = tuple(_shown(line, 240) for line in failure.notes) if kind == "restore" else ()
             reason = (T["backup_restore_reason_" + failure.reason],) if kind == "restore" and failure.reason in ("disk", "io", "corrupt", "busy", "other") else ()
             if kind == "invalid" and failure.reason == "structure":                          # 조작했을 수 있는 백업 — 왜 거절했는지 쉬운 한 줄(L8, D-554)
                 reason = (T["backup_invalid_structure"],)
+            if kind == "restore" and failure.reason == "live_structure":                     # 지금 보관함이 되돌릴 수 없는 모양이라 복원을 시작하지 않았다 — 지금 데이터는 그대로(L8b, D-570)
+                reason, unstarted = (T["backup_restore_live_structure"], T["backup_restore_live_structure_help"]), True
             lines = tuple(_shown(line, 240) for line in failure.summary) if kind == "blocked" else reason + left
-        text = T["backup_fail_restore_left" if kind == "restore" and left else "backup_fail_" + kind] if kind in ("blocked", "nothing", "busy", "invalid", "newer", "disk", "io", "restore", "other") else T["backup_fail_other"]
+        if unstarted:
+            text = T["backup_fail_restore_unstarted"]
+        else:
+            text = T["backup_fail_restore_left" if kind == "restore" and left else "backup_fail_" + kind] if kind in ("blocked", "nothing", "busy", "invalid", "newer", "disk", "io", "restore", "other") else T["backup_fail_other"]
         self.notice = ("error", text, lines)
         self.reload_wanted = kind in ("invalid", "restore", "other") or work.get("kind") == "restore"
         self.focus_after = True

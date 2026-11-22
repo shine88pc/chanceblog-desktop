@@ -90,6 +90,20 @@ def sample(label, delta=0):
     return SAMPLES[label][0](delta)
 
 
+OPEN_ENDED = ("Slack 앱 토큰", "Slack 갱신 토큰", "Stripe 비밀 키", "Stripe 웹훅 서명 비밀", "GitLab 토큰", "Hugging Face 토큰", "PyPI 토큰", "Groq 키", "NVIDIA 키", "Notion 토큰", "Linear 키", "Perplexity 키", "xAI 키")        # 꼬리 길이에 상한이 없는 모양 — 실제 키가 표본보다 길어도 끝까지 가린다
+FIXED_LENGTH = ("AWS 임시·식별 키", "DigitalOcean 토큰", "Replicate 토큰", "SendGrid 키", "Shopify 토큰")                                                                                               # 길이가 정해진 모양
+
+
+def nvidia_key(digit_at=None, upper_at=None, length=64):
+    """소문자뿐인 몸(`canary` 로 시작)에 숫자는 `digit_at` 번째, 대문자는 `upper_at` 번째 한 곳에만 둔 NVIDIA 모양 키 — 실제 키에서 숫자·대문자가 앞쪽에 없는 경우를 흉내 낸다(`None` 이면 그 글자는 없다)."""
+    chars = list("canary" + "".join(string.ascii_lowercase[(index * 7 + 3) % 26] for index in range(length - 6)))
+    if digit_at is not None:
+        chars[digit_at] = "7"
+    if upper_at is not None:
+        chars[upper_at] = "Q"
+    return cat("nv", "api-", "".join(chars))
+
+
 SCAN_ALREADY_KNOWS = frozenset({"AWS 임시·식별 키"})                                       # 본문 속 비밀 형태 검사기(`scan.py`, 저장·백업 관문)는 아는데 가리기 목록만 몰랐던 모양 — 가림 규칙의 알려 둔 한계 ① 이었다
 
 
@@ -234,6 +248,78 @@ class DetectionTest(unittest.TestCase):
         self.assertFalse(pattern.search("nvapi-" + "abcdefghij-" * 6), "소문자와 붙임표뿐인 긴 글")
         self.assertFalse(pattern.search("nvapi-" + "ABCDEFGHIJ-" * 6), "숫자가 없다")
         self.assertFalse(pattern.search("nvapi-" + "abcdefghij1-" * 6), "대문자가 없다")
+
+    def test_an_nvidia_key_whose_first_digit_and_capital_come_late_is_still_found_and_masked(self):
+        """독립 검증 Q 의 QP1 — 숫자·대문자 조건의 앞내다보기 창은 60자다. 표본은 숫자·대문자를 맨 앞에 두었고 창을 3자로 줄여도 통과했다. 실제 키(몸 64자 무작위)는 숫자·대문자가 앞쪽에 없을 수 있다(없을 확률 약 4e-5)."""
+        pattern = RECENT["NVIDIA 키"][0]
+        for digit_at, upper_at in ((10, 55), (55, 10), (45, 50), (59, 60), (60, 59), (60, 58)):
+            with self.subTest(digit_at=digit_at, upper_at=upper_at):
+                key = nvidia_key(digit_at, upper_at)
+                self.assertTrue(pattern.search(key), "첫 숫자·대문자가 몸의 61번째 글자 안에 있으면 모양이다")
+                self.assertTrue(mk.has_key_shape("토큰은 " + key + " 입니다"))
+                self.assert_masked("토큰은 " + key + " 입니다", key, "NVIDIA 키")
+
+    def test_the_nvidia_look_ahead_window_is_exactly_sixty_characters(self):
+        """창은 입력 길이에 선형이도록 일부러 막아 둔 값이다(문서의 '앞내다보기를 60자로'). 숫자나 대문자가 61번째 글자 뒤에서야 처음 나오면 모양으로 보지 않는다."""
+        pattern = RECENT["NVIDIA 키"][0]
+        self.assertFalse(pattern.search(nvidia_key(61, 5)), "첫 숫자가 62번째 글자")
+        self.assertFalse(pattern.search(nvidia_key(5, 61)), "첫 대문자가 62번째 글자")
+        self.assertFalse(pattern.search(nvidia_key(None, 5)), "숫자가 아예 없다")
+        self.assertFalse(pattern.search(nvidia_key(5, None)), "대문자가 아예 없다")
+        self.assertTrue(pattern.search(nvidia_key(60, 5)) and pattern.search(nvidia_key(5, 60)))
+
+    def test_the_slack_app_token_middle_chunks_take_any_length_from_eight(self):
+        """독립 검증 Q 의 QP2 — 가운데 두 덩어리(앱 번호 영숫자·숫자)는 8자 이상이면 모두 받는다. 표본의 길이(11·13)로 못박아도 통과했다."""
+        pattern = RECENT["Slack 앱 토큰"][0]
+        tail = body(64)
+        for app_id in (8, 9, 10, 11, 12, 20):
+            for number in (8, 9, 12, 13, 14, 30):
+                with self.subTest(app_id=app_id, number=number):
+                    token = cat("xa", "pp-1-", body(app_id, UPPER_DIGITS), "-", "1" * number, "-", tail)
+                    self.assertTrue(pattern.search(token))
+                    self.assert_masked("토큰은 " + token + " 입니다", token, "Slack 앱 토큰")
+        self.assertFalse(pattern.search(cat("xa", "pp-1-", body(7, UPPER_DIGITS), "-", "1" * 13, "-", tail)), "앱 번호 덩어리가 7자")
+        self.assertFalse(pattern.search(cat("xa", "pp-1-", body(11, UPPER_DIGITS), "-", "1" * 7, "-", tail)), "숫자 덩어리가 7자")
+        self.assertFalse(pattern.search(cat("xa", "pp-1-", body(11, UPPER_DIGITS).lower(), "-", "1" * 13, "-", tail)), "앱 번호 덩어리는 대문자·숫자만이다")
+
+    def test_every_open_ended_shape_masks_a_much_longer_real_key_to_its_last_character(self):
+        """독립 검증 Q 의 QP3 — 꼬리 길이에 상한이 없는 모양은 실제로 더 긴 키(Stripe 는 99자)의 꼬리까지 가린다. 상한이 생기면 가림 출력(로그·화면)에 키 꼬리가 남는다(모양 검사는 통과해 관문은 막지만 출력에는 남는다)."""
+        for label in OPEN_ENDED:
+            for extra in (60, 200):
+                with self.subTest(label=label, extra=extra):
+                    token = sample(label, extra)
+                    text = "토큰은 " + token + " 입니다"
+                    masked = mk.mask(text)
+                    self.assertEqual(masked, f"토큰은 [가림: {label}] 입니다", "긴 꼬리까지 통째로 한 표지로 바뀐다")
+                    self.assertNotIn(token[-16:], masked)
+                    self.assertTrue(RECENT[label][0].fullmatch(token), "모양이 키 전체에 걸린다 — 앞부분만이 아니다")
+
+    def test_the_two_lists_cover_every_shape_and_agree_with_the_pattern_text(self):
+        """위 시험이 보는 '꼬리 길이에 상한이 없는 모양' 과 길이가 정해진 다섯 모양(AWS·SendGrid·DigitalOcean·Shopify·Replicate)을 이름으로 못박는다 — 모양을 더하면 어느 쪽인지 정해야 하고, 모양의 글(`{n,}`)이 이름과 어긋나면 알린다."""
+        self.assertEqual(sorted(OPEN_ENDED + FIXED_LENGTH), sorted(SAMPLES))
+        self.assertEqual(len(OPEN_ENDED), 13)
+        for label in OPEN_ENDED:
+            with self.subTest(label=label, kind="open"):
+                self.assertIn(",}", RECENT[label][0].pattern, "꼬리 길이에 상한이 없다(`{n,}`)")
+        for label in FIXED_LENGTH:
+            with self.subTest(label=label, kind="fixed"):
+                self.assertNotIn(",}", RECENT[label][0].pattern)
+                self.assertTrue(RECENT[label][0].fullmatch(sample(label)), "표본은 모양 그대로다")
+
+    def test_a_digitalocean_token_is_lowercase_hex_only_and_a_shopify_token_takes_either_case(self):
+        """독립 검증 Q 의 QP4 — 입력 변형. DigitalOcean 토큰의 몸은 소문자 16진수뿐이다(대문자를 받으면 대문자 16진 해시 곁의 `dop_v1_` 글이 걸린다). Shopify 는 지금 대소문자를 모두 받는다 — 지금 모양을 못박는다."""
+        digitalocean = RECENT["DigitalOcean 토큰"][0]
+        lower = body(64, HEX)
+        self.assertTrue(digitalocean.search(cat("do", "p_v1_", lower)))
+        self.assertNotEqual(lower, lower.upper(), "시험의 전제 — 표본에 글자(a–f)가 있다")
+        self.assertFalse(digitalocean.search(cat("do", "p_v1_", lower.upper())), "모두 대문자")
+        at = next(index for index in range(10, 64) if lower[index] in "abcdef")
+        self.assertFalse(digitalocean.search(cat("do", "p_v1_", lower[:at] + lower[at].upper() + lower[at + 1:])), "한 글자만 대문자")
+        self.assertFalse(digitalocean.search(cat("do", "p_v1_", lower[:63] + "g")), "16진수가 아닌 글자")
+        shopify = RECENT["Shopify 토큰"][0]
+        self.assertTrue(shopify.search(cat("sh", "pat_", body(32, HEX))))
+        self.assertTrue(shopify.search(cat("sh", "pat_", body(32, HEX).upper())))
+        self.assertFalse(shopify.search(cat("sh", "pat_", body(31, HEX) + "g")), "16진수가 아닌 글자")
 
 
 class NormalTextTest(unittest.TestCase):
