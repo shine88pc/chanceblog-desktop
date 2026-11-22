@@ -264,3 +264,8 @@ backups/
 - `ui/core/ocr_protocol.py`(순수): 작업자와 주고받는 약속의 앱 쪽 사본 — 저장소의 `ocr_addon/protocol.py` 와 머리말 아래가 한 글자도 다르면 안 되고 시험이 견준다.
 - `ui/ocr_adapter.py`: 작업자를 띄우는 유일한 곳(`LOCAL_OCR` 관문이 첫 문장). `service/ocr_addon.py`: 추가 도구 폴더를 읽기만 해 확인한다. `ocr_addon/`(저장소 최상위, 앱 묶음 밖): 작업자 소스·약속·소켓 가드·빌드 스크립트·잠금 파일.
 - 새 문구 키(`pho_ocr_*`)·Qt 부품·사진 줄이기(`ui/qt/ocr_input.py`)·초안 본문 연결은 다음 라운드다. 보안 경계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 절에 있다.
+
+## 글자 읽기 — 시험 도구와 어댑터 보강 (D-513, 라운드 2)
+
+시험 쪽 새 파일(모두 `tests/` — 앱 묶음 밖): `ocr_fake_worker.py`(가짜 작업자 — 정상·느림·죽음·쓰레기·거대·깊은 JSON·표준 오류 폭주·네트워크 보고 등 서른두 가지 방식), `ocr_worker_probe.py`(진짜 `worker_main` 에 가짜 엔진만 끼우는 시험 전용 실행기),
+`test_ui_ocr_adapter.py`·`test_ocr_worker_guard.py`(어댑터와 진짜 작업자 코드의 소켓 가드·약속 처리). 어댑터(`ui/ocr_adapter.py`)는 요청을 별도 스레드가 쓰고 사진 한 장의 시간·취소 3초·앱 종료를 읽는 쪽이 지킨다. 보안 경계와 알려 둔 한계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 두 절에 있다.

@@ -293,13 +293,13 @@ class FrozenBuildCannotReachTheProbeTest(unittest.TestCase):
 
     def test_the_worker_reads_no_environment_variable_so_nothing_outside_can_pick_an_engine(self):
         tree = ast.parse(WORKER_MAIN.read_text(encoding="utf-8"))
-        loads = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and ast.unparse(node.func) in ("os.getenv", "os.environ.get", "_os.getenv", "_os.environ.get", "os.environ.setdefault"):
-                loads.append(node.lineno)
-            if isinstance(node, ast.Subscript) and ast.unparse(node.value) in ("os.environ", "_os.environ") and isinstance(node.ctx, ast.Load):
-                loads.append(node.lineno)
-        self.assertEqual(loads, [], "작업자는 환경 변수를 읽지 않는다(쓰기만 한다)")
+        names = ("environ", "environb", "getenv", "getenvb")
+        uses = [node for node in ast.walk(tree) if (isinstance(node, ast.Attribute) and node.attr in names) or (isinstance(node, ast.Name) and node.id in names)]
+        stores = [node for node in ast.walk(tree) if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) and ast.unparse(node.value) in ("os.environ", "_os.environ")]
+        allowed = {id(store.value) for store in stores}                      # 허용은 '환경 변수에 값을 쓰는' 문장(os.environ[이름] = 값)뿐 — 읽기·get·setdefault·__import__ 로 돌려 부르기는 모두 걸린다
+        outside = [node.lineno for node in uses if id(node) not in allowed]
+        self.assertEqual(outside, [], "작업자는 환경 변수를 읽지 않는다(쓰기만 한다)")
+        self.assertTrue(stores, "환경 변수를 쓰는 곳(오프라인·텔레메트리 끔 값)이 있어야 규칙이 빈 약속이 아니다")
 
     def test_the_real_entry_file_refuses_the_probe_arguments_and_never_says_ready(self):
         command = [sys.executable, "-B", str(WORKER_MAIN), "--probe", "ok"]

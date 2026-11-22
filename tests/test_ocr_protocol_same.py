@@ -77,6 +77,7 @@ class SameLettersTest(unittest.TestCase):
                    dict(good_result(), ms=[1]), dict(good_result(), ms={"det": 1.5}), dict(good_result(), ms={"det": True}), dict(good_result(), net_attempts=-1), dict(good_result(), net_attempts=1.5),
                    dict(good_result(), net_attempts="0"), {"t": "bye"}, {"t": "ready"}, {"id": 7}, {"t": "result"}, {"t": "error", "id": 7, "code": "decode", "extra": 1}, {"t": "error", "id": 7},
                    dict(good_result(), trunc=True, dropped=3), dict(good_result(), lines=[])]
+        accepted = [good_result(), {"t": "error", "id": 7, "code": "decode"}, dict(good_result(), trunc=True, dropped=3), dict(good_result(), lines=[])]      # 나머지 표본은 모두 거절(proto)이어야 한다
         for sample in samples:
             outcomes = []
             for module in (app_side, worker_side):
@@ -86,6 +87,8 @@ class SameLettersTest(unittest.TestCase):
                 except module.ProtocolError as error:
                     outcomes.append(error.code)
             self.assertEqual(outcomes[0], outcomes[1], repr(sample)[:80])
+            expected = "ok" if sample in accepted else "proto"
+            self.assertEqual(outcomes, [expected, expected], "두 사본이 똑같이 틀려도 잡는다 — 표본마다 기대 판정을 글자 그대로 못박는다: " + repr(sample)[:80])
 
     def test_both_sides_refuse_nan_and_infinity(self):
         for module in (app_side, worker_side):
