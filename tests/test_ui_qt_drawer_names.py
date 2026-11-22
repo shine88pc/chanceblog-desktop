@@ -143,7 +143,7 @@ class SpecialCharactersTest(Base):
                 self.assertEqual(widget.text().replace("&&", "&"), text)
                 self.assertEqual(widget.accessibleName(), text, "접근 이름은 별명 그대로")
         counted = UI.FilterChip("A&B", 3, True)
-        self.assertEqual((counted.text(), counted.accessibleName()), ("A&&B  3", "A&B 3"))
+        self.assertEqual((counted.text(), counted.accessibleName()), ("A&&B · 3", "A&B 3"))
 
     def test_a_badge_shows_markup_in_a_name_as_typed(self):
         from PySide6.QtCore import Qt

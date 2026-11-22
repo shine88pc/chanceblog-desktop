@@ -34,7 +34,7 @@ class ClampedLabel(QLabel):
         policy.setHeightForWidth(True)
         self.setSizePolicy(policy)
         if tooltip and self._full:
-            self.setToolTip(self._full)
+            self.setToolTip(UI.plain_tooltip(self._full))
 
     def plain_text(self):
         return self._full

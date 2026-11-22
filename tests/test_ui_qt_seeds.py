@@ -206,7 +206,7 @@ class MenuAndPageTest(Base):
             self.assertIn(text_, badges)
         self.assertIn("Seed 관리", labels)
         chips = {button.text() for button in screen.findChildren(QAbstractButton) if button.property("chip")}
-        self.assertEqual(chips, {"전체  16", "승인 전  9", "사용 중  5", "쉬는 중  2"})
+        self.assertEqual(chips, {"전체 · 16", "승인 전 · 9", "사용 중 · 5", "쉬는 중 · 2"})
         rows = self.ui(window).list.rows
         self.assertEqual(list(rows), [f"EX{number:03d}" for number in range(1, 17)])
         texts = {label.text() for label in self.row(window, "EX001").findChildren(UI.ElidedLabel)}
@@ -294,7 +294,7 @@ class MenuAndPageTest(Base):
 class FilterAndSelectionTest(Base):
     def test_a_status_chip_filters_without_writing_and_keeps_the_keyboard_focus_on_it(self):
         window = self.make()
-        chip = next(button for button in window.screen_widget.findChildren(QAbstractButton) if button.text() == "승인 전  9")
+        chip = next(button for button in window.screen_widget.findChildren(QAbstractButton) if button.text() == "승인 전 · 9")
         self.focus(chip)
         QTest.keyClick(chip, Qt.Key_Space)
         self.settle()
@@ -328,7 +328,7 @@ class FilterAndSelectionTest(Base):
         self.buttons(window.screen_widget)["더 거르기"].click()
         self.settle()
         scope = {button.text() for button in window.screen_widget.findChildren(QAbstractButton) if str(button.property("focus_key")).startswith("seeds:scope:")}
-        self.assertEqual(scope, {"모든 소속  16", "공통  3", "GitHub Pages  1", "Blogger 2 · 1", "Blogger 1 · 1", "네이버 블로그 1 · 6", "네이버 블로그 2 · 4"})
+        self.assertEqual(scope, {"모든 소속 · 16", "공통 · 3", "GitHub Pages · 1", "Blogger 2 · 1", "Blogger 1 · 1", "네이버 블로그 1 · 6", "네이버 블로그 2 · 4"})
         next(button for button in window.screen_widget.findChildren(QAbstractButton) if str(button.property("focus_key")) == "seeds:scope:common").click()
         self.settle()
         self.assertEqual(len(self.ui(window).list.rows), 3)
@@ -804,7 +804,7 @@ class RealServiceFlowTest(Base):
             before, listing = support.tree_snapshot(tmp), sorted(str(path) for path in Path(tmp).rglob("*"))
             window = self.make(provider)
             self.assertFalse([widget for widget in window.screen_widget.findChildren(QWidget) if widget.accessibleName() == "예시 데이터"], "실제 어댑터에는 '예시 데이터' 표시가 없다")
-            chip = next(button for button in window.screen_widget.findChildren(QAbstractButton) if button.text() == "승인 전  9")
+            chip = next(button for button in window.screen_widget.findChildren(QAbstractButton) if button.text() == "승인 전 · 9")
             chip.click()
             self.settle()
             self.row(window, "EX001").box.click()

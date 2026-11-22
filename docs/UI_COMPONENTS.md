@@ -276,7 +276,7 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 
 | 부품 | 바뀐 것 | 규칙의 자리 |
 |---|---|---|
-| `FilterChip(text, count, active, focus_key, full=None)` | 개수가 있는 칩은 이름이 숫자로 끝나면 `이름 · 개수`(접근 이름 `이름, 개수`), 아니면 `이름  개수` 그대로. `full`(줄이기 전의 전체 이름)을 주면 접근 이름과 툴팁이 그것을 쓴다(`FilterChip` 은 Tab 으로 포커스가 닿으므로 키보드 포커스에도 툴팁이 보인다) | `core/part_rules.py` 의 `chip_caption`·`chip_accessible`(순수) |
+| `FilterChip(text, count, active, focus_key, full=None)` | 개수가 있는 칩은 이름이 무엇이든 늘 `이름 · 개수`(접근 이름은 이름이 숫자로 끝날 때만 `이름, 개수` — POLISH-2 가 두 칸 모양을 같은 가운뎃점으로 맞췄다). `full`(줄이기 전의 전체 이름)을 주면 접근 이름과 툴팁이 그것을 쓴다(`FilterChip` 은 Tab 으로 포커스가 닿으므로 키보드 포커스에도 툴팁이 보인다) | `core/part_rules.py` 의 `chip_caption`·`chip_accessible`(순수) |
 | `Toast.show_message(text, level=None)` | `level` 이 `info`·`warning`·`error` 면 토스트 왼쪽에 그 상태색 줄이 보인다(`level` 속성 + 스타일시트 `QLabel#toast[level=…]` — 상태색 토큰 `info`·`warning`·`danger` 만). 수준이 없거나 `ok` 거나 모르는 값이면 예전 모양 그대로. 셸의 `notify(message, level=None)` 가 넘긴다 | `qt/components.py`·`qt/theme.py` |
 | `Dialog.present` | 열린 확인창을 닫지 않고 바꿔 열 때만, 부품이 보이게 된 다음 차례에 틀을 한 번 더 놓는다(새로 여는 확인창은 그대로) — 옛 동작은 새 확인창이 44px 로 접혔다 | `qt/components.py` |
 | 주 화면 채널 칩의 이름 | `channel_names.chip_label(key)` — 스무 자(`CHANNEL_CHIP_LIMIT`)까지, 줄이는 규칙은 서랍(`short_label` 열두 자)과 같은 `short_names`. 줄이면 뷰모델이 `tip`(전체 이름)을 싣고 화면이 `FilterChip(full=…)` 이나 툴팁으로 보인다. Seed 요약 칩은 포커스를 받지 않는 `Badge` 라 마우스를 올릴 때만 툴팁이 나온다(접근 이름은 전체 이름) | `ui/core/channel_names.py` |
@@ -324,3 +324,13 @@ ui/photo_adapter.py(ServicePhotoProvider) → service/photo_manifest.py(check_fi
 | `ocr_input.prepare` | 사진 한 장을 메모리에서 읽고 줄여 RGB 바이트로(경로·EXIF 는 넘기지 않는다) | — |
 
 **새 문구 키**는 모두 `pho_ocr_*`(69개)이고 `ui/core/photo_text.py` 의 `PHOTO_OCR_T` 한 곳에 있다 — 시험이 키 목록을 못박고 모든 키가 쓰이는지 본다. 읽은 글(엔진이 읽은 글)은 어느 문구·접근 이름·오류에도 되풀이되지 않는다(줄 글은 목록 줄과 그 접근 설명에만 있다).
+
+## 10. 후속 정리 둘째 묶음(POLISH-2, D-560 에서 D-565)으로 바뀐 공통 부품
+
+| 부품 | 바뀐 것 | 규칙의 자리 |
+|---|---|---|
+| `plain_tooltip(text)`(새) | 툴팁 글이 서식 글처럼 보이면(`Qt.mightBeRichText`) 글자를 이스케이프한 `<span style="white-space:pre-wrap">…</span>` 로 감싸 쓴 그대로 보이게 한다. 서식 글처럼 보이지 않는 글·문자열이 아닌 값은 그대로 돌려준다. 한 번만 거친다(이미 감싼 글을 다시 거치면 감싸개가 글자로 보인다) | `qt/components.py` |
+| `with_tooltip(widget, text)` | 글을 `plain_tooltip` 으로 바꿔 단다(마우스·키보드 포커스 모두 같은 글). 사용자가 친 글이 들어가는 다른 툴팁(`ElidedLabel`·`SemanticBadge`·`ClampedLabel`·서랍의 칩·배지·단추)도 같은 도우미를 거친다. 앱 고정 글만 담는 툴팁은 그대로다 | `qt/components.py`·`qt/blog_parts.py`·`qt/screens.py`·`qt/candidate_parts.py` |
+| `FilterChip(text, count, active, focus_key, full=None)` | 개수가 있으면 이름이 무엇이든 늘 `이름 · 개수`(접근 이름은 그대로 — 이름이 숫자로 끝날 때만 `이름, 개수`) | `core/part_rules.py` 의 `chip_caption`(순수) |
+| `Dialog.present` | 바꿔 열 때의 예약이 받는 객체(`self`)를 함께 받는다 — 확인창 부품이 지워지면 저절로 취소된다 | `qt/components.py` |
+| `Dialog.place` | 필요한 높이가 창 높이 − 32px(`roomy`)보다 길어도 창 높이 − 16px(`tight`) 이하이면 필요한 높이만큼 열고 위아래 여백을 8px 까지 줄인다(위쪽 여백 최솟값 16 → 8). `tight` 를 넘으면 `roomy` 로 자르고 본문 칸이 스크롤로 받는다(예전 그대로) | `qt/components.py` |

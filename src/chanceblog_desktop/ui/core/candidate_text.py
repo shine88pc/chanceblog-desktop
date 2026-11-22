@@ -27,7 +27,7 @@ CAND_T = {
     # 거르기
     "cand_filter_a11y": "후보 거르기", "cand_filter_channel": "채널", "cand_filter_status": "작업 상태", "cand_filter_band": "점수 구간", "cand_filter_cluster": "주제 묶음",
     "cand_all": "전체", "cand_band_none": "점수 계산 전", "cand_filter_more": "더 거르기", "cand_filter_less": "더 거르기 닫기",
-    "cand_filter_channel_a11y": "채널 {name}, {n}개", "cand_filter_status_a11y": "작업 상태 {name} {n}개", "cand_filter_band_a11y": "점수 구간 {name} {n}개", "cand_filter_cluster_a11y": "주제 묶음 {name} {n}개",
+    "cand_filter_channel_a11y": "채널 {name}, {n}개", "cand_filter_status_a11y": "작업 상태 {name} {n}개", "cand_filter_band_a11y": "점수 구간 {name} {n}개", "cand_filter_cluster_a11y": "주제 묶음 {name}, {n}개",
     "cand_search_label": "후보 찾기", "cand_search_placeholder": "제목이나 키워드로 찾아요", "cand_filter_result": "{shown}장을 보여 줘요(조건에 맞는 후보 {found}개 · 전체 {total}개)",
     "cand_filter_reset": "거르기 풀기", "cand_more": "{n}개 더 보기", "cand_more_a11y": "후보 {n}개 더 보기", "cand_grid_a11y": "후보 카드 목록",
     # 카드
@@ -55,7 +55,7 @@ CAND_T = {
     "cand_info_created": "만든 때", "cand_info_dup": "중복 판정", "cand_info_similar": "비슷한 글", "cand_info_similar_value": "{n}개", "cand_info_channel": "채널", "cand_info_none": "없음",
     # 후보 만들기 — 미리 보기·확인창·준비 안내·결과
     "cand_make_title": "후보를 최대 {n}개 만들까요?", "cand_make_ok": "만들기", "cand_make_cancel": "취소",
-    "cand_make_counts": "새 후보를 최대 {total}개 만들어요: {rows}", "cand_make_row": "{name} {n}개",
+    "cand_make_counts": "새 후보를 최대 {total}개 만들어요 — {rows}", "cand_make_row": "{name}: {n}개",
     "cand_make_seeds": "승인한 Seed {used}개에서 만들어요. 승인 전 Seed {proposed}개는 쓰이지 않아요.", "cand_make_seeds_none_proposed": "승인한 Seed {used}개에서 만들어요.",
     "cand_make_skips": "건너뛰는 것: {items}", "cand_make_skip_dup": "이미 있는 후보와 같아서 건너뛰는 후보 {n}개", "cand_make_skip_more": "외 {n}가지",
     "cand_make_adds": "후보는 이 PC 의 후보 보관함에 더해져요. 지금 있는 후보는 지워지거나 바뀌지 않아요.",

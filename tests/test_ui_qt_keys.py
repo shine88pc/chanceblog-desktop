@@ -573,7 +573,8 @@ class RegisterTest(Base):
                     if step == "confirm":
                         self.click(form.next_button)
                     self.settle(6)
-                    capped = window.dialog.height() >= window.height() - 32
+                    layout = window.dialog.layout_
+                    capped = max(layout.totalHeightForWidth(window.dialog.width()), layout.totalMinimumSize().height()) > window.height() - 16          # 위아래 여백을 8px 씩까지 줄여도 안 들어갈 때만 잘려 스크롤된다(확인창 높이 규칙 — POLISH-2 PQ-18)
                     bar, view = form.scroll.verticalScrollBar(), form.scroll.viewport()
                     if capped:
                         self.assertGreater(bar.maximum(), 0, "창이 낮아 몸이 스크롤된다")

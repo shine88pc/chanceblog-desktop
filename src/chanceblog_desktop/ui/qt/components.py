@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 
+from PySide6 import QtGui                                                                  # `Qt.mightBeRichText` 는 QtGui 쪽에 있다(`plain_tooltip`)
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAccessible, QAccessibleEvent, QColor, QDesktopServices, QLinearGradient, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QToolTip, QVBoxLayout, QWidget
@@ -76,7 +77,7 @@ class ElidedLabel(QLabel):
         self._full = text
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self.setToolTip(text)
+        self.setToolTip(plain_tooltip(text))
 
     def sizeHint(self):
         return QSize(0, self.fontMetrics().lineSpacing() + 2)
@@ -119,9 +120,17 @@ class _FocusTooltips(QObject):
 _FOCUS_TOOLTIPS = _FocusTooltips()
 
 
+def plain_tooltip(text):
+    """툴팁 글을 **쓴 그대로** 보이게 하는 글로 바꾼다(POLISH-2 SP-7·QP-5). Qt 는 툴팁 글이 서식 글처럼 보이면(`<b>…</b>`·`<p>`·`&lt;` 같은 것 — `Qt.mightBeRichText`) 서식으로 읽어 태그를 지우고 굵게 그린다.
+    별명·제목처럼 사용자가 친 글이 들어가면 칩 글(일반 글)과 툴팁이 다르게 읽히므로, 그럴 때만 글자를 이스케이프한 서식 글(`white-space:pre-wrap` 이라 공백·줄바꿈도 그대로)로 감싼다. 서식 글처럼 보이지 않는 글(거의 모든 글)은 한 글자도 안 바꾼다."""
+    if isinstance(text, str) and text and QtGui.Qt.mightBeRichText(text):
+        return '<span style="white-space:pre-wrap">' + html.escape(text, quote=False) + "</span>"
+    return text
+
+
 def with_tooltip(widget, text):
-    """툴팁을 달고, 마우스뿐 아니라 키보드(Tab)로 포커스가 올 때도 보이게 한다."""
-    widget.setToolTip(text)
+    """툴팁을 달고, 마우스뿐 아니라 키보드(Tab)로 포커스가 올 때도 보이게 한다. 글은 `plain_tooltip` 으로 쓴 그대로 보이게 한다(서식 글처럼 보이는 별명도 글자 그대로)."""
+    widget.setToolTip(plain_tooltip(text))
     widget.installEventFilter(_FOCUS_TOOLTIPS)
     return widget
 
@@ -192,7 +201,7 @@ def LinkButton(text, accessible=None):
 
 # ---- 칩·배지 ------------------------------------------------------------------------------------------------------------------
 def FilterChip(text, count, active, focus_key=None, full=None):
-    """칩 — 보이는 높이 34, 누르는 칸 36. 개수가 있으면 `이름  개수`, 이름이 숫자로 끝나면 `이름 · 개수`(`part_rules.chip_caption` — POLISH-1 Q2-8). `full` 은 줄이기 전의 전체 이름 — 줄였으면 접근 이름과 툴팁이 그것을 쓴다(POLISH-1 Q3-2)."""
+    """칩 — 보이는 높이 34, 누르는 칸 36. 개수가 있으면 늘 `이름 · 개수`(`part_rules.chip_caption` — POLISH-1 Q2-8·POLISH-2 QP-4 ①). `full` 은 줄이기 전의 전체 이름 — 줄였으면 접근 이름과 툴팁이 그것을 쓴다(POLISH-1 Q3-2)."""
     chip = QPushButton(ampersand_safe_text(chip_caption(text, count)))                                              # `&` 는 단축키 표시가 아니라 글자로(별명의 `A&B` — 검증 S2-3), 접근 이름은 아래에서 그대로
     chip.setAutoDefault(True)
     chip.setProperty("chip", True)
@@ -245,7 +254,7 @@ class SemanticBadge(QLabel):
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.setAccessibleName(name if full == name else f"{name}: {full}")
         if shown != full:
-            self.setToolTip(full)
+            self.setToolTip(plain_tooltip(full))
 
 
 def BlogBadge(blog, text):
@@ -1000,8 +1009,11 @@ class Dialog(QFrame):
         self.scrim.setGeometry(0, 0, parent.width(), parent.height())
         width = min(self._width, int(parent.width() * 0.94))
         self.setFixedWidth(width)
-        self.resize(width, min(max(self.layout_.totalHeightForWidth(width), self.layout_.totalMinimumSize().height()), max(120, parent.height() - 32)))     # 폭이 정해진 뒤의 줄바꿈 높이(창보다 크지 않게)
-        self.move((parent.width() - width) // 2, max(16, (parent.height() - self.height()) // 2))
+        needed = max(self.layout_.totalHeightForWidth(width), self.layout_.totalMinimumSize().height())                 # 폭이 정해진 뒤의 줄바꿈 높이
+        roomy = max(120, parent.height() - 32)                                                                           # 창 위아래로 16px 씩 띄운 높이 — 이보다 길면 본문 칸이 스크롤로 받는다
+        tight = max(120, parent.height() - 16)                                                                           # 조금만(16px 까지) 모자랄 때는 위아래 여백을 8px 씩까지 줄여 막대 없이 보인다(POLISH-2 PQ-18 — 사진 3장·1093×614 에서 10px 때문에 막대가 생겼다)
+        self.resize(width, needed if needed <= tight else roomy)
+        self.move((parent.width() - width) // 2, max(8, (parent.height() - self.height()) // 2))
 
     def present(self, width=None):
         self._width = width or K.LAYOUT["dialog"]
@@ -1013,7 +1025,7 @@ class Dialog(QFrame):
         self.is_open = True
         self.place()
         if replacing:                                             # 열린 확인창을 닫지 않고 바꿔 열면 새 부품이 아직 '숨김' 이라 위의 높이가 44px 로 잡힌다 — 부품이 보이게 된 다음 차례에 한 번 더 놓는다(POLISH-1 PQ-19). 새로 여는 확인창은 그대로다
-            QTimer.singleShot(0, self._replace_settled)
+            QTimer.singleShot(0, self, self._replace_settled)         # 받는 객체(self)를 함께 준다 — 그 사이 확인창 부품이 지워지면(앱을 닫을 때) 예약이 저절로 취소돼 이미 지워진 부품에 `place()` 를 부르지 않는다(POLISH-2 SP-6)
 
     def _replace_settled(self):
         if self.is_open:                                          # 그 사이 닫혔으면 아무것도 안 한다

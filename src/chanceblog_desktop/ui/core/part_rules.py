@@ -24,11 +24,12 @@ def clip_text(text, max_chars):
 
 
 def chip_caption(text, count):
-    """개수가 있는 거르기 칩의 보이는 글 — 평소에는 `이름  개수`(두 칸). 이름이 숫자로 끝나면(`네이버 블로그 1`) 개수가 그 숫자에 붙어 `네이버 블로그 16` 처럼 읽히므로 가운뎃점으로 가른다(`네이버 블로그 1 · 6`). 개수가 없으면 이름뿐이다(POLISH-1 Q2-8)."""
+    """개수가 있는 거르기 칩의 보이는 글 — 늘 `이름 · 개수`(가운뎃점)다. 이름이 숫자로 끝나면(`네이버 블로그 1`) 개수가 그 숫자에 붙어 `네이버 블로그 16` 처럼 읽히므로 가를 글이 꼭 있어야 하고(POLISH-1 Q2-8),
+    숫자로 끝나지 않는 이름(`전체`·`GitHub Pages`)도 같은 글로 맞춘다 — 한 줄에 놓인 칩들 사이에서 구분 글이 섞여(`Blogger 1 · 1` 옆의 `GitHub Pages  1`) 보이지 않게(POLISH-2 QP-4 ①). 개수가 없으면 이름뿐이다."""
     text = str(text)
     if count is None:
         return text
-    return f"{text} · {count}" if text[-1:].isdigit() else f"{text}  {count}"
+    return f"{text} · {count}"
 
 
 def chip_accessible(text, count):
