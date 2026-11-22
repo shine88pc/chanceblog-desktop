@@ -7,10 +7,16 @@
   2) 라이선스 전문 모으기 — 묶음에 든 부품마다 설치된 분포에서 라이선스·고지문 파일을 licenses/<이름>/ 로 복사하고, GEOS 의 LICENSE_GEOS 를 못 찾으면 **조용히 건너뛰지 않고 빌드를 멈춘다**(판을 못 읽거나 별도 GEOS 파일이 없을 때도).
   3) 산출 목록 — OCR_INFO.json 의 files 에 licenses/ 와 THIRD_PARTY_NOTICES.txt(와 GEOS 라이선스 전문)가 있고, info 단계가 그 파일들을 목록에 넣은 뒤 정보 파일을 쓴다. license_notes 는 '방식 미정' 이 아니라 확인 030 ② 에 따른다는 문구다.
   4) 새 코드는 네트워크·인터넷 주소를 쓰지 않는다(소스 규칙).
+
+[합친 뒤 이식 — D 를 B1 최종 위로 얹을 때] 순수 함수·가짜 설치 폴더 시험(NoticeText·LicenseNotes·FileRules·Collect·WriteOutputs·SourceRule)은 그대로다(불러오는 곳만 D 의 시험 도우미로 — 합친 스크립트가 형제 규칙 모듈을 가져오려고
+불러오는 동안 import 경로에 ocr_addon 폴더를 두기 때문에 도우미가 그 경로를 곧 빼 준다). 바뀐 것은 `InfoStageTest` 하나다: B1 의 a 단계 스크립트는 고지 파일을 **info 단계 안에서** 만들었지만, 합친 흐름은 고지 파일 만들기를
+**점검 앞의 독립 단계(`notices`)** 로 옮겼다(점검의 금지 이름·키 모양 훑기가 고지 파일도 보고 정보 파일의 목록에 들어가도록 — 확인 030 ② 의 검증 요청). 그래서 같은 네 가지 확인을 새 구조(`write_notices` → `geos.json` 기록 → 점검 →
+`make_info`)로 다시 걸었다. 합친 흐름의 전체 연결(점검·산출물 점검과 함께)은 test_ocr_addon_merged_flow.py 가 본다.
 """
+import contextlib
 import hashlib
-import importlib.util
 import inspect
+import io
 import json
 import os
 import re
@@ -23,17 +29,12 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+sys.path.insert(0, str(HERE))
+import ocr_build_support as support  # noqa: E402
+
 BUILD = ROOT / "ocr_addon" / "build_ocr_addon.py"
-
-
-def load_build():
-    spec = importlib.util.spec_from_file_location("build_ocr_addon_under_test", BUILD)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-B = load_build()
+B = support.load("build_ocr_addon")
+STATE = {"commit": "0123456789abcdef0123456789abcdef01234567", "epoch": 1794873600, "epoch_from": "git commit", "committed_utc": "2026-11-17T00:00:00Z", "clean": True, "dirty_count": 0}
 
 PACKAGES = [
     {"name": "numpy", "version": "2.5.4", "license_metadata": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0", "bundled_in_dist": True},
@@ -278,6 +279,44 @@ class CollectTest(unittest.TestCase):
                 B.collect_licenses(dst, PACKAGES, lookup_of(dists))
             self.assertFalse(os.path.exists(os.path.join(root, "evil")))
             self.assertFalse(os.path.exists(os.path.join(dst, "evil")))
+        self.assert_drive_and_absolute_record_paths_are_refused_before_anything_is_written()
+
+    def assert_drive_and_absolute_record_paths_are_refused_before_anything_is_written(self):
+        """독립 검증 S 의 SP-8 — 윈도의 os.path.join 은 'C:' 꼴 조각이나 '\\' 로 시작하는 조각을 만나면 앞의 폴더를 버리고 그 드라이브·루트로 가므로(묶음 밖 경로), 드라이브·절대 경로·파일 이름 안의 ':'(NTFS 대체 스트림)를
+        가진 기록 경로는 **복사하기 전에** 안전 규칙이 거절해야 한다. 폴더 만들기·복사를 가짜로 바꿔 '거절' 이 그 앞의 규칙에서 났음을 본다 — 규칙이 빠지면 뒤의 복사 실패가 대신 BuildError 를 내서
+        겉으로는 같아 보이고, 바꾸지 않으면 규칙이 빠진 코드가 시험 도중 진짜 드라이브에 폴더를 만든다. 가짜 경로에는 실제 사용자 이름이 없다."""
+        tqdm_only = [package for package in PACKAGES if package["name"] == "tqdm"]
+        backslash = chr(92)
+        bad_records = {
+            "드라이브와 슬래시": "C:/evil/LICENCE",
+            "드라이브만 있는 상대 꼴": "C:evil/LICENCE",
+            "다른 드라이브와 역슬래시": "D:" + backslash + "evil" + backslash + "LICENCE",
+            "꼬리표 폴더 아래의 드라이브": "tqdm-4.70.1.dist-info/licenses/C:/evil/LICENCE",
+            "꼬리표 폴더 아래의 드라이브만": "tqdm-4.70.1.dist-info/licenses/C:evil/LICENCE",
+            "파일 이름 안의 콜론(대체 스트림)": "tqdm-4.70.1.dist-info/licenses/LICENCE:stream",
+            "슬래시로 시작하는 절대 경로": "/evil/LICENCE",
+            "역슬래시로 시작하는 절대 경로": backslash + "evil" + backslash + "LICENCE",
+            "겹슬래시(UNC 꼴)": "//server/share/LICENCE",
+        }
+        for label, record in bad_records.items():
+            with self.subTest(case=label, record=record):
+                with tempfile.TemporaryDirectory() as root:
+                    dist = FakeDist(os.path.join(root, "site-tqdm"), [record])            # 원본 파일은 만들지 않는다 — 규칙이 막으면 파일 시스템에 닿지 않는다
+                    dst = make_bundle(root)
+                    with mock.patch.object(B.os, "makedirs") as makedirs, mock.patch.object(B.shutil, "copyfile") as copyfile:
+                        with self.assertRaises(B.BuildError) as caught:
+                            B.collect_licenses(dst, tqdm_only, lookup_of({"tqdm": dist}))
+                    self.assertIn("안전하지 않다", str(caught.exception), "복사 실패가 아니라 안전 규칙이 거절했다")
+                    makedirs.assert_not_called()
+                    copyfile.assert_not_called()
+        for label, record in {"평범한 꼬리표 아래 파일": "tqdm-4.70.1.dist-info/licenses/LICENCE", "폴더 안 파일": "tqdm/vendored/NOTICE.txt"}.items():       # 거절이 지나치지 않다 — 안전한 경로는 그대로 복사한다
+            with self.subTest(case=label, record=record):
+                with tempfile.TemporaryDirectory() as root:
+                    dists = make_site(root, {"tqdm": [record]})
+                    dst = make_bundle(root)
+                    collected = B.collect_licenses(dst, tqdm_only, lookup_of(dists))
+                    self.assertEqual(len(collected["tqdm"]), 1)
+                    self.assertTrue(os.path.isfile(os.path.join(dst, "licenses", "tqdm", *collected["tqdm"][0].split("/"))))
 
     def test_files_left_by_an_earlier_run_do_not_stay_in_the_licenses_folder(self):
         with tempfile.TemporaryDirectory() as root:
@@ -353,51 +392,51 @@ SITE_LICENSES = {"shapely": "BSD-3-Clause", "numpy": "BSD-3-Clause", "onnxruntim
 
 
 class InfoStageTest(unittest.TestCase):
-    """`make_info` 와 `main` 이 새 단계를 실제로 부른다 — 가짜 설치 폴더와 가짜 휠 표만으로(빌드 없이)."""
+    """`write_notices`(점검 앞의 notices 단계)와 `make_info`·`main` 이 새 단계를 실제로 부른다 — 가짜 설치 폴더와 가짜 부품 표만으로(빌드 없이). 예전 이름은 B1 의 info 단계 안 고지 만들기였다."""
+
+    BUNDLED = {"shapely", "numpy", "onnxruntime", "tqdm"}
 
     def prepare(self, root, site=None):
         out_dir = os.path.join(root, "out")
-        dst = os.path.join(out_dir, "dist", "ocr_addon")
+        dst = os.path.join(out_dir, "dist", "ocr")
         libs = os.path.join(dst, "_internal", "Shapely.libs")
         os.makedirs(libs)
-        for name in ("shapely", "numpy", "onnxruntime", "tqdm"):
-            os.makedirs(os.path.join(dst, "_internal", name))
         for name in ("geos-aaaa.dll", "geos_c-bbbb.dll"):
             with open(os.path.join(libs, name), "wb") as handle:
                 handle.write(b"DLL")
         with open(os.path.join(dst, "ocr_worker.exe"), "wb") as handle:
             handle.write(b"EXE")
-        photolab = os.path.join(root, "photolab")
-        os.makedirs(os.path.join(photolab, "stage2"))
-        table = {"files": [{"canon": name, "name": name, "file": "%s-1.0-py3-none-any.whl" % name, "version": SITE_VERSIONS[name], "bytes": 10, "sha256": "0" * 64, "license": SITE_LICENSES[name]} for name in sorted(SITE_VERSIONS)]}
-        with open(os.path.join(photolab, "stage2", "wheels_table.json"), "w", encoding="utf-8") as handle:
-            json.dump(table, handle)
-        return out_dir, dst, photolab, lookup_of(make_site(root, site or SITE))
+        with open(os.path.join(out_dir, "check_result.json"), "w", encoding="utf-8") as handle:        # 점검을 통과했다고 치는 기록(점검 자체는 test_ocr_addon_build_check.py·test_ocr_addon_build_flow.py 가 본다)
+            json.dump({"ok": True, "problems": [], "pe_files_checked": 3, "selftest": {"ok": True}, "selftest_exit": 0}, handle)
+        return out_dir, dst, lookup_of(make_site(root, site or SITE))
 
-    def run_info(self, root, site=None, version="3.99.9"):
-        out_dir, dst, photolab, lookup = self.prepare(root, site)
+    def patches(self, stack, lookup, version="3.99.9"):
+        stack.enter_context(mock.patch.object(B.im, "distribution", lookup))
+        stack.enter_context(mock.patch.object(B, "bundled_modules", return_value=set(self.BUNDLED)))
+        stack.enter_context(mock.patch.object(B, "installed_version", side_effect=lambda name: SITE_VERSIONS.get(name)))
+        stack.enter_context(mock.patch.object(B, "pypi_license", side_effect=lambda name: SITE_LICENSES.get(name)))
+        stack.enter_context(mock.patch.object(B, "read_geos_version", lambda: version))
+        stack.enter_context(mock.patch.object(B, "load_lock", return_value=({"schema": 1, "files": []}, {})))
+        stack.enter_context(mock.patch.object(B, "log"))
 
-        def fake_version(name):
-            if name in SITE_VERSIONS:
-                return SITE_VERSIONS[name]
-            raise B.im.PackageNotFoundError(name)
+    def run_flow(self, root, site=None, version="3.99.9"):
+        """notices 단계 -> info 단계(점검은 통과했다고 친다)."""
+        out_dir, dst, lookup = self.prepare(root, site)
+        with contextlib.ExitStack() as stack:
+            self.patches(stack, lookup, version)
+            geos = B.write_notices(out_dir, STATE)
+            info = B.make_info(out_dir, STATE, "t")
+        return out_dir, dst, geos, info
 
-        def fake_metadata(name):
-            raise B.im.PackageNotFoundError(name)
-        with mock.patch.object(B, "PHOTOLAB", photolab), mock.patch.object(B.im, "distribution", lookup), mock.patch.object(B.im, "version", fake_version), \
-                mock.patch.object(B.im, "metadata", fake_metadata), mock.patch.object(B, "read_geos_version", lambda: version), mock.patch.object(B, "log"), warnings.catch_warnings():
-            warnings.simplefilter("ignore", ResourceWarning)                # a 단계 코드가 json.load(open(...)) 로 파일을 닫지 않는 곳이 있다(이번 일과 무관)
-            result = B.make_info(out_dir, "t")
-        return out_dir, dst, result
-
-    def test_the_info_stage_writes_the_notice_and_licenses_first_and_lists_them_with_their_hashes(self):
+    def test_the_notices_stage_writes_the_notice_and_licenses_first_and_the_info_stage_lists_them_with_their_hashes(self):
         with tempfile.TemporaryDirectory() as root:
-            _out, dst, result = self.run_info(root)
-            self.assertEqual(result, 0)
+            out_dir, dst, geos, result = self.run_flow(root)
             info = json.loads(Path(dst, "OCR_INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, info, "make_info 가 돌려준 값과 디스크의 정보 파일이 같다")
             paths = [entry["path"] for entry in info["files"]]
             self.assertEqual(B.missing_outputs(paths), [])
             self.assertNotIn("OCR_INFO.json", paths)
+            self.assertNotIn("geos.json", paths, "GEOS 기록은 묶음 밖(out 폴더) 파일이다")
             self.assertEqual(info["file_count"], len(paths))
             by_path = {entry["path"]: entry for entry in info["files"]}
             notice = Path(dst, "THIRD_PARTY_NOTICES.txt").read_bytes()
@@ -407,44 +446,55 @@ class InfoStageTest(unittest.TestCase):
             self.assertEqual(info["geos"]["license_file"], "licenses/shapely/LICENSE_GEOS")
             self.assertEqual(info["geos"]["dll_files"], ["_internal/Shapely.libs/geos-aaaa.dll", "_internal/Shapely.libs/geos_c-bbbb.dll"])
             self.assertIs(info["geos"]["source_included"], False)
+            self.assertEqual(info["geos"], geos)
+            self.assertEqual(json.loads(Path(out_dir, "geos.json").read_text(encoding="utf-8")), geos, "info 단계가 읽는 기록은 notices 단계가 남긴 것이다")
             self.assertEqual(info["license_notes"], B.license_notes(info["geos"]))
             self.assertNotIn("방식 미정", json.dumps(info["license_notes"], ensure_ascii=False))
 
-    def test_a_missing_geos_license_makes_the_info_stage_fail_and_no_info_file_is_written(self):
+    def test_a_missing_geos_license_makes_the_notices_stage_fail_and_no_info_file_is_written(self):
         with tempfile.TemporaryDirectory() as root:
             site = dict(SITE, shapely=[r for r in SITE["shapely"] if "LICENSE_GEOS" not in r])
-            out_dir, dst, photolab, lookup = self.prepare(root, site)
-            with mock.patch.object(B, "PHOTOLAB", photolab), mock.patch.object(B.im, "distribution", lookup), mock.patch.object(B.im, "version", lambda name: SITE_VERSIONS[name]), \
-                    mock.patch.object(B.im, "metadata", side_effect=B.im.PackageNotFoundError("x")), mock.patch.object(B, "read_geos_version", lambda: "3.99.9"), mock.patch.object(B, "log"), \
-                    warnings.catch_warnings():
+            out_dir, dst, lookup = self.prepare(root, site)
+            with contextlib.ExitStack() as stack, warnings.catch_warnings():
+                self.patches(stack, lookup)
                 warnings.simplefilter("ignore", ResourceWarning)
                 with self.assertRaises(B.BuildError):
-                    B.make_info(out_dir, "t")
+                    B.write_notices(out_dir, STATE)
+                self.assertFalse(os.path.exists(os.path.join(out_dir, "geos.json")), "멈춘 단계는 GEOS 기록을 남기지 않는다")
+                self.assertFalse(os.path.exists(os.path.join(dst, "THIRD_PARTY_NOTICES.txt")))
+                with self.assertRaises(B.BuildError):                      # notices 를 건너뛰고 info 로 가는 길도 없다
+                    B.make_info(out_dir, STATE, "t")
             self.assertFalse(os.path.exists(os.path.join(dst, "OCR_INFO.json")))
 
     def test_the_info_stage_refuses_to_write_when_the_listing_lacks_the_required_outputs(self):
         """고지문·라이선스 전문을 만드는 단계가 (어떤 이유로) 파일을 안 만들었다면 정보 파일을 쓰지 않고 멈춘다 — 산출 목록의 마지막 확인."""
         with tempfile.TemporaryDirectory() as root:
-            out_dir, dst, photolab, lookup = self.prepare(root)
-            with mock.patch.object(B, "PHOTOLAB", photolab), mock.patch.object(B.im, "distribution", lookup), mock.patch.object(B.im, "version", lambda name: SITE_VERSIONS[name]), \
-                    mock.patch.object(B.im, "metadata", side_effect=B.im.PackageNotFoundError("x")), mock.patch.object(B, "write_license_outputs", return_value=dict(GEOS)), mock.patch.object(B, "log"), \
-                    warnings.catch_warnings():
-                warnings.simplefilter("ignore", ResourceWarning)
+            out_dir, dst, lookup = self.prepare(root)
+            with contextlib.ExitStack() as stack:
+                self.patches(stack, lookup)
+                stack.enter_context(mock.patch.object(B, "write_license_outputs", return_value=dict(GEOS)))        # 단계는 끝난 척하지만 파일은 하나도 만들지 않았다
+                B.write_notices(out_dir, STATE)
                 with self.assertRaises(B.BuildError) as caught:
-                    B.make_info(out_dir, "t")
+                    B.make_info(out_dir, STATE, "t")
             self.assertIn("THIRD_PARTY_NOTICES.txt", str(caught.exception))
             self.assertFalse(os.path.exists(os.path.join(dst, "OCR_INFO.json")))
 
     def test_main_turns_a_build_error_into_a_failure_exit_code_and_a_nonzero_info_into_failure_too(self):
+        """B1: 정보 단계의 BuildError 는 0 이 아닌 종료 코드. 합친 흐름: BuildError(notices·info)는 종료 코드 2 와 표준 오류 글 — 점검 실패의 1 과 구분한다. 정보 단계가 정보를 돌려주면 0 이다(B1 의 '0 이 아닌 값을 돌려준 정보 단계' 는 합친 쪽에 없다 — 실패는 예외로만 알린다)."""
         with tempfile.TemporaryDirectory() as root:
-            argv = ["build_ocr_addon.py", "info", "--out-dir", os.path.join(root, "out")]
-            with mock.patch.object(sys, "argv", argv), mock.patch.object(B, "make_info", side_effect=B.BuildError("GEOS 없음")), mock.patch.object(B, "log") as log:
-                self.assertEqual(B.main(), 1)
-            self.assertIn("GEOS 없음", str(log.call_args_list))
-            with mock.patch.object(sys, "argv", argv), mock.patch.object(B, "make_info", return_value=1):
-                self.assertEqual(B.main(), 1)
-            with mock.patch.object(sys, "argv", argv), mock.patch.object(B, "make_info", return_value=0):
-                self.assertEqual(B.main(), 0)
+            for stage, patched in (("info", "make_info"), ("notices", "write_notices")):
+                argv = ["build_ocr_addon.py", stage, "--out-dir", os.path.join(root, "out")]
+                os.makedirs(os.path.join(root, "out"), exist_ok=True)
+                with open(os.path.join(root, "out", "check_result.json"), "w", encoding="utf-8") as handle:
+                    json.dump({"ok": True}, handle)
+                with self.subTest(stage=stage):
+                    errors = io.StringIO()
+                    with mock.patch.object(sys, "argv", argv), mock.patch.object(B, "source_state", return_value=dict(STATE)), mock.patch.object(B, patched, side_effect=B.BuildError("GEOS 없음")), \
+                            mock.patch.object(B, "log"), contextlib.redirect_stderr(errors):
+                        self.assertEqual(B.main(), 2)
+                    self.assertIn("GEOS 없음", errors.getvalue())
+                    with mock.patch.object(sys, "argv", argv), mock.patch.object(B, "source_state", return_value=dict(STATE)), mock.patch.object(B, patched, return_value={"name": "x"}), mock.patch.object(B, "log"):
+                        self.assertEqual(B.main(), 0)
 
 
 class SourceRuleTest(unittest.TestCase):

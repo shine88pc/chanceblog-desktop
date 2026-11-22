@@ -1,0 +1,24 @@
+{
+ "schema": 1,
+ "note": "글자 사전 ppocrv5_korean_dict.txt 의 출처·만든 방법·라이선스 근거 기록(독립 검증 S·Q 지적 SP-5·QP-5 반영). 이 파일은 저장소에만 있고 추가 도구 묶음에는 들어가지 않는다(빌드가 복사하지 않는다 — 시험이 지킨다). 값은 photolab 0단계 받기 기록(stage0_download.py·STAGE0_REPORT.txt, 2026-11-16)과 같고, 2026-11-22 에 받아 둔 원본 inference.yml 로 다시 확인했다.",
+ "file": "ppocrv5_korean_dict.txt",
+ "bytes": 47451,
+ "lines": 11945,
+ "sha256": "a88071c68c01707489baa79ebe0405b7beb5cca229f4fc94cc3ef992328802d7",
+ "derived_from": {
+  "kind": "huggingface",
+  "repo": "PaddlePaddle/korean_PP-OCRv5_mobile_rec",
+  "commit": "c02ecaf1f22bfd1c618cce154fd19185b47e663a",
+  "file": "inference.yml",
+  "file_bytes": 96039,
+  "git_blob": "ba8f60f36464f8444b71301062ec6bf4f7b2d1e0"
+ },
+ "method": "inference.yml 의 PostProcess.character_dict 목록을 PyYAML 로 읽어 항목마다 한 줄(LF)로 적었다 — 11,945개, 순서와 내용 그대로(이 목록 + blank + space = 인식 모델의 출력 클래스 11,947개와 짝이 맞는다).",
+ "verified_on": "2026-11-22",
+ "verified_how": "받아 둔 원본 inference.yml 의 git blob SHA-1(ba8f60f3…)이 받기 기록과 같고, 그 character_dict 11,945개가 이 저장소 사전과 순서·내용까지 같음을 PyYAML 로 직접 견주었다(네트워크 없이).",
+ "license_tag": "apache-2.0",
+ "license_basis": "Hugging Face 저장소 카드 앞머리의 라이선스 태그뿐이다(카드 본문은 사실상 비어 있고 원본 PaddleOCR 의 라이선스 본문은 확인하지 못했다). 사전은 문자 목록 데이터라 저작권 위험은 낮다고 보지만 고지문(THIRD_PARTY_NOTICES.txt)에 이 출처를 적는 것이 말과 사실을 맞춘다.",
+ "known_oddities": [
+  "사설 영역 글자 U+F8FF 한 개가 상류 사전에 그대로 있다(줄 11744) — 모델의 출력 클래스와 한 칸이라 그대로 둔다. 읽은 글에 나오면 화면에서 빈 네모로 보일 수 있다."
+ ]
+}
