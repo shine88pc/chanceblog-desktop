@@ -1443,8 +1443,8 @@ class DocsTest(unittest.TestCase):
         self.assertIn("오류가 없었다는 뜻이 아니니", text)
         row = next(row for row in self.doc("TROUBLESHOOTING.md").splitlines() if row.startswith("| `UNEXPECTED_ERROR` |"))
         self.assertNotIn("로그 파일·내보내기 기능은 아직 없습니다", row, "로그 파일은 있다 — 없는 것은 내보내기 기능이다")
-        self.assertIn("로그를 내보내는 기능은 아직 없습니다", row)
-        self.assertIn("로그를 내보내는 기능은 아직 없습니다", (SRC / "errors" / "catalog.py").read_text(encoding="utf-8"), "화면에 나오는 안내(오류 카탈로그)도 같다")
+        self.assertIn("로그를 내보내는 기능은 아직 없어요", row)
+        self.assertIn("로그를 내보내는 기능은 아직 없어요", (SRC / "errors" / "catalog.py").read_text(encoding="utf-8"), "화면에 나오는 안내(오류 카탈로그)도 같다")
 
     def test_no_living_document_keeps_a_sentence_the_log_file_made_false_and_no_text_over_claims_the_rotation(self):
         """(3차 지시) 로그 파일이 생겨 거짓이 된 문장('로그 파일이 없다·설치 파일 묶음에서 정한다')이 지금 쓰는 문서와 코드 설명 어디에도 없고, 돌려쓰기를 과장하는 문장('막혀도 옛 파일이 그대로·잃지 않는다')이

@@ -47,7 +47,7 @@ CHANNEL_CODES = {key: name for name, key in BLOG_KEYS.items()}                  
 STORE_REASONS = {"missing": "missing", "empty": "missing", "old_structure": "old"}   # 주제 엔진 보관함 상태 → 화면의 '읽을 보관함이 없다' 이유(없음·0바이트는 '없음', 옛 구조는 '옛 구조') — 그 밖의 상태(`ready`)는 읽는다
 STAGE_OF = {st.DRAFT_GENERATED: "generated", st.REVIEW_REQUIRED: "review"}           # 작성 중 초안 = 승인 전(초안 생성됨·검토 필요) — 운영자 2026-11-06 확인 요청 004 의 답 홈 구성
 ENGINE_WORDED = {"TOPIC_STORE_CORRUPT": "board_err_store", "CANDIDATE_INVALID": "board_err_store", "TOPIC_STORE_VERSION_UNSUPPORTED": "board_err_newer", "TOPIC_STORE_LOCKED": "board_err_locked",
-                 "TOPIC_STORE_RECOVERY_PENDING": "board_err_pending", "TOPIC_FILE_INVALID": "board_err_profiles", "CONTENT_INVALID": "board_err_profiles"}      # 주제 엔진을 읽다 날 수 있는 오류 — 카탈로그 안내문에는 명령줄 글(`topics restore …`)이 섞여 있어 화면용 쉬운 문장으로 바꾼다(코드는 진단 정보에 그대로)
+                 "TOPIC_STORE_RECOVERY_PENDING": "board_err_pending", "TOPIC_FILE_INVALID": "board_err_profiles", "CONTENT_INVALID": "board_err_profiles"}      # 주제 엔진을 읽다 날 수 있는 오류 — 카탈로그 하실 일의 명령줄 글(`topics restore …`)은 꼬리로 나뉘어 카드에 안 나오지만(D-544), 이 코드들은 화면 전용 문장이 더 알맞아 따로 쓴다(코드는 진단 정보에 그대로)
 
 
 def is_folder(path):
@@ -82,7 +82,7 @@ def failure_from(error):
     if error.code in WRITE_WORDED_CODES:
         return ServiceFailure(T["data_unreadable"], code=error.code, retryable=True)
     shown_text = render(error.code, {name: mask(value) for name, value in error.slots.items()})
-    return ServiceFailure(f"{shown_text.message} {shown_text.action}".strip(), code=error.code, retryable=True)
+    return ServiceFailure(f"{shown_text.message} {shown_text.card_action}".strip(), code=error.code, retryable=True)             # 카드에는 명령줄 꼬리(`명령줄·개발자 안내:`)를 싣지 않는다(F028)
 
 
 def engine_failure(error):
@@ -350,7 +350,7 @@ class ServiceHomeProvider(HomeProvider):
 
 LEDGER_SPANS = ("오늘", "이번 달")                                                      # 장부 제공자(NAVER API HUB)의 한도 줄 — 하루·한 달 시도 수
 LIMIT_STOPS = ("blocked", "exhausted")                                                 # 서비스가 '한도에 실제로 닿아' 새 조회를 멈춘 때의 코드 — 서비스의 고정 멈춤 문구는 이때만 화면에 낸다(인증이 아직 확실하지 않은 처음 모습에는 내지 않는다)
-SETTINGS_WORDED = {"CONNECTIONS_FILE_INVALID": "conn_file_invalid", "DATA_DIR_UNSAFE": "conn_dir_unsafe"}      # 설정 화면을 읽다 날 수 있는 오류 — 카탈로그 안내문에는 명령줄 글(`keys add`·`.bak` 이름)이 섞여 있어 화면용 쉬운 문장으로 바꾼다(코드는 진단 정보에 그대로)
+SETTINGS_WORDED = {"CONNECTIONS_FILE_INVALID": "conn_file_invalid", "DATA_DIR_UNSAFE": "conn_dir_unsafe"}      # 설정 화면을 읽다 날 수 있는 오류 — 카탈로그 하실 일의 명령줄 글(`keys add`·`.bak` 이름)은 꼬리로 나뉘어 카드에 안 나오지만(D-544), 이 코드들은 화면 전용 문장이 더 알맞아 따로 쓴다(코드는 진단 정보에 그대로)
 
 
 def settings_failure(error):

@@ -262,7 +262,7 @@ class AdapterTest(unittest.TestCase):
 
         with self.assertRaises(jobs.JobFailure) as caught:
             adapters.ServiceHomeProvider(context_factory=other).load_home(lambda *a: None, lambda: False)
-        self.assertIn("데이터를 둘 폴더가 안전하지 않습니다", caught.exception.user_message)         # 다른 오류 문구는 그대로
+        self.assertIn("데이터를 둘 폴더가 안전하지 않아요", caught.exception.user_message)         # 다른 오류 문구는 그대로(L4: 문체만 '-요' 로)
 
     def test_only_the_two_write_worded_codes_are_reworded_and_every_other_catalog_code_keeps_its_own_text(self):
         """'저장하지 못했다' 말투 바꾸기가 다른 오류로 번지지 않는다(변이 N04: 다른 코드 하나를 더해도 시험이 통과했다) — 오류 표의 모든 코드에서, 바뀌는 건 단 둘이고 나머지는 표의 문장 그대로다."""
@@ -280,7 +280,10 @@ class AdapterTest(unittest.TestCase):
                 self.assertEqual(failure.user_message, text.T["data_unreadable"], code)
             else:
                 rendered = render(code, slots)
-                self.assertEqual(failure.user_message, f"{rendered.message} {rendered.action}".strip(), code)
+                self.assertEqual(failure.user_message, f"{rendered.message} {rendered.card_action}".strip(), code)
+                self.assertNotIn("명령줄·개발자 안내:", failure.user_message, code)
+                if "명령줄·개발자 안내:" in rendered.action:                                          # 명령줄 꼬리가 있는 행은 카드 글이 전체 글보다 짧다(꼬리는 카드에 없다)
+                    self.assertLess(len(failure.user_message), len(f"{rendered.message} {rendered.action}".strip()), code)
                 self.assertNotEqual(failure.user_message, text.T["data_unreadable"], code)
 
     def test_a_blog_name_that_is_empty_after_masking_falls_back_to_the_default_name(self):

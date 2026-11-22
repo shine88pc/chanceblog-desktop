@@ -667,7 +667,8 @@ class NormalPathTest(unittest.TestCase):
                     self.assertEqual(code, 1, (where, out, err))
                     text = out + err
                     seen += 1
-                    self.assertIn("찾을 수 없습니다", text, where)
+                    phrase = "찾을 수 없어요" if path[0] == "topics" else "찾을 수 없습니다"                    # L4(D-544): 주제 엔진 후보(TOPIC_CANDIDATE_NOT_FOUND)는 '-요' 문체로 다시 썼다 — 나머지 코드의 문장은 그대로
+                    self.assertIn(phrase, text, where)
                     self.assertNotIn(PLACEHOLDER, text, where)
                     self.assertIn(typed if typed == "a1b2c3d4" else "999", text, where)
                     if "--json" not in extra:

@@ -250,10 +250,10 @@ class AddTest(CliCase):
         code, out, err, source = self.run_keys("add", "ai_assist", "--name", "예비", "--stdin", stdin=json.dumps(other))
         self.assertEqual((code, out, source.reads), (1, "", 0))
         self.assertIn("코드: KEY_FAILOVER_TERMS_REQUIRED", err)
-        self.assertIn("키를 끝없이 돌려 쓰는 기능은 이 프로그램에 없습니다(용도마다 3개까지이고, 다른 앱의 키로 넘어가는 것은 한도·일시 오류일 때뿐입니다)", err)
+        self.assertIn("키를 끝없이 돌려 쓰는 기능은 이 프로그램에 없어요(용도마다 3개까지이고, 다른 앱의 키로 넘어가는 것은 한도·일시 오류일 때뿐이에요)", err)
         code, out, err = self.add("ai_assist", "예비", other, "--i-understand-terms", "--state", "예비")
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("서비스 약관에서 금지될 수 있습니다", out)
+        self.assertIn("서비스 약관에서 금지될 수 있어요", out)
         listed = next(group for group in json.loads(self.json_out("list"))["data"]["purposes"] if group["purpose"] == "ai_assist")["entries"]
         self.assertEqual([item["terms_ack_at"] != "" for item in listed], [False, True])
         self.assertEqual([item["state"] for item in listed], ["active", "standby"], "--state 예비 는 예비로 저장된다")

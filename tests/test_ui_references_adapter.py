@@ -135,6 +135,7 @@ class ProviderTest(AdapterCase):
                 self.provider.save(row.ref_id, "고친 제목", "고친 본문")
         self.assertIn("참고 글 보관함 폴더", saving.exception.message)
         self.assertNotIn("저장하지 못했습니다", T["ref_fail_delete"])
+        self.assertNotIn("저장하지 못했어요", T["ref_fail_delete"])                                    # 카탈로그 문장이 '-요' 체로 바뀐 뒤에도 '지우기 실패' 문장에 '저장' 이 섞이지 않는지(옛 문구만 보면 약해진다)
         self.assertNotIn(MARK_BODY, saving.exception.message)
         self.assertEqual(self.provider.open(row.ref_id).body, "지울 본문", "실패한 지우기·저장은 글을 그대로 둔다")
 
