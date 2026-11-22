@@ -3,6 +3,7 @@
 규칙의 정본은 chanceblog 의 `pipeline/secret_patterns.py` 이고(`vendor/` 로 원본 그대로 가져온 것), 여기서는 그 패턴을 그대로 써서 글 속 비밀 모양을
 `[가림: <이름>]` 으로 바꾼다. 거기에 이 앱이 다루는 글에서 더 필요한 세 가지를 더한다: 주소 속 `사용자:토큰@`(비밀번호에 `@` 가 들어 있어도),
 주소의 `?access_token=…` 같은 인자, `Bearer <토큰>`. 정본의 `sk-` 패턴이 못 알아보는 붙임표·밑줄이 든 새 키 모양(OpenAI `sk-proj-…`·Anthropic `sk-ant-api03-…`·OpenRouter `sk-or-v1-…`과 그 밖의 `sk-` 긴 모양)도 가린다. 어떤 입력이 와도 예외를 내지 않고(없는 값은 빈 글), 이미 가린 글을 다시 가려도 같다.
+L8(D-557)이 정본·옛 모양에 없던 최근 키·토큰 모양 열여덟(`_RECENT_PATTERNS` — Stripe·GitLab·Hugging Face·Groq·NVIDIA 같은 것)과 글 끝까지 보는 `has_key_shape_anywhere` 를 더했다.
 PCSEC1 H1 로 더한 것: 이름 목록 확장(serviceKey·authKey·appKey·secretKey·clientSecret·X-Api-Key·Ocp-Apim-Subscription-Key …), `Authorization`·`Proxy-Authorization`·`Cookie`·`Set-Cookie` 줄(쿠키는 이름 불문 모든 값), 전각·키릴 동형 문자·퍼센트로 쓴 이름과 이스케이프 JSON, XML 태그·`--옵션 값`·`Key=값`, base64 로 감싼 값, 쪼갠 값 — 아래 `_hidden_forms` 에 모였다(원문 규칙 뒤에 돈다).
 """
 from __future__ import annotations
@@ -54,6 +55,28 @@ _NEW_SK_PATTERNS = (
     ("OpenRouter 키", re.compile(r"(?<![A-Za-z0-9])sk-or-v[0-9]{1,2}-[A-Za-z0-9_-]{20,}")),
     ("sk- 형식 API 키(긴 모양)", re.compile(r"(?<![A-Za-z0-9])sk-(?=[A-Za-z0-9_-]{0,60}[A-Z])(?=[A-Za-z0-9_-]{0,60}[0-9])[A-Za-z0-9_-]{40,}")),
 )
+# 최근에 생긴 키·토큰 모양(L8 F069, 결정 D-557) — 정본(vendor/)이 아직 모르는 접두사 모양만 더했다(정본·위 `sk-` 모양·검사기 여섯 유형에 이미 있는 것은 되풀이하지 않는다: GitHub `ghp_`·`github_pat_`·텔레그램·`AIza`·`xox[baprs]`·개인 키 머리말·npm·JWT·AWS `AKIA` 는 그대로다. AWS 는 `AKIA` 말고 임시·식별 접두어 일곱을 더한다 — 검사기(`scan.py`)는 아는데 이 가리기 목록만 몰랐다).
+# 앞은 ASCII 영숫자가 아닐 것(한글 바로 옆·밑줄 뒤의 키도 가린다), 꼬리는 실제 키 길이보다 짧게 잡아 여유를 뒀다. 항목은 (이름, 정규식, 규칙이 일치하려면 글에 반드시 있어야 하는 낱말들 — `_CHAIN` 의 사전 확인). 모든 정규식은 입력 길이에 선형이다(`nvapi-` 만 앞내다보기를 60자로 막았다).
+_RECENT_PATTERNS = (
+    ("AWS 임시·식별 키", re.compile(r"(?<![A-Za-z0-9])(?:ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[A-Z0-9]{16}(?![A-Za-z0-9])"), ("ASIA", "AGPA", "AIDA", "AROA", "ANPA", "ANVA", "AIPA")),
+    ("Slack 앱 토큰", re.compile(r"(?<![A-Za-z0-9])xapp-[0-9]-[A-Z0-9]{8,}-[0-9]{8,}-[A-Za-z0-9]{32,}"), ("xapp-",)),
+    ("Slack 갱신 토큰", re.compile(r"(?<![A-Za-z0-9])xoxe-[0-9]-[A-Za-z0-9-]{40,}"), ("xoxe-",)),
+    ("Stripe 비밀 키", re.compile(r"(?<![A-Za-z0-9])(?:sk|rk)_live_[0-9A-Za-z]{24,}"), ("_live_",)),
+    ("Stripe 웹훅 서명 비밀", re.compile(r"(?<![A-Za-z0-9])whsec_[0-9A-Za-z]{32,}"), ("whsec_",)),
+    ("GitLab 토큰", re.compile(r"(?<![A-Za-z0-9])gl(?:pat|ptt|rt|dt|soat|cbt|imt|agent|ft|oas)-[0-9A-Za-z_-]{20,}"), ("glpat-", "glptt-", "glrt-", "gldt-", "glsoat-", "glcbt-", "glimt-", "glagent-", "glft-", "gloas-")),
+    ("Hugging Face 토큰", re.compile(r"(?<![A-Za-z0-9])hf_[A-Za-z0-9]{34,}(?![A-Za-z0-9_])"), ("hf_",)),
+    ("SendGrid 키", re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"), ("SG.",)),
+    ("PyPI 토큰", re.compile(r"(?<![A-Za-z0-9])pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}"), ("pypi-AgEI",)),
+    ("Groq 키", re.compile(r"(?<![A-Za-z0-9])gsk_[A-Za-z0-9]{40,}"), ("gsk_",)),
+    ("NVIDIA 키", re.compile(r"(?<![A-Za-z0-9])nvapi-(?=[A-Za-z0-9_-]{0,60}[0-9])(?=[A-Za-z0-9_-]{0,60}[A-Z])[A-Za-z0-9_-]{40,}"), ("nvapi-",)),
+    ("DigitalOcean 토큰", re.compile(r"(?<![A-Za-z0-9])do[opr]_v1_[0-9a-f]{64}"), ("_v1_",)),
+    ("Shopify 토큰", re.compile(r"(?<![A-Za-z0-9])shp(?:at|ss|ca|pa)_[0-9a-fA-F]{32}"), ("shpat_", "shpss_", "shpca_", "shppa_")),
+    ("Notion 토큰", re.compile(r"(?<![A-Za-z0-9])ntn_[A-Za-z0-9]{40,}"), ("ntn_",)),
+    ("Linear 키", re.compile(r"(?<![A-Za-z0-9])lin_api_[A-Za-z0-9]{40,}"), ("lin_api_",)),
+    ("Perplexity 키", re.compile(r"(?<![A-Za-z0-9])pplx-[A-Za-z0-9]{40,}"), ("pplx-",)),
+    ("xAI 키", re.compile(r"(?<![A-Za-z0-9])xai-[A-Za-z0-9]{70,}"), ("xai-",)),
+    ("Replicate 토큰", re.compile(r"(?<![A-Za-z0-9])r8_[A-Za-z0-9]{37}(?![A-Za-z0-9])"), ("r8_",)),
+)
 # `password: 값`·`token=값`, 환경 변수식 `DB_PASSWORD=값`·`MY_SERVICE_TOKEN=값`·쿠키 `csrftoken=값`, JSON `"password": "값"`·짧은 따옴표 값 `secret = "x"`. 이름은 그 자리에서 바로 찾는다(앞 덩어리를 끝까지 먹고 되돌아가지 않는다 — 제곱으로 느려지지 않게)
 _ASSIGNMENT = re.compile(
     r"(?i)((?:" + _NAME_WORDS + r")s?[\"']?\s*[:=]\s*)"
@@ -89,7 +112,8 @@ def _ascii_bounded(pattern):
 _BEARER, _BASIC, _SPACED_VALUE, _NPM_TOKEN = (_ascii_bounded(item) or item for item in (_BEARER, _BASIC, _SPACED_VALUE, _NPM_TOKEN))
 # 정본 패턴 중 단어 경계 기호 가 든 것(GitHub 토큰·Slack 토큰·AWS 액세스 키·sk- 키·Google 토큰 …)의 ASCII 경계 판 — 정본(vendor/)은 그대로 두고 여기서 더 돌린다
 _BOUNDED_PATTERNS = tuple((label, bounded) for label, pattern in SECRET_PATTERNS for bounded in (_ascii_bounded(pattern),) if bounded is not None)
-_SHAPE_PATTERNS = (_PEM, _JWT, _SLACK_HOOK, _NPM_TOKEN, _BEARER, *(pattern for _label, pattern in SECRET_PATTERNS), *(pattern for _label, pattern in _BOUNDED_PATTERNS), *(pattern for _label, pattern in _NEW_SK_PATTERNS))
+_SHAPE_PATTERNS = (_PEM, _JWT, _SLACK_HOOK, _NPM_TOKEN, _BEARER, *(pattern for _label, pattern in SECRET_PATTERNS), *(pattern for _label, pattern in _BOUNDED_PATTERNS), *(pattern for _label, pattern in _NEW_SK_PATTERNS),
+                   *(pattern for _label, pattern, _need in _RECENT_PATTERNS))
 
 
 _CUT_WINDOW = 400                  # 상한에서 이만큼 안쪽까지 공백을 찾아 거기서 자른다
@@ -121,13 +145,27 @@ def mask(value):
 
 
 def has_key_shape(value):
-    """글에 키·토큰 모양(정본 패턴과 그 ASCII 경계 판·이 모듈의 JWT·Bearer·npm·Slack 웹훅·개인 키 블록)이 들어 있는가. `이름=값` 꼴(주소 인자·대입)은 보지 않는다 — 어떤 입력에도 예외를 내지 않는다."""
+    """글에 키·토큰 모양(정본 패턴과 그 ASCII 경계 판·이 모듈의 JWT·Bearer·npm·Slack 웹훅·개인 키 블록·최근에 생긴 모양 `_RECENT_PATTERNS`)이 들어 있는가. 앞 20만 자만 본다(끝까지는 `has_key_shape_anywhere`). `이름=값` 꼴(주소 인자·대입)은 보지 않는다 — 어떤 입력에도 예외를 내지 않는다."""
     try:
         text = value if isinstance(value, str) else str(value)
     except Exception:
         return False
     text = _strip_invisible(text[:MAX_MASK_INPUT])
     return any(pattern.search(text) for pattern in _SHAPE_PATTERNS)
+
+
+_SCAN_WINDOW, _SCAN_OVERLAP = 150_000, 4_096         # `has_key_shape` 는 앞 20만 자만 본다(가리기용) — 끝까지 보려면 그보다 작은 창으로 겹쳐 훑는다. 키·토큰 모양은 겹침보다 짧아 창 경계에서 놓치지 않는다
+
+
+def has_key_shape_anywhere(value):
+    """`has_key_shape` 인데 글 **끝까지** 본다(겹친 창으로) — 내보내기 직전 관문(발행)이 쓴다: 가리기용 상한(20만 자) 뒤에 숨은 키도 막는다. 어떤 입력에도 예외를 내지 않는다(글로 바꿀 수 없으면 `has_key_shape` 처럼 False)."""
+    try:
+        text = value if isinstance(value, str) else str(value)
+    except Exception:
+        return False
+    if len(text) <= MAX_MASK_INPUT:
+        return has_key_shape(text)
+    return any(has_key_shape(text[start:start + _SCAN_WINDOW]) for start in range(0, len(text), _SCAN_WINDOW - _SCAN_OVERLAP))
 
 
 def _strip_invisible(text):
@@ -531,6 +569,7 @@ _CHAIN = (
     *((pattern, f"[가림: {label}]", _VENDOR_NEEDS.get(label, _NO_NEED)) for label, pattern in SECRET_PATTERNS),                       # 이름이 있는 정본 패턴이 먼저(어떤 종류인지 남긴다) — 아래의 일반 대입 규칙은 그 나머지를 가린다
     *((pattern, f"[가림: {label}]", _VENDOR_NEEDS.get(label, _NO_NEED)) for label, pattern in _BOUNDED_PATTERNS),                    # 한글 바로 옆의 키까지(정본이 먼저 돌았으니 이미 가려지던 글의 출력은 그대로다)
     *((pattern, f"[가림: {label}]", (("sk-",), (), ())) for label, pattern in _NEW_SK_PATTERNS),                                     # 붙임표·밑줄이 든 새 `sk-` 키 모양(정본이 못 알아보던 것)
+    *((pattern, f"[가림: {label}]", (need, (), ())) for label, pattern, need in _RECENT_PATTERNS),                                    # 최근에 생긴 키·토큰 모양(L8 F069) — 이름이 붙은 가림 표지로 어떤 종류인지 남긴다
     (_ASSIGNMENT, r"\1[가림: 값]", ((":", "="), _NAME_LITERALS, ())),
     (_SPACED_VALUE, r"\1[가림: 토큰]", ((), _SPACED_NEEDS, ())),                                    # 맨 끝 — `이름 key=값` 처럼 위 대입 규칙이 먼저 가려야 할 글을 이 규칙이 덩어리째 가로채지 않게
 )

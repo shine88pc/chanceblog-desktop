@@ -201,7 +201,7 @@ class Settings:
             return {"schema": SETTINGS_SCHEMA, "repo_path": "", "naver_profiles": {}}
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:             # UnicodeDecodeError 는 ValueError 다
+        except (OSError, ValueError, RecursionError) as error:             # UnicodeDecodeError 는 ValueError 다. 아주 깊게 겹친 JSON 은 RecursionError(L8 — 조작한 백업의 설정도 쉬운 SETTINGS_INVALID 로 거절한다)
             raise _bad_settings(self.path, f"읽을 수 없다: {type(error).__name__}") from None
         profiles = raw.get("naver_profiles") if isinstance(raw, dict) else None
         if (not isinstance(raw, dict) or set(raw) != {"schema", "repo_path", "naver_profiles"} or raw["schema"] != SETTINGS_SCHEMA or not isinstance(raw["repo_path"], str)

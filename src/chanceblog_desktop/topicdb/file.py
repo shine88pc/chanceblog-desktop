@@ -21,6 +21,8 @@ import time
 from contextlib import closing
 from pathlib import Path
 
+from ..content.schema_guard import describe as describe_foreign
+from ..content.schema_guard import foreign_kinds
 from ..content.store import _read_only_uri
 from ..errors import AppError
 
@@ -422,6 +424,7 @@ class EngineFile:
                     version = source.execute("PRAGMA user_version").fetchone()[0]
                     problem = source.execute("PRAGMA integrity_check").fetchone()[0]
                     shape = self._shape_problem(source, version) if self.MIN_SCHEMA_VERSION <= version <= self.SCHEMA_VERSION else None
+                    foreign = foreign_kinds(source, self.SCHEMA)                  # 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …) — 통째로 복사되기 전에 본다(L8, D-554)
                 except sqlite3.Error as error:
                     raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "백업 파일이 깨졌습니다"}, detail=detail_of(error)) from None
                 if application != self.APPLICATION_ID or problem != "ok":
@@ -430,6 +433,8 @@ class EngineFile:
                     raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "지원하지 않는 버전의 백업입니다"}, detail=f"백업 버전 {version} / 지원 {self.MIN_SCHEMA_VERSION}~{self.SCHEMA_VERSION}")
                 if shape:                                     # 바꾸기 전에 거절한다 — 바꾼 뒤 열기 검사에서 걸리면 이미 지금 저장소가 그 백업으로 덮인 뒤다
                     raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "표 모양이 맞지 않습니다"}, detail=shape)
+                if foreign:                                   # 조작한 백업의 트리거·뷰가 지금 저장소로 들어오지 못하게 바꾸기 전에 거절한다
+                    raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있습니다"}, detail=f"앱이 만들지 않는 구조: {describe_foreign(foreign)}")
                 try:
                     source.backup(self._db)
                 except sqlite3.Error as error:
