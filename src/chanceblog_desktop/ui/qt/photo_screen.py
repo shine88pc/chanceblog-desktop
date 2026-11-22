@@ -22,6 +22,7 @@ from .style_dialog import _empty_layout
 
 DIALOG_WIDTH = 820                                                               # 사진 줄이 들어갈 만큼 넓은 대화상자(창 논리 폭의 94% 를 넘지 않는다 — `Dialog.place`)
 PREVIEW_PIXELS = rules.THUMB_SIDE * 2                                            # 이미지 읽기 도구가 줄여 읽는 긴 변(화면에는 `THUMB_SIDE` 로 줄여 그린다)
+OCR_REFIT_DELAYS_MS = (0, 40, 160)                                              # 읽는 중 상태 글이 두 줄이 되면 창의 키를 맞추는 때(ms) — 첫 번째는 바로, 나머지는 겹친 배치가 자리를 잡은 뒤
 
 
 def make_preview(path):
@@ -45,7 +46,9 @@ class PhotoSheet(QWidget):
         self._making = False
         self._rejected_seen = ()                                                  # 마지막으로 그린 못 넣은 파일 목록(같은 목록이면 다시 스크롤하지 않는다 — 검증 Q N-5)
         self._reveal_rejected_pending = False
+        self._refit_serial = 0                                                    # 상태 글이 자라서 늦게 다시 맞추려고 건 시계들의 세대 — 다시 그리면 그 시계들은 낡은 것이 된다
         self.confirm_buttons = []
+        self.ocr_runner = getattr(shell, "ocr_runner", None)                      # 글자 읽기 진행자(D-513) — 없으면(도구 없음·관문 꺼짐) 이 창은 지금과 같다
         self.setAccessibleName(T["pho_title"])
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -62,7 +65,14 @@ class PhotoSheet(QWidget):
         self.empty = UI.label("", "body", wrap=True)
         self.full = UI.label("", "small", wrap=True)
         self.full.set_tone("orange")
-        for widget in (self.title, self.intro, self.limits, self.count, self.empty, self.full):
+        self.ocr_intro = None
+        shown = [self.title, self.intro, self.limits, self.count, self.empty, self.full]
+        if self.ocr_runner is not None:
+            self.ocr_intro = UI.label("", "small", wrap=True)                     # 글자 읽기 안내 — 쓸 수 있을 때만 보인다
+            self.ocr_intro.set_tone("blue")
+            self.ocr_intro.setVisible(False)
+            shown.insert(2, self.ocr_intro)
+        for widget in shown:
             column.addWidget(widget)
         self.rows_host = QWidget()
         self.rows_layout = QVBoxLayout(self.rows_host)
@@ -91,6 +101,9 @@ class PhotoSheet(QWidget):
         row.addStretch(1)
         row.addWidget(self.close_button)
         outer.addLayout(row)
+        if self.ocr_runner is not None:
+            self.ocr_runner.changed.connect(self.refresh)
+            self.ocr_runner.ticked.connect(self.ocr_tick)
         self.refresh()
 
     # ---- 만들기 ----
@@ -175,6 +188,8 @@ class PhotoSheet(QWidget):
             return None
         self.flush()                                                              # 칸에 쳐 둔 글(Enter 도 다른 칸으로 가기도 안 한 글)을 먼저 규칙에 넘긴다 — 어떤 길로 눌러도 '글 → 행동' 순서가 같다
         status = getattr(board, name)(*args)
+        if status == "busy":
+            board.notice = ("info", T["pho_ocr_confirm_busy"])                    # 글자를 읽는 중인 사진은 끝난 뒤에 확인할 수 있다 — 조용히 거절하지 않고 알린다
         self.refresh()
         if name == "ask_confirm_all" and status == "ask":
             self.focus_confirm()
@@ -230,6 +245,9 @@ class PhotoSheet(QWidget):
         board = self.board
         if board is None:
             return None
+        self._refit_serial += 1                                                   # 다시 그리면 그리기가 스스로 창의 키를 맞춘다 — 늦게 걸어 둔 맞춤 시계는 낡은 것이다(진행 중인 다른 모습 위로 덮치지 않게)
+        if self.ocr_runner is not None:
+            self.ocr_runner.sync()                                                # 사진을 지우거나 다시 찾아 컨트롤러가 모은 취소 번호는 다시 그릴 때 읽는 쪽에 곧바로 알린다(1초 시계를 기다리지 않는다)
         vm = board.view()
         self.limits.set_text(vm["limits"])
         self.count.set_text(vm["count"]["text"])
@@ -239,6 +257,7 @@ class PhotoSheet(QWidget):
         self.full.set_text(vm["full"])
         self.full.setVisible(bool(vm["full"]))
         self._sync_rows(vm["rows"])
+        self._sync_ocr()
         self._sync_rejected(vm["rejected"])
         self._sync_lists(vm["lists"])
         self.add_button.setEnabled(vm["add"]["enabled"])
@@ -274,6 +293,59 @@ class PhotoSheet(QWidget):
             if self.rows_layout.indexOf(card) != index:
                 self.rows_layout.removeWidget(card)
                 self.rows_layout.insertWidget(index, card)
+
+    # ---- 글자 읽기(D-513) — 없으면 아래는 모두 아무 일도 하지 않는다 ----
+    RUNNER_ACTIONS = frozenset({"read", "confirm_reread", "cancel_reread", "cancel", "escape"})       # 읽는 일(작업 스레드)을 건드리는 행동 — 나머지(줄 확인·고침·빼기·합치기·모두 맞아요)는 화면 규칙만 부른다
+
+    def has_ocr(self):
+        return self.ocr_runner is not None
+
+    def ocr_do(self, name, *args):
+        """글자 읽기 칸의 행동 하나 — 칸에 쳐 둔 글을 먼저 규칙에 넘긴 뒤 진행자(읽기·취소)나 화면 규칙(줄)에 묻고 다시 그린다 → 컨트롤러의 상태 이름."""
+        runner = self.ocr_runner
+        if runner is None or self.board is None:
+            return None
+        self.flush()
+        status = getattr(runner if name in self.RUNNER_ACTIONS else runner.panel, name)(*args)
+        self.refresh()
+        return status
+
+    def escape_ocr(self):
+        """Esc — 포커스가 있는 사진의 글자 읽기 칸에서 할 일(고치기 그만두기·확인 줄 그만두기·읽는 중 취소)이 있으면 하고 True. 없으면 False(창이 닫힌다)."""
+        for card in list(self.rows.values()):
+            block = card.ocr_block
+            if block is not None and block.contains_focus():
+                return block.handle_escape()
+        return False
+
+    def _sync_ocr(self):
+        runner = self.ocr_runner
+        if runner is None:
+            return
+        intro = runner.panel.intro()
+        self.ocr_intro.set_text(intro)
+        self.ocr_intro.setVisible(bool(intro))
+        views = runner.panel.views(runner.now())
+        for photo_id, card in self.rows.items():
+            if card.ocr_block is not None:
+                card.ocr_block.apply(views.get(photo_id))
+
+    def ocr_tick(self):
+        """매초 — 읽는 중인 사진의 상태 줄(몇 초째)만 가볍게 바꾼다."""
+        runner = self.ocr_runner
+        if runner is None or self.board is None:
+            return
+        now = runner.now()
+        grew = False
+        for photo_id, card in self.rows.items():
+            block = card.ocr_block
+            if block is not None and block.vm is not None and block.vm["busy"]:
+                grew = block.apply_status(runner.panel.status(photo_id, now)) or grew
+        if grew:
+            self._refit_serial += 1
+            serial = self._refit_serial
+            for delay in OCR_REFIT_DELAYS_MS:                                          # 상태 글이 두 줄이 됐다 — 창의 키를 다시 맞춘다. 겹친 배치는 층마다 이벤트 루프를 몇 바퀴 돌아야 새 높이를 알려 주어 첫 맞춤이 옛 높이를 볼 수 있으니 늦게도 두 번 더 맞춘다(그 사이에 다시 그렸으면 낡은 시계는 그만둔다 — 독립 검증 S Q11)
+                QTimer.singleShot(delay, lambda serial=serial: self._refit_if_current(serial))
 
     def _sync_rejected(self, rejected):
         _empty_layout(self.rejected_rows)
@@ -406,6 +478,10 @@ class PhotoSheet(QWidget):
         dialog.layout_.activate()
         dialog.place()
 
+    def _refit_if_current(self, serial):
+        if serial == self._refit_serial:
+            self._refit_later()
+
     def _refit_later(self):
         try:
             self._refit()
@@ -451,6 +527,13 @@ class PhotoSheet(QWidget):
         self.board = None
         self._queue = []
         self._previews = {}
+        runner = self.ocr_runner
+        if runner is not None:
+            for signal, slot in ((runner.changed, self.refresh), (runner.ticked, self.ocr_tick)):
+                try:
+                    signal.disconnect(slot)
+                except (TypeError, RuntimeError):                                 # 이미 끊겼거나 지워졌다
+                    pass
         try:
             for card in list(self.rows.values()):
                 card.hide()

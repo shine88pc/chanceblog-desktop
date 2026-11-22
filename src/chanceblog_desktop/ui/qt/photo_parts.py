@@ -5,6 +5,7 @@
 **입력 칸(이 사진은 무엇인가요? · 한마디 메모)은 접지 않고 늘 보인다**(운영자 요구) — 줄 머리(미리보기) 바로 아래에 두어 그림과 칸이 한 화면에 함께 보인다(검증 Q N-3). 종류·장소 분위기 칩은 그 아래에 늘 보이고, 들어갈 곳·자리·설명 글만 '자리 정하기' 로 접는다 —
 사용자가 직접 고른 값(기본값이 아닌 들어갈 곳·자리·설명 글)이 있을 때만 펼치고(종류가 정한 기본 들어갈 곳은 접힌 단추에 `들어갈 곳: 도입 ▸` 로 한 줄 요약만 보인다 — POLISH-1 M-2), 사용자가 접은 줄은 그 줄이 지워질 때까지 접힌 채 둔다(다른 동작이 되살리지 않는다). Enter 는 규칙이 받은 글(또는 바뀐 것이 없는 칸)에서만 다음 칸으로 가고 받지 않은 글에서는 그 칸에 머문다(N-4).
 줄은 **사진이 지워지기 전까지 같은 부품**이다 — 창이 다시 그릴 때(`apply`) 칸의 글을 덮어쓰지 않고(포커스가 있거나 한도를 넘겨 반영하지 못한 글은 그대로), 클릭한 칸이 사라져 포커스를 잃는 일이 없다.
+글자 읽기 칸(`photo_ocr_parts.OcrBlock`, D-513)은 글자 읽기 컨트롤러가 붙은 창에서만 종류·장소 분위기 칩 아래에 생긴다 — 붙지 않았으면 이 줄은 예전과 같은 위젯뿐이다.
 글자 수(`12/60`)는 치는 동안 그 자리에서 바뀌고 한도를 넘으면 글(`60자까지만 적을 수 있어요`)로도 알린다(색만으로 알리지 않는다). 모든 눌리는 부품은 키보드(Tab·Enter·Space)로 쓸 수 있고 접근 이름을 가지며 누르는 칸은 36px 이상이다.
 """
 from __future__ import annotations
@@ -16,6 +17,7 @@ from ..core import photo_rules as rules
 from ..core import tokens as K
 from ..core.text import T
 from . import components as UI
+from .photo_ocr_parts import OcrBlock
 
 TONE = {"ok": "green", "warn": "orange", "muted": "slate", "error": "red", "info": "slate"}       # 뷰모델의 상태 말 → 글 색 계열(글이 늘 함께 있다)
 PREVIEW_SIDE = rules.THUMB_SIDE
@@ -182,6 +184,9 @@ class PhotoRowCard(QWidget):
         inner.addWidget(self.note)
         self.types_host = self._host(inner)
         self.settings_host = self._host(inner)
+        self.ocr_block = OcrBlock(sheet, self.photo_id) if sheet.has_ocr() else None          # 글자 읽기 칸(D-513) — 컨트롤러가 붙었을 때만 만든다(꺼져 있으면 줄은 지금과 같다)
+        if self.ocr_block is not None:
+            inner.addWidget(self.ocr_block)
         self._build_place(inner, vm)
         self._build_confirm(inner, vm)
         self.apply(vm)
@@ -404,7 +409,8 @@ class PhotoRowCard(QWidget):
         """Tab 정거장(화면에 보이는 순서) — 줄 머리의 단추들 → 대상 → 메모 → 종류 칩 → 장소 분위기 칩 → 자리 정하기(펼쳤을 때만 그 안) → 확인했어요. 보이지 않거나 꺼진 것은 Qt 가 건너뛴다."""
         chips = [*getattr(self, "_chips_type", {}).values(), *getattr(self, "_chips_setting", {}).values()]
         place = [*getattr(self, "_chips_section", {}).values(), *getattr(self, "_chips_kind", {}).values(), self.nth_less, self.nth_more, self.caption.edit]
-        return [self.relink, self.up, self.down, self.remove, self.subject.edit, self.note.edit, *chips, self.place_toggle, *place, self.confirm_box]
+        reading = self.ocr_block.stops() if self.ocr_block is not None else []                # 글자 읽기 칸은 종류·장소 분위기 칩 다음, 자리 정하기 앞(목록은 정거장 하나)
+        return [self.relink, self.up, self.down, self.remove, self.subject.edit, self.note.edit, *chips, *reading, self.place_toggle, *place, self.confirm_box]
 
     def pending_fields(self):
         """닫기 전에 마지막으로 규칙에 넘길 글이 든 칸들."""

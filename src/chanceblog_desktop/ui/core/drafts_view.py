@@ -97,7 +97,8 @@ class DraftsController:
         self.regen_asked = False
         self.leave_asked = None
         self.made_photos = ()                                # 이 초안을 만들 때(또는 열었을 때) 본문에 넣은 사진 — 지금 확정한 사진과 다르면 카드가 '다시 만들기' 를 안내한다
-        self.saved_id = None                                 # 이 화면의 초안이 저장한 초안이면 그 번호(처음 저장하기 전·새로 만든 초안은 None)
+        self.opened_saved = False                            # 저장해 둔 초안을 열어 둔 채다(새로 만들면 거짓) — 읽은 글은 저장하지 않아서 연 초안의 사진 정보에는 읽은 글이 없다(`photo_text_at_risk`, D-517)
+        self.saved_id = None                                # 이 화면의 초안이 저장한 초안이면 그 번호(처음 저장하기 전·새로 만든 초안은 None)
         self.saved_rev = None                                # 저장한 횟수(다른 곳에서 먼저 고친 초안을 덮어쓰지 않으려고 저장할 때 서비스에 돌려준다)
         self.saved_at = ""
         self.saved_snapshot = None                           # 저장한 (제목, 본문) — 저장한 뒤 고쳤나를 이것과 견준다
@@ -193,6 +194,7 @@ class DraftsController:
         self.ack, self.copied, self.inspection, self.inspected_for = {}, set(), None, None
         self.copy_asked = self.pick_asked = self.leave_asked = None
         self.regen_asked = False
+        self.opened_saved = False                            # 새 글은 지금 메모리의 사진 정보로 만든 것이다 — 열어 둔 저장한 글의 문단이 빠질 걱정은 이 글에는 없다
         self._cancel_garbage()                               # 새 초안이 오면 글 모양 점검의 결과·무시 기억도 새로 시작한다
         self.failure, self.state = None, "normal"
         notes = []
@@ -367,12 +369,25 @@ class DraftsController:
         self.pick_asked = None
 
     # ---- 다시 만들기 ----
+    def photo_text_at_risk(self):
+        """저장해 둔 초안을 열어 둔 채 다시 만들면 저장해 둔 글의 '사진 속 글자' 문단이 새 글에서 소리 없이 빠질 수 있나(D-517). 읽은 글은 저장하지 않으므로(설계 4-3) 연 초안의 사진 정보에는 읽은 글이 없다 —
+        글자 읽기를 쓸 수 있는 실행에서(컨트롤러가 붙어 있다) 연 초안에 **확정한 사진**이 있는데 그 가운데 하나라도 지금 확정한 읽은 글이 없으면 참이다(문단은 확정한 사진의 확정한 줄로만 생기므로 일부 사진만 다시 읽었어도 나머지 사진의 문단은 빠진다 — 독립 검증 S SP-2). 저장해 둔 글에 그 문단이 있었는지는 글을 읽어 보지 않고는 모르므로
+        있었을 수 있다고 본다(글에서 틀 문장을 찾지 않는다). 글자 읽기가 없는 빌드·실행(컨트롤러 없음)은 늘 거짓이라 다시 만들기 확인은 지금과 같다."""
+        if self.photos.ocr is None or not self.opened_saved:
+            return False
+        placed = self._photos_to_place()                     # 확정한 사진만(검사가 막으면 None — 어차피 만들지 못하니 묻지 않는다)
+        return bool(placed) and not all(photo.confirmed_texts for photo in placed)
+
     def regen_dialog(self):
-        """고친 내용이 사라지면 확인창의 글, 아니면 None(바로 만들어도 된다). 사진 목록은 다시 만들어도 남으므로 글만 본다."""
-        if not self.text_unsaved():
+        """고친 내용이 사라지면 확인창의 글, 아니면 None(바로 만들어도 된다). 사진 목록은 다시 만들어도 남으므로 글만 본다 — 다만 저장해 둔 글의 사진 속 글자 문단이 빠질 수 있으면(`photo_text_at_risk`)
+        고친 내용이 없어도 먼저 묻고, 고친 내용도 있으면 그 확인창 글에 한 문장을 더한다."""
+        unsaved, at_risk = self.text_unsaved(), self.photo_text_at_risk()
+        if not unsaved and not at_risk:
             return None
         self.regen_asked = True
-        return {"title": T["drf_regen_title"], "body": T["drf_regen_body"], "ok": T["drf_regen_ok"], "cancel": T["drf_cancel"]}
+        if not unsaved:
+            return {"title": T["pho_ocr_regen_title"], "body": T["pho_ocr_regen_body"], "ok": T["pho_ocr_regen_ok"], "cancel": T["drf_cancel"]}
+        return {"title": T["drf_regen_title"], "body": T["drf_regen_body"] + (" " + T["pho_ocr_regen_more"] if at_risk else ""), "ok": T["drf_regen_ok"], "cancel": T["drf_cancel"]}
 
     def discard_regen(self):
         self.regen_asked = False
@@ -381,7 +396,7 @@ class DraftsController:
         """다시 만들기 — 고친 내용이 있는데 확인창을 보이지 않았으면 아무것도 하지 않는다(`unconfirmed`)."""
         if self.result is None:
             return "unavailable", None
-        if self.text_unsaved() and not self.regen_asked:
+        if (self.text_unsaved() or self.photo_text_at_risk()) and not self.regen_asked:
             return "unconfirmed", None
         return self.start_make(**callbacks)
 
@@ -596,6 +611,7 @@ class DraftsController:
         self.fields = {name: value for name, value in dict(result.options or {}).items() if name in dict(rules.OPTION_FIELDS) and isinstance(value, str)}
         self.saved_id, self.saved_rev, self.saved_at = opened.draft_id, opened.revision, opened.updated_at
         self.saved_snapshot = (opened.title, opened.body)
+        self.opened_saved = True
         self.state, self.failure, self.pending = "normal", None, None
         notes = ([T["drf_open_nocandidate"]] if opened.candidate != "found" else []) + ([T["drf_open_context_problem"]] if opened.context_problem else [])
         state = getattr(opened, "photos_state", "none")

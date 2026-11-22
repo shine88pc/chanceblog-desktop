@@ -1215,6 +1215,10 @@ class SourceRulesTest(unittest.TestCase):
         "content/photo_ocr.py": "글자 읽기(결정 D-512) — 작업자가 읽은 줄을 확인 전 후보로 다듬는 순수 규칙(읽은 글은 저장하지 않는다)",
         "ui/ocr_adapter.py": "글자 읽기 작업자를 띄우는 유일한 곳(결정 D-512) — 이미 줄인 RGB 바이트만 받고 사진 경로·번호·메모는 받지도 보내지도 않는다(LOCAL_OCR 관문 안)",
         "ui/core/photo_ocr_view.py": "글자 읽기 컨트롤러(결정 D-512) — 사진 한 장의 상태 기계·대기열·세대 번호·줄 확인·고침·빼기·합치기. 사진 목록(PhotoBoard)에 붙고 저장하지 않는다",
+        "ui/core/photo_ocr_panel.py": "글자 읽기 화면 규칙(결정 D-513) — 컨트롤러 위에서 사진 한 줄의 글자 읽기 칸 뷰모델(단추·상태 줄·읽은 글 목록)을 만들고 줄 일이 사진 확정을 풀면 안내를 남긴다. 읽은 글·사진 경로를 어디에도 되풀이하지 않는다",
+        "ui/qt/ocr_input.py": "글자 읽기에 보낼 사진 한 장을 메모리에서 읽고 줄여 RGB 바이트로(결정 D-513) — 회전 적용·투명 PNG 는 흰 바탕·PNG 6천만 화소 초과는 읽기 전 거절. 디스크에 쓰지 않고 경로를 어디에도 되풀이하지 않는다",
+        "ui/qt/ocr_runner.py": "글자 읽기 진행자(결정 D-513) — 요청을 작업 스레드에 한 장씩 맡기고 시간 초과·취소·유휴 종료를 감시한다. 사진 위치는 읽는 동안 값으로만 쥐고 컨트롤러는 화면 스레드에서만 만진다",
+        "ui/qt/photo_ocr_parts.py": "사진 한 줄 안의 글자 읽기 칸과 읽은 글 목록 위젯(결정 D-513) — 뷰모델을 그리기만 한다(사진 경로·파일을 모른다)",
     }
 
     def test_only_the_listed_source_files_mention_photos_so_saving_making_exporting_and_backup_are_untouched(self):
@@ -1232,7 +1236,7 @@ class SourceRulesTest(unittest.TestCase):
         from chanceblog_desktop.ui.core import tokens
         colors = tokens.palette()
         used = set()
-        for name in ("photo_parts.py", "photo_screen.py"):
+        for name in ("photo_parts.py", "photo_screen.py", "photo_ocr_parts.py"):
             tree = ast.parse((UI_QT / name).read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "set_tone":

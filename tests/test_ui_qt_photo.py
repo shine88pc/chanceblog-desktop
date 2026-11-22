@@ -53,7 +53,7 @@ if HAVE:
 T = text.T
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
 QT_DIR, CORE_DIR = UI_DIR / "qt", UI_DIR / "core"
-NEW_QT = ("photo_parts.py", "photo_screen.py")
+NEW_QT = ("photo_parts.py", "photo_screen.py", "photo_ocr_parts.py")
 SIZES = ((1920, 1080), (1600, 960), (1366, 768), (1280, 720), (1093, 614), (910, 512), (900, 560))
 DIR_MARK, FILE_MARK, NOTE_MARK = "UNIQ-PHOTODIR-z5r1", "UNIQ-PHOTOFILE-v8t3", "UNIQ-NOTE-본문-y2k7"
 
@@ -162,7 +162,7 @@ class SourceRulesTest(unittest.TestCase):
 
     def test_every_photo_text_is_used_and_every_used_text_is_defined(self):
         files = [CORE_DIR / "photo_view.py", CORE_DIR / "photo_rules.py", QT_DIR / "photo_parts.py", QT_DIR / "photo_screen.py", QT_DIR / "shell.py", QT_DIR / "draft_screen.py", CORE_DIR / "drafts_view.py", CORE_DIR / "drafts.py",
-                 UI_DIR / "drafts_adapter.py"]
+                 UI_DIR / "drafts_adapter.py", CORE_DIR / "photo_ocr_panel.py", QT_DIR / "photo_ocr_parts.py"]          # 글자 읽기(D-513)의 새 문구(`pho_ocr_*`)는 새 두 파일이 쓴다
         used = set()
         for path in files:
             used |= set(re.findall(r"""["'](pho_[a-z0-9_]+)["']""", path.read_text(encoding="utf-8")))
