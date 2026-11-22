@@ -285,7 +285,7 @@ class ListAndShowTest(Base):
             for candidate_id in ("abcd0001", "abcd0002"):
                 store.save_candidate(cd.Candidate.new(f"겹친 {candidate_id}", f"키워드 {candidate_id}", ("naver_a",), candidate_id=candidate_id, now=self.ctx.stamp()))
         err = self.fails("candidates", "show", "abcd")
-        self.assertIn("후보 번호가 여러 개와 겹칩니다", err)
+        self.assertIn("후보 번호가 여러 개와 겹쳐요", err)
         self.assertIn("코드: CANDIDATE_AMBIGUOUS", err)
         self.assertIn("순번 2 겹친 abcd0001", err)
         self.assertIn("순번 3 겹친 abcd0002", err)
@@ -494,7 +494,7 @@ class ImportCommandTest(Base):
                 path.write_bytes(data)
                 err = self.fails("candidates", "import-csv", str(path))
                 self.assertIn("코드: CANDIDATE_CSV_INVALID", err)
-                self.assertIn("후보 CSV 파일을 가져오지 못했습니다", err)
+                self.assertIn("후보 CSV 파일을 가져오지 못했어요", err)
         err = self.fails("candidates", "import-csv", str(self.tmp / "없는.csv"))
         self.assertIn("CANDIDATE_CSV_INVALID", err)
         self.assertFalse(self.root.exists())
@@ -560,7 +560,7 @@ class DocsTest(unittest.TestCase):
         self.assertRegex(self.read("docs/DECISIONS.md"), r"(?m)^\| D-24 \|")
         self.assertIn("D-23", architecture)
         self.assertIn("D-24", architecture)
-        self.assertIn("후보 번호가 여러 개와 겹칩니다", CATALOG["CANDIDATE_AMBIGUOUS"].message)
+        self.assertIn("후보 번호가 여러 개와 겹쳐요", CATALOG["CANDIDATE_AMBIGUOUS"].message)
 
 
 class NoTraceTest(Base):
@@ -591,7 +591,7 @@ class DeleteByNumberTest(Base):
             code, out, err = self.run_cli("candidates", "delete", "3", "--yes")
             self.assertEqual((code, out), (1, ""), repeat)
             self.assertIn("코드: CANDIDATE_DELETE_NEEDS_NUMBER", err)
-            self.assertIn("순번으로는 지우지 않았습니다", err)
+            self.assertIn("순번으로는 지우지 않았어요", err)
             self.assertIn("후보 지우기 — 다 (순번 3, 번호 " + self.number(3), err, "어느 후보인지 제목과 함께 보여 준다")
             self.assertIn(f"candidates delete {self.number(3)} --yes", err, "지울 명령을 알려 준다")
             self.assertNotIn("Traceback", err)
@@ -836,7 +836,7 @@ class DoctorAndRecoveryTest(Base):
                     err = self.fails(*argv)
                     self.assertIn("코드: STORE_RECOVERY_PENDING", err)
                     squeezed = " ".join(err.split())
-                    for needle in ("한 번 열면", "`list`", "`candidates add", "읽기만 해서 정리하지 못합니다"):
+                    for needle in ("한 번 열면", "`list`", "`candidates add", "읽기만 해서 정리하지 못해요"):
                         self.assertIn(needle, squeezed)
 
 

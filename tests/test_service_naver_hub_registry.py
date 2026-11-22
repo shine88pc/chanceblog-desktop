@@ -1071,8 +1071,8 @@ class SingleKeyWordingTest(Base):
         views = {view.purpose: view for view in q.QuotaGuard(self.ctx, lock_wait=0).usage()}
         self.assertEqual(views[HUB].notice, q.LOST_NOTICE)
         self.assertIn("절반으로 가정하지 않고", views[HUB].notice)
-        self.assertNotIn("절반을 이미 쓴 것으로 가정했습니다", views[HUB].notice)
-        self.assertIn("오늘 한도의 절반을 이미 쓴 것으로 가정했습니다", views["image_provider"].notice)
+        self.assertNotIn("절반을 이미 쓴 것으로 가정했어요", views[HUB].notice)                                              # L4: 부정 단언도 새 문체로 — 옛 글만 막으면 새 글이 나와도 통과한다
+        self.assertIn("오늘 한도의 절반을 이미 쓴 것으로 가정했어요", views["image_provider"].notice)
         self.assertEqual(views["ai_assist"].notice, views["image_provider"].notice)
         code, out, err, _ = self.run_keys("usage", HUB)
         self.assertEqual((code, err), (0, ""))

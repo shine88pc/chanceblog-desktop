@@ -1134,7 +1134,7 @@ class ErrorTextTest(Base):
         probes = [BODY_MARK, str(self.root / NAME_MARK), "I/O 오류", NAME_MARK]                      # 제목은 편집 칸에만 있어야 하고 목록 줄에는 저장된 뒤에야 나온다 — 저장이 안 됐으니 목록에도 없다
         with mock.patch.object(context_module.os, "replace", side_effect=OSError(errno.EIO, "I/O 오류 " + NAME_MARK, str(self.root / NAME_MARK))):
             self.save(window)
-        self.assertEqual(self.message(form), "파일을 저장하지 못했습니다: 「참고 글 보관함 폴더」.")
+        self.assertEqual(self.message(form), "파일을 저장하지 못했어요: 「참고 글 보관함 폴더」.")
         self.assertEqual((form.title_input.text(), form.body.toPlainText()), (TITLE_MARK, "본문 " + BODY_MARK), "저장하지 못해도 글은 편집 칸에 남아 다시 해 볼 수 있다")
         self.assertEqual(self.outside_editors(window, probes + [TITLE_MARK]), [], "저장이 안 됐으니 제목도 목록에 없다 — 편집 칸에만 있다")
         self.assertEqual(self.vault_files(), [], "임시 파일도 남지 않았다")

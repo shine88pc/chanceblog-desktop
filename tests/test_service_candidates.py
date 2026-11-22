@@ -257,7 +257,7 @@ class ResolveTest(unittest.TestCase):
     def test_a_beginning_shared_by_several_candidates_is_ambiguous_and_lists_them(self):
         error = self.refuses("CANDIDATE_AMBIGUOUS", "abcd")
         self.assertEqual(error.slots["항목"], "abcd")
-        self.assertIn("후보 번호가 여러 개와 겹칩니다", error.rendered().message)
+        self.assertIn("후보 번호가 여러 개와 겹쳐요", error.rendered().message)
         for needle in ("2개", "순번 1 주제1", "순번 2 주제2"):
             self.assertIn(needle, error.detail)
         self.assertTrue(error.detail.startswith("겹치는 후보 2개: 순번 1 주제1"), "세부는 친 글을 되풀이하지 않고 겹치는 후보들만 적는다: " + error.detail)

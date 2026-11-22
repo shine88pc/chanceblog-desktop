@@ -995,7 +995,7 @@ class ErrorRenderingTest(unittest.TestCase):
             with self.subTest(value=type(value).__name__):
                 shown = AppError("FILE_WRITE_FAILED", {"경로": value}).rendered().message
                 sec.assert_no_secret(self, KEY, shown, "이상한 값의 오류 문구")
-                self.assertIn("파일을 저장하지 못했습니다", shown)
+                self.assertIn("파일을 저장하지 못했어요", shown)
 
 
 class DisplayTextTest(unittest.TestCase):

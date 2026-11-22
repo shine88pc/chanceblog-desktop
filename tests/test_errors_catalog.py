@@ -115,7 +115,7 @@ class OperatorExamplesTest(unittest.TestCase):
         info = CATALOG["API_RATE_LIMITED"]
         self.assertEqual(info.slots, ("재시도 가능 시각",))
         self.assertIn("429", info.when)
-        self.assertIn("우회하지 않습니다", info.action)
+        self.assertIn("우회하지 않아요", info.action)
         self.assertEqual(info.retry_kind, RETRY_AFTER)
 
     def test_a_failed_optional_assistant_never_stops_the_program(self):
@@ -154,13 +154,13 @@ class RetryParsingTest(unittest.TestCase):
 class RenderTest(unittest.TestCase):
     def test_slot_values_are_put_in_corner_brackets_and_bold_marks_are_removed(self):
         shown = render("FILE_WRITE_FAILED", {"경로": "C:\\work\\글.md"})
-        self.assertEqual(shown.message, "파일을 저장하지 못했습니다: 「C:\\work\\글.md」.")
+        self.assertEqual(shown.message, "파일을 저장하지 못했어요: 「C:\\work\\글.md」.")
         self.assertNotIn("**", shown.message + shown.action)
         self.assertEqual((shown.code, shown.retry_kind, shown.retry_text), ("FILE_WRITE_FAILED", RETRY_NO, "아니오"))
 
     def test_two_slots_in_one_message(self):
         shown = render("ACTIONS_RUN_FAILED", {"워크플로 이름": "Pages 배포", "잡 이름": "build"})
-        self.assertEqual(shown.message, "배포 단계가 실패했습니다: 「Pages 배포」의 「build」.")
+        self.assertEqual(shown.message, "배포 단계가 실패했어요: 「Pages 배포」의 「build」.")
 
     def test_a_missing_slot_value_shows_unknown_instead_of_raising(self):
         shown = render("API_RATE_LIMITED", {})
@@ -196,7 +196,7 @@ class RenderTest(unittest.TestCase):
 
     def test_a_value_cannot_forge_another_slot(self):
         shown = render("ACTIONS_RUN_FAILED", {"워크플로 이름": "「잡 이름」", "잡 이름": "build"})
-        self.assertEqual(shown.message, "배포 단계가 실패했습니다: 「잡 이름」의 「build」.")
+        self.assertEqual(shown.message, "배포 단계가 실패했어요: 「잡 이름」의 「build」.")
 
     def test_an_unknown_code_is_shown_as_the_catch_all(self):
         shown = render("NOT_A_CODE", {"경로": "x"})
