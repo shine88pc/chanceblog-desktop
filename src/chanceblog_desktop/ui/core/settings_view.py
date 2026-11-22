@@ -199,7 +199,7 @@ def group_vm(key, infos, opened, sample, keys=None):
 
 
 def info_vm(data, opened, loaded_at, version):
-    """'정보' 묶음(UI-C1b) — **버전**(UI-C1a 의 버전 규칙 그대로: 읽으면 `v0.0.0`, 못 읽으면 개발 화면의 `개발 버전`)과 접어 둔 **진단 정보**(+ '키와 입력한 글은 담기지 않아요' 안내). 요약 칩은 없다.
+    """'정보' 묶음(UI-C1b) — **버전**(UI-C1a 의 버전 규칙 그대로: 읽으면 `v0.0.0`, 못 읽으면 개발 화면의 `개발 버전`)과 접어 둔 **진단 정보**(+ '키와 입력한 글은 담기지 않아요' 안내)와 `진단 정보 복사` 단추의 글(`copy`, L3 — 설정 화면이 오류 상태일 때도 같은 칸이 그려진다, D-540). 요약 칩은 없다.
     버전은 앱이 이미 읽어 둔 값(`VersionInfo`)을 받는다 — 이 순수 규칙이 파일을 읽지 않는다. 못 받았으면 개발 화면과 같은 `개발 버전`. 읽기만 한다(키·항목 이름·값은 어디에도 없다)."""
     title = T["conn_group_info"]
     state = T["conn_group_open"] if opened else T["conn_group_closed"]
@@ -211,7 +211,8 @@ def info_vm(data, opened, loaded_at, version):
         shown_version["notice"] = version.notice
     return {"key": INFO_GROUP, "title": title, "open": opened, "chips": [], "summary": "", "a11y": ", ".join((title, state)),
             "version": shown_version,
-            "diag": {"show": T["diag_show"], "hide": T["diag_hide"], "note": T["diag_note"], "text": diag_text(data, loaded_at) if data else ""}}
+            "diag": {"show": T["diag_show"], "hide": T["diag_hide"], "note": T["diag_note"], "text": diag_text(data, loaded_at) if data else ""},
+            "copy": {"text": T["diag_copy"], "note": T["diag_copy_note"]}}                # 진단 정보 복사 단추의 글과 담기는 것 안내 한 줄(L3, D-539) — 복사되는 글은 누를 때 `AppState.diagnostic_report` 가 만든다(이 뷰모델에는 없다)
 
 
 def diag_text(data, when=None):

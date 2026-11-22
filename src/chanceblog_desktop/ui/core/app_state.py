@@ -12,6 +12,7 @@ import sys
 
 from . import board_view as bv
 from . import channel_names
+from . import diagnostics as dg
 from . import settings_view as sv
 from .backup_view import BackupController
 from .blogs import FakeBlogsProvider
@@ -440,3 +441,29 @@ class AppState:
     def draft_requested(self, topic_id, blog):
         """상세 서랍의 초안 단추 — 아직 만들지 않은 기능이라 안내 문구만 돌려준다(없는 후보면 빈 글)."""
         return self.soon(T["make_small"]) if self.drawer_topic(topic_id) is not None else ""
+
+    # ---- 진단 정보 복사(L3, 결정 D-539 에서 D-541) ----
+    def last_error_code(self):
+        """지금 화면 상태가 들고 있는 **가장 최근 실패의 오류 코드** — 홈·설정·주제 후보·초안·Seed·블로그·백업이 각자 들고 있는 **읽기(불러오기·초안 만들기) 실패**(`failure`), 초안 작성이 따로 들고 있는 저장한 초안 목록의 읽기 실패(`list_failure`),
+        홈 새 구역 중 따로 읽지 못한 구역의 실패 가운데 남아 있는 것들에서 시각(`failed_at`)이 가장 늦은 것(목록·구역 실패는 시각이 없어 시각이 있는 실패가 있으면 그쪽이 먼저다). 남은 실패가 하나도 없으면 None(나아져서 지워진 실패는 없다).
+        **저장·복원·키 등록·삭제처럼 단추를 눌러 하는 일의 실패와 대화상자(참고 글·문체 참고값)의 실패는 코드를 상태로 들고 있지 않아(화면에 안내 줄·고정 문장만 남는다) 여기에 없다** — 그 일이 막힌 뒤에도 None 일 수 있다(한계는 D-541). 코드만 쓰고 실패의 안내 문장(`user_message`)은 읽지 않는다."""
+        slots = [(self.failure, self.failed_at), (self.conn_failure, self.conn_failed_at)]
+        for controller in (self.candidates, self.drafts, self.seeds, self.blogs, self.backups):
+            if controller is not None:                                                       # 백업은 짝 공급자가 없으면 없다
+                slots.append((getattr(controller, "failure", None), getattr(controller, "failed_at", None)))
+        if getattr(self.drafts, "list_state", "") == "error":                                  # 저장한 초안 목록을 못 읽은 것 — 초안 작성이 따로 들고 있는 읽기 실패(목록 자리의 오류·`다시 시도`)이고 시각은 없다
+            slots.append((getattr(self.drafts, "list_failure", None) or object(), None))        # 실패 값이 비었으면 코드를 모르는 실패(빈 값)로 센다
+        slots.extend((failure, None) for failure in self._board_failures())
+        return dg.latest_failure_code(slots)
+
+    def _board_failures(self):
+        """홈 새 구역(추천 채널 둘·작성 중 초안·최근 발행) 중 **따로** 읽지 못한 구역의 실패들 — 구역마다 따로 성공·실패해서 홈 전체의 `failure` 는 None 이다(`services.BoardData`). 구역을 읽지 못했는데 실패 값이 비었으면
+        코드를 모르는 실패(빈 값)로 센다. 홈을 아직 못 읽었거나 새 구역을 읽지 않는 공급자(`board` 없음)면 빈 목록."""
+        board = getattr(self.data, "board", None)
+        sections = list(getattr(board, "channels", None) or ()) + [getattr(board, "drafts", None), getattr(board, "recent", None)]
+        return [getattr(section, "failure", None) or object() for section in sections if section is not None and getattr(section, "state", "") == "failed"]
+
+    def diagnostic_report(self, windows_build=None, scale_percent=None):
+        """`진단 정보 복사` 가 클립보드에 쓸 글 — 앱 버전·빌드 커밋(이 상태가 받아 둔 `VersionInfo`)·윈도 빌드 번호·화면 배율·마지막 오류 코드뿐이다(규칙은 `diagnostics.py`, 순수).
+        윈도 빌드 번호와 화면 배율은 윈도·Qt 를 아는 앱 틀이 읽어 넘긴다 — 이 순수 상태는 읽지 않고, 못 받으면 글에 `unknown` 이다."""
+        return dg.build_report(self.version, windows_build, scale_percent, self.last_error_code())

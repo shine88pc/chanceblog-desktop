@@ -12,7 +12,7 @@ from PySide6.QtCore import QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QMainWindow, QScrollArea, QVBoxLayout, QWidget
 
-from ..core import channel_names, draft_rules, part_rules
+from ..core import channel_names, diagnostics, draft_rules, part_rules
 from ..core import tokens as K
 from ..core.app_state import AppState, report_unexpected
 from ..core.backup_view import WRITE_KEY as BACKUPS_WRITE_KEY
@@ -91,7 +91,7 @@ def qt_files_picker(parent, title, filter_text):
 
 
 class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None, environment=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
@@ -100,6 +100,7 @@ class AppShell(QMainWindow):
         self._relayout_timer.timeout.connect(self._relayout)
         self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups, photos=photos)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self._clipboard = clipboard or qt_clipboard_set
+        self._environment = environment or self._read_environment                        # 진단 정보 복사에 넣을 이 PC 의 값(윈도 빌드 번호·화면 배율 — `{"windows_build": 정수, "scale_percent": 정수}`)을 읽는 함수(시험은 가짜를 주입한다)
         self._url_opener = url_opener or qt_open_url                                     # 네이버 글쓰기 주소를 여는 함수(시험·사진은 가짜 열기 함수를 주입한다 — 주소만 연다)
         self._copy_timers = {}                                                           # 복사 단추의 `✓ … 복사됨` 모양을 되돌리는 시간 재개(복사한 항목마다 하나)
         self._close_confirmed = False                                                    # 앱을 닫을 때 고친 내용이 사라진다는 확인창에서 `그래도 닫기` 를 눌렀다
@@ -571,6 +572,29 @@ class AppShell(QMainWindow):
             self.notify(T["credit_copied"])
         else:
             self.notify(T["credit_failed"])
+
+    def _read_environment(self):
+        """진단 정보에 넣을 이 PC 의 값 둘 — Windows 빌드 번호와 **이 창이 놓인 화면**의 배율(%, Qt 의 `devicePixelRatio`). 읽기만 하고 못 읽으면 None(글에는 `unknown`) — 어떤 실패도 복사를 막지 않는다."""
+        try:
+            screen = self.screen() or QGuiApplication.primaryScreen()
+            ratio = screen.devicePixelRatio() if screen is not None else None
+        except Exception:                                                              # 화면을 알 수 없는 환경 — 배율만 빠진다
+            ratio = None
+        return {"windows_build": diagnostics.windows_build_number(), "scale_percent": diagnostics.scale_percent(ratio)}
+
+    def copy_diagnostics(self):
+        """`진단 정보 복사`(설정 > 정보 카드, 설정 화면이 오류일 때 오류 카드 아래의 정보 카드; L3, D-539) — 앱 버전·빌드 정보·윈도 빌드 번호·화면 배율·마지막 오류 코드뿐인 글(`ui/core/diagnostics.py`)을
+        **기존 복사 길**(`copy`)로 클립보드에 쓰고 알린다 → 복사했으면 True. 글은 누르는 순간에 만든다(마지막 오류 코드가 그때의 것이게). 새 파일 쓰기·외부 접속은 없다. 클립보드를 못 쓰면 `복사하지 못했어요` 안내만 하고 앱은 계속된다."""
+        try:
+            read = dict(self._environment() or {})
+        except Exception:                                                              # 값을 못 읽으면 그 칸만 `unknown` 이다
+            read = {}
+        copied = self.copy(self.state.diagnostic_report(read.get("windows_build"), read.get("scale_percent")))
+        if copied:
+            self.notify(T["diag_copy_done"])
+        else:
+            self.notify(T["diag_copy_failed"], "error")
+        return copied
 
     # ---- 불러오기(작업 스레드) ----
     def reload(self, *_):
