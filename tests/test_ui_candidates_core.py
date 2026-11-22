@@ -682,7 +682,7 @@ class MakeFlowTest(unittest.TestCase):
         self.assertEqual((dialog["title"], dialog["ok"], dialog["cancel"]), ("후보를 최대 6개 만들까요?", "만들기", "취소"))        # 의도적 갱신(P4d, D-277): 미리 본 개수라 서비스가 쓰는 시점에 다시 세면 달라질 수 있어 `최대`
         body = dialog["body"]
         # 의도적 갱신(P4d, D-277): 첫 문장만 `새 후보를 최대 6개 …` — 위 제목과 같은 까닭(미리 본 개수)
-        for expected in ("새 후보를 최대 6개 만들어요: 예시 블로그 가 6개", "승인한 Seed 3개에서 만들어요. 승인 전 Seed 2개는 쓰이지 않아요.", "건너뛰는 것: 조합 제외", "지금 있는 후보는 지워지거나 바뀌지 않아요", "키나 네트워크는 쓰지 않아요", "연결 전"):
+        for expected in ("새 후보를 최대 6개 만들어요 — 예시 블로그 가: 6개", "승인한 Seed 3개에서 만들어요. 승인 전 Seed 2개는 쓰이지 않아요.", "건너뛰는 것: 조합 제외", "지금 있는 후보는 지워지거나 바뀌지 않아요", "키나 네트워크는 쓰지 않아요", "연결 전"):
             self.assertIn(expected, body)
         self.assertNotIn("make", provider.calls, "미리 보기는 아무것도 쓰지 않는다")
 
@@ -692,7 +692,7 @@ class MakeFlowTest(unittest.TestCase):
         engine = tuple(cd.ChannelPreview(key, name, number) for number, (key, name) in enumerate((("github_pages", "예시 지"), ("blogger_en", "예시 영"), ("blogger_ko", "예시 한"), ("naver_a", "예시 가"), ("naver_b", "예시 나")), start=1))
         controller.preview = cd.MakePreview(store="ok", channels=engine, total_new=15, seeds_used=3)
         body = controller.make_dialog()["body"]
-        positions = [body.index(f"{name} {number}개") for number, name in ((4, "예시 가"), (5, "예시 나"), (3, "예시 한"), (2, "예시 영"), (1, "예시 지"))]
+        positions = [body.index(f"{name}: {number}개") for number, name in ((4, "예시 가"), (5, "예시 나"), (3, "예시 한"), (2, "예시 영"), (1, "예시 지"))]
         self.assertEqual(positions, sorted(positions), body)
 
     def test_without_the_dialog_nothing_is_written_not_even_by_calling_start_make_directly(self):
@@ -727,7 +727,7 @@ class MakeFlowTest(unittest.TestCase):
         drive(controller, controller.start_preview)
         dialog = controller.make_dialog()
         self.assertEqual(dialog["title"], "후보를 최대 12개 만들까요?")
-        self.assertEqual(dialog["body"].splitlines()[0], "새 후보를 최대 12개 만들어요: 예시 블로그 가 12개")
+        self.assertEqual(dialog["body"].splitlines()[0], "새 후보를 최대 12개 만들어요 — 예시 블로그 가: 12개")
         self.assertEqual(drive(controller, controller.start_make), ("started", "ok"))
         self.assertEqual(controller.notice, ("ok", "후보 6개를 만들었어요."), "결과 줄은 실제로 만든 개수만 말한다")
         self.assertNotIn("최대", controller.notice[1])

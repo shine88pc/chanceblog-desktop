@@ -40,7 +40,7 @@ SEED_T = {
     "seeds_bulk_effect_activate": "사용 중이 되면 그때부터 후보 생성에 쓰여요. 나중에 쉬는 중으로 되돌릴 수 있어요.",
     "seeds_bulk_effect_rest": "쉬는 중인 Seed 는 후보 생성에 쓰이지 않아요. 나중에 다시 사용 중으로 바꿀 수 있어요.",
     "seeds_bulk_skipped": "고른 것 중 {n}개는 이 일로 바뀌지 않아요(이미 그 상태이거나 바꿀 수 없는 상태예요).",
-    "seeds_bulk_counts": "바꾼 뒤 채널마다 쓸 수 있는 Seed 수: {rows}", "seeds_bulk_count_row": "{name}: {before}개 → {after}개", "seeds_bulk_all_or_nothing": "한 번에 모두 바뀌거나 하나도 안 바뀌어요.",
+    "seeds_bulk_counts": "바꾼 뒤 채널마다 쓸 수 있는 Seed 수 — {rows}", "seeds_bulk_count_row": "{name}: {before}개 → {after}개", "seeds_bulk_all_or_nothing": "한 번에 모두 바뀌거나 하나도 안 바뀌어요.",
     "seeds_bulk_cancel": "취소",
     # 상세 서랍
     "seeds_detail_title": "Seed 상세", "seeds_detail_a11y": "Seed 상세와 고치기", "seeds_info_scope": "소속", "seeds_info_importance": "중요도", "seeds_info_target": "대상 유형", "seeds_info_channels": "허용 채널",
@@ -96,7 +96,7 @@ SEED_T = {
     "seeds_pick_title": "제안 파일 고르기", "seeds_pick_filter": "제안 파일", "seeds_imp_title": "제안 파일을 불러올까요?", "seeds_imp_title_blocked": "제안 파일을 불러올 수 없어요", "seeds_imp_title_none": "새로 등록할 Seed 가 없어요",
     "seeds_imp_counts": "파일 안 Seed {total}개 · 새로 등록할 Seed {new}개 · 이미 있어 건너뜀 {skipped}개 · 읽을 수 없어 뺀 Seed {rejected}개(지금 등록된 Seed {existing}개)",
     "seeds_imp_all_proposed": "새로 등록하는 Seed 는 모두 승인 전이에요. 승인하기 전에는 후보 생성에 쓰이지 않아요. 이미 있는 Seed 는 건드리지 않아요.",
-    "seeds_imp_channels": "승인하면 채널마다 쓸 수 있게 되는 Seed 수: {rows}", "seeds_imp_channel_row": "{name}: {n}개({gen})", "seeds_imp_reasons": "{title}: {rows}", "seeds_imp_reason_row": "‘{name}’ {reason}",
+    "seeds_imp_channels": "승인하면 채널마다 쓸 수 있게 되는 Seed 수 — {rows}", "seeds_imp_channel_row": "{name}: {n}개({gen})", "seeds_imp_reasons": "{title}: {rows}", "seeds_imp_reason_row": "‘{name}’ {reason}",
     "seeds_imp_title_skipped": "이미 있어 건너뜀", "seeds_imp_title_rejected": "읽을 수 없어 뺌", "seeds_imp_more": "외 {n}건",
     "seeds_imp_blocked": "읽을 수 없는 Seed 가 있어서 아무것도 저장하지 않아요. 파일을 고친 뒤 다시 불러와 주세요.", "seeds_imp_none": "저장할 것이 없어서 아무것도 바뀌지 않아요.",
     "seeds_imp_ok": "승인 전으로 등록", "seeds_imp_cancel": "취소", "seeds_imp_close": "닫기", "seeds_imp_failed": "제안 파일을 읽지 못했어요. 파일이 있는지, 제안 파일 모양이 맞는지 확인해 주세요. 아무것도 바뀌지 않았어요.",

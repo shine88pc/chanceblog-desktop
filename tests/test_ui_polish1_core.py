@@ -30,13 +30,13 @@ MIXED = {"naver_a": (LONG30, True), "naver_b": ("예시 가게", True), "blogger
 
 
 class ChipCaptionTest(unittest.TestCase):
-    def test_a_name_that_ends_with_a_digit_is_split_from_the_count_by_a_middle_dot_and_other_names_keep_two_spaces(self):
+    def test_every_name_is_split_from_the_count_by_a_middle_dot_whether_or_not_it_ends_with_a_digit(self):
         self.assertEqual(part_rules.chip_caption("네이버 블로그 1", 6), "네이버 블로그 1 · 6")
         self.assertEqual(part_rules.chip_caption("Blogger 2", 0), "Blogger 2 · 0")
         self.assertEqual(part_rules.chip_caption("맛집 2024", 12), "맛집 2024 · 12")
-        self.assertEqual(part_rules.chip_caption("전체", 19), "전체  19")
-        self.assertEqual(part_rules.chip_caption("GitHub Pages", 1), "GitHub Pages  1")
-        self.assertEqual(part_rules.chip_caption("공통", 3), "공통  3")
+        self.assertEqual(part_rules.chip_caption("전체", 19), "전체 · 19", "숫자로 끝나지 않는 이름도 같은 가운뎃점(POLISH-2 QP-4 ①)")
+        self.assertEqual(part_rules.chip_caption("GitHub Pages", 1), "GitHub Pages · 1")
+        self.assertEqual(part_rules.chip_caption("공통", 3), "공통 · 3")
 
     def test_a_chip_without_a_count_shows_the_name_only_whatever_the_last_character(self):
         for name in ("네이버 블로그 1", "전체", "A&B"):
@@ -51,13 +51,13 @@ class ChipCaptionTest(unittest.TestCase):
 
     def test_the_count_is_kept_as_it_is_even_when_zero(self):
         self.assertEqual(part_rules.chip_caption("Blogger 1", 0), "Blogger 1 · 0")
-        self.assertEqual(part_rules.chip_caption("전체", 0), "전체  0")
+        self.assertEqual(part_rules.chip_caption("전체", 0), "전체 · 0")
         self.assertEqual(part_rules.chip_accessible("Blogger 1", 0), "Blogger 1, 0", "개수 0 도 접근 이름에 그대로 — 화면 읽기 프로그램은 `0개` 를 읽는다(0 을 감추면 `Blogger 1` 만 남아 개수가 없는 칩과 같아진다)")
         self.assertEqual(part_rules.chip_accessible("전체", 0), "전체 0")
 
 
 class SentenceRowTest(unittest.TestCase):
-    """문장 속에 ` · ` 로 이어 붙는 채널 줄(Seed 가져오기·일괄 바꾸기 확인창)은 이름 뒤에 쌍점 — `네이버 블로그 1: 3개 · 네이버 블로그 2: 2개`(옛 글은 `네이버 블로그 1 3개 · 네이버 블로그 2 2개` 라 `네이버 블로그 13개` 처럼 읽혔다). 후보 만들기 확인창의 줄은 블로그의 표시 이름을 쓰므로 그대로다."""
+    """문장 속에 ` · ` 로 이어 붙는 채널 줄(Seed 가져오기·일괄 바꾸기 확인창)은 이름 뒤에 쌍점 — `네이버 블로그 1: 3개 · 네이버 블로그 2: 2개`(옛 글은 `네이버 블로그 1 3개 · 네이버 블로그 2 2개` 라 `네이버 블로그 13개` 처럼 읽혔다). 후보 만들기 확인창의 줄도 같은 모양이 됐다(POLISH-2 QP-4 ③ — 새 시험은 `test_ui_polish2_core`)."""
 
     def test_the_summary_chip_the_import_row_the_bulk_row_and_the_filter_a11y_split_the_name_from_the_count(self):
         self.assertEqual(T["seeds_channel_chip"].format(name="네이버 블로그 1", n=3, gen="후보 생성 켜짐"), "네이버 블로그 1 · 3개 · 후보 생성 켜짐")

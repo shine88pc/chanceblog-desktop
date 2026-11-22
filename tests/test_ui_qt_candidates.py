@@ -896,7 +896,7 @@ class MakeFlowTest(Base):
         labels = self.texts(window.dialog)
         self.assertIn("후보를 최대 4개 만들까요?", labels)                                                # 의도적 갱신(P4d, D-277): 미리 본 개수라 `최대`
         body = next(label for label in labels if "새 후보를 최대 4개 만들어요" in label)
-        for part in ("예시 블로그 가 2개", "예시 블로그 나 2개", "승인한 Seed 3개에서 만들어요. 승인 전 Seed 1개는 쓰이지 않아요.", "지워지거나 바뀌지 않아요", "키나 네트워크는 쓰지 않아요", "아직 연결 전"):
+        for part in ("예시 블로그 가: 2개", "예시 블로그 나: 2개", "승인한 Seed 3개에서 만들어요. 승인 전 Seed 1개는 쓰이지 않아요.", "지워지거나 바뀌지 않아요", "키나 네트워크는 쓰지 않아요", "아직 연결 전"):
             self.assertIn(part, body)
         buttons = self.dialog_buttons(window)
         self.assertEqual(sorted(buttons), ["만들기", "취소"])

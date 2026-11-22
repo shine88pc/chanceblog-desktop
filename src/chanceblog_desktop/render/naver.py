@@ -24,7 +24,7 @@ MAX_TAG_CHARS = 30
 LABEL_CHARS = 80
 _TAG_TEXT = re.compile(r"<[^>]*>")
 _TOKEN = re.compile(r"<(/?)([A-Za-z0-9]+)[^>]*>|[^<]+")
-_SENTENCE_END = re.compile(r"[.!?…]+[\"'”’)\]]*(?=\s)")
+_SENTENCE_END = re.compile(r"(?<![.!?…])[.!?…]+[\"'”’)\]]*(?=\s)")                # 부호 덩어리의 맨 앞에서만 시작한다 — 덩어리 가운데서 다시 시작하면 구두점이 아주 길게 이어진 문단에서 제곱 시간이었다(마침표 2만 개 + 글자 하나 → 약 8초). 찾는 결과는 같다(POLISH-2 SP-4 — 글에서 문장 끝을 찾는 다른 정규식에 이미 한 고침과 같다)
 _INLINE = frozenset({"strong", "em", "b", "i", "a"})
 _PARAGRAPH = re.compile(r"^<p>(.*)</p>$", re.S)
 _HTTPS = re.compile(r"^https://[^\s<>\"'`]{1,500}$")

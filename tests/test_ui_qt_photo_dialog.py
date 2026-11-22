@@ -216,7 +216,7 @@ class ScrollBehaviorTest(BodyHelpers, DraftsBase):
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
 class BodyFocusTest(BodyHelpers, DraftsBase):
     """검증 Q PQ-22 — 스크롤이 있는 확인창의 본문 칸은 Tab 으로만 닿는다(`Qt.TabFocus`). 마우스로 본문을 눌러도·휠을 돌려도 포커스가 단추에서 옮겨 오지 않아 Enter 가 그 단추를 그대로 누른다
-    (예전엔 `StrongFocus` 라 한 번 누르면 포커스가 본문으로 가서 Enter 가 아무것도 안 눌렀다). 작게 넘칠 때(사진 3장·1093×614 에서 10px — PQ-18)도 키보드로 읽는 정거장이 있다."""
+    (예전엔 `StrongFocus` 라 한 번 누르면 포커스가 본문으로 가서 Enter 가 아무것도 안 눌렀다). 작게 넘칠 때(위아래 여백을 8px 씩까지 줄여도 모자란 때 — 사진 3장·1093×614 의 10px 는 이제 여백을 줄여 막대 없이 보인다, POLISH-2 PQ-18)도 키보드로 읽는 정거장이 있다."""
 
     def open_long(self, window, **kwargs):
         window.show_dialog("제목", long_body(), ok="확인", cancel="취소", safe_focus=True, **kwargs)
@@ -279,7 +279,7 @@ class BodyFocusTest(BodyHelpers, DraftsBase):
         window.close_dialog()
 
     def test_even_a_tiny_overflow_makes_the_body_a_named_tab_stop(self):
-        """작게 넘쳐도(여기서는 6px 쯤) 키보드 사용자가 잘린 줄을 읽을 수 있게 정거장·이름이 생긴다 — 문턱은 없다(스크롤 범위가 0 보다 크면 생긴다)."""
+        """작게 넘쳐도(여기서는 위아래 여백을 8px 씩으로 줄여도 4px 모자란 때 — 스크롤은 17px 부터 생긴다, POLISH-2 PQ-18) 키보드 사용자가 잘린 줄을 읽을 수 있게 정거장·이름이 생긴다 — 문턱은 없다(스크롤 범위가 0 보다 크면 생긴다)."""
         window = self.make(size=(900, 1400))
         window.show_dialog("제목", "\n".join(f"{number}. 확인창 본문 줄" for number in range(1, 31)), ok="확인", cancel="취소")
         self.settle(4)
@@ -287,9 +287,10 @@ class BodyFocusTest(BodyHelpers, DraftsBase):
         bar = body.verticalScrollBar()
         self.assertEqual((bar.maximum(), body.focusPolicy(), body.accessibleName()), (0, Qt.NoFocus, ""), "큰 창에서는 다 들어가 막대·정거장·이름이 없다")
         needed = window.dialog.layout_.totalHeightForWidth(window.dialog.width())
-        window.resize(900, needed + 32 - 6)
+        window.resize(900, needed + 16 - 4)                                                    # 여백을 8px 씩으로 줄여도 4px 모자란 창
         self.settle(8)
-        self.assertTrue(0 < bar.maximum() <= 14, f"6px 쯤 넘쳐야 한다(실제 {bar.maximum()}px)")
+        self.assertEqual(bar.maximum(), needed - (window.height() - 32), "여백 16px 기준으로 넘친 만큼(20px)만 스크롤된다 — 옛 시험의 `0 < … <= 14` 범위보다 엄하게 정확한 값을 본다")
+        self.assertEqual(bar.maximum(), 20, "여백을 8px 로 줄여도 4px 모자란 창은 20px 스크롤")
         self.assertEqual((body.focusPolicy(), body.accessibleName()), (Qt.TabFocus, body.label.plain_text()), "조금 넘쳐도 키보드로 읽을 정거장이고 이름은 본문 글이다")
         window.close_dialog()
 
@@ -337,7 +338,7 @@ class CopyDialogFitTest(BodyHelpers, PhotoSaveBase):
                     self.assertFalse(body.horizontalScrollBar().isVisibleTo(body), "가로 스크롤은 없다")
                     bar = body.verticalScrollBar()
                     needed = window.dialog.layout_.totalHeightForWidth(window.dialog.width())
-                    if needed > max(120, window.height() - 32):
+                    if needed > max(120, window.height() - 16):                            # 위아래 여백을 8px 씩까지 줄여 들어가면 스크롤이 없다(POLISH-2 PQ-18)
                         self.assertTrue(bar.maximum() > 0 and bar.isVisibleTo(body), f"창보다 길면 스크롤된다(필요 {needed}px)")
                         self.reachable_end(body)
                     else:

@@ -122,7 +122,7 @@ class SeedScreenChipsTest(SeedsBase):
         scope = chips_of(window.screen_widget, "seeds:scope:")
         self.assertEqual(scope["naver_a"].text(), "네이버 블로그 1 · 6")
         self.assertEqual(scope["naver_a"].accessibleName(), "네이버 블로그 1, 6")
-        self.assertEqual(scope["github_pages"].text(), "GitHub Pages  1", "숫자로 끝나지 않는 이름은 그대로")
+        self.assertEqual(scope["github_pages"].text(), "GitHub Pages · 1", "숫자로 끝나지 않는 이름도 같은 가운뎃점(POLISH-2 QP-4 ①)")
         self.assertEqual(scope["github_pages"].accessibleName(), "GitHub Pages 1")
 
 

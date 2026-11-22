@@ -426,7 +426,7 @@ def drawer_content(shell, d):
     if d["blog_label"]:
         badge = UI.Badge("info", d["blog_label"])
         if d.get("blog_tip"):                                                                    # 줄인 이름이면 전체 이름이 툴팁·접근 이름이다
-            badge.setToolTip(d["blog_tip"])
+            badge.setToolTip(UI.plain_tooltip(d["blog_tip"]))
             badge.setAccessibleName(d["blog_tip"])
         badges.append(badge)
     badges.append(UI.Badge("muted", f"{T['priority']} {d['priority']}"))
@@ -448,7 +448,7 @@ def drawer_content(shell, d):
         button = UI.Button("primary" if index == 0 else "secondary", draft["label"], size="lg" if index == 0 else None, focus_key="drawer-draft:" + draft["key"])
         button.clicked.connect(lambda _=False, key=draft["key"]: shell.draft(d["id"], key))
         if draft.get("tip"):                                                                     # 줄인 이름이면 전체 이름이 툴팁·접근 이름이다
-            button.setToolTip(draft["tip"])
+            button.setToolTip(UI.plain_tooltip(draft["tip"]))
             button.setAccessibleName(draft["tip"])
         layout.addWidget(button)
     extra = QHBoxLayout()

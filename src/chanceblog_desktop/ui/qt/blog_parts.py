@@ -433,7 +433,7 @@ class FieldView(QWidget):
                 chip = UI.FilterChip(option["label"], None, option["value"] == vm["value"] or (option["value"] == "" and not vm["value"]), focus_key=self._focus_key(":" + (option["value"] or "none")))
                 chip.setAccessibleName(f"{label}: {option.get('tip') or option['label']}")
                 if option.get("tip"):                                                              # 줄인 이름이면 전체 이름이 툴팁·접근 이름이다(Seed 서랍의 긴 별명 — 검증 Q2-1)
-                    chip.setToolTip(option["tip"])
+                    chip.setToolTip(UI.plain_tooltip(option["tip"]))
                 if "preset" in option:
                     chip.setIcon(swatch_icon(option["preset"]))
                     chip.setIconSize(QSize(K.SIZE["control"] - 4, K.ICON["badge"]))
@@ -448,7 +448,7 @@ class FieldView(QWidget):
                 chip = UI.FilterChip(option["label"], None, option["value"] in vm["value"], focus_key=self._focus_key(":" + option["value"]))
                 chip.setAccessibleName(f"{label}: {option.get('tip') or option['label']}")
                 if option.get("tip"):
-                    chip.setToolTip(option["tip"])
+                    chip.setToolTip(UI.plain_tooltip(option["tip"]))
                 chip.clicked.connect(lambda _=False, value=option["value"]: self.toggled_choice.emit(self.name, value))
                 self.chips[option["value"]] = chip
             column.addWidget(UI.chip_row(list(self.chips.values())))
