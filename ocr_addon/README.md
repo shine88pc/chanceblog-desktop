@@ -21,6 +21,12 @@
 - `build_ocr_addon.py` 는 a 단계 폴더 배치를 전제로 한 경로 상수(`STAGEA`·`PHOTOLAB`·`ASSETS`)가 그대로 있습니다. 저장소 배치에 맞추는 일은 빌드 흐름을 정하는 단계(B3)에서 합니다. B1 에서는 고치지 않았습니다.
 - 앱은 `LOCAL_OCR = False` 이므로 이 도구가 없거나 있어도 작업자를 띄우지 않습니다.
 
+## 빌드 산출물의 고지(운영자 확인 030 ②)
+
+- `build_ocr_addon.py` 의 info 단계가 산출 폴더에 `licenses/`(묶음에 든 부품마다 설치된 패키지에서 읽은 라이선스 전문)와 `THIRD_PARTY_NOTICES.txt`(제3자 부품 표·GEOS(LGPL-2.1) 안내·MPL-2.0 고지)를 만들고, `OCR_INFO.json` 에 `geos` 칸(판·별도 파일·전문 위치)을 적습니다. GEOS 라이선스 전문(`LICENSE_GEOS`)을 못 찾으면 조용히 건너뛰지 않고 빌드가 실패합니다.
+- 원본 소스 압축 파일은 넣지 않습니다(새 내려받기 없음). 같은 버전 소스를 공식 배포처에서 받으라는 안내만 고지문에 적습니다.
+- 이 단계의 시험은 빌드 없이 도는 `tests/test_ocr_addon_notices.py` 입니다.
+
 ## 시험
 
 - `tests/ocr_worker_probe.py`(시험 전용 실행기 — 앱 묶음·동결 작업자에는 없다)가 이 폴더의 `worker_main.py`·`netguard.py`·`protocol.py` 를 **파이썬 소스 그대로** 띄우고 엔진 만들기·모델 파일 확인 이름만 가짜로 바꿔 끼운다. `tests/test_ocr_worker_guard.py` 가 그것으로 소켓 가드(바깥 시도는 막혀 `net_blocked`·루프백은 통과)·가드 적재 순서·실패하면 시작하지 않음·진짜 `serve` 의 약속 처리를 시험한다. 시험이 만드는 바깥 시도는 패킷이 나갈 수 없는 주소(`0.0.0.1`)뿐이다.

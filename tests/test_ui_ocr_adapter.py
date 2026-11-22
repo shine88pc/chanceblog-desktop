@@ -18,6 +18,7 @@ import contextlib
 import io
 import logging
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -335,11 +336,12 @@ class TimeAndCancelTest(AdapterCase):
         adapter = self.make("--delay", "6", mode="slow", cancel_wait=0.5, read_timeout=30)
         results = []
         worker = threading.Thread(target=lambda: results.append(self.read(adapter)))
-        started = time.monotonic()
         worker.start()
-        time.sleep(0.6)
+        self.assertTrue(wait_until_write_started(adapter), "읽기 단계에 들어가야 한다(준비를 기다리다 취소하면 이 시험의 뜻이 사라진다)")
+        started = time.monotonic()
+        time.sleep(0.3)
         adapter.cancel()
-        worker.join(15)
+        worker.join(90)
         self.assertFalse(worker.is_alive())
         self.assertEqual(results[0].error, "cancelled")
         self.assertLess(time.monotonic() - started, 80, "취소 대기 뒤 바로 끝나야 한다")
@@ -378,7 +380,8 @@ class TimeAndCancelTest(AdapterCase):
         box = []
         thread = threading.Thread(target=lambda: box.append(self.read(adapter)), daemon=True)
         thread.start()
-        time.sleep(0.8)
+        self.assertTrue(wait_until_write_started(adapter), "읽는 중이어야 이 시험의 뜻이 있다")
+        time.sleep(0.3)
         started = time.monotonic()
         self.assertFalse(adapter.maybe_idle_exit())
         self.assertLess(time.monotonic() - started, 4.0, "읽는 중에는 기다리지 않고 바로 거짓 — 예전처럼 읽기가 끝날 때까지(8초) 잠금을 기다리면 걸린다")
@@ -454,6 +457,16 @@ def read_within(adapter, seconds, *args):
     return box[0] if box else None
 
 
+def wait_until_write_started(adapter, seconds=90.0):
+    """읽는 스레드가 작업자를 띄우고 준비 신호까지 받은 뒤 요청을 쓰기 시작할 때(요청 번호가 매겨질 때)까지 기다린다 — CPU 가 바쁜 PC 에서는 시간(sleep)만으로는 아직 준비를 기다리는 중일 수 있어, 쓰기·읽기 단계의 시험이 그 단계에 들어갔는지 확인하고 시작한다."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if adapter.next_id >= 1:
+            return True
+        time.sleep(0.05)
+    return False
+
+
 def watch_process(adapter):
     """어댑터가 띄운 작업자 프로세스를 `seen` 에 모은다 — 끝난 뒤 좀비·남은 프로세스가 0 인지 보려고 `_launch` 를 감싼다."""
     seen = []
@@ -481,7 +494,7 @@ class HardeningTest(AdapterCase):
 
     # 설계 3-5 의 검증 목록 일곱(알려진 칸만·형식·NaN/Infinity·줄 200개·줄당 400자·응답 256KB·요청 번호 일치)과 너무 깊은 JSON 을 규칙마다 따로 어댑터까지 올려 본다.
     def test_rule_unknown_fields_are_refused(self):
-        self.violations_are_dropped(("badfield", "scorefield"))
+        self.violations_are_dropped(("badfield", "scorefield", "linefield"))
 
     def test_rule_wrong_formats_are_refused(self):
         self.violations_are_dropped(("badtype", "badrange", "garbage"))
@@ -510,6 +523,17 @@ class HardeningTest(AdapterCase):
         outcome = read_within(adapter, 90, *self.BIG)
         self.assertIsNotNone(outcome)
         self.assertEqual((outcome.error, outcome.lines, adapter.process), ("proto", (), None))
+
+    def test_the_reader_never_takes_more_than_the_limit_plus_one_byte_of_one_line(self):
+        """줄바꿈 없이 끝없이 이어지는 출력도 한도(256KB)+1 바이트까지만 읽고 넘침만 알린다 — 읽기 상한이 없으면 끝없는 줄이 메모리를 다 쓴다(바이트가 얼마나 읽혔는지를 직접 본다)."""
+        limit = proto.MAX_RESPONSE_BYTES
+        stream = io.BytesIO(b"a" * (3 * limit))
+        sink = queue.Queue()
+        oa.OcrAdapter._pump_stdout(mock.Mock(stdout=stream), sink)
+        self.assertIs(sink.get_nowait(), oa._OVERSIZE)
+        self.assertIs(sink.get_nowait(), oa._EOF)
+        self.assertTrue(sink.empty())
+        self.assertEqual(stream.tell(), limit + 1, "넘침을 알린 뒤에는 더 읽지 않는다")
 
     def test_an_answer_of_exactly_the_size_limit_is_accepted_and_one_byte_more_is_not(self):
         """한 줄 256KB(줄바꿈까지 262144바이트) 경계 — 한도 상수·한 줄 읽기 상한·넘음 판정의 어긋남을 함께 잡는다."""
@@ -555,8 +579,9 @@ class HardeningTest(AdapterCase):
         adapter = self.make(mode="nostdin", read_timeout=60, cancel_wait=0.5)
         box = []
         thread = threading.Thread(target=lambda: box.append(adapter.read_rgb(*self.BIG)), daemon=True)
-        started = time.monotonic()
         thread.start()
+        self.assertTrue(wait_until_write_started(adapter), "요청을 쓰기 시작해야 이 시험의 뜻이 있다(준비를 기다리다 취소하면 막힌 쓰기를 시험하지 못한다)")
+        started = time.monotonic()
         time.sleep(1.0)
         adapter.cancel()
         thread.join(90)
@@ -569,6 +594,7 @@ class HardeningTest(AdapterCase):
         adapter = self.make(mode="nostdin", read_timeout=60, cancel_wait=0.5)
         thread = threading.Thread(target=lambda: adapter.read_rgb(*self.BIG), daemon=True)
         thread.start()
+        self.assertTrue(wait_until_write_started(adapter), "요청을 쓰기 시작해야 이 시험의 뜻이 있다(준비를 기다리다 닫으면 막힌 쓰기를 시험하지 못한다)")
         time.sleep(1.0)
         finished = []
         closer = threading.Thread(target=lambda: (adapter.shutdown(), finished.append(True)), daemon=True)

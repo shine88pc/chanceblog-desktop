@@ -143,6 +143,30 @@ class InvalidTest(AddonCase):
         Path(self.folder, oa.INFO_NAME).write_text(json.dumps(info), encoding="utf-8")
         self.assertIn("model_hash", oa.verify(self.folder).problems)
 
+    def test_a_models_dict_that_states_another_size_or_hash_than_the_app_is_invalid_even_when_the_file_list_agrees(self):
+        """정보 파일의 모델 칸(models_dict)도 앱에 박은 값과 맞아야 한다 — 파일 목록·폴더가 맞아도 칸이 다르게 적혀 있거나 모양이 아니면 거절한다."""
+        for label, change in (("sha256", lambda entry: entry.update(sha256=sha(b"other"))), ("bytes", lambda entry: entry.update(bytes=1)), ("empty", lambda entry: entry.clear())):
+            with self.subTest(label=label):
+                info = info_for(FILES)
+                change(info["models_dict"]["models/det/inference.onnx"])
+                write_addon(self.folder, info=info)
+                self.assertEqual(oa.verify(self.folder).problems, ("model_hash",), label)
+        info = info_for(FILES, models_dict="not a dict")
+        write_addon(self.folder, info=info)
+        self.assertEqual(oa.verify(self.folder).problems, ("model_hash",))
+
+    def test_the_info_file_size_limit_is_two_megabytes_exactly(self):
+        """한도 상수를 시험이 따라 바꾸지 않게 글자 그대로 못박는다 — 정확히 2MB 는 통과, 한 바이트 넘으면 거절."""
+        write_addon(self.folder)
+        path = Path(self.folder, oa.INFO_NAME)
+        base = path.read_bytes()
+        limit = 2 * 1024 * 1024
+        self.assertEqual(oa.MAX_INFO_BYTES, limit)
+        path.write_bytes(base + b" " * (limit - len(base)))
+        self.assertEqual(oa.verify(self.folder).state, oa.OK)
+        path.write_bytes(base + b" " * (limit - len(base) + 1))
+        self.assertEqual(oa.verify(self.folder).problems, ("info",))
+
     def test_a_list_without_the_worker_is_invalid(self):
         files = {name: data for name, data in FILES.items() if name != "ocr_worker.exe"}
         write_addon(self.folder, files)

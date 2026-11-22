@@ -9,6 +9,8 @@
 제거(remove): rapidocr 휠에 든 쓰지 않는 기본 모델 3개(31.7MB) · opencv 의 FFmpeg DLL(opencv_videoio_ffmpeg*.dll) · certifi 의 cacert.pem. --no-remove 면 건너뛴다(제거 전 크기를 재려고).
 점검(check): 금지 파일 없음 · 묶음 안 모든 exe·DLL·pyd 의 가져오기 표(pefile)에서 네트워크 DLL(WS2_32·WinINet·WinHTTP·mswsock·iphlpapi·dnsapi …) 검사(예외: 파이썬 표준 _socket.pyd·select.pyd) · 크기 보고 · 동결본 --selftest.
 이 스크립트는 앱 저장소·시스템 파일을 건드리지 않고 --out-dir 아래에만 쓴다.
+고지(info 단계, 운영자 확인 030 ②): 산출 폴더에 licenses/(묶음에 든 부품마다 설치된 패키지에서 읽은 라이선스 전문 — GEOS 의 LICENSE_GEOS 를 못 찾으면 빌드를 멈춘다)와 THIRD_PARTY_NOTICES.txt(제3자 부품 표·GEOS 안내·MPL-2.0 고지)를
+만들고 OCR_INFO.json 에 geos 칸(GEOS 판·별도 파일 목록)을 적는다. 원본 소스 압축 파일은 넣지 않는다(새 내려받기 없음 — 같은 버전 소스를 공식 배포처에서 받으라고 안내한다).
 """
 import argparse
 import ast
@@ -47,6 +49,15 @@ MODEL_EXPECT = {"models/det/inference.onnx": (4826518, "a431985659dc921974177a95
 EXCLUDED_ENGINE_MODULES = ["rapidocr.inference_engine.pytorch", "rapidocr.inference_engine.openvino", "rapidocr.inference_engine.paddle",
                            "rapidocr.inference_engine.mnn", "rapidocr.inference_engine.tensorrt", "rapidocr.inference_engine.onnxruntime_dml_unused"]
 GENERIC_EXCLUDES = ["tkinter", "matplotlib", "pandas", "scipy", "IPython", "pytest", "torch", "tensorflow", "openvino", "paddle", "MNN", "tensorrt", "setuptools", "pkg_resources", "distutils", "pip"]
+
+# 확인 030 ②(2026-11-22): GEOS(LGPL-2.1)·MPL-2.0 의무는 '라이선스 전문·고지문·소스 안내문을 추가 도구 폴더에 넣는' 방식으로 지킨다. 원본 소스 압축 파일은 넣지 않는다.
+LICENSES_DIR = "licenses"                         # 산출 폴더 안의 라이선스 전문 폴더(부품 이름별 하위 폴더)
+NOTICES_NAME = "THIRD_PARTY_NOTICES.txt"          # 제3자 부품 표·GEOS 안내·MPL-2.0 고지·소스 안내문
+GEOS_LICENSE_NAME = "LICENSE_GEOS"                # shapely 휠에 든 GEOS(LGPL-2.1) 라이선스 전문 — 빌드 때 설치된 패키지에서 읽는다
+GEOS_SOURCE_HOST = "libgeos.org"                  # GEOS 프로젝트 공식 사이트 — 주소는 host 글자만 쓴다(앞에 스킴을 붙이지 않는다). 근거: stage0b licenses 의 LICENSE_TABLE 6번 줄
+LICENSE_NAME_RE = re.compile(r"(licen[sc]e|notice|copying|attribution|third.?party)", re.I)
+NOT_LICENSE_SUFFIXES = (".py", ".pyc", ".pyo", ".pyd", ".pyi", ".dll", ".so", ".exe", ".json", ".c", ".cc", ".cpp", ".h", ".hpp")
+GEOS_DLL_RE = re.compile(r"geos(_c)?[-_.0-9a-z]*\.dll", re.I)
 
 
 def sha256_file(path):
@@ -306,6 +317,173 @@ def check(out_dir, run_selftest=True):
     return 0 if res["ok"] else 1
 
 
+# ───────────────────────────── 라이선스 전문·고지문(확인 030 ②) ─────────────────────────────
+class BuildError(Exception):
+    """빌드를 멈추는 문제 — 조용히 건너뛰지 않고 이유를 알린다."""
+
+
+def is_license_file(record_path):
+    """분포 파일 목록(RECORD)의 경로 하나가 라이선스·고지문 닮은 글 파일인가(순수 함수 — 파일을 열지 않는다)."""
+    parts = str(record_path).replace("\\", "/").split("/")
+    base = parts[-1]
+    if "__pycache__" in parts or not LICENSE_NAME_RE.search(base):
+        return False
+    return not base.lower().endswith(NOT_LICENSE_SUFFIXES)
+
+
+def license_target(record_path):
+    """분포 안 경로 -> licenses/<부품 이름>/ 아래 상대 경로(순수 함수): `*.dist-info/` 와 그 안의 `licenses/` 폴더 접두를 떼고 나머지 폴더 구조는 지킨다(같은 이름의 파일이 겹치지 않게)."""
+    parts = str(record_path).replace("\\", "/").split("/")
+    if parts and parts[0].endswith(".dist-info"):
+        parts = parts[1:]
+        if len(parts) > 1 and parts[0] == "licenses":
+            parts = parts[1:]
+    return "/".join(parts)
+
+
+def geos_license_path(record_paths):
+    """shapely 분포 파일 목록에서 GEOS 라이선스 전문(LICENSE_GEOS)의 경로 -> 없으면 None(순수 함수)."""
+    for path in record_paths:
+        text = str(path).replace("\\", "/")
+        if text.split("/")[-1].lower() == GEOS_LICENSE_NAME.lower() and is_license_file(text):
+            return text
+    return None
+
+
+def read_geos_version():
+    """설치된 shapely 가 알려 주는 GEOS 판 글(예: 3.14.1) -> 읽지 못하면 None(지어내지 않는다)."""
+    try:
+        import shapely
+        text = getattr(shapely, "geos_version_string", None)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+        parts = getattr(shapely, "geos_version", None)
+        if isinstance(parts, tuple) and parts and all(isinstance(n, int) for n in parts):
+            return ".".join(str(n) for n in parts)
+    except Exception:
+        pass
+    return None
+
+
+def geos_dll_files(dst):
+    """묶음 안의 별도 GEOS 파일(geos*.dll·geos_c*.dll) 경로들."""
+    return sorted(rel(dst, p) for p in walk_files(dst) if GEOS_DLL_RE.fullmatch(os.path.basename(p)))
+
+
+def collect_licenses(dst, packages, distribution=None):
+    """묶음에 든 부품마다 설치된 분포에서 라이선스·고지문 파일을 `dst/licenses/<부품 이름>/` 로 복사한다 -> {부품 이름: [licenses/<이름>/ 아래 상대 경로, …]}.
+    shapely 의 GEOS 라이선스 전문(LICENSE_GEOS)을 못 찾으면 BuildError — 조용히 건너뛰지 않는다. 쓰기는 dst 아래뿐이다."""
+    lookup = distribution or im.distribution                 # 호출할 때 찾는다(시험이 바꿔 끼울 수 있게)
+    root = os.path.join(dst, LICENSES_DIR)
+    shutil.rmtree(root, ignore_errors=True)                  # 이전 실행의 찌꺼기가 산출 목록에 섞이지 않게(dst 아래만)
+    collected = {}
+    for package in sorted((p for p in packages if p.get("bundled_in_dist")), key=lambda item: item["name"]):
+        name = package["name"]
+        try:
+            dist = lookup(name)
+        except Exception:
+            raise BuildError("묶음에 든 부품 %s 의 설치된 패키지를 찾지 못했다 — 라이선스 파일을 모을 수 없다" % name) from None
+        entries = [(item, str(item).replace("\\", "/")) for item in (dist.files or ())]
+        if name == "shapely" and geos_license_path([text for _item, text in entries]) is None:
+            raise BuildError("shapely 안 GEOS 의 라이선스 전문(%s)을 설치된 패키지에서 찾지 못했다 — 조용히 건너뛰지 않고 빌드를 멈춘다" % GEOS_LICENSE_NAME)
+        names = []
+        for item, text in entries:
+            if not is_license_file(text):
+                continue
+            target = license_target(text)
+            if not target or target.startswith("/") or ":" in target or ".." in target.split("/"):
+                raise BuildError("라이선스 파일 경로가 안전하지 않다: %s" % text)
+            destination = os.path.join(root, name, *target.split("/"))
+            try:
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                shutil.copyfile(str(dist.locate_file(item)), destination)
+            except OSError as error:
+                raise BuildError("라이선스 파일을 복사하지 못했다(%s): %s" % (text, type(error).__name__)) from None
+            names.append(target)
+        collected[name] = sorted(names)
+    return collected
+
+
+def render_notices(packages, geos, collected, removed=()):
+    """THIRD_PARTY_NOTICES.txt 의 글(순수 함수 — 같은 입력이면 같은 글. 시각처럼 빌드마다 달라지는 값은 없다). 글에는 인터넷 주소의 스킴(앞머리)도 물결표도 쓰지 않는다."""
+    bundled = sorted((p for p in packages if p.get("bundled_in_dist")), key=lambda item: item["name"])
+    lines = ["글자 읽기 추가 도구 — 제3자 부품 고지 (THIRD_PARTY_NOTICES.txt)",
+             "이 파일은 추가 도구를 만들 때 빌드가 자동으로 만든다. 법률 자문이 아니라 부품 파일에 적힌 표기를 옮긴 안내다. 운영자 확인 030 ② 에 따라 라이선스 전문(licenses 폴더)·이 고지문·소스 안내문을 이 폴더에 함께 둔다.",
+             "",
+             "[1] 이 묶음에 든 제3자 부품 (이름 | 버전 | 라이선스 표기 | 라이선스 전문 파일)"]
+    for package in bundled:
+        files = collected.get(package["name"]) or []
+        where = "%s/%s/ (%d개 파일)" % (LICENSES_DIR, package["name"], len(files)) if files else "(휠에 라이선스 파일이 없다 — 표기만 적는다)"
+        lines.append("- %s | %s | %s | %s" % (package["name"], package.get("version") or "?", package.get("license_metadata") or "?", where))
+    lines += ["각 부품의 라이선스 전문은 이 폴더의 licenses 폴더에 부품 이름별로 들어 있다.",
+              "",
+              "[2] GEOS — LGPL-2.1 (소스 안내와 바꿔 끼우기)",
+              "- 무엇: shapely 가 가져온 GEOS 라이브러리다. 별도 파일 geos*.dll 로 들어 있어 바꿔 끼울 수 있음 — 같은 이름의 호환되는 GEOS 판으로 바꿔 쓸 수 있다.",
+              "- 별도 파일의 위치: " + ", ".join(geos["dll_files"]),
+              "- 이 묶음의 GEOS 판: %s (OCR_INFO.json 의 geos 칸에도 같은 값이 적혀 있다)." % geos["version"],
+              "- 라이선스 전문: " + geos["license_file"],
+              "- 원본 소스: 이 묶음에는 원본 소스 압축 파일을 넣지 않았다. GEOS 프로젝트(공식 사이트 %s)가 공개 배포하는 같은 버전 소스를 받으세요(버전은 OCR_INFO.json 의 geos 칸)." % geos["source_host"],
+              "",
+              "[3] MPL-2.0 조건의 부품 — 고지"]
+    mpl = [p for p in bundled if "MPL-2.0" in str(p.get("license_metadata"))]
+    onnx = next((p for p in bundled if p["name"] == "onnxruntime"), None)
+    for package in mpl:
+        lines.append("- %s %s (%s)" % (package["name"], package.get("version") or "?", package.get("license_metadata")))
+    if onnx is not None:
+        lines.append("- onnxruntime %s 안에 든 Eigen (MPL-2.0 — onnxruntime 의 제3자 고지 파일 ThirdPartyNotices.txt 에 적혀 있다)" % (onnx.get("version") or "?"))
+    if mpl or onnx is not None:
+        lines.append("이 부품들은 이 묶음에서 고치지 않은 채 다시 배포한다. 해당 코드의 원본 소스는 각 프로젝트가 공개 배포하는 같은 버전 소스를 받으세요. MPL-2.0 전문과 고지는 licenses 폴더의 부품별 폴더(tqdm·onnxruntime 등)에 있다.")
+    else:
+        lines.append("- 이 묶음에는 MPL-2.0 조건의 부품이 없다.")
+    if any("opencv_videoio_ffmpeg" in str(item.get("path", "")) for item in removed if isinstance(item, dict)):
+        lines += ["", "[4] 이 묶음에서 뺀 것", "- opencv 휠의 FFmpeg DLL(opencv_videoio_ffmpeg*.dll, 파일에 LGPL-2.1 로 적혀 있음)은 쓰지 않아 이 묶음에서 제거했다."]
+    lines += ["", "그 밖의 부품(MIT·BSD·Apache-2.0 등)의 고지 조건은 licenses 폴더의 라이선스 전문 파일로 지킨다."]
+    return "\n".join(lines) + "\n"
+
+
+def license_notes(geos):
+    """OCR_INFO.json 의 license_notes 칸(순수 함수) — 방식이 정해졌다는 문구(확인 030 ②)."""
+    return {"memo": "법률 자문이 아님. 휠 메타데이터 기준 표기이며, GEOS(LGPL-2.1)·MPL-2.0 부품의 의무는 확인 030 ② 에 따라 라이선스 전문(licenses 폴더)·고지문(%s)·소스 안내문을 이 폴더에 넣는 방식으로 지킨다(원본 소스 압축 파일은 넣지 않는다)." % NOTICES_NAME,
+            "geos": "shapely 휠에 GEOS %s 동봉 — LGPL-2.1 — 확인 030 ② 에 따라 라이선스 전문·고지문·소스 안내문 동봉(별도 파일이라 바꿔 끼울 수 있음, 원본 소스는 같은 버전을 GEOS 프로젝트 공식 배포처 %s 에서 받음)" % (geos["version"], geos["source_host"]),
+            "ffmpeg": "opencv 휠의 FFmpeg DLL 은 이 묶음에서 제거(재배포 의무 대상에서 뺌)",
+            "mpl2": "certifi·tqdm MPL-2.0 — 고치지 않은 채 재배포, 확인 030 ② 에 따라 고지문(%s)과 라이선스 전문(licenses 폴더) 동봉, onnxruntime 안 Eigen(MPL-2.0)도 같은 고지(variant=stub 에서는 certifi 가 묶음에 없음)" % NOTICES_NAME}
+
+
+def missing_outputs(paths):
+    """산출 목록(OCR_INFO.json 의 files 경로들)에 꼭 있어야 하는데 빠진 것 -> 이름 목록(순수 함수): 고지문 · licenses/ 폴더(파일이 하나라도) · GEOS 라이선스 전문."""
+    paths = [str(p).replace("\\", "/") for p in paths]
+    missing = []
+    if NOTICES_NAME not in paths:
+        missing.append(NOTICES_NAME)
+    if not any(p.startswith(LICENSES_DIR + "/") for p in paths):
+        missing.append(LICENSES_DIR + "/")
+    if not any(p.startswith(LICENSES_DIR + "/shapely/") and p.split("/")[-1] == GEOS_LICENSE_NAME for p in paths):
+        missing.append("%s/shapely/%s" % (LICENSES_DIR, GEOS_LICENSE_NAME))
+    return missing
+
+
+def write_license_outputs(dst, packages, removed=(), distribution=None, geos_version=None):
+    """licenses/ 폴더와 THIRD_PARTY_NOTICES.txt 를 dst 안에 만든다 -> GEOS 기록(dict — OCR_INFO.json 의 geos 칸). 하나라도 못 만들면 BuildError(조용히 건너뛰지 않는다)."""
+    if not any(p.get("name") == "shapely" and p.get("bundled_in_dist") for p in packages):
+        raise BuildError("shapely(GEOS)가 묶음에 든 것으로 확인되지 않는다 — 이 빌드 흐름의 전제와 다르다")
+    collected = collect_licenses(dst, packages, distribution)
+    license_files = [name for name in collected.get("shapely", ()) if name.split("/")[-1] == GEOS_LICENSE_NAME]
+    if not license_files or not os.path.isfile(os.path.join(dst, LICENSES_DIR, "shapely", *license_files[0].split("/"))):
+        raise BuildError("GEOS 라이선스 전문(%s)을 산출 폴더에 복사하지 못했다" % GEOS_LICENSE_NAME)
+    version = (geos_version or read_geos_version)()
+    version = version.strip() if isinstance(version, str) else None
+    if not version:
+        raise BuildError("설치된 shapely 에서 GEOS 판을 읽지 못했다 — 소스 안내문에 판을 적을 수 없어 빌드를 멈춘다")
+    dlls = geos_dll_files(dst)
+    if not dlls:
+        raise BuildError("묶음에서 별도 파일 geos*.dll 을 찾지 못했다 — 바꿔 끼울 수 있다는 고지를 쓸 수 없어 빌드를 멈춘다")
+    geos = {"name": "GEOS", "version": version, "license": "LGPL-2.1", "dll_files": dlls, "license_file": "%s/shapely/%s" % (LICENSES_DIR, license_files[0]), "replaceable": True,
+            "source_host": GEOS_SOURCE_HOST, "source_included": False}
+    with open(os.path.join(dst, NOTICES_NAME), "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(render_notices(packages, geos, collected, removed))
+    return geos
+
+
 # ───────────────────────────── info / zip ─────────────────────────────
 def pypi_license(name):
     try:
@@ -397,12 +575,12 @@ def make_info(out_dir, tag="", extra=None):
                "selftest_ok": (c.get("selftest") or {}).get("ok"), "selftest_exit": c.get("selftest_exit")}
     removed = json.load(open(os.path.join(out_dir, "removed.json"), encoding="utf-8")) if os.path.isfile(os.path.join(out_dir, "removed.json")) else []
     fm = json.load(open(os.path.join(out_dir, "freeze_meta.json"), encoding="utf-8")) if os.path.isfile(os.path.join(out_dir, "freeze_meta.json")) else {}
+    geos = write_license_outputs(dst, packages, removed)                 # licenses/·THIRD_PARTY_NOTICES.txt 를 먼저 만든다(아래 파일 목록에 들어가도록) — GEOS 라이선스를 못 찾으면 BuildError
     info = {"schema": 1, "name": BUNDLE_NAME, "stage": "a-prototype", "tag": tag, "proto": 1, "built_local_time": build_clock("%Y-%m-%d %H:%M:%S"),
             "python": sys.version.split()[0], "variant": fm.get("variant"), "build_tools": tools, "packages": packages, "removed_from_bundle": removed,
             "models_dict": {k: {"bytes": v[0], "sha256": v[1]} for k, v in MODEL_EXPECT.items()}, "checks": chk,
-            "license_notes": {"memo": "시제품 기록 — 법률 자문이 아님. 휠 메타데이터 기준 표기이며 shapely 휠에 든 GEOS(LGPL-2.1)·opencv 휠의 제3자 구성요소 고지·소스 제공 방식은 b 단계 병합 전에 따로 정한다(stage0b\\licenses 의 기존 확인 참고).",
-                              "geos": "shapely 휠에 GEOS 동봉 — LGPL-2.1 (소스 제공·고지 방식 미정)", "ffmpeg": "opencv 휠의 FFmpeg DLL 은 이 묶음에서 제거(재배포 의무 대상에서 뺌)",
-                              "mpl2": "certifi·tqdm MPL-2.0 — 고치지 않은 채 재배포, 전문·소스 위치 고지 필요(variant=stub 에서는 certifi 가 묶음에 없음)"}}
+            "license_notes": license_notes(geos)}
+    info["geos"] = geos
     if extra:
         info.update(extra)
     files = []
@@ -414,6 +592,9 @@ def make_info(out_dir, tag="", extra=None):
     info["files"] = files
     info["file_count"] = len(files)
     info["total_bytes"] = sum(f["bytes"] for f in files)
+    absent = missing_outputs([f["path"] for f in files])
+    if absent:
+        raise BuildError("산출 목록에 꼭 있어야 하는 것이 없다: %s" % ", ".join(absent))
     with open(os.path.join(dst, "OCR_INFO.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(info, f, ensure_ascii=False, indent=1)
     log("OCR_INFO.json 만듦 — 파일 %d개 %d바이트, 패키지 %d개(묶임 %d)" % (len(files), info["total_bytes"], len(packages), sum(1 for p in packages if p["bundled_in_dist"])))
@@ -466,7 +647,12 @@ def main():
         if rc and st == "check":
             return rc
     if st in ("all", "info"):
-        make_info(out, a.tag)
+        try:
+            if make_info(out, a.tag):
+                return 1
+        except BuildError as error:
+            log("★ 빌드를 멈춘다: %s" % error)
+            return 1
     if st in ("all", "zip"):
         make_zip(out, a.zip or os.path.join(out, "ocr_addon_%s.zip" % (a.tag or "proto")))
     return 0
