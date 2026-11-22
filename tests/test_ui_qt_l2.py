@@ -1,0 +1,794 @@
+"""앱 묶음 L2(결정 D-534 에서 D-538)의 PySide6 시험 — 창을 화면에 띄우지 않고(offscreen) Seed 를 고치다 앱을 닫을 때의 확인창(F025)과 복원이 도는 동안의 저장 겹침 막기(F030)를 확인한다.
+**PySide6 가 없으면 통째로 건너뛴다**(CI 에는 PySide6 가 없다 — 순수 부분은 `test_ui_l2_core`). 사용자의 클립보드·보관소·데이터 폴더·설정 파일은 건드리지 않는다(가짜 공급자의 메모리 상태).
+
+지키는 것:
+  1) (F025) 저장하지 않은 Seed 입력(고친 씨앗·새 Seed 폼 — 한글을 입력기 확정 이벤트로 넣은 것 포함)이 있는데 창을 닫으면 닫지 않고 먼저 묻는다: `저장 안 하고 닫기` / `계속 고치기`, 처음 포커스와 Esc 는 계속 고치기이고
+     계속 고치기를 누르면 입력이 그대로이며 `저장 안 하고 닫기` 를 눌러야 닫힌다. 서랍을 닫았거나 다른 화면에서 닫아도 같다. 입력이 없으면(서랍만 열었다·글 검색·고른 상자)·저장한 뒤에는 묻지 않는다.
+     블로그 입력도 있으면 블로그 확인이 먼저이고 그 확인을 넘기면 Seed 확인이 이어진다. 화면 이동은 묻지 않고 입력이 남는다.
+  2) (F030) 복원이 도는 동안 Seed·블로그·저장한 초안의 저장은 시작하지 않고 한 줄로 알리며(입력·화면 그대로, 저장하고 나가기도 나가지 않는다) 복원이 끝나면 같은 입력을 저장할 수 있다. 저장이 도는 동안은 복원을 시작하지 않고(확인창도 띄우지 않는다)
+     한 줄로 알린다. 지금 백업(만들기)은 저장을 막지 않는다.
+  3) (독립 검증 보강, D-538) 서랍(Seed·후보)이 열린 채 확인창을 `계속 고치기` 나 Esc 로 닫아도 Tab 은 서랍 안에서만 돈다. 닫기 연쇄 `초안 확인 → Seed 확인`(블로그 입력 없음)은 두 갈래·세 갈래 모두 이어지고
+     연쇄 끝의 `저장 안 하고 닫기` 는 공급자에 아무것도 쓰지 않는다. 다른 씨앗 저장이 도는 중에도 닫기 질문이 뜬다. 복원 중 안내 가지(후보 만들기 확인 뒤·블로그 복제·제안 파일 등록 확인 뒤·저장한 초안 지우기·안전 사본 되돌리기)는 모두 한 줄로 알린다.
+"""
+import sys
+import unittest
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "tests"))
+import test_ui_qt_backup as tqb  # noqa: E402
+import test_ui_qt_candidates as tqc  # noqa: E402
+import test_ui_qt_drafts_save as tqd  # noqa: E402
+import test_ui_qt_seeds as tqs  # noqa: E402
+
+from chanceblog_desktop.ui.core import clock as clock_rules, seeds, services, text  # noqa: E402
+
+HAVE = tqs.HAVE and tqb.HAVE
+T = text.T
+if HAVE:
+    from PySide6.QtGui import QInputMethodEvent
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractButton, QApplication
+    from chanceblog_desktop.ui.qt import shell as shell_module
+
+    Qt, ui_offscreen = tqs.Qt, tqs.ui_offscreen
+
+FIXED_NOW = tqb.FIXED_NOW
+FULL = tqb.FIRST                                                                    # 복원할 백업의 이름(예시 목록의 첫 줄)
+TYPED = "내가 고친 이유"
+NEW_WORD = "새로 쓴 낱말"
+SEED_WRITES = ("set_state", "set_states", "edit_seed", "create_seed", "apply_import")        # 가짜 Seed 공급자가 `calls` 에 남기는 이름 중 쓰기인 것(읽기는 `load`·`preview_import`)
+
+
+def seed_writes(provider):
+    """가짜 Seed 공급자가 지금까지 받은 쓰기 이름들 — 닫기가 몰래 저장했는지 보려고(읽기는 세지 않는다)."""
+    return [name for name in provider.calls if name in SEED_WRITES]
+
+
+def fresh_toast(window):
+    """이전 안내를 치운다 — 다음 안내가 정말 새로 떴는지 보려고(같은 글이 이미 떠 있으면 새로 뜬 것과 구분이 안 된다)."""
+    window.toast.policy.expire()
+    window.toast.hide()
+
+
+def force_close(window):
+    """시험이 끝났을 때 창을 정리한다 — 입력이 남아 있으면 닫기가 먼저 묻고 닫지 않으므로 '그래도 닫기' 를 건너뛴다(시험 정리용)."""
+    window._close_confirmed = True
+    window.close()
+
+
+class Held(tqb.Stepped):
+    """복원이 시험이 풀어 줄 때까지 도는 가짜 공급자 — 첫 단계에서 멈춰 '복원 중' 을 확실히 본다(`Stepped` 는 `release` 에 하나를 넣어야 한 걸음 나아간다)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.steps = ((0.3, "복원하는 중"),)
+
+    def let_go(self):
+        for _ in range(8):
+            self.release.put(1)
+
+
+@unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
+class Base(tqs.Base):
+    def make(self, provider=None, size=(1366, 768), page="seed", backups_provider=None, wait=True, **kwargs):
+        provider = provider or seeds.FakeSeedsProvider()
+        window = shell_module.AppShell(services.FakeHomeProvider(), seeds=provider, backups=backups_provider, file_picker=lambda parent, title, filters: tqs.PICKED, autoload=False, clock=clock_rules.FixedClock(FIXED_NOW), **kwargs)
+        window.resize(*size)
+        window.show()
+        self.addCleanup(force_close, window)
+        if backups_provider is not None and hasattr(backups_provider, "let_go"):
+            self.addCleanup(backups_provider.let_go)                                 # 나중에 등록한 것이 먼저 돈다 — 복원을 풀어 주고 창을 닫는다
+        self.settle()
+        self.activate(window)
+        if page == "seed":
+            window.go("seed")
+            if wait:
+                ui_offscreen.wait_until(self.app, lambda: window.state.seeds.state != "loading" and not window.state.seeds.loading, 10)
+            self.settle()
+        return window
+
+    def go_seed(self, window):
+        window.go("seed")
+        ui_offscreen.wait_until(self.app, lambda: window.state.seeds.state != "loading" and not window.state.seeds.loading, 10)
+        self.settle(6)
+
+    def dialog_buttons(self, window):
+        return {button.text(): button for button in window.dialog.findChildren(QAbstractButton) if button.isVisibleTo(window.dialog)}
+
+    def dialog_texts(self, window):
+        return {label.plain_text() for label in window.dialog.findChildren(tqs.UI.Label)}
+
+    def type_ime(self, edit, value):
+        edit.setFocus(Qt.OtherFocusReason)
+        edit.selectAll()
+        event = QInputMethodEvent()
+        event.setCommitString(value)
+        QApplication.sendEvent(edit, event)
+        self.settle(2)
+
+    def edit_seed(self, window, seed_id="EX001", value=TYPED):
+        self.open_row(window, seed_id)
+        self.type_into(window, "reason", value)
+
+    def edit_new_seed(self, window, value=NEW_WORD):
+        window.seed_open_new()
+        self.settle(8)
+        self.type_into(window, "keyword", value)
+
+    def reason_text(self, window):
+        return self.dui(window).fields["reason"].edit.text()
+
+    def toast_text(self, window):
+        return window.toast.text() if window.toast.isVisible() else ""
+
+    def fresh_toast(self, window):
+        fresh_toast(window)
+
+    def tab_inside_drawer(self, window, count=16):
+        """Tab 을 `count` 번 누르며, 누를 때마다 포커스가 서랍 안(서랍 자신 포함)에 있었는지를 차례로 돌려준다 — 하나라도 거짓이면 Tab 이 서랍 밖(목록·메뉴)으로 샌 것이다."""
+        seen = []
+        for _ in range(count):
+            QTest.keyClick(QApplication.focusWidget() or window, Qt.Key_Tab)
+            self.settle(1)
+            widget = QApplication.focusWidget()
+            seen.append(bool(widget is not None and (window.drawer is widget or window.drawer.isAncestorOf(widget))))
+        return seen
+
+    def wait_candidates(self, window):
+        ui_offscreen.wait_until(self.app, lambda: window.state.candidates.state != "loading" and not window.state.candidates.loading, 10)
+        self.settle(6)
+
+
+# ---- 1) Seed 를 고치다 창을 닫을 때 먼저 묻기 -------------------------------------------------------------------------------------------------
+class CloseQuestionTest(Base):
+    def test_closing_with_an_edited_seed_asks_first_with_keep_editing_focused_and_keep_editing_keeps_the_korean_text(self):
+        window = self.make()
+        self.edit_seed(window)
+        self.assertEqual(self.reason_text(window), TYPED)
+        window.close()
+        self.settle(3)
+        self.assertTrue(window.isVisible(), "저장하지 않은 Seed 입력이 있으면 닫지 않고 먼저 묻는다")
+        self.assertTrue(window.dialog.is_open)
+        self.assertTrue({T["seeds_close_title"], T["seeds_close_body"]} <= self.dialog_texts(window))
+        buttons = self.dialog_buttons(window)
+        self.assertEqual(sorted(buttons), sorted([T["seeds_close_ok"], T["seeds_close_cancel"]]), "두 갈래다")
+        self.assertIs(QApplication.focusWidget(), buttons[T["seeds_close_cancel"]], "처음 포커스는 계속 고치기")
+        self.assertIs(window.dialog_default, buttons[T["seeds_close_cancel"]])
+        buttons[T["seeds_close_cancel"]].click()
+        self.settle(3)
+        self.assertEqual((window.isVisible(), window.dialog.is_open), (True, False))
+        self.assertEqual(self.reason_text(window), TYPED, "계속 고치기를 누르면 입력이 그대로다")
+        self.assertTrue(window.state.seeds.is_dirty("EX001"))
+
+    def test_escape_also_keeps_editing_and_the_enter_key_on_the_first_focus_does_not_close(self):
+        window = self.make()
+        self.edit_seed(window)
+        window.close()
+        self.settle(3)
+        QTest.keyClick(window, Qt.Key_Escape)
+        self.settle(2)
+        self.assertEqual((window.isVisible(), window.dialog.is_open, self.reason_text(window)), (True, False, TYPED))
+        window.close()
+        self.settle(3)
+        QTest.keyClick(QApplication.focusWidget(), Qt.Key_Space)                        # 처음 포커스에서 누르는 키는 계속 고치기를 누른 것이다
+        self.settle(3)
+        self.assertEqual((window.isVisible(), window.dialog.is_open, self.reason_text(window)), (True, False, TYPED))
+
+    def test_choosing_close_without_saving_closes_and_writes_nothing(self):
+        window = self.make()
+        self.edit_seed(window)
+        before = window.state.seeds.data
+        window.close()
+        self.settle(3)
+        self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+        self.settle(3)
+        self.assertFalse(window.isVisible(), "'저장 안 하고 닫기' 를 눌러야 닫힌다")
+        self.assertIs(window.state.seeds.data, before, "아무것도 저장하지 않았다")
+
+    def test_a_new_seed_form_asks_even_after_the_drawer_was_closed_and_from_another_screen(self):
+        window = self.make()
+        self.edit_new_seed(window)
+        window.close_drawer()
+        self.settle(4)
+        self.assertFalse(window.drawer.is_open)
+        window.go("home")
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "화면을 옮길 때는 묻지 않는다 — 쓰던 값은 남아 있다")
+        window.close()
+        self.settle(3)
+        self.assertTrue(window.isVisible() and window.dialog.is_open)
+        self.assertIn(T["seeds_close_title"], self.dialog_texts(window))
+        self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+        self.settle(3)
+        window.go("seed")
+        self.settle(4)
+        window.seed_open_new()
+        self.settle(8)
+        self.assertEqual(self.dui(window).fields["keyword"].edit.text(), NEW_WORD, "쓰던 값이 그대로 남아 있다")
+
+    def test_no_input_no_question_a_drawer_a_search_text_and_checked_boxes_do_not_count(self):
+        window = self.make()
+        self.open_row(window, "EX001")
+        self.assertTrue(window.drawer.is_open)
+        window.close()
+        self.settle(3)
+        self.assertFalse(window.isVisible(), "서랍만 열었으면 바로 닫힌다")
+        other = self.make()
+        other.state.seeds.set_query("검색어")
+        other.state.seeds.toggle_check("EX001")
+        other.state.seeds.open_new()
+        other.close()
+        self.settle(3)
+        self.assertFalse(other.isVisible(), "글 검색·고른 상자·열기만 한 새 Seed 서랍은 잃을 입력이 아니다")
+
+    def test_after_saving_the_same_input_nothing_is_asked(self):
+        window = self.make()
+        self.edit_seed(window)
+        self.bar_button(window, "save").click()
+        self.wait_write(window)
+        self.assertEqual(window.state.seeds.notice, ("ok", T["seeds_saved"]))
+        window.close()
+        self.settle(3)
+        self.assertFalse(window.isVisible(), "저장한 뒤에는 묻지 않는다")
+
+    def test_moving_between_screens_never_asks_and_keeps_the_seed_input_and_its_badge(self):
+        window = self.make()
+        self.edit_seed(window)
+        window.go("home")
+        self.settle(4)
+        self.assertEqual((window.dialog.is_open, window.state.page), (False, "home"))
+        self.go_seed(window)
+        self.assertTrue(window.state.seeds.is_dirty("EX001"))
+        self.assertEqual(self.row(window, "EX001").badges[-1].text(), T["seeds_flag_unsaved"], "줄에 '저장 전 변경' 이 보인다")
+
+    def test_the_blog_question_comes_first_and_the_seed_question_follows_and_either_cancel_keeps_both_inputs(self):
+        window = self.make()
+        window.go("blogs")
+        ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state != "loading" and not window.state.blogs.loading, 10)
+        self.settle(6)
+        self.type_ime(window.screen_widget.blogs_ui.fields["alias"].edit, "저장 전 별명")
+        self.go_seed(window)
+        self.edit_seed(window)
+        window.close()
+        self.settle(3)
+        self.assertIn(T["blogs_close_title"], self.dialog_texts(window), "블로그 확인이 먼저다")
+        self.dialog_buttons(window)[T["blogs_close_ok"]].click()
+        self.settle(3)
+        self.assertTrue(window.isVisible(), "블로그 확인을 넘겨도 Seed 입력이 있으면 닫지 않는다")
+        self.assertIn(T["seeds_close_title"], self.dialog_texts(window), "이어서 Seed 확인이 뜬다")
+        buttons = self.dialog_buttons(window)
+        self.assertIs(QApplication.focusWidget(), buttons[T["seeds_close_cancel"]], "처음 포커스는 계속 고치기")
+        buttons[T["seeds_close_cancel"]].click()
+        self.settle(3)
+        self.assertEqual((window.isVisible(), window.dialog.is_open, self.reason_text(window), window.state.blogs.has_unsaved()), (True, False, TYPED, True), "둘 다 그대로다")
+        window.close()
+        self.settle(3)
+        self.dialog_buttons(window)[T["blogs_close_ok"]].click()
+        self.settle(3)
+        self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+        self.settle(3)
+        self.assertFalse(window.isVisible(), "두 확인을 모두 넘기면 닫힌다")
+
+    def test_with_the_drafts_question_first_the_blog_and_seed_questions_still_follow_in_order(self):
+        window = self.make()
+        window.go("blogs")
+        ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state != "loading" and not window.state.blogs.loading, 10)
+        self.settle(6)
+        self.type_ime(window.screen_widget.blogs_ui.fields["alias"].edit, "저장 전 별명")
+        self.go_seed(window)
+        self.edit_seed(window)
+        with mock.patch.object(window.state.drafts, "has_unsaved", return_value=True):
+            window.close()
+            self.settle(3)
+            first = self.dialog_buttons(window)
+            self.assertEqual(sorted(first), sorted([T["drf_close_ok"], T["drf_cancel"]]), "초안 확인이 맨 먼저다")
+            first[T["drf_close_ok"]].click()
+            self.settle(3)
+            self.assertIn(T["blogs_close_title"], self.dialog_texts(window))
+            self.dialog_buttons(window)[T["blogs_close_ok"]].click()
+            self.settle(3)
+            self.assertIn(T["seeds_close_title"], self.dialog_texts(window))
+            self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+            self.settle(3)
+            self.assertFalse(window.isVisible())
+
+    def test_the_close_question_fits_the_window_at_every_required_size(self):
+        for size in tqs.SIZES:
+            with self.subTest(size=size):
+                window = self.make(size=size)
+                self.edit_seed(window)
+                window.close()
+                self.settle(6)
+                dialog = window.dialog
+                self.assertTrue(dialog.is_open and window.isVisible())
+                self.assertTrue(all(label.height() > 0 for label in dialog.findChildren(tqs.UI.Label)), f"{size}: 제목·본문 높이가 0 이다")
+                self.assertGreater(dialog.height(), 120, f"{size}: 틀이 접히지 않았다")
+                self.assertLessEqual(dialog.height(), window.height() - 16, f"{size}: 틀이 창보다 크지 않다")
+                buttons = [button for button in dialog.findChildren(QAbstractButton) if button.isVisibleTo(dialog)]
+                self.assertEqual(len(buttons), 2, size)
+                for button in buttons:
+                    corners = (button.mapTo(dialog, button.rect().topLeft()), button.mapTo(dialog, button.rect().bottomRight()))
+                    self.assertTrue(all(dialog.rect().contains(point) for point in corners), f"{size}: 단추가 틀 안에 있다")
+                self.assertEqual(window.scroll.horizontalScrollBar().maximum(), 0, f"{size}: 가로 스크롤이 없다")
+                self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+                self.settle(3)
+
+    def test_the_two_buttons_have_names_a_big_enough_hit_area_and_tab_stays_inside_the_dialog(self):
+        window = self.make()
+        self.edit_seed(window)
+        window.close()
+        self.settle(3)
+        buttons = self.dialog_buttons(window)
+        for button in buttons.values():
+            self.assertTrue(button.accessibleName() or button.text())
+            self.assertGreaterEqual(button.height(), 36)
+        order = []
+        for _ in range(2):
+            order.append(QApplication.focusWidget().text())
+            QTest.keyClick(QApplication.focusWidget(), Qt.Key_Tab)
+            self.settle(1)
+        self.assertEqual(sorted(order), sorted([T["seeds_close_ok"], T["seeds_close_cancel"]]), "두 단추를 한 바퀴 돈다")
+        self.assertEqual(QApplication.focusWidget().text(), order[0], "대화상자 밖으로 나가지 않는다")
+
+    # ---- 독립 검증 보강(D-538) ----
+    def test_after_keep_editing_or_escape_tab_stays_inside_the_open_seed_drawer(self):
+        for how in ("keep_editing", "escape"):
+            with self.subTest(how=how):
+                window = self.make()
+                self.edit_seed(window)
+                self.assertTrue(window.drawer.is_open)
+                self.assertTrue(all(self.tab_inside_drawer(window)), "기준: 확인창이 뜨기 전에도 Tab 은 서랍 안에서만 돈다")
+                self.dui(window).fields["reason"].edit.setFocus(Qt.OtherFocusReason)
+                self.settle(1)
+                window.close()
+                self.settle(3)
+                self.assertTrue(window.dialog.is_open)
+                if how == "keep_editing":
+                    self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+                else:
+                    QTest.keyClick(window, Qt.Key_Escape)
+                self.settle(3)
+                self.assertEqual((window.isVisible(), window.dialog.is_open, window.drawer.is_open, self.reason_text(window)), (True, False, True, TYPED), "서랍은 열린 채이고 입력은 그대로다")
+                self.assertTrue(all(self.tab_inside_drawer(window)), "확인창을 취소하고 나서도 Tab 은 서랍 안에서만 돈다(밖의 목록·메뉴로 새지 않는다)")
+
+    def test_after_keep_editing_tab_stays_inside_the_open_candidate_drawer_too(self):
+        window = self.make(size=(1280, 720), candidates=tqc.Gated())
+        self.edit_seed(window)
+        window.go("topics")
+        self.wait_candidates(window)
+        window.cand_open(window.state.candidates_view()["grid"]["cards"][0]["id"])
+        self.settle(10)
+        self.assertTrue(window.drawer.is_open, "창이 좁으면 후보 상세는 서랍이다")
+        self.assertTrue(window.state.seeds.has_unsaved(), "다른 화면으로 옮겨도 Seed 입력은 컨트롤러에 남는다")
+        self.assertTrue(all(self.tab_inside_drawer(window)), "기준: 확인창이 뜨기 전에도 Tab 은 서랍 안에서만 돈다")
+        window.close()
+        self.settle(3)
+        self.assertIn(T["seeds_close_title"], self.dialog_texts(window))
+        self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+        self.settle(3)
+        self.assertEqual((window.isVisible(), window.dialog.is_open, window.drawer.is_open), (True, False, True))
+        self.assertTrue(all(self.tab_inside_drawer(window)), "후보 서랍이 열린 채 확인창을 취소해도 Tab 은 서랍 안에서만 돈다")
+
+    def test_drafts_question_then_only_seed_input_still_asks_the_seed_question_and_the_end_writes_nothing(self):
+        provider = seeds.FakeSeedsProvider()
+        window = self.make(provider=provider)
+        self.edit_seed(window)
+        self.assertFalse(window.state.blogs.has_unsaved(), "블로그 입력은 없다")
+        with mock.patch.object(window.state.drafts, "has_unsaved", return_value=True):
+            window.close()
+            self.settle(3)
+            first = self.dialog_buttons(window)
+            self.assertEqual(sorted(first), sorted([T["drf_close_ok"], T["drf_cancel"]]), "초안 확인이 맨 먼저다(두 갈래)")
+            first[T["drf_close_ok"]].click()
+            self.settle(3)
+            self.assertTrue(window.isVisible(), "초안 확인을 넘겨도 Seed 입력이 있으면 닫지 않는다")
+            self.assertIn(T["seeds_close_title"], self.dialog_texts(window), "블로그 입력이 없어도 Seed 확인이 이어서 뜬다")
+            buttons = self.dialog_buttons(window)
+            self.assertIs(QApplication.focusWidget(), buttons[T["seeds_close_cancel"]], "처음 포커스는 계속 고치기")
+            buttons[T["seeds_close_cancel"]].click()
+            self.settle(3)
+            self.assertEqual((window.isVisible(), window.dialog.is_open, self.reason_text(window)), (True, False, TYPED), "계속 고치기 — 입력이 그대로다")
+            window.close()
+            self.settle(3)
+            self.dialog_buttons(window)[T["drf_close_ok"]].click()
+            self.settle(3)
+            self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+            self.settle(4)
+            self.assertFalse(window.isVisible(), "두 확인을 모두 넘기면 닫힌다")
+        self.assertEqual(seed_writes(provider), [], "연쇄 끝의 '저장 안 하고 닫기' 는 공급자에 아무것도 쓰지 않았다")
+
+    def test_three_way_drafts_question_then_only_seed_input_still_asks_and_the_end_writes_nothing(self):
+        provider = seeds.FakeSeedsProvider()
+        window = self.make(provider=provider)
+        self.edit_seed(window)
+        controller = window.state.drafts
+        with mock.patch.object(controller, "has_unsaved", return_value=True), mock.patch.object(type(controller), "can_save", new_callable=mock.PropertyMock, return_value=True):
+            window.close()
+            self.settle(3)
+            first = self.dialog_buttons(window)
+            self.assertIn(T["drf_choice_discard_close"], first, "저장 기능이 있으면 세 갈래다")
+            first[T["drf_choice_discard_close"]].click()
+            self.settle(3)
+            self.assertTrue(window.isVisible(), "세 갈래 초안 확인을 넘겨도 Seed 입력이 있으면 닫지 않는다")
+            self.assertIn(T["seeds_close_ok"], self.dialog_buttons(window), "블로그 입력이 없어도 Seed 확인이 이어서 뜬다")
+            self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+            self.settle(3)
+            self.assertEqual((window.isVisible(), self.reason_text(window)), (True, TYPED), "계속 고치기 — 입력이 그대로다")
+            window.close()
+            self.settle(3)
+            self.dialog_buttons(window)[T["drf_choice_discard_close"]].click()
+            self.settle(3)
+            self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+            self.settle(4)
+            self.assertFalse(window.isVisible(), "두 확인을 모두 넘기면 닫힌다")
+        self.assertEqual(seed_writes(provider), [], "연쇄 끝의 '저장 안 하고 닫기' 는 공급자에 아무것도 쓰지 않았다")
+
+    def test_choosing_close_without_saving_writes_nothing_at_the_provider(self):
+        provider = seeds.FakeSeedsProvider()
+        window = self.make(provider=provider)
+        self.edit_seed(window)
+        window.close()
+        self.settle(3)
+        self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+        self.settle(4)
+        self.assertFalse(window.isVisible())
+        self.assertEqual(seed_writes(provider), [], "'저장 안 하고 닫기' 는 공급자에 아무것도 쓰지 않는다")
+
+    def test_a_write_in_flight_for_one_seed_never_hides_another_seeds_input_from_the_close_question(self):
+        provider = tqs.Gated()
+        window = self.make(provider=provider)
+        self.addCleanup(provider.gate.set)
+        self.edit_seed(window, "EX002", "저장하지 않을 이유")
+        self.edit_seed(window, "EX001")
+        self.bar_button(window, "save").click()
+        self.settle(3)
+        self.assertTrue(window.state.seeds.busy, "저장이 문 앞에서 기다리는 중이다")
+        self.assertEqual(window.state.seeds.unsaved_targets(), [("seed", "EX002")])
+        window.close()
+        self.settle(3)
+        self.assertTrue(window.isVisible() and window.dialog.is_open, "저장이 도는 중에도 다른 씨앗의 저장하지 않은 입력이 있으면 먼저 묻는다")
+        self.assertIn(T["seeds_close_title"], self.dialog_texts(window))
+        self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+        self.settle(2)
+        provider.gate.set()
+        ui_offscreen.wait_until(self.app, lambda: not window.state.seeds.busy and window.state.seeds.pending is None, 10)
+        self.settle(4)
+        self.assertEqual((window.state.seeds.is_dirty("EX001"), window.state.seeds.is_dirty("EX002")), (False, True), "저장한 씨앗은 깨끗하고 다른 씨앗의 입력은 남아 있다")
+
+
+# ---- 2) 복원 중 저장 겹침 막기 -----------------------------------------------------------------------------------------------------------------
+class RestoreOverlapTest(Base):
+    def start_restore(self, window):
+        """설정 화면의 복원 확인창에서 `복원하기` 를 눌러 복원을 시작한다(복원은 풀어 줄 때까지 돈다)."""
+        window.go("settings")
+        controller = window.state.backups
+        ui_offscreen.wait_until(self.app, lambda: controller.state != "loading" and not controller.loading, 10)
+        self.settle()
+        window.backup_restore(FULL)
+        self.assertTrue(window.dialog.is_open)
+        ok = next(button for button in window.dialog.findChildren(QAbstractButton) if button.property("focus_key") == "dialog-ok")
+        QTest.mouseClick(ok, Qt.LeftButton)
+        self.settle(3)
+        self.assertTrue(controller.restoring)
+
+    def finish_restore(self, window, provider):
+        provider.let_go()
+        ui_offscreen.wait_until(self.app, lambda: window.state.backups.pending is None and not window.state.backups.busy, 20)
+        self.settle(4)
+        self.assertFalse(window.state.backups.restoring)
+
+    def test_a_seed_save_during_a_restore_says_one_line_changes_nothing_and_works_after_it(self):
+        held = Held()
+        window = self.make(backups_provider=held)
+        self.start_restore(window)
+        self.go_seed(window)
+        self.edit_seed(window)
+        before = window.state.seeds.data
+        self.fresh_toast(window)
+        self.bar_button(window, "save").click()
+        self.settle(3)
+        self.assertEqual(self.toast_text(window), T["backup_blocks_save"], "한 줄로 알린다")
+        self.assertEqual((window.state.seeds.busy, window.state.seeds.pending, window.state.seeds.is_dirty("EX001"), self.reason_text(window)), (False, None, True, TYPED), "저장은 시작하지 않았고 입력은 그대로다")
+        self.assertIs(window.state.seeds.data, before)
+        self.finish_restore(window, held)
+        self.bar_button(window, "save").click()
+        self.wait_write(window)
+        self.assertEqual((window.state.seeds.notice, window.state.seeds.is_dirty("EX001")), (("ok", T["seeds_saved"]), False), "복원이 끝나면 같은 입력을 저장할 수 있다")
+
+    def test_the_other_seed_writes_and_a_new_seed_are_refused_the_same_way(self):
+        held = Held()
+        window = self.make(backups_provider=held)
+        self.start_restore(window)
+        self.go_seed(window)
+        self.open_row(window, "EX001")
+        for action in ("approve",):
+            self.fresh_toast(window)
+            self.bar_button(window, action).click()
+            self.settle(3)
+            self.assertEqual(self.toast_text(window), T["backup_blocks_save"], action)
+        self.assertEqual(window.state.seeds.data.seeds[0].state, "proposed", "승인은 시작하지 않았다")
+        self.fresh_toast(window)
+        window.state.seeds.toggle_check("EX001")
+        window.seed_bulk("activate")
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "복원이 도는 동안은 바꿀 수 없는 일을 묻지 않는다")
+        self.assertEqual(self.toast_text(window), T["backup_blocks_save"])
+        window.close_drawer()
+        self.settle(3)
+        self.edit_new_seed(window)
+        self.fresh_toast(window)
+        window.seed_create()
+        self.settle(3)
+        self.assertEqual((self.toast_text(window), window.state.seeds.busy, window.state.seeds.pending), (T["backup_blocks_save"], False, None))
+        self.finish_restore(window, held)
+
+    def test_a_blog_save_and_a_blog_delete_during_a_restore_are_refused_with_the_same_line(self):
+        held = Held()
+        window = self.make(backups_provider=held, page=None)
+        self.start_restore(window)
+        window.go("blogs")
+        ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state != "loading" and not window.state.blogs.loading, 10)
+        self.settle(6)
+        self.type_ime(window.screen_widget.blogs_ui.fields["alias"].edit, "저장 전 별명")
+        self.fresh_toast(window)
+        window.blog_action("save")
+        self.settle(3)
+        self.assertEqual(self.toast_text(window), T["backup_blocks_save"])
+        self.assertEqual((window.state.blogs.busy, window.state.blogs.pending, window.state.blogs.has_unsaved()), (False, None, True))
+        self.fresh_toast(window)
+        window.blog_action("delete")
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "복원이 도는 동안은 지울 수 없는 일을 묻지 않는다")
+        self.assertEqual(self.toast_text(window), T["backup_blocks_save"])
+        self.finish_restore(window, held)
+        window.blog_action("save")
+        self.wait_blog_write(window)
+        self.assertFalse(window.state.blogs.has_unsaved(), "복원이 끝난 뒤에는 저장된다")
+
+    def wait_blog_write(self, window):
+        ui_offscreen.wait_until(self.app, lambda: not window.state.blogs.busy and window.state.blogs.pending is None, 10)
+        self.settle()
+
+    def test_a_save_runs_even_while_a_plain_backup_is_being_made(self):
+        held = Held()
+        window = self.make(backups_provider=held, page=None)
+        window.go("settings")
+        controller = window.state.backups
+        ui_offscreen.wait_until(self.app, lambda: controller.state != "loading" and not controller.loading, 10)
+        self.settle()
+        self.assertEqual(window.backup_now(), "started")
+        self.assertTrue(controller.busy and not controller.restoring)
+        self.go_seed(window)
+        self.edit_seed(window)
+        self.bar_button(window, "save").click()
+        self.wait_write(window)
+        self.assertEqual((window.state.seeds.notice, window.state.seeds.is_dirty("EX001")), (("ok", T["seeds_saved"]), False), "지금 백업은 저장을 막지 않는다")
+        held.let_go()
+
+    # ---- 거꾸로: 저장이 도는 동안은 복원을 시작하지 않는다 ----
+    def test_a_restore_is_not_started_while_a_seed_save_runs_and_asks_nothing(self):
+        gated = tqs.Gated()
+        held = Held()
+        window = self.make(provider=gated, backups_provider=held)
+        self.addCleanup(gated.gate.set)
+        self.edit_seed(window)
+        self.bar_button(window, "save").click()
+        self.settle(3)
+        self.assertTrue(window.state.seeds.busy, "저장이 문 앞에서 기다리는 중이다")
+        window.go("settings")
+        controller = window.state.backups
+        ui_offscreen.wait_until(self.app, lambda: controller.state != "loading" and not controller.loading, 10)
+        self.settle()
+        self.fresh_toast(window)
+        window.backup_restore(FULL)
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "시작할 수 없는 복원은 묻지 않는다")
+        self.assertEqual(self.toast_text(window), T["backup_wait_save"])
+        self.fresh_toast(window)
+        self.assertEqual(window.backup_restore_confirmed(FULL), "writing", "확인창이 먼저 떠 있었어도 시작하지 않는다")
+        self.assertEqual(self.toast_text(window), T["backup_wait_save"], "그 길에서도 한 줄로 알린다")
+        self.assertEqual((controller.busy, held.started), (False, []))
+        gated.gate.set()
+        ui_offscreen.wait_until(self.app, lambda: not window.state.seeds.busy and window.state.seeds.pending is None, 10)
+        self.settle(4)
+        self.start_restore(window)
+        self.assertEqual(held.started, ["restore:" + FULL], "저장이 끝난 뒤에는 복원을 시작한다")
+        self.finish_restore(window, held)
+
+    def test_a_revert_of_a_stopped_restore_is_not_offered_while_a_seed_save_runs(self):
+        gated = tqs.Gated()
+        held = Held("interrupted")
+        window = self.make(provider=gated, backups_provider=held)
+        self.addCleanup(gated.gate.set)
+        self.edit_seed(window)
+        self.bar_button(window, "save").click()
+        self.settle(3)
+        self.assertTrue(window.state.seeds.busy, "저장이 문 앞에서 기다리는 중이다")
+        window.go("settings")
+        controller = window.state.backups
+        ui_offscreen.wait_until(self.app, lambda: controller.state != "loading" and not controller.loading, 10)
+        self.settle()
+        self.assertTrue(controller.can_revert(), "기준: 멈춘 복원 흔적이 있어 되돌리기가 가능한 상태다")
+        self.fresh_toast(window)
+        window.backup_revert()
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "시작할 수 없는 되돌리기는 묻지 않는다")
+        self.assertEqual(self.toast_text(window), T["backup_wait_save"], "한 줄로 알린다")
+        self.fresh_toast(window)
+        self.assertEqual(window.backup_revert_confirmed(), "writing", "확인창이 먼저 떠 있었어도 시작하지 않는다")
+        self.assertEqual((self.toast_text(window), controller.busy, held.started), (T["backup_wait_save"], False, []))
+        gated.gate.set()
+        ui_offscreen.wait_until(self.app, lambda: not window.state.seeds.busy and window.state.seeds.pending is None, 10)
+        self.settle(4)
+
+    def test_a_candidate_make_confirmed_during_a_restore_is_refused_with_the_line_and_makes_nothing(self):
+        held = Held()
+        cand_provider = tqc.Gated()
+        window = self.make(candidates=cand_provider, backups_provider=held, page=None)
+        self.start_restore(window)
+        window.go("topics")
+        self.wait_candidates(window)
+        make = next(button for button in window.screen_widget.findChildren(QAbstractButton) if button.property("focus_key") == "cand-make")
+        make.click()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.dialog.is_open, 10), "미리 보기는 읽기뿐이라 복원 중에도 되고 확인창이 뜬다")
+        self.settle(3)
+        ok = next(button for button in window.dialog.findChildren(QAbstractButton) if button.property("focus_key") == "dialog-ok")
+        self.fresh_toast(window)
+        ok.click()
+        self.settle(6)
+        self.assertEqual(self.toast_text(window), T["backup_blocks_save"], "확인을 눌러도 복원이 도는 중이면 만들지 않고 한 줄로 알린다")
+        self.assertEqual((window.state.candidates.make_asked, window.state.candidates.busy, cand_provider.made_batches), (False, False, 0), "확인 표시도 거두었고 아무것도 만들지 않았다")
+        self.finish_restore(window, held)
+
+    def test_the_remaining_confirmed_branches_of_the_shell_refuse_with_the_same_line_during_a_restore(self):
+        held = Held()
+        window = self.make(backups_provider=held, page=None)
+        self.start_restore(window)
+        window.go("blogs")
+        ui_offscreen.wait_until(self.app, lambda: window.state.blogs.state != "loading" and not window.state.blogs.loading, 10)
+        self.settle(6)
+        for name, call in (("blog_clone", window.blog_clone), ("seed_import_confirmed", window.seed_import_confirmed), ("drf_delete_confirmed", window._drf_delete_confirmed), ("cand_make_confirmed", window.cand_make_confirmed)):
+            with self.subTest(branch=name):
+                self.fresh_toast(window)
+                call()
+                self.settle(3)
+                self.assertEqual(self.toast_text(window), T["backup_blocks_save"], "복원이 도는 중이라 시작하지 않고 한 줄로 알린다")
+        self.assertEqual((window.state.blogs.busy, window.state.seeds.busy, window.state.candidates.busy, window.state.drafts.store_busy), (False, False, False, False), "막은 일은 작업을 만들지 않았다")
+        self.finish_restore(window, held)
+
+
+# ---- 3) 저장한 초안 ----------------------------------------------------------------------------------------------------------------------------
+class DraftRestoreTest(tqd.SaveBase):
+    def make_with(self, held, fake):
+        window = self.drafted(drafts_provider=fake, home=services.FakeHomeProvider(backups=held))
+        self.addCleanup(held.let_go)
+        self.addCleanup(lambda: setattr(window, "_close_confirmed", True))
+        return window
+
+    def start_restore(self, window):
+        controller = window.state.backups
+        controller.apply_loaded(controller.provider.load_backups(lambda *a: None, lambda: False))
+        self.assertEqual(window.backup_restore_confirmed(FULL), "started")
+        self.assertTrue(controller.restoring)
+
+    def test_a_draft_save_during_a_restore_is_refused_with_the_line_and_save_and_leave_does_not_leave(self):
+        held = Held()
+        fake = tqd.provider()
+        window = self.make_with(held, fake)
+        self.edit_body(window)
+        body = window.state.drafts.body
+        self.start_restore(window)
+        fresh_toast(window)
+        self.button(window, "act:save").click()
+        self.settle(3)
+        self.assertEqual(window.toast.text() if window.toast.isVisible() else "", T["backup_blocks_save"], "한 줄로 알린다")
+        self.assertEqual((fake.save_calls, window.state.drafts.store_busy, window.state.drafts.body), ([], False, body), "저장은 시작하지 않았고 고친 글은 그대로다")
+        window.go("topics")
+        self.settle(3)
+        buttons = self.dialog_buttons(window)
+        self.assertIn(T["drf_choice_save"], buttons)
+        fresh_toast(window)
+        buttons[T["drf_choice_save"]].click()
+        self.settle(4)
+        self.assertEqual((window.state.page, fake.save_calls), ("drafts", []), "저장하고 나가기를 눌러도 저장하지 못했으면 나가지 않는다 — 고친 글이 그대로 남는다")
+        self.assertEqual(window.toast.text() if window.toast.isVisible() else "", T["backup_blocks_save"])
+        self.assertEqual(window.state.drafts.body, body)
+        held.let_go()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.backups.pending is None and not window.state.backups.busy, 20))
+        self.settle(4)
+        self.button(window, "act:save").click()
+        self.assertTrue(self.wait_store(window))
+        self.assertEqual(len(fake.saved), 1, "복원이 끝나면 같은 글을 저장할 수 있다")
+
+    def test_a_saved_draft_delete_during_a_restore_asks_nothing_deletes_nothing_and_asks_again_after_it(self):
+        from chanceblog_desktop.content import saved_draft as sd
+        stamp, body = "2026-11-05T09:00:00Z", "저장해 둔 본문"
+        draft_id = sd.make_draft_id(stamp, "", "naver_a", "저장해 둔 제목", body)
+        base = sd.BaseDraft.build("저장해 둔 제목", ["저장해 둔 제목"], body, [], "", None)
+        seeded = sd.SavedDraft.build(draft_id=draft_id, revision=1, created_at=stamp, updated_at=stamp, title="저장해 둔 제목", body=body, topic="저장해 둔 주제", blog="naver_a", post_type=sd.POST_TYPES[0], base=base)
+        held = Held()
+        fake = tqd.provider(saved={draft_id: seeded})
+        window = self.make(drafts_provider=fake, home=services.FakeHomeProvider(backups=held))
+        self.addCleanup(held.let_go)
+        window.go("drafts")
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.drafts.list_state == "ok", 10))
+        self.settle()
+        self.start_restore(window)
+        fresh_toast(window)
+        window.drf_saved_delete(draft_id)
+        self.settle(3)
+        self.assertFalse(window.dialog.is_open, "복원이 도는 동안은 지울 수 없는 일을 묻지 않는다")
+        self.assertEqual(window.toast.text() if window.toast.isVisible() else "", T["backup_blocks_save"], "한 줄로 알린다")
+        self.assertEqual((window.state.drafts.delete_asked, sorted(fake.saved)), (None, [draft_id]), "지우기 확인 표시도 없고 저장한 초안은 그대로다")
+        held.let_go()
+        self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.backups.pending is None and not window.state.backups.busy, 20))
+        self.settle(4)
+        window.drf_saved_delete(draft_id)
+        self.settle(3)
+        self.assertTrue(window.dialog.is_open, "복원이 끝나면 지우기 확인창이 뜬다")
+        self.dialog_buttons(window)[T["drf_cancel"]].click()
+        self.settle(2)
+        self.assertEqual(sorted(fake.saved), [draft_id], "취소하면 그대로다")
+
+
+class DraftChainTest(tqd.SaveBase):
+    """초안 확인(세 갈래) 뒤에도 Seed 질문이 이어지는지 — 진짜 초안 길(저장 안 하고 닫기·저장)로 본다."""
+
+    def window_with_seed_input(self, fake):
+        window = self.drafted(drafts_provider=fake)
+        self.addCleanup(lambda: setattr(window, "_close_confirmed", True))
+        self.edit_body(window)
+        controller = window.state.seeds
+        controller.apply_loaded(controller.provider.load_seeds(lambda *a: None, lambda: False))
+        controller.open_detail("EX001")
+        controller.edit("reason", TYPED)
+        self.assertTrue(controller.has_unsaved() and window.state.drafts.has_unsaved())
+        return window
+
+    def test_three_way_discard_then_the_seed_question_then_close_writes_nothing_at_any_provider(self):
+        fake = tqd.provider()
+        window = self.window_with_seed_input(fake)
+        provider = window.state.seeds.provider
+        window.close()
+        self.settle(3)
+        buttons = self.dialog_buttons(window)
+        self.assertIn(T["drf_choice_discard_close"], buttons, "초안은 세 갈래로 먼저 묻는다")
+        buttons[T["drf_choice_discard_close"]].click()
+        self.settle(4)
+        self.assertTrue(window.isVisible() and window.dialog.is_open, "초안의 '저장 안 하고 닫기' 뒤에도 Seed 질문이 이어진다")
+        self.assertIn(T["seeds_close_title"], self.texts(window.dialog))
+        self.assertTrue(window.state.drafts.has_unsaved(), "초안은 아직 그대로다(아직 닫지 않았다)")
+        self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+        self.settle(3)
+        self.assertTrue(window.isVisible() and window.state.drafts.has_unsaved() and window.state.seeds.has_unsaved(), "계속 고치기 — 둘 다 남는다")
+        window.close()
+        self.settle(3)
+        self.dialog_buttons(window)[T["drf_choice_discard_close"]].click()
+        self.settle(3)
+        self.dialog_buttons(window)[T["seeds_close_ok"]].click()
+        self.settle(4)
+        self.assertFalse(window.isVisible(), "두 확인을 모두 넘기면 닫힌다")
+        self.assertEqual((seed_writes(provider), fake.save_calls), ([], []), "초안도 Seed 도 저장하지 않았다")
+
+    def test_three_way_save_then_the_seed_question_follows_and_the_seed_input_is_not_saved_with_it(self):
+        fake = tqd.provider()
+        window = self.window_with_seed_input(fake)
+        provider = window.state.seeds.provider
+        window.close()
+        self.settle(3)
+        self.dialog_buttons(window)[T["drf_choice_save"]].click()
+        self.assertTrue(self.wait_store(window))
+        self.settle(4)
+        self.assertEqual(len(fake.saved), 1, "초안은 저장했다")
+        self.assertTrue(window.isVisible() and window.dialog.is_open and T["seeds_close_title"] in self.texts(window.dialog), "초안을 저장한 뒤에도 Seed 질문이 이어진다")
+        self.dialog_buttons(window)[T["seeds_close_cancel"]].click()
+        self.settle(3)
+        self.assertTrue(window.isVisible() and window.state.seeds.has_unsaved(), "계속 고치기 — Seed 입력이 그대로다")
+        self.assertEqual(seed_writes(provider), [], "초안을 저장하면서 Seed 를 같이 저장하지 않았다")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -468,7 +468,7 @@ class AppShell(QMainWindow):
         callback, self._dialog_on_cancel = self._dialog_on_cancel, None
         self.dialog.dismiss()
         self._trap_focus(False)
-        if self.state.drawer_id and self.drawer.is_open:
+        if self.drawer.is_open:                                                   # 홈 서랍만이 아니라 Seed·후보 서랍이 열려 있어도 확인창을 닫으면 다시 서랍 안에 가둔다
             self._trap_focus(True, self.drawer)
         target, self._dialog_return = self._dialog_return, None
         if target is not None:
@@ -516,6 +516,10 @@ class AppShell(QMainWindow):
 
     def notify_soon(self, name):
         self.notify(self.state.soon(name))
+
+    def _notify_restoring(self):
+        """복원(또는 안전 사본으로 되돌리기)이 도는 동안 저장을 시작하지 못했다 — 한 줄로만 알린다(F030). 입력한 내용은 그대로이고 복원이 끝난 뒤에 다시 누르면 된다."""
+        self.notify(T["backup_blocks_save"])
 
     def _sync_nav_checks(self):
         """사이드바 메뉴 단추의 눌림 표시를 지금 화면에 맞춘다(눌렀지만 확인창에서 막혔을 때 누른 단추가 눌린 채로 남지 않게)."""
@@ -823,6 +827,8 @@ class AppShell(QMainWindow):
             self._focus_first_blog_error()
         elif status == "nothing":
             self.notify(T["blogs_save_nothing"])
+        elif status == "restoring":
+            self._notify_restoring()
         else:
             self.notify(T["load_busy"])
 
@@ -839,12 +845,17 @@ class AppShell(QMainWindow):
             self.render()
         elif status == "unavailable":
             self.notify(self.state.blogs.clone_info()[1] or T["blogs_clone_no_target"])
+        elif status == "restoring":
+            self._notify_restoring()
         else:
             self.notify(T["load_busy"])
 
     def blog_delete(self):
         """삭제 — 확인창이 먼저다(무엇이 지워지는지·되돌릴 수 없다는 것·후보·초안·발행 기록은 지워지지 않는다는 것). '지우기' 를 눌러야 쓰기가 시작된다(처음 포커스는 취소)."""
         blogs = self.state.blogs
+        if self.state.save_blocked():                                                # 복원이 도는 동안은 지울 수 없는 일을 묻지 않는다(F030)
+            self._notify_restoring()
+            return
         if blogs.busy or not blogs.can_clear():
             self.notify(T["load_busy"] if blogs.busy else T["blogs_delete_empty"])
             return
@@ -855,6 +866,8 @@ class AppShell(QMainWindow):
         status, _detail = self.state.blogs.start_clear(**self.blogs_write_bridge.callbacks())
         if status == "started":
             self.render()
+        elif status == "restoring":                                                  # 확인창이 떠 있는 사이에 복원이 시작됐다
+            self._notify_restoring()
 
     def _on_blogs_loaded(self, data):
         self._guarded(self._show_blogs_loaded, data, recover=self._recover_blogs)
@@ -1054,6 +1067,8 @@ class AppShell(QMainWindow):
             self._focus_first_seed_error()
         elif status == "nothing":
             self.notify(T["seeds_act_nothing"])
+        elif status == "restoring":
+            self._notify_restoring()
         else:
             self.notify(T["load_busy"])
 
@@ -1068,6 +1083,8 @@ class AppShell(QMainWindow):
             self.render()
         elif status == "unsaved":
             self.notify(T["seeds_act_unsaved"])
+        elif status == "restoring":
+            self._notify_restoring()
         elif status == "busy":
             self.notify(T["load_busy"])
 
@@ -1078,12 +1095,17 @@ class AppShell(QMainWindow):
         elif status == "invalid":
             self.render()
             self._focus_first_seed_error()
+        elif status == "restoring":
+            self._notify_restoring()
         elif status == "busy":
             self.notify(T["load_busy"])
 
     def seed_bulk(self, kind):
         """여러 개를 한꺼번에 바꾸기 — 확인창이 먼저다(개수·처음 몇 개 이름·되돌릴 수 있다는 것·바꾼 뒤 채널별 수). '바꾸기' 를 눌러야 쓰기가 시작된다(처음 포커스는 취소)."""
         seeds = self.state.seeds
+        if self.state.save_blocked():                                                # 복원이 도는 동안은 바꿀 수 없는 일을 묻지 않는다(F030)
+            self._notify_restoring()
+            return
         dialog = seeds.bulk_dialog(kind)
         if dialog is None:
             self.notify(T["load_busy"] if seeds.busy else seeds.bulk_info(kind)[1])
@@ -1094,6 +1116,9 @@ class AppShell(QMainWindow):
         status, _detail = self.state.seeds.start_bulk(kind, **self.seeds_write_bridge.callbacks())
         if status == "started":
             self.render()
+        elif status == "restoring":                                                  # 확인창이 떠 있는 사이에 복원이 시작됐다 — '확인창을 보였다' 표시도 거둔다(다음에는 확인창이 먼저다)
+            self.state.seeds.discard_bulk()
+            self._notify_restoring()
 
     def seed_import(self):
         """제안 파일 불러오기 — 파일 고르기(위치만) → 읽어 보기(읽기뿐) → 확인창 → 등록. 고르지 않으면 아무 일도 없다."""
@@ -1120,6 +1145,9 @@ class AppShell(QMainWindow):
         status, _detail = self.state.seeds.start_import_apply(**self.seeds_write_bridge.callbacks())
         if status == "started":
             self.render()
+        elif status == "restoring":                                                  # 읽어 보는 사이에 복원이 시작됐다 — 등록은 복원이 끝난 뒤에 다시 불러오게 한다
+            self.state.seeds.discard_import()
+            self._notify_restoring()
 
     def _on_seeds_loaded(self, data):
         self._guarded(self._show_seeds_loaded, data, recover=self._recover_seeds)
@@ -1263,6 +1291,9 @@ class AppShell(QMainWindow):
         status, _detail = self.state.candidates.start_make(**self.cand_write_bridge.callbacks())
         if status == "started":
             self.render()
+        elif status == "restoring":                                                  # 미리 보는 사이에 복원이 시작됐다 — 만들기는 복원이 끝난 뒤에 다시 누르게 한다
+            self.state.candidates.discard_make()
+            self._notify_restoring()
 
     def cand_prep_action(self, key):
         """준비 안내 카드의 단추 — 이미 있는 화면(Seed 관리·블로그 관리)으로 가거나 카드를 닫는다. 새 화면·쓰기는 없다."""
@@ -1639,6 +1670,8 @@ class AppShell(QMainWindow):
             self.notify(T["drf_save_why_busy"])
         elif status == "making":
             self.notify(T["drf_save_why_making"])
+        elif status == "restoring":                                                   # 복원이 도는 동안은 저장하지 않는다 — 나가기·닫기를 이어 하지도 않는다(고친 내용이 그대로 남는다)
+            self._notify_restoring()
 
     def _on_store_done(self, result):
         self._guarded(self._show_store_done, result, recover=self._recover_store)
@@ -1792,6 +1825,9 @@ class AppShell(QMainWindow):
     def drf_saved_delete(self, draft_id):
         """목록의 `지우기` — 확인창이 먼저다(처음 포커스는 취소). 지우기 직전 상태는 서비스가 백업해 둔다."""
         controller = self.state.drafts
+        if self.state.save_blocked():                                                 # 복원이 도는 동안은 지울 수 없는 일을 묻지 않는다(F030)
+            self._notify_restoring()
+            return
         dialog = controller.delete_dialog(draft_id)
         if dialog is not None:
             self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._drf_delete_confirmed, danger=True, safe_focus=True, on_cancel=controller.discard_delete)
@@ -1800,6 +1836,9 @@ class AppShell(QMainWindow):
         status, _job = self.state.drafts.start_delete(**self.store_bridge.callbacks())
         if status == "started":
             self._render_drafts()
+        elif status == "restoring":                                                   # 확인창이 떠 있는 사이에 복원이 시작됐다 — '확인창을 보였다' 표시도 거둔다
+            self.state.drafts.discard_delete()
+            self._notify_restoring()
         elif status == "busy":
             self.notify(T["load_busy"])
 
@@ -2479,6 +2518,8 @@ class AppShell(QMainWindow):
             self._render_backups()
         elif status == "busy":
             self.notify(T["backup_busy"])
+        elif status == "writing":                                                     # 다른 화면의 저장이 도는 중이라 복원을 시작하지 않았다(F030) — 저장이 끝난 뒤에 다시 누르게 한다
+            self.notify(T["backup_wait_save"])
         elif status in ("unavailable",):
             self.notify(T["backup_fail_other"])
         return status
@@ -2495,6 +2536,9 @@ class AppShell(QMainWindow):
         """`복원` — **확인창이 먼저다**(무엇이 바뀌는지·안전 사본 위치·되돌리는 법, 처음 포커스는 취소 — Enter 를 잘못 눌러도 복원하지 않는다). `복원하기` 를 눌러야 쓰기가 시작된다."""
         backups = self._backups()
         if backups is None:
+            return None
+        if backups.writing_elsewhere():                                               # 저장이 도는 동안은 시작할 수 없는 일을 묻지 않는다(F030)
+            self.notify(T["backup_wait_save"])
             return None
         dialog = backups.restore_dialog(name)
         if dialog is None:
@@ -2514,6 +2558,9 @@ class AppShell(QMainWindow):
         """`안전 사본으로 되돌리기`(복원이 중간에 멈췄을 때만 보이는 단추) — 복원처럼 **확인창이 먼저다**(처음 포커스는 취소). `되돌리기` 를 눌러야 쓰는 일이 시작된다."""
         backups = self._backups()
         if backups is None:
+            return None
+        if backups.writing_elsewhere():                                               # 저장이 도는 동안은 시작할 수 없는 일을 묻지 않는다(F030)
+            self.notify(T["backup_wait_save"])
             return None
         dialog = backups.revert_dialog()
         if dialog is None:
@@ -2619,12 +2666,25 @@ class AppShell(QMainWindow):
         self.close()
 
     def _close_after_drafts(self):
-        """초안 확인(저장·저장 안 하고 닫기·그래도 닫기)이 끝난 뒤의 닫기 — 저장하지 않은 블로그 입력이 같이 있으면 블로그 확인창이 이어서 뜬다(없으면 바로 닫는다). 초안 확인 하나가 블로그 입력을 알림 없이 버리지 않게(검증 T-1)."""
-        dialog = self.state.blogs.close_dialog()
-        if dialog is None:
-            self._close_after_confirm()
+        """초안 확인(저장·저장 안 하고 닫기·그래도 닫기)이 끝난 뒤의 닫기 — 저장하지 않은 블로그 입력이 같이 있으면 블로그 확인창이, 이어서 Seed 입력이 있으면 Seed 확인창이 뜬다(없으면 바로 닫는다).
+        초안 확인 하나가 블로그·Seed 입력을 알림 없이 버리지 않게(검증 T-1, F025)."""
+        self._close_next(("blogs", "seeds"))
+
+    def _close_after_blogs(self):
+        """블로그 확인(`닫기`)이 끝난 뒤의 닫기 — 저장하지 않은 Seed 입력이 있으면 Seed 확인창이 이어서 뜬다(없으면 바로 닫는다)."""
+        self._close_next(("seeds",))
+
+    def _close_next(self, kinds):
+        """남은 확인(`kinds` 순서 — 블로그 → Seed) 중 지금도 물을 입력이 있는 첫 확인창을 띄운다. 그 확인을 넘기면 그 뒤의 것을 이어서 묻고, 물을 것이 없으면 닫는다. 처음 포커스는 취소(계속 고치기)다."""
+        asks = {"blogs": self.state.blogs.close_dialog, "seeds": self.state.seeds.close_dialog}
+        for index, kind in enumerate(kinds):
+            dialog = asks[kind]()
+            if dialog is None:
+                continue
+            rest = kinds[index + 1:]
+            self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=(lambda rest=rest: self._close_next(rest)) if rest else self._close_after_confirm, safe_focus=True)
             return
-        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm, safe_focus=True)
+        self._close_after_confirm()
 
     def closeEvent(self, event):
         # 윈도가 종료·로그오프 중이면 확인창으로 붙잡지 않는다(저장하지 않은 고친 내용은 사라진다 — D-281, 저장해 둔 초안은 남는다: D-363). 참고(독립 검증 V10): 실제 윈도 Qt 6.12 는 종료 질의에 `commitDataRequest` 만 내고 곧바로 종료를 허용해서
@@ -2641,7 +2701,8 @@ class AppShell(QMainWindow):
                 if "choices" in dialog:
                     self._show_leave_choices(dialog, ("close", None))
                 else:
-                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self._close_after_confirm if dialog.get("blogs") else self._close_after_drafts, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
+                    after = self._close_after_confirm if dialog.get("seeds") else self._close_after_blogs if dialog.get("blogs") else self._close_after_drafts       # 어느 확인이냐에 따라 그 뒤에 이어 물을 확인이 다르다(초안 → 블로그 → Seed)
+                    self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=after, safe_focus=True, on_cancel=self.state.drafts.discard_leave)
                 return
         channel_names.use(None)                                                   # 닫는 창의 채널 이름(별명)을 켜 둔 채 두지 않는다
         self.hide()                                                               # 창은 바로 사라지게 — 끝나지 않은 작업을 잠깐(최대 1초) 기다리는 동안 멈춘 창처럼 보이지 않게

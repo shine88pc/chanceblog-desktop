@@ -179,6 +179,11 @@ class AppState:
         # 사진 정리(사진 연동 2단계, D-499) — 사진 파일을 읽기만 하는 짝 공급자(`ui/photo_adapter.py`). 사진 목록은 초안 컨트롤러(`self.drafts.photos`)가 들고 있고 저장한 초안을 저장·열기·지우기할 때 초안 공급자가 함께 다룬다(3단계). 짝이 없으면(예시 화면·시험) 파일을 읽지 않는 가짜다
         paired_photos = getattr(self.provider, "photos_provider", None)
         self.drafts.photos.provider = photos if photos is not None else (paired_photos() if paired_photos else FakePhotoProvider())
+        # 복원 중 저장 겹침 막기(F030, D-534) — 복원이 도는 동안은 저장 길을, 저장 길이 도는 동안은 복원을 시작하지 않는다(`save_gate.py`). 지금 백업(만들기)은 읽기만 해서 막지 않는다
+        for controller in (self.blogs, self.seeds, self.candidates, self.drafts):
+            controller.save_gate = self.save_blocked
+        if self.backups is not None:
+            self.backups.restore_gate = self.writers_busy
 
     # ---- 메뉴 ----
     def leave_guard(self, key):
@@ -188,9 +193,20 @@ class AppState:
         return None
 
     def close_guard(self):
-        """앱을 닫을 때 초안의 고친 내용이나 블로그 관리의 저장하지 않은 입력이 사라지면 확인창의 글(없으면 None) — 초안이 먼저다."""
+        """앱을 닫을 때 초안의 고친 내용이나 블로그 관리·Seed 관리의 저장하지 않은 입력이 사라지면 확인창의 글(없으면 None) — 초안이 먼저, 이어서 블로그 관리, 마지막이 Seed 관리다(F025, D-535).
+        앞의 확인을 넘기면 셸이 남은 입력을 같은 차례로 이어서 묻는다(`_close_next`). 화면 이동(`leave_guard`)은 초안만 묻는다 — 블로그·Seed 입력은 컨트롤러에 남아 이동에 사라지지 않는다."""
         dialog = self.drafts.leave_dialog("close")
-        return dialog if dialog is not None else self.blogs.close_dialog()
+        if dialog is None:
+            dialog = self.blogs.close_dialog()
+        return dialog if dialog is not None else self.seeds.close_dialog()
+
+    def save_blocked(self):
+        """복원(또는 안전 사본으로 되돌리기)이 도는 중이라 다른 화면의 저장·복제·삭제·승인·등록·후보 만들기를 시작하면 안 되나(F030, D-534) — 복원이 파일을 통째로 바꾸는 사이에 같은 파일에 쓰면 서로 덮어쓴다. 각 컨트롤러의 `save_gate` 이다."""
+        return self.backups is not None and self.backups.restoring
+
+    def writers_busy(self):
+        """복원이 바꾸는 파일(글 보관함·주제 보관함·채널 프로필·Seed)에 쓰는 일이 도는 중인가 — 그런 일이 도는 동안은 복원을 시작하지 않는다(`BackupController.restore_gate`). 저장한 초안은 목록·열기도 같은 작업 이름이라 함께 센다(잠깐이라 조심하는 쪽이다)."""
+        return bool(self.blogs.busy or self.seeds.busy or self.candidates.busy or self.drafts.store_busy)
 
     def nav(self, key, force=False):
         """화면을 옮긴다. 초안 작성 화면을 떠날 때 고친 내용이 있으면 `force`(확인창에서 `그래도 이동` 을 눌렀다)가 아니면 옮기지 않는다 — 그리고 떠나면 초안은 메모리에서 지운다(저장하지 않는다)."""

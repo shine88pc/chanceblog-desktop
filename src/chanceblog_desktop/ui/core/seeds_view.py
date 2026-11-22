@@ -9,6 +9,8 @@
   · 칸 옆 오류는 **고친 칸이나 저장을 시도한 뒤에만** 보인다. 저장 단추는 바뀐 것이 있을 때 켜지고, 칸에 문제가 있으면 서비스를 부르지 않고 문제 칸을 알린다. 저장하지 않은 변경이 있으면 상태를 바꾸는 단추는 꺼진다(무엇을 승인하는지 헷갈리지 않게).
   · 다른 곳이 먼저 바꿔(낡은 판) 거절되면 최신 내용을 다시 읽고(읽기만) 초안은 그대로 둔다. 오류 문장은 쉬운 말뿐이다(파이썬 목록·내부 예외·오류 코드·경로 없음). 코드는 읽기 오류의 접힌 '진단 정보'에만 있다.
   · **180일 '쉬게 할까요'** 는 목록·서랍에 제안으로 보일 뿐 자동으로 바뀌지 않는다 — 사용자가 '쉬게 하기' 를 눌러야 쉬게 한다.
+  · **앱을 닫을 때**(F025, D-535) 저장하지 않은 입력(고친 씨앗·새 Seed 폼 — 서랍이 닫혀 있어도)이 있으면 확인창이 먼저다(`close_dialog` — 두 갈래, 처음 포커스는 계속 고치기). 화면을 옮길 때는 입력이 이 상태에 남으므로 묻지 않는다.
+    **복원이 도는 동안**(F030, D-534)에는 쓰는 다섯 길(`start_save`·`start_state`·`start_bulk`·`start_create`·`start_import_apply`)을 시작하지 않고 `("restoring", None)` 을 돌려준다(`save_gate.py`).
 실제 Seed 낱말·분류는 이 코드에 없다(저장된 값을 보이기만 하고, 보일 때는 비밀 모양을 가린 뒤 줄인다).
 """
 from __future__ import annotations
@@ -21,6 +23,7 @@ from . import channel_names as cn
 from . import seed_form as sf
 from . import seed_rules as rules
 from .jobs import JobFailure
+from .save_gate import blocked_while_restoring
 from .seeds import SeedFailure
 from .text import T
 
@@ -41,6 +44,8 @@ def _target_of(action, seed):
 
 
 class SeedsController:
+    save_gate = None                                         # 복원이 도는 중이면 참을 돌려주는 함수 — `AppState` 가 이어 준다(F030: 복원 중에는 저장·승인·바꾸기·등록·불러오기 등록을 시작하지 않는다)
+
     def __init__(self, provider, runner):
         self.provider, self.runner = provider, runner
         self.state = "loading"
@@ -184,6 +189,27 @@ class SeedsController:
             if name in names:
                 found.setdefault(name, problem)
         return found
+
+    # ---- 앱 닫기 앞의 질문(F025, D-535) ----
+    def unsaved_targets(self):
+        """저장하지 않은 입력이 있는 곳들 — `("seed", 번호)`(고쳐서 저장 전인 씨앗, 고친 순서)와 `("new", None)`(새 Seed 폼에 사용자가 친 것이 있다). 서랍을 닫았어도 쓰던 값은 남아 있으므로 센다.
+        지금 저장하는 중인 것(그 씨앗의 저장 · 새 Seed 등록)은 그 일이 끝나기를 기다리므로 세지 않는다 — 무슨 일인지 모르는 쓰기는 입력을 뺄 근거가 없어 모두 센다. 읽은 내용이 없어(`data` 가 None) 저장된 값과 견줄 수 없는 초안은 묻는 쪽으로 센다."""
+        flying = (self.pending or {}) if self.busy else {}
+        found = [("seed", seed_id) for seed_id in self.drafts if not (flying.get("kind") == "edit" and flying.get("id") == seed_id) and (self.data is None or self.is_dirty(seed_id))]
+        if self.new_dirty() and flying.get("kind") != "create":
+            found.append(("new", None))
+        return found
+
+    def has_unsaved(self):
+        """저장하지 않은 입력이 있나 — 앱을 닫으면 사라지는 것(`unsaved_targets`). 화면 이동에는 입력이 컨트롤러에 남아 사라지지 않으므로 이동 확인은 없다."""
+        return bool(self.unsaved_targets())
+
+    def close_dialog(self):
+        """앱 닫기 확인창의 글(없으면 None) — 저장하지 않은 입력이 있을 때만이다. 두 갈래(`저장 안 하고 닫기`·`계속 고치기`)이고 처음 포커스는 계속 고치기(블로그 닫기 확인과 같은 원칙)다.
+        저장은 씨앗마다 서랍에서 따로 하는 일이라(새 Seed 는 등록이라 더 그렇다) 한 번에 이어 주는 `저장하고 닫기` 는 두지 않는다. `seeds` 표시 — 셸이 초안·블로그 확인(뒤에 이 확인이 이어질 수 있다)과 이 확인을 가른다."""
+        if not self.has_unsaved():
+            return None
+        return {"title": T["seeds_close_title"], "body": T["seeds_close_body"], "ok": T["seeds_close_ok"], "cancel": T["seeds_close_cancel"], "seeds": True}
 
     # ---- 거르기·찾기·고르기·서랍(파일에 닿지 않는다) ----
     def _reset_page(self):
@@ -337,6 +363,7 @@ class SeedsController:
         self.notice = None
         return "started", job
 
+    @blocked_while_restoring
     def start_save(self, **callbacks):
         """씨앗 상세의 저장 — `(상태, 내용)`: `("busy", None)` 쓰는 중 · `("nothing", None)` 바뀐 것이 없음 · `("invalid", 문제들)` 칸에 문제가 있어 서비스를 부르지 않음 · `("started", 작업)`."""
         seed = self.open_seed()
@@ -367,6 +394,7 @@ class SeedsController:
             return False, T["seeds_act_unsaved"]
         return True, ""
 
+    @blocked_while_restoring
     def start_state(self, action, **callbacks):
         """승인하기·쉬게 하기·다시 쓰기 — 확인창 없이 저장한다(씨앗 하나). `(상태, 내용)`: `busy`·`unavailable`·`unsaved`(저장하지 않은 변경이 있다)·`started`."""
         seed = self.open_seed()
@@ -418,6 +446,7 @@ class SeedsController:
         """확인창을 확인 없이 닫았다(취소·Esc) — '확인창을 보였다' 표시를 거둔다."""
         self.bulk_asked = None
 
+    @blocked_while_restoring
     def start_bulk(self, kind, **callbacks):
         """확인창에서 확인을 눌렀을 때만 — 확인창을 보이지 않은(또는 그 뒤에 고른 씨앗이 달라진) 일괄 변경은 아무것도 하지 않는다(`unconfirmed`). 한 번의 쓰기로 전부 바꾸거나 하나도 안 바꾼다."""
         if self.data is None or kind not in rules.BULK_KINDS:
@@ -433,6 +462,7 @@ class SeedsController:
         target, version, provider = rules.BULK_TARGET[kind], self.data.version, self.provider
         return self._start("bulk", {"kind_of": kind, "ids": ids}, lambda progress, cancelled: provider.set_states(ids, target, version, progress, cancelled), callbacks)
 
+    @blocked_while_restoring
     def start_create(self, **callbacks):
         """새 Seed 등록 — `(상태, 내용)`: `busy`·`invalid`(칸에 문제 — 서비스를 부르지 않는다)·`started`. 등록한 Seed 는 늘 승인 전이다."""
         if self.data is None or self.drawer is None or self.drawer[0] != "new" or self.new_values is None:
@@ -491,6 +521,7 @@ class SeedsController:
     def discard_import(self):
         self.import_info, self.import_asked = None, False
 
+    @blocked_while_restoring
     def start_import_apply(self, **callbacks):
         """확인창에서 '승인 전으로 등록' 을 눌렀을 때만 — 미리 본 새 씨앗을 모두 승인 전으로 한 번에 등록한다. 확인창을 보이지 않았거나 읽을 수 없는 씨앗이 있으면 아무것도 하지 않는다(`unconfirmed`)."""
         info = self.import_info

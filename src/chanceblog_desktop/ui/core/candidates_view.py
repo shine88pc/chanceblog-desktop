@@ -21,6 +21,7 @@ from .candidates import CandidateFailure
 from .draft_rules import BLOG_NAMES
 from .drafts import DraftTarget
 from .jobs import JobFailure
+from .save_gate import blocked_while_restoring
 from .text import T
 
 LOAD_KEY = "candidates-load"                                 # 후보를 읽는 작업의 이름(홈·설정·Seed 읽기와 따로 돈다)
@@ -38,6 +39,8 @@ def short_number(candidate_id):
 
 
 class CandidatesController:
+    save_gate = None                                         # 복원이 도는 중이면 참을 돌려주는 함수 — `AppState` 가 이어 준다(F030: 복원 중에는 후보 만들기를 시작하지 않는다)
+
     def __init__(self, provider, runner):
         self.provider, self.runner = provider, runner
         self.state = "loading"
@@ -291,6 +294,7 @@ class CandidatesController:
         self.preview, self.make_asked = None, False
         return True
 
+    @blocked_while_restoring
     def start_make(self, **callbacks):
         """확인창에서 `만들기` 를 눌렀을 때만 — 확인창을 보이지 않았거나 만들 후보가 없으면 아무것도 하지 않는다(`unconfirmed`·`unavailable`). 이미 도는 중이면 새로 시작하지 않는다(`busy`)."""
         preview = self.preview
