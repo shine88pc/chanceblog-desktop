@@ -892,14 +892,45 @@ class SourceRulesTest(unittest.TestCase):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         return [(node.lineno, ast.unparse(node.func)) for node in ast.walk(tree) if isinstance(node, ast.Call)]
 
+    # 글자 읽기 어댑터(`ocr_adapter.py`, 결정 D-512)는 작업자 전용 임시 폴더를 끝나면 지우려고 `_remove_temp` 한 함수에서 `shutil.rmtree` 를 한 번 부른다 — 이 규칙의 허용은 **그 함수의 그 호출 하나**뿐이다(파일 전체를 빼 주지 않는다).
+    # 어댑터가 파일 시스템을 건드리는 곳은 `test_service_safety.OcrAdapterFileUseTest` 가 (함수) 단위로 따로 못박는다(임시 폴더를 만드는 `_launch` 의 `mkdtemp` 와 이것뿐).
+    OCR_TEMP_REMOVAL = ("ocr_adapter.py", "_remove_temp", "shutil.rmtree")
+
+    def without_the_allowed_temp_removal(self, path, found):
+        """어댑터 파일에서만 — `_remove_temp` 안의 `shutil.rmtree` 한 호출을 뺀 나머지를 돌려준다. 그 함수 밖의 `rmtree` 나 다른 쓰기 호출은 그대로 남는다."""
+        if path.relative_to(UI_DIR).as_posix() != self.OCR_TEMP_REMOVAL[0]:                 # 파일 이름이 아니라 ui 아래 경로로 가린다(다른 폴더의 같은 이름 파일은 빼 주지 않는다 — 검증 S SP-16)
+            return found
+        function = next((node for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))) if isinstance(node, ast.FunctionDef) and node.name == self.OCR_TEMP_REMOVAL[1]), None)
+        if function is None:
+            return found
+        inside = range(function.lineno, function.end_lineno + 1)
+        allowed = [(line, name) for line, name in found if name == self.OCR_TEMP_REMOVAL[2] and line in inside]
+        return [item for item in found if item not in allowed[:1]]
+
     def test_no_screen_code_writes_a_file(self):
-        """`ui/core`·`ui/qt` 와 홈·설정 어댑터에는 파일을 쓰는 호출이 없다 — 쓰는 길은 `blogs_adapter` 가 부르는 서비스 함수 셋뿐이다."""
+        """`ui/core`·`ui/qt` 와 홈·설정 어댑터에는 파일을 쓰는 호출이 없다 — 쓰는 길은 `blogs_adapter` 가 부르는 서비스 함수 셋뿐이다(글자 읽기 어댑터의 임시 폴더 지우기 한 호출만 위의 이유로 허용)."""
         for path in sorted(UI_DIR.rglob("*.py")):
             if path.name == "blogs_adapter.py":
                 continue
             found = [(line, name) for line, name in self.calls(path) if name.rsplit(".", 1)[-1] in self.WRITERS or name in self.DOTTED]
             with self.subTest(file=path.relative_to(UI_DIR).as_posix()):
-                self.assertEqual(found, [])
+                self.assertEqual(self.without_the_allowed_temp_removal(path, found), [])
+
+    def test_the_one_allowed_temp_removal_exists_inside_its_function_and_the_rule_does_not_widen(self):
+        """허용이 빈 약속이 되지 않고(어댑터의 `_remove_temp` 안에 `shutil.rmtree` 가 정확히 하나 있다) 넓어지지도 않는다(그 밖의 위치·다른 이름·다른 파일의 같은 호출은 그대로 걸린다)."""
+        adapter = UI_DIR / "ocr_adapter.py"
+        found = [(line, name) for line, name in self.calls(adapter) if name.rsplit(".", 1)[-1] in self.WRITERS or name in self.DOTTED]
+        self.assertEqual([name for _line, name in found], ["shutil.rmtree"])
+        self.assertEqual(self.without_the_allowed_temp_removal(adapter, found), [])
+        elsewhere = [(1, "shutil.rmtree")]
+        self.assertEqual(self.without_the_allowed_temp_removal(UI_DIR / "core" / "photo_view.py", elsewhere), elsewhere, "다른 파일은 빼 주지 않는다")
+        self.assertEqual(self.without_the_allowed_temp_removal(UI_DIR / "core" / "ocr_adapter.py", elsewhere), elsewhere, "같은 이름의 다른 폴더 파일도 빼 주지 않는다(경로 기준)")
+        self.assertEqual(self.without_the_allowed_temp_removal(UI_DIR / "qt" / "ocr_adapter.py", elsewhere), elsewhere)
+        function = next(node for node in ast.walk(ast.parse(adapter.read_text(encoding="utf-8"))) if isinstance(node, ast.FunctionDef) and node.name == "_remove_temp")
+        outside = [(function.end_lineno + 5, "shutil.rmtree"), (function.lineno, "os.remove")]
+        self.assertEqual(self.without_the_allowed_temp_removal(adapter, outside), outside, "그 함수 밖의 호출·다른 이름은 그대로 걸린다")
+        twice = [(function.lineno + 1, "shutil.rmtree"), (function.lineno + 2, "shutil.rmtree")]
+        self.assertEqual(self.without_the_allowed_temp_removal(adapter, twice), twice[1:], "한 번만 빼 준다")
 
     def test_the_adapter_reaches_the_files_only_through_the_three_service_write_functions_and_delete_always_confirms(self):
         path = UI_DIR / "blogs_adapter.py"

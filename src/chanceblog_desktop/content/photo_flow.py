@@ -1,9 +1,13 @@
 """사진을 초안 본문의 어디에 어떤 줄로 넣을지 정한다(사진 연동 3단계, 설계 4-2·4-6) — **순수 함수**(파일·네트워크·시계·난수·화면 없음, 같은 입력은 늘 같은 결과).
 입력은 규칙으로 만든 본문 블록들(`draft_body.BodyBlock`)과 **확정한 사진만** 담은 `DraftPhoto` 들(`photo_manifest.draft_inputs` — 경로·파일 이름이 없다)이고, 돌려주는 것은 사진 줄이 들어간 새 블록들과 알림 글들이다.
 
-한 사진이 만드는 줄(최대 넷, 이 순서):
+한 사진이 만드는 줄(최대 여섯, 이 순서):
   ① `{{사진 N}}`(틀로 만든 글 — 번호 N 은 화면의 사진 번호) ② 설명 글이 있으면 그 글 그대로(사용자 글) ③ 대상이 있으면 `<대상> 사진이에요.`(사용자 글 — 사용자의 말로 만든 문장이라 '지어내지 않기' 검사에서 빼고, 입력할 때 이미 '결과를 약속하는 표현' 검사를 거쳤다)
   ④ 메모가 있으면 그대로 한 문단(사용자 글). 대상이 없으면 틀 문장을 만들지 않는다 — 종류 이름만으로는 문장을 만들지 않는다(사용자가 만든 종류 이름이 섞일 수 있다).
+  ⑤⑥ 확정한 글자(`DraftPhoto.confirmed_texts` — 글자 읽기에서 사용자가 줄마다 확인한 글, 결정 D-520)가 있으면 맨 끝에 둘이 더해진다: ⑤ 틀 문장 한 줄 `사진에 적힌 글이에요.`(합니다체 글에서는 `사진에 적힌 글입니다.` — 틀로 만든 글 — 사실이 없는 한 줄이라 '지어내지 않기' 검사와 마지막 관문이 본다)
+    ⑥ 확정한 줄들을 줄바꿈 그대로 이은 문단 하나(사용자 글 — 입구 검사 `photo_manifest.check_text` 를 이미 거쳤고, 한 글자도 고치지 않으며, 가격·메뉴 이름·상호를 뽑거나 해석하지 않는다). 확정한 글자가 없으면 ⑤⑥ 은 없고 줄은 지금과 한 글자도 다르지 않다.
+    ⑤ 와 ⑥ 이 서로 다른 문단인 까닭: 문단마다 '틀로 만든 글인가' 깃발이 하나뿐이라, 한 문단에 섞으면 틀 문장이 검사를 받지 못하거나 사용자 글이 그 검사에 걸려 초안이 거절된다. ⑥ 이 줄마다 한 문단이 아닌 까닭(결정 D-521): 초안 본문은 평문이라
+    글 모양 점검(`check/garbage`)이 문단 속 줄을 이미 다루고(경고만) 복사 변환(`to_copy_text`)은 줄바꿈을 건드리지 않으며, 줄마다 한 문단이면 메뉴판·영수증 한 장이 빈 줄 수십 개로 늘어난다. 줄이 합쳐지는 곳은 마크다운 길(`render/naver` — 원고 전용)뿐이고 초안 본문은 그 길을 지나지 않는다.
 사용자 글은 한 글자도 고치지 않는다(문장 사이에서 갈라 넣을 때 갈라지는 자리의 공백만 사라진다). 본문을 몰래 고치지 않는다 — 못 찾은 자리나 옮긴 자리는 알림 글에 **사진 번호로만** 적는다(글·경로 없음).
 
 자리 규칙(설계 4-2):
@@ -29,6 +33,10 @@ KIND_ALIASES = {"주의": CAUTIONS, "경험": EXPERIENCE, "intro": INTRO, "closi
 SENTENCE_END = re.compile(r"(?<![.!?…])[.!?…]+[\"'”’)\]]*(?=\s|$)")                # 부호 덩어리의 맨 앞에서만 시작한다 — 덩어리 가운데서 다시 시작하면 구두점이 아주 길게 이어진 글에서 제곱 시간이었다(POLISH-1 PS-10, 마침표 2만 개 + 글자 하나 → 약 9초). 찾는 결과는 같다
 SENTENCE_FORMS = ("에요", "예요", "입니다", "습니다", "해요", "어요", "아요")                      # 이미 문장으로 끝난 대상 — `사진이에요.` 를 더 붙이지 않는다
 FRAME = "{subject} 사진이에요."
+TEXT_FRAME = "사진에 적힌 글이에요."                                                       # 확정한 글자 문단의 틀 문장(결정 D-520) — 사실이 없는 한 줄. 공백·부호를 뺀 길이가 9 라 `check/garbage` 의 '같은 문장' 기준(10)에 못 미쳐 사진마다 되풀이돼도 경고가 나지 않는다(시험이 지킨다)
+TEXT_FRAME_HAPSYO = "사진에 적힌 글입니다."                                                    # 합니다체 글의 틀 문장(결정 D-520 — 공백·부호를 뺀 길이 9 로 되풀이 경고 기준에 못 미친다, 시험이 지킨다)
+STYLE_HAEYO, STYLE_HAPSYO = "haeyo", "hapsyo"                                  # `body_lang.STYLES` 와 같은 글(시험이 견준다 — 이 모듈이 그쪽을 가져오지 않으려고 글자로 적는다)
+NL = chr(10)
 NOTE_SECTION = "사진 {n}번은 고른 들어갈 곳을 찾지 못해 내용 소제목에 넣었어요."
 NOTE_MOOD = "사진 {n}번은 분위기 소제목을 찾지 못해 내용 소제목에 넣었어요."
 NOTE_PARAGRAPH = "사진 {n}번은 문단이 모자라 그 소제목의 마지막 문단 뒤에 넣었어요."
@@ -44,8 +52,14 @@ def subject_sentence(subject):
     return FRAME.format(subject=text)
 
 
-def photo_lines(photo):
-    """사진 한 장이 본문에 만드는 줄들 → `((글, 틀로 만든 글인가), …)` — 자리표시자·설명 글·대상 문장·메모 순서."""
+def text_frame(style=STYLE_HAEYO):
+    """확정한 글자 문단의 틀 문장 — 글의 문체를 따른다(`hapsyo` 면 합니다체, 그 밖에는 해요체 — 모르는 문체도 해요체다)."""
+    return TEXT_FRAME_HAPSYO if style == STYLE_HAPSYO else TEXT_FRAME
+
+
+def photo_lines(photo, style=STYLE_HAEYO):
+    """사진 한 장이 본문에 만드는 줄들 → `((글, 틀로 만든 글인가), …)` — 자리표시자·설명 글·대상 문장·메모 순서이고, 확정한 글자가 있으면 맨 끝에 틀 문장(`text_frame` — 틀로 만든 글, 글의 문체를 따른다)과
+    확정한 줄들을 줄바꿈으로 이은 문단 하나(사용자 글 — 한 글자도 고치지 않는다)가 더해진다. 확정한 글자가 없으면 지금과 한 글자도 다르지 않다(문체와 상관없이)."""
     lines = [(pm.placeholder(photo.number), True)]
     if photo.caption:
         lines.append((photo.caption, False))
@@ -53,6 +67,9 @@ def photo_lines(photo):
         lines.append((subject_sentence(photo.user_subject), False))
     if photo.user_note:
         lines.append((photo.user_note, False))
+    if photo.confirmed_texts:
+        lines.append((text_frame(style), True))
+        lines.append((NL.join(photo.confirmed_texts), False))
     return tuple(lines)
 
 
@@ -110,9 +127,9 @@ def _spread(count, groups):
     return [groups[(k - 1) * len(groups) // count] for k in range(1, count + 1)]
 
 
-def place_photos(blocks, photos):
+def place_photos(blocks, photos, style=STYLE_HAEYO):
     """블록들에 확정한 사진 줄을 넣는다 → `(새 블록들, 알림 글들)`. 사진이 없으면 같은 블록들을 그대로 돌려준다(아무것도 바꾸지 않는다).
-    `blocks` 는 `draft_body.BodyBlock` 모양(kind·key·heading·paragraphs·generated)이고 처음 블록이 도입이다. 입력은 바꾸지 않는다."""
+    `blocks` 는 `draft_body.BodyBlock` 모양(kind·key·heading·paragraphs·generated)이고 처음 블록이 도입이다. 입력은 바꾸지 않는다. `style` 은 글의 문체(`haeyo`·`hapsyo`)로 확정한 글자 문단의 틀 문장을 정한다."""
     blocks = tuple(blocks)
     photos = tuple(sorted(photos, key=lambda item: (item.display_order, item.number)))
     if not photos or not blocks:
@@ -156,7 +173,7 @@ def place_photos(blocks, photos):
                 paragraph = 1 if count else 0
                 if nth > len(ends):
                     notes.append(NOTE_SENTENCE.format(n=photo.number))
-        inserts.setdefault(home, []).append((paragraph, cut, 0 if kind == "top" else 1, position, photo_lines(photo)))
+        inserts.setdefault(home, []).append((paragraph, cut, 0 if kind == "top" else 1, position, photo_lines(photo, style)))
     result = list(blocks)
     for home, items in inserts.items():
         result[home] = _rebuilt(blocks[home], items)
@@ -204,4 +221,4 @@ def to_copy_text(text):
     return pm.PLACEHOLDER.sub(lambda found: f"[이미지 {found.group(1)}]", text) if isinstance(text, str) else text
 
 
-__all__ = ["place_photos", "photo_lines", "subject_sentence", "sentence_ends", "to_copy_text"]
+__all__ = ["TEXT_FRAME", "TEXT_FRAME_HAPSYO", "place_photos", "photo_lines", "subject_sentence", "sentence_ends", "text_frame", "to_copy_text"]

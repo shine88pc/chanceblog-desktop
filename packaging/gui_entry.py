@@ -284,7 +284,9 @@ def check_capabilities(*, import_module=importlib.import_module):
             return Result("capabilities", "fail", f"관문 상수 {name} 이 없어요")
         if getattr(module, name) is not False:
             return Result("capabilities", "fail", f"관문 상수 {name} 이 False 가 아니에요 — 외부 쓰기가 열려 있어요")
-    return Result("capabilities", "ok", "외부 쓰기·Blogger 입력 관문이 모두 꺼져 있어요(EXTERNAL_WRITE=False · BLOGGER_OAUTH_INPUT=False)")
+    local = getattr(module, "LOCAL_OCR", None)              # 글자 읽기 작업자 관문(결정 D-512)은 알림 줄일 뿐이고 실패 조건이 아니다 — 이 PC 안 계산이라 바깥에 쓰지 않는다
+    note = "" if local is None else (" · 글자 읽기 작업자 관문도 꺼져 있어요(LOCAL_OCR=False)" if local is False else " · 글자 읽기 작업자 관문이 켜져 있어요(LOCAL_OCR=True — 알림일 뿐 실패가 아니에요)")
+    return Result("capabilities", "ok", "외부 쓰기·Blogger 입력 관문이 모두 꺼져 있어요(EXTERNAL_WRITE=False · BLOGGER_OAUTH_INPUT=False)" + note)
 
 
 def check_uac_manifest(exe_path, frozen):

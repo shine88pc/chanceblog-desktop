@@ -200,17 +200,25 @@ class LimitTest(Base):
         self.assertEqual(pm.check_text("user_note", "줄 하나\n줄 둘\r\n줄 셋"), ("줄 하나 줄 둘 줄 셋", None))
         self.assertEqual(pm.check_text("user_subject", "보\u200b이\u202e는"), ("보이는", None), "보이지 않는 글자는 지운다")
 
-    def test_the_analysis_lists_hold_twenty_items_of_two_hundred_characters(self):
+    def test_the_analysis_lists_hold_sixty_texts_and_twenty_objects_of_two_hundred_characters(self):
+        """결정 D-512 로 한도를 둘로 나눴다 — 읽은 글자 칸은 60개, 관찰한 대상 칸은 20개(옛 시험은 두 칸 모두 20개였다 — 대상 칸의 단언은 그대로 두고 글자 칸만 60개로 올렸다)."""
         manifest = build(1)
-        manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", texts=[f"글{n}" for n in range(20)])
-        self.assertEqual((len(manifest.photos[0].visible_text), dropped), (20, 0))
-        manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", texts=[f"글{n}" for n in range(21)])
-        self.assertEqual((len(manifest.photos[0].visible_text), dropped), (20, 1), "스물한 번째는 버린다")
+        manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", objects=[f"물건{n}" for n in range(20)])
+        self.assertEqual((len(manifest.photos[0].observed_objects), dropped), (20, 0))
+        manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", objects=[f"물건{n}" for n in range(21)])
+        self.assertEqual((len(manifest.photos[0].observed_objects), dropped), (20, 1), "스물한 번째 대상은 버린다")
+        manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", texts=[f"글{n}" for n in range(60)])
+        self.assertEqual((len(manifest.photos[0].visible_text), dropped), (60, 0))
+        manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", texts=[f"글{n}" for n in range(61)])
+        self.assertEqual((len(manifest.photos[0].visible_text), dropped), (60, 1), "예순한 번째 글자 줄은 버린다")
         manifest, dropped = pm.set_analysis(manifest, "p001", method="local:x", texts=["가" * 200, "가" * 201])
         self.assertEqual((len(manifest.photos[0].visible_text), dropped), (1, 1))
-        too_many = [{"text": f"글{n}", "confirmed": False} for n in range(21)]
+        too_many = [{"text": f"글{n}", "confirmed": False} for n in range(61)]
         raw = build(1).to_dict(True)
         raw["photos"][0]["visible_text"] = too_many
+        self.assertRefuses(pm.PhotoManifest.from_dict, raw)
+        raw = build(1).to_dict(True)
+        raw["photos"][0]["observed_objects"] = [{"text": f"물건{n}", "confirmed": False} for n in range(21)]
         self.assertRefuses(pm.PhotoManifest.from_dict, raw)
 
     def test_the_limits_and_lists_the_operator_can_see_are_pinned_as_literal_numbers(self):

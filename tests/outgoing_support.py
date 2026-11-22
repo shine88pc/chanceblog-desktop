@@ -20,7 +20,7 @@ class OutgoingBlocked(Exception):
 
 class Tripwire:
     OS_NAMES = ("system", "popen", "startfile", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe",
-                "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe")
+                "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe", "posix_spawn", "posix_spawnp")
 
     def __init__(self, allow=()):
         self.allow = frozenset(allow)

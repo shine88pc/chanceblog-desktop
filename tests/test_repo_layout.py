@@ -30,7 +30,7 @@ KEY_SHAPES = (
 # 정본 패턴 전체(vendor/pipeline/secret_patterns.py)로 훑는 곳(F066). 위 KEY_SHAPES 는 여섯 가지뿐이라 새 구글 키(`AQ.`)·구글 접근 토큰(`ya29.`)·Slack·AWS 키·키/토큰 할당 같은 것을 놓친다.
 # tests/ 는 일부러 넣은 가짜 값(`client_secret` 예시·AWS 문서의 예시 키 …)이 있어 이 훑기에서 빼고 위 여섯 가지로만 훑는다(아래 SecretHygieneTest 가 그대로 한다).
 # 예외는 파일 하나를 이름·이유와 함께 적는다 — 목록을 늘리려면 이유를 적고, 필요 없어지면 시험이 알려 주니 뺀다(실제 노출을 가리는 넓은 허용 규칙은 두지 않는다).
-CANONICAL_SCAN_DIRS = ("src", "docs", ".github", "packaging", "scripts")
+CANONICAL_SCAN_DIRS = ("src", "docs", ".github", "packaging", "scripts", "ocr_addon")
 CANONICAL_SCAN_EXEMPT = {"scripts/ui_capture.py": "화면 사진용 가짜 연결 값(예시 비밀 문자열)이 든다"}
 # 훑는 글 파일의 확장자 — 문서·설정·코드에 더해 html·sh·bat·cfg·ini·csv·xml 까지(스크립트·설정·표 파일에도 키가 붙을 수 있다)
 TEXT_SUFFIXES = {".md", ".yml", ".yaml", ".py", ".txt", ".json", ".toml", ".example", ".html", ".sh", ".bat", ".cfg", ".ini", ".csv", ".xml"}
