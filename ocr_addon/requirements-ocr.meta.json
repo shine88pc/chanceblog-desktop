@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "pinned_on": "2026-11-17",
+  "min_age_days": 14,
+  "source": "a 단계(추가 도구 시제품)가 21개 핀의 업로드 날짜·휠 파일·바이트를 PyPI JSON 으로 대조해 정보 파일에 적은 값을 옮겼다(21/21 일치 — a 단계 보고서 ③). 잠금 파일의 해시는 휠 파일의 SHA-256 과 같다.",
+  "packages": {
+    "certifi": {
+      "version": "2026.10.23",
+      "uploaded": "2026-10-23",
+      "wheel_file": "certifi-2026.10.23-py3-none-any.whl",
+      "wheel_bytes": 135082
+    },
+    "charset-normalizer": {
+      "version": "3.5.2",
+      "uploaded": "2026-09-30",
+      "wheel_file": "charset_normalizer-3.5.2-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 207486
+    },
+    "colorama": {
+      "version": "0.4.6",
+      "uploaded": "2022-10-25",
+      "wheel_file": "colorama-0.4.6-py2.py3-none-any.whl",
+      "wheel_bytes": 25335
+    },
+    "colorlog": {
+      "version": "6.12.0",
+      "uploaded": "2026-07-23",
+      "wheel_file": "colorlog-6.12.0-py3-none-any.whl",
+      "wheel_bytes": 12239
+    },
+    "flatbuffers": {
+      "version": "25.12.19",
+      "uploaded": "2025-12-19",
+      "wheel_file": "flatbuffers-25.12.19-py2.py3-none-any.whl",
+      "wheel_bytes": 26661
+    },
+    "idna": {
+      "version": "3.20",
+      "uploaded": "2026-09-17",
+      "wheel_file": "idna-3.20-py3-none-any.whl",
+      "wheel_bytes": 69583
+    },
+    "numpy": {
+      "version": "2.5.4",
+      "uploaded": "2026-10-10",
+      "wheel_file": "numpy-2.5.4-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 12573091
+    },
+    "omegaconf": {
+      "version": "2.4.0",
+      "uploaded": "2026-10-09",
+      "wheel_file": "omegaconf-2.4.0-py3-none-any.whl",
+      "wheel_bytes": 254152
+    },
+    "onnxruntime": {
+      "version": "1.31.1",
+      "uploaded": "2026-10-26",
+      "wheel_file": "onnxruntime-1.31.1-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 14888466
+    },
+    "opencv-python-headless": {
+      "version": "5.0.0.93",
+      "uploaded": "2026-07-02",
+      "wheel_file": "opencv_python_headless-5.0.0.93-cp37-abi3-win_amd64.whl",
+      "wheel_bytes": 43825962
+    },
+    "packaging": {
+      "version": "26.3",
+      "uploaded": "2026-08-04",
+      "wheel_file": "packaging-26.3-py3-none-any.whl",
+      "wheel_bytes": 129956
+    },
+    "pillow": {
+      "version": "13.0.0",
+      "uploaded": "2026-10-16",
+      "wheel_file": "pillow-13.0.0-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 7272166
+    },
+    "protobuf": {
+      "version": "7.36.2",
+      "uploaded": "2026-09-17",
+      "wheel_file": "protobuf-7.36.2-cp310-abi3-win_amd64.whl",
+      "wheel_bytes": 456514
+    },
+    "pyclipper": {
+      "version": "1.4.0",
+      "uploaded": "2025-12-01",
+      "wheel_file": "pyclipper-1.4.0-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 104619
+    },
+    "pyyaml": {
+      "version": "6.0.3",
+      "uploaded": "2025-09-25",
+      "wheel_file": "pyyaml-6.0.3-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 154003
+    },
+    "rapidocr": {
+      "version": "3.10.0",
+      "uploaded": "2026-10-08",
+      "wheel_file": "rapidocr-3.10.0-py3-none-any.whl",
+      "wheel_bytes": 27288134
+    },
+    "requests": {
+      "version": "2.34.2",
+      "uploaded": "2026-05-14",
+      "wheel_file": "requests-2.34.2-py3-none-any.whl",
+      "wheel_bytes": 73075
+    },
+    "shapely": {
+      "version": "2.2.0",
+      "uploaded": "2026-10-07",
+      "wheel_file": "shapely-2.2.0-cp312-cp312-win_amd64.whl",
+      "wheel_bytes": 1791280
+    },
+    "six": {
+      "version": "1.17.0",
+      "uploaded": "2024-12-04",
+      "wheel_file": "six-1.17.0-py2.py3-none-any.whl",
+      "wheel_bytes": 11050
+    },
+    "tqdm": {
+      "version": "4.70.1",
+      "uploaded": "2026-09-11",
+      "wheel_file": "tqdm-4.70.1-py3-none-any.whl",
+      "wheel_bytes": 80199
+    },
+    "urllib3": {
+      "version": "2.8.0",
+      "uploaded": "2026-09-15",
+      "wheel_file": "urllib3-2.8.0-py3-none-any.whl",
+      "wheel_bytes": 135717
+    }
+  }
+}

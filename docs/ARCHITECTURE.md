@@ -275,3 +275,12 @@ backups/
 시험 쪽 새 파일(모두 `tests/` — 앱 묶음 밖): `test_ocr_netguard.py`(진짜 `netguard.py` 를 가짜 `socket` 모듈에 얹어 분류·래퍼 열 개를 시험 — 진짜 소켓을 건드리지 않는다), `test_ocr_addon_build_check.py`(빌드 점검 관문·단계 순서를 빌드 없이 — 가짜 `pefile`·가짜 모델).
 어댑터(`ui/ocr_adapter.py`)는 정리에서 Job 개체를 핸들 닫기보다 먼저 닫고, 줄 대기열에 한도(`LINE_QUEUE_MAX`)가 있고 읽기 스레드는 정지 표지(`pump_stop`)로 그만두며, 핸들 닫기는 `CLOSE_WAIT` 만 기다리고, `verify` 가 필수 인자이며 작업자 실행 파일은 절대 경로여야 한다. 어댑터를 상속하거나 감싸는 코드는 이 인자·경로 규칙을 따라야 한다.
 어댑터 시험은 하위 프로세스에 닿는 모든 길(`subprocess`·`os`·`ctypes`·kernel32 이름·동적 이름 찾기)을 소스 규칙으로 닫힌 집합으로 못박는다. 보안 경계와 알려 둔 한계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 세 절에 있다.
+
+## 글자 읽기 추가 도구 빌드(선택 기능) — `ocr_addon/` 의 빌드 쪽과 빌드 흐름 (D-527에서 D-533, 사진 글자 읽기 d 단계)
+
+앱 본체(`src/`·`packaging/`)와 따로, 작업자 프로그램을 압축 파일 하나로 만드는 층이다. 자세한 사용법은 [`PACKAGE_OCR.md`](PACKAGE_OCR.md).
+- **층 구조**: `ocr_addon/build_rules.py`(점검 규칙 — 파일·네트워크·시계 없는 순수 함수, 표준 라이브러리만) ← `ocr_addon/build_ocr_addon.py`(실제 묶음을 읽어 규칙에 넘기는 곳 — pefile·PyInstaller 는 여기서만 쓴다, 점검에 걸리면 정보 파일·zip 을 만들지 않는다) ← `.github/workflows/package-ocr.yml`(수동 실행 한 줄 흐름). 네트워크는 `ocr_addon/fetch_models.py`(빌드 전용 모델 받기) 한 곳뿐이고 앱은 이 파일을 가져오지 않는다.
+- **잠금과 신뢰의 뿌리**: `requirements-ocr.lock`·`requirements-build.txt`(해시 포함)·`requirements-ocr.meta.json`(업로드 날짜)·`models.lock.json`(저장소·커밋·크기·SHA-256)·`data/`(사전, 줄바꿈 변환 금지). 모델·사전 해시의 뿌리는 앱 소스(`service/ocr_addon.py` 의 `EMBEDDED_FILES`)이고 빌드의 잠금·작업자의 기대값이 그와 같음을 시험이 지킨다.
+- **본체와의 관계**: 본체 `packaging/build_package.py` 의 함수 몇 개(출력 폴더 점검·좁힌 PATH 의 PyInstaller 환경·DLL 출처 점검·금지 파일 이름)를 읽기 전용으로 가져다 쓴다 — 본체 코드는 그대로이고, 본체 묶음 점검(`UNEXPECTED_BUNDLED` 의 `PIL` 등)은 이 묶음에 돌지 않는다(점검은 서로 별개, 사실표는 `PACKAGE_OCR.md` 9절).
+- **산출물**: `ChanceBlogDesktop-OCR-<버전>-win64.zip`(맨 위 폴더 `ocr` — 앱이 본체 옆에서 찾는 이름)·`SHA256SUMS`·`PACKAGE_INFO.json`. 올리기 직전에 `ocr_addon/verify_release.py`(산출물 점검 — 파일 자체를 다시 읽어 해시·크기·파일 목록·모델 잠금 값·라이선스 고지 파일 `licenses/`·`THIRD_PARTY_NOTICES.txt` 가 압축 파일 안에 있는지 확인하고, FFmpeg DLL·인증서 파일·기본 모델·OpenSSL·진짜 `urllib3`·`certifi` 같은 '없어야 할 것'과 정보 파일의 빌드 점검 결과도 압축 파일 쪽에서 다시 판정)가 한 번 더 본다. 안의 `OCR_INFO.json` 은 앱의 추가 도구 확인(`service/ocr_addon.py`)이 읽는 정보 파일이고, 시험이 가짜 묶음으로 만든 정보 파일을 앱의 확인 함수에 넣어 ok 로 읽히는지 본다.
+- **시험(모두 빌드·네트워크 없이)**: `test_ocr_addon_build_rules`(규칙)·`test_ocr_addon_fetch`(모델 받기, 가짜 응답)·`test_ocr_addon_build_flow`(흐름·정보 파일·zip, 가짜 단계)·`test_ocr_addon_verify_release`(산출물 점검, 진짜 빌드 함수로 만든 가짜 묶음)·`test_package_ocr_workflow`(워크플로 글 규칙)·`test_workflow_yaml_support`(그 규칙이 쓰는 작은 YAML 읽개 — 흐름식·앵커·겹친 키·줄 나눔처럼 읽히거나 보이지 않는 글자를 거절하는지)·`test_ocr_addon_merged_flow`(합친 흐름 — 고지 만들기·점검·정보 파일·압축·산출물 점검·앱의 확인을 진짜 함수로 한 줄기에 잇고 단계를 하나씩 불러도 같은 압축 파일이 나오는지).

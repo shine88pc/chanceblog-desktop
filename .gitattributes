@@ -7,3 +7,6 @@ tests/fixtures/** -text
 
 # 개인 PC 제한 시험용 Package 에 그대로 복사되는 라이선스 전문(packaging/LICENSES)도 한 글자도 바뀌면 안 되므로 줄바꿈 변환(Windows autocrlf 포함)을 하지 않는다.
 packaging/LICENSES/** -text
+
+# 글자 읽기 추가 도구(ocr_addon/)의 사전·정보 파일은 크기와 SHA-256 이 박힌 값과 한 바이트도 다르면 안 되므로 줄바꿈 변환(Windows autocrlf 포함)을 하지 않는다 — 빌드가 같은 값을 확인한다(D-527).
+ocr_addon/data/** -text

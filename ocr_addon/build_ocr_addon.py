@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
-"""build_ocr_addon.py - 글자 읽기 작업자(추가 도구) 빌드: 동결(PyInstaller onedir) -> 모델·사전 얹기 -> 쓰지 않는 것 제거 -> 묶음 점검 -> 정보 파일·zip 을 한 번에(설계서 5-5·5-6·7-3).
+"""build_ocr_addon.py - 글자 읽기 작업자(추가 도구) 빌드: 동결(PyInstaller onedir) -> 모델·사전 얹기 -> 쓰지 않는 것 제거 -> 묶음 점검(R1-R4) -> 정보 파일·zip 을 한 번에(설계서 5-5·5-6, 결정 D-527 에서 D-531).
 
-실행(OCR 가상환경 안의 파이썬으로, 표준 사용자 토큰 아래에서):
-  python -I -B -X utf8 build_ocr_addon.py all --out-dir <빌드 폴더> [--variant std|stub] [--no-remove] [--tag 이름] [--numpy-note 글]
-  단계를 따로: freeze · assemble · remove · check · info · zip   (같은 --out-dir 를 주면 이어서 한다)
-변형(variant): std  = 진짜 requests·urllib3·certifi·idna·charset_normalizer 를 묶는다(기본 동결 그대로)
-               stub = 아무것도 안 하는 가짜 requests 한 모듈(ocr_addon\\stubs\\requests.py)로 대신하고 위 다섯 개를 묶음에서 뺀다(설계·지시서 2-5)
-제거(remove): rapidocr 휠에 든 쓰지 않는 기본 모델 3개(31.7MB) · opencv 의 FFmpeg DLL(opencv_videoio_ffmpeg*.dll) · certifi 의 cacert.pem. --no-remove 면 건너뛴다(제거 전 크기를 재려고).
-점검(check): 금지 파일 없음 · 묶음 안 모든 exe·DLL·pyd 의 가져오기 표(pefile)에서 네트워크 DLL(WS2_32·WinINet·WinHTTP·mswsock·iphlpapi·dnsapi …) 검사(예외: _internal 바로 아래의 파이썬 표준 _socket.pyd·select.pyd·python312.dll) · 크기 보고 · 동결본 --selftest.
-점검이 하나라도 실패하면 단계가 all 이어도 거기서 멈춘다(info·zip 을 만들지 않고 종료 코드 1).
-이 스크립트는 앱 저장소·시스템 파일을 건드리지 않고 --out-dir 아래에만 쓴다.
-고지(info 단계, 운영자 확인 030 ②): 산출 폴더에 licenses/(묶음에 든 부품마다 설치된 패키지에서 읽은 라이선스 전문 — GEOS 의 LICENSE_GEOS 를 못 찾으면 빌드를 멈춘다)와 THIRD_PARTY_NOTICES.txt(제3자 부품 표·GEOS 안내·MPL-2.0 고지)를
-만들고 OCR_INFO.json 에 geos 칸(GEOS 판·별도 파일 목록)을 적는다. 원본 소스 압축 파일은 넣지 않는다(새 내려받기 없음 — 같은 버전 소스를 공식 배포처에서 받으라고 안내한다).
+실행(OCR 가상환경 안의 파이썬 3.12 로 — 잠금 파일(requirements-ocr.lock·requirements-build.txt)을 --require-hashes 로 설치한 환경):
+  python ocr_addon/build_ocr_addon.py all --out-dir <빌드 폴더> --models-dir <fetch_models.py 가 받은 폴더> [--require-clean]
+  단계를 따로: freeze · assemble · remove · notices · check · info · zip   (같은 --out-dir 를 주면 이어서 한다)
+재료: 모델 2개는 --models-dir(안에 det·rec 폴더), 글자 사전은 ocr_addon/data/, 모두 models.lock.json 의 크기·SHA-256 과 대조한다. 가짜 requests(stubs/requests.py)로 requests 계열을 대신하고 뺀다.
+제거(remove): rapidocr 휠에 든 쓰지 않는 기본 모델 3개(31.7MB) · opencv 의 FFmpeg DLL(opencv_videoio_ffmpeg*.dll) · certifi 의 cacert.pem.
+고지(notices, 운영자 확인 030 ② — 점검 앞): 묶음 폴더에 licenses/(묶음에 든 부품마다 설치된 패키지에서 읽은 라이선스 전문 — GEOS 의 LICENSE_GEOS 를 못 찾으면 빌드를 멈춘다)와 THIRD_PARTY_NOTICES.txt(제3자 부품 표·GEOS 안내·MPL-2.0 고지)를 만들고
+  GEOS 기록(geos.json)을 남긴다 — 점검(check)보다 앞에서 만들어야 R2(금지 이름)·키 모양 훑기가 이 파일들도 보고 정보 파일(OCR_INFO.json)의 파일 목록에 들어간다. 정보 파일에는 geos 칸(GEOS 판·별도 파일 목록)을 적는다.
+  원본 소스 압축 파일은 넣지 않는다(새 내려받기 없음 — 같은 버전 소스를 공식 배포처에서 받으라고 안내한다).
+점검(check, 규칙은 build_rules.py): R1 가져오기 표(pefile) · R2 묶음 파일·모델 해시 · R3 OpenSSL·진짜 requests 부재 · R4 동결본 --selftest · 묶음 글 파일의 키 모양 · DLL 출처 허용 뿌리 · 설치된 판 = 잠금 판.
+  하나라도 걸리면 종료 코드 1 이고 정보 파일·zip 을 만들지 않는다(점검을 건너뛰는 옵션은 없다).
+재현: 시각은 SOURCE_DATE_EPOCH(없으면 이 저장소 HEAD 의 커밋 시각)로 고정하고 PyInstaller 는 좁힌 PATH 로 부른다(본체 packaging/build_package.py 와 같은 함수 — 러너 PATH 의 자바·Git DLL 이 묶음에 새는 것을 막는다, D-468).
+이 스크립트는 산출물을 --out-dir 아래에만 쓰고 네트워크를 쓰지 않는다(모델은 fetch_models.py 가 따로 받는다). 다만 곁다리로 --out-dir 밖에도 닿는다: git status 가 .git/index 를 고칠 수 있고, PyInstaller 는 --clean 으로 자기 캐시(기본 위치 %LOCALAPPDATA% 아래 pyinstaller 폴더)를 지우고 다시 쓰며, 파이썬이 ocr_addon·packaging 에 __pycache__ 를 쓸 수 있다(독립 검증 S 의 SN-13 — 러너에서는 무해하고 개발 PC 에서 돌리는 사람이 알 일).
 """
 import argparse
-import ast
+import datetime
 import fnmatch
 import hashlib
 import importlib.metadata as im
@@ -28,26 +29,27 @@ import time
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-STAGEA = os.path.dirname(HERE)
-PHOTOLAB = os.path.dirname(STAGEA)
-ASSETS = os.path.join(STAGEA, "assets")
-EXE_NAME = "ocr_worker"
-BUNDLE_NAME = "ocr_addon"
-LOCK = os.path.join(HERE, "models.lock.json")
+REPO = os.path.dirname(HERE)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import build_rules as rules  # noqa: E402
 
-NET_DLLS = ["ws2_32.dll", "wsock32.dll", "mswsock.dll", "wininet.dll", "winhttp.dll", "iphlpapi.dll", "dnsapi.dll", "urlmon.dll", "wldap32.dll",
-            "httpapi.dll", "netapi32.dll", "rasapi32.dll", "mpr.dll", "webservices.dll", "wlanapi.dll", "fwpuclnt.dll", "winnsi.dll", "nsi.dll", "dhcpcsvc.dll"]
-# 허용 예외 = 파이썬(CPython) 표준 구성요소 셋. _socket.pyd·select.pyd 는 지시서 2-5 가 정한 것이고, python312.dll(인터프리터 본체)은 a 단계 실측으로 더한다:
-# 시스템에 설치된 원본 python312.dll 도 ws2_32.dll 을 가져온다(보고서 ⑥). 이 셋 밖에 하나라도 있으면 점검 실패.
-PE_EXCEPTIONS = {"_socket.pyd", "select.pyd", "python312.dll"}
-PE_EXCEPTION_DIR = "_internal"                   # 허용 예외는 이 폴더 바로 아래의 그 이름 파일뿐이다(a 단계 실측: _internal/_socket.pyd·select.pyd·python312.dll) — 같은 이름이 묶음의 다른 곳에 있으면 예외가 아니다(검증 S SP-11)
-FORBIDDEN_NAMES = [r"opencv_videoio_ffmpeg.*\.dll", r".*\.pem$", r".*\.crt$", r".*\.key$"]
+DATA_DIR = os.path.join(HERE, "data")
+EXE_NAME = "ocr_worker"
+BUNDLE_NAME = "ocr_addon"                                 # 정보 파일의 name(앱 service/ocr_addon.py 가 이 값을 요구한다)
+BUNDLE_DIR = "ocr"                                        # 묶음 폴더·압축 파일 맨 위 폴더 이름 = 앱이 본체 옆에서 찾는 폴더 이름(FOLDER_NAME)
+LOCK = os.path.join(HERE, "models.lock.json")
+PINS = os.path.join(HERE, "requirements-ocr.lock")
+BUILD_PINS = os.path.join(HERE, "requirements-build.txt")
+PIN_META = os.path.join(HERE, "requirements-ocr.meta.json")
+OUT_MARKER = ".chanceblog-ocr-out"
+GEOS_RECORD = "geos.json"                                 # notices 단계가 남기고 info 단계가 읽는 GEOS 기록(out 폴더 안 — 묶음에는 들어가지 않는다)
+OUT_SUBFOLDERS = ("build", "dist", "gen", "spec", "release", "selftest_tmp")
+TEXT_SUFFIXES = (".py", ".pyi", ".json", ".txt", ".md", ".xml", ".cfg", ".ini", ".toml", ".yml", ".yaml", ".html", ".js", ".css", ".csv")
+TEXT_SCAN_LIMIT = 5 * 1024 * 1024
 REMOVE_GLOBS = [("rapidocr 기본 모델(쓰지 않음)", "**/rapidocr/models/*.onnx"),
                 ("opencv FFmpeg DLL(영상 입출력, 쓰지 않음)", "**/opencv_videoio_ffmpeg*.dll"),
                 ("certifi cacert.pem(연결하지 않으므로 필요 없음)", "**/certifi/cacert.pem")]
-MODEL_EXPECT = {"models/det/inference.onnx": (4826518, "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d"),
-                "models/rec/inference.onnx": (13418787, "92f0b7785e64fc9090106a241cf4c1eb97472824558272751b88a2a4476d3a08"),
-                "data/ppocrv5_korean_dict.txt": (47451, "a88071c68c01707489baa79ebe0405b7beb5cca229f4fc94cc3ef992328802d7")}
 EXCLUDED_ENGINE_MODULES = ["rapidocr.inference_engine.pytorch", "rapidocr.inference_engine.openvino", "rapidocr.inference_engine.paddle",
                            "rapidocr.inference_engine.mnn", "rapidocr.inference_engine.tensorrt", "rapidocr.inference_engine.onnxruntime_dml_unused"]
 GENERIC_EXCLUDES = ["tkinter", "matplotlib", "pandas", "scipy", "IPython", "pytest", "torch", "tensorflow", "openvino", "paddle", "MNN", "tensorrt", "setuptools", "pkg_resources", "distutils", "pip"]
@@ -81,7 +83,7 @@ def rel(root, p):
 
 
 def dist_dir(out_dir):
-    return os.path.join(out_dir, "dist", BUNDLE_NAME)
+    return os.path.join(out_dir, "dist", BUNDLE_DIR)
 
 
 def log(msg):
@@ -89,12 +91,76 @@ def log(msg):
     sys.stdout.flush()
 
 
-def build_clock(fmt):
-    """빌드 시각 글. 환경 변수 SOURCE_DATE_EPOCH 가 있으면 그 시각(UTC)을 써서 같은 입력이면 같은 정보 파일·zip 이 나오게 한다(재현 빌드)."""
-    ep = os.environ.get("SOURCE_DATE_EPOCH")
-    if ep and ep.isdigit():
-        return time.strftime(fmt, time.gmtime(int(ep)))
-    return time.strftime(fmt)
+class BuildError(Exception):
+    """빌드를 계속할 수 없는 이유(쉬운 한국어) — main 이 한 줄로 알리고 종료 코드 2 로 끝낸다."""
+
+
+def read_json(path):
+    with open(path, "rb") as f:
+        return json.loads(f.read().decode("utf-8"))
+
+
+def load_lock():
+    """models.lock.json -> (잠금 사전, {키: (바이트, SHA-256)}). 모양이 이상하면 BuildError."""
+    lock = read_json(LOCK)
+    problems = rules.lock_problems(lock)
+    if problems:
+        raise BuildError("models.lock.json 점검 실패: " + " / ".join(problems))
+    return lock, rules.expected_files(lock)
+
+
+def git_text(*args):
+    done = subprocess.run(["git", "-C", REPO, *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if done.returncode != 0:
+        raise BuildError("git 이 실패했다 — 이 폴더가 git 저장소가 맞는지 확인해 주세요(git %s)" % args[0])
+    return done.stdout
+
+
+def source_state():
+    """이 저장소 HEAD 의 커밋·시각과 ocr_addon 폴더가 깨끗한지. 시각은 SOURCE_DATE_EPOCH 가 있으면 그것(숫자 아니면 거절), 없으면 커밋 시각(재현 빌드의 시계 하나)."""
+    commit = git_text("rev-parse", "HEAD").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise BuildError("git 이 돌려준 커밋 해시의 모양이 이상하다")
+    given = os.environ.get("SOURCE_DATE_EPOCH")
+    if given is not None and not given.isdigit():
+        raise BuildError("SOURCE_DATE_EPOCH 는 숫자(초)여야 한다")
+    epoch = int(given) if given else int(git_text("show", "-s", "--format=%ct", "HEAD").strip())
+    dirty = [line for line in git_text("status", "--porcelain", "--untracked-files=all", "--", "ocr_addon", "VERSION").splitlines() if line.strip()]
+    return {"commit": commit, "epoch": epoch, "epoch_from": "SOURCE_DATE_EPOCH" if given else "git commit", "committed_utc": rules.utc_text(epoch), "clean": not dirty, "dirty_count": len(dirty)}
+
+
+def read_version():
+    with open(os.path.join(REPO, "VERSION"), "rb") as f:
+        text = f.read().decode("utf-8").lstrip(chr(0xFEFF)).strip()
+    rules.zip_name(text)                                       # 모양 확인(어긋나면 ValueError -> main 이 알린다)
+    return text
+
+
+def import_packaging():
+    """본체 빌드(packaging/build_package.py)의 함수를 읽기 전용으로 가져다 쓴다 — 본체 코드는 고치지 않는다. 표준 라이브러리만 가져오는 모듈이다."""
+    folder = os.path.join(REPO, "packaging")
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    import build_package as bp
+    return bp
+
+
+def prepare_out_dir(out):
+    """출력 폴더가 비었거나 이 도구가 만든 폴더(표지 파일)일 때만 쓴다 — 아니면 아무것도 지우지 않고 거절. 이 도구가 만든 폴더면 이전 결과(하위 폴더·점검 결과)를 지운다."""
+    out = str(import_packaging().safe_out_dir(out, REPO))      # 본체 빌드의 출력 폴더 점검(저장소·드라이브 맨 위·이상한 이름·긴 경로 거절)을 그대로 쓴다
+    if os.path.isfile(out):
+        raise BuildError("출력 경로가 폴더가 아니라 이미 있는 파일이다")
+    if os.path.isdir(out) and os.listdir(out) and not os.path.isfile(os.path.join(out, OUT_MARKER)):
+        raise BuildError("출력 폴더가 비어 있지 않은데 이 도구가 만든 폴더가 아니다(표지 파일 %s 가 없다) — 새 폴더나 빈 폴더를 골라 주세요" % OUT_MARKER)
+    os.makedirs(out, exist_ok=True)
+    for name in OUT_SUBFOLDERS:
+        shutil.rmtree(os.path.join(out, name), ignore_errors=True)
+    for name in ("freeze_meta.json", "removed.json", "check_result.json", GEOS_RECORD):          # 앞선 빌드의 건넴 파일이 새 빌드에 남지 않게(GEOS 기록 포함)
+        if os.path.isfile(os.path.join(out, name)):
+            os.remove(os.path.join(out, name))
+    with open(os.path.join(out, OUT_MARKER), "wb") as f:
+        f.write("이 폴더는 ocr_addon/build_ocr_addon.py 의 출력 폴더다. 다음 빌드 때 안의 하위 폴더가 지워진다.\n".encode("utf-8"))
+    return out
 
 
 def normalize_base_library(path):
@@ -127,35 +193,32 @@ def gen_buildinfo(out_dir):
     return gen, versions
 
 
-def freeze(out_dir, variant, extra_excludes=()):
+def freeze(out_dir, epoch):
     t0 = time.time()
+    bp = import_packaging()
     gen, versions = gen_buildinfo(out_dir)
     work = os.path.join(out_dir, "build")
     dist_root = os.path.join(out_dir, "dist")
     for d in (work, dist_root):
         shutil.rmtree(d, ignore_errors=True)
-    cmd = [sys.executable, "-I", "-B", "-X", "utf8", "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--console", "--noupx",
+    cmd = [sys.executable, "-s", "-B", "-X", "utf8", "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--console", "--noupx",
            "--name", EXE_NAME, "--distpath", dist_root, "--workpath", work, "--specpath", os.path.join(out_dir, "spec"),
-           "--paths", HERE, "--paths", gen,
-           "--additional-hooks-dir", os.path.join(HERE, "hooks"),
+           "--paths", HERE, "--paths", gen, "--paths", os.path.join(HERE, "stubs"),
            "--collect-data", "rapidocr",
            "--hidden-import", "rapidocr.main", "--hidden-import", "rapidocr.inference_engine.onnxruntime",
            "--hidden-import", "buildinfo"]
-    excludes = list(GENERIC_EXCLUDES) + EXCLUDED_ENGINE_MODULES
-    if variant == "stub":
-        cmd += ["--paths", os.path.join(HERE, "stubs")]
-        # 진짜 requests 계열과 ssl(OpenSSL 의 libcrypto-3.dll 이 ws2_32 를 가져온다)·asyncio(_overlapped.pyd)·multiprocessing(_multiprocessing.pyd)을 뺀다 — 작업자는 쓰지 않는다
-        excludes += ["urllib3", "charset_normalizer", "idna", "certifi", "ssl", "_ssl", "_hashlib", "asyncio", "multiprocessing", "_overlapped", "_multiprocessing"]
-    excludes += list(extra_excludes)
+    # 가짜 requests(stubs/requests.py)가 진짜 requests 계열을 대신한다. ssl(OpenSSL 의 libcrypto-3.dll 이 ws2_32 를 가져온다)·asyncio(_overlapped.pyd)·multiprocessing(_multiprocessing.pyd)도 뺀다 — 작업자는 쓰지 않는다
+    excludes = list(GENERIC_EXCLUDES) + EXCLUDED_ENGINE_MODULES + ["urllib3", "charset_normalizer", "idna", "certifi", "ssl", "_ssl", "_hashlib", "asyncio", "multiprocessing", "_overlapped", "_multiprocessing"]
     for m in excludes:
         cmd += ["--exclude-module", m]
     cmd.append(os.path.join(HERE, "worker_main.py"))
-    log("PyInstaller 시작 (variant=%s)" % variant)
-    log(" ".join(cmd[3:]))
-    r = subprocess.run(cmd, cwd=out_dir)
+    env = bp.pyinstaller_env(epoch)                            # 좁힌 PATH(가상환경·기본 파이썬·Windows 폴더)·PYTHONHASHSEED=0·SOURCE_DATE_EPOCH — 본체 빌드와 같은 함수
+    folders = [folder for folder in env["PATH"].split(bp.PATH_SEPARATOR) if folder]
+    log("PyInstaller 시작 — PATH 는 %d곳으로 좁혀서 부른다(정책 %s)" % (len(folders), bp.PATH_POLICY))
+    log(" ".join(cmd[5:]))
+    r = subprocess.run(cmd, cwd=out_dir, env=env, timeout=1800)
     if r.returncode != 0:
-        log("★ PyInstaller 실패 (종료 코드 %d)" % r.returncode)
-        return r.returncode
+        raise BuildError("PyInstaller 가 실패했다(종료 코드 %d)" % r.returncode)
     src = os.path.join(dist_root, EXE_NAME)
     dst = dist_dir(out_dir)
     shutil.rmtree(dst, ignore_errors=True)
@@ -172,25 +235,25 @@ def freeze(out_dir, variant, extra_excludes=()):
     normalize_base_library(os.path.join(dst, "_internal", "base_library.zip"))
     log("동결 끝 %.1f초 -> %s" % (time.time() - t0, dst))
     with open(os.path.join(out_dir, "freeze_meta.json"), "w", encoding="utf-8") as f:
-        json.dump({"variant": variant, "freeze_seconds": round(time.time() - t0, 1), "pyinstaller_cmd": cmd[3:]}, f, ensure_ascii=False, indent=1)
-    return 0
+        json.dump({"freeze_seconds": round(time.time() - t0, 1), "path_policy": bp.PATH_POLICY, "path_folders": len(folders)}, f, ensure_ascii=False, indent=1)
 
 
 # ───────────────────────────── assemble ─────────────────────────────
-def assemble(out_dir):
+def assemble(out_dir, models_dir):
+    """모델 2개(--models-dir 의 det·rec 폴더)와 글자 사전(ocr_addon/data)을 묶음에 얹는다 — 모두 잠금 파일의 크기·SHA-256 과 대조하고 다르면 멈춘다."""
     dst = dist_dir(out_dir)
-    for relp, (size, sha) in MODEL_EXPECT.items():
-        src = os.path.join(ASSETS, relp)
+    _lock, expected = load_lock()
+    for key, (size, sha) in expected.items():
+        folder = models_dir if key.startswith("models/") else DATA_DIR
+        src = os.path.join(folder, *key.split("/")[1:])
         if not os.path.isfile(src) or os.path.getsize(src) != size or sha256_file(src) != sha:
-            log("★ 모델·사전 원본 확인 실패: %s" % relp)
-            return 1
-        os.makedirs(os.path.dirname(os.path.join(dst, relp)), exist_ok=True)
-        shutil.copyfile(src, os.path.join(dst, relp))
-    info_src = os.path.join(ASSETS, "data", "ppocrv5_korean_dict.info.json")
+            raise BuildError("모델·사전 원본이 잠금 파일의 크기·SHA-256 과 다르거나 없다: %s" % key)
+        os.makedirs(os.path.dirname(os.path.join(dst, key)), exist_ok=True)
+        shutil.copyfile(src, os.path.join(dst, key))
+    info_src = os.path.join(DATA_DIR, "ppocrv5_korean_dict.info.json")
     if os.path.isfile(info_src):
         shutil.copyfile(info_src, os.path.join(dst, "data", "ppocrv5_korean_dict.info.json"))
     log("모델 2개·사전 얹음(크기·SHA-256 일치)")
-    return 0
 
 
 # ───────────────────────────── remove ─────────────────────────────
@@ -208,7 +271,6 @@ def remove_unused(out_dir):
     log("제거 %d개, 합계 %d바이트" % (len(removed), sum(x["bytes"] for x in removed)))
     for x in removed:
         log("  - %s  %s  %d" % (x["what"], x["path"], x["bytes"]))
-    return 0
 
 
 # ───────────────────────────── check ─────────────────────────────
@@ -231,112 +293,115 @@ def size_report(dst):
             "by_package": dict(sorted(groups.items(), key=lambda kv: -kv[1]))}
 
 
-def pe_table(dst):
+def pe_rows(dst):
+    """묶음 안 모든 exe·DLL·pyd 의 가져오기 표(정적·지연·묶음 가져오기)를 pefile 로 읽는다 — pefile 은 빌드 환경에만 있다. 반환 (줄 목록, 못 읽은 파일 목록)."""
     import pefile
     rows, errors = [], []
+    wanted = [pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"], pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"], pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT"]]
     for p in sorted(walk_files(dst)):
         if not p.lower().endswith((".exe", ".dll", ".pyd")):
             continue
         try:
             pe = pefile.PE(p, fast_load=True)
-            pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"], pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"],
-                                                   pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT"]])
-            names, delay = set(), set()
-            for e in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []) or []:
-                names.add(e.dll.decode("ascii", "replace").lower())
-            for e in getattr(pe, "DIRECTORY_ENTRY_DELAY_IMPORT", []) or []:
-                delay.add(e.dll.decode("ascii", "replace").lower())
-            bound = set()
-            for e in getattr(pe, "DIRECTORY_ENTRY_BOUND_IMPORT", []) or []:
-                bound.add(e.name.decode("ascii", "replace").lower())
+            pe.parse_data_directories(directories=wanted)
+            imports = sorted({e.dll.decode("ascii", "replace").lower() for e in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []) or []})
+            delay = sorted({e.dll.decode("ascii", "replace").lower() for e in getattr(pe, "DIRECTORY_ENTRY_DELAY_IMPORT", []) or []})
+            bound = sorted({e.name.decode("ascii", "replace").lower() for e in getattr(pe, "DIRECTORY_ENTRY_BOUND_IMPORT", []) or []})
             pe.close()
-            net = sorted((names | delay | bound) & set(NET_DLLS))
-            rows.append({"path": rel(dst, p), "bytes": os.path.getsize(p), "n_imports": len(names), "n_delay": len(delay), "net_dlls": net,
-                         "net_static": sorted(names & set(NET_DLLS)), "net_delay": sorted(delay & set(NET_DLLS)), "imports": sorted(names)})
+            rows.append({"path": rel(dst, p), "bytes": os.path.getsize(p), "imports": imports, "delay": delay, "bound": bound})
         except Exception as e:
-            errors.append({"path": rel(dst, p), "error": "%s: %s" % (type(e).__name__, str(e)[:100])})
+            errors.append("%s (%s)" % (rel(dst, p), type(e).__name__))
     return rows, errors
 
 
-def net_offenders(rows):
-    """가져오기 표(pe_table 의 행들)에서 네트워크 DLL 을 가져오는 파일 중 허용 예외(PE_EXCEPTION_DIR 바로 아래의 PE_EXCEPTIONS 이름 파일) 밖인 것 -> 행 목록(순수 함수)."""
-    out = []
-    for row in rows:
-        if not row.get("net_dlls"):
-            continue
-        folder, _slash, name = str(row["path"]).replace("\\", "/").rpartition("/")
-        if folder == PE_EXCEPTION_DIR and name.lower() in PE_EXCEPTIONS:
-            continue
-        out.append(row)
-    return out
+def snapshot(root):
+    """폴더 안 파일 목록과 크기·수정 시각 — 자가 점검이 묶음 안에 쓰지 않았는지 전후를 견준다."""
+    return {rel(root, p): (os.path.getsize(p), os.stat(p).st_mtime_ns) for p in walk_files(root)}
 
 
-def check(out_dir, run_selftest=True):
+def run_selftest(out_dir, dst):
+    """동결본 --selftest 를 돌린다 — 임시 폴더를 비어 있는 새 폴더로 돌려 두고, 끝난 뒤 묶음 폴더가 그대로이고 임시 폴더가 비어 있는지도 본다(파일을 쓰지 않는다는 약속).
+    반환 (종료 코드, 마지막 줄 JSON 또는 None, 추가 문제 글들, 걸린 초, 표준 오류 끝)."""
+    exe = os.path.join(dst, EXE_NAME + ".exe")
+    tmp = os.path.join(out_dir, "selftest_tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    before = snapshot(dst)
+    env = dict(os.environ, TEMP=tmp, TMP=tmp, PYTHONDONTWRITEBYTECODE="1")
+    t0 = time.time()
+    r = subprocess.run([exe, "--selftest"], capture_output=True, cwd=dst, timeout=300, env=env)
+    seconds = round(time.time() - t0, 2)
+    out = r.stdout.decode("utf-8", "replace").strip().splitlines()
+    try:
+        report = json.loads(out[-1]) if out else None
+    except ValueError:
+        report = None
+    problems, after = [], snapshot(dst)
+    if after != before:
+        changed = sorted(set(before) ^ set(after)) or sorted(k for k in after if after[k] != before.get(k))
+        problems.append("R4 --selftest 가 묶음 폴더 안의 파일을 바꿨다(약속: 파일을 쓰지 않는다): %s" % changed[:5])
+    leftovers = sorted(os.listdir(tmp))
+    if leftovers:
+        problems.append("R4 --selftest 가 임시 폴더에 파일을 남겼다(약속: 파일을 쓰지 않는다): %d개" % len(leftovers))
+    return r.returncode, report, problems, seconds, r.stderr.decode("utf-8", "replace")[-1500:]
+
+
+def check(out_dir):
+    """묶음 점검 — 하나라도 문제면 (False, 문제 목록). 규칙 판정은 build_rules.py(순수 함수), 여기서는 실제 묶음을 읽어 넘긴다."""
     dst = dist_dir(out_dir)
-    res = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "problems": []}
-    # 1) 금지 파일
-    bad = []
-    for p in walk_files(dst):
-        b = os.path.basename(p).lower()
-        if any(re.fullmatch(pat, b) for pat in FORBIDDEN_NAMES):
-            bad.append(rel(dst, p))
-        if fnmatch.fnmatch(rel(dst, p), "*/rapidocr/models/*.onnx"):
-            bad.append(rel(dst, p))
-    res["forbidden_files"] = bad
-    if bad:
-        res["problems"].append("금지 파일이 묶음에 있음: %s" % bad)
-    # 2) 모델·사전
-    mfail = []
-    for relp, (size, sha) in MODEL_EXPECT.items():
-        p = os.path.join(dst, relp)
-        if not os.path.isfile(p) or os.path.getsize(p) != size or sha256_file(p) != sha:
-            mfail.append(relp)
-    res["model_dict_ok"] = not mfail
-    if mfail:
-        res["problems"].append("모델·사전 크기/해시 불일치: %s" % mfail)
-    # 3) 가져오기 표
-    rows, errors = pe_table(dst)
-    with_net = [r for r in rows if r["net_dlls"]]
-    offenders = net_offenders(with_net)
-    res["pe"] = {"files_checked": len(rows), "parse_errors": errors, "with_net_dll": [{k: r[k] for k in ("path", "bytes", "net_static", "net_delay")} for r in with_net],
-                 "exceptions_allowed": sorted(PE_EXCEPTIONS), "offenders": [r["path"] for r in offenders]}
-    if offenders:
-        res["problems"].append("가져오기 표에 네트워크 DLL 이 있는 파일(허용 예외 밖): %s" % [(r["path"], r["net_dlls"]) for r in offenders])
-    if errors:
-        res["problems"].append("가져오기 표를 읽지 못한 파일 %d개" % len(errors))
+    bp = import_packaging()
+    _lock, expected = load_lock()
+    res = {"problems": []}
+    problems = res["problems"]
+    sizes = {rel(dst, p): os.path.getsize(p) for p in walk_files(dst)}
+    problems += rules.bundle_file_problems(sizes, expected, lambda key: sha256_file(os.path.join(dst, *key.split("/"))))      # R2
+    problems += ["R2 라이선스 고지 산출물이 없다: " + name for name in missing_outputs(sorted(sizes))]                           # 확인 030 ②: 고지문·licenses/ 도 점검을 거친다(없으면 notices 단계가 안 돈 것)
+    problems += ["묶음에 있으면 안 되는 파일(%s): %s" % (bp.pc.forbidden_name(path), path) for path in sorted(sizes) if bp.pc.forbidden_name(path)]       # 본체의 비밀·사용자 데이터 파일 이름 목록
+    problems += rules.key_shape_problems((path, read_lossy(os.path.join(dst, *path.split("/")))) for path in sorted(sizes)
+                                         if (path.lower().endswith(TEXT_SUFFIXES) or path.startswith(LICENSES_DIR + "/")) and sizes[path] <= TEXT_SCAN_LIMIT)      # licenses/ 아래는 LICENSE·COPYING 처럼 확장자가 없어도 훑는다(확인 030 ②)
+    rows, errors = pe_rows(dst)                                                                                                    # R1
+    problems += rules.pe_problems(rows, errors)
     with open(os.path.join(out_dir, "pe_imports_all.json"), "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=0)
-    # 4) 크기
-    res["size"] = size_report(dst)
-    # 5) 동결본 자가 점검
-    if run_selftest:
-        exe = os.path.join(dst, EXE_NAME + ".exe")
-        t0 = time.time()
-        r = subprocess.run([exe, "--selftest"], capture_output=True, cwd=dst, timeout=300)
-        res["selftest_seconds"] = round(time.time() - t0, 2)
-        res["selftest_exit"] = r.returncode
-        out = r.stdout.decode("utf-8", "replace").strip().splitlines()
-        try:
-            res["selftest"] = json.loads(out[-1]) if out else None
-        except Exception:
-            res["selftest"] = {"raw_tail": out[-3:]}
-        if r.returncode != 0 or not (res["selftest"] or {}).get("ok"):
-            res["problems"].append("동결본 --selftest 실패(종료 %s)" % r.returncode)
-            res["selftest_stderr_tail"] = r.stderr.decode("utf-8", "replace")[-1500:]
-    res["ok"] = not res["problems"]
+    problems += bp.check_binary_origins(os.path.join(out_dir, "build", EXE_NAME, "COLLECT-00.toc"))                              # DLL 출처: 가상환경·기본 파이썬·Windows 폴더뿐
+    code, report, more, seconds, stderr_tail = run_selftest(out_dir, dst)                                                          # R4
+    problems += rules.selftest_problems(report, code) + more
+    if isinstance(report, dict):                                                                                                   # 러너 로그에서 첫 관측 값을 바로 읽게
+        log("자가 점검 %.1f초 — 엔진 %s · 모델 올리기 %s초 · 점검 그림 읽기 %s밀리초" % (seconds, report.get("engine"), report.get("load_s"), report.get("read_ms")))
+    problems += rules.module_problems(bundled_modules(out_dir), (report or {}).get("imports"), (report or {}).get("imports_optional"))                                    # R3
+    pins = rules.parse_lock(read_text(PINS))
+    problems += rules.installed_problems(pins, {pin["name"]: installed_version(pin["name"]) for pin in pins})
+    problems += rules.pin_age_problems(pins, read_json(PIN_META))
+    res.update({"files": len(sizes), "pe_files_checked": len(rows), "selftest_seconds": seconds, "selftest_exit": code, "selftest": report, "size": size_report(dst)})
+    if problems and stderr_tail.strip():
+        res["selftest_stderr_tail"] = stderr_tail
+    res["ok"] = not problems
     with open(os.path.join(out_dir, "check_result.json"), "w", encoding="utf-8") as f:
         json.dump(res, f, ensure_ascii=False, indent=1)
-    log("점검 %s — 문제 %d건, 파일 %d개 %d바이트" % ("통과" if res["ok"] else "실패", len(res["problems"]), res["size"]["files"], res["size"]["bytes"]))
-    for pr in res["problems"]:
+    log("점검 %s — 문제 %d건, 파일 %d개 %d바이트, 가져오기 표 %d개 파일" % ("통과" if res["ok"] else "실패", len(problems), res["size"]["files"], res["size"]["bytes"], len(rows)))
+    for pr in problems:
         log("  ★ " + pr)
-    return 0 if res["ok"] else 1
+    return res["ok"], res
+
+
+def read_text(path):
+    with open(path, "rb") as f:
+        return f.read().decode("utf-8")
+
+
+def read_lossy(path):
+    with open(path, "rb") as f:
+        return f.read().decode("utf-8", "replace")
+
+
+def installed_version(name):
+    try:
+        return im.version(name)
+    except im.PackageNotFoundError:
+        return None
 
 
 # ───────────────────────────── 라이선스 전문·고지문(확인 030 ②) ─────────────────────────────
-class BuildError(Exception):
-    """빌드를 멈추는 문제 — 조용히 건너뛰지 않고 이유를 알린다."""
-
-
 def is_license_file(record_path):
     """분포 파일 목록(RECORD)의 경로 하나가 라이선스·고지문 닮은 글 파일인가(순수 함수 — 파일을 열지 않는다)."""
     parts = str(record_path).replace("\\", "/").split("/")
@@ -499,6 +564,44 @@ def write_license_outputs(dst, packages, removed=(), distribution=None, geos_ver
     return geos
 
 
+def package_records(out_dir, state):
+    """잠금 파일의 패키지 21개 기록(이름·설치된 판·라이선스 표기·휠·업로드일·나이·묶임 여부) — 고지문(notices 단계)과 정보 파일(info 단계)이 **같은 기록**을 쓴다(묶임 판정이 두 곳에서 갈라지지 않게)."""
+    pins = rules.parse_lock(read_text(PINS))
+    meta = read_json(PIN_META)
+    mods = {n.split(".")[0] for n in bundled_modules(out_dir)}
+    top_names = {"opencv-python-headless": "cv2", "pillow": "PIL", "pyyaml": "yaml", "protobuf": "google", "charset-normalizer": "charset_normalizer"}
+    today = datetime.date.fromisoformat(state["committed_utc"][:10])
+    packages = []
+    for pin in pins:
+        name, entry = pin["name"], meta["packages"][pin["name"]]
+        top = top_names.get(name, name.replace("-", "_"))
+        stubbed = name == "requests"                       # 묶인 것은 진짜 requests 가 아니라 가짜 껍데기(stubs/requests.py)다
+        packages.append({"name": name, "version": installed_version(name), "license_metadata": pypi_license(name), "wheel_file": entry["wheel_file"], "wheel_bytes": entry["wheel_bytes"],
+                         "wheel_sha256": pin["hashes"][0], "pypi_upload": entry["uploaded"], "age_days_at_build": (today - datetime.date.fromisoformat(entry["uploaded"])).days,
+                         "bundled_in_dist": top in mods and not stubbed, "replaced_by_offline_stub": stubbed})
+    return packages
+
+
+def write_notices(out_dir, state):
+    """notices 단계 — licenses/·THIRD_PARTY_NOTICES.txt 를 묶음 폴더에 만들고 GEOS 기록을 geos.json 에 남긴다. **점검(check)보다 앞이다**: R2(금지 이름)·키 모양 훑기가 이 파일들도 보고 정보 파일의 파일 목록에 들어간다.
+    GEOS 라이선스 전문·판·별도 GEOS 파일을 못 찾는 등 못 만들면 BuildError — 조용히 건너뛰지 않는다."""
+    removed_path = os.path.join(out_dir, "removed.json")
+    removed = read_json(removed_path) if os.path.isfile(removed_path) else []
+    geos = write_license_outputs(dist_dir(out_dir), package_records(out_dir, state), removed)
+    with open(os.path.join(out_dir, GEOS_RECORD), "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(geos, handle, ensure_ascii=False, indent=1)
+    log("라이선스 전문·고지문 만듦 — GEOS %s · 별도 파일 %d개 · 고지문 %s" % (geos["version"], len(geos["dll_files"]), NOTICES_NAME))
+    return geos
+
+
+def read_geos_record(out_dir):
+    """notices 단계가 남긴 GEOS 기록 — 없으면 정보 파일을 만들지 않는다(먼저 notices 단계를 거쳐야 한다)."""
+    path = os.path.join(out_dir, GEOS_RECORD)
+    if not os.path.isfile(path):
+        raise BuildError("GEOS 기록(%s)이 없다 — 먼저 notices 단계(라이선스 전문·고지문 만들기)를 해야 정보 파일을 만든다" % GEOS_RECORD)
+    return read_json(path)
+
+
 # ───────────────────────────── info / zip ─────────────────────────────
 def pypi_license(name):
     try:
@@ -509,167 +612,147 @@ def pypi_license(name):
 
 
 def bundled_modules(out_dir):
-    """묶음에 실제로 들어간 최상위 모듈 이름 집합: PYZ 보관소(PYZ-00.pyz)의 모듈 목록 + _internal 직속 이름(.pyd·폴더). PyInstaller 의 읽기 도구를 쓴다."""
+    """묶음에 실제로 들어간 최상위 모듈·파일 이름 집합: PYZ 보관소(PYZ-00.pyz)의 모듈 목록 + _internal 직속 이름(.pyd·폴더) + 묶음 맨 위 이름. PyInstaller 의 읽기 도구를 쓴다 — 못 읽으면 멈춘다(R3 이 눈감지 않게)."""
     names = set()
     pyz = os.path.join(out_dir, "build", EXE_NAME, "PYZ-00.pyz")
     try:
         from PyInstaller.archive.readers import ZlibArchiveReader
-        r = ZlibArchiveReader(pyz)
-        for n in r.toc:
+        for n in ZlibArchiveReader(pyz).toc:
             names.add(str(n).split(".")[0])
-    except Exception:
-        pass
-    inter = os.path.join(dist_dir(out_dir), "_internal")
-    if os.path.isdir(inter):
-        for n in os.listdir(inter):
-            names.add(n.split(".")[0])
+    except Exception as e:
+        raise BuildError("PyInstaller 의 모듈 보관소(PYZ-00.pyz)를 읽지 못했다(%s) — 묶음 안 부품 목록을 알 수 없다" % type(e).__name__)
+    for folder in (os.path.join(dist_dir(out_dir), "_internal"), dist_dir(out_dir)):
+        if os.path.isdir(folder):
+            names.update(n for n in os.listdir(folder))
     return names
 
 
-def make_info(out_dir, tag="", extra=None):
+def worker_proto():
+    """작업자와 같은 약속 번호 — 같은 폴더의 protocol.py(표준 라이브러리만)를 경로로 읽는다(sys.path 에 기대지 않고, 흔한 이름 protocol 을 모듈 목록에 남기지 않는다)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ocr_addon_protocol", os.path.join(HERE, "protocol.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.PROTO
+
+
+def make_info(out_dir, state, version):
     dst = dist_dir(out_dir)
-    table = json.load(open(os.path.join(PHOTOLAB, "stage2", "wheels_table.json"), encoding="utf-8"))
-    pinned = {r["canon"]: r for r in table["files"] if r["file"].endswith(".whl")}
-    mods = bundled_modules(out_dir)
-    top_names = {"opencv-python-headless": "cv2", "pillow": "PIL", "pyyaml": "yaml", "protobuf": "google", "charset-normalizer": "charset_normalizer",
-                 "rapidocr": "rapidocr", "onnxruntime": "onnxruntime", "numpy": "numpy", "shapely": "shapely", "pyclipper": "pyclipper", "omegaconf": "omegaconf",
-                 "flatbuffers": "flatbuffers", "colorlog": "colorlog", "six": "six", "tqdm": "tqdm", "packaging": "packaging", "colorama": "colorama",
-                 "requests": "requests", "urllib3": "urllib3", "certifi": "certifi", "idna": "idna"}
-    # PyPI 업로드 날짜(2단계 verify_pypi.json + a 단계 verify_*.json)와 설치한 판의 휠 파일(휠 폴더에서 이름·판이 맞는 것)을 찾아 크기·해시를 적는다
-    uploads = {}
-    for jp in (os.path.join(PHOTOLAB, "stage2", "verify_pypi.json"), os.path.join(STAGEA, "results", "verify_numpy254.json"), os.path.join(STAGEA, "results", "verify_build_wheels.json")):
-        if os.path.isfile(jp):
-            for it in json.load(open(jp, encoding="utf-8")).get("items", []):
-                if it.get("upload"):
-                    uploads[it["file"]] = it["upload"]
-    wheel_dirs = (os.path.join(STAGEA, "wheels_build"), os.path.join(PHOTOLAB, "wheels_rapid"))
-
-    def find_wheel(name, ver):
-        key = (name.replace("-", "_") + "-" + ver + "-").lower()
-        for wd in wheel_dirs:
-            if os.path.isdir(wd):
-                for fn in os.listdir(wd):
-                    if fn.lower().startswith(key) and fn.endswith(".whl"):
-                        pth = os.path.join(wd, fn)
-                        return fn, os.path.getsize(pth), sha256_file(pth)
-        return None, None, None
-
-    today = build_clock("%Y-%m-%d")
-    packages = []
-    for canon, rec in sorted(pinned.items()):
-        try:
-            ver = im.version(rec["name"])
-        except Exception:
-            ver = None
-        top = top_names.get(canon, canon.replace("-", "_"))
-        bundled = top in mods
-        stubbed = bool(canon == "requests" and os.path.isfile(os.path.join(out_dir, "freeze_meta.json")) and json.load(open(os.path.join(out_dir, "freeze_meta.json"), encoding="utf-8")).get("variant") == "stub")
-        if stubbed:
-            bundled = False                                  # 묶인 것은 진짜 requests 가 아니라 가짜 껍데기(stubs\requests.py)다
-        fn, size, sha = find_wheel(canon, ver) if ver else (None, None, None)
-        up = uploads.get(fn or rec["file"])
-        age = None
-        if up:
-            import datetime
-            age = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(up[:10])).days
-        packages.append({"name": canon, "version": ver, "stage2_pinned_version": rec["version"], "license_metadata": pypi_license(rec["name"]) or rec.get("license"),
-                         "wheel_file": fn or rec["file"], "wheel_bytes": size if fn else rec["bytes"], "wheel_sha256": sha if fn else rec["sha256"],
-                         "pypi_upload": up[:10] if up else None, "age_days_at_build": age, "bundled_in_dist": bool(bundled), "replaced_by_offline_stub": stubbed})
+    _lock, expected = load_lock()
+    packages = package_records(out_dir, state)
+    geos = read_geos_record(out_dir)                       # notices 단계가 남긴 기록 — 고지 파일은 점검 앞에서 이미 만들어져 아래 파일 목록에 들어간다
     tools = {}
-    for n in ("pyinstaller", "pyinstaller-hooks-contrib", "altgraph", "pefile", "pywin32-ctypes", "setuptools", "packaging"):
-        try:
-            tools[n] = im.version(n)
-        except Exception:
-            tools[n] = None
-    chk = None
-    cp = os.path.join(out_dir, "check_result.json")
-    if os.path.isfile(cp):
-        c = json.load(open(cp, encoding="utf-8"))
-        chk = {"ok": c.get("ok"), "problems": c.get("problems"), "pe_files_checked": c["pe"]["files_checked"], "pe_files_with_net_dll": c["pe"]["with_net_dll"],
-               "pe_exceptions_allowed": c["pe"]["exceptions_allowed"], "forbidden_files": c["forbidden_files"], "model_dict_ok": c["model_dict_ok"],
-               "selftest_ok": (c.get("selftest") or {}).get("ok"), "selftest_exit": c.get("selftest_exit")}
-    removed = json.load(open(os.path.join(out_dir, "removed.json"), encoding="utf-8")) if os.path.isfile(os.path.join(out_dir, "removed.json")) else []
-    fm = json.load(open(os.path.join(out_dir, "freeze_meta.json"), encoding="utf-8")) if os.path.isfile(os.path.join(out_dir, "freeze_meta.json")) else {}
-    geos = write_license_outputs(dst, packages, removed)                 # licenses/·THIRD_PARTY_NOTICES.txt 를 먼저 만든다(아래 파일 목록에 들어가도록) — GEOS 라이선스를 못 찾으면 BuildError
-    info = {"schema": 1, "name": BUNDLE_NAME, "stage": "a-prototype", "tag": tag, "proto": 1, "built_local_time": build_clock("%Y-%m-%d %H:%M:%S"),
-            "python": sys.version.split()[0], "variant": fm.get("variant"), "build_tools": tools, "packages": packages, "removed_from_bundle": removed,
-            "models_dict": {k: {"bytes": v[0], "sha256": v[1]} for k, v in MODEL_EXPECT.items()}, "checks": chk,
-            "license_notes": license_notes(geos)}
-    info["geos"] = geos
-    if extra:
-        info.update(extra)
+    for line in read_text(BUILD_PINS).splitlines():
+        match = re.match(r"^([A-Za-z0-9._-]+)==", line.strip())
+        if match:
+            tools[rules.canon(match.group(1))] = installed_version(match.group(1))
+    check_path = os.path.join(out_dir, "check_result.json")
+    c = read_json(check_path)
+    chk = {"ok": c["ok"], "rules": ["R1", "R2", "R3", "R4"], "problems": c["problems"], "pe_files_checked": c["pe_files_checked"], "pe_exceptions_allowed": list(rules.PE_EXCEPTIONS),
+           "selftest_ok": (c.get("selftest") or {}).get("ok"), "selftest_exit": c.get("selftest_exit")}
+    removed = read_json(os.path.join(out_dir, "removed.json")) if os.path.isfile(os.path.join(out_dir, "removed.json")) else []
+    lock_hashes = {os.path.basename(p): hashlib.sha256(read_text(p).replace("\r\n", "\n").encode("utf-8")).hexdigest() for p in (PINS, BUILD_PINS, PIN_META, LOCK)}
+    info = {"schema": 1, "name": BUNDLE_NAME, "proto": worker_proto(), "channel": "personal-pc-preview", "notice": "개인 PC 제한 시험용, 미서명 추가 도구 — 공개 배포용이 아닙니다",
+            "version": version, "source": {"commit": state["commit"], "committed_utc": state["committed_utc"], "clean": state["clean"], "time_from": state["epoch_from"]},
+            "python": sys.version.split()[0], "variant": "inner", "build_tools": tools, "lock_sha256": lock_hashes, "packages": packages, "removed_from_bundle": removed,
+            "models_dict": {k: {"bytes": v[0], "sha256": v[1]} for k, v in expected.items()}, "checks": chk,
+            "license_notes": license_notes(geos), "geos": geos}
     files = []
     for p in sorted(walk_files(dst)):
         r = rel(dst, p)
-        if r == "OCR_INFO.json":
-            continue
-        files.append({"path": r, "bytes": os.path.getsize(p), "sha256": sha256_file(p)})
-    info["files"] = files
-    info["file_count"] = len(files)
-    info["total_bytes"] = sum(f["bytes"] for f in files)
+        if r != "OCR_INFO.json":
+            files.append({"path": r, "bytes": os.path.getsize(p), "sha256": sha256_file(p)})
+    info["files"], info["file_count"], info["total_bytes"] = files, len(files), sum(f["bytes"] for f in files)
     absent = missing_outputs([f["path"] for f in files])
     if absent:
         raise BuildError("산출 목록에 꼭 있어야 하는 것이 없다: %s" % ", ".join(absent))
     with open(os.path.join(dst, "OCR_INFO.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(info, f, ensure_ascii=False, indent=1)
     log("OCR_INFO.json 만듦 — 파일 %d개 %d바이트, 패키지 %d개(묶임 %d)" % (len(files), info["total_bytes"], len(packages), sum(1 for p in packages if p["bundled_in_dist"])))
-    return 0
+    return info
 
 
-def make_zip(out_dir, zip_path):
+def make_zip(out_dir, version, info):
+    """결정적 zip(시각·순서·압축 수준 고정, 맨 위 폴더 ocr) + 옆에 SHA256SUMS·PACKAGE_INFO.json(= 정보 파일 + 압축 파일 이름·해시·크기) — 이 셋이 올리는 산출물의 전부다."""
     dst = dist_dir(out_dir)
+    release = os.path.join(out_dir, "release")
+    os.makedirs(release, exist_ok=True)
+    zip_path = os.path.join(release, rules.zip_name(version))
     entries = sorted(walk_files(dst), key=lambda p: rel(dst, p))
-    if os.path.exists(zip_path):
-        os.remove(zip_path)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for p in entries:
-            zi = zipfile.ZipInfo(BUNDLE_NAME + "/" + rel(dst, p), date_time=(1980, 1, 1, 0, 0, 0))   # 결정적 zip: 시각·순서·압축 수준 고정
+            zi = zipfile.ZipInfo(BUNDLE_DIR + "/" + rel(dst, p), date_time=(1980, 1, 1, 0, 0, 0))   # 결정적 zip: 시각·순서·압축 수준 고정
             zi.compress_type = zipfile.ZIP_DEFLATED
             zi.external_attr = 0o644 << 16
             with open(p, "rb") as f:
                 z.writestr(zi, f.read(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    with zipfile.ZipFile(zip_path) as z:                                                            # 다시 열어 항목 이름·해시가 묶음 폴더와 같은지 확인
+        if z.testzip() is not None:
+            raise BuildError("만든 압축 파일이 깨졌다")
+        got = {i.filename: hashlib.sha256(z.read(i)).hexdigest() for i in z.infolist()}
+    want = {BUNDLE_DIR + "/" + rel(dst, p): sha256_file(p) for p in entries}
+    if got != want:
+        raise BuildError("압축 파일의 항목이 묶음 폴더와 다르다")
     sha = sha256_file(zip_path)
-    with open(zip_path + ".sha256", "w", encoding="utf-8", newline="\n") as f:
-        f.write("%s *%s\n" % (sha, os.path.basename(zip_path)))
-    log("zip %s  %d바이트  SHA-256 %s" % (zip_path, os.path.getsize(zip_path), sha))
-    return 0
+    outer = dict(info, variant="outer", package={"name": os.path.basename(zip_path), "sha256": sha, "bytes": os.path.getsize(zip_path)})
+    with open(os.path.join(release, "PACKAGE_INFO.json"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(outer, ensure_ascii=False, indent=2) + "\n")
+    with open(os.path.join(release, "SHA256SUMS"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(rules.render_sums([(os.path.basename(zip_path), sha)]))
+    log("zip %s  %d바이트  SHA-256 %s" % (os.path.basename(zip_path), os.path.getsize(zip_path), sha))
 
 
-def main():
+def passed_check(out_dir):
+    """info·zip 을 따로 돌릴 때도 통과한 점검 결과가 있어야 한다 — 점검을 거치지 않은 묶음으로는 산출물을 만들지 않는다."""
+    path = os.path.join(out_dir, "check_result.json")
+    if not os.path.isfile(path) or read_json(path).get("ok") is not True:
+        raise BuildError("통과한 점검 결과(check_result.json)가 없다 — 먼저 check 를 통과해야 정보 파일·zip 을 만든다")
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("stage", choices=("all", "freeze", "assemble", "remove", "check", "info", "zip"))
+    ap.add_argument("stage", choices=("all", "freeze", "assemble", "remove", "notices", "check", "info", "zip"))
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--variant", choices=("std", "stub"), default="std")
-    ap.add_argument("--no-remove", action="store_true")
-    ap.add_argument("--no-selftest", action="store_true")
-    ap.add_argument("--extra-exclude", default="", help="쉼표로 구분한 추가 --exclude-module(실험용)")
-    ap.add_argument("--tag", default="")
-    ap.add_argument("--zip", default=None, help="zip 경로(기본: <out-dir>\\ocr_addon_<tag>.zip)")
-    a = ap.parse_args()
-    out = os.path.abspath(a.out_dir)
-    os.makedirs(out, exist_ok=True)
+    ap.add_argument("--models-dir", default=None, help="fetch_models.py 가 받은 모델 폴더(안에 det·rec 폴더) — assemble 이 필요로 한다")
+    ap.add_argument("--require-clean", action="store_true", help="ocr_addon 폴더·VERSION 에 커밋되지 않은 변경이 있으면 거절한다(빌드 흐름이 쓴다)")
+    a = ap.parse_args(argv)
     st = a.stage
-    if st in ("all", "freeze"):
-        if freeze(out, a.variant, [x for x in a.extra_exclude.split(",") if x]):
-            return 1
-    if st in ("all", "assemble"):
-        if assemble(out):
-            return 1
-    if st in ("all", "remove") and not a.no_remove:
-        remove_unused(out)
-    if st in ("all", "check"):
-        rc = check(out, not a.no_selftest)
-        if rc:                                                       # 점검이 실패하면 단계가 all 이어도 info·zip 으로 가지 않는다 — 실패한 묶음의 zip 을 만들지 않고 0 이 아닌 코드로 끝낸다(검증 S SP-1)
-            return rc
-    if st in ("all", "info"):
-        try:
-            if make_info(out, a.tag):
+    started = time.time()
+    try:
+        state = source_state()
+        if a.require_clean and not state["clean"]:
+            raise BuildError("ocr_addon 폴더에 커밋되지 않은 변경이 %d개 있다 — 모두 커밋한 뒤 다시 빌드해 주세요(커밋 해시가 묶음 내용을 대표해야 한다)" % state["dirty_count"])
+        version = read_version()
+        out = prepare_out_dir(a.out_dir) if st in ("all", "freeze") else os.path.abspath(a.out_dir)
+        if st in ("all", "assemble") and not a.models_dir:
+            raise BuildError("--models-dir(fetch_models.py 가 받은 모델 폴더)가 필요하다")
+        log("버전 %s · 커밋 %s · 시각 %s(%s) · 작업 폴더 %s" % (version, state["commit"][:12], state["committed_utc"], state["epoch_from"], "깨끗함" if state["clean"] else "변경 있음"))
+        if st in ("all", "freeze"):
+            freeze(out, state["epoch"])
+        if st in ("all", "assemble"):
+            assemble(out, os.path.abspath(a.models_dir))
+        if st in ("all", "remove"):
+            remove_unused(out)
+        if st in ("all", "notices"):
+            write_notices(out, state)
+        if st in ("all", "check"):
+            ok, _res = check(out)
+            if not ok:
                 return 1
-        except BuildError as error:
-            log("★ 빌드를 멈춘다: %s" % error)
-            return 1
-    if st in ("all", "zip"):
-        make_zip(out, a.zip or os.path.join(out, "ocr_addon_%s.zip" % (a.tag or "proto")))
+        if st in ("info", "zip"):
+            passed_check(out)
+        info = make_info(out, state, version) if st in ("all", "info") else None
+        if st in ("all", "zip"):
+            make_zip(out, version, info or read_json(os.path.join(dist_dir(out), "OCR_INFO.json")))
+        log("끝 — %s 단계, 걸린 시간 %.0f초" % (st, time.time() - started))
+    except (BuildError, ValueError) as error:
+        sys.stderr.write("빌드를 멈췄다: %s\n" % error)
+        return 2
+    except Exception as error:
+        if type(error).__name__ == "BuildRefused":             # 본체 packaging 의 출력 폴더 점검이 거절한 경우
+            sys.stderr.write("빌드를 멈췄다: %s\n" % error)
+            return 2
+        raise
     return 0
 
 

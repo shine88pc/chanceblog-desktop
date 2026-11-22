@@ -1,0 +1,13 @@
+{
+ "source": "models/paddle/korean_PP-OCRv5_mobile_rec/inference.yml",
+ "parser": "pyyaml",
+ "entries": 11945,
+ "non_str_entries_converted": 0,
+ "multi_char_entries": [],
+ "linebreak_like_entries": [],
+ "space_entries": [],
+ "duplicates": 0,
+ "expected_model_classes_if_blank_and_space_added": 11947,
+ "sha256": "a88071c68c01707489baa79ebe0405b7beb5cca229f4fc94cc3ef992328802d7",
+ "file": "engines/data/ppocrv5_korean_dict.txt"
+}

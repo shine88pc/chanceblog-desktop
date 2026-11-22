@@ -1,0 +1,73 @@
+name: "Package OCR — 글자 읽기 추가 도구 빌드(수동, 개인 PC 제한 시험용)"
+
+# 글자 읽기 추가 도구(ocr_addon/ — 사진 속 글자를 이 PC 안에서만 읽는 별도 프로세스 작업자)를 GitHub 의 Windows 러너에서 만든다(운영자 확인 026 ②·028 ② 의 d 단계, docs/PACKAGE_OCR.md, 결정 D-527 에서 D-533).
+# 본체 Package 흐름(package.yml)과 같은 조건이다: 수동 실행(workflow_dispatch)만 — 푸시·PR·예약 실행으로는 돌지 않고 입력칸도 없다(글을 받아 명령에 넣는 길이 없다).
+# 읽기 권한만 쓰고(permissions: contents: read) 비밀 값(secrets.*)·토큰을 쓰지 않으며 서명·릴리스 게시 단계가 없다(미서명 추가 도구). 액션은 package.yml 과 같은 전체 커밋 SHA 셋뿐이다(새 액션 0).
+# 밖으로 나가는 곳은 둘: ① 파이썬 패키지 저장소(PyPI) — 잠금 파일(해시 포함)대로 --require-hashes 로만 설치 ② 모델 2파일을 받는 Hugging Face — 커밋 고정 주소·크기·SHA-256 대조(ocr_addon/fetch_models.py).
+# 올리는 것은 압축 파일·SHA256SUMS·PACKAGE_INFO.json 셋뿐이다(보존 14일 — 본체의 허용 목록 모양 안: tests/test_workflow_artifacts.py). 빌드 로그·work·spec 은 올리지 않는다.
+# 단계마다 명령은 하나다(PowerShell 은 중간 명령이 실패해도 마지막 명령의 종료 코드만 보므로 — 빌드 점검이 실패하면 이 흐름이 빨갛게 끝나야 한다).
+# 이 흐름이 GitHub 러너에서 끝까지 도는지는 병합 전에 확인하지 못했다 — 병합 뒤 운영자가 수동으로 한 번 돌려 봐야 한다(막힐 수 있는 곳: 모델 받기 속도·차단, 빌드 시간).
+# T3(.github 변경) — 운영자 승인 전에는 병합하지 않는다. 이 파일은 NO-MERGE 가지에 준비만 해 둔 것이다.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-ocr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package-ocr:
+    name: 글자 읽기 추가 도구 만들기 (Windows, Python 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      # checkout·setup-python·upload-artifact 의 SHA 와 버전 주석은 package.yml 의 같은 줄과 같은 값이다(새 액션을 더하지 않는다 — 시험이 지킨다).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: OCR 가상환경 만들기(러너에 미리 깔린 패키지가 묶음에 섞이지 않게)
+        run: python -m venv "$env:RUNNER_TEMP/ocr-venv"
+
+      - name: 잠금 파일(해시 포함)의 패키지 21개를 해시 검사로 설치
+        run: '& "$env:RUNNER_TEMP/ocr-venv/Scripts/python.exe" -m pip install --require-hashes --only-binary=:all: -r ocr_addon/requirements-ocr.lock'
+
+      - name: 빌드 도구(PyInstaller 등)를 해시 검사로 설치
+        run: '& "$env:RUNNER_TEMP/ocr-venv/Scripts/python.exe" -m pip install --require-hashes --only-binary=:all: -r ocr_addon/requirements-build.txt'
+
+      - name: 설치된 패키지끼리 맞는지 확인
+        run: '& "$env:RUNNER_TEMP/ocr-venv/Scripts/python.exe" -m pip check'
+
+      - name: 모델 2파일 받기(커밋 고정 주소·크기·SHA-256 대조, 다르면 실패)
+        run: python ocr_addon/fetch_models.py --dest "$env:RUNNER_TEMP/ocr_models"
+
+      - name: 추가 도구 만들기(동결·쓰지 않는 것 제거·묶음 점검 R1에서 R4·자가 점검·결정적 zip·정보 파일)
+        run: '& "$env:RUNNER_TEMP/ocr-venv/Scripts/python.exe" ocr_addon/build_ocr_addon.py all --out-dir "$env:RUNNER_TEMP/ocr" --models-dir "$env:RUNNER_TEMP/ocr_models" --require-clean'
+
+      # 올리기 전에 만든 압축 파일·SHA256SUMS·PACKAGE_INFO.json 을 빌드 스크립트의 말이 아니라 파일 자체에서 다시 읽는다(해시·크기·파일 목록, 모델 잠금 값, 그리고 라이선스 고지 파일 licenses/·THIRD_PARTY_NOTICES.txt 가 압축 파일 안에 있는지 — 운영자 확인 030 ②). 어긋나면 이 단계가 빨갛게 끝나 아무것도 올라가지 않는다.
+      - name: 산출물 점검(압축 파일의 해시·크기·파일 목록과 라이선스 고지 파일이 들어 있는지)
+        run: python ocr_addon/verify_release.py --release "$env:RUNNER_TEMP/ocr/release"
+
+      - name: SHA-256 보기(공개 값이다 — 운영자가 개인 PC 에서 대조한다)
+        run: Get-Content "$env:RUNNER_TEMP/ocr/release/SHA256SUMS"
+
+      - name: 올리기(압축 파일·SHA256SUMS·PACKAGE_INFO.json 만, 14일)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: ChanceBlogDesktop-OCR-preview
+          path: |
+            ${{ runner.temp }}/ocr/release/ChanceBlogDesktop-OCR-*-win64.zip
+            ${{ runner.temp }}/ocr/release/SHA256SUMS
+            ${{ runner.temp }}/ocr/release/PACKAGE_INFO.json
+          retention-days: 14
+          if-no-files-found: error
