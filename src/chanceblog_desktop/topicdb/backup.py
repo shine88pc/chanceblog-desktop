@@ -21,6 +21,8 @@ from contextlib import closing
 from pathlib import Path
 from typing import NamedTuple
 
+from ..content.schema_guard import describe as describe_foreign
+from ..content.schema_guard import foreign_kinds
 from ..content.store import _read_only_uri
 from ..echo import shown_topic_backup
 from ..errors import AppError
@@ -252,6 +254,13 @@ def _database_problem(path):
     return problems[0] if problems else None
 
 
+def _structure_problem(path):
+    """되돌릴 SQLite 사본에 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …)가 있으면 그 종류를 말하는 글, 없으면 None(L8, D-554) — 읽기 전용으로 열어 읽기만 한다. 읽을 수 없으면 `sqlite3.Error`."""
+    with closing(sqlite3.connect(_read_only_uri(path), uri=True)) as database:
+        found = foreign_kinds(database, TopicStore.SCHEMA)
+    return describe_foreign(found) if found else None
+
+
 def list_backups(folder):
     """백업 폴더들(이름이 앱이 만드는 모양인 것만, 새 것이 먼저)."""
     folder = Path(folder)
@@ -472,6 +481,12 @@ def read_backup(folder):
     manifest, contents = _verify_folder(folder)
     for name, data in contents.items():
         if name == layout.ENGINE_DB_FILE:
+            try:
+                foreign = _structure_problem(folder / name)                                    # 조작한 보관함의 트리거·뷰가 통째 복사로 들어오지 못하게 — 내용을 훑기 전에 구조부터
+            except sqlite3.Error as error:
+                raise _invalid(folder, "백업 안의 보관함을 읽을 수 없습니다", detail=detail_of(error)) from None
+            if foreign:
+                raise _invalid(folder, "백업 안의 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있어 쓰지 않습니다", detail=f"앱이 만들지 않는 구조: {foreign}")
             try:
                 _scan_database(folder / name)
             except AppError:

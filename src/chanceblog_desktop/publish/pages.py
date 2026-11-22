@@ -30,7 +30,8 @@ from .. import capabilities
 from ..core import use_vendored_core
 from ..errors import UNEXPECTED, AppError
 from ..render.pages import front_matter_problems
-from ..security.mask import _INVISIBLE, _strip_invisible, mask       # 비밀을 눈에 안 보이는 글자로 쪼갠 것도 찾으려고 같은 패키지의 정리 함수를 쓴다
+from ..security import scan
+from ..security.mask import _INVISIBLE, _strip_invisible, has_key_shape_anywhere, mask       # 비밀을 눈에 안 보이는 글자로 쪼갠 것도 찾으려고 같은 패키지의 정리 함수를 쓴다
 from . import gitrepo
 from .gitrepo import EXPECTED_ORIGIN, MAIN, inspect_repo, run_git, sync_latest
 
@@ -66,6 +67,18 @@ def _bad(item, detail=""):
     return AppError("CONTENT_INVALID", {"항목": item}, detail=detail)
 
 
+def secret_labels(text):
+    """글 속 키·토큰 모양의 이름들(중복 없이, 없으면 빈 집합) — 올리기 직전 마지막 관문이 앱의 **모든** 모양 목록을 본다(L8 F069, 결정 D-556): ① 정본(vendor/)의 이름 있는 패턴 ② 본문 속 비밀 형태 검사기의 여섯 유형(`security/scan.py`)
+    ③ 앱의 가리기 목록(`security/mask.has_key_shape` — `sk-proj-`·Anthropic·npm·JWT·Bearer·Slack 웹훅·개인 키 머리말과 최근에 생긴 접두사 모양)을 글 끝까지. 예전에는 ①만 봐서 복사 관문·저장 관문이 막는 모양을 이 관문이 놓쳤다.
+    값은 돌려주지 않는다 — 이름뿐이다. 눈에 안 보이는 글자로 쪼갠 키도 같은 방식으로 찾는다."""
+    view = _strip_invisible(text)
+    found = {label for label, _preview in find_secrets(view)}
+    found.update(scan.KIND_LABELS[item.kind] for item in scan.scan_secrets(view))
+    if not found and has_key_shape_anywhere(view):
+        found.add("키·토큰 모양")
+    return found
+
+
 def check_post(post):
     """글(경로·내용)이 올려도 되는 모양인지. 아니면 AppError. 파일·저장소는 건드리지 않는다."""
     path = getattr(post, "path", None)
@@ -96,9 +109,9 @@ def check_post(post):
     problems = front_matter_problems(text)
     if problems:
         raise _bad("머리말", detail="; ".join(problems))
-    secrets = find_secrets(_strip_invisible(text))
+    secrets = secret_labels(text)
     if secrets:
-        raise AppError("SECRET_IN_TEXT_BLOCKED", detail="키 모양 문자열: " + ", ".join(sorted({label for label, _ in secrets})))
+        raise AppError("SECRET_IN_TEXT_BLOCKED", detail="키 모양 문자열: " + ", ".join(sorted(secrets)))
 
 
 def _inside(root, target):
@@ -232,7 +245,7 @@ def commit_post(repo_path, post, *, title="", git=run_git, expected_origin=EXPEC
     """연결한 저장소를 최신으로 맞추고 글 파일을 써서 그 파일만 commit 한다(올리지는 않는다). 같은 글(주소)이 이미 있으면 DUPLICATE_SLUG."""
     capabilities.require_external_write("글 파일 기록(commit)")      # 외부 Write 관문 — 이 시험 버전은 꺼져 있어 git 을 부르기 전에 거절한다
     check_post(post)
-    if find_secrets(_strip_invisible(str(title or ""))):
+    if secret_labels(str(title or "")):
         raise AppError("SECRET_IN_TEXT_BLOCKED", detail="commit 제목에 키 모양 문자열이 있다")           # 제목은 공개 저장소의 commit 기록에 그대로 남는다
     try:
         info = sync_latest(repo_path, git, expected_origin)

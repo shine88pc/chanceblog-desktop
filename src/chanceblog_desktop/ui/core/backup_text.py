@@ -59,6 +59,7 @@ BACKUP_T = {
     "backup_fail_io": "파일을 쓰지 못했어요(읽기 전용이거나 다른 프로그램이 쓰고 있을 수 있어요). 만들던 것은 남기지 않았고 지금 데이터는 그대로예요.",
     "backup_fail_restore": "복원하다 문제가 생겼어요. 지금까지 바꾼 것은 원래대로 돌려 두었어요.",
     "backup_fail_restore_left": "복원하다 문제가 생겼어요. 아래 것은 원래대로 돌리지 못했어요 — 원래 내용은 ‘복원 직전 사본’ 에 있으니 그 사본으로 다시 복원해 주세요.",
+    "backup_invalid_structure": "이유: 백업 안의 보관함에 앱이 만들지 않는 구조(트리거·뷰 — 저장할 때 몰래 도는 동작이나 표 행세를 하는 목록 같은 것)가 들어 있어요. 누가 고쳤거나 다른 프로그램이 만든 백업일 수 있어서 복원하지 않았어요.",
     "backup_restore_reason_disk": "이유: 저장 공간이 모자랐어요.", "backup_restore_reason_io": "이유: 파일을 쓰지 못했어요(읽기 전용이거나 다른 프로그램이 쓰고 있을 수 있어요).",
     "backup_restore_reason_corrupt": "이유: 바꾼 뒤 다시 읽어 보니 온전하지 않았어요.", "backup_restore_reason_busy": "이유: 다른 곳에서 데이터를 쓰고 있었어요.", "backup_restore_reason_other": "이유: 예상하지 못한 문제가 생겼어요.",
     "backup_fail_other": "처리하지 못했어요. 다시 시도해도 같으면 아래 진단 정보를 함께 알려 주세요.", "backup_fail_notes_sample": "예시 파일은 원래대로 돌리지 못했어요",
