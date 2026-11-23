@@ -1,10 +1,10 @@
-"""AS2-B 묶음(결정 D-605에서 D-615)의 작은 것들과 문서 사실을 지키는 시험 — 백업 설정 경로 안내 한 줄·`--noupx`·'업데이트 경로 없음' 두 줄·결정 행·SECURITY.md 새 절·CHANGELOG(AS-S1 참고-11·20·21).
+"""AS2-B 묶음(결정 D-605에서 D-619)의 작은 것들과 문서 사실을 지키는 시험 — 백업 설정 경로 안내 한 줄·`--noupx`·'업데이트 경로 없음' 두 줄·결정 행·SECURITY.md 새 절·CHANGELOG(AS-S1 참고-11·20·21).
 
 지키는 것:
   1) `INCLUDED_PATH_NOTE` — 백업의 설정 파일에 연결한 폴더의 전체 경로가 들어간다는 안내 한 줄. '담지 않는 것' 목록(`EXCLUDED`)·백업 목록의 칸은 그대로다(그 모양은 다른 시험이 못박는다).
   2) `pyinstaller_args` 가 `--noupx` 를 명시한다 — UPX 는 PATH 에 있을 때만 쓰이던 것(결정적 빌드). 동작은 UPX 를 쓰지 않는 쪽뿐이다.
   3) `docs/SECURITY.md` §1 과 §3 에 '이 시험 버전에는 업데이트 경로가 없다(미구현 설계)' 가 한 번씩 덧붙었고 **기존 줄은 한 글자도 안 바뀌었다**. 새 절은 파일 끝에 하나뿐이다.
-  4) 결정 행 D-605에서 D-615 가 번호 순서대로 한 줄씩(앞 묶음의 D-594 행 바로 뒤에 빈 줄 없이) 있고, 새 글에 ASCII 물결표·http 링크가 없다. CHANGELOG 에 한 줄이 있다.
+  4) 결정 행 D-605에서 D-619 가 번호 순서대로 한 줄씩(앞 묶음의 D-594 행 바로 뒤에 빈 줄 없이) 있고, 새 글에 ASCII 물결표·http 링크가 없다. CHANGELOG 에 한 줄이 있다.
 """
 import re
 import sys
@@ -17,7 +17,7 @@ from chanceblog_desktop.security import backup_note
 
 ROOT = ps.ROOT
 bp = ps.build_package
-NEW_HEADING = "## 백업·복원·키·시험 훑기 감사(AS-S1) 필수·권고 처리 — 허용 목록·되돌리기·링크·WAL (D-605에서 D-615, 2026-11-23)"
+NEW_HEADING = "## 백업·복원·키·시험 훑기 감사(AS-S1) 필수·권고 처리 — 허용 목록·되돌리기·링크·WAL (D-605에서 D-619, 2026-11-23)"
 UPDATE_SENTENCE = "이 시험 버전에는 업데이트 경로가 없다"
 # 이 묶음 앞의 SECURITY.md §1 다섯째 표 줄과 §3 본문 — 바뀌지 않았다.
 OLD_SECTION1_ROW = "| 업데이트 서명 개인키 | GitHub Environment 시크릿 `UPDATE_SIGNING_KEY` + 운영자의 오프라인 백업 2곳 | 없음(공개키는 앱에 내장·저장소에 있음) |"
@@ -101,7 +101,7 @@ class SecurityDocTest(unittest.TestCase):
         headings = [line for line in self.text.splitlines() if line.startswith("## ")]
         self.assertGreater(headings.index(NEW_HEADING), headings.index("## 3. 업데이트 보안"), "새 절은 기존 절 뒤에 덧붙었다")
         section = self.section_text()
-        for word in ("정정", "_plain_local_shape", "restore_from", "`_is_link`", "WAL", "Win32CredApi.exists", "client_id", "ctypes", "vendor/", "RecursionError", "D-605", "D-615"):
+        for word in ("정정", "_plain_local_shape", "restore_from", "`_is_link`", "WAL", "Win32CredApi.exists", "client_id", "ctypes", "vendor/", "RecursionError", "D-605", "D-615", "D-616", "D-617", "D-618", "D-619", "_opened_text", "journal_mode=DELETE", "HONEST_LIMITS", "정직한 코드의 회귀 그물"):
             self.assertIn(word, section, word)
 
     def test_the_limit_eight_supplement_is_a_new_line_after_the_old_limits_paragraph(self):
@@ -122,15 +122,46 @@ class SecurityDocTest(unittest.TestCase):
                 self.assertNotIn(unfinished, text)
 
 
+class SecondRoundDocsTest(unittest.TestCase):
+    """2차(안전 검증 S·시험 렌즈 Q 지적, D-616에서 D-619) — 문서가 고친 것과 하지 않은 것을 사실대로 적는다."""
+
+    def setUp(self):
+        self.text = read("docs/SECURITY.md")
+        self.section = self.text[self.text.index(NEW_HEADING):]
+        following = self.section.find("\n## ", len(NEW_HEADING))
+        self.section = self.section if following < 0 else self.section[:following]
+
+    def test_each_second_round_fix_is_marked_in_the_section_with_its_limit(self):
+        for marker in ("**2차(D-616):**", "**2차(D-617):**", "**2차(D-618): 폴더 자신과 그 바로 아래 항목까지**", "**2차(D-619)**"):
+            with self.subTest(marker=marker):
+                self.assertEqual(self.section.count(marker), 1)
+        self.assertIn("`Context.repo_path`", self.section, "사용자가 정한 경로에는 가드를 걸지 않았다는 한계")
+        self.assertIn("그 위(데이터 폴더·`backups` 의 윗 폴더)가 링크인 경우는 같은 사용자의 선택이라 따라간다", self.section)
+        self.assertIn("링크인 폴더에 새 사본을 쓰는 쪽(백업 만들기)은 막지 않는다", self.section)
+        self.assertIn("이 수정 전에 만든 사본이 WAL 머리면 앱 밖 도구로 열어야 한다", self.section)
+
+    def test_the_source_scan_is_called_a_regression_net_for_honest_code_in_both_places_and_its_limits_are_kept(self):
+        self.assertGreaterEqual(self.text.count("정직한 코드의 회귀 그물"), 2, "L135 의 한계 줄과 새 절 둘 다")
+        self.assertIn("**의도적** 우회는 막지 못하고", self.text, "옛 한계(D-359)는 그대로 남는다")
+        for limit in ("timeit", "cProfile", "pdb", "operator.attrgetter", "compile", "module_from_spec", "ATTACH"):
+            with self.subTest(limit=limit):
+                self.assertIn(limit, self.section)
+
+    def test_the_carried_over_second_round_notes_are_listed_as_limits(self):
+        for note in ("`same_database` 는 두 보관함의 판이 다르면 표마다 행 수만 견준다", "`.restoring` 을 O_EXCL 로 만들지 않는다", "name surrogate", "`INCLUDED_PATH_NOTE`", "한계 ⑦ 과 같은 부류"):
+            with self.subTest(note=note):
+                self.assertIn(note, self.section)
+
+
 class DecisionRowsTest(unittest.TestCase):
     def rows(self):
         lines = read("docs/DECISIONS.md").splitlines()
-        return lines, [number for number, line in enumerate(lines) if re.match(r"\| D-6(0[5-9]|1[0-5]) \|", line)]
+        return lines, [number for number, line in enumerate(lines) if re.match(r"\| D-6(0[5-9]|1[0-9]) \|", line)]
 
-    def test_rows_605_to_615_are_in_order_on_one_line_each_right_after_the_previous_rows(self):
+    def test_rows_605_to_619_are_in_order_on_one_line_each_right_after_the_previous_rows(self):
         lines, found = self.rows()
-        self.assertEqual(len(found), 11)
-        self.assertEqual(found, list(range(found[0], found[0] + 11)), "빈 줄 없이 이어 붙인다")
+        self.assertEqual(len(found), 15)
+        self.assertEqual(found, list(range(found[0], found[0] + 15)), "빈 줄 없이 이어 붙인다")
         for offset, number in enumerate(found):
             self.assertTrue(lines[number].startswith(f"| D-{605 + offset} | 2026-11-23 | **"), lines[number][:30])
             self.assertEqual(lines[number].count(" | "), 3, "번호 · 날짜 · 결정 · 상태 — 네 칸")
@@ -146,11 +177,14 @@ class DecisionRowsTest(unittest.TestCase):
             for number in numbers:
                 with self.subTest(item=f"{kind}-{number}"):
                     self.assertRegex(text, kind + r"-(?:[0-9]+·)*" + str(number) + r"(?![0-9])")
+        for needle in ("안전 검증 S 필수-1", "S 권고-1", "S 권고-2", "S 권고-3", "시험 렌즈 Q 필수-2·3·4·권고-1·참고-2·3·4", "Q 필수-2", "Q 필수-3", "Q 필수-4", "Q 참고"):
+            with self.subTest(item=needle):
+                self.assertIn(needle, text)
         self.assertNotIn(chr(126), text)
         self.assertNotRegex(text, r"(?i)(https?|ftp)://|www[.]")
 
     def test_changelog_has_the_one_line(self):
-        lines = [line for line in read("CHANGELOG.md").splitlines() if "D-605 에서 D-615" in line]
+        lines = [line for line in read("CHANGELOG.md").splitlines() if "D-605 에서 D-619" in line]
         self.assertEqual(len(lines), 1)
         self.assertTrue(lines[0].startswith("- 백업·복원·키·시험 훑기 독립 감사(AS-S1)"))
         self.assertNotIn(chr(126), lines[0])
