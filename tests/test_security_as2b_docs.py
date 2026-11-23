@@ -90,12 +90,17 @@ class SecurityDocTest(unittest.TestCase):
         self.assertLess(section1.index(OLD_SECTION1_ROW), section1.index(UPDATE_SENTENCE), "표 줄 뒤에 덧붙였다")
         self.assertLess(section3.index("서명이 없거나 어긋나면 업데이트를 거부한다."), section3.index(UPDATE_SENTENCE))
 
-    def test_the_new_section_is_the_last_one_and_there_is_exactly_one_of_it(self):
+    def section_text(self):
+        """이 묶음의 새 절 하나만(뒤에 다른 갈래의 절이 덧붙어도 그 앞까지만)."""
+        section = self.text[self.text.index(NEW_HEADING):]
+        following = section.find("\n## ", len(NEW_HEADING))
+        return section if following < 0 else section[:following]
+
+    def test_the_new_section_exists_exactly_once_after_the_old_ones(self):
         self.assertEqual(self.text.count(NEW_HEADING), 1)
         headings = [line for line in self.text.splitlines() if line.startswith("## ")]
-        self.assertEqual(headings[-1], NEW_HEADING, "다른 갈래의 절이 뒤에 덧붙을 수 있다 — 이 묶음의 절은 하나다")
-        section = self.text[self.text.index(NEW_HEADING):]
-        self.assertNotIn("\n## ", section[len(NEW_HEADING):])
+        self.assertGreater(headings.index(NEW_HEADING), headings.index("## 3. 업데이트 보안"), "새 절은 기존 절 뒤에 덧붙었다")
+        section = self.section_text()
         for word in ("정정", "_plain_local_shape", "restore_from", "`_is_link`", "WAL", "Win32CredApi.exists", "client_id", "ctypes", "vendor/", "RecursionError", "D-605", "D-615"):
             self.assertIn(word, section, word)
 
@@ -108,8 +113,8 @@ class SecurityDocTest(unittest.TestCase):
         self.assertIn("이름이 먼저 나간다", lines[old], "기존 줄은 그대로다")
 
     def test_the_new_text_has_no_ascii_tilde_no_link_and_nothing_unfinished(self):
-        section = self.text[self.text.index(NEW_HEADING):]
-        extra = "\n".join(line for line in self.text.splitlines() if UPDATE_SENTENCE in line or line.startswith("**한계 ⑧ 보충"))
+        section = self.section_text()
+        extra ="\n".join(line for line in self.text.splitlines() if UPDATE_SENTENCE in line or line.startswith("**한계 ⑧ 보충"))
         for text in (section, extra):
             self.assertNotIn(chr(126), text)
             self.assertNotRegex(text, r"(?i)(https?|ftp)://|www[.]")

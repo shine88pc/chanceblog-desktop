@@ -450,7 +450,7 @@ class EngineFile:
                         source.backup(self._db)
                     except sqlite3.Error as error:
                         raise store_error(error, self.path) from None
-                    overwritten = True                            # 여기부터는 지금 저장소가 백업 내용으로 덮여 있다 — 아래에서 무슨 일이 나도 덮기 전 내용으로 되돌린다
+                    overwritten = True                            # 여기부터는 지금 저장소가 백업 내용으로 덮여 있다 — 되돌리기를 켰으면 아래에서 무슨 일이 나도 덮기 전 내용으로 되돌린다
                 self._prepare(fresh=False)                         # 옛 구조의 백업이면 지금 구조로 올린다
             except BaseException as error:
                 if overwritten and not (undo is not None and self._undo_overwrite(undo)):
