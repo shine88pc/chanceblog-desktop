@@ -6,7 +6,7 @@
   단계를 따로: freeze · assemble · remove · notices · check · info · zip   (같은 --out-dir 를 주면 이어서 한다)
 재료: 모델 2개는 --models-dir(안에 det·rec 폴더), 글자 사전은 ocr_addon/data/, 모두 models.lock.json 의 크기·SHA-256 과 대조한다. 가짜 requests(stubs/requests.py)로 requests 계열을 대신하고 뺀다.
 제거(remove): rapidocr 휠에 든 쓰지 않는 기본 모델 3개(31.7MB) · opencv 의 FFmpeg DLL(opencv_videoio_ffmpeg*.dll) · certifi 의 cacert.pem.
-고지(notices, 운영자 확인 030 ② — 점검 앞): 묶음 폴더에 licenses/(묶음에 든 부품마다 설치된 패키지에서 읽은 라이선스 전문 — GEOS 의 LICENSE_GEOS 를 못 찾으면 빌드를 멈춘다)와 THIRD_PARTY_NOTICES.txt(제3자 부품 표·GEOS 안내·MPL-2.0 고지)를 만들고
+고지(notices, 운영자 확인 030 ② — 점검 앞): 묶음 폴더에 licenses/(묶음에 든 부품마다 설치된 패키지에서 읽은 라이선스 전문 — GEOS 의 LICENSE_GEOS 를 못 찾으면 빌드를 멈춘다)와 THIRD_PARTY_NOTICES.txt(제3자 부품 표·GEOS 안내와 바꿔 끼운 뒤 주의·MPL-2.0 고지·뺀 것·모델 2개와 글자 사전의 이름·출처·라이선스 표기 [5] 절)를 만들고
   GEOS 기록(geos.json)을 남긴다 — 점검(check)보다 앞에서 만들어야 R2(금지 이름)·키 모양 훑기가 이 파일들도 보고 정보 파일(OCR_INFO.json)의 파일 목록에 들어간다. 정보 파일에는 geos 칸(GEOS 판·별도 파일 목록)을 적는다.
   원본 소스 압축 파일은 넣지 않는다(새 내려받기 없음 — 같은 버전 소스를 공식 배포처에서 받으라고 안내한다).
 점검(check, 규칙은 build_rules.py): R1 가져오기 표(pefile) · R2 묶음 파일·모델 해시 · R3 OpenSSL·진짜 requests 부재 · R4 동결본 --selftest · 묶음 글 파일의 키 모양 · DLL 출처 허용 뿌리 · 설치된 판 = 잠금 판.
@@ -62,6 +62,19 @@ GEOS_SOURCE_HOST = "libgeos.org"                  # GEOS 프로젝트 공식 사
 LICENSE_NAME_RE = re.compile(r"(licen[sc]e|notice|copying|attribution|third.?party)", re.I)
 NOT_LICENSE_SUFFIXES = (".py", ".pyc", ".pyo", ".pyd", ".pyi", ".dll", ".so", ".exe", ".json", ".c", ".cc", ".cpp", ".h", ".hpp")
 GEOS_DLL_RE = re.compile(r"geos(_c)?[-_.0-9a-z]*\.dll", re.I)
+# 고지문 [5] 절(모델 2개·글자 사전의 이름·출처·라이선스 표기, 독립 점검 W1 의 R5): 값은 models.lock.json 과 사전 출처 기록에서 그대로 읽는다. 값이 빠졌거나 모양이 다르면 빌드를 멈춘다(조용히 건너뛰지 않는다).
+DICT_PROVENANCE = "ppocrv5_korean_dict.provenance.json"       # 사전 출처 기록 — 저장소의 data/ 에만 있고 묶음에는 복사하지 않는다(읽기만 한다)
+MODEL_NOTICE_FILES = (("det", "models/det/inference.onnx", "글자 위치를 찾는 모델(PP-OCRv5 검출)"),          # [5] 절의 차례 — 잠금 파일의 줄 순서와 상관없이 고정
+                      ("rec", "models/rec/inference.onnx", "글자를 읽는 모델(PP-OCRv5 한국어 인식)"),
+                      ("dict", "data/ppocrv5_korean_dict.txt", "글자 사전(한국어 인식 모델이 쓰는 글자 목록)"))
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*")
+FILE_RE = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
+LICENSE_TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]{0,39}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+# 고지문 [5] 절에 들어가는 글 값의 모양 = (정규식 — 한 줄·공백 없음, 길이 상한 — 정규식이 길이를 못 정하는 저장소 이름·파일 경로만). 재료를 뽑을 때(model_notice_records·dict_source_facts)와 글이 되기 전(render_notices·write_license_outputs)이 같은 notice_field_ok 로 본다.
+NOTICE_FIELDS = {"repo": (REPO_RE, 200), "file": (FILE_RE, 200), "source_file": (FILE_RE, 200), "commit": (COMMIT_RE, None), "git_blob": (COMMIT_RE, None), "sha256": (SHA256_RE, None), "license_tag": (LICENSE_TAG_RE, None)}
+NOTICE_NUMBER_LIMIT = 10 ** 12                    # 크기·줄 수는 양의 정수(참거짓 아님)이고 이 값 미만 — 한 줄이 길어지지 않게
 
 
 def sha256_file(path):
@@ -484,8 +497,88 @@ def collect_licenses(dst, packages, distribution=None):
     return collected
 
 
-def render_notices(packages, geos, collected, removed=()):
-    """THIRD_PARTY_NOTICES.txt 의 글(순수 함수 — 같은 입력이면 같은 글. 시각처럼 빌드마다 달라지는 값은 없다). 글에는 인터넷 주소의 스킴(앞머리)도 물결표도 쓰지 않는다."""
+def shaped(value, pattern):
+    """글(str)이고 모양(정규식)에 온전히 맞는가(순수 함수) — 빠진 값(None)이 글 'None' 으로 둔갑해 통과하지 못하게 형을 먼저 본다."""
+    return isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def notice_field_ok(field, value):
+    """고지문 [5] 절에 들어가는 글 값 하나가 써도 되는 모양인가(순수 함수) — 글(str)이고, 정해진 모양(한 줄·공백 없음 — 정규식 전체 일치)이고, 길이 상한 안이고, 파일 경로는 . 와 .. 마디가 없다.
+    재료를 뽑을 때와 글이 되기 전이 같은 이 함수로 본다(값의 모양을 한 곳에서만 정한다 — 독립 검증 S 의 SR2)."""
+    pattern, limit = NOTICE_FIELDS[field]
+    if not shaped(value, pattern) or (limit is not None and len(value) > limit):
+        return False
+    return not (field in ("file", "source_file") and {".", ".."} & set(value.split("/")))
+
+
+def check_model_records(models):
+    """고지문 [5] 절에 쓸 기록(model_notice_records 의 결과)의 마지막 점검(순수 함수) — 칸 이름은 정해진 것뿐이고 label·file 은 그 역할의 정해진 값 그대로이며, 글 값은 모두 notice_field_ok, 크기·줄 수는 양의 정수(참거짓 아님, 상한 미만).
+    기록이 어디서 왔든(재료를 뽑는 함수·직접 부른 시험) 글이 되기 전에 같은 문을 지난다 — 어긋나면 BuildError."""
+    fixed = {role: (key, label) for role, key, label in MODEL_NOTICE_FILES}
+    common = {"role", "label", "file", "bytes", "sha256", "repo", "commit", "source_file", "license_tag"}
+    for item in models:
+        role = item.get("role") if isinstance(item, dict) else None
+        if role not in fixed or item.get("file") != fixed[role][0] or item.get("label") != fixed[role][1]:
+            raise BuildError("알 수 없는 모델 칸이 있다 — 고지문 [5] 절을 쓸 수 없다")
+        if set(item) != common | ({"git_blob", "entries"} if role == "dict" else set()):
+            raise BuildError("모델 칸(%s)의 칸 이름이 정해진 것과 다르다 — 고지문 [5] 절을 쓸 수 없다" % role)
+        for field in ("sha256", "repo", "commit", "source_file", "license_tag") + (("git_blob",) if role == "dict" else ()):
+            if not notice_field_ok(field, item[field]):
+                raise BuildError("고지문 [5] 절에 쓸 값의 모양이 다르다(%s 칸의 %s) — 한 줄·공백 없는 정해진 모양과 길이 상한을 지키지 않아 빌드를 멈춘다" % (role, field))
+        for field in ("bytes", "entries") if role == "dict" else ("bytes",):
+            if type(item[field]) is not int or not 0 < item[field] < NOTICE_NUMBER_LIMIT:
+                raise BuildError("고지문 [5] 절에 쓸 숫자의 모양이 다르다(%s 칸의 %s) — 양의 정수가 아니거나 너무 커서 빌드를 멈춘다" % (role, field))
+
+
+def read_dict_provenance():
+    """사전 출처 기록(data/ppocrv5_korean_dict.provenance.json)을 읽는다 — 읽기만 하고 묶음에는 복사하지 않는다. 못 읽으면 BuildError(조용히 건너뛰지 않는다)."""
+    try:
+        return read_json(os.path.join(DATA_DIR, DICT_PROVENANCE))
+    except (OSError, ValueError):
+        raise BuildError("사전 출처 기록(%s)을 읽지 못했다 — 고지문 [5] 절에 사전의 출처를 적을 수 없어 빌드를 멈춘다" % DICT_PROVENANCE) from None
+
+
+def dict_source_facts(entry, provenance):
+    """사전 출처 기록 -> 고지문 [5] 절의 사전 출처 칸(순수 함수 — 파일을 열지 않는다). 잠금 파일의 사전(entry)과 같은 파일(크기·SHA-256)의 기록일 때만 쓴다 — 아니면 BuildError."""
+    record = provenance if isinstance(provenance, dict) else {}
+    derived = record.get("derived_from") if isinstance(record.get("derived_from"), dict) else {}
+    lines_count, tag = record.get("lines"), record.get("license_tag")
+    if not (derived.get("kind") == "huggingface" and notice_field_ok("repo", derived.get("repo")) and notice_field_ok("commit", derived.get("commit")) and notice_field_ok("source_file", derived.get("file"))
+            and notice_field_ok("git_blob", derived.get("git_blob")) and type(lines_count) is int and 0 < lines_count < NOTICE_NUMBER_LIMIT and notice_field_ok("license_tag", tag)):
+        raise BuildError("사전 출처 기록(%s)의 모양이 다르다 — 고지문 [5] 절에 사전의 출처를 적을 수 없어 빌드를 멈춘다" % DICT_PROVENANCE)
+    if record.get("bytes") != entry["bytes"] or record.get("sha256") != entry["sha256"]:
+        raise BuildError("사전 출처 기록(%s)의 크기·SHA-256 이 잠금 파일의 사전 값과 다르다 — 다른 파일의 출처를 고지문에 적을 수 없어 빌드를 멈춘다" % DICT_PROVENANCE)
+    return {"repo": derived["repo"], "commit": derived["commit"], "source_file": derived["file"], "git_blob": derived["git_blob"], "entries": lines_count, "license_tag": tag}
+
+
+def model_notice_records(lock, provenance):
+    """고지문 [5] 절에 적을 사실 — 모델 2개(검출·인식)와 글자 사전의 파일·크기·SHA-256·출처(저장소·커밋·파일)·라이선스 표기 — 를 잠금 파일(models.lock.json)과 사전 출처 기록에서 그대로 뽑는다(순수 함수 — 파일을 열지 않는다) -> 검출·인식·사전 순의 목록.
+    사실만 옮긴다: 어느 칸이든 없거나 모양이 다르면, 사전 출처 기록이 잠금 파일의 사전과 다른 파일의 기록이면 BuildError — 조용히 건너뛰지 않는다."""
+    problems = rules.lock_problems(lock)
+    if problems:
+        raise BuildError("models.lock.json 점검 실패(고지문 [5] 절을 쓸 수 없다): " + " / ".join(problems))
+    entries = {entry["key"]: entry for entry in lock["files"]}
+    records = []
+    for role, key, label in MODEL_NOTICE_FILES:
+        entry = entries.get(key)
+        if entry is None:
+            raise BuildError("models.lock.json 에 %s 칸이 없다 — 고지문 [5] 절을 쓸 수 없어 빌드를 멈춘다" % key)
+        record = {"role": role, "label": label, "file": key, "bytes": entry["bytes"], "sha256": entry["sha256"]}
+        if role == "dict":
+            record.update(dict_source_facts(entry, provenance))
+        else:
+            source, tag = entry["source"], entry.get("license_tag")
+            if source.get("kind") != "huggingface" or not notice_field_ok("license_tag", tag):
+                raise BuildError("models.lock.json 의 %s 칸에서 출처(Hugging Face 저장소·커밋)나 라이선스 표기(license_tag)를 읽지 못했다 — 고지문 [5] 절에 적을 수 없어 빌드를 멈춘다" % key)
+            record.update({"repo": source["repo"], "commit": source["commit"], "source_file": source["path"], "license_tag": tag})
+        records.append(record)
+    check_model_records(records)                                  # 잠금 쪽 값(저장소·커밋·경로·SHA-256 의 길이 상한 따위)도 사전 쪽과 같은 문을 지난다
+    return records
+
+
+def render_notices(packages, geos, collected, removed=(), models=None):
+    """THIRD_PARTY_NOTICES.txt 의 글(순수 함수 — 같은 입력이면 같은 글. 시각처럼 빌드마다 달라지는 값은 없다). 글에는 인터넷 주소의 스킴(앞머리)도 물결표도 쓰지 않는다.
+    models 는 model_notice_records 의 결과 — 있으면 [5] 절(모델 2개·글자 사전의 이름·출처·라이선스 표기)을 덧붙인다(옛 호출 모양에는 그 절이 없다 — 파일을 쓰는 write_license_outputs 는 models 가 모두 없으면 멈춘다)."""
     bundled = sorted((p for p in packages if p.get("bundled_in_dist")), key=lambda item: item["name"])
     lines = ["글자 읽기 추가 도구 — 제3자 부품 고지 (THIRD_PARTY_NOTICES.txt)",
              "이 파일은 추가 도구를 만들 때 빌드가 자동으로 만든다. 법률 자문이 아니라 부품 파일에 적힌 표기를 옮긴 안내다. 운영자 확인 030 ② 에 따라 라이선스 전문(licenses 폴더)·이 고지문·소스 안내문을 이 폴더에 함께 둔다.",
@@ -503,6 +596,7 @@ def render_notices(packages, geos, collected, removed=()):
               "- 이 묶음의 GEOS 판: %s (OCR_INFO.json 의 geos 칸에도 같은 값이 적혀 있다)." % geos["version"],
               "- 라이선스 전문: " + geos["license_file"],
               "- 원본 소스: 이 묶음에는 원본 소스 압축 파일을 넣지 않았다. GEOS 프로젝트(공식 사이트 %s)가 공개 배포하는 같은 버전 소스를 받으세요(버전은 OCR_INFO.json 의 geos 칸)." % geos["source_host"],
+              "- 바꿔 끼운 뒤: GEOS 파일을 바꾸면 OCR_INFO.json 의 files 목록에서 그 파일의 항목(path 가 그 파일인 항목)의 bytes(크기)와 sha256(SHA-256)도 새 파일에 맞게 고쳐야 이 추가 도구를 쓰는 앱이 받아들인다 — 앱은 정보 파일의 목록과 크기·SHA-256 이 다른 파일이 하나라도 있으면 이 추가 도구를 쓰지 않는다.",
               "",
               "[3] MPL-2.0 조건의 부품 — 고지"]
     mpl = [p for p in bundled if "MPL-2.0" in str(p.get("license_metadata"))]
@@ -517,6 +611,19 @@ def render_notices(packages, geos, collected, removed=()):
         lines.append("- 이 묶음에는 MPL-2.0 조건의 부품이 없다.")
     if any("opencv_videoio_ffmpeg" in str(item.get("path", "")) for item in removed if isinstance(item, dict)):
         lines += ["", "[4] 이 묶음에서 뺀 것", "- opencv 휠의 FFmpeg DLL(opencv_videoio_ffmpeg*.dll, 파일에 LGPL-2.1 로 적혀 있음)은 쓰지 않아 이 묶음에서 제거했다."]
+    if models:
+        check_model_records(models)                                                      # 값마다 마지막 모양 점검(한 줄·공백 없음·길이 상한) — 직접 불러도 같은 문을 지난다
+        order = {role: index for index, (role, _key, _label) in enumerate(MODEL_NOTICE_FILES)}
+        lines += ["", "[5] 모델과 글자 사전 — 이름·출처·라이선스 표기 (빌드가 소스의 models.lock.json 과 사전 출처 기록에서 그대로 옮긴 값)"]
+        for item in sorted(models, key=lambda record: order[record["role"]]):
+            origin = "파일 %s" % item["source_file"] + ("(git blob %s)" % item["git_blob"] if item.get("git_blob") else "")
+            lines.append("- %s: 파일 %s (%d바이트, SHA-256 %s)" % (item["label"], item["file"], item["bytes"], item["sha256"]))
+            lines.append("  출처: Hugging Face 저장소 %s · 커밋 %s · %s" % (item["repo"], item["commit"], origin))
+            if item["role"] == "dict":
+                lines.append("  만든 방법: 그 파일의 character_dict 목록 %d개를 순서·내용 그대로 한 줄에 한 글자씩 옮겨 적었다." % item["entries"])
+            lines.append("  라이선스 표기: %s (그 저장소 카드의 license 태그)" % item["license_tag"])
+        lines += ["- 라이선스 표기의 근거는 위 저장소 카드의 license 태그뿐이다(카드 본문은 사실상 비어 있다). 원본 PaddleOCR 의 라이선스 본문은 확인하지 못했다.",
+                  "- 이 모델·사전 전용 라이선스 전문 파일은 licenses 폴더에 없다(licenses 폴더의 파일은 파이썬 부품이 자기 패키지에 넣어 둔 것을 모은 것이다)."]
     lines += ["", "그 밖의 부품(MIT·BSD·Apache-2.0 등)의 고지 조건은 licenses 폴더의 라이선스 전문 파일로 지킨다."]
     return "\n".join(lines) + "\n"
 
@@ -542,8 +649,12 @@ def missing_outputs(paths):
     return missing
 
 
-def write_license_outputs(dst, packages, removed=(), distribution=None, geos_version=None):
-    """licenses/ 폴더와 THIRD_PARTY_NOTICES.txt 를 dst 안에 만든다 -> GEOS 기록(dict — OCR_INFO.json 의 geos 칸). 하나라도 못 만들면 BuildError(조용히 건너뛰지 않는다)."""
+def write_license_outputs(dst, packages, removed=(), distribution=None, geos_version=None, models=None):
+    """licenses/ 폴더와 THIRD_PARTY_NOTICES.txt 를 dst 안에 만든다 -> GEOS 기록(dict — OCR_INFO.json 의 geos 칸). 하나라도 못 만들면 BuildError(조용히 건너뛰지 않는다).
+    models 는 model_notice_records 의 결과(검출·인식·사전 셋) — 하나라도 없으면 [5] 절을 쓸 수 없어 아무것도 쓰기 전에 멈춘다."""
+    if not isinstance(models, (list, tuple)) or sorted(str(item.get("role")) if isinstance(item, dict) else "?" for item in models) != sorted(role for role, _key, _label in MODEL_NOTICE_FILES):
+        raise BuildError("모델 2개·글자 사전의 고지 기록(models)이 모두 있어야 한다 — 고지문 [5] 절을 쓸 수 없어 빌드를 멈춘다")
+    check_model_records(models)                                                          # 값의 모양도 아무것도 쓰기 전에 본다(render_notices 도 같은 점검을 다시 한다)
     if not any(p.get("name") == "shapely" and p.get("bundled_in_dist") for p in packages):
         raise BuildError("shapely(GEOS)가 묶음에 든 것으로 확인되지 않는다 — 이 빌드 흐름의 전제와 다르다")
     collected = collect_licenses(dst, packages, distribution)
@@ -560,7 +671,7 @@ def write_license_outputs(dst, packages, removed=(), distribution=None, geos_ver
     geos = {"name": "GEOS", "version": version, "license": "LGPL-2.1", "dll_files": dlls, "license_file": "%s/shapely/%s" % (LICENSES_DIR, license_files[0]), "replaceable": True,
             "source_host": GEOS_SOURCE_HOST, "source_included": False}
     with open(os.path.join(dst, NOTICES_NAME), "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(render_notices(packages, geos, collected, removed))
+        handle.write(render_notices(packages, geos, collected, removed, models))
     return geos
 
 
@@ -587,7 +698,9 @@ def write_notices(out_dir, state):
     GEOS 라이선스 전문·판·별도 GEOS 파일을 못 찾는 등 못 만들면 BuildError — 조용히 건너뛰지 않는다."""
     removed_path = os.path.join(out_dir, "removed.json")
     removed = read_json(removed_path) if os.path.isfile(removed_path) else []
-    geos = write_license_outputs(dist_dir(out_dir), package_records(out_dir, state), removed)
+    lock, _expected = load_lock()
+    models = model_notice_records(lock, read_dict_provenance())                 # 못 만들면 여기서 멈춘다 — 아직 아무것도 쓰지 않았다
+    geos = write_license_outputs(dist_dir(out_dir), package_records(out_dir, state), removed, models=models)
     with open(os.path.join(out_dir, GEOS_RECORD), "w", encoding="utf-8", newline="\n") as handle:
         json.dump(geos, handle, ensure_ascii=False, indent=1)
     log("라이선스 전문·고지문 만듦 — GEOS %s · 별도 파일 %d개 · 고지문 %s" % (geos["version"], len(geos["dll_files"]), NOTICES_NAME))
