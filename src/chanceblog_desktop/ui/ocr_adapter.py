@@ -48,22 +48,26 @@ def system_root(parent):
     return parent.get("SystemRoot") or parent.get("SYSTEMROOT") or parent.get("windir")
 
 
+def trusted_system_root(root):
+    """환경에서 읽은 시스템 폴더 값(`root`, `system_root` 의 결과)을 **믿고 쓸 폴더**로 바꾼다 — `taskkill_path` 와 작업자의 PATH(`build_environment`)가 같은 이 함수 하나를 쓴다(감사 후속, 결정 D-600).
+    윈도에서는 환경 변수가 아니라 윈도에 직접 물은 값(`winroot.windows_directory`)을 믿는다: 환경 값은 그 값과 같은 폴더일 때만 쓰고(쓴 철자 그대로) 다르면(`D:\\evil` 처럼 드라이브만 바뀐 값·`..` 를 낀 값·네트워크 위치) 윈도가 알려 준 값을 쓴다.
+    윈도에 물을 수 없으면(윈도가 아니거나 호출이 실패) 예전 그대로다: 환경 값이 드라이브 글자로 시작하는 절대 경로가 아니면 윈도 기본 폴더(`DEFAULT_SYSTEM_ROOT`)이고 맞으면 그 값이다."""
+    real = winroot.windows_directory()
+    if real is not None:
+        return root if isinstance(root, str) and winroot.same_folder(root, real) else real
+    return root if winroot.is_drive_absolute(root) else DEFAULT_SYSTEM_ROOT
+
+
 def taskkill_path(parent=None):
     """`taskkill.exe` 의 **절대 경로** — 시스템 폴더 아래 `System32` 의 것이다. 이름만 부르면 윈도가 앱이 불러온 폴더·현재 폴더에서 같은 이름의 실행 파일을 먼저 찾아 시간 초과·취소 때마다 그것이 실행될 수 있다(감사 OCR-S1 R3).
     **윈도에서는** 환경 변수(`system_root`)가 아니라 윈도에 직접 물은 값(`winroot.windows_directory`)을 믿는다 — 환경 값은 그 값과 같은 폴더일 때만 쓰고 다르면(`D:\\evil` 처럼 드라이브 글자 절대 경로이기만 한 아무 폴더·`..` 로 돌려 가리킨 폴더 포함) 윈도가 알려 준 값을 쓴다(결정 D-593).
     윈도에 물을 수 없으면(윈도가 아니거나 호출이 실패) 예전 그대로다: 환경 값이 드라이브 글자로 시작하는 절대 경로가 아니면(상대 경로·네트워크 위치·장치 경로) 윈도 기본 폴더를 쓴다. 그 자리에 파일이 없으면 부르기가 실패할 뿐이고 이름만 부르는 대체 호출은 없다(`kill_tree` 는 실패해도 작업자 하나는 끈다 — 손자는 Job 개체가 끈다)."""
-    root = system_root(os.environ if parent is None else parent)
-    real = winroot.windows_directory()
-    if real is not None:
-        if not (isinstance(root, str) and winroot.same_folder(root, real)):
-            root = real
-    elif not winroot.is_drive_absolute(root):
-        root = DEFAULT_SYSTEM_ROOT
+    root = trusted_system_root(system_root(os.environ if parent is None else parent))
     return ntpath.join(root, "System32", "taskkill.exe")
 
 
 def build_environment(parent, temp_dir, work_dir=None):
-    """작업자에게 줄 환경 변수 — 부모 것은 아래 몇 가지(윈도 시스템 변수)만 옮기고 나머지는 버린다(순수 함수: 파일을 만지지 않는다)."""
+    """작업자에게 줄 환경 변수 — 부모 것은 아래 몇 가지(윈도 시스템 변수)만 옮기고 나머지는 버린다(파일을 만지지 않는다). PATH 의 시스템 폴더는 환경 값이 아니라 윈도에 직접 물은 값을 믿는다(`trusted_system_root` — 읽기 한 번뿐)."""
     env = {name: parent[name] for name in KEEP_WINDOWS if name in parent}
     for name in parent:
         if "PROXY" in name.upper():
@@ -76,6 +80,7 @@ def build_environment(parent, temp_dir, work_dir=None):
     env["TEMP"] = env["TMP"] = str(temp_dir)
     root = system_root(parent)
     if os.name == "nt" and root:
+        root = trusted_system_root(root)                                 # 환경 값이 아니라 윈도에 직접 물은 폴더로(`taskkill_path` 와 같은 함수 — 환경이 다른 폴더를 가리켜도 PATH 는 진짜 윈도 폴더 아래뿐)
         env["PATH"] = os.pathsep.join([os.path.join(root, "System32"), root])
     else:
         env["PATH"] = os.pathsep.join(["/usr/bin", "/bin"])
