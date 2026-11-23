@@ -5,6 +5,7 @@
 지키는 것: ① 들어오는 JSON·설정이 얼마나 깊어도 복원은 쉬운 `FULL_BACKUP_INVALID` 이다 ② 지금 파일 하나가 너무 깊으면 그 파일만 건너뛴 부분 백업이다(나머지는 담는다) ③ 보관함 칸 속 JSON 이 너무 깊어도 백업은 멈추지 않는다
 ④ **훑기가 재귀 한도에 걸려도 키 모양은 놓치지 않는다** — 걸리면 그 글을 통째로 일반 글로 다시 훑는다(깊이 겹친 JSON 에 숨긴 키도 막힌다). 네트워크·실제 시계 없이 돈다.
 """
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -24,6 +25,15 @@ KIND = bs.KINDS[0]
 
 def nested(depth, inner=b""):
     return b"[" * depth + inner + b"]" * depth
+
+
+def json_reads(raw):
+    """이 파이썬의 json 이 그 바이트를 재귀 한도에 걸리지 않고 읽는가(읽는 쪽의 한도는 파이썬 판마다 다르다)."""
+    try:
+        json.loads(raw.decode("utf-8"))
+    except RecursionError:
+        return False
+    return True
 
 
 class DeepRestoreTest(tp.ForgedBackup):
@@ -52,12 +62,14 @@ class DeepRestoreTest(tp.ForgedBackup):
         self.assertEqual(error.code, "FULL_BACKUP_BLOCKED", "재귀 한도에 걸렸다고 키 모양을 놓쳤다")
         self.assert_untouched(self.before)
 
-    def test_a_real_deep_value_with_a_key_hidden_at_the_bottom_is_blocked_not_crashed(self):
+    def test_a_real_deep_value_with_a_key_hidden_at_the_bottom_is_refused_not_crashed_and_blocked_where_the_scan_can_follow_it(self):
         raw = nested(1100, b'"' + bs.secret_text(KIND).encode("utf-8") + b'"')
         self.forge_bytes(layout.SEEDS_FILE, raw)
         error = bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True)
         self.assertIsNotNone(error)
-        self.assertEqual(error.code, "FULL_BACKUP_BLOCKED")
+        # 이 파이썬의 json 이 그 깊이를 읽으면(3.12 — C 재귀 한도가 파이썬 한도보다 높다) 훑기가 구조를 따라가다 파이썬 재귀 한도에 걸려 글로 다시 훑으므로 키 모양을 찾아 BLOCKED 다.
+        # json 이 읽지도 못하면(3.10 — C 재귀가 파이썬 한도 1000 을 같이 써 약 990단부터) 훑기 앞의 읽기에서 INVALID 로 거절된다. 어느 쪽이든 원시 RecursionError 가 아니고 복원은 거절되며 아무것도 바뀌지 않는다.
+        self.assertEqual(error.code, "FULL_BACKUP_BLOCKED" if json_reads(raw) else "FULL_BACKUP_INVALID", error.detail)
         self.assert_untouched(self.before)
 
 

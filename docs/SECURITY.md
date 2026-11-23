@@ -507,7 +507,7 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 
 ### 시험 훑기와 깊은 JSON(D-611·D-613)
 
-'바깥과 닿는 길은 표가 전부' 시험이 우회 모양(`from os import …`·`import os as 별칭`·`getattr(os, …)`·`ctypes`·`winreg`·`msvcrt`·`pty`·`runpy`·`importlib.import_module`·`__import__`·`exec`·`eval`)을 보고, `ctypes` 를 가져오는 다섯 파일(`security/keystore.py`·`service/liveness.py`·`ui/single_instance.py`·`ui/winroot.py`·`ui/ocr_adapter.py`)과 `vendor/` 안의 바깥 모듈을 이유가 달린 표로 못박는다. 깊게 겹친 JSON(1000–1500 단)은 원시 `RecursionError` 가 아니라 쉬운 오류가 되고, 훑기가 재귀 한도에 걸려도 글 전체를 일반 글로 다시 훑어 숨긴 키 모양을 놓치지 않는다.
+'바깥과 닿는 길은 표가 전부' 시험이 우회 모양(`from os import …`·`import os as 별칭`·`getattr(os, …)`·`ctypes`·`winreg`·`msvcrt`·`pty`·`runpy`·`importlib.import_module`·`__import__`·`exec`·`eval`)을 보고, `ctypes` 를 가져오는 다섯 파일(`security/keystore.py`·`service/liveness.py`·`ui/single_instance.py`·`ui/winroot.py`·`ui/ocr_adapter.py`)과 `vendor/` 안의 바깥 모듈을 이유가 달린 표로 못박는다. 깊게 겹친 JSON(1000–1500 단)은 원시 `RecursionError` 가 아니라 쉬운 오류가 되고, 훑기가 재귀 한도에 걸려도 글 전체를 일반 글로 다시 훑어 숨긴 키 모양을 놓치지 않는다(`FULL_BACKUP_BLOCKED`). 파이썬의 json 이 그 깊이를 읽지도 못하는 판(3.10 은 약 990단부터)에서는 훑기 앞의 읽기에서 `FULL_BACKUP_INVALID` 로 거절된다 — 어느 쪽이든 복원은 거절되고 아무것도 바뀌지 않는다.
 
 ### 이 묶음이 하지 않은 것(D-615)
 
