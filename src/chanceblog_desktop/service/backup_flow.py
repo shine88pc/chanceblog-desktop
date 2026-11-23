@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import time
 import unicodedata
 from contextlib import closing, contextmanager
@@ -282,14 +283,50 @@ def _remove_quietly(path):
         return False
 
 
+REPARSE_POINT = 0x400                                                    # 윈도 파일 속성 FILE_ATTRIBUTE_REPARSE_POINT — 심볼릭 링크·junction(정션)·마운트 지점이 가진다
+LINK_TAGS = frozenset({0xA000000C, 0xA0000003})                          # 이름을 다른 곳으로 돌리는 reparse 종류 — 심볼릭 링크(IO_REPARSE_TAG_SYMLINK)·junction 과 마운트 지점(IO_REPARSE_TAG_MOUNT_POINT). OneDrive 같은 클라우드 파일 자리표시는 아니다
+
+
+def _is_link(path):
+    """그 경로 **자신**이 링크인가 — 심볼릭 링크이거나 윈도 reparse point(junction·마운트 지점 …)이면 참(AS-S1 권고-1, D-608). 링크를 따라가지 않고 그 이름을 `os.lstat` 로 본다.
+    윈도에서 junction 의 `is_symlink()` 는 거짓이고 `is_dir()` 은 링크를 따라가서, 그 둘만으로는 폴더 자리에 놓인 junction 을 못 거른다(목록을 보기만 해도 그 목적지의 앱 이름 파일이 지워졌다).
+    reparse point 인데 종류(`st_reparse_tag`)가 링크가 아니면(클라우드 파일 자리표시 …) 링크로 보지 않는다. 없는 경로는 거짓, 읽을 수 없으면 참(알 수 없으면 따라가지 않는다).
+    `st_file_attributes` 는 윈도에만 있고 다른 운영체제에서는 0 으로 읽는다(심볼릭 링크는 `S_ISLNK`)."""
+    path = Path(path)
+    try:
+        if path.is_symlink():                                            # 심볼릭 링크(윈도 junction 은 여기서 거짓이라 아래 reparse 속성이 따로 본다)
+            return True
+        info = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if not getattr(info, "st_file_attributes", 0) & REPARSE_POINT:
+        return False
+    tag = getattr(info, "st_reparse_tag", None)
+    return tag is None or tag in LINK_TAGS
+
+
+def _clear_stage(stage):
+    """복원이 쓸 고정 이름 임시 파일(`<이름>.restoring`) 자리를 비운다 — 옛 찌꺼기나 미리 심은 링크가 있으면 그 이름 자체를 지운다(링크가 가리키는 곳은 건드리지 않는다).
+    지우고도 링크가 남아 있으면 그 자리에 쓰지 않고 멈춘다(AS-S1 참고-3, D-608). 오류는 `OSError` 다 — 복원 흐름·되돌리기가 이미 그 오류를 쉬운 문구로 바꾼다."""
+    _remove_quietly(stage)
+    if _is_link(stage):
+        raise OSError(errno.EPERM, "임시 파일 자리에 링크가 있어 치우지 못했다")
+
+
 def _remove_known_folder(folder, allowed=KNOWN_FILES):
     """앱이 만드는 이름(`allowed`)의 파일만 지우고 비면 폴더를 없앤다 → 없앴는가. 낯선 파일(사용자가 넣은 것)이 있으면 그 폴더는 그대로 둔다."""
     folder = Path(folder)
     try:
+        if _is_link(folder):                                             # 폴더 자신이 링크이면 따라가지 않는다 — 그 목적지의 파일을 지우지 않는다(D-608)
+            return False
         if not folder.is_dir():
             return True
         entries = list(folder.iterdir())
-        if any(entry.name not in allowed or entry.is_symlink() or not entry.is_file() for entry in entries):
+        if any(entry.name not in allowed or _is_link(entry) or not entry.is_file() for entry in entries):
             return False
         for entry in entries:
             os.unlink(entry)
@@ -386,7 +423,7 @@ def _temp_folders(ctx):
     found = []
     for root in (ctx.workspace.backups_dir, _safety_root(ctx)):
         try:
-            found += [entry for entry in Path(root).iterdir() if STALE_TEMP.fullmatch(entry.name) and entry.is_dir() and not entry.is_symlink()]
+            found += [entry for entry in Path(root).iterdir() if STALE_TEMP.fullmatch(entry.name) and entry.is_dir() and not _is_link(entry)]
         except OSError:
             continue
     return found
@@ -880,13 +917,15 @@ def _verify_folder(folder):
     """백업 폴더를 읽기만 해서 확인한다 → 목록. 목록 모양·폴더 안의 파일(이름·종류)·크기·해시를 본다(안의 보관함·JSON·설정이 온전한지는 `_verify_backup` 이 이어서 이 프로그램이 읽는 방법 그대로 읽어 본다).
     틀리면 FULL_BACKUP_INVALID(이유 `manifest`·`files`·`hash`·`content`) — 더 새로운 앱의 백업은 STORE_VERSION_UNSUPPORTED. 아무것도 쓰지 않는다."""
     folder = Path(folder)
+    if _is_link(folder):                                                 # 백업 폴더 자신이 링크(junction 포함)이면 읽지 않는다(D-608)
+        raise _invalid(folder, "files")
     manifest = _parse_manifest(folder)
     _check_version(folder, manifest)
     try:
         entries = {entry.name: entry for entry in folder.iterdir()}
     except OSError:
         raise _invalid(folder, "files") from None
-    if set(entries) != set(manifest["files"]) | {MANIFEST_NAME} or any(entry.is_symlink() or not entry.is_file() for entry in entries.values()):
+    if set(entries) != set(manifest["files"]) | {MANIFEST_NAME} or any(_is_link(entry) or not entry.is_file() for entry in entries.values()):
         raise _invalid(folder, "files")
     for name, info in manifest["files"].items():
         if BY_NAME[name].kind in (JSON_FILE, SETTINGS) and info["size"] > MAX_JSON_BYTES:                  # 앱이 만드는 JSON·설정은 이 크기를 넘지 않는다(백업을 만들 때 같은 상한으로 거절한다) — 읽기 전에 거절한다(L8, D-554)
@@ -1016,7 +1055,7 @@ def _check_content(folder, name):
 def _folders(root, pattern=FULL_NAME):
     """폴더 안의 앱이 만든 모양(`pattern`)의 백업 폴더들(새 것이 먼저)."""
     try:
-        found = [entry for entry in Path(root).iterdir() if entry.is_dir() and pattern.fullmatch(entry.name)]
+        found = [entry for entry in Path(root).iterdir() if entry.is_dir() and pattern.fullmatch(entry.name) and not _is_link(entry)]
     except OSError:
         return []
     return sorted(found, key=lambda entry: (_stamp_of(entry.name), len(entry.name), entry.name), reverse=True)
@@ -1027,7 +1066,7 @@ def _quick_row(folder, kind):
     folder = Path(folder)
     try:
         manifest = _parse_manifest(folder)
-        sizes = {entry.name: entry.stat().st_size for entry in folder.iterdir() if entry.is_file() and not entry.is_symlink()}
+        sizes = {entry.name: entry.stat().st_size for entry in folder.iterdir() if entry.is_file() and not _is_link(entry)}
     except FlowError as error:
         return _broken_row(folder, kind, error.reason or "manifest")
     except OSError:
@@ -1172,12 +1211,12 @@ def create_full_backup(ctx, *, step=None):
 def _resolve(ctx, source):
     """되돌릴 백업 폴더 — 이름(`full-날짜-시각`, 백업 폴더나 안전 사본 폴더 안)이거나 폴더 경로(`Path`). 없으면 FULL_BACKUP_INVALID. 이름이 아닌 글(경로 모양)은 이름으로 받지 않는다."""
     if isinstance(source, Path):
-        if source.is_dir():
+        if source.is_dir() and not _is_link(source):                     # 링크(junction 포함)인 폴더는 백업 폴더로 받지 않는다(D-608)
             return source
         raise _invalid(source, "missing")
     if isinstance(source, str):
         root = ctx.workspace.backups_dir if FULL_NAME.fullmatch(source) else (_safety_root(ctx) if SAFETY_NAME.fullmatch(source) else None)
-        if root is not None and (root / source).is_dir():
+        if root is not None and (root / source).is_dir() and not _is_link(root / source):
             return root / source
     raise FlowError("FULL_BACKUP_INVALID", {"파일": _shown_name(source), "이유": INVALID_REASONS["missing"]}, detail="백업 폴더에서 찾을 수 없다", reason="missing")
 
@@ -1323,6 +1362,7 @@ def _apply(ctx, folder, manifest, names, live, safety_folder, state, moment, ste
         _make_folder(target.parent)
         state["originals"][component.name] = target.read_bytes() if target.is_file() else None
         stage = target.with_name(target.name + ".restoring")
+        _clear_stage(stage)                                              # 고정 이름이라 미리 심은 링크가 있으면 그 이름을 지우고 쓴다 — 링크가 가리키는 곳에 쓰지 않는다(D-608)
         _write_durably(stage, (folder / component.name).read_bytes())
         state["staged"].append(stage)
     for component in plain:
@@ -1375,6 +1415,7 @@ def _roll_back(ctx, names, live, safety_folder, state):
                 _remove_file(target)
             else:
                 temp = target.with_name(target.name + ".restoring")
+                _clear_stage(temp)
                 _write_durably(temp, original)
                 _swap_in(temp, target)
         except OSError:
