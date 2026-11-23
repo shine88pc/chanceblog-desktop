@@ -787,7 +787,6 @@ class EnvironmentRound2Test(unittest.TestCase):
         self.assertEqual((env["TEMP"], env["TMP"]), ("/tmp/w", "/tmp/w"))
 
 
-@unittest.skipUnless(os.name == "nt", "Job 개체는 윈도 전용이다")
 class EnvironmentPathTrustTest(unittest.TestCase):
     """감사 후속(AS2-A A3, 결정 D-600) — 검증 SQ 2차 참고 2: `taskkill` 은 윈도에 직접 물은 폴더를 믿는데 작업자의 PATH 는 환경 값 그대로였다(`SystemRoot=D:\\evil` 이면 PATH 가 `D:\\evil\\System32;D:\\evil`).
     PATH 도 같은 출처(`trusted_system_root`)를 쓴다 — 환경이 윈도가 알려 준 폴더와 다른 곳(다른 드라이브·`..` 낀 경로·네트워크 위치)을 가리키면 윈도가 알려 준 폴더로 짠다. 윈도에 묻는 일을 가짜로 바꿔 어느 운영체제에서나 돈다.
@@ -865,6 +864,7 @@ class EnvironmentPathTrustTest(unittest.TestCase):
             self.assertEqual(oa.trusted_system_root(None), oa.DEFAULT_SYSTEM_ROOT)
 
 
+@unittest.skipUnless(os.name == "nt", "Job 개체는 윈도 전용이다")
 class JobObjectTest(unittest.TestCase):
     def test_the_job_object_can_be_made_and_takes_a_process(self):
         job = oa.JobObject()
@@ -1646,6 +1646,44 @@ class JobRuleOnWindowsTest(AdapterCase):
         self.assertEqual(outcome.error, "blocked")
         again = self.read(adapter)
         self.assertEqual((again.error, adapter.launches, adapter.job_assigned), ("", 2, True))
+
+
+class WindowsOnlyDecoratorsStayOnTheirClassesTest(unittest.TestCase):
+    """감사 후속 2차(AS2-A, 결정 D-602) — 검증 S 의 필수-2: 새 시험 클래스를 윈도 전용 건너뛰기 데코레이터와 그 대상 사이에 끼워 넣어 데코레이터가 새 클래스(`EnvironmentPathTrustTest`)에 붙고 `JobObjectTest` 는 리눅스에서도 돌았다
+    (앱 CI ubuntu 칸이 `job.ok` 단언에서 빨개지고, 어디서나 돌게 만든 PATH 시험은 리눅스에서 건너뛰어졌다 — 윈도에서는 둘 다 안 드러났다). 이 시험은 **데코레이터가 붙은 클래스**를 소스(AST)에서 읽어 윈도 전용 시험은 윈도 전용 표시를 갖고 어디서나 돌아야 하는 시험은 갖지 않음을 못박는다.
+    일부러 이 파일의 맨 끝에 두고 데코레이터를 달지 않는다(데코레이터가 붙은 클래스 곁에 끼워 넣으면 같은 사고가 되풀이된다)."""
+
+    WINDOWS_ONLY = ("JobObjectTest", "TaskkillOnWindowsTest", "JobRuleOnWindowsTest")
+    EVERYWHERE = ("EnvironmentPathTrustTest", "EnvironmentRound2Test", "TaskkillPathTest", "TaskkillApiPathTest", "PosixBranchTest", "JobRuleMockedTest", "EnvironmentTest", "WindowsOnlyDecoratorsStayOnTheirClassesTest")
+
+    @staticmethod
+    def class_decorators(source):
+        tree = ast.parse(source)
+        return {node.name: [ast.unparse(item) for item in node.decorator_list] for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    @staticmethod
+    def skips_off_windows(decorators):
+        """`unittest.skipUnless(os.name == 'nt', ...)` 꼴이 있는가 — 윈도가 아닌 곳에서는 클래스 전체를 건너뛴다."""
+        return any(item.startswith("unittest.skipUnless(os.name == 'nt'") for item in decorators)
+
+    def test_the_windows_only_classes_keep_their_skip_and_the_everywhere_classes_have_none(self):
+        found = self.class_decorators(Path(__file__).read_text(encoding="utf-8"))
+        for name in self.WINDOWS_ONLY:
+            with self.subTest(windows_only=name):
+                self.assertIn(name, found)
+                self.assertTrue(self.skips_off_windows(found[name]), f"{name} 에 윈도 전용 건너뛰기 데코레이터가 없다 — 리눅스 칸에서 그대로 돌아 빨개진다")
+        for name in self.EVERYWHERE:
+            with self.subTest(everywhere=name):
+                self.assertIn(name, found)
+                self.assertFalse(self.skips_off_windows(found[name]), f"{name} 에 윈도 전용 건너뛰기 데코레이터가 붙었다 — 리눅스 칸에서 건너뛰어진다(데코레이터는 자기 대상 클래스 바로 위에 둔다)")
+
+    def test_the_check_itself_sees_a_decorator_that_moved_onto_the_wrong_class(self):
+        moved = ("import unittest, os\n@unittest.skipUnless(os.name == \"nt\", \"Job 개체는 윈도 전용이다\")\nclass EnvironmentPathTrustTest(unittest.TestCase):\n    pass\n\nclass JobObjectTest(unittest.TestCase):\n    pass\n")
+        found = self.class_decorators(moved)
+        self.assertTrue(self.skips_off_windows(found["EnvironmentPathTrustTest"]))
+        self.assertFalse(self.skips_off_windows(found["JobObjectTest"]))
+        other_condition = self.class_decorators("import unittest, os\n@unittest.skipUnless(os.name == \"posix\", \"x\")\nclass A(unittest.TestCase):\n    pass\n")
+        self.assertFalse(self.skips_off_windows(other_condition["A"]), "다른 조건의 건너뛰기는 윈도 전용 표시가 아니다")
 
 
 if __name__ == "__main__":

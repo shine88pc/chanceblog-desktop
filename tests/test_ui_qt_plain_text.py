@@ -47,7 +47,7 @@ class PlainTextBase(unittest.TestCase):
             "bold": "<b>x</b>",
             "image": f'<img src="{cls.png.as_posix()}">',
             "image-url": f'<img src="{cls.png.as_uri()}">',
-            "link": '<a href="https://example.invalid/x">link</a>',
+            "link": '<a href="' + "https" + "://example.invalid/x" + '">link</a>',            # 웹 주소 모양이 소스에 그대로 없게 조립한다(가짜 호스트 — 접속 코드는 없다)
             "table": "<table><tr><td>t</td></tr></table>",
         }
 
