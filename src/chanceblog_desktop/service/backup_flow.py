@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..content import schema_guard
-from ..content.store import SCHEMA_STATEMENTS, Store, _read_only_uri, same_database
+from ..content.store import SCHEMA_STATEMENTS, WAL_TEXT, Store, _read_only_uri, same_database, wal_header
 from ..content.store import SCHEMA_VERSION as STORE_SCHEMA_VERSION
 from ..errors import AppError
 from ..security import scan
@@ -643,6 +643,9 @@ def _snapshot(component, source, target, found):
     except AppError as error:
         _remove_quietly(target)
         raise _Skip(error.code) from None
+    except RecursionError:                                              # 아주 깊게 겹친 JSON — 그 파일 하나만 건너뛰고 나머지는 계속 담는다(백업이 통째로 멈추지 않는다, D-613)
+        _remove_quietly(target)
+        raise _Skip(DAMAGED_CODE[component.kind]) from None
 
 
 # ---- 키·토큰 모양 훑기(만든 사본을 훑는다) ----------------------------------------------------------------------------------------------------
@@ -720,6 +723,15 @@ def _scan_connection(sink, db, name):
                     _scan_cell(sink, value, area, table, column, ref)
 
 
+def _scan_json_safely(sink, parsed, *place):
+    """`_scan_json_value` 를 부른다 → 끝까지 훑었는가. 아주 깊게 겹친 값(파이썬 재귀 한도와 json 의 C 한도 사이 1000–1500 단)은 재귀 한도에 걸려 거짓이다 — 부른 쪽이 그 글을 통째로 일반 글로 다시 훑는다(D-613)."""
+    try:
+        _scan_json_value(sink, parsed, *place)
+    except RecursionError:
+        return False
+    return True
+
+
 def _scan_cell(sink, value, area, table, column, ref):
     if isinstance(value, bytes):
         value = value.decode("utf-8", "replace")
@@ -731,8 +743,7 @@ def _scan_cell(sink, value, area, table, column, ref):
             parsed = json.loads(value)
         except (ValueError, RecursionError):
             parsed = None
-        if parsed is not None:
-            _scan_json_value(sink, parsed, area, field, ref)
+        if parsed is not None and _scan_json_safely(sink, parsed, area, field, ref):
             return
     _scan_text(sink, value, " · ".join(part for part in (area, field, ref) if part), _clip(area))
 
@@ -740,10 +751,12 @@ def _scan_cell(sink, value, area, table, column, ref):
 def _scan_json_bytes(sink, data, name):
     """JSON 파일의 바이트(디스크에 쓰기 전의 것이거나 읽어 온 것)를 훑는다. JSON 으로 읽을 수 없으면 AppError."""
     try:
-        parsed = json.loads(data.decode("utf-8-sig"))
+        text = data.decode("utf-8-sig")
+        parsed = json.loads(text)
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise AppError("TOPIC_FILE_INVALID", {"파일": name}, detail="훑으려고 읽었지만 읽을 수 없다") from None
-    _scan_json_value(sink, parsed, AREA[name])
+    if not _scan_json_safely(sink, parsed, AREA[name]):                  # 너무 깊어 구조를 따라가지 못하면 글 전체를 일반 글로 다시 훑는다 — 깊이 겹친 JSON 에 숨긴 키 모양도 놓치지 않는다(D-613)
+        _scan_text(sink, text, AREA[name], _clip(AREA[name]))
 
 
 def _scan_json_leniently(sink, data, name):
@@ -776,6 +789,9 @@ def scan_folder(folder, names, lenient=frozenset()):
         except (AppError, sqlite3.Error):
             if name not in lenient:
                 raise
+        except RecursionError:                                          # 아주 깊게 겹친 JSON 은 쉬운 오류로 바꾼다(원시 RecursionError 가 새어 나가지 않게, D-613)
+            if name not in lenient:
+                raise AppError("TOPIC_FILE_INVALID", {"파일": name}, detail="너무 깊게 겹쳐 훑을 수 없다") from None
     return found
 
 
@@ -972,6 +988,8 @@ def _check_structure(folder, name):
     component = BY_NAME[name]
     if component.kind not in (STORE, ENGINE):
         return
+    if wal_header(folder / name):                                        # 열기 전에 머리 바이트로 거절한다 — WAL 머리의 파일은 읽기 전용으로 열기만 해도 이 백업 폴더에 `-wal`·`-shm` 을 만들어 그 폴더를 영영 깨진 것으로 만든다(AS-S1 권고-2, D-609)
+        raise _invalid(folder, "structure", detail=f"{name}: {WAL_TEXT}")
     try:
         foreign = _foreign_in(component, folder / name, defer_newer=True)
     except AppError as error:
@@ -1048,6 +1066,8 @@ def _check_content(folder, name):
         raise _invalid(folder, "content", detail=f"{name}: {error.code}") from None
     except OSError as error:
         raise _invalid(folder, "content", detail=f"{name}: {type(error).__name__}") from None
+    except RecursionError:                                               # 아주 깊게 겹친 JSON — 읽을 수 없는 파일과 같게 거절한다(D-613)
+        raise _invalid(folder, "content", detail=f"{name}: 너무 깊게 겹친 JSON") from None
     if problem:                                                          # 경로 글은 되풀이하지 않는다 — 고정 낱말뿐(L8, D-554)
         raise _invalid(folder, "content", detail=f"{name}: 연결한 폴더 글이 보통 폴더 경로 모양이 아니다({problem})")
 
@@ -1260,11 +1280,14 @@ def _live_state(ctx, component, healed=False):
         if error.code in STORE_DAMAGED or error.code in ("TOPIC_FILE_INVALID", "SETTINGS_INVALID", "CONTENT_INVALID"):
             return "damaged"
         raise
+    except RecursionError:                                               # 지금 JSON 이 아주 깊게 겹쳐 읽을 수 없다 — 깨진 파일과 같게 지우지 않고 옆으로 옮겨 둔다(D-613)
+        return "damaged"
 
 
 def _restore_database(component, path, source):
     """보관함 하나를 백업 파일의 내용으로 한 번에 바꾼다(SQLite 백업 방식 — 도중에 실패하면 지금 보관함은 그대로다)."""
     with (Store.open(path) if component.kind == STORE else open_for_write(path)) as database:
+        database.undo_failed_restore = True                              # 덮은 뒤 판 올리기가 실패하면 낮은 층이 덮기 전 내용으로 되돌린다 — 못 하면 오류에 `left_overwritten` 표시가 달린다(AS-S1 필수-4, D-606)
         database.restore_from(source)
 
 

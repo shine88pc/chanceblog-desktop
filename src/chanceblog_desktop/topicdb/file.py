@@ -23,7 +23,7 @@ from pathlib import Path
 
 from ..content.schema_guard import describe as describe_foreign
 from ..content.schema_guard import foreign_kinds
-from ..content.store import _read_only_uri, hold_in_memory
+from ..content.store import WAL_TEXT, _read_only_uri, hold_in_memory, wal_header
 from ..errors import AppError
 
 BUSY_SECONDS = 5.0                                       # 잠겨 있을 때 기다리는 시간 — 윈도에서는 타이머 간격 때문에 실제로 약 7초까지 걸릴 수 있다(D-73)
@@ -89,6 +89,8 @@ class EngineFile:
     INDEXES = {}                                         # {판: {색인: (표, (열, …))}} — 그 판에 처음 생긴 색인(뒤 판에도 있다)
     MIGRATIONS = {}                                      # {지금 판: 다음 판으로 바꾸는 함수(연결)} — 한 번에 한 단계씩, 모두 한 트랜잭션 안에서 돈다
     KIND = "주제 엔진 보관함"                              # 오류 문구에 쓸 이름
+
+    undo_failed_restore = False        # 참이면 `restore_from` 이 지금 보관함을 덮은 **뒤** 판 올리기 등이 실패했을 때 덮기 전 내용으로 되돌린다(D-606) — 전체 복원·주제 엔진 복원이 켠다. 기본(거짓)은 옛 동작 그대로 복구한 내용이 남는다
 
     def __init__(self, path, connection, *, busy_seconds=BUSY_SECONDS, read_only=False):
         self.path = Path(path)
@@ -413,6 +415,8 @@ class EngineFile:
         self._refuse_if_read_only()
         backup = Path(os.fspath(backup))
         name = backup.name
+        if wal_header(backup):                                    # 열기 전에 머리 바이트로 거절한다 — 열면 SQLite 가 백업 폴더에 짝 파일을 만든다(D-609)
+            raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "앱이 만들지 않는 저널 방식(WAL 머리표시)이 들어 있습니다"}, detail=f"앱이 만들지 않는 구조: {WAL_TEXT}")
         with self._lock:
             try:
                 source = sqlite3.connect(_read_only_uri(backup), uri=True)
@@ -437,10 +441,11 @@ class EngineFile:
                         raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "표 모양이 맞지 않습니다"}, detail=shape)
                     if foreign:                                   # 조작한 백업의 트리거·뷰가 지금 저장소로 들어오지 못하게 바꾸기 전에 거절한다
                         raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있습니다"}, detail=f"앱이 만들지 않는 구조: {describe_foreign(foreign)}")
-                    try:
-                        undo = hold_in_memory(self._db)           # 덮기 전 지금 내용을 메모리에 — 담지 못하면 덮지 않는다(D-606)
-                    except sqlite3.Error as error:
-                        raise store_error(error, self.path) from None
+                    if self.undo_failed_restore:
+                        try:
+                            undo = hold_in_memory(self._db)       # 덮기 전 지금 내용을 메모리에 — 담지 못하면 덮지 않는다(D-606)
+                        except sqlite3.Error as error:
+                            raise store_error(error, self.path) from None
                     try:
                         source.backup(self._db)
                     except sqlite3.Error as error:
@@ -448,8 +453,8 @@ class EngineFile:
                     overwritten = True                            # 여기부터는 지금 저장소가 백업 내용으로 덮여 있다 — 아래에서 무슨 일이 나도 덮기 전 내용으로 되돌린다
                 self._prepare(fresh=False)                         # 옛 구조의 백업이면 지금 구조로 올린다
             except BaseException as error:
-                if overwritten and not self._undo_overwrite(undo):
-                    error.left_overwritten = True                  # 되돌리지 못했다 — 복원 흐름이 이 표시를 보고 안전 사본에서 되돌린다
+                if overwritten and not (undo is not None and self._undo_overwrite(undo)):
+                    error.left_overwritten = True                  # 덮인 채 남았다(되돌리기를 켜지 않았거나 되돌리지 못했다) — 복원 흐름이 이 표시를 보고 안전 사본에서 되돌린다
                 raise
             finally:
                 if undo is not None:

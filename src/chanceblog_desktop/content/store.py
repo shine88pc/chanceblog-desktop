@@ -243,6 +243,27 @@ def _read_only_uri(path):
     return uri + "?mode=ro"
 
 
+WAL_TEXT = "앱이 만들지 않는 저널 방식(WAL 머리표시 — 18·19번째 바이트가 2)"
+
+
+def wal_in_head(head):
+    """보관함 파일의 머리 바이트(앞 20바이트 이상)가 WAL 방식 표시인가 — SQLite 파일 머리 글자가 맞고 18번째(쓰기 방식)나 19번째(읽기 방식) 바이트가 2 이면 참이다. 모양이 다른 글·짧은 글은 거짓
+    (그런 파일은 그 뒤의 이름표·점검이 자기 오류로 거절한다). 순수 바이트 판정이다."""
+    return len(head) >= 20 and head[:16] == b"SQLite format 3\x00" and (head[18] == 2 or head[19] == 2)
+
+
+def wal_header(path):
+    """그 보관함 파일의 머리가 WAL 방식 표시인가(AS-S1 권고-2, D-609) — 파일을 SQLite 로 열지 않고 앞 20바이트만 읽는다. WAL 표시의 파일은 **읽기 전용으로 열기만 해도** SQLite 가 곁에 `-wal`·`-shm` 을 만들어
+    '읽기만 한다' 는 약속이 깨지고(백업 폴더에 짝 파일이 남아 그 폴더가 영영 깨진 것으로 보인다), 옛 복원 길은 그 파일을 받아 지금 보관함이 조용히 WAL 이 된다. 그래서 들어오는 파일은 열기 **전에** 이 함수로 본다 —
+    앱은 롤백 저널 방식(`delete`) 보관함만 만든다. 읽을 수 없으면 거짓(그 뒤의 열기가 자기 오류를 낸다)."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(20)
+    except OSError:
+        return False
+    return wal_in_head(head)
+
+
 def hold_in_memory(connection):
     """열린 보관함 연결의 지금 내용을 **메모리 사본**으로 담아 돌려준다(부른 쪽이 닫는다 — 파일을 만들지 않는다). 복원(`restore_from`)이 지금 보관함을 덮어쓰기 **전에** 하나 담아 두고,
     덮은 뒤 판 올리기(`_prepare`)가 실패하면 이 사본으로 덮기 전 내용을 되돌린다(AS-S1 필수-4, D-606 — 덮어쓴 뒤 실패해도 '지금 보관함은 그대로다' 가 사실이게)."""
@@ -278,6 +299,8 @@ def same_database(first, second):
 
 class Store:
     """한 SQLite 파일을 여는 저장소. `with Store.open(경로) as store:` 로 쓴다(밖으로 나가면 닫는다). 여러 스레드가 함께 써도 된다."""
+
+    undo_failed_restore = False        # 참이면 `restore_from` 이 지금 보관함을 덮은 **뒤** 판 올리기 등이 실패했을 때 덮기 전 내용으로 되돌린다(D-606) — 전체 복원·옛 `restore` 명령이 켠다. 기본(거짓)은 옛 동작 그대로 복구한 내용이 남는다
 
     def __init__(self, path, connection, keep_revisions, *, busy_seconds=BUSY_SECONDS, read_only=False):
         self.path = Path(path)
@@ -989,6 +1012,8 @@ class Store:
         `safety_folder` 를 주면 바꾸기 직전 상태를 거기에 먼저 백업한다(실수로 복구했을 때 되돌릴 수 있게)."""
         self._refuse_if_read_only()
         backup = Path(os.fspath(backup))
+        if wal_header(backup):                                # 열기 전에 머리 바이트로 거절한다 — 열면 SQLite 가 백업 폴더에 짝 파일을 만든다(D-609)
+            raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: {WAL_TEXT}")
         with self._lock:
             try:
                 source = sqlite3.connect(_read_only_uri(backup), uri=True)
@@ -1018,10 +1043,11 @@ class Store:
                         raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: 앱이 만들지 않는 구조가 들어 있다({schema_guard.describe(foreign)})")
                     if safety_folder is not None:
                         self.backup(safety_folder)
-                    try:
-                        undo = hold_in_memory(self._db)       # 덮기 전 지금 내용을 메모리에 — 담지 못하면 덮지 않는다(D-606)
-                    except sqlite3.Error as error:
-                        raise store_error(error, self.path) from None
+                    if self.undo_failed_restore:
+                        try:
+                            undo = hold_in_memory(self._db)   # 덮기 전 지금 내용을 메모리에 — 담지 못하면 덮지 않는다(D-606)
+                        except sqlite3.Error as error:
+                            raise store_error(error, self.path) from None
                     try:
                         source.backup(self._db)
                     except sqlite3.Error as error:
@@ -1029,8 +1055,8 @@ class Store:
                     overwritten = True                       # 여기부터는 지금 저장소가 백업 내용으로 덮여 있다 — 아래에서 무슨 일이 나도 덮기 전 내용으로 되돌린다
                 self._prepare(fresh=False)                     # 옛 구조의 백업이면 지금 구조로 올린다
             except BaseException as error:
-                if overwritten and not self._undo_overwrite(undo):
-                    error.left_overwritten = True              # 되돌리지 못했다 — 복원 흐름(`backup_flow`)이 이 표시를 보고 안전 사본에서 되돌린다
+                if overwritten and not (undo is not None and self._undo_overwrite(undo)):
+                    error.left_overwritten = True              # 덮인 채 남았다(되돌리기를 켜지 않았거나 되돌리지 못했다) — 복원 흐름(`backup_flow`)이 이 표시를 보고 안전 사본에서 되돌린다
                 raise
             finally:
                 if undo is not None:

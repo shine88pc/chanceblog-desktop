@@ -128,6 +128,7 @@ class StoreRestoreFromTest(unittest.TestCase):
         seen = {}
         with self.arm_prepare_failure(seen):
             with cstore.Store.open(self.live) as store:
+                store.undo_failed_restore = True
                 seen["armed"] = True
                 with self.assertRaises(AppError) as caught:
                     store.restore_from(self.backup)
@@ -139,10 +140,25 @@ class StoreRestoreFromTest(unittest.TestCase):
         with cstore.Store.open(self.live) as again:                       # 다시 열어도 멀쩡하다
             self.assertEqual(again.check(), [])
 
+    def test_by_default_the_old_behaviour_stays_the_restored_content_remains_and_the_error_carries_the_overwritten_mark(self):
+        """되돌리기는 켠 쪽(전체 복원·옛 `restore` 명령)만 쓴다 — 기본은 기존 시험(`test_content_migration`)이 못박은 옛 동작이다: 판 올리기가 실패해도 복구한 내용이 남고 저장소는 계속 쓸 수 있다. 다만 '덮인 채 남았다' 는 표시는 단다."""
+        seen = {}
+        with self.arm_prepare_failure(seen), mock.patch.object(cstore, "hold_in_memory", side_effect=AssertionError("기본에서는 지금 내용을 담지 않는다")):
+            with cstore.Store.open(self.live) as store:
+                self.assertFalse(store.undo_failed_restore)
+                seen["armed"] = True
+                with self.assertRaises(AppError) as caught:
+                    store.restore_from(self.backup)
+                self.assertFalse(store._db.in_transaction)
+                self.assertEqual([row[0] for row in store._db.execute("SELECT text FROM drafts")], ["BACKUP"])
+        self.assertTrue(caught.exception.left_overwritten)
+        self.assertEqual(drafts_of(self.live), ["BACKUP"])
+
     def test_the_real_p5_trigger_a_version_one_backup_with_every_copy_name_taken_leaves_the_current_store_untouched(self):
         v1 = make_v1_store_file(self.root / "v1" / "chanceblog.db", "OLD-BACKUP")
         occupy_copy_names(self.live)
         with cstore.Store.open(self.live) as store:
+            store.undo_failed_restore = True
             with self.assertRaises(AppError) as caught:
                 store.restore_from(v1)
         self.assertEqual(caught.exception.code, "MIGRATION_BLOCKED")
@@ -153,6 +169,7 @@ class StoreRestoreFromTest(unittest.TestCase):
         seen = {}
         with self.arm_prepare_failure(seen), mock.patch.object(cstore, "hold_in_memory", lambda connection: BrokenUndo()):
             with cstore.Store.open(self.live) as store:
+                store.undo_failed_restore = True
                 seen["armed"] = True
                 with self.assertRaises(AppError) as caught:
                     store.restore_from(self.backup)
@@ -161,6 +178,7 @@ class StoreRestoreFromTest(unittest.TestCase):
         make_store_file(self.root / "live2" / "chanceblog.db", "LIVE2")
         with mock.patch.object(cstore, "hold_in_memory", side_effect=sqlite3.OperationalError("database is locked")):
             with cstore.Store.open(self.root / "live2" / "chanceblog.db") as store:
+                store.undo_failed_restore = True
                 with self.assertRaises(AppError) as locked:
                     store.restore_from(self.backup)
         self.assertEqual(locked.exception.code, "STORE_LOCKED")
@@ -183,6 +201,7 @@ class StoreRestoreFromTest(unittest.TestCase):
         seen = {}
         with self.arm_prepare_failure(seen):
             with cstore.Store.open(self.live) as store:
+                store.undo_failed_restore = True
                 seen["armed"] = True
                 with self.assertRaises(AppError):
                     store.restore_from(self.backup)
@@ -228,6 +247,7 @@ class EngineRestoreFromTest(unittest.TestCase):
         seen = {}
         with self.arm_prepare_failure(seen):
             with TopicStore.open(self.live) as store:
+                store.undo_failed_restore = True
                 seen["armed"] = True
                 with self.assertRaises(AppError) as caught:
                     store.restore_from(self.backup)
@@ -241,6 +261,7 @@ class EngineRestoreFromTest(unittest.TestCase):
         seen = {}
         with self.arm_prepare_failure(seen), mock.patch.object(tfile, "hold_in_memory", lambda connection: BrokenUndo()):
             with TopicStore.open(self.live) as store:
+                store.undo_failed_restore = True
                 seen["armed"] = True
                 with self.assertRaises(AppError) as caught:
                     store.restore_from(self.backup)
@@ -249,6 +270,7 @@ class EngineRestoreFromTest(unittest.TestCase):
         other = make_engine_file(self.root / "other" / layout.ENGINE_DB_FILE, "OTHER")
         with mock.patch.object(tfile, "hold_in_memory", side_effect=sqlite3.OperationalError("database is locked")):
             with TopicStore.open(other) as store:
+                store.undo_failed_restore = True
                 with self.assertRaises(AppError) as locked:
                     store.restore_from(self.backup)
         self.assertEqual(locked.exception.code, "TOPIC_STORE_LOCKED")
@@ -257,6 +279,17 @@ class EngineRestoreFromTest(unittest.TestCase):
     def test_a_restore_that_works_is_unchanged(self):
         with TopicStore.open(self.live) as store:
             store.restore_from(self.backup)
+        self.assertEqual(reviews_of(self.live), ["BACKUP"])
+
+    def test_by_default_the_restored_content_remains_and_the_error_carries_the_overwritten_mark(self):
+        seen = {}
+        with self.arm_prepare_failure(seen), mock.patch.object(tfile, "hold_in_memory", side_effect=AssertionError("기본에서는 지금 내용을 담지 않는다")):
+            with TopicStore.open(self.live) as store:
+                self.assertFalse(store.undo_failed_restore)
+                seen["armed"] = True
+                with self.assertRaises(AppError) as caught:
+                    store.restore_from(self.backup)
+        self.assertTrue(caught.exception.left_overwritten)
         self.assertEqual(reviews_of(self.live), ["BACKUP"])
 
 

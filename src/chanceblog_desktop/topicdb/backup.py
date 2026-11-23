@@ -23,7 +23,7 @@ from typing import NamedTuple
 
 from ..content.schema_guard import describe as describe_foreign
 from ..content.schema_guard import foreign_kinds
-from ..content.store import _read_only_uri, same_database
+from ..content.store import WAL_TEXT, _read_only_uri, same_database, wal_in_head
 from ..echo import shown_topic_backup
 from ..errors import AppError
 from ..security.backup_note import CREDENTIAL_NOTE
@@ -462,6 +462,8 @@ def _verify_folder_files(folder):
         contents[name] = data
     for name, data in contents.items():
         if name == layout.ENGINE_DB_FILE:
+            if wal_in_head(data[:20]):                                # 열기 전에 머리 바이트로 거절한다 — 열면 SQLite 가 백업 폴더에 `-wal`·`-shm` 을 만든다(AS-S1 권고-2, D-609)
+                raise _invalid(folder, "백업 안의 보관함에 앱이 만들지 않는 저널 방식(WAL 머리표시)이 들어 있어 쓰지 않습니다", detail=WAL_TEXT)
             problem = _database_problem(folder / name)
             if problem:
                 raise _invalid(folder, "주제 엔진 보관함 사본이 온전하지 않습니다", detail=problem)
@@ -579,6 +581,7 @@ def restore_backup(backup, data_dir, backups_dir, *, now):
         if layout.ENGINE_DB_FILE in contents:
             working = layout.ENGINE_DB_FILE
             with TopicStore.open(data_dir / layout.ENGINE_DB_FILE) as live_store:
+                live_store.undo_failed_restore = True                  # 덮은 뒤 판 올리기가 실패해도 덮기 전 내용으로 되돌린다(AS-S1 필수-4, D-606)
                 live_store.restore_from(backup / layout.ENGINE_DB_FILE)
             restored.append(layout.ENGINE_DB_FILE)
     except BaseException as error:
