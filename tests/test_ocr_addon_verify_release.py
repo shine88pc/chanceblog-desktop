@@ -27,6 +27,10 @@ STATE = {"commit": "0123456789abcdef0123456789abcdef01234567", "epoch": 17948736
 VERSION = "0.1.0-preview.1"
 MODELS = {"models/det/inference.onnx": b"det-model", "models/rec/inference.onnx": b"rec-model-bytes", "data/ppocrv5_korean_dict.txt": b"dict\nbytes\n"}
 NOTICE = "제3자 고지\n\n- GEOS: LGPL-2.1, 별도 DLL 파일(Shapely.libs)이라 바꿔 끼울 수 있습니다. 소스는 파이썬 패키지 저장소의 shapely 배포 파일에서 받을 수 있습니다(원본 소스 파일은 이 폴더에 넣지 않았습니다).\n"
+# 고지문 [5] 절(모델 2개·글자 사전 — 빌드의 `render_notices` 와 같은 줄 모양, 값은 이 시험 묶음의 가짜 모델 값) — 산출물 점검이 압축 파일 쪽에서도 그 절을 다시 본다(감사 후속, 결정 D-599)
+MODEL_LABELS = (("models/det/inference.onnx", "글자 위치를 찾는 모델"), ("models/rec/inference.onnx", "글자를 읽는 모델"), ("data/ppocrv5_korean_dict.txt", "글자 사전"))
+SECTION5 = "\n[5] 모델과 글자 사전 — 이름·출처·라이선스 표기 (시험용)\n" + "".join("- %s: 파일 %s (%d바이트, SHA-256 %s)\n" % (label, key, len(MODELS[key]), hashlib.sha256(MODELS[key]).hexdigest()) for key, label in MODEL_LABELS)
+NOTICE += SECTION5
 # 합친 빌드(notices 단계가 점검 앞에서 만든 것)와 같은 모양: licenses/<부품 이름>/<파일>, GEOS 전문은 licenses/shapely/LICENSE_GEOS, 별도 GEOS DLL 은 _internal 아래
 GEOS = {"name": "GEOS", "version": "3.99.9", "license": "LGPL-2.1", "dll_files": ["_internal/Shapely.libs/geos_c-1-abcdef.dll"], "license_file": "licenses/shapely/LICENSE_GEOS", "replaceable": True,
         "source_host": "libgeos.org", "source_included": False}
@@ -183,7 +187,36 @@ class NoticeTest(ReleaseCase):
         self.expect(self.make_release(bundle={**BUNDLE, "THIRD_PARTY_NOTICES.txt": "tqdm MPL-2.0 만 적었다".encode()}), "GEOS")
         self.expect(self.make_release(bundle={**BUNDLE, "THIRD_PARTY_NOTICES.txt": "GEOS 는 있는데 라이선스 이름이 없다".encode()}), "GEOS")
         self.expect(self.make_release(bundle={**BUNDLE, "THIRD_PARTY_NOTICES.txt": "라이선스는 LGPL 인데 부품 이름이 없다".encode()}), "GEOS")
-        self.assertEqual(self.problems(self.make_release(bundle={**BUNDLE, "THIRD_PARTY_NOTICES.txt": "geos 는 lgpl-2.1 이다".encode()})), [])
+        self.assertEqual(self.problems(self.make_release(bundle={**BUNDLE, "THIRD_PARTY_NOTICES.txt": ("geos 는 lgpl-2.1 이다" + SECTION5).encode()})), [])
+
+    # ---- 감사 후속(AS2-A A3, 결정 D-599): 산출물 점검이 고지문 [5] 절을 압축 파일 쪽에서 다시 본다(독립 검증 S2 의 I3) ----
+    def notice_release(self, text):
+        return self.make_release(bundle={**BUNDLE, "THIRD_PARTY_NOTICES.txt": text.encode("utf-8")})
+
+    def test_a_notice_without_the_model_section_or_with_two_of_them_fails(self):
+        base = NOTICE.replace(SECTION5, "")
+        self.assertIn("geos", base.lower(), "다른 점검은 통과하는 고지문에서 [5] 절만 뺐다")
+        self.expect(self.notice_release(base), "[5] 절이 정확히 하나")
+        self.expect(self.notice_release(NOTICE + SECTION5), "[5] 절이 정확히 하나")
+        self.assertEqual(self.problems(self.make_release()), [], "정상 묶음은 통과한다(거절만 보지 않는다)")
+
+    def test_a_section_whose_model_line_is_missing_or_has_another_size_or_hash_fails_naming_the_file(self):
+        det_key, rec_key, dict_key = "models/det/inference.onnx", "models/rec/inference.onnx", "data/ppocrv5_korean_dict.txt"
+        det_line = next(line for line in NOTICE.splitlines() if det_key in line)
+        rec_line = next(line for line in NOTICE.splitlines() if rec_key in line)
+        wrong_size = det_line.replace("(%d바이트" % len(MODELS[det_key]), "(%d바이트" % (len(MODELS[det_key]) + 1))
+        wrong_hash = rec_line.replace("SHA-256 " + sha(MODELS[rec_key]), "SHA-256 " + "0" * 64)
+        without_dict = "\n".join(line for line in NOTICE.splitlines() if dict_key not in line) + "\n"
+        for label, text, key in (("한 줄 빠짐", NOTICE.replace(det_line + "\n", ""), det_key), ("크기가 다름", NOTICE.replace(det_line, wrong_size), det_key),
+                                 ("해시가 다름", NOTICE.replace(rec_line, wrong_hash), rec_key), ("사전 줄 빠짐", without_dict, dict_key)):
+            with self.subTest(label=label):
+                problems = self.expect(self.notice_release(text), "잠금 값", label)
+                self.assertTrue(any(key in item for item in problems), (label, key, problems))
+
+    def test_model_lines_that_stand_above_the_section_heading_do_not_count(self):
+        head, _, tail = NOTICE.partition("\n[5] ")
+        text = tail.split("\n", 1)[1] + "\n" + head + "\n[5] 모델과 글자 사전 — 줄이 모두 위에 있다\n"
+        self.expect(self.notice_release(text), "잠금 값")
 
     def test_geos_must_be_a_separate_dll_file_under_internal_not_somewhere_else(self):
         dll = "_internal/Shapely.libs/geos_c-1-abcdef.dll"

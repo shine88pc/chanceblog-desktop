@@ -53,7 +53,7 @@ class Journal:
 
         try:
             raw = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, RecursionError) as error:             # 아주 깊게 겹친 JSON 의 RecursionError 도 같은 쉬운 거절이다(AS-S1 참고-18, D-612 — `context.py` 와 같은 처리)
             raise bad(f"읽을 수 없다: {type(error).__name__}") from None
         if not isinstance(raw, dict) or set(raw) != _KEYS or raw["schema"] != SCHEMA or raw["project_id"] != project_id:
             raise bad("칸이 올바르지 않다")

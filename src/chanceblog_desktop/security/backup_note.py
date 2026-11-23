@@ -8,6 +8,9 @@ from types import MappingProxyType
 CREDENTIAL_NOTE = "자격 증명(키·토큰·쿠키·세션)은 이 백업에 들어 있지 않아요 — 복원한 뒤 키는 다시 등록하세요"       # 백업 목록(MANIFEST.json)의 `credential_excluded_note` — 주제 백업(PCSEC1 M4, `topicdb/backup.py`)과 **한 상수**다(D-467)
 RESTORE_NOTE = "키는 백업에 없어요 — 복원한 뒤 설정에서 다시 등록해 주세요"
 SHORT_NOTE = "Credential 제외됨"
+# 반대로 **담기는** 개인 값 하나 — 백업의 설정 파일(`settings.json`)에 연결한 chanceblog 폴더의 절대 경로가 들어간다. 비밀은 아니지만 경로에 이 PC 의 사용자 이름이 보일 수 있어 백업 폴더를 다른 PC·클라우드로 옮길 때 알아 둘 일이다
+# (AS-S1 참고-11, D-614). 아래 '담지 않는 것' 목록(`EXCLUDED`)과 달리 목록 파일(`MANIFEST.json`)의 칸이 아니라 안내 글이다 — 목록의 모양은 바꾸지 않았다.
+INCLUDED_PATH_NOTE = "백업의 설정 파일(settings.json)에는 연결한 chanceblog 폴더의 전체 경로가 들어 있어요 — 비밀은 아니지만 경로에 이 PC 의 사용자 이름이 보일 수 있으니 백업 폴더를 다른 곳에 옮길 때 알아 두세요"
 
 # 백업이 담지 않는 것 — (이름, 이유). 이름은 파일·폴더 이름이거나 종류 이름이다. 목록 파일에 이 순서 그대로 적힌다.
 EXCLUDED = (
@@ -24,4 +27,4 @@ EXCLUDED = (
 EXCLUDED_NAMES = tuple(name for name, _ in EXCLUDED)
 EXCLUDED_REASON = MappingProxyType(dict(EXCLUDED))
 
-__all__ = ("CREDENTIAL_NOTE", "EXCLUDED", "EXCLUDED_NAMES", "EXCLUDED_REASON", "RESTORE_NOTE", "SHORT_NOTE")
+__all__ = ("CREDENTIAL_NOTE", "EXCLUDED", "EXCLUDED_NAMES", "EXCLUDED_REASON", "INCLUDED_PATH_NOTE", "RESTORE_NOTE", "SHORT_NOTE")

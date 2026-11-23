@@ -122,6 +122,56 @@ class StatedFactsTest(unittest.TestCase):
             self.assertIn(needle, DOC, needle)
 
 
+URL_SCHEME = re.compile(r"(?i)(?:https?|ftp)://|www[.]")
+
+
+def promise_problems(text):
+    """'정확한 SHA-256·바이트 수는 문서에 적지 않는다'(D-575)와 '글에는 인터넷 주소 스킴도 ASCII 물결표도 쓰지 않는다' 를 어긴 곳의 이름 목록(순수 함수)."""
+    found = []
+    if HASH64.search(text):
+        found.append("64자리 16진수")
+    if BIG_NUMBER.search(text):
+        found.append("7자리 이상 수")
+    if chr(0x7E) in text:
+        found.append("ASCII 물결표")
+    if URL_SCHEME.search(text):
+        found.append("주소 스킴")
+    return found
+
+
+class PromiseCoverageTest(unittest.TestCase):
+    """감사 후속(AS2-A A3, 결정 D-599) — 독립 검증 Q 의 QR2. D-575·변경 이력은 '정확한 SHA-256·바이트 수는 문서에 적지 않고 시험이 지킨다' 고 말하는데 시험이 읽는 문서는 `PACKAGE_OCR.md` 하나였다.
+    운영자가 첫 실행 뒤 `Get-FileHash` 값이나 압축 파일 크기를 README·NOTICE·변경 이력·결정 기록에 붙여 넣어도 어느 시험도 빨개지지 않았다(변이 넷이 12모듈 전체에서 살아남았다). 약속이 걸린 글 전부에 같은 검사를 건다:
+    추가 도구 README·NOTICE 전체, 이 묶음의 변경 이력 줄('- 글자 읽기 추가 도구' 로 열리는 줄), 결정 기록 D-575–D-577 행, 그리고 `PACKAGE_OCR.md`(물결표·스킴까지). 옛 숫자가 많은 변경 이력·결정 기록의 다른 줄은 대상이 아니다."""
+
+    def promised(self):
+        items = [("docs/PACKAGE_OCR.md", DOC), ("ocr_addon/README.md", support.read("ocr_addon/README.md")), ("ocr_addon/NOTICE", support.read("ocr_addon/NOTICE"))]
+        items += [("CHANGELOG.md 줄 %d" % number, line) for number, line in enumerate(support.read("CHANGELOG.md").splitlines(), 1) if line.startswith("- 글자 읽기 추가 도구")]
+        decisions = support.read("docs/DECISIONS.md").splitlines()
+        items += [("DECISIONS %s" % number, line) for number in ("D-575", "D-576", "D-577") for line in decisions if line.startswith("| %s |" % number)]
+        return items
+
+    def test_the_scan_finds_every_promised_text_so_it_cannot_pass_by_seeing_nothing(self):
+        names = [name for name, _text in self.promised()]
+        for expected in ("docs/PACKAGE_OCR.md", "ocr_addon/README.md", "ocr_addon/NOTICE", "DECISIONS D-575", "DECISIONS D-576", "DECISIONS D-577"):
+            self.assertIn(expected, names)
+        self.assertGreaterEqual(sum(1 for name in names if name.startswith("CHANGELOG.md")), 2, "변경 이력의 이 묶음 줄 둘")
+        self.assertTrue(all(text.strip() for _name, text in self.promised()))
+
+    def test_no_promised_text_carries_an_exact_hash_a_byte_count_a_tilde_or_a_scheme(self):
+        for name, text in self.promised():
+            with self.subTest(text=name):
+                self.assertEqual(promise_problems(text), [])
+
+    def test_the_check_catches_a_value_pasted_into_each_kind_of_promised_text_and_leaves_ordinary_text_alone(self):
+        for pasted in ("값 " + "A" * 64, "값 " + "ab" * 32, "크기 84798380바이트", "크기 84,798,380 바이트", "10" + chr(0x7E) + "20분", "주소 " + "https" + "://x.example/a", "주소 " + "www" + ".example.org"):
+            for name, text in self.promised():
+                with self.subTest(text=name, pasted=pasted[:14]):
+                    self.assertTrue(promise_problems(text + "\n" + pasted), "붙여 넣은 값을 못 잡았다")
+        for ordinary in ("파일 144개", "약 207MB", "10–20분", "버전 3.14.1", "a" * 40, "0.1.0-preview.1"):
+            self.assertEqual(promise_problems(ordinary), [], ordinary)
+
+
 class QuestionCandidatesTest(unittest.TestCase):
     def test_the_section_has_the_five_topics_each_with_facts_and_a_question_candidate(self):
         part = DOC[DOC.index("## 11. 켜기 전에 정할 일"):]

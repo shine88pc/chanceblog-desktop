@@ -72,7 +72,9 @@ class ElidedLabel(QLabel):
     """한 줄로 보여 주고 넘치면 …(줄임표)로 줄인다. 마우스를 올리면 **받은 글**이 툴팁으로 나온다 — 받은 글은 뷰모델이 가린 뒤 이미 줄인 글(블로그 이름 30자 + …, 한 줄 설명 300자)이라 그보다 긴 원문은 툴팁에도 없다(키가 반쪽으로 남지 않게 가린 뒤에 자르는 원칙)."""
 
     def __init__(self, text, role="small"):
-        super().__init__(text)
+        super().__init__()
+        self.setTextFormat(Qt.PlainText)                                           # 일반 글을 먼저 — 생성자 인자(`QLabel(text)`)는 AutoText 로 먼저 읽어 `<img src=…>` 가 든 글이 서식 글이 된다(마우스만 올려도 그림을 읽는다 — 감사 AS-S1 필수-2)
+        self.setText(text)
         self.setProperty("role", role)
         self._full = text
         self.setMinimumWidth(0)
@@ -246,7 +248,9 @@ class SemanticBadge(QLabel):
         name = K.badge_label(kind)
         full = " ".join(str(text if text else name).split())
         shown = clip_text(full, BADGE_MAX_CHARS)
-        super().__init__(shown)
+        super().__init__()
+        self.setTextFormat(Qt.PlainText)                                           # 일반 글을 먼저(쓰는 곳은 아직 시험·갤러리뿐이지만 외부 글이 들어와도 서식 글로 읽히지 않게 — 감사 AS-S1 참고-12)
+        self.setText(shown)
         self.kind, self.full_text = kind, full
         self.setProperty("semantic", kind)
         self.setAlignment(Qt.AlignCenter)
@@ -431,7 +435,7 @@ class ImagePlaceholder(QWidget):
             self.setMinimumSize(K.SIZE["thumb"], K.SIZE["thumb"])
             self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setAccessibleName(f"{thumb['label']}. {thumb['state_text']}")
-        self.setToolTip(thumb["state_text"])
+        self.setToolTip(plain_tooltip(thumb["state_text"]))
 
     def hasHeightForWidth(self):
         return self._wide
@@ -788,6 +792,7 @@ class Toast(QLabel):
 
     def __init__(self, parent, policy=None):
         super().__init__(parent)
+        self.setTextFormat(Qt.PlainText)                                           # 안내 글은 늘 일반 글 — 오류 문구에 외부 글이 끼어도 서식 글로 읽히지 않게(감사 AS-S1 권고-4)
         self.policy = policy or ToastPolicy()
         self.setObjectName("toast")
         self.setAlignment(Qt.AlignCenter)

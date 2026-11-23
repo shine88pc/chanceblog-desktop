@@ -738,7 +738,7 @@ class HardeningTest(AdapterCase):
 class EnvironmentRound2Test(unittest.TestCase):
     def test_the_path_holds_only_the_system_folders_under_the_system_root_on_windows(self):
         parent = {"SystemRoot": "C:" + chr(92) + "Windows", "PATH": "C:" + chr(92) + "Tools;C:" + chr(92) + "Program Files" + chr(92) + "Other;C:" + chr(92) + "Windows", "APPDATA": "x"}
-        with mock.patch.object(os, "name", "nt"), mock.patch.object(os, "pathsep", ";"):
+        with mock.patch.object(os, "name", "nt"), mock.patch.object(os, "pathsep", ";"), mock.patch.object(oa.winroot, "windows_directory", return_value="C:" + chr(92) + "Windows"):      # 윈도에 묻는 일을 가짜로 — 이 PC 의 윈도 폴더가 어디든 같은 시험(AS2-A, D-600)
             env = oa.build_environment(parent, "C:" + chr(92) + "tmp", None)
         parts = env["PATH"].split(";")
         self.assertEqual(len(parts), 2)
@@ -785,6 +785,83 @@ class EnvironmentRound2Test(unittest.TestCase):
             self.assertEqual(env[name], parent[name], name)
         self.assertEqual((env["my_PROXY"], env["Http_Proxy"]), (oa.PROXY_TRAP, oa.PROXY_TRAP), "이름에 PROXY 가 든 것은 대소문자와 상관없이 모두 닫힌 포트로")
         self.assertEqual((env["TEMP"], env["TMP"]), ("/tmp/w", "/tmp/w"))
+
+
+class EnvironmentPathTrustTest(unittest.TestCase):
+    """감사 후속(AS2-A A3, 결정 D-600) — 검증 SQ 2차 참고 2: `taskkill` 은 윈도에 직접 물은 폴더를 믿는데 작업자의 PATH 는 환경 값 그대로였다(`SystemRoot=D:\\evil` 이면 PATH 가 `D:\\evil\\System32;D:\\evil`).
+    PATH 도 같은 출처(`trusted_system_root`)를 쓴다 — 환경이 윈도가 알려 준 폴더와 다른 곳(다른 드라이브·`..` 낀 경로·네트워크 위치)을 가리키면 윈도가 알려 준 폴더로 짠다. 윈도에 묻는 일을 가짜로 바꿔 어느 운영체제에서나 돈다.
+    `SystemRoot` 값이 아예 없을 때의 모양(윈도 아닌 곳의 PATH)은 그대로다 — 더 막는 쪽으로만 바꿨다."""
+
+    REAL = "E:" + chr(92) + "RealWin"
+
+    def build(self, parent, real=REAL, name="nt"):
+        with mock.patch.object(os, "name", name), mock.patch.object(os, "pathsep", ";"), mock.patch.object(oa.winroot, "windows_directory", return_value=real) as ask:
+            env = oa.build_environment(parent, "C:" + chr(92) + "tmp", None)
+        return env, ask
+
+    def parts(self, env):
+        return env["PATH"].split(";")
+
+    def test_an_environment_root_that_is_not_the_folder_windows_reports_does_not_reach_the_path(self):
+        b = chr(92)
+        hostile = ("D:" + b + "evil", "C:" + b + "Windows" + b + ".." + b + "Users", "E:" + b + "RealWin" + b + ".." + b + "Users", "E:" + b + "RealWinX", b * 2 + "server" + b + "share" + b + "RealWin",
+                   b * 2 + "?" + b + "E:" + b + "RealWin", "C:Windows", "E:RealWin", "RealWin", "..")
+        for value in hostile:
+            for key in ("SystemRoot", "SYSTEMROOT", "windir"):
+                with self.subTest(value=value, key=key):
+                    env, _ask = self.build({key: value})
+                    parts = self.parts(env)
+                    self.assertEqual(len(parts), 2)
+                    for part in parts:
+                        self.assertTrue(part.startswith(self.REAL), part)
+                    self.assertNotIn("evil", env["PATH"].lower())
+                    self.assertNotIn("server", env["PATH"].lower())
+
+    def test_an_environment_root_that_names_the_same_folder_keeps_its_spelling_like_the_taskkill_path(self):
+        b = chr(92)
+        for value in ("E:" + b + "RealWin", "e:" + b + "realwin", "E:" + b + "RealWin" + b):
+            with self.subTest(value=value):
+                env, _ask = self.build({"SystemRoot": value})
+                for part in self.parts(env):
+                    self.assertTrue(part.startswith(value), part)
+
+    def test_when_windows_cannot_be_asked_the_old_rules_stay_a_usable_drive_path_is_kept_and_an_unusable_one_becomes_the_default_folder(self):
+        b = chr(92)
+        env, _ask = self.build({"SystemRoot": "D:" + b + "Win"}, real=None)
+        self.assertTrue(all(part.startswith("D:" + b + "Win") for part in self.parts(env)))
+        for value in ("Windows", b * 2 + "server" + b + "share" + b + "Windows", "C:Windows", ".."):
+            with self.subTest(value=value):
+                env, _ask = self.build({"SystemRoot": value}, real=None)
+                for part in self.parts(env):
+                    self.assertTrue(part.startswith(oa.DEFAULT_SYSTEM_ROOT), part)
+
+    def test_without_any_system_root_or_off_windows_the_path_is_what_it_was(self):
+        env, ask = self.build({}, name="nt")
+        self.assertEqual(env["PATH"], ";".join(["/usr/bin", "/bin"]), "SystemRoot 가 없으면 윈도 시스템 폴더를 새로 만들어 주지 않는다")
+        self.assertEqual(ask.call_count, 0, "쓸 값이 없으면 윈도에 묻지도 않는다")
+        env, ask = self.build({"SystemRoot": "D:" + chr(92) + "evil"}, name="posix")
+        self.assertEqual(env["PATH"], ";".join(["/usr/bin", "/bin"]))
+        self.assertEqual(ask.call_count, 0)
+
+    def test_the_path_and_the_taskkill_path_share_one_trusted_function_and_windows_is_asked_once_per_call(self):
+        parent = {"SystemRoot": "D:" + chr(92) + "evil"}
+        with mock.patch.object(oa, "trusted_system_root", wraps=oa.trusted_system_root) as shared, mock.patch.object(os, "name", "nt"), mock.patch.object(os, "pathsep", ";"), \
+                mock.patch.object(oa.winroot, "windows_directory", return_value=self.REAL) as ask:
+            oa.build_environment(parent, "C:" + chr(92) + "tmp", None)
+            oa.taskkill_path(parent)
+        self.assertEqual([call.args[0] for call in shared.call_args_list], ["D:" + chr(92) + "evil", "D:" + chr(92) + "evil"], "두 곳이 같은 함수를 환경 값 하나로 부른다")
+        self.assertEqual(ask.call_count, 2, "호출마다 한 번")
+
+    def test_the_trusted_function_returns_the_environment_value_only_when_it_is_the_same_folder_or_windows_cannot_be_asked(self):
+        b = chr(92)
+        with mock.patch.object(oa.winroot, "windows_directory", return_value=self.REAL):
+            self.assertEqual(oa.trusted_system_root("D:" + b + "evil"), self.REAL)
+            self.assertEqual(oa.trusted_system_root(None), self.REAL)
+            self.assertEqual(oa.trusted_system_root("e:/realwin/"), "e:/realwin/")
+        with mock.patch.object(oa.winroot, "windows_directory", return_value=None):
+            self.assertEqual(oa.trusted_system_root("D:" + b + "Win"), "D:" + b + "Win")
+            self.assertEqual(oa.trusted_system_root("Windows"), oa.DEFAULT_SYSTEM_ROOT)
+            self.assertEqual(oa.trusted_system_root(None), oa.DEFAULT_SYSTEM_ROOT)
 
 
 @unittest.skipUnless(os.name == "nt", "Job 개체는 윈도 전용이다")
@@ -1569,6 +1646,44 @@ class JobRuleOnWindowsTest(AdapterCase):
         self.assertEqual(outcome.error, "blocked")
         again = self.read(adapter)
         self.assertEqual((again.error, adapter.launches, adapter.job_assigned), ("", 2, True))
+
+
+class WindowsOnlyDecoratorsStayOnTheirClassesTest(unittest.TestCase):
+    """감사 후속 2차(AS2-A, 결정 D-602) — 검증 S 의 필수-2: 새 시험 클래스를 윈도 전용 건너뛰기 데코레이터와 그 대상 사이에 끼워 넣어 데코레이터가 새 클래스(`EnvironmentPathTrustTest`)에 붙고 `JobObjectTest` 는 리눅스에서도 돌았다
+    (앱 CI ubuntu 칸이 `job.ok` 단언에서 빨개지고, 어디서나 돌게 만든 PATH 시험은 리눅스에서 건너뛰어졌다 — 윈도에서는 둘 다 안 드러났다). 이 시험은 **데코레이터가 붙은 클래스**를 소스(AST)에서 읽어 윈도 전용 시험은 윈도 전용 표시를 갖고 어디서나 돌아야 하는 시험은 갖지 않음을 못박는다.
+    일부러 이 파일의 맨 끝에 두고 데코레이터를 달지 않는다(데코레이터가 붙은 클래스 곁에 끼워 넣으면 같은 사고가 되풀이된다)."""
+
+    WINDOWS_ONLY = ("JobObjectTest", "TaskkillOnWindowsTest", "JobRuleOnWindowsTest")
+    EVERYWHERE = ("EnvironmentPathTrustTest", "EnvironmentRound2Test", "TaskkillPathTest", "TaskkillApiPathTest", "PosixBranchTest", "JobRuleMockedTest", "EnvironmentTest", "WindowsOnlyDecoratorsStayOnTheirClassesTest")
+
+    @staticmethod
+    def class_decorators(source):
+        tree = ast.parse(source)
+        return {node.name: [ast.unparse(item) for item in node.decorator_list] for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    @staticmethod
+    def skips_off_windows(decorators):
+        """`unittest.skipUnless(os.name == 'nt', ...)` 꼴이 있는가 — 윈도가 아닌 곳에서는 클래스 전체를 건너뛴다."""
+        return any(item.startswith("unittest.skipUnless(os.name == 'nt'") for item in decorators)
+
+    def test_the_windows_only_classes_keep_their_skip_and_the_everywhere_classes_have_none(self):
+        found = self.class_decorators(Path(__file__).read_text(encoding="utf-8"))
+        for name in self.WINDOWS_ONLY:
+            with self.subTest(windows_only=name):
+                self.assertIn(name, found)
+                self.assertTrue(self.skips_off_windows(found[name]), f"{name} 에 윈도 전용 건너뛰기 데코레이터가 없다 — 리눅스 칸에서 그대로 돌아 빨개진다")
+        for name in self.EVERYWHERE:
+            with self.subTest(everywhere=name):
+                self.assertIn(name, found)
+                self.assertFalse(self.skips_off_windows(found[name]), f"{name} 에 윈도 전용 건너뛰기 데코레이터가 붙었다 — 리눅스 칸에서 건너뛰어진다(데코레이터는 자기 대상 클래스 바로 위에 둔다)")
+
+    def test_the_check_itself_sees_a_decorator_that_moved_onto_the_wrong_class(self):
+        moved = ("import unittest, os\n@unittest.skipUnless(os.name == \"nt\", \"Job 개체는 윈도 전용이다\")\nclass EnvironmentPathTrustTest(unittest.TestCase):\n    pass\n\nclass JobObjectTest(unittest.TestCase):\n    pass\n")
+        found = self.class_decorators(moved)
+        self.assertTrue(self.skips_off_windows(found["EnvironmentPathTrustTest"]))
+        self.assertFalse(self.skips_off_windows(found["JobObjectTest"]))
+        other_condition = self.class_decorators("import unittest, os\n@unittest.skipUnless(os.name == \"posix\", \"x\")\nclass A(unittest.TestCase):\n    pass\n")
+        self.assertFalse(self.skips_off_windows(other_condition["A"]), "다른 조건의 건너뛰기는 윈도 전용 표시가 아니다")
 
 
 if __name__ == "__main__":

@@ -89,6 +89,11 @@ class PlainTooltipTest(SeedsBase):
         self.assertEqual(rendered(badge.toolTip()), badge.full_text)
         clamped = candidate_parts.ClampedLabel(long_text, "small", 2)
         self.assertEqual(rendered(clamped.toolTip()), long_text)
+        # 강화(D-595, 감사 AS-S1 권고-4): 제목은 '이름을 쓴 그대로 그린다' 인데 옛 단언은 툴팁만 봤다 — 글 자체의 형식(서식 글이 아니라 일반 글)과 보이는 글도 못박는다
+        self.assertEqual((label.textFormat(), label.text()), (Qt.PlainText, RICH30))
+        self.assertEqual(badge.textFormat(), Qt.PlainText)
+        self.assertTrue(badge.text().endswith("…") and badge.full_text.startswith(badge.text()[:-1]), "보이는 글은 쓴 이름의 앞부분 + …(태그를 벗기지 않는다)")
+        self.assertEqual((clamped.textFormat(), clamped.plain_text()), (Qt.PlainText, long_text))
 
     def test_a_tooltip_shown_for_the_keyboard_focus_is_the_same_text(self):
         window = self.make()
