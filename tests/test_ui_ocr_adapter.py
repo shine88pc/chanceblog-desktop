@@ -17,6 +17,7 @@ import ast
 import contextlib
 import io
 import logging
+import ntpath
 import os
 import queue
 import signal
@@ -820,7 +821,7 @@ class JobObjectTest(unittest.TestCase):
         self.assertIn(b"MEMORYERROR", out, "한도를 넘는 메모리는 얻지 못해야 한다")
 
     def test_the_adapter_records_whether_the_worker_went_into_the_job(self):
-        """검증 S SP-15 — Job 개체에 넣었는지 남긴다(못 넣어도 읽기는 되지만 메모리 한도·앱이 죽어도 따라 끝남이 없다는 사실을 알 수 있게)."""
+        """검증 S SP-15 + 감사 OCR-S1 R2(결정 D-585) — Job 개체에 넣었는지 남기고, 윈도에서 못 넣었으면 그 작업자로는 읽지 않는다(예전에는 못 넣어도 읽기가 됐다 — 메모리 한도도 앱이 죽어도 따라 끝남도 없는 채로)."""
         local_ocr_on()
         self.addCleanup(local_ocr_off)
         adapter = oa.OcrAdapter(command(), verify=None, prepare_timeout=60, read_timeout=60, priority_class=0)
@@ -830,8 +831,11 @@ class JobObjectTest(unittest.TestCase):
         self.assertIs(adapter.job_assigned, True)
         adapter.shutdown()
         with mock.patch.object(oa.JobObject, "assign", autospec=True, return_value=False):
-            self.assertEqual(adapter.read_rgb(16, 16, PIXELS, "960").error, "")
+            outcome = adapter.read_rgb(16, 16, PIXELS, "960")
+        self.assertEqual(outcome.error, "blocked", "윈도에서 Job 개체에 못 넣으면 읽지 않고 blocked 로 끝낸다")
         self.assertIs(adapter.job_assigned, False, "못 넣었으면 못 넣었다고 남긴다")
+        self.assertEqual(adapter.read_rgb(16, 16, PIXELS, "960").error, "", "고장이 사라지면 같은 어댑터가 새 작업자로 다시 읽는다")
+        self.assertIs(adapter.job_assigned, True)
 
     def test_the_default_limit_is_one_gigabyte_and_the_adapter_puts_the_worker_in_a_job(self):
         self.assertEqual(oa.MEMORY_LIMIT_BYTES, 1024 * 1024 * 1024)
@@ -866,12 +870,16 @@ class PosixBranchTest(unittest.TestCase):
             oa.kill_tree(process)
 
     def test_on_windows_the_tree_is_ended_with_taskkill_and_a_hidden_window(self):
+        """감사 OCR-S1 R3(결정 D-586) — 예전에는 `["taskkill", …]` 이름만 부르는 호출이라 현재 폴더·앱 폴더의 같은 이름 실행 파일이 대신 실행될 수 있었다. 이제는 시스템 폴더(`SystemRoot`, 환경에서 읽는다)의 `System32` 아래 `taskkill.exe` **절대 경로**이고 나머지 인자는 그대로다."""
         process = mock.Mock(pid=77)
-        with mock.patch.object(os, "name", "nt"), mock.patch.object(subprocess, "run") as run:
+        root = "D:" + chr(92) + "WinTest"
+        with mock.patch.object(os, "name", "nt"), mock.patch.object(os, "environ", {"SystemRoot": root, "PATH": "C:" + chr(92) + "Evil"}), mock.patch.object(oa.winroot, "windows_directory", return_value=None), mock.patch.object(subprocess, "run") as run:
             oa.kill_tree(process)
         args, kwargs = run.call_args
-        self.assertEqual(args[0], ["taskkill", "/PID", "77", "/T", "/F"])
+        self.assertEqual(args[0], [root + chr(92) + "System32" + chr(92) + "taskkill.exe", "/PID", "77", "/T", "/F"], "이름만이 아니라 시스템 폴더의 절대 경로로 부른다")
+        self.assertNotEqual(args[0][0].lower(), "taskkill", "이름만 부르는 호출이 다시 생기면 빨강이다")
         self.assertEqual(kwargs["creationflags"], oa.NO_WINDOW)
+        self.assertEqual(run.call_count, 1, "이름만 부르는 대체 호출을 한 번 더 하지 않는다")
 
     def test_the_launch_on_other_systems_starts_a_new_session_and_never_passes_windows_only_flags(self):
         local_ocr_on()
@@ -1253,6 +1261,314 @@ class SourceShapeTest(unittest.TestCase):
     def test_the_fake_worker_and_the_real_protocol_agree_on_the_shapes(self):
         self.assertEqual(proto.PROTO, 1)
         self.assertTrue(HERE.joinpath("ocr_fake_worker.py").exists())
+
+
+def docstring_nodes(tree):
+    """모듈·함수·클래스의 설명 글 노드(글자 상수 하나) — 소스 속 '낱말 찾기' 가 설명 글을 코드로 세지 않게."""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                found.add(id(first.value))
+    return found
+
+
+class TaskkillPathTest(unittest.TestCase):
+    """감사 OCR-S1 R3(결정 D-586) — 프로세스 트리를 끄는 `taskkill.exe` 는 이름만이 아니라 윈도 시스템 폴더의 절대 경로로 부른다(이름만 부르면 윈도가 앱 폴더·현재 폴더의 같은 이름 실행 파일을 먼저 찾는다)."""
+
+    SYSTEM32 = chr(92) + "System32" + chr(92) + "taskkill.exe"
+
+    def setUp(self):
+        """이 묶음은 환경 값으로 가는 길(윈도에 물을 수 없을 때 — 윈도가 아니거나 호출이 실패)을 본다. 진짜 윈도에서는 윈도가 알려 주는 폴더가 먼저라서(결정 D-593) 그 길을 '물을 수 없음' 으로 고정한다 — 윈도에 물을 수 있을 때의 길은 `TaskkillApiPathTest`·`TaskkillOnWindowsTest`."""
+        patcher = mock.patch.object(oa.winroot, "windows_directory", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_path_is_system32_under_the_system_root_found_in_the_same_three_names_in_the_same_order(self):
+        for name in ("SystemRoot", "SYSTEMROOT", "windir"):
+            with self.subTest(name=name):
+                parent = {name: "D:" + chr(92) + "Win"}
+                self.assertEqual(oa.system_root(parent), "D:" + chr(92) + "Win")
+                self.assertEqual(oa.taskkill_path(parent), "D:" + chr(92) + "Win" + self.SYSTEM32)
+        order = {"SystemRoot": "E:" + chr(92) + "A", "SYSTEMROOT": "E:" + chr(92) + "B", "windir": "E:" + chr(92) + "C"}
+        self.assertEqual(oa.taskkill_path(order), "E:" + chr(92) + "A" + self.SYSTEM32, "SystemRoot 가 먼저")
+        del order["SystemRoot"]
+        self.assertEqual(oa.taskkill_path(order), "E:" + chr(92) + "B" + self.SYSTEM32, "그다음 SYSTEMROOT")
+        del order["SYSTEMROOT"]
+        self.assertEqual(oa.taskkill_path(order), "E:" + chr(92) + "C" + self.SYSTEM32, "마지막이 windir")
+
+    def test_the_environment_builder_and_the_taskkill_path_ask_the_one_same_function_for_the_system_root(self):
+        """'build_environment 가 이미 계산하는 값과 같은 출처' — 두 곳이 같은 함수 하나를 부른다(따로 읽는 두 번째 길이 생기면 걸린다)."""
+        parent = {"SystemRoot": "D:" + chr(92) + "Win"}
+        with mock.patch.object(oa, "system_root", wraps=oa.system_root) as source:
+            oa.build_environment(parent, "/tmp/w")
+            oa.taskkill_path(parent)
+        self.assertEqual([call.args[0] for call in source.call_args_list], [parent, parent])
+
+    def test_a_missing_or_unusable_system_root_gives_the_default_windows_folder_never_a_relative_or_network_path(self):
+        self.assertEqual(oa.DEFAULT_SYSTEM_ROOT, "C:" + chr(92) + "Windows")
+        default = "C:" + chr(92) + "Windows" + self.SYSTEM32
+        unusable = (None, "", " ", ".", "Windows", "Windows" + chr(92) + "x", "..", chr(92) + "Windows", "C:Windows", "C:", "1:" + chr(92) + "Windows", "/usr/bin", chr(92) * 2 + "server" + chr(92) + "share" + chr(92) + "Windows",
+                    chr(92) * 2 + "?" + chr(92) + "C:" + chr(92) + "Windows", chr(92) * 2 + "." + chr(92) + "C:", 5, 0, ["C:" + chr(92) + "Windows"], ("C:" + chr(92) + "Windows").encode("ascii"))
+        for value in unusable:
+            for key in ("SystemRoot", "SYSTEMROOT", "windir"):
+                with self.subTest(value=repr(value), key=key):
+                    self.assertEqual(oa.taskkill_path({key: value}), default)
+        self.assertEqual(oa.taskkill_path({}), default)
+
+    def test_a_forward_slash_root_is_fine_and_no_other_environment_value_reaches_the_result(self):
+        self.assertEqual(oa.taskkill_path({"SystemRoot": "C:/Windows"}), "C:/Windows" + self.SYSTEM32)
+        for parent in ({"SystemRoot": "evil", "PATH": "C:" + chr(92) + "Evil", "PWD": "x", "TEMP": "y"}, {"windir": ""}, {"PATH": "C:" + chr(92) + "Evil"}, {}):
+            with self.subTest(parent=sorted(parent)):
+                result = oa.taskkill_path(parent)
+                drive, rest = ntpath.splitdrive(result)
+                self.assertTrue(len(drive) == 2 and drive[1] == ":" and rest[:1] in (chr(92), "/"), "드라이브 글자로 시작하는 절대 경로다: " + result)
+                self.assertEqual(ntpath.basename(result), "taskkill.exe")
+                self.assertEqual(ntpath.basename(ntpath.dirname(result)), "System32")
+                self.assertNotIn("Evil", result)
+
+    def test_without_an_argument_it_reads_the_real_environment(self):
+        root = "D:" + chr(92) + "FromTheEnvironment"
+        with mock.patch.object(os, "environ", {"SystemRoot": root}):
+            self.assertEqual(oa.taskkill_path(), root + self.SYSTEM32)
+        with mock.patch.object(os, "environ", {}):
+            self.assertEqual(oa.taskkill_path(), oa.DEFAULT_SYSTEM_ROOT + self.SYSTEM32)
+
+    def test_a_taskkill_file_that_is_missing_is_never_answered_with_a_call_by_bare_name(self):
+        process = mock.Mock(pid=5)
+        with mock.patch.object(os, "name", "nt"), mock.patch.object(subprocess, "run", side_effect=FileNotFoundError("없다")) as run:
+            oa.kill_tree(process)
+        self.assertEqual(run.call_count, 1, "실패해도 이름만 부르는 대체 호출을 하지 않는다")
+        self.assertTrue(ntpath.isabs(run.call_args[0][0][0]))
+        process.kill.assert_called_once()                                  # 작업자 하나는 그래도 끈다(손자는 Job 개체가 끈다)
+
+    def test_the_adapter_source_has_no_bare_taskkill_name_only_the_file_name_inside_the_path_function(self):
+        """소스를 읽어 못박는다 — 설명 글 밖의 글자 상수 가운데 `taskkill` 이 든 것은 `taskkill_path` 안의 `taskkill.exe` 하나뿐이고, 프로세스를 끄는 호출의 첫 칸은 `taskkill_path()` 다."""
+        tree = ast.parse((ROOT / "src" / "chanceblog_desktop" / "ui" / "ocr_adapter.py").read_text(encoding="utf-8"))
+        skip = docstring_nodes(tree)
+        exported = next(node.value for node in tree.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets))
+        skip |= {id(node) for node in ast.walk(exported)}                    # `__all__` 의 내보내는 이름 목록(`taskkill_path` 라는 이름)은 호출이 아니다
+        found = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str) and "taskkill" in node.value.lower() and id(node) not in skip]
+        self.assertEqual(found, ["taskkill.exe"])
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        self.assertIn("taskkill.exe", [node.value for node in ast.walk(functions["taskkill_path"]) if isinstance(node, ast.Constant)])
+        runs = [node for node in ast.walk(functions["kill_tree"]) if isinstance(node, ast.Call) and ast.unparse(node.func) == "subprocess.run"]
+        self.assertEqual([ast.unparse(call.args[0].elts[0]) for call in runs], ["taskkill_path()"])
+
+
+@unittest.skipUnless(os.name == "nt", "taskkill 은 윈도 전용이다")
+class TaskkillOnWindowsTest(unittest.TestCase):
+    def test_the_path_points_at_the_real_system_tool_and_that_tool_really_ends_a_process(self):
+        path = oa.taskkill_path()
+        self.assertTrue(ntpath.isabs(path) and os.path.isfile(path), "이 PC 의 시스템 폴더에 실제로 있는 파일이다")
+        child = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"], creationflags=oa.NO_WINDOW)
+        self.addCleanup(kill_and_reap, child)
+        stand_in = mock.Mock(pid=child.pid)                                # 직접 끄기(kill)는 아무 일도 안 하는 대역 — 끝낸 것이 절대 경로의 taskkill 임을 보인다
+        stand_in.kill.side_effect = lambda: None
+        stand_in.wait.side_effect = lambda timeout=None: None
+        oa.kill_tree(stand_in)
+        try:
+            child.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("절대 경로로 부른 taskkill 이 프로세스를 끝내지 못했다")
+
+    def test_a_hostile_system_root_in_the_environment_no_longer_decides_which_taskkill_runs(self):
+        """검증 SQ 참고 4(결정 D-593) — 환경의 SystemRoot 가 `D:` + `evil` 같은 아무 폴더여도 윈도에 직접 물은 값을 쓰므로 진짜 시스템 taskkill 이 프로세스를 끝낸다(옛 코드는 그 폴더의 경로로 불러 실패했다)."""
+        real = oa.winroot.windows_directory()
+        self.assertTrue(real and os.path.isdir(real), "윈도가 알려 주는 윈도 폴더")
+        expected = ntpath.join(real, "System32", "taskkill.exe")
+        for hostile in ("D:" + chr(92) + "evil", "C:" + chr(92) + "Windows" + chr(92) + ".." + chr(92) + "Users", chr(92) * 2 + "server" + chr(92) + "share", ""):
+            with self.subTest(hostile=hostile), mock.patch.object(os, "environ", {"SystemRoot": hostile}):
+                self.assertEqual(oa.taskkill_path(), expected)
+        child = subprocess.Popen([sys.executable, "-B", "-c", "import time; time.sleep(60)"], creationflags=oa.NO_WINDOW)
+        self.addCleanup(kill_and_reap, child)
+        stand_in = mock.Mock(pid=child.pid)
+        stand_in.kill.side_effect = lambda: None
+        stand_in.wait.side_effect = lambda timeout=None: None
+        with mock.patch.object(os, "environ", {"SystemRoot": "D:" + chr(92) + "evil"}):
+            oa.kill_tree(stand_in)
+        try:
+            child.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail("환경 값이 아니라 윈도가 알려 준 폴더의 taskkill 로 불러야 프로세스가 끝난다")
+
+
+class TaskkillApiPathTest(unittest.TestCase):
+    """검증 SQ 참고 4(결정 D-593) — 윈도에서는 환경의 `SystemRoot` 가 아니라 윈도에 직접 물은 폴더(`winroot.windows_directory`)를 믿는다. 환경 값은 그 폴더와 같을 때만 쓰고 아니면 윈도가 알려 준 값이다.
+    윈도에 묻는 일을 가짜로 바꿔 어느 운영체제에서나 도는 시험이다(진짜 호출은 `TaskkillOnWindowsTest`·`test_ui_winroot`)."""
+
+    REAL = "E:" + chr(92) + "RealWin"
+    SYSTEM32 = chr(92) + "System32" + chr(92) + "taskkill.exe"
+
+    def setUp(self):
+        patcher = mock.patch.object(oa.winroot, "windows_directory", return_value=self.REAL)
+        self.ask = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_an_environment_value_that_is_not_the_folder_windows_reports_is_ignored_whatever_its_shape(self):
+        """SQ 탐침 r3 구역 D 의 입력들(`D:` + `evil`·`C:` + `Windows` + `..` + `Users`)과 그 밖의 쓸 수 없는 값 — 모두 윈도가 알려 준 값."""
+        b = chr(92)
+        hostile = ("D:" + b + "evil", "C:" + b + "Windows" + b + ".." + b + "Users", "E:" + b + "RealWin" + b + ".." + b + "Users", "E:" + b + "RealWinX", "E:" + b + "Other", b * 2 + "server" + b + "share" + b + "RealWin",
+                   b * 2 + "?" + b + "E:" + b + "RealWin", "C:Windows", "E:RealWin", "RealWin", "..", ".", "", " ", None, 5, 0, ["E:" + b + "RealWin"], ("E:" + b + "RealWin").encode("ascii"))
+        for value in hostile:
+            for key in ("SystemRoot", "SYSTEMROOT", "windir"):
+                with self.subTest(value=repr(value), key=key):
+                    self.assertEqual(oa.taskkill_path({key: value}), self.REAL + self.SYSTEM32)
+        self.assertEqual(oa.taskkill_path({}), self.REAL + self.SYSTEM32, "환경에 값이 없어도")
+
+    def test_an_environment_value_that_names_the_same_folder_is_used_in_the_spelling_it_came_in(self):
+        b = chr(92)
+        for value in ("E:" + b + "RealWin", "e:" + b + "realwin", "E:/RealWin", "E:" + b + "RealWin" + b, "E:/RealWin/", "E:" + b + "RealWin" + b + "x" + b + ".."):
+            with self.subTest(value=value):
+                result = oa.taskkill_path({"SystemRoot": value})
+                self.assertTrue(result.startswith(value), "같은 폴더면 환경 값 그대로 쓴다")
+                self.assertEqual(ntpath.normcase(ntpath.normpath(result)), ntpath.normcase(self.REAL + self.SYSTEM32))
+
+    def test_the_folder_windows_reports_wins_over_the_other_two_names_too(self):
+        parent = {"SystemRoot": "D:" + chr(92) + "A", "SYSTEMROOT": "D:" + chr(92) + "B", "windir": self.REAL}
+        self.assertEqual(oa.taskkill_path(parent), self.REAL + self.SYSTEM32, "SystemRoot 가 다르면 windir 가 맞아도 윈도가 알려 준 값을 쓴다 — 어느 쪽이든 결과는 그 값")
+
+    def test_the_tree_kill_runs_the_path_under_the_folder_windows_reports_even_with_a_hostile_environment(self):
+        process = mock.Mock(pid=77)
+        with mock.patch.object(os, "name", "nt"), mock.patch.object(os, "environ", {"SystemRoot": "D:" + chr(92) + "evil"}), mock.patch.object(subprocess, "run") as run:
+            oa.kill_tree(process)
+        self.assertEqual(run.call_args[0][0], [self.REAL + self.SYSTEM32, "/PID", "77", "/T", "/F"])
+        self.assertEqual(run.call_count, 1)
+
+    def test_windows_is_asked_once_per_call_and_only_through_the_one_helper(self):
+        oa.taskkill_path({"SystemRoot": self.REAL})
+        self.assertEqual(self.ask.call_count, 1)
+        tree = ast.parse((ROOT / "src" / "chanceblog_desktop" / "ui" / "ocr_adapter.py").read_text(encoding="utf-8"))
+        calls = [ast.unparse(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call) and "windows_directory" in ast.unparse(node.func)]
+        self.assertEqual(calls, ["winroot.windows_directory"], "어댑터가 윈도 폴더를 묻는 곳은 이 도우미 한 줄뿐이다(ctypes 는 어댑터에 없다)")
+
+
+class JobRuleMockedTest(unittest.TestCase):
+    """감사 OCR-S1 R2(결정 D-585) — 윈도에서 Job 개체에 못 넣으면(메모리 한도도 '앱이 죽으면 작업자도 끝남' 도 없다) 띄우지 않는다. 윈도 갈래를 `os.name` 만 좁게 흉내 내어 어느 운영체제에서나 본다(진짜 Job 개체는 `JobObjectTest`·`JobRuleOnWindowsTest`)."""
+
+    def setUp(self):
+        local_ocr_on()
+        self.addCleanup(local_ocr_off)
+        self.process = mock.Mock(pid=5, stdout=io.BytesIO(b""), stderr=io.BytesIO(b""), stdin=io.BytesIO())
+        self.adapter = oa.OcrAdapter([WORKER_PATH], verify=None, work_dir=tempfile.gettempdir())
+        self.addCleanup(self.adapter._remove_temp)
+
+    def launch(self, system, job):
+        made = []
+        real = tempfile.mkdtemp
+
+        def mkdtemp(*args, **kwargs):
+            made.append(real(*args, **kwargs))
+            return made[-1]
+        with mock.patch.object(os, "name", system), mock.patch.object(oa, "JobObject", return_value=job), mock.patch.object(subprocess, "Popen", return_value=self.process), \
+                mock.patch.object(tempfile, "mkdtemp", mkdtemp), mock.patch.object(oa, "kill_tree") as kill:
+            try:
+                self.adapter._launch()
+                raised = None
+            except oa.AdapterError as error:
+                raised = error
+        return raised, kill, made
+
+    def test_on_windows_a_job_that_cannot_take_the_worker_ends_the_launch_as_blocked_and_cleans_up_at_once(self):
+        job = mock.Mock()
+        job.assign.return_value = False
+        queue_before = self.adapter.lines
+        raised, kill, made = self.launch("nt", job)
+        self.assertIsNotNone(raised, "못 넣었는데 조용히 뜨면 안 된다")
+        self.assertEqual(raised.name, "blocked")
+        kill.assert_called_once_with(self.process)                          # 방금 띄운 프로세스 트리를 끝낸다
+        job.close.assert_called()                                           # Job 개체도 닫는다
+        self.assertEqual(len(made), 1)
+        self.assertFalse(os.path.exists(made[0]), "임시 폴더를 치운다")
+        self.assertTrue(self.process.stdin.closed and self.process.stdout.closed and self.process.stderr.closed, "파이프 핸들도 닫는다")
+        self.assertEqual((self.adapter.process, self.adapter.job, self.adapter.temp_dir, self.adapter.job_assigned), (None, None, None, False))
+        self.assertIs(self.adapter.lines, queue_before, "읽기 스레드를 시작하지도 않았다")
+
+    def test_the_same_failure_through_a_read_is_reported_to_the_caller_as_blocked_without_asking_the_worker_anything(self):
+        job = mock.Mock()
+        job.assign.return_value = False
+        self.process.stdin = mock.Mock()
+        with mock.patch.object(os, "name", "nt"), mock.patch.object(oa, "JobObject", return_value=job), mock.patch.object(subprocess, "Popen", return_value=self.process), mock.patch.object(oa, "kill_tree"):
+            outcome = self.adapter.read_rgb(16, 16, PIXELS, "960")
+        self.assertEqual((outcome.error, outcome.lines), ("blocked", ()))
+        self.process.stdin.write.assert_not_called()                        # 요청 한 바이트도 보내지 않았다 — 사진 픽셀이 한도 없는 작업자에게 가지 않는다
+
+    def test_a_job_object_that_could_not_even_be_made_is_the_same_failure(self):
+        job = mock.Mock(ok=False)
+        job.assign.return_value = False
+        raised, kill, _made = self.launch("nt", job)
+        self.assertEqual(getattr(raised, "name", None), "blocked")
+        kill.assert_called_once_with(self.process)
+
+    def test_on_windows_a_job_that_took_the_worker_launches_normally(self):
+        """대조 — 넣었으면 그대로 뜬다(위 시험의 빨강이 다른 원인이 아님)."""
+        job = mock.Mock()
+        job.assign.return_value = True
+        raised, kill, made = self.launch("nt", job)
+        self.assertIsNone(raised)
+        kill.assert_not_called()
+        self.assertEqual((self.adapter.process, self.adapter.job_assigned), (self.process, True))
+        self.assertTrue(os.path.isdir(made[0]))
+
+    def test_off_windows_there_is_no_job_object_so_the_rule_does_not_apply(self):
+        """윈도가 아닌 곳(앱 CI 의 리눅스 칸)에는 Job 개체가 없다 — 작업자는 그대로 뜨고 `job_assigned` 만 거짓이다."""
+        job = mock.Mock()
+        job.assign.return_value = False
+        raised, kill, made = self.launch("posix", job)
+        self.assertIsNone(raised)
+        kill.assert_not_called()
+        self.assertEqual((self.adapter.process, self.adapter.job_assigned), (self.process, False))
+        self.assertTrue(os.path.isdir(made[0]))
+
+
+@unittest.skipUnless(os.name == "nt", "Job 개체는 윈도 전용이다")
+class JobRuleOnWindowsTest(AdapterCase):
+    """감사 OCR-S1 R2(결정 D-585) — 진짜 작업자 프로세스(가짜 작업자)로: Job 개체에 못 넣으면 띄운 프로세스가 끝나 있고 임시 폴더가 없고 요청은 한 바이트도 안 갔다."""
+
+    def run_blocked(self, make_job_fail):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        dump = Path(folder.name, "request.bin")                             # 작업자가 요청을 받았다면 이 파일이 생긴다
+        adapter = self.make("--dump", str(dump))
+        created, made = [], []
+        real_popen, real_mkdtemp = subprocess.Popen, tempfile.mkdtemp
+
+        def popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            if args and list(args[0]) == adapter.command:                    # 작업자만 센다(트리를 끄는 taskkill 도 같은 Popen 을 지난다)
+                created.append(process)
+                self.addCleanup(hard_kill, process)
+            return process
+
+        def mkdtemp(*args, **kwargs):
+            made.append(real_mkdtemp(*args, **kwargs))
+            return made[-1]
+        with mock.patch.object(subprocess, "Popen", popen), mock.patch.object(tempfile, "mkdtemp", mkdtemp), make_job_fail():
+            outcome = adapter.read_rgb(16, 16, PIXELS, "960")
+        return adapter, outcome, created, made, dump.exists()
+
+    def check_blocked(self, adapter, outcome, created, made, sent):
+        self.assertEqual(outcome.error, "blocked")
+        self.assertEqual((len(created), len(made)), (1, 1))
+        self.assertTrue(wait_dead(created[0].pid), "방금 띄운 작업자 프로세스가 남아 있다")
+        self.assertFalse(os.path.exists(made[0]), "임시 폴더가 남아 있다")
+        self.assertFalse(sent, "작업자는 요청을 받지 못했다")
+        self.assertEqual((adapter.process, adapter.job, adapter.temp_dir, adapter.job_assigned, adapter.launches), (None, None, None, False, 1))
+
+    def test_a_job_that_refuses_the_assignment_leaves_nothing_running_and_no_request_sent(self):
+        self.check_blocked(*self.run_blocked(lambda: mock.patch.object(oa.JobObject, "assign", autospec=True, return_value=False)))
+
+    def test_a_job_object_that_cannot_be_made_leaves_nothing_running_and_no_request_sent(self):
+        def broken_init(self_, memory_limit=oa.MEMORY_LIMIT_BYTES):
+            self_.handle, self_.ok = None, False
+        self.check_blocked(*self.run_blocked(lambda: mock.patch.object(oa.JobObject, "__init__", broken_init)))
+
+    def test_after_a_blocked_launch_the_next_read_starts_a_fresh_worker_in_a_job(self):
+        adapter, outcome, created, made, sent = self.run_blocked(lambda: mock.patch.object(oa.JobObject, "assign", autospec=True, return_value=False))
+        self.assertEqual(outcome.error, "blocked")
+        again = self.read(adapter)
+        self.assertEqual((again.error, adapter.launches, adapter.job_assigned), ("", 2, True))
 
 
 if __name__ == "__main__":

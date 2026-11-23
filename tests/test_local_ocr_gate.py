@@ -98,6 +98,18 @@ class ConstantTest(unittest.TestCase):
         for code, sentence in sentences.items():
             self.assertIn(sentence, CATALOG[code].message, code)
 
+    def test_the_cause_of_the_blocked_error_also_names_the_job_object_and_a_worker_that_ended_at_once(self):
+        """검증 SQ 권고 1(결정 D-585) — 어댑터의 `blocked` 는 보안 프로그램의 차단만이 아니라 윈도의 작업 한도 장치(Job 개체)에 못 넣은 경우와 시작하자마자 끝난 작업자도 알린다(이미 끝난 프로세스는 Job 개체에 못 넣는다 — 예전에는
+        그 경우를 `died` 로 알렸다). 오류 카탈로그와 문제 해결 표의 원인 칸이 그것을 말한다. 화면 문구는 원인 대부분이 보안 프로그램이라 그대로 두었고 카탈로그 문장과 한 글자 같다."""
+        info = CATALOG["OCR_BLOCKED"]
+        for part in ("보안 프로그램", "스마트 앱 컨트롤", "Job 개체", "작업 한도 장치", "시작하자마자"):
+            self.assertIn(part, info.when)
+        self.assertIn("이 PC 의 보안 프로그램이 글자 읽기 도구를 막은 것 같아요", info.message)
+        doc = (ss.ROOT / "docs" / "TROUBLESHOOTING.md").read_text(encoding="utf-8")
+        row = next(line for line in doc.splitlines() if line.startswith("| `OCR_BLOCKED` |"))
+        for part in ("Job 개체", "작업 한도 장치", "시작하자마자"):
+            self.assertIn(part, row, "문제 해결 표의 같은 줄에도 있다(카탈로그는 이 표에서 만든다)")
+
 
 class NoWayToTurnItOnTest(unittest.TestCase):
     def test_nothing_in_src_stores_to_the_constant_except_the_one_false_in_capabilities(self):
@@ -184,10 +196,14 @@ class EntryPointGateTest(unittest.TestCase):
         self.assertTrue(ADAPTER.exists(), "ui/ocr_adapter.py 가 없다 — 옮겼다면 이 시험의 경로도 고친다(조용히 건너뛰지 않는다, 검증 S SP-13)")
         tree = ast.parse(ADAPTER.read_text(encoding="utf-8"))
         others = [call for call in ast.walk(tree) if isinstance(call, ast.Call) and ast.unparse(call.func) in OTHER_CALLS]
-        self.assertTrue(others)
+        self.assertEqual(len(others), 1, "트리를 끄는 taskkill 한 곳뿐이다")
         for call in others:
             first = call.args[0] if call.args else None
-            self.assertTrue(isinstance(first, ast.List) and first.elts and isinstance(first.elts[0], ast.Constant) and first.elts[0].value == "taskkill", ast.unparse(call)[:80])
+            # 감사 OCR-S1 R3(결정 D-586): 첫 칸은 글자 상수 'taskkill'(이름만 — 현재 폴더·앱 폴더의 같은 이름 실행 파일이 먼저 잡힌다)이 아니라 시스템 폴더 절대 경로를 만드는 `taskkill_path()` 호출이다
+            self.assertTrue(isinstance(first, ast.List) and first.elts and isinstance(first.elts[0], ast.Call) and ast.unparse(first.elts[0]) == "taskkill_path()", ast.unparse(call)[:80])
+            self.assertEqual([ast.unparse(item) for item in first.elts[1:]], ["'/PID'", "str(process.pid)", "'/T'", "'/F'"])
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "taskkill_path")
+        self.assertIn("ntpath.join(root, 'System32', 'taskkill.exe')", ast.unparse(function), "절대 경로는 시스템 폴더의 System32 아래 taskkill.exe 다")
 
     def test_every_function_that_launches_a_process_in_the_adapter_starts_with_the_gate(self):
         self.assertTrue(ADAPTER.exists(), "ui/ocr_adapter.py 가 없다 — 옮겼다면 이 시험의 경로도 고친다(조용히 건너뛰지 않는다, 검증 S SP-13)")

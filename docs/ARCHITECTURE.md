@@ -262,17 +262,17 @@ backups/
 - `content/photo_ocr.py`(순수): 작업자가 읽은 줄을 확인 전 후보로 다듬는다(빈 줄·되풀이는 조용히 빼고, 입구 검사에 걸린 줄은 글 없이 개수만, 줄 수 한도 60). `content/photo_manifest.py` 의 한도 상수를 글자 칸 60·대상 칸 20으로 나누고 `remove_item`·`merge_items` 를 더했다(저장 모양 불변).
 - `ui/core/photo_ocr_view.py`(순수): 사진 한 장의 상태 기계(쉼·기다림·준비·읽는 중·완료·실패·취소)·한 번에 한 장 대기열·세대 번호로 늦은 결과 버림·시간과 실패 규칙·줄 확인·고침·빼기·합치기·'모두 맞아요' 두 단계. `PhotoBoard` 에는 얇은 훅만 달았고(컨트롤러가 없으면 동작이 그대로), `differs_from` 이 분석 칸을 뺀 모양끼리 견주게 고쳤다(읽은 글은 저장하지 않으므로 '저장 안 한 변경' 이 아니다).
 - `ui/core/ocr_protocol.py`(순수): 작업자와 주고받는 약속의 앱 쪽 사본 — 저장소의 `ocr_addon/protocol.py` 와 머리말 아래가 한 글자도 다르면 안 되고 시험이 견준다.
-- `ui/ocr_adapter.py`: 작업자를 띄우는 유일한 곳(`LOCAL_OCR` 관문이 첫 문장). `service/ocr_addon.py`: 추가 도구 폴더를 읽기만 해 확인한다. `ocr_addon/`(저장소 최상위, 앱 묶음 밖): 작업자 소스·약속·소켓 가드·빌드 스크립트·잠금 파일.
+- `ui/ocr_adapter.py`: 작업자를 띄우는 유일한 곳(`LOCAL_OCR` 관문이 첫 문장). `ui/winroot.py`: 윈도 폴더를 윈도에 직접 물어(`GetSystemWindowsDirectoryW` — 윈도에서만 ctypes) 어댑터가 `taskkill` 의 절대 경로를 정하게 돕는 작은 파일이고 프로세스를 띄우지 않는다(D-593). `service/ocr_addon.py`: 추가 도구 폴더를 읽기만 해 확인한다. `ocr_addon/`(저장소 최상위, 앱 묶음 밖): 작업자 소스·약속·소켓 가드·빌드 스크립트·잠금 파일.
 - 새 문구 키(`pho_ocr_*`)·Qt 부품·사진 줄이기(`ui/qt/ocr_input.py`)·진행자(`ui/qt/ocr_runner.py`)·화면 규칙(`ui/core/photo_ocr_panel.py`)·조립(`ui/ocr_provider.py`)은 B2 에 있고 초안 본문 연결은 B3 다. 보안 경계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 절에 있다.
 
 ## 글자 읽기 — 시험 도구와 어댑터 보강 (D-526, 라운드 2)
 
 시험 쪽 새 파일(모두 `tests/` — 앱 묶음 밖): `ocr_fake_worker.py`(가짜 작업자 — 정상·느림·죽음·쓰레기·거대·깊은 JSON·표준 오류 폭주·네트워크 보고 등 서른두 가지 방식), `ocr_worker_probe.py`(진짜 `worker_main` 에 가짜 엔진만 끼우는 시험 전용 실행기),
-`test_ui_ocr_adapter.py`·`test_ocr_worker_guard.py`(어댑터와 진짜 작업자 코드의 소켓 가드·약속 처리). 어댑터(`ui/ocr_adapter.py`)는 요청을 별도 스레드가 쓰고 사진 한 장의 시간·취소 3초·앱 종료를 읽는 쪽이 지킨다. 보안 경계와 알려 둔 한계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 두 절에 있다.
+`test_ui_ocr_adapter.py`·`test_ocr_worker_guard.py`(어댑터와 진짜 작업자 코드의 소켓 가드·약속 처리)·`test_ui_winroot.py`(윈도 폴더를 윈도에 직접 묻는 도우미의 판정과 소스 닫힌 집합, D-593). 어댑터(`ui/ocr_adapter.py`)는 요청을 별도 스레드가 쓰고 사진 한 장의 시간·취소 3초·앱 종료를 읽는 쪽이 지킨다. 보안 경계와 알려 둔 한계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 두 절에 있다.
 
 ## 글자 읽기 — 라운드 3 시험 도구와 어댑터 변화 (D-526)
 
-시험 쪽 새 파일(모두 `tests/` — 앱 묶음 밖): `test_ocr_netguard.py`(진짜 `netguard.py` 를 가짜 `socket` 모듈에 얹어 분류·래퍼 열 개를 시험 — 진짜 소켓을 건드리지 않는다), `test_ocr_addon_build_check.py`(빌드 점검 관문·단계 순서를 빌드 없이 — 가짜 `pefile`·가짜 모델).
+시험 쪽 새 파일(모두 `tests/` — 앱 묶음 밖): `test_ocr_netguard.py`(진짜 `netguard.py` 를 가짜 `socket` 모듈에 얹어 분류·래퍼 열 개를 시험 — 진짜 소켓을 건드리지 않는다. 감사 훅 한 겹(D-587)의 시험만 진짜 `socket`·`_socket` 위에서 돈다 — 래퍼는 설치하지 않고 훅만 켜짐 표시로 켜며 바깥 주소는 패킷이 나갈 수 없는 `0.0.0.1` 뿐이다), `test_ocr_addon_build_check.py`(빌드 점검 관문·단계 순서를 빌드 없이 — 가짜 `pefile`·가짜 모델).
 어댑터(`ui/ocr_adapter.py`)는 정리에서 Job 개체를 핸들 닫기보다 먼저 닫고, 줄 대기열에 한도(`LINE_QUEUE_MAX`)가 있고 읽기 스레드는 정지 표지(`pump_stop`)로 그만두며, 핸들 닫기는 `CLOSE_WAIT` 만 기다리고, `verify` 가 필수 인자이며 작업자 실행 파일은 절대 경로여야 한다. 어댑터를 상속하거나 감싸는 코드는 이 인자·경로 규칙을 따라야 한다.
 어댑터 시험은 하위 프로세스에 닿는 모든 길(`subprocess`·`os`·`ctypes`·kernel32 이름·동적 이름 찾기)을 소스 규칙으로 닫힌 집합으로 못박는다. 보안 경계와 알려 둔 한계는 `docs/SECURITY.md` 의 '글자 읽기 작업자' 세 절에 있다.
 

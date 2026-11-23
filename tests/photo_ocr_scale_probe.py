@@ -22,13 +22,14 @@ from chanceblog_desktop.ui.qt import app as qapp  # noqa: E402
 from chanceblog_desktop.ui.qt import shell as shell_module  # noqa: E402
 
 LINES = tuple(f"차림표 {number} 번 메뉴 이름이 조금 길어요 {number * 1000:,}원" for number in range(1, 25))
+HIDDEN = ("가" * 201, "900101-1234567", "가" + chr(0x3164) + "나")                    # 입구 검사가 가리는 줄 셋 — '읽은 글 중 3줄은 보여 드리지 않았어요(…)' 안내(가장 긴 안내 글)가 배율에서도 잘리지 않는지 본다(검증 SQ 권고 3, 결정 D-593)
 
 
 class Gate(pov.FakeOcrProvider):
     """`release()` 전에는 읽지 않고 기다리는 가짜 공급자 — 읽는 중인 모습을 붙잡는다."""
 
     def __init__(self):
-        super().__init__(default=pov.OcrOutcome(LINES))
+        super().__init__(default=pov.OcrOutcome(LINES + HIDDEN))
         self.gate = threading.Event()
 
     def read(self, job):
@@ -64,7 +65,7 @@ def main(width, height):
         ui_offscreen.settle(app, 2)
         buttons = (form.add_button, form.all_button, form.close_button)
         blocks = [card.ocr_block for card in form.rows.values() if card.ocr_block is not None]
-        reports.append({"label": label, "inside": window.rect().contains(dialog.geometry()), "hscroll": form.scroll.horizontalScrollBar().maximum(),
+        reports.append({"label": label, "note": block.notes.plain_text() if block.notes.isVisible() else "", "inside": window.rect().contains(dialog.geometry()), "hscroll": form.scroll.horizontalScrollBar().maximum(),
                         "list_hscroll": max([block.scroll.horizontalScrollBar().maximum() for block in blocks] or [0]), "clipping": ui_offscreen.find_clipping(dialog), "squeezed": ui_offscreen.find_squeezed(dialog),
                         "buttons": all(window.rect().contains(button.mapTo(window, button.rect().bottomRight())) and button.isVisible() for button in buttons)})
 

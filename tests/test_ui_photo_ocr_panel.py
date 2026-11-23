@@ -20,6 +20,8 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(HERE))
 
+import scan_samples  # noqa: E402
+
 from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.content import photo_manifest as pm  # noqa: E402
 from chanceblog_desktop.errors.render import render  # noqa: E402
@@ -284,6 +286,9 @@ class LinesViewTest(unittest.TestCase):
         guide = panel.view("p001", 1.0)["lines"]["guide"]
         for part in ("틀릴 수 있어요", "맞는 줄에만 맞아요를 눌러 주세요", "누른 줄만 초안에 쓰여요", "저장되지 않아요"):
             self.assertIn(part, guide)
+        # 감사 OCR-S1 I9(결정 D-589) — 저장에 관한 말을 사실대로: 목록은 저장하지 않고, 맞아요로 확인해 초안에 넣은 글은 초안과 함께 저장된다
+        self.assertIn("확인 전 후보와 읽은 결과 목록은 저장되지 않아요. 맞아요로 확인해 초안에 넣은 글은 초안과 함께 저장돼요", guide)
+        self.assertNotIn("읽은 글은 저장되지 않아요", guide, "확인해 초안에 넣은 글은 저장되므로 '읽은 글은 저장되지 않아요' 라고만 말하지 않는다")
 
     def test_the_digits_note_shows_only_when_a_line_has_digits(self):
         board, ocr, panel = make(1)
@@ -298,13 +303,38 @@ class LinesViewTest(unittest.TestCase):
         shaped = ("900101-1234567", "정상 줄", "가" * 201, "다른 줄")
         read(panel, lines=shaped)
         notes = panel.view("p001", 1.0)["lines"]["notes"]
-        self.assertEqual(notes, ["읽은 글 중 2줄은 보여 드리지 않았어요(너무 길거나 개인 번호처럼 보여요)."])
+        self.assertEqual(notes, ["읽은 글 중 2줄은 보여 드리지 않았어요(너무 길거나, 눈에 보이지 않는 글자가 섞여 있거나, 알아볼 수 없는 글자가 붙어 있거나, 주민등록번호·카드 번호·키처럼 보이거나, 태그 같은 표시가 들어 있어요)."])
         for line in shaped[:1] + shaped[2:3]:
             self.assertFalse(any(line in value for value in strings_of(panel.view("p001", 1.0), skip={("lines", "items", 0, "text"), ("lines", "items", 1, "text")})), "거른 줄의 글을 되풀이하지 않는다")
         board, ocr, panel = make(1)
         read(panel, lines=tuple(f"줄 {number}" for number in range(70)))
         notes = panel.view("p001", 1.0)["lines"]["notes"]
         self.assertEqual((panel.view("p001", 1.0)["lines"]["total"], notes), (60, ["줄이 많아 처음 60줄만 보여요."]))
+
+    def test_the_hidden_note_names_what_the_entry_check_really_hides_and_phone_email_and_address_shapes_stay_visible(self):
+        """감사 OCR-S1 R4(결정 D-589)·검증 SQ 권고 3(결정 D-593) — 거른 줄 안내는 입구 검사가 실제로 가리는 것(너무 긴 줄·눈에 보이지 않거나 빈칸 같은 글자·겹쳐 쌓인 결합 문자·주민등록번호·카드 번호·키 모양·태그나 `{{ }}`)을 빠짐없이 말한다.
+        전화번호·이메일·주소 모양은 가리지 않으므로(동작은 그대로 — 운영자 질문 후보) '개인 번호' 처럼 넓게 말하지 않고, 그런 줄은 목록에 그대로 보인다(숫자 주의 한 줄이 사진과 견주라고 알린다)."""
+        invisible = ("가" + chr(0x3164) + "나", chr(0x2800) * 2 + "표", "글" + chr(0xFFFD) + "자")             # 빈칸처럼 보이거나 보이지 않는 글자(한글 채움·점자 빈칸·깨진 글자 표시)
+        stacked = ("가" + chr(0x0301) * 3,)                                                              # 겹쳐 쌓인 결합 문자
+        hidden = ("가" * 201, "900101-1234567", "4111 1111 1111 1111", scan_samples.google(), "<b>굵게</b>", "{{ 사진 3 }}") + invisible + stacked
+        shown = ("010-1234-5678", "02-123-4567", "문의 test.user@example.invalid", "서울시 강남구 테헤란로 123", "사업자 123-45-67890")
+        for line in hidden:
+            self.assertIsNotNone(pm.check_text("observation", line)[1], "입구 검사가 정말 가리는 줄이다")
+        for line in shown:
+            self.assertIsNone(pm.check_text("observation", line)[1], "입구 검사가 가리지 않는 줄이다")
+        board, ocr, panel = make(1)
+        read(panel, lines=hidden + shown)
+        lines = panel.view("p001", 1.0)["lines"]
+        self.assertEqual([item["text"] for item in lines["items"]], list(shown), "전화·이메일·주소 모양은 가려지지 않는다 — 그대로 보인다")
+        self.assertEqual(lines["notes"], [T["pho_ocr_hidden"].format(m=len(hidden))])
+        note = lines["notes"][0]
+        for word in ("너무 길", "눈에 보이지 않는 글자", "알아볼 수 없는 글자", "주민등록번호", "카드 번호", "키", "태그"):
+            self.assertIn(word, note)
+        for word in ("개인 번호", "전화", "이메일", "주소"):
+            self.assertNotIn(word, note, "가리지 않는 것을 가린다고 말하지 않는다: " + word)
+        self.assertIn("전화번호", lines["digits"], "가리지 않는 전화번호는 숫자 주의 한 줄이 사진과 견주라고 알린다")
+        for line in hidden:
+            self.assertFalse(any(line in value for value in strings_of(panel.view("p001", 1.0))), "거른 줄의 글을 되풀이하지 않는다")
 
     def test_the_lines_are_locked_while_it_reads_again_and_the_buttons_that_change_them_are_off(self):
         board, ocr, panel = make(1)
@@ -661,12 +691,40 @@ class WordingTest(unittest.TestCase):
         self.assertEqual(T["pho_ocr_status_a11y"], "사진 {n} 글자 읽기 상태: {text}")
 
     def test_the_wording_matches_the_design_sentences(self):
-        self.assertEqual(T["pho_ocr_intro"], "글자 읽기는 이 PC 안에서만 해요. 사진은 밖으로 나가지 않아요. 읽은 글은 틀릴 수 있어서, 확인한 줄만 초안에 쓰여요. 읽은 글은 저장되지 않아요.")
+        self.assertEqual(T["pho_ocr_intro"], "글자 읽기는 이 PC 안에서만 해요. 사진은 밖으로 나가지 않아요. 읽은 글은 틀릴 수 있어서, 확인한 줄만 초안에 쓰여요. 확인 전 후보와 읽은 결과 목록은 저장되지 않아요. 맞아요로 확인해 초안에 넣은 글은 초안과 함께 저장돼요.")
+        self.assertEqual(T["pho_ocr_guide"], "읽은 글은 틀릴 수 있어요. 사진과 견주어 맞는 줄에만 맞아요를 눌러 주세요. 누른 줄만 초안에 쓰여요. 확인 전 후보와 읽은 결과 목록은 저장되지 않아요. 맞아요로 확인해 초안에 넣은 글은 초안과 함께 저장돼요.")
+        self.assertEqual(T["pho_ocr_hidden"], "읽은 글 중 {m}줄은 보여 드리지 않았어요(너무 길거나, 눈에 보이지 않는 글자가 섞여 있거나, 알아볼 수 없는 글자가 붙어 있거나, 주민등록번호·카드 번호·키처럼 보이거나, 태그 같은 표시가 들어 있어요).")
+        self.assertEqual(T["pho_ocr_regen_body"], "저장해 둔 글에 사진 속 글자 문단이 들어 있었다면, 지금 확인한 글자가 없는 사진의 문단은 새 글에서 빠져요. 읽은 결과 목록은 저장되지 않아요. 넣으려면 먼저 사진 정리에서 그 사진의 글자를 다시 읽고 맞아요를 누른 뒤 사진을 다시 확인했어요로 해 주세요.")
+        self.assertEqual(T["pho_ocr_regen_more"], "저장해 둔 글의 사진 속 글자 문단도 새 글에서 빠질 수 있어요. 읽은 결과 목록은 저장되지 않아서 지금은 확인한 글자가 없어요.")
         self.assertEqual((T["pho_ocr_btn"], T["pho_ocr_again"], T["pho_ocr_bigger"], T["pho_ocr_cancel"], T["pho_ocr_all"]), ("글자 읽기", "다시 읽기", "작은 글씨라면 더 크게 다시 읽기", "취소", "읽은 글 모두 맞아요"))
         self.assertEqual((T["pho_ocr_line_pending"], T["pho_ocr_line_done"], T["pho_ocr_line_remove"]), ("확인 전", "확인함", "빼기"))
         self.assertEqual(T["pho_ocr_summary"].format(n=47, k=5), "읽은 글 47줄 중 확인 5줄")
         self.assertEqual(T["pho_ocr_hint"], "이 PC 안에서만 읽어요")
         self.assertEqual(T["pho_ocr_cancelled"], "글자 읽기를 멈췄어요")
+
+    def test_every_text_that_speaks_of_saving_says_the_same_thing_and_the_old_one_line_sentence_is_nowhere(self):
+        """감사 OCR-S1 I9(결정 D-589)·검증 SQ 참고 7(결정 D-593) — '읽은 글은 저장되지 않아요' 는 맞아요로 확인해 초안에 넣은 글이 초안과 함께 저장된다는 사실을 가린다. 창 위 안내·읽은 글 안내는 '읽은 결과 목록은 저장되지 않고 확인해 넣은 글은 초안과
+        함께 저장된다' 로, 저장해 둔 초안을 다시 만들 때의 확인창 두 글(`pho_ocr_regen_*`)도 같은 '읽은 결과 목록' 말씨로 맞췄고, 어느 문구에도 옛 한 줄짜리 말이 없다 — 이 표의 모든 문구를 훑는다."""
+        for key, value in photo_text.PHOTO_OCR_T.items():
+            self.assertNotIn("읽은 글은 저장되지 않아", value, key)
+            self.assertNotIn("읽은 글은 저장하지 않아", value, key)
+        pair = "확인 전 후보와 읽은 결과 목록은 저장되지 않아요. 맞아요로 확인해 초안에 넣은 글은 초안과 함께 저장돼요."
+        for key in ("pho_ocr_intro", "pho_ocr_guide"):
+            self.assertIn(pair, T[key], key)
+        self.assertIn("읽은 결과 목록은 저장되지 않아요.", T["pho_ocr_regen_body"])
+        self.assertIn("읽은 결과 목록은 저장되지 않아서", T["pho_ocr_regen_more"])
+        mentions = sorted(key for key, value in photo_text.PHOTO_OCR_T.items() if "저장" in value and key not in ("pho_ocr_regen_title",))
+        self.assertEqual(mentions, ["pho_ocr_guide", "pho_ocr_intro", "pho_ocr_regen_body", "pho_ocr_regen_more"], "저장을 말하는 문구는 이 넷뿐이다 — 새로 생기면 위 말씨와 맞는지 보고 이 목록을 고친다")
+
+    def test_the_screen_states_document_quotes_the_intro_the_guide_the_digits_note_and_the_hidden_note_word_for_word(self):
+        """검증 SQ 권고 3(결정 D-593) — 화면 문구를 바꾸고도 문서의 인용이 옛 글로 남던 틈(검증이 눈으로 찾았다)을 닫는다: `docs/UI_STATES.md` 의 글자 읽기 표가 창 위 안내·읽은 글 안내·숫자 주의·거른 줄 안내(줄 수 자리는 `M`, 끝의 마침표는 빼고)를
+        문구 표와 한 글자 같게 인용한다."""
+        doc = (ROOT / "docs" / "UI_STATES.md").read_text(encoding="utf-8")
+        for key in ("pho_ocr_intro", "pho_ocr_guide", "pho_ocr_digits"):
+            self.assertIn(T[key], doc, key)
+        hidden = T["pho_ocr_hidden"].replace("{m}", "M")
+        self.assertTrue(hidden.endswith(")."), hidden)
+        self.assertIn(hidden[:-1], doc, "거른 줄 안내")
 
 
 class AppStateTest(unittest.TestCase):
