@@ -9,6 +9,7 @@
 실행: `python ocr_worker_probe.py --probe 방식 [--fakelib 폴더]`
 방식(probe): 엔진을 가짜로 바꾸는 방식 — ok(글 두 줄) · raise(엔진이 예외) · many(300줄) · longline(1000자 한 줄) · emoji_big(4바이트 글자 200줄 x 400자 — 응답이 256KB 를 넘어 줄여 보내는 길) ·
   net_connect·net_connect_ex·net_create_connection·net_getaddrinfo·net_gethostbyname·net_sendto(바깥 시도 하나 — 막혀서 `net_blocked` 가 되어야 한다) · net_loopback(루프백만 — 통과하고 횟수에 안 잡힌다) ·
+  net_raw_connect·net_raw_connect_ex·net_raw_sendto·net_raw_bind·net_raw_getaddrinfo·net_raw_gethostbyname(`_socket` 을 곧바로 쓰는 바깥 시도 하나 — 파이썬 래퍼는 못 보고 감사 훅이 막아 `net_blocked` 가 되어야 한다, 결정 D-587) · net_raw_count(그 여섯을 한꺼번에 시도하고 가드의 횟수를 글 한 줄로 알린다) ·
   stdout_noise(엔진이 fd 1 과 print 로 표준 출력에 글을 씀 — 프로토콜 줄이 안 더럽혀지는지) · net_count(바깥 셋·루프백 둘을 시도하고 가드의 횟수를 글 한 줄로 알려 준 뒤 횟수를 비운다) · startup_raise(엔진 만들기가 예외 — 시작 실패) ·
   import_time(엔진 자리를 안 바꾸고 진짜 `build_engine` 이 `--fakelib` 폴더의 가짜 라이브러리를 가져오게 한다 — 가짜 `onnxruntime` 이 가져오는 순간 바깥 시도를 한다: 가드를 첫 줄에서 켰는지 본다).
 `worker_main.main` 은 그대로 부른다(표준 입출력 약속·종료 코드도 진짜 그대로다). 숫자 배열 라이브러리가 없어도 돌도록 `serve` 가 쓰는 만큼만 흉내 낸 가짜 `numpy` 를 끼운다.
@@ -68,9 +69,31 @@ def attempt(call):
         pass
 
 
+RAW_KINDS = ("raw_connect", "raw_connect_ex", "raw_sendto", "raw_bind", "raw_getaddrinfo", "raw_gethostbyname")
+
+
+def raw_attempt(kind):
+    """`socket` 모듈의 래퍼를 거치지 않고 `_socket`(C 모듈)을 곧바로 쓰는 시도 — 파이썬 래퍼는 이 길을 못 보고 감사 훅 한 겹만 본다(감사 OCR-S1 R5, 결정 D-587). 주소는 모두 패킷이 나갈 수 없는 `0.0.0.1` 이다."""
+    import _socket
+    if kind == "raw_connect":
+        attempt(lambda: _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM).connect((BAD_HOST, 9)))
+    elif kind == "raw_connect_ex":
+        attempt(lambda: _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM).connect_ex((BAD_HOST, 9)))
+    elif kind == "raw_sendto":
+        attempt(lambda: _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM).sendto(b"x", (BAD_HOST, 9)))
+    elif kind == "raw_bind":
+        attempt(lambda: _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM).bind((BAD_HOST, 0)))
+    elif kind == "raw_getaddrinfo":
+        attempt(lambda: _socket.getaddrinfo(BAD_HOST, 80))
+    elif kind == "raw_gethostbyname":
+        attempt(lambda: _socket.gethostbyname(BAD_HOST))
+
+
 def blocked_attempt(kind):
     import socket
-    if kind == "connect":
+    if kind in RAW_KINDS:
+        raw_attempt(kind)
+    elif kind == "connect":
         attempt(lambda: socket.socket().connect((BAD_HOST, 9)))
     elif kind == "connect_ex":
         attempt(lambda: socket.socket().connect_ex((BAD_HOST, 9)))
@@ -103,9 +126,16 @@ class Engine:
             return output(["가" * 1000])
         if behavior == "emoji_big":
             return output([chr(0x1F600) * 400 for _ in range(200)])
-        if behavior.startswith("net_") and behavior[4:] in ("connect", "connect_ex", "create_connection", "getaddrinfo", "gethostbyname", "sendto"):
+        if behavior.startswith("net_") and behavior[4:] in ("connect", "connect_ex", "create_connection", "getaddrinfo", "gethostbyname", "sendto") + RAW_KINDS:
             blocked_attempt(behavior[4:])
             return output(["바깥 시도 뒤의 글"])
+        if behavior == "net_raw_count":
+            for kind in RAW_KINDS:
+                raw_attempt(kind)
+            stats = wm._netguard.stats()
+            text = json.dumps({"attempts": stats["attempts"], "loopback": stats["loopback"], "audit": stats["audit"], "apis": sorted({api for api, _target in stats["recent"]})}, ensure_ascii=True)
+            wm._netguard.reset_counts()
+            return output([text])
         if behavior == "net_loopback":
             loopback_attempt()
             return output(["루프백만 쓴 글"])
@@ -115,7 +145,7 @@ class Engine:
             loopback_attempt()
             loopback_attempt()
             stats = wm._netguard.stats()
-            text = json.dumps({"attempts": stats["attempts"], "loopback": stats["loopback"], "targets": sorted({target for _api, target in stats["recent"]}), "apis": sorted({api for api, _target in stats["recent"]})}, ensure_ascii=True)
+            text = json.dumps({"attempts": stats["attempts"], "loopback": stats["loopback"], "audit": stats["audit"], "targets": sorted({target for _api, target in stats["recent"]}), "apis": sorted({api for api, _target in stats["recent"]})}, ensure_ascii=True)
             wm._netguard.reset_counts()
             return output([text])
         if behavior == "stdout_noise":

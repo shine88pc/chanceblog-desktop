@@ -10,6 +10,8 @@
   4) 가드를 못 켜면(설치가 예외·켜지지 않음) 작업자는 시작하지 않는다(종료 코드 70). 가드는 `worker_main.py` 의 첫 문장이고 엔진 라이브러리는 함수 안에서만 가져온다(소스 규칙).
   5) 진짜 `serve` 의 약속 처리 — 나쁜 머리·모르는 칸·`opts`·너무 긴 머리는 `proto` 와 종료 코드 2, 크기가 안 맞거나 너무 크면 오류 응답 뒤 계속 일하고, 본문 도중에 입력이 닫히면 종료 코드 3, `bye`·EOF 는 `bye` 와 0.
   6) 진짜 작업자의 응답(줄 200개로 줄임·`dropped`·`trunc`·글 400자 자름)이 앱의 응답 검사를 모두 통과하고, 어댑터가 `net_blocked`·`engine` 을 이름으로 알리며 컨트롤러가 끈다.
+  7) 감사 훅 한 겹(감사 OCR-S1 R5, 결정 D-587) — 파이썬 소켓 래퍼를 안 지나는 `_socket` 직접 시도(connect·connect_ex·sendto·bind·getaddrinfo·gethostbyname)도 `net_blocked` 와 종료 코드 5 로 끝나고 한 번씩만 세며,
+     진짜 `--selftest` 경로의 음성 대조 다섯(각각 한 번)과 루프백(안 셈)이 그대로다.
 """
 import ast
 import json
@@ -206,6 +208,7 @@ class GuardBlocksTest(ClientCase):
             self.assertGreaterEqual(stats["loopback"], 2, "루프백은 따로 센다(create_connection 하나가 안쪽에서 getaddrinfo·connect 를 또 불러 시도마다 한 번 넘게 센다)")
             self.assertTrue(any("0.0.0.1" in target for target in stats["targets"]), stats["targets"])
             self.assertTrue({"socket.connect", "socket.getaddrinfo", "socket.sendto"} <= set(stats["apis"]), stats["apis"])
+            self.assertIs(stats["audit"], True, "작업자는 소켓 래퍼 위에 감사 훅 한 겹도 켜 둔다(결정 D-587)")
             self.assertFalse(any("127.0.0.1" in target for target in stats["targets"]), "루프백은 시도 목록에 없다")
         self.assertEqual(seen[0], seen[1], "두 번째 요청의 횟수가 첫 번째와 같다 — 횟수를 비웠으므로 쌓이지 않는다")
 
@@ -337,6 +340,54 @@ class FailClosedTest(unittest.TestCase):
         done = self.run_with_guard_source("ACTIVE = False" + chr(10) + "def install():" + chr(10) + "    global ACTIVE" + chr(10) + "    ACTIVE = True" + chr(10) + "    return True" + chr(10))
         self.assertEqual(done.returncode, 0)
         self.assertIn(b"STARTED", done.stdout)
+
+
+RAW_KINDS = ("raw_connect", "raw_connect_ex", "raw_sendto", "raw_bind", "raw_getaddrinfo", "raw_gethostbyname")
+
+
+class AuditLayerTest(ClientCase):
+    """감사 OCR-S1 R5(결정 D-587) — `_socket`(C 모듈)을 곧바로 쓰는 바깥 시도는 파이썬 래퍼를 지나지 않아 예전에는 가드가 못 봤다(래퍼 위의 감사 훅 한 겹이 이제 본다). 진짜 작업자 소스를 띄워 본다. 주소는 모두 패킷이 나갈 수 없는 `0.0.0.1`."""
+
+    def test_each_raw_socket_attempt_is_blocked_and_reported_as_net_blocked_and_the_worker_ends_with_code_five(self):
+        for kind in RAW_KINDS:
+            with self.subTest(kind=kind):
+                client = self.client("net_" + kind)
+                self.ready(client)
+                answer = self.answer(client, 7)
+                self.assertEqual(answer, {"t": "error", "id": 7, "code": "net_blocked"}, kind)
+                self.assertIsNone(client.line(), "결과 줄은 나가지 않는다")
+                self.assertEqual(client.process.wait(timeout=90), 5, kind)
+
+    def test_the_probe_helper_knows_exactly_the_raw_kinds_this_test_runs(self):
+        """시험 도우미(`ocr_worker_probe.py`)는 불러오면 진짜 가드를 켜 버려서 시험이 불러올 수 없다 — 두 파일에 같은 목록이 따로 적혀 있으니 글자로 견줘 어긋남을 막는다(도우미가 한 길을 조용히 빠뜨리면 그 길은 시험되지 않는다)."""
+        text = Path(PROBE).read_text(encoding="utf-8")
+        self.assertIn("RAW_KINDS = (" + ", ".join('"%s"' % kind for kind in RAW_KINDS) + ")", text)
+
+    def test_the_raw_attempts_are_counted_exactly_once_each_and_the_worker_says_the_audit_layer_is_on(self):
+        client = self.client("net_raw_count")
+        self.ready(client)
+        stats = json.loads(self.answer(client, 1)["lines"][0]["text"])
+        self.assertEqual(stats["attempts"], 6, "여섯 길을 한 번씩 — 래퍼와 훅이 겹쳐 두 번 세지도, 하나를 놓치지도 않는다")
+        self.assertIs(stats["audit"], True)
+        self.assertEqual(stats["loopback"], 0, "래퍼를 안 지나므로 루프백 횟수는 그대로다")
+        self.assertEqual(stats["apis"], ["socket.bind", "socket.connect", "socket.getaddrinfo", "socket.gethostbyname", "socket.sendto"], "connect_ex 도 같은 connect 이벤트다")
+
+    def test_the_real_selftest_keeps_its_five_negative_controls_counted_exactly_once_and_loopback_uncounted(self):
+        """진짜 `worker_main.py --selftest` 경로(가드 음성 대조 다섯 + 루프백)를 부른다 — 감사 훅이 래퍼와 겹쳐 두 번 세거나 루프백을 막으면 빨개진다(예전에는 이 경로를 부르는 시험이 없었다 — 소스만 읽었다).
+        모델이 없는 빈 폴더라 그 뒤 파일 점검에서 종료 코드 6 으로 끝난다(엔진 라이브러리는 가져오지 않는다)."""
+        with tempfile.TemporaryDirectory() as folder:
+            command = [sys.executable, "-B", str(WORKER_MAIN), "--selftest", "--home", folder]
+            if os.name != "nt":
+                command = ["/usr/bin/env", "LD_LIBRARY_PATH=" + os.environ.get("LD_LIBRARY_PATH", ""), *command]
+            done = subprocess.run(command, capture_output=True, env=oa.build_environment(dict(os.environ), folder), timeout=120, cwd=str(ROOT), input=b"")
+        self.assertEqual(done.returncode, 6, done.stderr.decode("utf-8", "replace")[-300:])
+        report = json.loads(done.stdout.decode("utf-8").strip().splitlines()[-1])
+        self.assertIs(report["guard_active"], True)
+        self.assertEqual(report["negative_control_attempts"], 5)
+        self.assertTrue(all(probe["blocked_and_counted"] for probe in report["negative_control"]), report["negative_control"])
+        self.assertIs(report["loopback_not_counted"], True)
+        self.assertIs(report["negative_control_recent_targets_only_test_addresses"], True)
+        self.assertIs(report["files_ok"], False)
 
 
 class RealServeProtocolTest(ClientCase):

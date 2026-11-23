@@ -3,6 +3,8 @@
 
 작업자를 지키는 겹(설계 3-6 의 1겹과 3-3):
   · 인자는 고정이고 셸을 쓰지 않는다(`shell` 없음). 윈도에서는 창이 안 뜨게(`CREATE_NO_WINDOW`) 낮은 우선순위(`BELOW_NORMAL`)로 띄우고, Job 개체(`KILL_ON_JOB_CLOSE` + 프로세스 메모리 1GB)에 넣어 앱이 죽어도 작업자가 남지 않게 한다.
+    윈도에서 Job 개체를 만들지 못하거나 작업자를 넣지 못하면(메모리 한도도 '앱이 죽으면 따라 끝남' 도 없는 채로 돌게 되므로) 방금 띄운 트리를 끝내고 임시 폴더를 지운 뒤 `blocked` 로 끝낸다 — 윈도가 아닌 곳은 Job 개체가 없어 이 규칙이 없다(결정 D-585). 띄우자마자 끝난 작업자도 이미 끝난 프로세스는 Job 개체에 넣을 수 없어 이 길로 `blocked` 가 된다(예전에는 `died`).
+    프로세스 트리를 끌 때의 `taskkill` 도 이름만 부르지 않고 윈도 시스템 폴더의 절대 경로로 부른다(`taskkill_path` — 앱 폴더나 현재 폴더에 놓은 같은 이름의 실행 파일이 대신 실행되지 않게, 결정 D-586. 윈도에서는 환경 변수가 아니라 윈도에 직접 물은 폴더를 믿는다 — 결정 D-593).
   · 환경 변수는 새로 짠다(`build_environment`) — 부모의 것을 그대로 넘기지 않는다: 이름에 PROXY 가 든 것은 모두 닫힌 로컬 포트로, NO_PROXY 는 없애고(우회 못 하게), `HF_HUB_OFFLINE`·`DO_NOT_TRACK`·`ORT_DISABLE_TELEMETRY`·`OPENCV_OPENCL_RUNTIME`·`PYTHONDONTWRITEBYTECODE`·`PYTHONUTF8` 을 정하고,
     `TEMP`·`TMP` 는 작업자 전용 빈 폴더(끝나면 지운다), `PATH` 는 시스템 폴더만 둔다. 그 밖의 부모 변수(비밀이 든 것 포함)는 하나도 넘기지 않는다.
   · 요청은 `ocr_protocol.encode_request` 가 만든 머리 한 줄 + 픽셀뿐이다 — 사진 경로·파일 이름·사진 번호·종류·메모·`Exif` 가 들어갈 자리가 없다(이 파일은 경로를 받지도 않는다).
@@ -13,6 +15,7 @@
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import queue
 import shutil
@@ -23,6 +26,7 @@ import time
 
 from .. import capabilities
 from ..errors import AppError
+from . import winroot
 from .core import ocr_protocol as proto
 from .core import photo_ocr_view as pov
 
@@ -34,8 +38,28 @@ CLOSE_WAIT = 3.0                                 # 정리 때 파이프 핸들 �
 PROXY_TRAP = "127.0.0.1:9"                       # 닫힌 로컬 포트 — 어떤 라이브러리가 프록시를 따라가도 연결이 거절된다
 FIXED_ENVIRONMENT = {"HF_HUB_OFFLINE": "1", "DO_NOT_TRACK": "1", "ORT_DISABLE_TELEMETRY": "1", "OPENCV_OPENCL_RUNTIME": "disabled", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"}
 KEEP_WINDOWS = ("SystemRoot", "SYSTEMROOT", "windir", "WINDIR", "ComSpec", "COMSPEC", "PATHEXT", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS")
+DEFAULT_SYSTEM_ROOT = "C:\\Windows"               # 환경 변수에 시스템 폴더가 없거나 쓸 수 없는 값일 때만 쓰는 윈도 기본 폴더(`taskkill_path`)
 _EOF = object()
 _OVERSIZE = object()
+
+
+def system_root(parent):
+    """윈도 시스템 폴더 값 — 부모 환경에서 `SystemRoot`·`SYSTEMROOT`·`windir` 순으로 읽는다(없으면 None). `build_environment` 가 PATH 를 짤 때와 `taskkill_path` 가 같은 출처를 읽게 한 곳에 둔다."""
+    return parent.get("SystemRoot") or parent.get("SYSTEMROOT") or parent.get("windir")
+
+
+def taskkill_path(parent=None):
+    """`taskkill.exe` 의 **절대 경로** — 시스템 폴더 아래 `System32` 의 것이다. 이름만 부르면 윈도가 앱이 불러온 폴더·현재 폴더에서 같은 이름의 실행 파일을 먼저 찾아 시간 초과·취소 때마다 그것이 실행될 수 있다(감사 OCR-S1 R3).
+    **윈도에서는** 환경 변수(`system_root`)가 아니라 윈도에 직접 물은 값(`winroot.windows_directory`)을 믿는다 — 환경 값은 그 값과 같은 폴더일 때만 쓰고 다르면(`D:\\evil` 처럼 드라이브 글자 절대 경로이기만 한 아무 폴더·`..` 로 돌려 가리킨 폴더 포함) 윈도가 알려 준 값을 쓴다(결정 D-593).
+    윈도에 물을 수 없으면(윈도가 아니거나 호출이 실패) 예전 그대로다: 환경 값이 드라이브 글자로 시작하는 절대 경로가 아니면(상대 경로·네트워크 위치·장치 경로) 윈도 기본 폴더를 쓴다. 그 자리에 파일이 없으면 부르기가 실패할 뿐이고 이름만 부르는 대체 호출은 없다(`kill_tree` 는 실패해도 작업자 하나는 끈다 — 손자는 Job 개체가 끈다)."""
+    root = system_root(os.environ if parent is None else parent)
+    real = winroot.windows_directory()
+    if real is not None:
+        if not (isinstance(root, str) and winroot.same_folder(root, real)):
+            root = real
+    elif not winroot.is_drive_absolute(root):
+        root = DEFAULT_SYSTEM_ROOT
+    return ntpath.join(root, "System32", "taskkill.exe")
 
 
 def build_environment(parent, temp_dir, work_dir=None):
@@ -50,7 +74,7 @@ def build_environment(parent, temp_dir, work_dir=None):
     env.pop("no_proxy", None)
     env.update(FIXED_ENVIRONMENT)
     env["TEMP"] = env["TMP"] = str(temp_dir)
-    root = parent.get("SystemRoot") or parent.get("SYSTEMROOT") or parent.get("windir")
+    root = system_root(parent)
     if os.name == "nt" and root:
         env["PATH"] = os.pathsep.join([os.path.join(root, "System32"), root])
     else:
@@ -127,10 +151,10 @@ class JobObject:
 
 
 def kill_tree(process):
-    """작업자와 그 자식(손자) 프로세스까지 끈다 — 윈도는 `taskkill /T /F`, 그 밖은 프로세스 그룹. 어떤 오류도 밖으로 내지 않는다."""
+    """작업자와 그 자식(손자) 프로세스까지 끈다 — 윈도는 시스템 폴더의 `taskkill /T /F`(절대 경로 — `taskkill_path`), 그 밖은 프로세스 그룹. 어떤 오류도 밖으로 내지 않는다."""
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=15, creationflags=NO_WINDOW)
+            subprocess.run([taskkill_path(), "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=15, creationflags=NO_WINDOW)
         else:
             import signal
             os.killpg(process.pid, signal.SIGKILL)
@@ -161,7 +185,7 @@ class OcrAdapter(pov.OcrProvider):
         self.work_dir = work_dir if work_dir is not None else os.path.dirname(os.path.abspath(self.command[0]))       # 작업 폴더는 작업자 폴더(설계 3-6 1겹 — 작업자 폴더의 DLL 이 먼저 잡히고 앱의 작업 폴더에 기대지 않게)
         self.parent_env = parent_env if parent_env is not None else dict(os.environ)
         self.process, self.job, self.temp_dir = None, None, None
-        self.job_assigned = False                                   # 마지막으로 띄운 작업자를 Job 개체에 넣었는가(윈도 아닌 곳·만들기 실패면 False — 그러면 메모리 한도·앱이 죽어도 따라 끝남은 없고 트리 종료·유휴 종료만 남는다. 검증 S SP-15)
+        self.job_assigned = False                                   # 마지막으로 띄운 작업자를 Job 개체에 넣었는가(윈도 아닌 곳이면 False — Job 개체가 없어 메모리 한도·앱이 죽어도 따라 끝남은 없고 트리 종료·유휴 종료만 남는다. 윈도에서 False 가 되면 그 작업자는 쓰지 않고 `blocked` 로 끝낸다(D-585). 검증 S SP-15)
         self.lines = queue.Queue(maxsize=LINE_QUEUE_MAX)
         self.pump_stop = threading.Event()
         self.cancel_event = threading.Event()
@@ -210,6 +234,9 @@ class OcrAdapter(pov.OcrProvider):
         self.process, self.launches = process, self.launches + 1
         self.job = JobObject()
         self.job_assigned = bool(self.job.assign(process))
+        if os.name == "nt" and not self.job_assigned:
+            self._stop(kill=True)                                   # 윈도에서 Job 개체에 못 넣었다 — 메모리 1GB 한도도 '앱이 죽으면 작업자도 끝남' 도 없는 채로는 읽지 않는다: 방금 띄운 트리를 끝내고 임시 폴더를 지운 뒤 blocked 로 끝낸다(안전한 기본값, 결정 D-585). 윈도가 아닌 곳은 Job 개체가 없어 이 규칙이 없다
+            raise AdapterError("blocked")
         self.lines = queue.Queue(maxsize=LINE_QUEUE_MAX)
         self.pump_stop = threading.Event()
         threading.Thread(target=self._pump_stdout, args=(process, self.lines, self.pump_stop), daemon=True).start()
@@ -456,4 +483,4 @@ class OcrAdapter(pov.OcrProvider):
         self.cancel_event.clear()
 
 
-__all__ = ["AdapterError", "CLOSE_WAIT", "JobObject", "LINE_QUEUE_MAX", "MEMORY_LIMIT_BYTES", "OcrAdapter", "PROXY_TRAP", "build_environment", "kill_tree"]
+__all__ = ["AdapterError", "CLOSE_WAIT", "DEFAULT_SYSTEM_ROOT", "JobObject", "LINE_QUEUE_MAX", "MEMORY_LIMIT_BYTES", "OcrAdapter", "PROXY_TRAP", "build_environment", "kill_tree", "system_root", "taskkill_path"]

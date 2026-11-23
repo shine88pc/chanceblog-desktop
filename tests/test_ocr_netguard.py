@@ -8,9 +8,13 @@
   1) 분류(`_is_loopback`) — 루프백(127.0.0.0/8·::1·localhost·localhost.localdomain)만 통과하고, 사설망(192.168·10·172.16)·링크 로컬(169.254 — 클라우드 메타데이터 주소 포함)·IPv6 주소·'localhost' 로 시작하는 바깥 이름·숫자로만 쓴 모양은 모두 막는다.
   2) 래퍼 열 개(connect·connect_ex·sendto·create_connection·getaddrinfo·gethostbyname·gethostbyname_ex·gethostbyaddr·getnameinfo·getfqdn)가 **각각 따로** 바깥 주소를 막고(원본을 안 부르고 오류) 루프백은 원본에 넘기며 센다.
   3) 시도·루프백 횟수, 최근 대상 목록(메모리에만, 20개), 설치 점검(`verify_installed`)·되풀이 설치.
+  4) 감사 훅 한 겹(감사 OCR-S1 R5, 결정 D-587) — `_socket` 을 곧바로 쓰는 호출(파이썬 래퍼를 안 지난다)도 같은 규칙으로 막고 세며, 훅은 못 빼므로 **켜짐 표시로만** 일한다: 켜기 전·끈 뒤에는 소켓 호출이 그대로 간다.
+     이 네 번째 묶음만 진짜 `socket`·`_socket` 위에서 돈다(래퍼는 설치하지 않고 감사 훅만 켠다). 쓰는 바깥 주소는 패킷이 나갈 수 없는 `0.0.0.1` 숫자 주소뿐이고 이름 풀이는 가짜 이벤트(`sys.audit`)로만 한다(DNS 질의가 없다).
 """
 import errno
 import importlib.util
+import ipaddress
+import socket
 import sys
 import types
 import unittest
@@ -265,6 +269,237 @@ class NotInstalledTest(unittest.TestCase):
         guard.install()
         with self.assertRaises(fake.gaierror):
             fake.getaddrinfo("8.8.8.8", 80)
+
+
+BAD = "0.0.0.1"                         # 패킷이 나갈 수 없는 잘못된 목적지 — 숫자 주소라 이름 풀이(DNS)도 하지 않는다
+AUDIT_EVENTS = ["socket.bind", "socket.connect", "socket.getaddrinfo", "socket.gethostbyaddr", "socket.gethostbyname", "socket.getnameinfo", "socket.sendmsg", "socket.sendto"]
+NAME_EVENTS = ("socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr", "socket.getnameinfo")
+_real_copy = []
+
+
+def shared_real_guard():
+    """진짜 `socket` 모듈 위의 가드 사본 하나 — **래퍼는 설치하지 않고**(진짜 소켓 모듈을 바꾸지 않는다) 감사 훅 한 겹만 `enable_audit`·`disable_audit` 로 켜고 끈다. 훅은 한 번 걸면 못 빼므로
+    사본을 프로세스에서 한 번만 만들어 모든 시험이 나눠 쓴다(시험마다 새로 걸면 훅이 쌓인다) — 꺼져 있는 동안 훅은 아무것도 하지 않는다."""
+    if not _real_copy:
+        _real_copy.append(fresh_real_guard())
+    return _real_copy[0]
+
+
+def fresh_real_guard():
+    """아직 한 번도 켜지 않은 새 사본(진짜 `socket` 모듈) — 켜기 전의 모습과 훅 거는 횟수를 보는 시험 전용. 켜면 훅이 하나 남으므로 쓰고 나면 꼭 `disable_audit` 를 부른다."""
+    spec = importlib.util.spec_from_file_location("netguard_real_socket_under_test_%d" % (len(_real_copy) + 1), str(GUARD))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def raw_calls():
+    """`socket` 모듈의 래퍼를 거치지 않고 `_socket`(C 모듈)을 곧바로 쓰는 바깥 시도 -> {이름: (호출, 감사 이벤트 이름)} — S1 의 probe3 와 같은 모양이다."""
+    import _socket
+
+    def on_socket(kind, action):
+        sock = _socket.socket(_socket.AF_INET, kind)
+        try:
+            return action(sock)
+        finally:
+            sock.close()
+
+    def timed(action):
+        def run(sock):
+            sock.settimeout(0.5)
+            return action(sock)
+        return run
+    tcp, udp = _socket.SOCK_STREAM, _socket.SOCK_DGRAM
+    return {"connect": (lambda: on_socket(tcp, timed(lambda s: s.connect((BAD, 9)))), "socket.connect"),
+            "connect_ex": (lambda: on_socket(tcp, timed(lambda s: s.connect_ex((BAD, 9)))), "socket.connect"),
+            "sendto": (lambda: on_socket(udp, lambda s: s.sendto(b"x", (BAD, 9))), "socket.sendto"),
+            "sendto_with_flags": (lambda: on_socket(udp, lambda s: s.sendto(b"x", 0, (BAD, 9))), "socket.sendto"),
+            "bind": (lambda: on_socket(tcp, lambda s: s.bind((BAD, 0))), "socket.bind"),
+            "getaddrinfo": (lambda: _socket.getaddrinfo(BAD, 80), "socket.getaddrinfo"),
+            "gethostbyname": (lambda: _socket.gethostbyname(BAD), "socket.gethostbyname"),
+            "gethostbyname_ex": (lambda: _socket.gethostbyname_ex(BAD), "socket.gethostbyname")}
+
+
+def outcome(call):
+    try:
+        return "returned", call()
+    except Exception as error:               # noqa: BLE001 — 막힘(PermissionError·gaierror)이든 운영체제의 거절(OSError)이든 모두 받아 본다
+        return "raised", error
+
+
+def is_guard_error(error):
+    return isinstance(error, (PermissionError, socket.gaierror)) and "netguard" in str(error)
+
+
+class AuditCase(unittest.TestCase):
+    def setUp(self):
+        self.guard = shared_real_guard()
+        self.guard.disable_audit()
+        self.guard.reset_counts()
+        self.addCleanup(self.guard.disable_audit)
+        self.addCleanup(self.guard.reset_counts)
+
+
+class AuditHookBlocksTest(AuditCase):
+    def test_each_raw_socket_call_is_blocked_and_counted_once_while_the_audit_layer_is_on(self):
+        self.assertTrue(self.guard.enable_audit())
+        self.assertTrue(self.guard.stats()["audit"])
+        for name, (call, event) in raw_calls().items():
+            with self.subTest(call=name):
+                before = self.guard.attempts()
+                kind, error = outcome(call)
+                self.assertEqual(kind, "raised", name + " — connect_ex 도 값을 돌려주지 않고 막힌다")
+                self.assertTrue(is_guard_error(error), repr(error))
+                self.assertIsInstance(error, socket.gaierror if event in NAME_EVENTS else PermissionError)
+                self.assertEqual(self.guard.attempts(), before + 1, "막힌 시도는 한 번 센다")
+                api, target = self.guard.stats()["recent"][-1]
+                self.assertEqual(api, event)
+                self.assertIn(BAD, target)
+        self.assertEqual(self.guard.stats()["loopback"], 0, "이 사본에는 래퍼가 없어 루프백 횟수는 훅이 건드리지 않는다")
+
+    def test_loopback_passes_while_it_is_on_and_is_never_counted(self):
+        import _socket
+        self.guard.enable_audit()
+        server = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        self.addCleanup(server.close)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        client = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        self.addCleanup(client.close)
+        client.connect(("127.0.0.1", port))
+        datagram = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        self.addCleanup(datagram.close)
+        datagram.sendto(b"x", ("127.0.0.1", port))
+        self.assertEqual(_socket.getaddrinfo("127.0.0.1", 80)[0][4][0], "127.0.0.1")
+        self.assertTrue(ipaddress.ip_address(_socket.gethostbyname("localhost")).is_loopback)
+        self.assertEqual((self.guard.attempts(), self.guard.stats()["recent"]), (0, []), "루프백은 한 번도 시도로 세지 않는다")
+
+    def test_synthetic_events_for_outside_targets_are_blocked_whatever_the_shape_of_the_address(self):
+        """가짜 이벤트(`sys.audit`) — 호출은 일어나지 않으므로 바깥 이름·사설 주소·IPv6·유닉스 경로도 안전하게 모양별로 본다. 래퍼와 같은 분류다."""
+        self.guard.enable_audit()
+        outside = [("socket.connect", (None, ("example.com", 80))), ("socket.connect", (None, ("8.8.8.8", 53))), ("socket.connect", (None, ("fe80::1", 80, 0, 0))), ("socket.connect", (None, "/tmp/some.sock")),
+                   ("socket.connect", (None, ("localhost.evil.example", 80))), ("socket.bind", (None, ("0.0.0.0", 8080))), ("socket.sendto", (None, ("192.168.1.5", 9))), ("socket.sendmsg", (None, ("10.0.0.1", 9))),
+                   ("socket.getaddrinfo", ("example.com", 80, 0, 0, 0)), ("socket.getaddrinfo", (b"8.8.8.8", 80, 0, 0, 0)), ("socket.gethostbyname", ("metadata.google.internal",)),
+                   ("socket.gethostbyaddr", ("169.254.169.254",)), ("socket.getnameinfo", (("8.8.8.8", 80),))]
+        for event, args in outside:
+            with self.subTest(event=event, args=repr(args)[:40]):
+                before = self.guard.attempts()
+                with self.assertRaises(socket.gaierror if event in NAME_EVENTS else PermissionError):
+                    sys.audit(event, *args)
+                self.assertEqual(self.guard.attempts(), before + 1)
+                self.assertEqual(self.guard.stats()["recent"][-1][0], event)
+
+    def test_synthetic_events_for_loopback_targets_pass_and_are_not_counted(self):
+        self.guard.enable_audit()
+        inside = [("socket.connect", (None, ("127.0.0.1", 80))), ("socket.connect", (None, ("::1", 80, 0, 0))), ("socket.connect", (None, ("localhost", 80))), ("socket.connect", (None, None)),
+                  ("socket.bind", (None, ("", 0))), ("socket.bind", (None, ("127.0.0.1", 0))), ("socket.sendto", (None, ("127.0.0.5", 9))), ("socket.sendmsg", (None, ("localhost", 9))),
+                  ("socket.getaddrinfo", (None, 80, 0, 0, 0)), ("socket.getaddrinfo", ("localhost", 80, 0, 0, 0)), ("socket.getaddrinfo", (b"127.0.0.1", 80, 0, 0, 0)), ("socket.gethostbyname", ("localhost",)),
+                  ("socket.gethostbyaddr", ("127.0.0.1",)), ("socket.getnameinfo", (("127.0.0.1", 80),))]
+        for event, args in inside:
+            with self.subTest(event=event, args=repr(args)[:40]):
+                sys.audit(event, *args)
+        self.assertEqual(self.guard.attempts(), 0)
+
+    def test_an_event_whose_shape_cannot_be_read_is_blocked_not_waved_through(self):
+        self.guard.enable_audit()
+        for event, args in (("socket.connect", ()), ("socket.sendto", (None,)), ("socket.getaddrinfo", ()), ("socket.gethostbyname", ())):
+            with self.subTest(event=event):
+                before = self.guard.attempts()
+                with self.assertRaises((PermissionError, socket.gaierror)):
+                    sys.audit(event, *args)
+                self.assertEqual(self.guard.attempts(), before + 1)
+
+    def test_other_audit_events_are_ignored_even_while_it_is_on(self):
+        self.guard.enable_audit()
+        for event, args in (("open", ("x", "r", 0)), ("import", ("m", None, None, None, None)), ("exec", (None,)), ("os.system", ("echo",)), ("socket.__new__", (None, 2, 1, 0)), ("socket.getservbyname", ("http", "tcp")),
+                            ("socket.sethostname", ("x",)), ("netguard.other", ())):
+            sys.audit(event, *args)
+        self.assertEqual(self.guard.attempts(), 0)
+
+    def test_the_audited_events_are_exactly_these_eight(self):
+        self.assertEqual(sorted(self.guard._AUDIT_EVENTS), AUDIT_EVENTS, "하나가 빠지면 그 길이 열린다 — 더하면 이 목록과 시험을 함께 고친다")
+
+
+class AuditHookSwitchTest(AuditCase):
+    def test_while_the_audit_layer_is_off_the_same_calls_go_through_untouched(self):
+        """꺼진 동안 훅은 아무것도 하지 않는다 — 같은 호출이 그대로 운영체제까지 가고(0.0.0.1 이라 바로 거절되거나 숫자 주소 풀이만 한다) 가드가 세지도 막지도 않는다."""
+        for name, (call, _event) in raw_calls().items():
+            with self.subTest(call=name):
+                kind, value = outcome(call)
+                self.assertFalse(kind == "raised" and is_guard_error(value), "꺼져 있는데 가드가 막았다: " + repr(value))
+        self.assertEqual((self.guard.attempts(), self.guard.stats()["recent"]), (0, []))
+        self.assertEqual(self.guard.stats()["audit"], False)
+
+    def test_a_copy_that_was_never_turned_on_leaves_the_calls_alone(self):
+        fresh = fresh_real_guard()
+        self.assertEqual((fresh.stats()["audit"], fresh._audit_hooked), (False, False), "불러오기만 해서는 아무것도 걸리지 않는다")
+        call, _event = raw_calls()["connect"]
+        kind, error = outcome(call)
+        self.assertEqual(kind, "raised")
+        self.assertFalse(is_guard_error(error), repr(error))
+        self.assertEqual(fresh.attempts(), 0)
+
+    def test_it_follows_the_flag_on_off_on_off_and_the_hook_is_hung_only_once(self):
+        fresh = fresh_real_guard()
+        self.addCleanup(fresh.disable_audit)
+        call, _event = raw_calls()["connect"]
+        with mock.patch.object(sys, "addaudithook", wraps=sys.addaudithook) as add:
+            for round_number in range(3):
+                with self.subTest(round=round_number):
+                    self.assertTrue(fresh.enable_audit())
+                    kind, error = outcome(call)
+                    self.assertTrue(is_guard_error(error), "켜짐: 막힌다")
+                    self.assertEqual(fresh.attempts(), round_number + 1)
+                    fresh.disable_audit()
+                    kind, error = outcome(call)
+                    self.assertFalse(is_guard_error(error), "꺼짐: 그대로 간다")
+                    self.assertEqual(fresh.attempts(), round_number + 1, "꺼진 동안은 세지 않는다")
+        self.assertEqual(add.call_count, 1, "훅은 사본에서 한 번만 걸고 그 뒤로는 켜짐 표시만 바꾼다")
+
+    def test_if_the_hook_does_not_really_get_installed_turning_it_on_raises_and_it_stays_off(self):
+        """fail closed — 앞서 걸린 다른 훅이 예외를 내면 새 훅이 조용히 안 걸릴 수 있다(문서). 확인 이벤트를 훅이 못 받으면 켜기가 예외로 끝나고 켜짐 표시는 내려가 있다."""
+        fresh = fresh_real_guard()
+        with mock.patch.object(sys, "addaudithook"):
+            with self.assertRaises(RuntimeError):
+                fresh.enable_audit()
+        self.assertEqual((fresh.stats()["audit"], fresh._audit_hooked), (False, False))
+
+    def test_an_earlier_hook_that_refuses_the_check_event_ends_in_an_error_with_the_flag_down(self):
+        fresh = fresh_real_guard()
+        with mock.patch.object(sys, "audit", side_effect=OSError("앞선 훅이 거절")):
+            with self.assertRaises(OSError):
+                fresh.enable_audit()
+        self.assertEqual((fresh.stats()["audit"], fresh._audit_hooked), (False, False))
+
+
+class AuditWiringTest(unittest.TestCase):
+    def test_install_turns_the_audit_layer_on_and_an_install_that_cannot_ends_in_an_error(self):
+        guard, _fake, _calls = load_guard(install=False)
+        guard.enable_audit = mock.Mock(return_value=True)
+        self.assertTrue(guard.install())
+        guard.enable_audit.assert_called_once_with()
+        self.assertTrue(guard.ACTIVE)
+        broken, _fake, _calls = load_guard(install=False)
+        broken.enable_audit = mock.Mock(side_effect=RuntimeError("훅이 안 걸렸다"))
+        with self.assertRaises(RuntimeError):
+            broken.install()
+        self.assertFalse(broken.ACTIVE, "켜지지 않았으면 켜졌다고 하지 않는다 — 작업자는 시작하지 않는다(종료 코드 70)")
+
+    def test_a_copy_on_a_fake_socket_module_hangs_no_hook_so_the_other_tests_in_the_process_are_never_touched(self):
+        guard, fake, _calls = load_guard(install=True)
+        self.assertEqual((guard.ACTIVE, guard.stats()["audit"], guard._audit_hooked), (True, False, False))
+        self.assertFalse(hasattr(fake, "_socket"))
+        self.assertFalse(guard.enable_audit())
+
+    def test_nothing_in_the_add_on_but_the_guard_itself_names_the_off_switch(self):
+        """작업자 쪽 소스는 감사 훅을 끄지 않는다 — 끄는 길(`disable_audit`·켜짐 표시)은 시험이 같은 프로세스에서 켰다 끄려고 둔 것이다."""
+        for path in sorted((ROOT / "ocr_addon").glob("*.py")):
+            if path.name == "netguard.py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("disable_audit", text, path.name)
+            self.assertNotIn("_audit_on", text, path.name)
 
 
 if __name__ == "__main__":

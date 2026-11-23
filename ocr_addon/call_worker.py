@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""call_worker.py - 앱 없이 작업자(표준 입출력 프로토콜, protocol.py)를 불러 보는 간단한 호출 도구(a 단계 시험용 — 앱 저장소에 넣지 않는다).
+"""call_worker.py - 앱 없이 작업자(표준 입출력 프로토콜, protocol.py)를 불러 보는 간단한 호출 도구(a 단계 시험용 기록). 이 저장소에 들어 있지만 저장소 밖 작업 폴더의 도구(winproc·imgprep·netwatch 와 합성 시험 사진)를
+가져와 쓰므로 저장소 안에서는 그대로 돌지 않는다 — 추가 도구 묶음(`build_ocr_addon.py` 는 `worker_main.py` 만 묶는다)에도 앱 묶음에도 들어가지 않는다.
 
 사용: python -I -B -X utf8 call_worker.py <시나리오> [옵션] -- <작업자 실행 명령 …>
   시나리오

@@ -4,8 +4,9 @@
 확인 순서(모두 읽기):
   1) 폴더나 정보 파일이 없으면 `absent`(설치 안 함 — 글자 읽기 단추를 보이지 않는다, 오류 아님).
   2) 정보 파일이 너무 크거나(2MB 넘음)·JSON 이 아니거나·모양이 다르거나(이름·약속 번호·파일 목록) 위험한 경로(절대 경로·`..`·드라이브)가 있으면 `invalid`.
-  3) **앱에 박은** 모델·글자 사전 해시(`EMBEDDED_FILES`)와 정보 파일의 값이 같아야 한다 — 정보 파일과 모델을 함께 바꿔도 통과하지 못한다(신뢰의 뿌리는 앱 소스다).
-  4) 목록의 모든 파일이 있고 크기·SHA-256 이 같아야 하고, 목록에 없는 파일이 있어도 `invalid`(작업자 폴더에 낯선 파일이 섞이지 않게 — `thumbs.db`·`desktop.ini` 만 봐준다).
+  3) **앱에 박은** 모델·글자 사전 해시(`EMBEDDED_FILES`)와 정보 파일의 값이 같아야 한다 — 정보 파일과 모델을 함께 바꿔도 통과하지 못한다(모델 둘·글자 사전의 신뢰의 뿌리는 앱 소스다).
+     작업자 실행 파일과 DLL 은 앱 소스에 박혀 있지 않아 정보 파일이 스스로 적은 해시와만 견준다 — 정보 파일과 함께 통째로 바꾼 묶음은 이 확인이 못 막는다(켜기 승인 변경 때 작업자 실행 파일의 SHA-256 을 앱 소스에 박는 것이 `docs/SECURITY.md` 의 켜기 전 할 일, 결정 D-591).
+  4) 목록의 모든 파일이 있고 크기·SHA-256 이 같아야 하고, 목록에 없는 파일이 있어도 `invalid`(작업자 폴더에 낯선 파일이 섞이지 않게 — `thumbs.db`·`desktop.ini` 만 봐준다). 폴더 안의 링크(링크 파일·디렉터리 링크)는 따라가지 않고 `invalid` 로 본다.
 결과(`AddonStatus`)에는 상태 이름·버전 글·문제 개수·문제 종류 이름뿐이고 경로·파일 이름은 없다(화면의 정보 카드는 고정 문장만 보인다).
 """
 from __future__ import annotations
@@ -35,7 +36,7 @@ _CHUNK = 1 << 20
 class AddonStatus:
     state: str                  # absent · ok · invalid
     version: str = ""           # 예: `rapidocr 3.10.0 · onnxruntime 1.31.1`(정보 파일의 패키지 목록에서) — ok 일 때만
-    problems: tuple = ()        # 문제 종류 이름들(`info`·`unsafe_path`·`model_hash`·`missing`·`size`·`hash`·`extra`·`worker`) — 경로·파일 이름은 없다
+    problems: tuple = ()        # 문제 종류 이름들(`info`·`unsafe_path`·`model_hash`·`missing`·`size`·`hash`·`extra`·`link`·`worker`) — 경로·파일 이름은 없다
 
     @property
     def ok(self):
@@ -72,8 +73,9 @@ def _safe_relative(path):
 
 
 def _version(info):
+    packages = info.get("packages", ())
     wanted = {}
-    for package in info.get("packages", ()):
+    for package in packages if isinstance(packages, list) else ():          # 목록이 아닌 값(null·숫자·참거짓 …)이어도 예외를 내지 않는다(감사 OCR-S1 I7) — 그런 정보 파일은 `verify` 가 먼저 `invalid` 로 거절한다
         if isinstance(package, dict) and package.get("name") in ("rapidocr", "onnxruntime") and isinstance(package.get("version"), str):
             wanted[package["name"]] = package["version"][:30]
     return " · ".join(f"{name} {wanted[name]}" for name in ("rapidocr", "onnxruntime") if name in wanted)
@@ -108,7 +110,7 @@ def verify(folder, *, check_files=True):
         return AddonStatus(ABSENT)
     problems = []
     files = info.get("files")
-    if info.get("name") != "ocr_addon" or info.get("proto") != PROTO or not isinstance(files, list) or not 0 < len(files) <= MAX_FILES:
+    if info.get("name") != "ocr_addon" or info.get("proto") != PROTO or not isinstance(files, list) or not 0 < len(files) <= MAX_FILES or not isinstance(info.get("packages", []), list):
         return AddonStatus(INVALID, problems=("info",))
     listed = {}
     for entry in files:
@@ -137,7 +139,10 @@ def verify(folder, *, check_files=True):
                 problems.append("hash")
         except OSError:
             problems.append("missing")
-    for root, _dirs, names in os.walk(folder):
+    for root, dirs, names in os.walk(folder):
+        for name in dirs:
+            if os.path.islink(os.path.join(root, name)):
+                problems.append("link")                                     # 디렉터리 링크 — os.walk 는 링크 안을 돌지 않아 그 안의 낯선 파일이 `extra` 로 안 잡히고, 목록의 파일이 링크 너머에 있어도 마지막 성분만 보는 위 검사를 지난다(감사 OCR-S1 I8)
         for name in names:
             relative = os.path.relpath(os.path.join(root, name), folder).replace(os.sep, "/")
             if relative != INFO_NAME and relative not in listed and name.lower() not in IGNORED_EXTRA:

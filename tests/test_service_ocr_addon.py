@@ -233,6 +233,89 @@ class InvalidTest(AddonCase):
         Path(self.folder, oa.INFO_NAME).write_bytes(b" " * (oa.MAX_INFO_BYTES + 1))
         self.assertEqual(oa.verify(self.folder).problems, ("info",))
 
+    def test_a_packages_value_that_is_not_a_list_is_invalid_and_never_lets_an_exception_out(self):
+        """감사 OCR-S1 I7(결정 D-588) — 정보 파일의 `packages` 가 목록이 아닌 값(null·참거짓·숫자 …)이면 다른 검사를 모두 통과해도 예외가 새던 틈(`_version` 의 TypeError)을 닫았다: invalid(`info`) 로 끝난다. S1 의 probe5 가 찾은 여섯 모양(null·참·0·-1·아주 큰 정수·1.5)과 그 밖의 비목록."""
+        for value in (None, True, False, 0, -1, 10 ** 30, 1.5, "x", {}, {"a": 1}):
+            with self.subTest(packages=repr(value)[:20]):
+                write_addon(self.folder, info=info_for(FILES, packages=value))
+                status = oa.verify(self.folder)
+                self.assertEqual((status.state, status.problems, status.version), (oa.INVALID, ("info",), ""))
+                self.assertEqual(oa.verify_problem(self.folder), "info")
+                self.assertEqual(oa.verify(self.folder, check_files=False).problems, ("info",))
+                self.assertEqual(oa._version({"packages": value}), "", "버전 글을 읽는 함수도 예외를 내지 않는다")
+
+    def test_a_packages_list_with_odd_entries_or_no_packages_at_all_is_still_ok_and_only_the_two_known_names_are_shown(self):
+        for packages, version in (([], ""), ([None], ""), ([1], ""), ([[]], ""), ([{}], ""), ([{"name": "rapidocr", "version": 5}, {"name": "onnxruntime", "version": "1.31.1"}], "onnxruntime 1.31.1"),
+                                  ([{"name": "numpy", "version": "2.5.4"}], "")):
+            with self.subTest(packages=repr(packages)[:40]):
+                write_addon(self.folder, info=info_for(FILES, packages=packages))
+                status = oa.verify(self.folder)
+                self.assertEqual((status.state, status.version), (oa.OK, version))
+        info = info_for(FILES)
+        del info["packages"]
+        write_addon(self.folder, info=info)
+        self.assertEqual((oa.verify(self.folder).state, oa.verify(self.folder).version), (oa.OK, ""), "칸이 아예 없으면 예전과 같다")
+
+    def make_link(self, target, link):
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("이 환경에서는 디렉터리 링크를 만들 수 없다(권한 없음) — 같은 규칙은 아래 모의 시험이 본다")
+
+    def test_a_directory_link_inside_the_folder_is_invalid_even_though_the_walk_does_not_look_inside_it(self):
+        """감사 OCR-S1 I8(결정 D-588) — `os.walk` 는 디렉터리 링크 안을 돌지 않아 링크 뒤의 목록에 없는 파일이 `extra` 로 안 잡혔다. 이제 링크 자체를 `link` 문제로 센다."""
+        write_addon(self.folder)
+        outside = os.path.join(self.tmp.name, "outside")
+        os.makedirs(outside)
+        Path(outside, "planted.dll").write_bytes(b"x")
+        self.make_link(outside, os.path.join(self.folder, "linked"))
+        self.assertEqual(self.problems(), ("link",))
+        self.assertEqual(oa.verify_problem(self.folder), "link")
+
+    def test_a_directory_link_nested_below_the_top_folder_is_found_too(self):
+        """검증 SQ 권고 2(변이 SQ-N5 — 링크 검사를 맨 위 폴더에서만 돌리면 살아남던 틈, 결정 D-593) — 묶음 폴더의 실제 모양은 `_internal` 아래 여러 겹이다. 새 폴더 안(맨 위에서 두 겹 아래)의 디렉터리 링크도 `link` 다."""
+        write_addon(self.folder)
+        outside = os.path.join(self.tmp.name, "outside")
+        os.makedirs(outside)
+        Path(outside, "planted.dll").write_bytes(b"x")
+        nested = os.path.join(self.folder, "_internal", "deep")
+        os.makedirs(nested)
+        self.make_link(outside, os.path.join(nested, "linked2"))
+        self.assertEqual(self.problems(), ("link",))
+        self.assertEqual(oa.verify_problem(self.folder), "link")
+
+    def test_a_listed_file_that_sits_behind_a_directory_link_is_refused_too(self):
+        """목록의 파일은 마지막 성분만 링크인지 보므로 폴더째 다른 곳으로 옮기고 링크를 걸어도 크기·해시가 맞아 통과하던 길도 같은 `link` 로 막힌다."""
+        write_addon(self.folder)
+        moved = os.path.join(self.tmp.name, "moved_internal")
+        os.rename(os.path.join(self.folder, "_internal"), moved)
+        self.make_link(moved, os.path.join(self.folder, "_internal"))
+        self.assertEqual(self.problems(), ("link",))
+
+    def test_a_directory_link_is_found_by_the_walk_rule_where_links_cannot_be_made_too(self):
+        """링크를 못 만드는 환경에서도 도는 모의 — `os.path.islink` 만 좁게 바꿔 폴더 하나를 링크처럼 보이게 한다(링크 안은 돌지 않으므로 그 안의 파일은 보이지 않는다)."""
+        write_addon(self.folder)
+        os.makedirs(os.path.join(self.folder, "sub"))
+        Path(self.folder, "sub", "planted.dll").write_bytes(b"x")
+        self.assertEqual(self.problems(), ("extra",), "대조 — 링크가 아니면 그 안의 낯선 파일이 extra 로 잡힌다")
+        with mock.patch.object(os.path, "islink", side_effect=lambda path: os.path.basename(str(path)) == "sub"):
+            self.assertEqual(self.problems(), ("link",))
+        with mock.patch.object(os.path, "islink", side_effect=lambda path: os.path.basename(str(path)) == "_internal"):
+            os.remove(os.path.join(self.folder, "sub", "planted.dll"))
+            os.rmdir(os.path.join(self.folder, "sub"))
+            self.assertEqual(self.problems(), ("link",), "목록의 파일이 든 폴더가 링크여도 같다")
+
+    def test_a_nested_directory_link_is_found_by_the_walk_rule_where_links_cannot_be_made_too(self):
+        """검증 SQ 권고 2 — 링크 권한이 없는 CI 에서도 '맨 위 폴더만 본다' 는 회귀가 걸리게 `os.path.islink` 만 이름으로 좁게 바꾼 모의: 맨 위에서 세 겹 아래(`_internal` 아래 `deep` 아래 `deeper`)의 폴더 하나를 링크처럼 보이게 한다(링크 안은 돌지 않으므로 그 안의 파일은 보이지 않는다)."""
+        write_addon(self.folder)
+        deeper = os.path.join(self.folder, "_internal", "deep", "deeper")
+        os.makedirs(deeper)
+        Path(deeper, "planted.dll").write_bytes(b"x")
+        self.assertEqual(self.problems(), ("extra",), "대조 — 링크가 아니면 중첩 폴더 안의 낯선 파일이 extra 로 잡힌다")
+        for name in ("deep", "deeper"):
+            with self.subTest(link_named=name), mock.patch.object(os.path, "islink", side_effect=lambda path, name=name: os.path.basename(str(path)) == name):
+                self.assertEqual(self.problems(), ("link",))
+
     def test_the_adapter_hash_hook_refuses_to_start_a_tampered_folder(self):
         from chanceblog_desktop.ui import ocr_adapter
         from capability_support import local_ocr_off, local_ocr_on

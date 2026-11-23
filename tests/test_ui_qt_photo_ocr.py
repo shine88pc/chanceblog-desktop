@@ -51,6 +51,7 @@ SIZES = tq.SIZES
 
 LINES = ("한우 불고기 전골 28,000원", "된장찌개 9,000원", "공기밥 1,000원", "식사 후 커피 무료")
 MANY = tuple(f"차림표 {number} 번 메뉴 {number * 1000:,}원" for number in range(1, 61))
+HIDDEN = ("가" * 201, "900101-1234567", "가" + chr(0x3164) + "나")                    # 입구 검사가 가리는 줄 셋(너무 긴 줄·주민등록번호 모양·보이지 않는 글자) — '읽은 글 중 3줄은 보여 드리지 않았어요(…)' 안내가 일곱 크기에서 잘리지 않아야 한다(검증 SQ 권고 3, 결정 D-593)
 
 
 class BlockingProvider(pov.FakeOcrProvider):
@@ -1061,7 +1062,7 @@ class FitTest(OcrBase):
     def test_every_state_fits_every_size_without_clipping_scrolling_sideways_or_hiding_the_buttons(self):
         for size in SIZES:
             with self.subTest(size=size):
-                provider = BlockingProvider(default=pov.OcrOutcome(LINES + MANY[:20]))
+                provider = BlockingProvider(default=pov.OcrOutcome(LINES + MANY[:20] + HIDDEN))
                 window, form = self.ocr_sheet(photos=2, provider=provider, size=size)
                 self.check_fit(window, form, (size, "읽기 전"))
                 block = self.block(form)
@@ -1073,6 +1074,8 @@ class FitTest(OcrBase):
                 provider.release()
                 self.wait_state(form, "done")
                 self.check_fit(window, form, (size, "읽은 글 24줄"))
+                self.assertEqual(block.notes.plain_text(), T["pho_ocr_hidden"].format(m=len(HIDDEN)), (size, "거른 줄 안내(가장 긴 안내 글)가 실제로 보이는 채로 위의 잘림 점검을 지났다"))
+                self.assertTrue(block.notes.isVisible(), size)
                 block.lines.setFocus(Qt.TabFocusReason)
                 self.key(block.lines, Qt.Key_F2)
                 block.lines.rows[0].editor.setText("가" * 150)
@@ -1392,6 +1395,8 @@ class ScaleTest(unittest.TestCase):
         minimum = tokens.LAYOUT["window_min"]                                              # 앱 창에는 가장 작은 크기(900x560)가 있어 그보다 낮은 논리 크기(910x512)는 그 크기로 열린다
         self.assertEqual(report["logical"], [max(width, minimum[0]), max(height, minimum[1])])
         self.assertEqual([item["label"] for item in report["reports"]], self.STATES)
+        shown = {item["label"]: item["note"] for item in report["reports"]}
+        self.assertEqual(shown["읽은 글 24줄"], T["pho_ocr_hidden"].format(m=3), (width, height, scale, "거른 줄 안내(가장 긴 안내 글 — 자식 프로세스가 거를 줄 셋을 함께 읽힌다)가 보이는 채로 잘림을 점검했다"))
         for item in report["reports"]:
             label = (width, height, scale, item["label"])
             self.assertTrue(item["inside"], label)
