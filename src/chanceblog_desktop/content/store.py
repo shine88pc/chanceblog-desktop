@@ -264,6 +264,15 @@ def wal_header(path):
     return wal_in_head(head)
 
 
+def drop_wal_head(connection):
+    """방금 복사해 만든 **사본** 연결의 저널 방식을 롤백 저널(`delete`)로 낮춘다(AS-S1 2차 권고-1, D-617) — 지금 보관함이 앱 밖 도구로 WAL 방식이 되어 있으면 SQLite 백업이 머리(18·19번째 바이트가 2)까지
+    그대로 옮겨서, 앱이 만든 사본인데도 `restore_from` 의 WAL 거절(D-609)에 걸려 되돌리기(옛 `restore` 명령이 검사에 실패하면 방금 만든 사본으로 되돌린다)·수동 복구가 막혔다. 앱이 만든 사본은 늘 롤백 저널 머리다.
+    낮추지 못하면(돌려준 방식이 `delete` 가 아니면) 사본을 쓸 수 없으니 오류를 낸다 — 되돌릴 수 없는 사본을 조용히 남기지 않는다."""
+    mode = connection.execute("PRAGMA journal_mode=DELETE").fetchone()
+    if not mode or str(mode[0]).lower() != "delete":
+        raise sqlite3.DatabaseError("사본의 저널 방식을 롤백 저널로 낮추지 못했다")
+
+
 def hold_in_memory(connection):
     """열린 보관함 연결의 지금 내용을 **메모리 사본**으로 담아 돌려준다(부른 쪽이 닫는다 — 파일을 만들지 않는다). 복원(`restore_from`)이 지금 보관함을 덮어쓰기 **전에** 하나 담아 두고,
     덮은 뒤 판 올리기(`_prepare`)가 실패하면 이 사본으로 덮기 전 내용을 되돌린다(AS-S1 필수-4, D-606 — 덮어쓴 뒤 실패해도 '지금 보관함은 그대로다' 가 사실이게)."""
@@ -968,9 +977,10 @@ class Store:
         return problems
 
     def _copy_to(self, destination):
-        """SQLite 백업 기능으로 지금 내용을 다른 파일로 복사한다(열려 있어도 일관된 사본)."""
+        """SQLite 백업 기능으로 지금 내용을 다른 파일로 복사한다(열려 있어도 일관된 사본). 사본의 머리는 늘 롤백 저널 방식이다(`drop_wal_head` — 지금 보관함이 WAL 이어도, D-617)."""
         with closing(sqlite3.connect(str(destination))) as target:
             self._db.backup(target)
+            drop_wal_head(target)
 
     def backup(self, folder, *, keep=KEEP_BACKUPS, now=None):
         """폴더에 `<이름>-YYYYMMDD-HHMMSS.db` 사본을 만든다(임시 파일에서 점검한 뒤 이름을 바꾼다). 오래된 사본은 `keep` 개만 남긴다. 실패하면 BACKUP_FAILED."""

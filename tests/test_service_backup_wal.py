@@ -219,6 +219,77 @@ class OldRestoreWalTest(unittest.TestCase):
             self.assertEqual(listing(crafted), before[0], "읽어 보기만 해도 짝 파일이 생기면 안 된다")
 
 
+class LiveWalCopyTest(unittest.TestCase):
+    """AS-S1 2차(안전 검증 S) 권고-1(D-617) — WAL 거절(D-609)과 되돌리기 사본의 어긋남. 지금 보관함이 앱 밖 도구로 WAL 방식이 되어 있으면 SQLite 백업이 머리(18·19번째 바이트 2)까지 옮겨서, 앱이 만든 사본(`Store.backup`·
+    `EngineFile.copy_to`)이 `restore_from` 의 WAL 거절에 걸렸다 — 옛 `restore` 명령이 '검사 실패 시 방금 만든 사본으로 되돌리기'를 못 하고, 사용자가 지우기 전 사본·before-restore 를 되살리는 길도 막혔다.
+    이제 앱이 만든 사본은 늘 롤백 저널 머리다(`drop_wal_head`). 앱 밖에서 온 WAL 파일을 거절하는 위 시험들은 그대로 통과한다."""
+
+    def test_a_store_copy_made_from_a_wal_live_store_has_a_rollback_journal_header_no_side_files_and_restores_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "chanceblog.db"
+            with cstore.Store.open(live):
+                pass
+            make_wal(live)
+            with cstore.Store.open(live) as store:
+                saved = store.backup(root / "saves")
+                self.assertEqual(header18_19(saved), (1, 1), "사본이 WAL 머리를 물려받았다")
+                self.assertEqual([name for name in listing(saved.parent) if name.endswith(("-wal", "-shm", ".tmp"))], [], "사본 곁에 짝 파일·임시 파일이 남았다")
+                self.assertTrue(cstore.same_database(saved, live), "사본의 내용이 지금 보관함과 다르다")
+                store.restore_from(saved)                                      # 앱이 만든 사본은 거절당하지 않는다
+
+    def test_the_old_restore_command_can_restore_a_copy_it_made_from_a_wal_live_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = bs.World(tmp)
+            make_wal(world.path("chanceblog.db"))
+            saved = projects.backup_store(world.ctx)
+            self.assertEqual(header18_19(saved), (1, 1))
+            projects.restore_store(world.ctx, saved, confirmed=True)
+
+    def test_a_topic_engine_copy_made_from_a_wal_live_engine_has_a_rollback_journal_header_and_restores_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / layout.ENGINE_DB_FILE
+            with TopicStore.open(live):
+                pass
+            make_wal(live)
+            with TopicStore.open(live) as store:
+                copy = root / "engine-copy.db"
+                store.copy_to(copy)
+                self.assertEqual(header18_19(copy), (1, 1))
+                self.assertEqual([name for name in listing(root) if name.endswith(("-wal", "-shm")) and name.startswith("engine-copy")], [])
+                store.restore_from(copy)
+
+    def test_topics_backup_of_a_wal_live_engine_is_made_and_restorable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            world = tb.World(tmp)
+            make_wal(world.data / layout.ENGINE_DB_FILE)
+            made = world.backup()
+            self.assertEqual(header18_19(made.path / layout.ENGINE_DB_FILE), (1, 1))
+            tbackup.read_backup(made.path)
+            tbackup.restore_backup(made.path, world.data, world.backups, now=tb.NOW + datetime.timedelta(minutes=5))
+
+    def test_a_copy_of_a_rollback_journal_store_is_unchanged_and_a_copy_that_cannot_be_lowered_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with cstore.Store.open(root / "chanceblog.db") as store:
+                saved = store.backup(root / "saves")
+                self.assertEqual(header18_19(saved), (1, 1))
+        with contextlib.closing(sqlite3.connect(":memory:")) as stuck:
+            with self.assertRaises(sqlite3.DatabaseError):
+                cstore.drop_wal_head(_StuckMode(stuck))                         # 낮추지 못했다고 답하면 조용히 넘어가지 않는다(되돌릴 수 없는 사본을 남기지 않는다)
+
+
+class _StuckMode:
+    """`PRAGMA journal_mode=DELETE` 에 'wal' 을 되돌려 주는 연결 흉내 — 낮추기가 안 됐을 때의 오류 길을 본다."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, sql):
+        return self.connection.execute("SELECT 'wal'")
+
+
 class NormalBackupsStayAcceptedTest(tr.Base):
     def test_rollback_journal_backups_restore_exactly_as_before(self):
         outcome = self.world.backup()

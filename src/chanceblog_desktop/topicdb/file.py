@@ -23,7 +23,7 @@ from pathlib import Path
 
 from ..content.schema_guard import describe as describe_foreign
 from ..content.schema_guard import foreign_kinds
-from ..content.store import WAL_TEXT, _read_only_uri, hold_in_memory, wal_header
+from ..content.store import WAL_TEXT, _read_only_uri, drop_wal_head, hold_in_memory, wal_header
 from ..errors import AppError
 
 BUSY_SECONDS = 5.0                                       # 잠겨 있을 때 기다리는 시간 — 윈도에서는 타이머 간격 때문에 실제로 약 7초까지 걸릴 수 있다(D-73)
@@ -471,10 +471,11 @@ class EngineFile:
         return True
 
     def copy_to(self, destination):
-        """SQLite 백업 기능으로 지금 내용을 다른 파일로 복사한다(열려 있어도 일관된 사본 — 읽기 전용으로 연 저장소도 된다)."""
+        """SQLite 백업 기능으로 지금 내용을 다른 파일로 복사한다(열려 있어도 일관된 사본 — 읽기 전용으로 연 저장소도 된다). 사본의 머리는 늘 롤백 저널 방식이다(`drop_wal_head` — 지금 보관함이 WAL 이어도, D-617)."""
         with self._lock, closing(sqlite3.connect(str(destination))) as target:
             try:
                 self._db.backup(target)
+                drop_wal_head(target)
             except sqlite3.Error as error:
                 raise store_error(error, destination) from None
 
