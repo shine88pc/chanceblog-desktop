@@ -508,7 +508,7 @@ class FieldView(QWidget):
                 chip.setEnabled(enabled)
             if texts:
                 reason = option.get("reason", "")
-                chip.setToolTip(reason)
+                chip.setToolTip(UI.plain_tooltip(reason))
                 chip.setAccessibleDescription(reason or description)
         if self.custom_chip is not None:
             custom, enabled = bool(vm.get("custom")), not vm["disabled"]

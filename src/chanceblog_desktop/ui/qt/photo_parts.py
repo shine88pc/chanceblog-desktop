@@ -206,6 +206,7 @@ class PhotoRowCard(QWidget):
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(K.SPACE["3"])
         self.preview = QLabel()
+        self.preview.setTextFormat(Qt.PlainText)                                       # 그림 아니면 고정 안내 글 — 서식 글로 읽히지 않게 일반 글(감사 AS-S1 권고-5)
         self.preview.setFixedSize(PREVIEW_SIDE + K.SPACE["2"], PREVIEW_SIDE + K.SPACE["2"])
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setWordWrap(True)

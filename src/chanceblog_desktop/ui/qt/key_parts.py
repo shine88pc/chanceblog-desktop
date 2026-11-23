@@ -286,7 +286,7 @@ class KeyDialog(QWidget):
         self.terms_toggle.blockSignals(False)
         save = vm["buttons"]["save"]
         self.save_button.setEnabled(save["enabled"])
-        self.save_button.setToolTip(save["reason"] if not save["enabled"] else "")
+        self.save_button.setToolTip(UI.plain_tooltip(save["reason"] if not save["enabled"] else ""))
         self.save_button.setAccessibleDescription(save["reason"] if not save["enabled"] else "")
         self.title.set_text(vm["title"])
         host = self.parentWidget()

@@ -27,6 +27,7 @@ class ClampedLabel(QLabel):
 
     def __init__(self, text, role="small", lines=2, tooltip=True):
         super().__init__()
+        self.setTextFormat(Qt.PlainText)                                           # 글은 이 라벨 안이 아니라 직접 그리지만, 나중에 `setText` 가 불려도 서식 글로 읽히지 않게 일반 글로 못박는다
         self.setProperty("role", role)
         self._full, self._max, self._role = str(text), max(1, int(lines)), role
         self.setMinimumWidth(0)
@@ -95,7 +96,9 @@ class CardChip(QLabel):
     """카드의 키워드 칩 — 짧게 줄인 글(뷰모델이 가린 뒤 줄였다)을 한 줄로. 모양은 스타일시트(`kw`)가 입힌다. `+N` 도 같은 모양이다."""
 
     def __init__(self, text, accessible=None):
-        super().__init__(text)
+        super().__init__()
+        self.setTextFormat(Qt.PlainText)                                           # 일반 글을 먼저 — 키워드·태그는 외부 글이라 `<img src=…>`·`<b>` 가 서식으로 읽히면 그림을 읽고 모양을 속인다(감사 AS-S1 필수-1)
+        self.setText(text)
         self.setProperty("kw", True)
         self.setMinimumHeight(K.SIZE["badge_h"])
         self.setAlignment(Qt.AlignCenter)
@@ -112,7 +115,7 @@ class CardImage(QWidget):
         self._icon, self._tone, self._glyph = icon, tone, glyph
         self.setFixedHeight(height or K.CARD["image_h"])
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setToolTip(state_text)
+        self.setToolTip(UI.plain_tooltip(state_text))
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.badges = []
         if badges:                                                                              # 의미 배지는 이미지 위 왼쪽에 얹는다(카드 한 장의 높이를 줄인다 — C-Type §7.2 '이미지 → 상단 의미 배지')

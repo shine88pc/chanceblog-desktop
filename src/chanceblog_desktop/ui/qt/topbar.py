@@ -90,7 +90,7 @@ class TopBar(QFrame):
         text = self._levels[plan.level]
         if self.date_label.plain_text() != text:
             self.date_label.set_text(text)
-        self.date_label.setToolTip(self._levels[0] if plan.level else "")                  # 줄여 보일 때는 전체 날짜를 말풍선으로
+        self.date_label.setToolTip(UI.plain_tooltip(self._levels[0] if plan.level else ""))    # 줄여 보일 때는 전체 날짜를 말풍선으로
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
