@@ -960,15 +960,32 @@ def _refuse_if_undo_impossible(ctx, names, live):
         raise FlowError("RESTORE_FAILED", {"이유": LIVE_STRUCTURE_TEXT}, detail="지금 보관함에 앱이 만들지 않는 구조가 있다 — " + "; ".join(found), reason=LIVE_STRUCTURE)
 
 
+_DRIVE_ABSOLUTE = re.compile(r"[A-Za-z]:\\")                              # 구분자를 역슬래시로 통일한 글의 앞머리 — 드라이브 글자 절대경로(`C:\…`)
+_NT_NAMESPACE = re.compile(r"\\(?:\?\?|dosdevices|global\?\?)(?:\\|$)", re.IGNORECASE)        # 같은 글의 앞머리 — 윈도 NT 이름공간 표기(`\??\UNC\서버\공유`·`\??\GLOBALROOT\Device\Mup\…`·`\DosDevices\…`·`\GLOBAL??\…`)
+
+
+def _plain_local_shape(text):
+    """'연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양인가 — **허용 목록**이다(AS-S1 필수-3, D-605). 받는 모양은 넷뿐이다: ① 빈 글(연결 안 함) ② 드라이브 글자 절대경로(`C:\\…`·`C:/…`)
+    ③ 맨 앞이 구분자가 아닌 글(상대 경로·홈 폴더 약식 — 앞 물결표·드라이브 글자만 있는 상대 경로) ④ 맨 앞 구분자가 **하나뿐**인 경로(`/home/me/…`) — 단 ④ 는 NT 이름공간 접두(`\\??\\`·`\\DosDevices\\`·`\\GLOBAL??\\`)가 아닐 때만이다.
+    그 밖은 받지 않는다: 구분자 둘 이상으로 시작하는 서버·확장·장치 경로, 그리고 NT 이름공간 표기(윈도 파일 호출이 `\\??\\UNC\\서버\\공유` 를 네트워크 공급자로 보낸다). 구분자는 `/` 와 `\\` 를 같게 보고 대소문자는 가리지 않으며 맨 앞 공백은 걷고 본다
+    (윈도 경로 읽기가 맨 앞 공백을 건너뛸 수 있다). 순수 글자 판정이라 파일 시스템·네트워크를 부르지 않는다."""
+    probe = text.lstrip().replace("/", "\\")
+    if not probe:
+        return True
+    if _DRIVE_ABSOLUTE.match(probe) or probe[0] != "\\":
+        return True
+    return probe[1:2] != "\\" and not _NT_NAMESPACE.match(probe)
+
+
 def _repo_path_problem(text):
-    """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554).
-    네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로 포함)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검), 조작한 백업이 남의 서버를 가리키면
-    이 PC 가 그 서버에 접속하면서 윈도 로그인 정보를 보낼 수 있다. 빈 글(연결 안 함)·드라이브 경로·상대 경로·홈 폴더 약식으로 쓴 경로는 그대로 받는다."""
+    """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554 — 거절 목록에서 허용 목록으로 D-605).
+    네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로, NT 이름공간 표기 포함 — `_plain_local_shape`)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검),
+    조작한 백업이 남의 서버를 가리키면 이 PC 가 그 서버에 접속하면서 윈도 로그인 정보를 보낼 수 있다. 빈 글(연결 안 함)·드라이브 경로·상대 경로·홈 폴더 약식으로 쓴 경로는 그대로 받는다."""
     if len(text) > MAX_REPO_PATH:
         return "length"
     if any(unicodedata.category(char) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") for char in text):
         return "control"
-    if text.replace("/", "\\").startswith("\\\\"):
+    if not _plain_local_shape(text):
         return "network"
     if "://" in text:
         return "url"
@@ -1382,7 +1399,9 @@ def _outcome(ctx, folder, manifest, names, live, safety):
             repo = Settings(ctx.workspace.settings_path).repo_path()
         except AppError:
             repo = ""
-        if repo and not Path(os.path.expanduser(repo)).is_dir():
+        if repo and _repo_path_problem(repo):                            # 한 번 더 — 보통 폴더 경로 모양이 아닌 글은 열어 보지 않는다(복원 전 확인이 이미 거절했지만 이 PC 가 남의 서버에 접속할 수 있는 호출이라 방어를 겹친다, D-605)
+            notes.append("연결해 둔 chanceblog 폴더의 경로가 이 PC 의 보통 폴더 경로 모양이 아니라서 열어 보지 않았어요 — 필요하면 설정에서 다시 연결해 주세요")
+        elif repo and not Path(os.path.expanduser(repo)).is_dir():
             notes.append("연결해 둔 chanceblog 폴더를 이 PC 에서 찾지 못했어요 — 필요하면 설정에서 다시 연결해 주세요")
     status = STATUS_COMPLETE if manifest["status"] == STATUS_COMPLETE else STATUS_PARTIAL
     return RestoreOutcome(status, folder.name, safety.row.name if safety is not None else "", tuple(lines), tuple(notes))

@@ -26,10 +26,19 @@ from chanceblog_desktop.topics import layout  # noqa: E402
 BS = chr(92)                                                                         # 역슬래시 — 소스에 이스케이프를 쓰지 않는다
 HOST = "CANARY_host.example"
 GOOD = ("", "chanceblog", "C:" + BS + "Users" + BS + "me" + BS + "chanceblog", "D:/repos/chanceblog", chr(126) + "/chanceblog", "../chanceblog", "/home/me/chanceblog", "한글 폴더/블로그",
-        "C:" + BS + "a b" + BS + "c", "relative" + BS + "path", "C:/x", "a" * bf.MAX_REPO_PATH, "C:" + BS + "x:y", "x:" + BS + "y")
+        "C:" + BS + "a b" + BS + "c", "relative" + BS + "path", "C:/x", "a" * bf.MAX_REPO_PATH, "C:" + BS + "x:y", "x:" + BS + "y",
+        # AS-S1 필수-3(D-605) — 허용 목록이 계속 받아야 하는 보통 경로들: 드라이브 글자(소문자·슬래시 섞임)·홈 약식·상대 경로·드라이브 상대·구분자 하나로 시작하는 경로·NT 접두와 닮았지만 아닌 이름
+        "c:" + BS + "x", "C:/x" + BS + "y/z", chr(126), chr(126) + "other/x", "..", ".", "C:x", "C:", BS + "Users" + BS + "me", "/dosdevicesx/y", "/global/x", "/devices/x", "/??x/y", "GLOBALROOT/Device/x", "a/??/b",
+        "한글" + BS + "경로" + BS + "x", "D:" + BS + "블로그 저장소", "%USERPROFILE%" + BS + "x", "C:" + BS + "x::$DATA")
 BAD = {
     "network": (BS * 2 + HOST + BS + "share" + BS + "repo", "//" + HOST + "/share/repo", BS * 2 + "?" + BS + "C:" + BS + "x", BS * 2 + "." + BS + "pipe" + BS + "x", "/" + BS + HOST + BS + "x",
-                BS + "/" + HOST + "/x", BS * 3 + HOST),
+                BS + "/" + HOST + "/x", BS * 3 + HOST,
+                # AS-S1 필수-3(D-605) — NT 이름공간 표기(윈도 파일 호출이 네트워크 공급자로 보낸다)·대소문자·슬래시·앞 공백 변형. 뒤의 둘은 로컬 폴더를 가리키는 NT 표기라도 보통 경로가 아니므로 받지 않는다.
+                BS + "??" + BS + "UNC" + BS + HOST + BS + "share" + BS + "x", "/??/UNC/" + HOST + "/share/x", BS + "??" + BS + "GLOBALROOT" + BS + "Device" + BS + "Mup" + BS + HOST + BS + "share",
+                BS + "??" + BS + "unc" + BS + HOST, BS + "??" + BS + "Unc" + "/" + HOST, "/??" + BS + "UNC/" + HOST, "/??/GLOBALROOT/Device/Mup/" + HOST + "/share",
+                BS + "DosDevices" + BS + "UNC" + BS + HOST + BS + "x", BS + "dosdevices" + BS + "unc" + BS + HOST, "/DOSDEVICES/UNC/" + HOST + "/x", BS + "GLOBAL??" + BS + "UNC" + BS + HOST, "/global??/UNC/" + HOST,
+                BS + "Global??" + BS + "GLOBALROOT" + BS + "Device" + BS + "Mup" + BS + HOST, " " + BS * 2 + HOST + BS + "share", chr(0xA0) + BS * 2 + HOST + BS + "x", " /??/UNC/" + HOST, "  " + BS + "??" + BS + "UNC" + BS + HOST,
+                BS + "??", "/??", BS + "??" + BS + "C:" + BS + "Windows", BS + "??" + BS + "c:", "/dosdevices", BS + "GLOBAL??"),
     "url": ("https://" + HOST + "/x", "file:///C:/x", "ftp://" + HOST + "/y", "C:/x://y", "smb://" + HOST + "/s"),
     "control": ("C:" + BS + "x" + chr(10) + "y", "C:/x" + chr(0) + "y", "C:/x" + chr(0x202E) + "y", "C:/x" + chr(0x200B), "C:/x" + chr(0x2028), chr(7) + "C:/x", "C:/x" + chr(0x7F), "C:/x" + chr(0xE000), "C:/x" + chr(0x2029), "C:/x" + chr(0x0378)),
     "length": ("C:/" + "a" * 1100, "a" * (bf.MAX_REPO_PATH + 1)),
@@ -132,6 +141,131 @@ class RestoreTest(ForgedBackup):
         with mock.patch.object(bf, "_flow_lock", side_effect=AssertionError("잠금을 잡기 전에 거절해야 한다")):
             error = bs.code_of(bf.restore_full_backup, self.ctx, self.outcome.row.name, confirmed=True)
         self.assertEqual(error.code, "FULL_BACKUP_INVALID")
+
+
+class AllowListTest(unittest.TestCase):
+    """AS-S1 필수-3(D-605) — '연결한 폴더' 글의 네트워크 경로 가드가 거절 목록(역슬래시 둘로 시작할 때만 network)에서 **허용 목록**으로 바뀌었다. 윈도 파일 호출은 NT 이름공간 접두 `\\??\\` 를
+    그대로 받아 `\\??\\UNC\\서버\\공유` 를 네트워크 공급자로 보내는데 옛 가드는 그 글을 빈 글(받음)로 판정했다. 이 시험은 순수 글자 판정이라 모든 운영체제에서 돌고 네트워크·UNC 를 부르지 않는다."""
+
+    NT_NAMES = ("??", "DosDevices", "GLOBAL??")
+
+    def test_the_allow_list_accepts_exactly_the_four_plain_shapes(self):
+        """① 빈 글 ② 드라이브 글자 절대경로 ③ 맨 앞이 구분자가 아닌 글(상대·홈 약식) ④ 구분자 하나로 시작하는 경로(NT 접두 제외)."""
+        for text in ("", "C:" + BS + "x", "z:/y", "relative/x", chr(126) + "/x", "../x", BS + "Users" + BS + "me", "/home/me/x", "/devices/x"):
+            with self.subTest(text=text):
+                self.assertTrue(bf._plain_local_shape(text))
+        for text in (BS * 2 + HOST, "//" + HOST, BS + "??" + BS + "UNC" + BS + HOST, "/??/UNC/" + HOST, BS + "DosDevices" + BS + "x", BS + "GLOBAL??" + BS + "x", " " + BS * 2 + HOST):
+            with self.subTest(text=text):
+                self.assertFalse(bf._plain_local_shape(text))
+
+    def test_every_nt_namespace_spelling_is_network_in_any_case_with_either_separator_and_leading_spaces(self):
+        tails = ("", "{s}UNC{s}" + HOST + "{s}share", "{s}GLOBALROOT{s}Device{s}Mup{s}" + HOST, "{s}C:{s}Windows")
+        count = 0
+        for name in self.NT_NAMES:
+            for spelling in (name, name.lower(), name.upper(), name.title()):
+                for lead in ("", " ", "  ", chr(0xA0), chr(0x3000)):
+                    for first in (BS, "/"):
+                        for sep in (BS, "/"):
+                            for tail in tails:
+                                text = lead + first + spelling + tail.format(s=sep)
+                                with self.subTest(text=text):
+                                    self.assertEqual(bf._repo_path_problem(text), "network")
+                                count += 1
+        self.assertEqual(count, 960, "세 이름 × 네 철자 × 앞 공백 다섯 × 첫 구분자 둘 × 나머지 구분자 둘 × 꼬리 넷")
+
+    def test_two_or_more_leading_separators_in_any_mix_are_network_and_a_single_one_is_not(self):
+        for first in (BS, "/"):
+            for second in (BS, "/"):
+                for more in ("", BS, "/"):
+                    text = first + second + more + HOST + "/share"
+                    with self.subTest(text=text):
+                        self.assertEqual(bf._repo_path_problem(text), "network")
+        for text in (BS + HOST, "/" + HOST, "/" + HOST + "/share", BS + HOST + BS + "share"):
+            with self.subTest(text=text):
+                self.assertEqual(bf._repo_path_problem(text), "", "구분자 하나로 시작하는 경로는 이 PC 의 드라이브 뿌리 경로다")
+
+    def test_drive_paths_and_relative_paths_are_accepted_whatever_the_letter_or_separator(self):
+        letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        for letter in letters:
+            for sep in (BS, "/"):
+                with self.subTest(letter=letter, sep=sep):
+                    self.assertEqual(bf._repo_path_problem(letter + ":" + sep + "blog" + sep + "chanceblog"), "")
+        for text in ("blog" + BS + "chanceblog", "../x", chr(126) + BS + "x", "x" * 100, "한글 폴더/블로그", "C:relative", "NUL", "GLOBALROOT" + BS + "Device" + BS + "x"):
+            with self.subTest(text=text):
+                self.assertEqual(bf._repo_path_problem(text), "")
+
+    def test_the_audit_probe_table_gets_the_same_answers_as_before_except_the_nt_forms_which_are_now_refused(self):
+        """감사 탐침 p6 의 스물 몇 가지 — 옛 가드가 이미 잘 막던 모양은 **같은 낱말**로 막히고, 새로 막히는 것은 NT 표기(와 앞 공백·NBSP 를 붙인 UNC)뿐이다. 환경 변수 꼴·`~사용자`·대체 데이터 흐름·매핑된 드라이브 글자는 글자만으로는 알 수 없어 받는다(알려진 한계)."""
+        table = {
+            "unc backslash": (BS * 2 + "srv" + BS + "share" + BS + "x", "network"), "unc slash": ("//srv/share/x", "network"), "extended unc": (BS * 2 + "?" + BS + "UNC" + BS + "srv" + BS + "share" + BS + "x", "network"),
+            "device path": (BS * 2 + "." + BS + "pipe" + BS + "x", "network"), "webdav ssl": (BS * 2 + "srv@SSL" + BS + "DavWWWRoot" + BS + "x", "network"), "triple slash": ("///srv/share", "network"),
+            "bidi override unc": (chr(0x202A) + BS * 2 + "srv" + BS + "share", "control"), "file url": ("file:///c:/x", "url"), "http url": ("http://evil/x", "url"), "http with backslashes": ("http:" + BS * 2 + "evil" + BS + "x", ""),
+            "mapped drive letter": ("Z:" + BS + "mapped" + BS + "x", ""), "relative traversal": (".." + BS + ".." + BS + "x", ""), "env var": ("%USERPROFILE%" + BS + "x", ""), "tilde user": (chr(126) + "someone" + BS + "x", ""),
+            "ads": ("C:" + BS + "x::$DATA", ""), "plain": ("C:" + BS + "work" + BS + "blog", ""), "empty": ("", ""),
+            # 옛 가드가 받던(=뚫리던) 모양 — 이제 network
+            "nt namespace single backslash": (BS + "??" + BS + "UNC" + BS + "srv" + BS + "share" + BS + "x", "network"), "nt namespace slash": ("/??/UNC/srv/share/x", "network"),
+            "nt globalroot mup": (BS + "??" + BS + "GLOBALROOT" + BS + "Device" + BS + "Mup" + BS + "srv" + BS + "share", "network"), "leading space unc": (" " + BS * 2 + "srv" + BS + "share" + BS + "x", "network"),
+            "nbsp unc": (chr(0xA0) + BS * 2 + "srv" + BS + "share" + BS + "x", "network"),
+        }
+        for label, (text, expected) in table.items():
+            with self.subTest(label=label):
+                self.assertEqual(bf._repo_path_problem(text), expected)
+
+    def test_the_decision_is_pure_text_it_asks_neither_the_file_system_nor_the_network(self):
+        boom = AssertionError("글자 판정이 파일 시스템·네트워크를 불렀다")
+        import os
+        import socket
+        with mock.patch.object(Path, "is_dir", side_effect=boom), mock.patch.object(Path, "exists", side_effect=boom), mock.patch.object(Path, "resolve", side_effect=boom), \
+                mock.patch.object(os, "stat", side_effect=boom), mock.patch.object(os, "lstat", side_effect=boom), mock.patch.object(os.path, "exists", side_effect=boom), \
+                mock.patch.object(os.path, "isdir", side_effect=boom), mock.patch.object(socket, "socket", side_effect=boom), mock.patch.object(socket, "getaddrinfo", side_effect=boom):
+            for text in [*GOOD, *(item for texts in BAD.values() for item in texts)]:
+                bf._repo_path_problem(text)
+
+    def test_the_old_reject_list_shape_is_gone_the_function_is_the_allow_list(self):
+        import inspect
+        source = inspect.getsource(bf._repo_path_problem) + inspect.getsource(bf._plain_local_shape)
+        self.assertNotIn('startswith("\\\\\\\\")', source.replace(" ", ""), "옛 거절 목록(역슬래시 둘로 시작할 때만)이 남아 있다")
+        self.assertIn("_NT_NAMESPACE", source)
+        self.assertEqual(bf._DRIVE_ABSOLUTE.pattern, "[A-Za-z]:" + BS * 2)
+
+
+class OutcomeGuardTest(ForgedBackup):
+    """복원이 끝난 뒤 그 경로를 폴더인지 알아보는 곳(`_outcome`)도 같은 허용 목록을 한 번 더 거친다 — 보통 폴더 경로 모양이 아니면 열어 보지 않는다(D-605)."""
+
+    def test_a_path_that_is_not_a_plain_folder_path_is_never_opened_after_a_restore(self):
+        manifest = self.world.manifest(self.outcome)
+        for text in (BS + "??" + BS + "UNC" + BS + HOST + BS + "share", "/??/UNC/" + HOST + "/share", BS * 2 + HOST + BS + "share", BS + "DosDevices" + BS + "UNC" + BS + HOST, " " + BS * 2 + HOST):
+            with self.subTest(text=text):
+                self.ctx.settings.save_repo_path(text)
+                opened = []
+                real = Path.is_dir
+
+                def spy(self_path):
+                    opened.append(str(self_path))
+                    return real(self_path)
+
+                with mock.patch.object(Path, "is_dir", spy):
+                    result = bf._outcome(self.ctx, self.folder, manifest, [], {}, None)
+                self.assertEqual([item for item in opened if HOST in item], [], "그 경로는 열어 보지도 않는다")
+                self.assertTrue(any("보통 폴더 경로 모양이 아니라서 열어 보지 않았어요" in note for note in result.notes), result.notes)
+                self.assertNotIn(HOST, " ".join(result.notes), "경로 글을 되풀이하지 않는다")
+
+    def test_a_plain_missing_folder_still_gets_the_old_note_and_is_asked_about(self):
+        manifest = self.world.manifest(self.outcome)
+        missing = "C:" + BS + "no" + BS + "such" + BS + "folder-" + HOST
+        self.ctx.settings.save_repo_path(missing)
+        asked = []
+        real = Path.is_dir
+
+        def spy(self_path):
+            asked.append(str(self_path))
+            return real(self_path)
+
+        with mock.patch.object(Path, "is_dir", spy):
+            result = bf._outcome(self.ctx, self.folder, manifest, [], {}, None)
+        self.assertTrue([item for item in asked if HOST in item], "보통 경로는 예전처럼 열어 본다")
+        self.assertTrue(any("연결해 둔 chanceblog 폴더를 이 PC 에서 찾지 못했어요" in note for note in result.notes))
+        self.assertFalse(any("열어 보지 않았어요" in note for note in result.notes))
 
 
 class AdversarialTest(ForgedBackup):
