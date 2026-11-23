@@ -4,6 +4,10 @@
 `os.popen`·`os.spawn*`·`os.exec*`·`os.startfile`·Qt 의 `QDesktopServices`·`PySide6.QtNetwork` 와 PySide6 의 웹 모듈)을 사용하는 곳을 AST 로 모아 **아래 허용 목록과 같음**을 단언한다. 목록에 없는 곳이 생기면 이 시험이 빨개지고,
 목록의 곳이 사라져도 빨개진다(낡은 허용을 남기지 않는다). 허용마다 이유가 있다 — 바깥에 **쓰는** 곳은 `subprocess`(관문 안) 하나뿐이다.
 `urllib.parse`(주소를 글자로 쪼개는 일)는 연결이 아니다 — 어디서든 쓸 수 있다.
+
+덧붙임(AS-S1 권고-6, D-611): 위 표는 '바깥으로 나가는' 길이다. 그 길을 **돌아서** 갈 수 있는 네이티브·동적 호출(`ctypes`·`winreg`·`msvcrt`·`pty`·`runpy`·`__import__`·`importlib.import_module`·`exec`·`eval`·
+`import os as 별칭`·`from os import <위험 이름>`·`getattr(os, …)`)은 따로 `NATIVE_ALLOWED` 표(파일마다 이유)로 못박고, `vendor/` 안의 바깥 모듈도 `VENDOR_ALLOWED` 표로 못박는다. 감사가 합성 코드로 재현한 못 보는 모양
+(`probe_scanner.py` 의 목록)이 모두 잡히고 지금 소스는 위반이 0 이다.
 """
 import ast
 import sys
@@ -21,6 +25,9 @@ QT_NAMES = {"QDesktopServices", "QNetworkAccessManager", "QTcpSocket", "QUdpSock
 QT_MODULES = {"QtNetwork", "QtWebEngineCore", "QtWebEngineWidgets", "QtWebChannel", "QtWebSockets", "QtHttpServer"}
 # 하위 프로세스를 띄우는 또 다른 길 — 예전 규칙에는 `QProcess`(Qt)·`ProcessPoolExecutor`·`multiprocessing`·`os.posix_spawn` 이 없어서 새 코드가 그 길로 시험을 통과할 틈이 있었다(결정 D-512, 설계 3-8 (3)).
 PROCESS_NAMES = {"QProcess", "ProcessPoolExecutor"}
+# 위 이름을 돌아서 부를 수 있는 길(AS-S1 권고-6, D-611) — 윈도 API 를 직접 부르는 모듈·가짜 터미널·다른 파일을 실행하는 모듈, 이름 없이 모듈을 가져오는 호출, 별칭·`getattr` 로 숨기는 `os`.
+NATIVE_MODULES = {"ctypes", "winreg", "msvcrt", "pty", "runpy"}
+GUARDED_NAMES = NATIVE_MODULES | {"__import__", "importlib.import_module", "exec", "eval", "os-alias", "getattr(os)"}
 
 # (파일, 쓰는 것) → 이유. 이 표가 앱이 바깥과 닿는 길의 전부다.
 ALLOWED = {
@@ -30,10 +37,58 @@ ALLOWED = {
     ("ui/qt/components.py", "QDesktopServices"): "이미지 출처 링크 열기(`check_url` 로 주소 모양을 거른 뒤 기본 브라우저가 연다) — 앱은 연결하지 않는다",
 }
 
+# (파일, 쓰는 것) → 이유. 네이티브·동적 호출의 전부다(AS-S1 권고-6, D-611) — 새 파일이 `ctypes` 등을 가져오면 이 시험이 빨개지고, 이유 없이는 표에 더할 수 없다.
+NATIVE_ALLOWED = {
+    ("security/keystore.py", "ctypes"): "Windows 자격 증명 관리자(`advapi32` 의 `CredWriteW`·`CredReadW`·`CredDeleteW`·`CredEnumerateW`·`CredFree`)를 부르는 유일한 곳 — 키를 OS 보안 저장소에만 두려는 것이고 하위 프로세스·접속이 아니다",
+    ("service/liveness.py", "ctypes"): "프로세스가 살아 있는지 읽기만 하는 `kernel32` 호출(`OpenProcess`·`GetExitCodeProcess`·`GetProcessTimes`·`GetComputerNameW`) — 끝내거나 신호를 보내는 권한을 쓰지 않는다",
+    ("ui/single_instance.py", "ctypes"): "이미 떠 있는 같은 앱의 창을 앞으로 가져오는 `kernel32`·`user32` 호출 — 창 제목·실행 파일 경로는 비교에만 쓰고 저장·출력하지 않는다",
+    ("ui/winroot.py", "ctypes"): "윈도 폴더를 윈도에 직접 묻는 읽기 한 번(`GetSystemWindowsDirectoryW`) — 쓰기·하위 프로세스·접속이 없고 윈도가 아니면 가져오지도 않는다",
+    ("ui/ocr_adapter.py", "ctypes"): "글자 읽기 작업자를 띄울 때 작업 제한 장치(Job 개체)를 만드는 `kernel32` 호출 — 작업자를 가두는 쪽이며 `LOCAL_OCR` 관문 뒤에서만 쓰인다(결정 D-512)",
+}
+# vendor/ 는 `chanceblog` 의 파일을 한 글자도 바꾸지 않고 가져온 것이라(해시는 `tests/test_vendor_core.py` 가 지킨다) 앱 소스 훑기에서 빠져 있었다 — 그 안에서 바깥과 닿는 곳도 이름과 이유로 못박는다.
+VENDOR_ALLOWED = {
+    ("scripts/verify_pages_deploy.py", "http"): "블로그 배포 확인 도구(`http.client`) — 앱은 `publish/deploy.py` 의 외부 쓰기 관문(`require_external_write`)을 지난 뒤에만 부르고 이 빌드에서는 부르지 않는다",
+    ("scripts/verify_pages_deploy.py", "urllib"): "같은 도구의 `urllib.request` — 같은 관문 뒤에서만 쓰인다",
+}
+
+
+def guarded_names(node):
+    """AST 노드 하나에서 위 감시 이름을 **돌아서** 부르는 모양(`GUARDED_NAMES`)을 찾는다(AS-S1 권고-6, D-611): 네이티브 모듈 가져오기·`import os as 별칭`·`from os import <위험 이름>`(`from os import *` 포함)·
+    `importlib.import_module`·`__import__`·`exec`·`eval`·`getattr(os, …)`. `getattr(os, '글자')` 는 그 글자가 위험 이름일 때만, 글자가 아닌 인자는 늘 걸린다(`getattr(os, 'O_BINARY', 0)` 같은 평범한 이름은 아니다)."""
+    found = []
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.name.split(".")[0] in NATIVE_MODULES:
+                found.append(alias.name.split(".")[0])
+            if alias.name == "os" and alias.asname:
+                found.append("os-alias")
+    elif isinstance(node, ast.ImportFrom) and node.level == 0:
+        module = node.module or ""
+        if module.split(".")[0] in NATIVE_MODULES:
+            found.append(module.split(".")[0])
+        if module == "os":
+            found += [f"os.{alias.name}" for alias in node.names if alias.name in OUTGOING_OS]
+            if any(alias.name == "*" for alias in node.names):
+                found.append("os-alias")
+        if module == "importlib" and any(alias.name in ("import_module", "__import__") for alias in node.names):
+            found.append("importlib.import_module")
+    elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "importlib" and node.attr == "import_module":
+        found.append("importlib.import_module")
+    elif isinstance(node, ast.Name) and node.id in ("__import__", "exec", "eval"):
+        found.append(node.id)
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == "os":
+        picked = node.args[1] if len(node.args) > 1 else None
+        if isinstance(picked, ast.Constant) and isinstance(picked.value, str):
+            if picked.value in OUTGOING_OS:
+                found.append(f"os.{picked.value}")
+        else:
+            found.append("getattr(os)")
+    return found
+
 
 def outgoing_names(node):
-    """AST 노드 하나에서 바깥과 닿는 이름들(모듈·호출·Qt 이름·하위 프로세스를 띄우는 이름)을 찾는다 — 소스 전체 훑기와 탐지기 대조 시험이 같은 함수를 쓴다."""
-    names = []
+    """AST 노드 하나에서 바깥과 닿는 이름들(모듈·호출·Qt 이름·하위 프로세스를 띄우는 이름, 그리고 그것을 돌아서 부르는 모양 — `guarded_names`)을 찾는다 — 소스 전체 훑기와 탐지기 대조 시험이 같은 함수를 쓴다."""
+    names = guarded_names(node)
     if isinstance(node, ast.Import):
         for alias in node.names:
             top = alias.name.split(".")[0]
@@ -63,15 +118,30 @@ def outgoing_names(node):
     return names
 
 
-def found_outgoing():
+_NAMES = {}
+
+
+def names_in(path):
+    """그 파일에서 `outgoing_names` 가 찾은 (이름, 줄 번호)들 — 같은 파일(경로·수정 시각·크기가 같으면)은 한 번만 훑는다(소스 훑기 시험이 여러 번 부른다)."""
+    info = path.stat()
+    key = (str(path), info.st_mtime_ns, info.st_size)
+    if key not in _NAMES:
+        _NAMES[key] = [(name, getattr(node, "lineno", 0)) for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))) for name in outgoing_names(node)]
+    return _NAMES[key]
+
+
+def found_outgoing(guarded=False, root=None):
+    """(파일, 이름) → 줄 번호들. 기본은 예전과 같은 '바깥으로 나가는 길' 표(`ALLOWED` 와 견준다)이고, `guarded=True` 는 그것을 돌아서 부르는 네이티브·동적 호출(`NATIVE_ALLOWED` 와 견준다)이다 — 두 표가 섞이지 않는다.
+    `root` 는 훑을 폴더(기본은 앱 소스)다."""
+    base = SRC if root is None else root
     found = {}
-    for path in sorted(SRC.rglob("*.py")):
+    for path in sorted(base.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        rel = path.relative_to(SRC).as_posix()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            for name in outgoing_names(node):
-                found.setdefault((rel, name), []).append(getattr(node, "lineno", 0))
+        rel = path.relative_to(base).as_posix()
+        for name, line in names_in(path):
+            if (name in GUARDED_NAMES) == guarded:
+                found.setdefault((rel, name), []).append(line)
     return found
 
 
@@ -127,6 +197,98 @@ class OutgoingCallSitesTest(unittest.TestCase):
     def test_no_source_file_uses_the_added_process_names_yet(self):
         added = {"multiprocessing", "QProcess", "ProcessPoolExecutor", "os.posix_spawn", "os.posix_spawnp"}
         self.assertEqual(sorted(key for key in found_outgoing() if key[1] in added), [], "하위 프로세스를 띄우는 새 길은 허용 목록·관문 없이는 늘 수 없다")
+
+
+class GuardedCallSitesTest(unittest.TestCase):
+    """AS-S1 권고-6(D-611) — 우회 모양을 보는 탐지와 네이티브·동적 호출 허용 표."""
+
+    # 감사 탐침(`probe_scanner.py`)의 합성 코드 — 옛 탐지기가 '못 봄' 으로 놓친 것들. 각 코드에서 기대하는 이름 집합.
+    MISSED_BEFORE = {
+        "from os import system": ("from os import system\nsystem('x')\n", {"os.system"}),
+        "from os import popen as run": ("from os import popen as run\nrun('x')\n", {"os.popen"}),
+        "from os import *": ("from os import *\nsystem('x')\n", {"os-alias"}),
+        "import os as o; o.popen": ("import os as o\no.popen('x')\n", {"os-alias"}),
+        "getattr(os, 'system')": ("import os\ngetattr(os, 'system')('x')\n", {"os.system"}),
+        "getattr(os, 이름 변수)": ("import os\nname = 'sys' + 'tem'\ngetattr(os, name)('x')\n", {"getattr(os)"}),
+        "ctypes ShellExecuteW": ("import ctypes\nctypes.windll.shell32.ShellExecuteW(0, 'open', 'calc', None, None, 1)\n", {"ctypes"}),
+        "ctypes CreateProcessW via WinDLL": ("import ctypes\nctypes.WinDLL('kernel32').CreateProcessW\n", {"ctypes"}),
+        "from ctypes import windll": ("from ctypes import windll\nwindll.kernel32\n", {"ctypes"}),
+        "importlib.import_module('subprocess')": ("import importlib\nimportlib.import_module('subprocess').run(['x'])\n", {"importlib.import_module"}),
+        "from importlib import import_module": ("from importlib import import_module\nimport_module('socket')\n", {"importlib.import_module"}),
+        "__import__('socket')": ("__import__('socket').create_connection(('h', 1))\n", {"__import__"}),
+        "winreg": ("import winreg\n", {"winreg"}),
+        "msvcrt": ("import msvcrt\n", {"msvcrt"}),
+        "pty": ("import pty\n", {"pty"}),
+        "runpy": ("import runpy\nrunpy.run_path('x')\n", {"runpy"}),
+        "from runpy import run_path": ("from runpy import run_path\n", {"runpy"}),
+        "exec('import subprocess')": ("exec('import subprocess')\n", {"exec"}),
+        "eval": ("eval('1 + 1')\n", {"eval"}),
+    }
+    STILL_SEEN = {
+        "import subprocess": ("import subprocess\n", {"subprocess"}), "os.system": ("import os\nos.system('x')\n", {"os.system"}), "import asyncio": ("import asyncio\n", {"asyncio"}),
+    }
+    HARMLESS = {
+        "getattr(os, 평범한 이름)": "import os\nfd = os.open('x', os.O_WRONLY | getattr(os, 'O_BINARY', 0))\n", "app.exec()": "app = object()\napp.exec()\n", "import os.path as p": "import os.path as p\n",
+        "from os import path, getcwd": "from os import path, getcwd\n", "importlib.util": "import importlib.util\nimportlib.util.spec_from_file_location('m', 'x.py')\n", "literal_eval": "from ast import literal_eval\nliteral_eval('1')\n",
+        "re.compile": "import re\nre.compile('x')\n", "shutil.which": "import shutil\nshutil.which('git')\n", "threading": "import threading\nimport json\n", "os.getcwd": "import os\nos.getcwd()\nos.path.join('a', 'b')\n",
+        "이름에 exec 가 든 변수": "my_exec = 1\nevaluate = 2\nname = 'exec'\n", "importlib 만": "import importlib\n",
+    }
+
+    def names_of(self, source):
+        return {name for node in ast.walk(ast.parse(source)) for name in outgoing_names(node)}
+
+    def test_every_shape_the_audit_probe_missed_is_now_seen_by_its_own_name(self):
+        for label, (source, expected) in self.MISSED_BEFORE.items():
+            with self.subTest(label=label):
+                self.assertTrue(expected <= self.names_of(source), f"{label}: 기대 {sorted(expected)} / 실제 {sorted(self.names_of(source))}")
+
+    def test_what_the_old_detector_already_saw_is_still_seen(self):
+        for label, (source, expected) in self.STILL_SEEN.items():
+            with self.subTest(label=label):
+                self.assertEqual(self.names_of(source), expected)
+
+    def test_ordinary_look_alikes_are_not_flagged(self):
+        for label, source in self.HARMLESS.items():
+            with self.subTest(label=label):
+                self.assertEqual(self.names_of(source), set())
+
+    def test_the_two_tables_are_kept_apart_so_the_old_assertions_keep_their_meaning(self):
+        self.assertEqual({key for key in found_outgoing() if key[1] in GUARDED_NAMES}, set(), "예전 표에는 돌아서 부르는 이름이 섞이지 않는다")
+        self.assertTrue(set(NATIVE_ALLOWED) <= set(found_outgoing(guarded=True)))
+
+    def test_the_files_that_use_native_or_dynamic_calls_are_exactly_the_allowed_list(self):
+        self.assertEqual(sorted(found_outgoing(guarded=True)), sorted(NATIVE_ALLOWED), "네이티브·동적 호출이 허용 표와 다르다 — 새로 생겼거나 사라졌다. 새로 생긴 곳은 이유를 갖추고 이 표에 더한다")
+
+    def test_every_native_allowance_has_a_real_reason(self):
+        for key, reason in NATIVE_ALLOWED.items():
+            with self.subTest(key=key):
+                self.assertGreater(len(reason), 30)
+                self.assertEqual(key[1], "ctypes", "지금 소스에서 네이티브 길을 쓰는 것은 ctypes 뿐이다")
+
+    def test_ctypes_is_imported_by_exactly_the_five_windows_helpers_and_nothing_else_is_used(self):
+        files = sorted({key[0] for key in found_outgoing(guarded=True) if key[1] == "ctypes"})
+        self.assertEqual(files, ["security/keystore.py", "service/liveness.py", "ui/ocr_adapter.py", "ui/single_instance.py", "ui/winroot.py"])
+        used = {key[1] for key in found_outgoing(guarded=True)}
+        self.assertEqual(used, {"ctypes"}, "winreg·msvcrt·pty·runpy·__import__·import_module·exec·eval·별칭·getattr(os) 는 한 곳도 없다")
+
+    def test_vendor_scripts_outside_modules_are_a_closed_table(self):
+        vendor = ss.ROOT / "vendor"
+        self.assertTrue(vendor.is_dir())
+        self.assertEqual(sorted(found_outgoing(root=vendor)), sorted(VENDOR_ALLOWED))
+        self.assertEqual(sorted(found_outgoing(guarded=True, root=vendor)), [], "vendor 안에 네이티브·동적 호출이 없다")
+        for key, reason in VENDOR_ALLOWED.items():
+            with self.subTest(key=key):
+                self.assertGreater(len(reason), 20)
+
+    def test_the_detector_finds_a_new_bypass_in_a_synthetic_tree(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a").mkdir()
+            (root / "a" / "fine.py").write_text("import json\nimport os\nos.getcwd()\n", encoding="utf-8")
+            (root / "a" / "sneaky.py").write_text("import os as o\nfrom os import system\nimport ctypes\n__import__('socket')\n", encoding="utf-8")
+            self.assertEqual(sorted(found_outgoing(root=root)), [("a/sneaky.py", "os.system")])
+            self.assertEqual(sorted(found_outgoing(guarded=True, root=root)), [("a/sneaky.py", "__import__"), ("a/sneaky.py", "ctypes"), ("a/sneaky.py", "os-alias")])
 
 
 if __name__ == "__main__":

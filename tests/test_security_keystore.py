@@ -264,7 +264,8 @@ class EncodeTest(NoLeak):
             ks.encode_fields({"k": value})
         error = caught.exception
         self.assertEqual(error.slots, {"허용 용량": "2,560바이트"})
-        self.assertEqual(error.detail, "2,562바이트(UTF-16)")
+        self.assertEqual(error.detail, "묶음이 한도를 넘었다")                   # 의도적 갱신(AS-S1 참고-8, D-612): 세부에 입력의 바이트 수(예전 '2,562바이트(UTF-16)')를 싣지 않는다 — 한도만 알린다
+        self.assertNotRegex(error.detail, r"[0-9]")
         self.assert_no_leak(error, MARKER, "SECRETVALUE", value[:20])
 
     def test_a_lone_surrogate_is_refused_as_an_invalid_shape_and_says_nothing_about_the_text(self):

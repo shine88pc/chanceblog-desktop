@@ -119,7 +119,7 @@ def encode_fields(fields):
     except UnicodeEncodeError:                                           # 짝 없는 대용 문자 — 예외 문구에 그 글자가 담기므로 우리 말로 바꾼다
         raise AppError("KEY_INVALID_SHAPE", {"항목": "값", "이유": "표시할 수 없는 글자가 들어 있습니다"}) from None
     if len(raw) > MAX_BLOB_BYTES:
-        raise AppError("KEY_TOO_LONG", {"허용 용량": f"{MAX_BLOB_BYTES:,}바이트"}, detail=f"{len(raw):,}바이트(UTF-16)")
+        raise AppError("KEY_TOO_LONG", {"허용 용량": f"{MAX_BLOB_BYTES:,}바이트"}, detail="묶음이 한도를 넘었다")        # 한도는 알려도 되지만 입력의 크기는 알리지 않는다 — 머리말의 '길이 같은 일부 정보도 만들지 않는다'(AS-S1 참고-8, D-612)
     return raw
 
 
@@ -127,7 +127,7 @@ def decode_fields(raw):
     """보관된 바이트 → `SecretFields`. 모양이 틀리면(다른 프로그램이 건드렸다 등) KEY_STORE_UNAVAILABLE — 내용은 담지 않는다."""
     try:
         data = json.loads(bytes(raw).decode("utf-16-le"))
-    except (UnicodeDecodeError, ValueError) as error:
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:        # 아주 깊게 겹친 묶음은 3.10 에서 파이썬 재귀 한도에 걸려 RecursionError 가 새어 나갔다(AS-S1 참고-7, D-612)
         raise _unavailable(f"보관된 값을 해석하지 못했다({type(error).__name__})") from None
     if (not isinstance(data, dict) or not data or len(data) > MAX_FIELDS
             or not all(isinstance(name, str) and _FIELD.fullmatch(name) and isinstance(value, str) for name, value in data.items())):
@@ -284,6 +284,23 @@ class Win32CredApi:
         finally:
             self._dll.CredFree(found)
 
+    def exists(self, target):
+        """오류 번호(0 이면 그 이름의 항목이 있다) — 값을 파이썬 쪽으로 **꺼내지 않는다**(AS-S1 권고-3, D-610). `CredReadW` 가 OS 쪽에 만든 사본은 읽지 않고 바로 0 으로 덮은 뒤 어떤 길로 끝나도(예외 포함)
+        `CredFree` 로 돌려준다 — 존재 여부만 묻는데 모든 비밀 칸이 든 묶음이 변경할 수 없는 bytes 로 복사돼 가비지 수집 때까지 남는 일이 없다."""
+        found = ctypes.POINTER(_CREDENTIALW)()
+        if not self._dll.CredReadW(target, CRED_TYPE_GENERIC, 0, ctypes.byref(found)):
+            return self._error()
+        if not found:                                             # 성공이라는데 돌려준 것이 없다 — 있을 수 없는 일이지만 널 포인터를 읽지 않는다
+            return self._error()
+        try:
+            credential = found.contents
+            size = int(credential.CredentialBlobSize)
+            if size and credential.CredentialBlob:
+                ctypes.memset(credential.CredentialBlob, 0, size)       # 관리자가 돌려준 원본 메모리를 읽지 않고 지운다
+            return 0
+        finally:
+            self._dll.CredFree(found)
+
     def delete(self, target):
         return 0 if self._dll.CredDeleteW(target, CRED_TYPE_GENERIC, 0) else self._error()
 
@@ -337,6 +354,19 @@ class WindowsCredentialStore(KeyStore):
         if number:
             raise _unavailable(f"CredReadW 실패(오류 번호 {number})")
         return raw
+
+    def exists(self, ref):
+        """그 항목이 있는가 — 값을 꺼내지 않는 길(`Win32CredApi.exists`)을 쓴다(AS-S1 권고-3, D-610). 값을 꺼내는 길(`read`)만 있는 시험용 가짜 API 는 예전처럼 `read` 로 묻는다."""
+        check_ref(ref)
+        ask = getattr(self._api, "exists", None)
+        if ask is None:
+            return super().exists(ref)
+        number = ask(self._target(ref))
+        if number == ERROR_NOT_FOUND:
+            return False
+        if number:
+            raise _unavailable(f"CredReadW 실패(오류 번호 {number})")
+        return True
 
     def _delete(self, ref):
         number = self._api.delete(self._target(ref))
