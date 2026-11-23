@@ -258,7 +258,7 @@ class EncodeTest(NoLeak):
             ks.encode_fields({"a": "x" * 600, "b": "y" * 666})
         self.assertEqual(caught.exception.requested_code, "KEY_TOO_LONG")
 
-    def test_too_long_says_the_limit_and_the_size_and_never_the_value(self):
+    def test_too_long_says_the_limit_and_never_the_size_or_the_value(self):
         value = (MARKER * 200)[:1273]
         with self.assertRaises(AppError) as caught:
             ks.encode_fields({"k": value})

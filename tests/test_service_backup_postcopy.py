@@ -38,6 +38,12 @@ from chanceblog_desktop.topicdb.store import TopicStore  # noqa: E402
 from chanceblog_desktop.topics import layout  # noqa: E402
 
 
+def _marked(error):
+    """그 예외에 '덮인 채 남았다' 표시를 단다(낮은 층이 되돌리지 못했을 때의 모양)."""
+    error.left_overwritten = True
+    return error
+
+
 class BrokenUndo:
     """메모리 사본인 척하지만 되돌리기(`backup`)가 늘 실패하는 가짜 — 되돌리기 자체가 실패하는 길을 시험한다."""
 
@@ -113,16 +119,48 @@ class StoreRestoreFromTest(unittest.TestCase):
         self.live = make_store_file(self.root / "live" / "chanceblog.db", "LIVE")
         self.backup = make_store_file(self.root / "backup" / "chanceblog.db", "BACKUP")
 
-    def arm_prepare_failure(self, seen):
+    def arm_prepare_failure(self, seen, exception=None):
         real = cstore.Store._prepare
 
         def failing(this, fresh):
             if seen.get("armed"):
                 seen["armed"] = False
                 seen["during"] = [row[0] for row in this._db.execute("SELECT text FROM drafts")]
+                if exception is not None:
+                    raise exception()
                 raise AppError("MIGRATION_BLOCKED", {"이유": "일부러 낸 실패"}, detail="덮은 뒤의 판 올리기 실패")
             return real(this, fresh)
         return mock.patch.object(cstore.Store, "_prepare", failing)
+
+    def test_a_keyboard_interrupt_or_a_system_exit_after_the_copy_also_puts_the_current_content_back_and_is_raised_again(self):
+        """AS2 시험 렌즈 Q 필수-4(D-619) — `except BaseException` 을 `except Exception` 으로 바꿔도 초록이던 변이(Q19)를 죽인다: 덮은 뒤 `Exception` 이 아닌 `BaseException`(`KeyboardInterrupt`·`SystemExit`)이 나도
+        지금 내용으로 되돌리고, 되돌린 뒤 그 예외를 삼키지 않고 그대로 다시 던진다."""
+        for factory in (lambda: KeyboardInterrupt("일부러 낸 중단"), lambda: SystemExit(3)):
+            kind = type(factory())
+            with self.subTest(kind=kind.__name__):
+                seen = {}
+                with self.arm_prepare_failure(seen, factory):
+                    with cstore.Store.open(self.live) as store:
+                        store.undo_failed_restore = True
+                        seen["armed"] = True
+                        with self.assertRaises(kind) as caught:
+                            store.restore_from(self.backup)
+                        self.assertEqual(drafts_of(self.live), ["LIVE"], "열려 있는 저장소도 원래 내용이다")
+                self.assertEqual(seen["during"], ["BACKUP"], "시험의 전제 — 중단이 난 순간 지금 보관함은 이미 백업 내용으로 덮여 있었다")
+                self.assertFalse(getattr(caught.exception, "left_overwritten", False), "되돌렸으면 '덮인 채 남았다' 표시가 없다")
+                with cstore.Store.open(self.live) as again:
+                    self.assertEqual(again.check(), [])
+
+    def test_a_keyboard_interrupt_when_the_undo_is_impossible_carries_the_overwritten_mark_and_is_still_raised(self):
+        seen = {}
+        with self.arm_prepare_failure(seen, lambda: KeyboardInterrupt("일부러 낸 중단")), mock.patch.object(cstore, "hold_in_memory", lambda connection: BrokenUndo()):
+            with cstore.Store.open(self.live) as store:
+                store.undo_failed_restore = True
+                seen["armed"] = True
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    store.restore_from(self.backup)
+        self.assertTrue(getattr(caught.exception, "left_overwritten", False), "되돌리지 못했으면 중단에도 표시가 달려야 복원 흐름이 안전 사본에서 되돌린다")
+        self.assertEqual(drafts_of(self.live), ["BACKUP"], "시험의 전제 — 되돌리기가 실패해 백업 내용으로 남았다")
 
     def test_a_prepare_failure_after_the_copy_puts_the_current_content_back(self):
         seen = {}
@@ -232,16 +270,47 @@ class EngineRestoreFromTest(unittest.TestCase):
         self.live = make_engine_file(self.root / "live" / layout.ENGINE_DB_FILE, "LIVE")
         self.backup = make_engine_file(self.root / "backup" / layout.ENGINE_DB_FILE, "BACKUP")
 
-    def arm_prepare_failure(self, seen):
+    def arm_prepare_failure(self, seen, exception=None):
         real = tfile.EngineFile._prepare
 
         def failing(this, fresh):
             if seen.get("armed"):
                 seen["armed"] = False
                 seen["during"] = [row[0] for row in this._db.execute("SELECT kind FROM review_log")]
+                if exception is not None:
+                    raise exception()
                 raise AppError("MIGRATION_BLOCKED", {"이유": "일부러 낸 실패"}, detail="덮은 뒤의 판 올리기 실패")
             return real(this, fresh)
         return mock.patch.object(tfile.EngineFile, "_prepare", failing)
+
+    def test_a_keyboard_interrupt_or_a_system_exit_after_the_copy_also_puts_the_current_content_back_and_is_raised_again(self):
+        """주제 엔진 쪽 같은 시험(AS2 시험 렌즈 Q 필수-4, D-619) — `EngineFile.restore_from` 의 `except BaseException` 을 지킨다."""
+        for factory in (lambda: KeyboardInterrupt("일부러 낸 중단"), lambda: SystemExit(3)):
+            kind = type(factory())
+            with self.subTest(kind=kind.__name__):
+                seen = {}
+                with self.arm_prepare_failure(seen, factory):
+                    with TopicStore.open(self.live) as store:
+                        store.undo_failed_restore = True
+                        seen["armed"] = True
+                        with self.assertRaises(kind) as caught:
+                            store.restore_from(self.backup)
+                self.assertEqual(seen["during"], ["BACKUP"], "시험의 전제 — 중단이 난 순간 이미 덮여 있었다")
+                self.assertEqual(reviews_of(self.live), ["LIVE"], "덮은 뒤 중단됐는데 주제 보관함이 백업 내용으로 남았다")
+                self.assertFalse(getattr(caught.exception, "left_overwritten", False))
+                with TopicStore.open(self.live) as again:
+                    self.assertEqual(again.check(), [])
+
+    def test_a_keyboard_interrupt_when_the_undo_is_impossible_carries_the_overwritten_mark_and_is_still_raised(self):
+        seen = {}
+        with self.arm_prepare_failure(seen, lambda: KeyboardInterrupt("일부러 낸 중단")), mock.patch.object(tfile, "hold_in_memory", lambda connection: BrokenUndo()):
+            with TopicStore.open(self.live) as store:
+                store.undo_failed_restore = True
+                seen["armed"] = True
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    store.restore_from(self.backup)
+        self.assertTrue(getattr(caught.exception, "left_overwritten", False))
+        self.assertEqual(reviews_of(self.live), ["BACKUP"], "시험의 전제 — 되돌리기가 실패해 덮인 채 남았다")
 
     def test_a_prepare_failure_after_the_copy_puts_the_current_content_back(self):
         seen = {}
@@ -320,8 +389,8 @@ class FlowPostCopyTest(tr.Base):
         bs.write_manifest(target, manifest)
         return self.BACKUP_NAME
 
-    def failing_restore(self, error_text="덮은 뒤 실패", mark=True):
-        """`Store.restore_from` 을 '지금 보관함을 덮은 뒤 실패하고 되돌리지도 못하는' 것으로 바꾼다(첫 호출만 — 되돌리기의 호출은 진짜다)."""
+    def failing_restore(self, error_text="덮은 뒤 실패", mark=True, exception=None):
+        """`Store.restore_from` 을 '지금 보관함을 덮은 뒤 실패하고 되돌리지도 못하는' 것으로 바꾼다(첫 호출만 — 되돌리기의 호출은 진짜다). `exception` 은 `AppError` 대신 낼 예외를 만드는 함수다."""
         real = cstore.Store.restore_from
         calls = []
 
@@ -331,7 +400,7 @@ class FlowPostCopyTest(tr.Base):
                 return real(this, backup, **kwargs)
             with contextlib.closing(sqlite3.connect(cstore._read_only_uri(Path(backup)), uri=True)) as source:
                 source.backup(this._db)
-            error = AppError("MIGRATION_BLOCKED", {"이유": "일부러 낸 실패"}, detail=error_text)
+            error = exception() if exception is not None else AppError("MIGRATION_BLOCKED", {"이유": "일부러 낸 실패"}, detail=error_text)
             if mark:
                 error.left_overwritten = True
             raise error
@@ -387,6 +456,20 @@ class FlowPostCopyTest(tr.Base):
         self.assertEqual(calls[0], self.outcome.row.name)
         self.assertRegex(calls[1], bf.SAFETY_NAME.pattern)
         self.assert_original_and_clean(error)
+
+    def test_a_keyboard_interrupt_after_the_overwrite_is_rolled_back_from_the_safety_copy_and_then_raised_again(self):
+        """AS2 시험 렌즈 Q 필수-4(D-619) — 복원 흐름의 `except BaseException` 도 같다: 덮은 뒤 `KeyboardInterrupt`·`SystemExit` 이 나도(표시가 달려 있으면) 안전 사본에서 되돌리고 표지를 지운 뒤 그 예외를 다시 던진다."""
+        for factory in (lambda: KeyboardInterrupt("일부러 낸 중단"), lambda: SystemExit(3)):
+            kind = type(factory())
+            with self.subTest(kind=kind.__name__):
+                patch, calls = self.failing_restore(exception=lambda: _marked(factory()))
+                with patch:
+                    with self.assertRaises(kind):
+                        bf.restore_full_backup(self.ctx, self.outcome.row.name, confirmed=True)
+                self.assertEqual(len(calls), 2, "되돌리기가 안전 사본으로 한 번 더 불렀다")
+                self.assertEqual(tr.state_of(self.world), self.before, "중단됐는데 지금 데이터가 원래대로가 아니다")
+                self.assertFalse(bf._marker_path(self.ctx).exists(), "원래대로 돌렸는데 표지가 남았다")
+                self.assertIsNone(bf.list_full_backups(self.ctx).interrupted)
 
     def test_an_error_without_the_overwritten_mark_is_not_rolled_back_so_another_windows_new_writes_survive(self):
         """덮이지 않은 채 실패한 보관함(예: 다른 곳이 쓰는 중)을 안전 사본으로 덮으면 그 사이 다른 창이 쓴 내용을 잃는다 — 표시가 없으면 건드리지 않는다."""

@@ -19,15 +19,22 @@ sys.path.insert(0, str(HERE))
 import service_support as ss  # noqa: E402
 
 SRC = ss.ROOT / "src" / "chanceblog_desktop"
-OUTGOING_MODULES = {"subprocess", "socket", "ssl", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "requests", "asyncio", "webbrowser", "socketserver", "imaplib", "poplib", "multiprocessing"}
+OUTGOING_MODULES = {"subprocess", "socket", "ssl", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "requests", "asyncio", "webbrowser", "socketserver", "imaplib", "poplib", "multiprocessing",
+                    # AS-S1 2차 권고-3(D-619) — 같은 길의 안쪽 이름·옛 모듈: C 쪽 소켓·TLS·프로세스 모듈, 가져오기만 해도 브라우저를 여는 `antigravity`, 파이썬 3.10 의 `asyncore`·`smtpd`(3.12 에서 없어졌어도 3.10 칸이 돈다)
+                    "_socket", "_ssl", "_multiprocessing", "antigravity", "asyncore", "smtpd"}
 OUTGOING_OS = {"system", "popen", "startfile", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe", "posix_spawn", "posix_spawnp"}
 QT_NAMES = {"QDesktopServices", "QNetworkAccessManager", "QTcpSocket", "QUdpSocket", "QWebEngineView", "QWebSocket"}
 QT_MODULES = {"QtNetwork", "QtWebEngineCore", "QtWebEngineWidgets", "QtWebChannel", "QtWebSockets", "QtHttpServer"}
 # 하위 프로세스를 띄우는 또 다른 길 — 예전 규칙에는 `QProcess`(Qt)·`ProcessPoolExecutor`·`multiprocessing`·`os.posix_spawn` 이 없어서 새 코드가 그 길로 시험을 통과할 틈이 있었다(결정 D-512, 설계 3-8 (3)).
 PROCESS_NAMES = {"QProcess", "ProcessPoolExecutor"}
 # 위 이름을 돌아서 부를 수 있는 길(AS-S1 권고-6, D-611) — 윈도 API 를 직접 부르는 모듈·가짜 터미널·다른 파일을 실행하는 모듈, 이름 없이 모듈을 가져오는 호출, 별칭·`getattr` 로 숨기는 `os`.
-NATIVE_MODULES = {"ctypes", "winreg", "msvcrt", "pty", "runpy"}
-GUARDED_NAMES = NATIVE_MODULES | {"__import__", "importlib.import_module", "exec", "eval", "os-alias", "getattr(os)"}
+NATIVE_MODULES = {"ctypes", "winreg", "msvcrt", "pty", "runpy",
+                  # AS-S1 2차 권고-3(D-619) — `os` 가 안에서 쓰는 운영체제 내장 모듈(`nt.system`·`posix.system`)·윈도 프로세스 API(`_winapi.CreateProcess`)·`subprocess` 가 쓰는 `_posixsubprocess`
+                  "nt", "posix", "_winapi", "_posixsubprocess"}
+GUARDED_NAMES = NATIVE_MODULES | {"__import__", "importlib.import_module", "exec", "eval", "os-alias", "getattr(os)", "getattr(builtins)", "sys.modules"}
+BUILTINS_HOLDERS = {"builtins", "__builtins__"}                                  # `builtins.exec`·`__builtins__.__import__` 처럼 내장 이름을 속성으로 부르는 모양의 앞쪽 이름
+DYNAMIC_HOLDERS = {"os": "getattr(os)", "builtins": "getattr(builtins)", "__builtins__": "getattr(builtins)"}   # `X.__dict__`·`X.__getattribute__`·`vars(X)` 가 이름 없이 꺼낼 수 있는 곳 — 걸리는 이름
+REEXPORT_HOLDERS = {"os", "_os"}                                                 # `glob.os.system`·`tempfile._os.system`·`os.path.os.system` 처럼 다른 모듈이 다시 내놓는 `os`
 
 # (파일, 쓰는 것) → 이유. 이 표가 앱이 바깥과 닿는 길의 전부다.
 ALLOWED = {
@@ -83,6 +90,39 @@ def guarded_names(node):
                 found.append(f"os.{picked.value}")
         else:
             found.append("getattr(os)")
+    found += guarded_bypass_names(node)
+    return found
+
+
+def guarded_bypass_names(node):
+    """`guarded_names` 의 덧붙임(AS-S1 2차 권고-3·AS2 시험 렌즈 Q 권고-1, D-619) — 이름을 돌려 부르는 다른 모양: ① 별칭으로 가져온 `importlib`(`import importlib as il` — 별칭의 `import_module` 은 노드 하나로는 못 따르니 가져오는 줄을 건다)
+    ② `builtins.__import__`·`__builtins__.exec` 처럼 내장 이름을 속성으로 부르는 모양과 `from builtins import exec` ③ 이름 없이 꺼내는 `os.__dict__`·`os.__getattribute__`·`vars(os)`(와 `builtins`·`__builtins__` 쪽 같은 모양)
+    ④ `getattr(builtins, …)` ⑤ `sys.modules[…]`(가져오기 없이 모듈을 꺼낸다). 평범한 코드(`app.exec()`·`self.__dict__`·`vars(self)`·`sys.modules.get(…)`)는 걸리지 않는다."""
+    found = []
+    if isinstance(node, ast.Import):
+        found += ["importlib.import_module" for alias in node.names if alias.name == "importlib" and alias.asname]
+    elif isinstance(node, ast.ImportFrom) and node.level == 0 and (node.module or "") == "builtins":
+        found += [alias.name for alias in node.names if alias.name in ("__import__", "exec", "eval")]
+        found += ["getattr(builtins)" for alias in node.names if alias.name == "*"]
+    elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        holder = node.value.id
+        if holder in BUILTINS_HOLDERS and node.attr in ("__import__", "exec", "eval"):
+            found.append(node.attr)
+        if holder in DYNAMIC_HOLDERS and node.attr in ("__dict__", "__getattribute__"):
+            found.append(DYNAMIC_HOLDERS[holder])
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.args and isinstance(node.args[0], ast.Name):
+        holder = node.args[0].id
+        if node.func.id == "vars" and holder in DYNAMIC_HOLDERS:
+            found.append(DYNAMIC_HOLDERS[holder])
+        if node.func.id == "getattr" and holder in BUILTINS_HOLDERS:
+            picked = node.args[1] if len(node.args) > 1 else None
+            if isinstance(picked, ast.Constant) and isinstance(picked.value, str):
+                if picked.value in ("__import__", "exec", "eval"):
+                    found.append(picked.value)
+            else:
+                found.append("getattr(builtins)")
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Attribute) and node.value.attr == "modules" and isinstance(node.value.value, ast.Name) and node.value.value.id == "sys":
+        found.append("sys.modules")                      # 읽을 때만 — `sys.modules[이름] = 모듈`(앱이 불러온 모듈을 등록하는 `core.py`·`doctor.py` 의 적재기)은 꺼내는 일이 아니다
     return found
 
 
@@ -115,6 +155,28 @@ def outgoing_names(node):
         names.append(node.attr)
     elif isinstance(node, ast.Name) and node.id in PROCESS_NAMES:
         names.append(node.id)
+    names += reexposed_names(node)
+    return names
+
+
+def reexposed_names(node):
+    """같은 이름을 **다른 모양**으로 부르는 길(AS-S1 2차 권고-3, D-619): 다른 모듈이 다시 내놓는 `os`(`glob.os.system`·`tempfile._os.system`·`os.path.os.system`)·다시 내놓는 `subprocess`(`gitrepo.subprocess.run`)·다른 모듈에서 가져온
+    바깥 모듈 이름(`from ..publish.gitrepo import subprocess as sp`)·Qt 이름을 속성으로(`QtGui.QDesktopServices`)나 `getattr(QtGui, 'QDesktopServices')` 로 부르는 모양. 이름은 예전 표(`ALLOWED`)와 같은 이름으로 걸린다."""
+    names = []
+    if isinstance(node, ast.Attribute):
+        if node.attr in OUTGOING_OS and isinstance(node.value, ast.Attribute) and node.value.attr in REEXPORT_HOLDERS:
+            names.append(f"os.{node.attr}")
+        if node.attr == "subprocess":
+            names.append("subprocess")
+        if node.attr in QT_NAMES:
+            names.append(node.attr)
+    elif isinstance(node, ast.ImportFrom):
+        top = (node.module or "").split(".")[0] if node.level == 0 else ""
+        if top not in OUTGOING_MODULES:
+            names += [alias.name for alias in node.names if alias.name in OUTGOING_MODULES]
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr" and len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+        if isinstance(node.args[1].value, str) and node.args[1].value in QT_NAMES | PROCESS_NAMES:
+            names.append(node.args[1].value)
     return names
 
 
@@ -280,6 +342,16 @@ class GuardedCallSitesTest(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertGreater(len(reason), 20)
 
+    def test_the_detector_finds_a_new_bypass_in_a_synthetic_tree_of_the_second_round(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a").mkdir()
+            (root / "a" / "fine.py").write_text("import json\nimport sys\nsys.modules['x'] = json\nclass A:\n    def go(self):\n        return self.__dict__, vars(self)\napp = object()\napp.exec()\n", encoding="utf-8")
+            (root / "a" / "sneaky.py").write_text("import builtins\nbuiltins.__import__('socket')\nfrom builtins import exec as run\nimport sys\nsys.modules['os'].system('x')\nimport nt\n", encoding="utf-8")
+            self.assertEqual(sorted(found_outgoing(guarded=True, root=root)), [("a/sneaky.py", "__import__"), ("a/sneaky.py", "exec"), ("a/sneaky.py", "nt"), ("a/sneaky.py", "sys.modules")])
+            self.assertEqual(sorted(found_outgoing(root=root)), [], "예전 표에는 돌아서 부르는 이름이 섞이지 않는다")
+
     def test_the_detector_finds_a_new_bypass_in_a_synthetic_tree(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
@@ -289,6 +361,124 @@ class GuardedCallSitesTest(unittest.TestCase):
             (root / "a" / "sneaky.py").write_text("import os as o\nfrom os import system\nimport ctypes\n__import__('socket')\n", encoding="utf-8")
             self.assertEqual(sorted(found_outgoing(root=root)), [("a/sneaky.py", "os.system")])
             self.assertEqual(sorted(found_outgoing(guarded=True, root=root)), [("a/sneaky.py", "__import__"), ("a/sneaky.py", "ctypes"), ("a/sneaky.py", "os-alias")])
+
+
+class BypassShapesTest(unittest.TestCase):
+    """AS-S1 2차(안전 검증 S) 권고-3 + AS2 시험 렌즈 Q 권고-1(D-619) — 검증자의 합성 코드 38개(탐침 `probe_scanner2`) 중 33개와 시험 렌즈가 더한 4개를 **못박는다**: 이름으로 보이게 만든 것은 `NOW_SEEN`(기대하는 이름 집합까지),
+    AST 이름 규칙으로는 보이지 않는 것은 `HONEST_LIMITS`(이유와 함께 '지금은 안 보인다' 를 못박는다 — 나중에 보이게 되면 이 시험이 빨개져 `NOW_SEEN` 으로 옮기게 한다).
+    이 시험은 **정직한 코드의 회귀 그물**이다 — 새로 쓴 평범한 코드가 바깥으로 나가는 길을 만들면 빨개지게 할 뿐, 일부러 숨기는 코드를 막는 방어가 아니다(`docs/SECURITY.md` D-359·D-611). 지금 소스는 위반 0 이고 허용 표는 정확히 일치한다."""
+
+    AUDIT_LABELS = (
+        "os.__dict__['system']", "vars(os)['system']", "os.__getattribute__('system')", "builtins.__import__('socket')", "__builtins__.__import__", "builtins.exec", "builtins.eval", "importlib alias: il.import_module",
+        "glob.os.system (재노출)", "tempfile._os.system", "os.path.os.system", "nt.system (윈도 내장 모듈)", "_winapi.CreateProcess", "_socket.socket", "_ssl", "sys.modules['subprocess']", "재노출 gitrepo.subprocess",
+        "from ..publish.gitrepo import subprocess as sp", "QtGui.QDesktopServices (속성)", "getattr(QtGui, 'QDesktopServices')", "import antigravity (webbrowser)", "operator.attrgetter('system')(os)",
+        "timeit.timeit(문자열 실행)", "cProfile.run(문자열 실행)", "compile + types.FunctionType", "importlib.util.module_from_spec", "asyncore (3.10)", "smtpd (3.10)", "pdb.run", "code.interact", "ensurepip.bootstrap",
+        "sqlite3 ATTACH 네트워크 경로", "os.fspath + Path('//srv/x').read_text",
+    )
+    NOW_SEEN = {
+        "os.__dict__['system']": ("import os\nos.__dict__['system']('x')\n", {"getattr(os)"}),
+        "vars(os)['system']": ("import os\nvars(os)['system']('x')\n", {"getattr(os)"}),
+        "os.__getattribute__('system')": ("import os\nos.__getattribute__('system')('x')\n", {"getattr(os)"}),
+        "builtins.__import__('socket')": ("import builtins\nbuiltins.__import__('socket')\n", {"__import__"}),
+        "__builtins__.__import__": ("__builtins__.__import__('socket')\n", {"__import__"}),
+        "builtins.exec": ("import builtins\nbuiltins.exec('import subprocess')\n", {"exec"}),
+        "builtins.eval": ("import builtins\nbuiltins.eval('1')\n", {"eval"}),
+        "importlib alias: il.import_module": ("import importlib as il\nil.import_module('socket')\n", {"importlib.import_module"}),
+        "glob.os.system (재노출)": ("import glob\nglob.os.system('x')\n", {"os.system"}),
+        "tempfile._os.system": ("import tempfile\ntempfile._os.system('x')\n", {"os.system"}),
+        "os.path.os.system": ("import os.path\nos.path.os.system('x')\n", {"os.system"}),
+        "nt.system (윈도 내장 모듈)": ("import nt\nnt.system('x')\n", {"nt"}),
+        "_winapi.CreateProcess": ("import _winapi\n_winapi.CreateProcess(None, 'x', None, None, 0, 0, None, None, None)\n", {"_winapi"}),
+        "_socket.socket": ("import _socket\n_socket.socket()\n", {"_socket"}),
+        "_ssl": ("import _ssl\n", {"_ssl"}),
+        "sys.modules['subprocess']": ("import sys\nsys.modules['subprocess'].run(['x'])\n", {"sys.modules"}),
+        "재노출 gitrepo.subprocess": ("from ..publish import gitrepo\ngitrepo.subprocess.run(['x'])\n", {"subprocess"}),
+        "from ..publish.gitrepo import subprocess as sp": ("from ..publish.gitrepo import subprocess as sp\nsp.run(['x'])\n", {"subprocess"}),
+        "QtGui.QDesktopServices (속성)": ("from PySide6 import QtGui\nQtGui.QDesktopServices.openUrl(None)\n", {"QDesktopServices"}),
+        "getattr(QtGui, 'QDesktopServices')": ("from PySide6 import QtGui\ngetattr(QtGui, 'QDesktopServices')\n", {"QDesktopServices"}),
+        "import antigravity (webbrowser)": ("import antigravity\n", {"antigravity"}),
+        "asyncore (3.10)": ("import asyncore\n", {"asyncore"}),
+        "smtpd (3.10)": ("import smtpd\n", {"smtpd"}),
+        # 시험 렌즈 Q 권고-1 — 같은 부류의 다른 모양 넷과 그 짝
+        "from builtins import exec as _e": ("from builtins import exec as _e\n_e('x')\n", {"exec"}),
+        "sys.modules['os'].system": ("import sys\nsys.modules['os'].system('x')\n", {"sys.modules"}),
+        "vars(__builtins__)[조립한 이름]": ("vars(__builtins__)['__imp' + 'ort__']('ctypes')\n", {"getattr(builtins)"}),
+        "from builtins import __import__": ("from builtins import __import__\n__import__('socket')\n", {"__import__"}),
+        "getattr(builtins, 이름 변수)": ("import builtins\nname = 'ex' + 'ec'\ngetattr(builtins, name)('x')\n", {"getattr(builtins)"}),
+        "getattr(builtins, 'exec')": ("import builtins\ngetattr(builtins, 'exec')('x')\n", {"exec"}),
+        "builtins.__dict__": ("import builtins\nbuiltins.__dict__['exec']('x')\n", {"getattr(builtins)"}),
+        "posix.system": ("import posix\nposix.system('x')\n", {"posix"}),
+        "_posixsubprocess": ("import _posixsubprocess\n", {"_posixsubprocess"}),
+        "_multiprocessing": ("import _multiprocessing\n", {"_multiprocessing"}),
+    }
+    HONEST_LIMITS = {
+        "operator.attrgetter('system')(os)": ("import os\nimport operator\noperator.attrgetter('system')(os)('x')\n", "속성 이름을 값으로 넘기는 일반 함수 — `attrgetter` 는 정렬에도 평범하게 쓰여 이름만으로는 가를 수 없다"),
+        "timeit.timeit(문자열 실행)": ("import timeit\ntimeit.timeit(\"__import__('os').system('x')\", number=1)\n", "표준 모듈이 글을 실행해 준다 — 그런 모듈 이름이 끝이 없어 이름 목록으로는 다 못 막는다"),
+        "cProfile.run(문자열 실행)": ("import cProfile\ncProfile.run(\"import os\")\n", "같은 이유(글을 실행하는 표준 모듈)"),
+        "compile + types.FunctionType": ("import types\ncode = compile('x=1', 'f', 'exec')\ntypes.FunctionType(code, {})()\n", "내장 `compile` 과 함수 만들기 — `re.compile` 같은 평범한 이름과 갈리지 않는다"),
+        "importlib.util.module_from_spec": ("import importlib.util\nspec = importlib.util.spec_from_file_location('m', 'x.py')\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n", "앱의 적재기 둘(`core.py`·`service/doctor.py`)이 평범하게 쓴다 — 파일 경로로 앱 자신의 스크립트를 불러오는 일"),
+        "pdb.run": ("import pdb\npdb.run('x')\n", "같은 이유(글을 실행하는 표준 모듈)"),
+        "code.interact": ("import code\ncode.interact()\n", "같은 이유(글을 실행하는 표준 모듈)"),
+        "ensurepip.bootstrap": ("import ensurepip\nensurepip.bootstrap()\n", "표준 모듈이 패키지를 설치한다 — 이름 목록으로는 끝이 없다"),
+        "sqlite3 ATTACH 네트워크 경로": ("import sqlite3\nc = sqlite3.connect(':memory:')\nc.execute(\"ATTACH DATABASE '//srv/share/x.db' AS x\")\n", "글자 안의 경로는 AST 이름 규칙이 아니라 글자 검사의 몫이다(연결한 폴더 가드 `_plain_local_shape` 와 같은 부류)"),
+        "os.fspath + Path('//srv/x').read_text": ("from pathlib import Path\nPath('//srv/x').read_text()\n", "같은 이유(글자 안의 경로 — AST 이름 규칙이 아니라 글자 검사의 몫)"),
+    }
+    HARMLESS = {
+        "app.exec()·dialog.exec()": "app = object()\napp.exec()\ndialog = object()\ndialog.exec()\n",
+        "self.__dict__·vars(self)": "class A:\n    def go(self):\n        return self.__dict__, vars(self), vars(A)\n",
+        "sys.modules.get·in·대입·삭제": "import sys\nmodule = sys.modules.get('x')\nsys.modules['x'] = module\ndel sys.modules['x']\nsys.modules.pop('x', None)\nprint('x' in sys.modules)\n",
+        "builtins 만 가져오기·print": "import builtins\nbuiltins.print('x')\nfrom builtins import print as p\np('x')\n",
+        "importlib.util 별칭": "import importlib.util as iu\niu.spec_from_file_location('m', 'x.py')\n",
+        "getattr(self, 이름)": "class A:\n    def go(self, name):\n        return getattr(self, name), getattr(self, 'x', None)\n",
+        "상대 가져오기": "from . import helpers\nfrom .shapes import checker\nfrom ..content import store\n",
+        "이름이 비슷한 속성": "x = object()\nx.os_name\nx.subprocess_name\nx.exec_module_name\nx.QDesktopServicesLike\n",
+        "os.path·os.environ·os.getcwd": "import os\nos.path.join('a', 'b')\nos.environ.get('x')\nos.getcwd()\n",
+    }
+
+    def names_of(self, source):
+        return {name for node in ast.walk(ast.parse(source)) for name in outgoing_names(node)}
+
+    def test_the_audit_list_of_thirty_three_is_fully_accounted_for_by_the_two_tables(self):
+        self.assertEqual(len(self.AUDIT_LABELS), 33)
+        self.assertEqual(len(set(self.AUDIT_LABELS)), 33)
+        known = set(self.NOW_SEEN) | set(self.HONEST_LIMITS)
+        self.assertEqual([label for label in self.AUDIT_LABELS if label not in known], [], "검증자의 합성 코드가 어느 표에도 없다 — 잊힌 모양")
+        self.assertEqual(set(self.NOW_SEEN) & set(self.HONEST_LIMITS), set())
+
+    def test_every_shape_the_second_audit_found_is_seen_by_its_own_name(self):
+        for label, (source, expected) in self.NOW_SEEN.items():
+            with self.subTest(label=label):
+                self.assertEqual(self.names_of(source), expected)
+
+    def test_the_shapes_that_stay_unseen_are_listed_as_honest_limits_with_a_reason(self):
+        for label, (source, reason) in self.HONEST_LIMITS.items():
+            with self.subTest(label=label):
+                self.assertGreater(len(reason), 15)
+                self.assertEqual(self.names_of(source), set(), "이제 보이게 됐다 — `NOW_SEEN` 으로 옮기고 기대 이름을 적는다")
+
+    def test_ordinary_code_that_looks_alike_is_not_flagged(self):
+        for label, source in self.HARMLESS.items():
+            with self.subTest(label=label):
+                self.assertEqual(self.names_of(source), set())
+
+    def test_the_new_names_stay_in_the_guarded_table_or_the_old_outgoing_table_and_never_in_both(self):
+        for label, (source, expected) in self.NOW_SEEN.items():
+            with self.subTest(label=label):
+                for name in expected:
+                    in_guarded = name in GUARDED_NAMES
+                    in_outgoing = name in OUTGOING_MODULES or name in OUTGOING_OS or name.startswith("os.") or name in QT_NAMES or name in PROCESS_NAMES
+                    self.assertNotEqual(in_guarded, in_outgoing, f"{name} 은 두 표 가운데 한 곳에만 있어야 한다")
+
+    def test_the_app_source_has_no_violation_of_the_widened_rules_and_the_tables_match_exactly(self):
+        self.assertEqual(sorted(found_outgoing()), sorted(ALLOWED))
+        self.assertEqual(sorted(found_outgoing(guarded=True)), sorted(NATIVE_ALLOWED))
+        self.assertEqual(sorted(found_outgoing(root=ss.ROOT / "vendor")), sorted(VENDOR_ALLOWED))
+        self.assertEqual(sorted(found_outgoing(guarded=True, root=ss.ROOT / "vendor")), [])
+
+    def test_the_security_document_calls_this_check_a_regression_net_for_honest_code_and_not_a_defence(self):
+        text = (ss.ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn("정직한 코드의 회귀 그물", text)
+        self.assertNotIn("이 표가 앱이 바깥과 닿는 길의 전부다 — 우회도 다 본다", text)
 
 
 if __name__ == "__main__":

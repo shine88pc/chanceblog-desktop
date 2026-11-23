@@ -15,18 +15,21 @@ from chanceblog_desktop.security import mask  # noqa: E402
 
 KEY = "CANARY_" + "unsplash" + "AccessKey" + "0123456789" + "abcdefXYZ"
 MARK = "[가림: 주소 인자]"
+SCHEME = "https" + ":" + "//"                                  # 웹 주소 모양을 글자 그대로 두지 않는다(AS2 시험 렌즈 Q 참고-3, D-619) — 가짜 호스트는 `.invalid`
+API = SCHEME + "api.example.invalid/photos"
+OTHER = SCHEME + "x.invalid/p"
 
 
 class ClientIdQueryTest(unittest.TestCase):
     def urls(self):
         return {
-            "맨 앞 인자": "https://api.example.test/photos?client_id={k}",
-            "뒤쪽 인자": "https://api.example.test/photos?page=2&client_id={k}&per_page=3",
-            "대문자": "https://api.example.test/photos?CLIENT_ID={k}&page=2",
-            "붙임표": "https://api.example.test/photos?client-id={k}",
-            "밑줄 없음": "https://api.example.test/photos?clientid={k}",
-            "세미콜론 구분": "https://api.example.test/photos?a=1;client_id={k}",
-            "기록 문장 속": "GET https://api.example.test/photos?client_id={k} 가 429 로 끝났다",
+            "맨 앞 인자": API + "?client_id={k}",
+            "뒤쪽 인자": API + "?page=2&client_id={k}&per_page=3",
+            "대문자": API + "?CLIENT_ID={k}&page=2",
+            "붙임표": API + "?client-id={k}",
+            "밑줄 없음": API + "?clientid={k}",
+            "세미콜론 구분": API + "?a=1;client_id={k}",
+            "기록 문장 속": "GET " + API + "?client_id={k} 가 429 로 끝났다",
         }
 
     def test_the_value_of_a_client_id_argument_is_masked_by_both_entry_points_and_the_name_stays(self):
@@ -41,12 +44,13 @@ class ClientIdQueryTest(unittest.TestCase):
                     self.assertRegex(shown.lower(), r"client[_-]?id=\[가림")
 
     def test_the_other_arguments_and_the_surrounding_text_are_left_alone(self):
-        shown = mask.mask("https://api.example.test/photos?page=2&client_id=" + KEY + "&per_page=3")
-        self.assertEqual(shown, "https://api.example.test/photos?page=2&client_id=" + MARK + "&per_page=3")
-        self.assertEqual(mask.mask("https://api.example.test/a?client=abc&client_identifier=def&page=2"), "https://api.example.test/a?client=abc&client_identifier=def&page=2")
+        shown = mask.mask(API + "?page=2&client_id=" + KEY + "&per_page=3")
+        self.assertEqual(shown, API + "?page=2&client_id=" + MARK + "&per_page=3")
+        plain = SCHEME + "api.example.invalid/a?client=abc&client_identifier=def&page=2"
+        self.assertEqual(mask.mask(plain), plain)
 
     def test_masking_twice_changes_nothing_and_the_older_names_still_work(self):
-        once = mask.mask("https://x.test/p?client_id=" + KEY + "&api_key=" + KEY)
+        once = mask.mask(OTHER + "?client_id=" + KEY + "&api_key=" + KEY)
         self.assertEqual(mask.mask(once), once)
         self.assertNotIn(KEY, once)
         self.assertEqual(once.count(MARK), 2)

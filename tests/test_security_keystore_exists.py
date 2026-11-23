@@ -111,6 +111,30 @@ class StoreExistsTest(unittest.TestCase):
                 self.assertEqual(caught.exception.code, "KEY_STORE_UNAVAILABLE")
                 self.assertEqual(caught.exception.detail, f"CredReadW 실패(오류 번호 {number})")
 
+    def test_a_malformed_ref_is_refused_before_the_api_is_asked_even_on_the_exists_path(self):
+        """AS2 시험 렌즈 Q 필수-3(D-619) — `exists` 의 `check_ref` 가 새 길의 유일한 입력 검사다(`_target` 은 모양을 보지 않는다). 지워도 초록이던 변이(Q21)를 죽인다: `exists` 가 있는 API 로 잘못된 번호를 주면
+        API 에 묻기 **전에** ValueError 이고 값을 읽는 길은 한 번도 안 불린다. 올바른 번호는 그대로 API 에 묻는다."""
+        class Counting:
+            def __init__(self):
+                self.asked = []
+
+            def exists(self, target):
+                self.asked.append(target)
+                return 0
+
+            def read(self, target):
+                raise AssertionError("값을 꺼내는 read 를 불렀다")
+
+        api = Counting()
+        store = ks.WindowsCredentialStore(api)
+        for ref in ("not a ref", "", " ", "naver_openapi:", ":" + "ab12" * 8, "naver_openapi:" + "x" * 500, "../x", "a" * 5000, None, 7, b"naver_openapi:ab12"):
+            with self.subTest(ref=repr(ref)[:40]):
+                with self.assertRaises(ValueError):
+                    store.exists(ref)
+        self.assertEqual(api.asked, [], "잘못된 번호인데 API 에 물었다")
+        self.assertIs(store.exists(tk.REF), True)
+        self.assertEqual(api.asked, ["ChanceBlogDesktop:" + tk.REF])
+
     def test_the_whole_store_on_the_fake_dll_never_copies_a_value_when_only_asked_whether_it_exists(self):
         dll = tk.FakeDll()
         error = [0]
