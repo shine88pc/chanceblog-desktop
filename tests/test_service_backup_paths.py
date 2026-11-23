@@ -11,6 +11,8 @@
 """
 import hashlib
 import json
+import os
+import random
 import sys
 import unittest
 from pathlib import Path
@@ -43,6 +45,13 @@ BAD = {
     "control": ("C:" + BS + "x" + chr(10) + "y", "C:/x" + chr(0) + "y", "C:/x" + chr(0x202E) + "y", "C:/x" + chr(0x200B), "C:/x" + chr(0x2028), chr(7) + "C:/x", "C:/x" + chr(0x7F), "C:/x" + chr(0xE000), "C:/x" + chr(0x2029), "C:/x" + chr(0x0378)),
     "length": ("C:/" + "a" * 1100, "a" * (bf.MAX_REPO_PATH + 1)),
 }
+# AS-S1 2차(안전 검증 S) 필수-1(D-616) — 점 마디·겹친 구분자 접두 뒤에 NT 이름이 오는 글(검증자 탐침 `probe_path_guard_normalize` 의 구조). 앱은 `Path(os.path.expanduser(글))` 로 정리한 글을 여는데 pathlib 은 겹친 구분자와 `.` 마디를
+# 지우고 다시 만들어서 이 글들은 열 때 NT 이름공간 표기가 된다.
+DOT_LEADS = ("/./", BS + "." + BS, "/.//", BS + "." + BS + "." + BS, "/././", "/." + BS + BS, BS + "." + BS + "/", "/.//./")
+DOTDOT_LEADS = ("/..//..", BS + ".." + BS + ".." + BS)                                   # `..` 마디는 pathlib 이 지우지 않는다 — 정리한 글에도 남아 NT 접두가 되지 않는다(아래 시험 설명)
+NT_FORMS = ("??" + BS + "UNC" + BS + HOST + BS + "share", "??/UNC/" + HOST + "/share", "??" + BS + "GLOBALROOT" + BS + "Device" + BS + "Mup" + BS + HOST + BS + "share", "??" + BS + "unc" + BS + HOST,
+            "??" + BS + "C:" + BS + "x")
+BAD["network"] += (DOT_LEADS[0] + NT_FORMS[1], DOT_LEADS[1] + NT_FORMS[0], DOT_LEADS[2] + NT_FORMS[2], DOT_LEADS[7] + NT_FORMS[3])    # 끝에서 끝까지 시험(조작한 백업·복원 직후 열기)이 이 넷을 함께 돈다
 
 
 class RuleTest(unittest.TestCase):
@@ -195,11 +204,11 @@ class AllowListTest(unittest.TestCase):
                 self.assertEqual(bf._repo_path_problem(text), "")
 
     def test_the_audit_probe_table_gets_the_same_answers_as_before_except_the_nt_forms_which_are_now_refused(self):
-        """감사 탐침 p6 의 스물 몇 가지 — 옛 가드가 이미 잘 막던 모양은 **같은 낱말**로 막히고, 새로 막히는 것은 NT 표기(와 앞 공백·NBSP 를 붙인 UNC)뿐이다. 환경 변수 꼴·`~사용자`·대체 데이터 흐름·매핑된 드라이브 글자는 글자만으로는 알 수 없어 받는다(알려진 한계)."""
+        """감사 탐침 p6 의 스물 몇 가지 — 옛 가드가 이미 잘 막던 모양은 **같은 낱말**로 막히고, 새로 막히는 것은 NT 표기(와 앞 공백·NBSP 를 붙인 UNC)뿐이다. 환경 변수 꼴·사용자 이름이 붙은 홈 약식·대체 데이터 흐름·매핑된 드라이브 글자는 글자만으로는 알 수 없어 받는다(알려진 한계)."""
         table = {
             "unc backslash": (BS * 2 + "srv" + BS + "share" + BS + "x", "network"), "unc slash": ("//srv/share/x", "network"), "extended unc": (BS * 2 + "?" + BS + "UNC" + BS + "srv" + BS + "share" + BS + "x", "network"),
             "device path": (BS * 2 + "." + BS + "pipe" + BS + "x", "network"), "webdav ssl": (BS * 2 + "srv@SSL" + BS + "DavWWWRoot" + BS + "x", "network"), "triple slash": ("///srv/share", "network"),
-            "bidi override unc": (chr(0x202A) + BS * 2 + "srv" + BS + "share", "control"), "file url": ("file:///c:/x", "url"), "http url": ("http://evil/x", "url"), "http with backslashes": ("http:" + BS * 2 + "evil" + BS + "x", ""),
+            "bidi override unc": (chr(0x202A) + BS * 2 + "srv" + BS + "share", "control"), "file url": ("file" + ":///c:/x", "url"), "http url": ("http" + ":" + "//evil.invalid/x", "url"), "http with backslashes": ("http:" + BS * 2 + "evil" + BS + "x", ""),
             "mapped drive letter": ("Z:" + BS + "mapped" + BS + "x", ""), "relative traversal": (".." + BS + ".." + BS + "x", ""), "env var": ("%USERPROFILE%" + BS + "x", ""), "tilde user": (chr(126) + "someone" + BS + "x", ""),
             "ads": ("C:" + BS + "x::$DATA", ""), "plain": ("C:" + BS + "work" + BS + "blog", ""), "empty": ("", ""),
             # 옛 가드가 받던(=뚫리던) 모양 — 이제 network
@@ -229,12 +238,94 @@ class AllowListTest(unittest.TestCase):
         self.assertEqual(bf._DRIVE_ABSOLUTE.pattern, "[A-Za-z]:" + BS * 2)
 
 
+class DotSegmentTest(unittest.TestCase):
+    """AS-S1 2차(안전 검증 S) 필수-1(D-616) — 가드가 글자 **그대로**만 보던 틈. '슬래시 점 슬래시 물음표 물음표 슬래시 UNC 슬래시 서버 슬래시 공유' 꼴의 글은 맨 앞 구분자 바로 뒤가 `.` 이라 보통 경로로 판정됐는데,
+    앱이 여는 글(`Path(os.path.expanduser(글))` — pathlib 이 겹친 구분자와 `.` 마디를 지우고 다시 만든다)은 NT 이름공간 표기의 UNC 경로였다 — 감사 필수-3 이 막으려던 바로 그 글이다. 이제 원문과 앱이 여는 글(`_opened_text` — 윈도 방식 정리)
+    **둘 다** 보통 경로 모양일 때만 받는다. 순수 글자 판정이라 모든 운영체제에서 돌고 네트워크·UNC 를 부르지 않는다.
+
+    `..` 마디가 앞에 오는 글은 일부러 받는다: pathlib 은 `..` 마디를 지우지 않아 정리한 글에도 `..` 가 남아 NT 접두가 되지 않고, 윈도는 `..` 를 현재 드라이브의 뿌리 안으로 풀어 이 PC 의 폴더가 된다(네트워크로 가지 않는다 — 윈도 자신의 글자 변환으로 확인했다)."""
+
+    def test_dot_segment_and_doubled_separator_prefixes_before_an_nt_name_are_network_with_or_without_leading_spaces(self):
+        count = 0
+        for lead in DOT_LEADS:
+            for form in NT_FORMS:
+                for prefix in ("", " ", chr(0xA0)):
+                    text = prefix + lead + form
+                    with self.subTest(text=text):
+                        self.assertEqual(bf._repo_path_problem(text), "network")
+                    count += 1
+        self.assertEqual(count, 8 * 5 * 3, "여덟 접두 × 다섯 NT 꼴 × 앞 공백 셋")
+
+    def test_the_dot_dot_prefixes_stay_accepted_because_the_text_the_app_opens_has_no_nt_prefix(self):
+        count = 0
+        for lead in DOTDOT_LEADS:
+            for form in NT_FORMS:
+                text = lead + form
+                with self.subTest(text=text):
+                    self.assertEqual(bf._repo_path_problem(text), "", "`..` 마디는 정리 뒤에도 남아 NT 접두가 되지 않는다")
+                    opened = bf._opened_text(text)
+                    self.assertIsNone(bf._NT_NAMESPACE.match(opened.lstrip().replace("/", BS)), "정리한 글이 NT 접두로 시작하지 않는다")
+                count += 1
+        self.assertEqual(count, 2 * 5)
+
+    def test_the_app_opens_the_normalised_text_and_the_guard_judges_both_the_text_and_that_normalised_text(self):
+        text = "/./??/UNC/" + HOST + "/share"
+        self.assertEqual(bf._opened_text(text), BS + "??" + BS + "UNC" + BS + HOST + BS + "share", "pathlib 이 점 마디를 지우면 NT 이름공간 표기가 된다")
+        seen = []
+        real = bf._plain_local_shape
+
+        def spy(value):
+            seen.append(value)
+            return real(value)
+
+        with mock.patch.object(bf, "_plain_local_shape", spy):
+            bf._repo_path_problem(text)
+        self.assertIn(text, seen)
+        self.assertIn(bf._opened_text(text), seen)
+
+    def test_an_accepted_text_stays_accepted_after_the_apps_own_normalisation_and_normalising_twice_changes_nothing(self):
+        """속성 시험(시드 고정) — 앞 구분자·`.`·`..`·공백 조합 × NT 꼴을 구조 무작위로 만들어, 받은 글은 앱이 여는 글(정리한 글)도 같은 판정으로 받는지 본다. 거꾸로 말하면 '정리하면 NT 접두·UNC 가 되는 글' 은 원문이 어떻게 생겼든 거절된다."""
+        rng = random.Random(2026)
+        leads = (BS, "/", ".", "..", " ", BS * 2, "//", "." + BS, "./", chr(0xA0))
+        bodies = (*NT_FORMS, "??", "DosDevices" + BS + "UNC" + BS + HOST, "GLOBAL??" + BS + "UNC" + BS + HOST, "x" + BS + "y", "C:" + BS + "x", "pipe" + BS + "x")
+        accepted = refused = 0
+        for _ in range(6000):
+            text = "".join(rng.choice(leads) for _ in range(rng.randint(0, 6))) + rng.choice(bodies)
+            if rng.random() < 0.3:
+                text += rng.choice(("", BS, "/", ".", " "))
+            opened = bf._opened_text(text)
+            self.assertEqual(bf._opened_text(opened), opened, f"정리는 한 번이면 충분하다: {text!r}")
+            if bf._repo_path_problem(text) == "":
+                accepted += 1
+                self.assertEqual(bf._repo_path_problem(opened), "", f"받은 글을 정리하니 거절 모양이 됐다: {text!r} -> {opened!r}")
+                self.assertTrue(bf._plain_local_shape(opened), f"{text!r} -> {opened!r}")
+            else:
+                refused += 1
+        self.assertGreater(accepted, 1000, "받는 글이 너무 적으면 속성 시험이 비어 초록이 된다")
+        self.assertGreater(refused, 1000, "거절하는 글이 너무 적으면 속성 시험이 비어 초록이 된다")
+
+    @unittest.skipUnless(os.name == "nt", "윈도의 `Path` 가 하는 정리를 `PureWindowsPath` 가 그대로 흉내 내는지는 윈도에서만 마주 볼 수 있다")
+    def test_on_windows_the_opened_text_is_exactly_what_path_would_open(self):
+        texts = [*GOOD, *(item for texts in BAD.values() for item in texts), *(lead + form for lead in DOT_LEADS + DOTDOT_LEADS for form in NT_FORMS)]
+        for text in texts:
+            if chr(0) in text:
+                continue
+            with self.subTest(text=text[:30]):
+                self.assertEqual(bf._opened_text(text), str(Path(os.path.expanduser(text))))
+
+    def test_ordinary_paths_are_still_accepted_after_the_second_judgement(self):
+        for text in ("C:" + BS + "Users" + BS + "me" + BS + "blog", "blog", "relative" + BS + "dir", "../blog", "/home/me/blog", chr(126) + "/blog", "한글 폴더/블로그", "C:/x", ".", "a b" + BS + "c", "", "..", "./x", "C:x"):
+            with self.subTest(text=text):
+                self.assertEqual(bf._repo_path_problem(text), "")
+
+
 class OutcomeGuardTest(ForgedBackup):
     """복원이 끝난 뒤 그 경로를 폴더인지 알아보는 곳(`_outcome`)도 같은 허용 목록을 한 번 더 거친다 — 보통 폴더 경로 모양이 아니면 열어 보지 않는다(D-605)."""
 
     def test_a_path_that_is_not_a_plain_folder_path_is_never_opened_after_a_restore(self):
         manifest = self.world.manifest(self.outcome)
-        for text in (BS + "??" + BS + "UNC" + BS + HOST + BS + "share", "/??/UNC/" + HOST + "/share", BS * 2 + HOST + BS + "share", BS + "DosDevices" + BS + "UNC" + BS + HOST, " " + BS * 2 + HOST):
+        for text in (BS + "??" + BS + "UNC" + BS + HOST + BS + "share", "/??/UNC/" + HOST + "/share", BS * 2 + HOST + BS + "share", BS + "DosDevices" + BS + "UNC" + BS + HOST, " " + BS * 2 + HOST,
+                     DOT_LEADS[0] + NT_FORMS[1], DOT_LEADS[3] + NT_FORMS[0]):
             with self.subTest(text=text):
                 self.ctx.settings.save_repo_path(text)
                 opened = []

@@ -27,7 +27,7 @@ import unicodedata
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from ..content import schema_guard
 from ..content.store import SCHEMA_STATEMENTS, WAL_TEXT, Store, _read_only_uri, same_database, wal_header
@@ -422,6 +422,8 @@ def _temp_folders(ctx):
     """만들다 멈춘 임시 폴더들(`full-….tmp`·`before-….tmp`) — 백업 폴더와 안전 사본 폴더 안에서 앱이 만든 이름의 진짜 폴더만(링크는 따라가지 않는다). 읽기만 한다."""
     found = []
     for root in (ctx.workspace.backups_dir, _safety_root(ctx)):
+        if _is_link(root):                                               # 폴더 두 곳 자신이 링크이면(안전 사본 폴더에 junction 을 심어 둔 경우 …) 그 안을 훑지 않는다 — 목록을 보기만 해도 목적지의 폴더가 지워졌다(AS-S1 2차 권고-2, D-618)
+            continue
         try:
             found += [entry for entry in Path(root).iterdir() if STALE_TEMP.fullmatch(entry.name) and entry.is_dir() and not _is_link(entry)]
         except OSError:
@@ -1034,6 +1036,13 @@ def _plain_local_shape(text):
     return probe[1:2] != "\\" and not _NT_NAMESPACE.match(probe)
 
 
+def _opened_text(text):
+    """앱이 그 글로 **실제로 여는** 글(AS-S1 2차 필수-1, D-616) — `Path(os.path.expanduser(글))` 를 윈도 방식(`PureWindowsPath` — 리눅스 CI 에서도 같은 결과)으로 정리한 글이다.
+    pathlib 은 겹친 구분자와 `.` 마디를 지우고 다시 만든다 — 그래서 가드가 글자 그대로만 보면 `/./??/UNC/서버/공유`(맨 앞 구분자 바로 뒤가 `.`)는 보통 경로로 보이지만 앱이 여는 글은 `\\??\\UNC\\서버\\공유` 다.
+    `..` 마디는 지우지 않으므로(`/../??/UNC/…` 는 정리 뒤에도 NT 접두가 아니다 — 윈도도 현재 드라이브 안으로 푼다) 그 글은 안전하다. 순수 글자 변환이라 파일 시스템·네트워크를 부르지 않는다."""
+    return str(PureWindowsPath(os.path.expanduser(text)))
+
+
 def _repo_path_problem(text):
     """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554 — 거절 목록에서 허용 목록으로 D-605).
     네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로, NT 이름공간 표기 포함 — `_plain_local_shape`)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검),
@@ -1042,7 +1051,7 @@ def _repo_path_problem(text):
         return "length"
     if any(unicodedata.category(char) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") for char in text):
         return "control"
-    if not _plain_local_shape(text):
+    if not (_plain_local_shape(text) and _plain_local_shape(_opened_text(text))):         # 글자 그대로와 앱이 여는 글(정리된 글) 둘 다 보통 경로 모양일 때만 받는다(D-616)
         return "network"
     if "://" in text:
         return "url"
@@ -1073,7 +1082,9 @@ def _check_content(folder, name):
 
 
 def _folders(root, pattern=FULL_NAME):
-    """폴더 안의 앱이 만든 모양(`pattern`)의 백업 폴더들(새 것이 먼저)."""
+    """폴더 안의 앱이 만든 모양(`pattern`)의 백업 폴더들(새 것이 먼저). 그 폴더(`root`) 자신이 링크이면 빈 목록이다(목록·정리·복원이 링크 목적지를 보지 않는다 — D-618)."""
+    if _is_link(root):
+        return []
     try:
         found = [entry for entry in Path(root).iterdir() if entry.is_dir() and pattern.fullmatch(entry.name) and not _is_link(entry)]
     except OSError:
@@ -1127,7 +1138,7 @@ def _free_name(root, name):
 def _prune(root, keep, pattern=FULL_NAME, protect=(), moment=None):
     """가장 새 `keep` 개만 남기고 지운다. `protect` 의 이름(방금 만든 것·되돌리는 데 쓰는 것)은 절대 지우지 않고 가장 새 것으로 센다. **시계가 거꾸로 갔거나 다른 PC 에서 가져와 `moment`(지금)보다 미래 날짜인 폴더는 가장 낡은 것으로 센다** —
     미래 날짜의 옛 백업이 지금 만든 백업보다 앞서 서서 방금 만든 것을 지우는 일이 없다(D-460)."""
-    limit = moment.strftime(SIDE_STAMP) if moment is not None else ""
+    limit = moment.strftime(SIDE_STAMP) if moment is not None else ""      # 정리할 후보는 `_folders` 가 구한다 — 그 폴더(`root`) 자신이 링크이면 빈 목록이라 아무것도 지우지 않는다(D-618)
 
     def rank(entry):
         stamp = _stamp_of(entry.name)
@@ -1236,7 +1247,7 @@ def _resolve(ctx, source):
         raise _invalid(source, "missing")
     if isinstance(source, str):
         root = ctx.workspace.backups_dir if FULL_NAME.fullmatch(source) else (_safety_root(ctx) if SAFETY_NAME.fullmatch(source) else None)
-        if root is not None and (root / source).is_dir() and not _is_link(root / source):
+        if root is not None and not _is_link(root) and (root / source).is_dir() and not _is_link(root / source):       # 폴더 자신도 링크가 아니어야 한다(D-618)
             return root / source
     raise FlowError("FULL_BACKUP_INVALID", {"파일": _shown_name(source), "이유": INVALID_REASONS["missing"]}, detail="백업 폴더에서 찾을 수 없다", reason="missing")
 
