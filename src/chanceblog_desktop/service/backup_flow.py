@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..content import schema_guard
-from ..content.store import SCHEMA_STATEMENTS, Store, _read_only_uri
+from ..content.store import SCHEMA_STATEMENTS, Store, _read_only_uri, same_database
 from ..content.store import SCHEMA_VERSION as STORE_SCHEMA_VERSION
 from ..errors import AppError
 from ..security import scan
@@ -961,7 +961,7 @@ def _refuse_if_undo_impossible(ctx, names, live):
 
 
 _DRIVE_ABSOLUTE = re.compile(r"[A-Za-z]:\\")                              # 구분자를 역슬래시로 통일한 글의 앞머리 — 드라이브 글자 절대경로(`C:\…`)
-_NT_NAMESPACE = re.compile(r"\\(?:\?\?|dosdevices|global\?\?)(?:\\|$)", re.IGNORECASE)        # 같은 글의 앞머리 — 윈도 NT 이름공간 표기(`\??\UNC\서버\공유`·`\??\GLOBALROOT\Device\Mup\…`·`\DosDevices\…`·`\GLOBAL??\…`)
+_NT_NAMESPACE = re.compile(r"(?i)\\(?:\?\?|dosdevices|global\?\?)(?:\\|$)")        # 같은 글의 앞머리(대소문자는 가리지 않는다) — 윈도 NT 이름공간 표기(`\??\UNC\서버\공유`·`\??\GLOBALROOT\Device\Mup\…`·`\DosDevices\…`·`\GLOBAL??\…`)
 
 
 def _plain_local_shape(text):
@@ -1334,7 +1334,12 @@ def _apply(ctx, folder, manifest, names, live, safety_folder, state, moment, ste
         target = _component_path(ctx, component)
         if live[component.name] in ("missing", "blank", "damaged"):
             state["new_db"][component.name] = "blank" if live[component.name] == "blank" else "absent"
-        _restore_database(component, target, folder / component.name)
+        try:
+            _restore_database(component, target, folder / component.name)
+        except BaseException as error:
+            if getattr(error, "left_overwritten", False):                # 보관함이 백업 내용으로 덮인 채 남았다 — 덮은 뒤 판 올리기가 실패했는데 낮은 층이 덮기 전 내용으로 되돌리지 못했다(AS-S1 필수-4, D-606)
+                state["db_done"].append(component.name)                   # 바꾼 것으로 센다 — 아래 `_roll_back` 이 안전 사본에서 되돌린다(덮이지 않은 채 실패한 보관함은 건드리지 않는다)
+            raise
         state["db_done"].append(component.name)
     step(0.9, "바뀐 것을 다시 읽어 확인하는 중")
     for component in names:
@@ -1358,6 +1363,8 @@ def _roll_back(ctx, names, live, safety_folder, state):
                     _write_durably(path, b"")
             elif name in state["db_done"] and safety_folder is not None:
                 _restore_database(component, path, safety_folder / name)
+                if not same_database(path, safety_folder / name):          # 되돌린 뒤 지금 보관함이 안전 사본과 같은지 확인한다 — 다르면 '원래대로 돌렸다' 고 말하지 않고 알리며 표지를 남긴다(D-606)
+                    left.append(f"{component.label}은(는) 되돌린 뒤에도 안전 사본({safety_folder.name})과 내용이 달라요 — 원래 내용은 안전 사본에 그대로 있어요")
         except (AppError, OSError, sqlite3.Error):
             left.append(f"{component.label}은(는) 원래대로 돌리지 못했어요 — 원래 내용은 안전 사본({safety_folder.name if safety_folder else '없음'})에 있어요")
     for name in reversed(state["swapped"]):

@@ -243,6 +243,39 @@ def _read_only_uri(path):
     return uri + "?mode=ro"
 
 
+def hold_in_memory(connection):
+    """열린 보관함 연결의 지금 내용을 **메모리 사본**으로 담아 돌려준다(부른 쪽이 닫는다 — 파일을 만들지 않는다). 복원(`restore_from`)이 지금 보관함을 덮어쓰기 **전에** 하나 담아 두고,
+    덮은 뒤 판 올리기(`_prepare`)가 실패하면 이 사본으로 덮기 전 내용을 되돌린다(AS-S1 필수-4, D-606 — 덮어쓴 뒤 실패해도 '지금 보관함은 그대로다' 가 사실이게)."""
+    memory = sqlite3.connect(":memory:")
+    try:
+        connection.backup(memory)
+    except BaseException:
+        memory.close()
+        raise
+    return memory
+
+
+def same_database(first, second):
+    """두 보관함 파일(읽기 전용으로 연다)이 같은 내용인가 — 이름표·판이 같고 모든 표와 행까지 같다. 판이 다르면(한쪽이 열면서 지금 판으로 올라갔다) 판이 낮은 쪽의 표마다 행 수가 같을 때 같다고 본다.
+    복원이 도중에 실패해 '안전 사본으로 되돌렸는가' 를 확인할 때 쓴다(D-606). 파일을 읽을 수 없으면 sqlite3.Error·OSError 를 그대로 올린다."""
+    with closing(sqlite3.connect(_read_only_uri(first), uri=True, timeout=BUSY_SECONDS)) as one, closing(sqlite3.connect(_read_only_uri(second), uri=True, timeout=BUSY_SECONDS)) as two:
+        ids = [db.execute("PRAGMA application_id").fetchone()[0] for db in (one, two)]
+        versions = [db.execute("PRAGMA user_version").fetchone()[0] for db in (one, two)]
+        if ids[0] != ids[1]:
+            return False
+        if versions[0] == versions[1]:
+            nothing = object()
+            return all(mine == theirs for mine, theirs in itertools.zip_longest(one.iterdump(), two.iterdump(), fillvalue=nothing))
+        low, high = (one, two) if versions[0] < versions[1] else (two, one)
+        for (table,) in low.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").fetchall():
+            quoted = '"' + table.replace('"', '""') + '"'
+            if high.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone() is None:
+                return False
+            if low.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0] != high.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0]:
+                return False
+        return True
+
+
 class Store:
     """한 SQLite 파일을 여는 저장소. `with Store.open(경로) as store:` 로 쓴다(밖으로 나가면 닫는다). 여러 스레드가 함께 써도 된다."""
 
@@ -961,30 +994,54 @@ class Store:
                 source = sqlite3.connect(_read_only_uri(backup), uri=True)
             except sqlite3.Error as error:
                 raise store_error(error, backup) from None
-            with closing(source):
-                try:
-                    application = source.execute("PRAGMA application_id").fetchone()[0]
-                    version = source.execute("PRAGMA user_version").fetchone()[0]
-                    problem = source.execute("PRAGMA integrity_check").fetchone()[0]
-                except sqlite3.Error as error:
-                    raise store_error(error, backup) from None
-                if application != APPLICATION_ID or problem != "ok":
-                    raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail="이 프로그램의 온전한 백업이 아니다")
-                if version > SCHEMA_VERSION:
-                    raise AppError("STORE_VERSION_UNSUPPORTED", {"파일": backup.name}, detail=f"백업 버전 {version} > 지원 {SCHEMA_VERSION}")
-                try:
-                    shape = _shape_problem(source, version) if version >= MIN_SCHEMA_VERSION else f"백업 버전 {version} 은 이 프로그램이 만든 적이 없다"
-                    foreign = schema_guard.foreign_kinds(source, SCHEMA_STATEMENTS)         # 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …) — 통째로 복사되기 전에 본다(D-554)
-                except sqlite3.Error as error:
-                    raise store_error(error, backup) from None
-                if shape:                                # 바꾸기 전에 거절한다 — 바꾼 뒤 열기 검사에서 걸리면 이미 지금 저장소가 그 백업으로 덮인 뒤다
-                    raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: {shape}")
-                if foreign:                              # 조작한 백업의 트리거·뷰가 지금 저장소로 들어와 저장할 때마다 도는 일을 막는다 — 바꾸기 전에 거절한다
-                    raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: 앱이 만들지 않는 구조가 들어 있다({schema_guard.describe(foreign)})")
-                if safety_folder is not None:
-                    self.backup(safety_folder)
-                try:
-                    source.backup(self._db)
-                except sqlite3.Error as error:
-                    raise store_error(error, self.path) from None
-            self._prepare(fresh=False)                     # 옛 구조의 백업이면 지금 구조로 올린다
+            undo, overwritten = None, False
+            try:
+                with closing(source):
+                    try:
+                        application = source.execute("PRAGMA application_id").fetchone()[0]
+                        version = source.execute("PRAGMA user_version").fetchone()[0]
+                        problem = source.execute("PRAGMA integrity_check").fetchone()[0]
+                    except sqlite3.Error as error:
+                        raise store_error(error, backup) from None
+                    if application != APPLICATION_ID or problem != "ok":
+                        raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail="이 프로그램의 온전한 백업이 아니다")
+                    if version > SCHEMA_VERSION:
+                        raise AppError("STORE_VERSION_UNSUPPORTED", {"파일": backup.name}, detail=f"백업 버전 {version} > 지원 {SCHEMA_VERSION}")
+                    try:
+                        shape = _shape_problem(source, version) if version >= MIN_SCHEMA_VERSION else f"백업 버전 {version} 은 이 프로그램이 만든 적이 없다"
+                        foreign = schema_guard.foreign_kinds(source, SCHEMA_STATEMENTS)         # 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …) — 통째로 복사되기 전에 본다(D-554)
+                    except sqlite3.Error as error:
+                        raise store_error(error, backup) from None
+                    if shape:                                # 바꾸기 전에 거절한다 — 바꾼 뒤 열기 검사에서 걸리면 이미 지금 저장소가 그 백업으로 덮인 뒤다
+                        raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: {shape}")
+                    if foreign:                              # 조작한 백업의 트리거·뷰가 지금 저장소로 들어와 저장할 때마다 도는 일을 막는다 — 바꾸기 전에 거절한다
+                        raise AppError("STORE_CORRUPT", {"파일": backup.name}, detail=f"이 프로그램의 온전한 백업이 아니다: 앱이 만들지 않는 구조가 들어 있다({schema_guard.describe(foreign)})")
+                    if safety_folder is not None:
+                        self.backup(safety_folder)
+                    try:
+                        undo = hold_in_memory(self._db)       # 덮기 전 지금 내용을 메모리에 — 담지 못하면 덮지 않는다(D-606)
+                    except sqlite3.Error as error:
+                        raise store_error(error, self.path) from None
+                    try:
+                        source.backup(self._db)
+                    except sqlite3.Error as error:
+                        raise store_error(error, self.path) from None
+                    overwritten = True                       # 여기부터는 지금 저장소가 백업 내용으로 덮여 있다 — 아래에서 무슨 일이 나도 덮기 전 내용으로 되돌린다
+                self._prepare(fresh=False)                     # 옛 구조의 백업이면 지금 구조로 올린다
+            except BaseException as error:
+                if overwritten and not self._undo_overwrite(undo):
+                    error.left_overwritten = True              # 되돌리지 못했다 — 복원 흐름(`backup_flow`)이 이 표시를 보고 안전 사본에서 되돌린다
+                raise
+            finally:
+                if undo is not None:
+                    undo.close()
+
+    def _undo_overwrite(self, undo):
+        """복원이 덮어쓴 뒤 판 올리기 등이 실패했다 — 덮기 전에 담아 둔 메모리 사본(`undo`)으로 지금 저장소를 되돌린다(D-606) → 되돌렸는가. 되돌리다 또 실패해도 원래 오류를 가리지 않는다."""
+        try:
+            with self._lock:
+                undo.backup(self._db)
+                self._version = self._read_version()
+        except (sqlite3.Error, OSError):
+            return False
+        return True
