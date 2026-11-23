@@ -48,7 +48,7 @@ def sha(data):
 
 def fake_lock():
     def hf(key, repo, commit):
-        return {"key": key, "role": key.split("/")[1], "source": {"kind": "huggingface", "repo": repo, "commit": commit, "path": "inference.onnx"}, "bytes": len(MODELS[key]), "sha256": sha(MODELS[key])}
+        return {"key": key, "role": key.split("/")[1], "source": {"kind": "huggingface", "repo": repo, "commit": commit, "path": "inference.onnx"}, "bytes": len(MODELS[key]), "sha256": sha(MODELS[key]), "license_tag": "apache-2.0"}
     return {"schema": 1, "files": [hf("models/det/inference.onnx", "Owner/det_repo", "a" * 40), hf("models/rec/inference.onnx", "Owner/rec_repo", "b" * 40),
                                    {"key": "data/ppocrv5_korean_dict.txt", "role": "dict", "source": {"kind": "repo", "path": "ocr_addon/data/ppocrv5_korean_dict.txt"},
                                     "bytes": len(MODELS["data/ppocrv5_korean_dict.txt"]), "sha256": sha(MODELS["data/ppocrv5_korean_dict.txt"])}]}
@@ -56,6 +56,8 @@ def fake_lock():
 
 LOCK = fake_lock()
 EXPECTED = rules.expected_files(LOCK)
+PROVENANCE = {"schema": 1, "file": "ppocrv5_korean_dict.txt", "bytes": len(MODELS["data/ppocrv5_korean_dict.txt"]), "sha256": sha(MODELS["data/ppocrv5_korean_dict.txt"]), "lines": 2,
+              "derived_from": {"kind": "huggingface", "repo": "Owner/dict_source_repo", "commit": "c" * 40, "file": "inference.yml", "file_bytes": 10, "git_blob": "d" * 40}, "license_tag": "apache-2.0"}     # 가짜 사전의 출처 기록(고지문 [5] 절의 재료)
 VERSIONS = {pin["name"]: pin["version"] for pin in rules.parse_lock(support.read("ocr_addon/requirements-ocr.lock"))}
 
 
@@ -144,6 +146,7 @@ class MergedFlowCase(unittest.TestCase):
             stack.enter_context(mock.patch.object(build, "pypi_license", side_effect=lambda name: LICENSES.get(name)))
             stack.enter_context(mock.patch.object(build, "read_geos_version", lambda: "3.99.9"))
             stack.enter_context(mock.patch.object(build, "load_lock", return_value=(LOCK, EXPECTED)))
+            stack.enter_context(mock.patch.object(build, "read_dict_provenance", return_value=dict(PROVENANCE)))
             stack.enter_context(mock.patch.object(build, "import_packaging", return_value=fake_bp))
             stack.enter_context(mock.patch.object(build, "pe_rows", return_value=(rows if rows is not None else [dict(item) for item in PE_ROWS], [])))
             stack.enter_context(mock.patch.object(build, "run_selftest", return_value=(0, report if report is not None else dict(REPORT), [], 1.0, "")))
@@ -355,6 +358,76 @@ class FailureShapesTest(MergedFlowCase):
         self.assertEqual(code, 2)
         self.assertIn(build.GEOS_RECORD, err)
         self.assertFalse((Path(build.dist_dir(str(out))) / "OCR_INFO.json").exists())
+
+
+class NoticeModelsFlowTest(MergedFlowCase):
+    """고지문 [5] 절(N1 의 R5)이 합친 빌드의 한 줄기 — notices 단계 → 점검 → 정보 파일 → 압축 → 올리기 직전 점검 — 에서 실제로 압축 파일에 실리고, 재료를 못 만들면 점검 앞에서 멈춘다."""
+
+    def test_the_release_notice_has_section_5_from_the_lock_and_the_verifier_still_passes(self):
+        out = self.root / "out"
+        with self.environment():
+            code, err = self.call_main("all", out)
+        self.assertEqual((code, err), (0, ""))
+        with zipfile.ZipFile(self.zip_of(out)) as archive:
+            notice = archive.read("ocr/THIRD_PARTY_NOTICES.txt").decode("utf-8")
+            info = json.loads(archive.read("ocr/OCR_INFO.json").decode("utf-8"))
+        part = notice.split("[5]")[1]
+        for needle in ("Owner/det_repo", "a" * 40, "Owner/rec_repo", "b" * 40, "Owner/dict_source_repo", "c" * 40, "d" * 40, "models/det/inference.onnx", sha(MODELS["models/det/inference.onnx"]),
+                       sha(MODELS["data/ppocrv5_korean_dict.txt"]), "확인하지 못했다"):
+            self.assertIn(needle, part, needle)
+        by_path = {item["path"]: item for item in info["files"]}
+        self.assertEqual(by_path["THIRD_PARTY_NOTICES.txt"]["sha256"], sha(notice.encode("utf-8")), "정보 파일 목록의 고지문 해시는 [5] 절이 든 글의 해시다")
+        problems, _facts = verify.release_problems(str(out / "release"), LOCK)
+        self.assertEqual(problems, [])
+
+    def test_a_dictionary_record_that_cannot_be_read_stops_the_whole_build_before_the_check(self):
+        out = self.root / "stopped"
+        with self.environment(), mock.patch.object(build, "read_dict_provenance", side_effect=build.BuildError("사전 출처 기록을 읽지 못했다")):
+            code, err = self.call_main("all", out)
+        self.assertEqual(code, 2)
+        self.assertIn("사전 출처 기록", err)
+        self.assertEqual(self.stages, ["freeze", "assemble", "remove"], "점검·정보 파일·압축 단계에는 닿지 않았다")
+        self.assertFalse((out / "release").exists())
+        self.assertFalse((Path(build.dist_dir(str(out))) / "THIRD_PARTY_NOTICES.txt").exists())
+
+
+class NoticeKeyShapeTest(MergedFlowCase):
+    """SR3 — check 단계는 licenses/ 아래뿐 아니라 최상위 고지문 THIRD_PARTY_NOTICES.txt 도 키 모양으로 훑는다(확장자 .txt 덕). 고지문 안에 가짜 키 모양(CANARY 로 조립)이 있으면 점검이 실패(종료 코드 1)하고 정보 파일도 압축 파일도 만들어지지 않는다."""
+
+    def run_with(self, label, *, provenance=None, lock=None):
+        out = self.root / ("out_" + label)
+        with self.environment():
+            with contextlib.ExitStack() as stack:
+                if provenance is not None:
+                    stack.enter_context(mock.patch.object(build, "read_dict_provenance", return_value=provenance))
+                if lock is not None:
+                    stack.enter_context(mock.patch.object(build, "load_lock", return_value=(lock, EXPECTED)))
+                code, err = self.call_main("all", out)
+        return out, code, err
+
+    def test_a_key_shaped_text_inside_the_notice_fails_the_check_and_nothing_is_made_after_it(self):
+        canary_repo = "CANARY_" + "AI" + "za" + "A" * 35 + "/dict_source_repo"          # 사전 저장소 칸에 들어가는 가짜 Google 키 모양(조립)
+        canary_tag = "sk-" + "CANARY" + "A" * 30                                       # 라이선스 표기 칸(39 글자 — 모양 검사를 통과하는 길이)에 들어가는 가짜 키 모양(조립)
+        fake_provenance = json.loads(json.dumps(PROVENANCE))
+        fake_provenance["derived_from"]["repo"] = canary_repo
+        fake_lock = json.loads(json.dumps(LOCK))
+        next(item for item in fake_lock["files"] if item["role"] == "det")["license_tag"] = canary_tag
+        for label, extra, planted in (("provenance_repo", {"provenance": fake_provenance}, canary_repo), ("lock_license_tag", {"lock": fake_lock}, canary_tag)):
+            with self.subTest(vector=label):
+                out, code, _err = self.run_with(label, **extra)
+                self.assertEqual(code, 1, "고지 단계가 아니라 점검이 막는다(종료 코드 1)")
+                dist = Path(build.dist_dir(str(out)))
+                self.assertIn(planted, (dist / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8"), "가짜 키 모양이 실제로 고지문에 들어갔다")
+                result = json.loads((out / "check_result.json").read_text(encoding="utf-8"))
+                self.assertFalse(result["ok"])
+                self.assertTrue(any("키 모양" in problem and "THIRD_PARTY_NOTICES.txt" in problem for problem in result["problems"]), result["problems"])
+                self.assertFalse((dist / "OCR_INFO.json").exists())
+                self.assertFalse(list((out / "release").glob("*")), "점검에 걸리면 압축 파일도 SHA256SUMS 도 만들지 않는다")
+
+    def test_the_same_run_without_the_canary_passes_so_the_failure_above_is_about_the_planted_text(self):
+        out, code, err = self.run_with("clean")
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(json.loads((out / "check_result.json").read_text(encoding="utf-8"))["ok"])
 
 
 if __name__ == "__main__":
