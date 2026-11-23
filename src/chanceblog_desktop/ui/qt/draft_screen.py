@@ -257,7 +257,7 @@ def _options_panel(shell, options, ui):
             edit.setMaximumHeight(K.SIZE["control"] * 2 + K.SPACE["4"])
             edit.set_value(field["value"])
             edit.edited.connect(lambda text, name=field["name"]: shell.drf_option_edited(name, text))
-        edit.setToolTip(field["hint"])
+        edit.setToolTip(UI.plain_tooltip(field["hint"]))
         ui.fields[field["name"]] = edit
         inner.addWidget(edit)
         inner.addWidget(UI.label(field["hint"], "caption", wrap=True))

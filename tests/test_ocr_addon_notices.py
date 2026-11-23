@@ -269,6 +269,58 @@ class CollectTest(unittest.TestCase):
             with self.assertRaises(B.BuildError):
                 B.collect_licenses(make_bundle(root), PACKAGES, lookup_of(dists))
 
+    # ---- 감사 후속(AS2-A A3, 결정 D-599): 같은 도착 경로로 겹치는 라이선스 파일 쌍 — 진짜 numpy 휠이 그렇다 ----
+    OVERLAP = (("numpy-2.5.4.dist-info/licenses/numpy/ma/LICENSE", "numpy/ma/LICENSE"), ("numpy-2.5.4.dist-info/licenses/numpy/random/LICENSE.md", "numpy/random/LICENSE.md"))
+
+    def overlapped_site(self, root, same):
+        """numpy 의 설치 기록에 같은 도착 경로로 겹치는 쌍 둘을 더한다. `same` 이면 쌍의 두 파일 내용이 같다(진짜 휠이 그렇다 — 독립 검증 S2 의 I5)."""
+        site = dict(SITE, numpy=SITE["numpy"] + [record for pair in self.OVERLAP for record in pair])
+        dists = make_site(root, site)
+        if same:
+            for first, second in self.OVERLAP:
+                for record in (first, second):
+                    with open(dists["numpy"].locate_file(record), "wb") as handle:
+                        handle.write(("SAME TEXT " + first).encode("ascii"))
+        return dists
+
+    def test_two_records_that_land_on_the_same_file_are_copied_once_and_counted_once(self):
+        """독립 검증 S2 의 I5 — 고지문 [1] 표가 numpy 를 `(20개 파일)` 로 적었는데 실제 묶음의 `licenses/numpy/` 는 18개였다(같은 도착 경로로 겹치는 기록 쌍을 둘로 셌다). 한 번만 복사하고 한 번만 센다."""
+        with tempfile.TemporaryDirectory() as root:
+            dists = self.overlapped_site(root, same=True)
+            dst = make_bundle(root)
+            collected = B.collect_licenses(dst, PACKAGES, lookup_of(dists))
+            self.assertEqual(collected["numpy"], ["LICENSE.txt", "numpy/_core/src/highway/LICENSE", "numpy/ma/LICENSE", "numpy/random/LICENSE.md"])
+            self.assertEqual(len(collected["numpy"]), len(set(collected["numpy"])), "같은 도착 경로를 두 번 세지 않는다")
+            on_disk = [path for path in listing(dst) if path.startswith("licenses/numpy/")]
+            self.assertEqual(len(on_disk), len(collected["numpy"]), "목록의 개수가 폴더의 실제 파일 수와 같다")
+            self.assertIn("licenses/numpy/ (4개 파일)", B.render_notices(PACKAGES, GEOS, collected))
+            with open(os.path.join(dst, "licenses", "numpy", "numpy", "ma", "LICENSE"), "rb") as handle:
+                self.assertEqual(handle.read(), b"SAME TEXT " + self.OVERLAP[0][0].encode("ascii"))
+
+    def test_two_records_that_land_on_the_same_path_with_different_text_stop_the_build_instead_of_hiding_one_text(self):
+        """같은 도착 경로에 내용이 다른 두 라이선스 글이 겹치면 먼저 복사한 쪽이 덮여 글이 사라진다 — 조용히 덮지 않고 멈춘다(진짜 numpy 의 두 쌍은 내용이 같아 이 길에 닿지 않는다)."""
+        with tempfile.TemporaryDirectory() as root:
+            dists = self.overlapped_site(root, same=False)
+            dst = make_bundle(root)
+            with self.assertRaises(B.BuildError) as caught:
+                B.collect_licenses(dst, PACKAGES, lookup_of(dists))
+            self.assertIn("numpy/ma/LICENSE", str(caught.exception))
+            with open(os.path.join(dst, "licenses", "numpy", "numpy", "ma", "LICENSE"), "rb") as handle:
+                self.assertEqual(handle.read(), ("TEXT OF numpy " + self.OVERLAP[0][0]).encode("ascii"), "먼저 복사한 글이 그대로 남는다(덮어쓰지 않았다)")
+
+    def test_a_vanished_second_source_is_a_build_error_not_a_raw_os_error(self):
+        with tempfile.TemporaryDirectory() as root:
+            dists = self.overlapped_site(root, same=True)
+            os.remove(dists["numpy"].locate_file(self.OVERLAP[0][1]))
+            with self.assertRaises(B.BuildError):
+                B.collect_licenses(make_bundle(root), PACKAGES, lookup_of(dists))
+
+    def test_the_notice_table_counts_distinct_files_even_when_a_list_with_a_repeat_is_handed_in(self):
+        collected = dict(COLLECTED, numpy=["LICENSE.txt", "LICENSE.txt", "numpy/ma/LICENSE", "numpy/ma/LICENSE"])
+        text = B.render_notices(PACKAGES, GEOS, collected)
+        self.assertIn("licenses/numpy/ (2개 파일)", text)
+        self.assertNotIn("(4개 파일)", text)
+
     def test_a_bundled_part_that_cannot_be_found_stops_the_build(self):
         with tempfile.TemporaryDirectory() as root:
             dists = make_site(root, {name: files for name, files in SITE.items() if name != "tqdm"})
@@ -1104,6 +1156,71 @@ class ModelValueShapeTest(unittest.TestCase):
         for field, value, want in table:
             with self.subTest(field=field, value=repr(value)[:30]):
                 self.assertIs(B.notice_field_ok(field, value), want)
+
+    # ---- 감사 후속(AS2-A A3, 결정 D-599): 올바른 값 바로 뒤의 줄바꿈 꼴과 글이 아닌 역할 값 ----
+    VALID_VALUES = {"repo": "Owner/repo-name", "file": "models/det/inference.onnx", "source_file": "path/to/inference.onnx", "commit": "a" * 40, "git_blob": "b" * 40, "sha256": "c" * 64, "license_tag": "apache-2.0"}
+
+    @staticmethod
+    def break_variants(valid):
+        lf, cr = chr(10), chr(13)
+        return {"끝 줄바꿈 하나": valid + lf, "끝 CRLF": valid + cr + lf, "끝 CR": valid + cr, "끝 줄바꿈 둘": valid + lf * 2, "앞 줄바꿈": lf + valid, "끝 공백": valid + " ", "끝 탭": valid + chr(9),
+                "끝 줄 구분(U+2028)": valid + chr(0x2028), "끝 다음 줄(U+0085)": valid + chr(0x85)}
+
+    def test_every_valid_value_passes_and_the_same_value_with_a_trailing_line_break_or_space_is_refused(self):
+        """독립 검증 Q 의 QR1 — 정규식 끝 앵커(`$`)는 끝 줄바꿈 앞에서도 맞으므로 '올바른 값 + 줄바꿈 하나' 가 통과하면 고지문 [5] 절의 한 줄이 둘로 쪼개진다. 지금은 `fullmatch` 라 거절하는데 그 모양을 지키는 시험이 없었다
+        (정규식 끝에 줄바꿈 한 개를 허용하거나 `shaped` 를 끝 앵커를 붙인 `match` 로 바꿔도 12모듈이 모두 초록이었다). 일곱 필드마다 올바른 값은 통과하고(거절만 보지 않는다) 줄바꿈·CRLF·공백 꼴은 모두 거절한다."""
+        self.assertEqual(set(self.VALID_VALUES), set(B.NOTICE_FIELDS), "필드 일곱 모두")
+        for field, valid in self.VALID_VALUES.items():
+            self.assertTrue(B.notice_field_ok(field, valid), field)
+            self.assertTrue(B.shaped(valid, B.NOTICE_FIELDS[field][0]), field)
+            for name, value in self.break_variants(valid).items():
+                with self.subTest(field=field, value=name):
+                    self.assertFalse(B.notice_field_ok(field, value))
+                    self.assertFalse(B.shaped(value, B.NOTICE_FIELDS[field][0]))
+
+    def test_a_real_value_followed_by_a_line_break_stops_the_build_at_every_door(self):
+        base = real_models()
+        for index, record in enumerate(base):
+            fields = ["sha256", "repo", "commit", "source_file", "license_tag"] + (["git_blob"] if record["role"] == "dict" else [])
+            for field in fields:
+                for name, suffix in (("끝 줄바꿈", chr(10)), ("끝 CRLF", chr(13) + chr(10))):
+                    with self.subTest(door="기록", role=record["role"], field=field, value=name):
+                        changed = [dict(item) for item in base]
+                        changed[index][field] = record[field] + suffix
+                        with self.assertRaises(B.BuildError):
+                            B.check_model_records(changed)
+                        with self.assertRaises(B.BuildError):
+                            B.render_notices(PACKAGES, GEOS, COLLECTED, (), changed)
+        for role in ("det", "rec"):
+            entry = next(item for item in REAL_LOCK["files"] if item["role"] == role)
+            real = {"repo": entry["source"]["repo"], "commit": entry["source"]["commit"], "path": entry["source"]["path"], "sha256": entry["sha256"], "license_tag": entry["license_tag"]}
+            for field, value in real.items():
+                with self.subTest(door="잠금 파일", role=role, field=field):
+                    with self.assertRaises(B.BuildError):
+                        B.model_notice_records(lock_changed(role, field, value + chr(10)), REAL_PROVENANCE)
+        derived = REAL_PROVENANCE["derived_from"]
+        for field in ("repo", "commit", "file", "git_blob"):
+            with self.subTest(door="사전 출처 기록", field=field):
+                with self.assertRaises(B.BuildError):
+                    B.model_notice_records(REAL_LOCK, provenance_changed(field, derived[field] + chr(10)))
+        with self.assertRaises(B.BuildError):
+            B.model_notice_records(REAL_LOCK, provenance_changed("license_tag", REAL_PROVENANCE["license_tag"] + chr(10)))
+
+    def test_a_role_that_is_not_text_is_a_build_error_and_not_a_type_error(self):
+        """독립 검증 S2 의 I2·Q 의 QI2 — 역할 칸에 목록·사전·집합이 오면 `role not in fixed`(사전 조회)가 해시할 수 없어 TypeError 로 멈췄다(직접 부른 `render_notices` 에서만). 같은 BuildError 로 멈춘다."""
+        base = real_models()
+        for name, role in {"빈 목록": [], "목록": ["det"], "빈 사전": {}, "사전": {"role": "det"}, "집합": {"det"}, "튜플": ("det",), "바이트": b"det", "없음": None, "숫자": 5, "참거짓": True}.items():
+            with self.subTest(role=name):
+                changed = [dict(item) for item in base]
+                changed[0]["role"] = role
+                with self.assertRaises(B.BuildError):
+                    B.check_model_records(changed)
+                with self.assertRaises(B.BuildError):
+                    B.render_notices(PACKAGES, GEOS, COLLECTED, (), changed)
+        for name, item in {"사전이 아닌 기록": "det", "없는 역할 칸": {"label": "x"}}.items():
+            with self.subTest(record=name):
+                with self.assertRaises(B.BuildError):
+                    B.check_model_records([item])
 
 
 if __name__ == "__main__":

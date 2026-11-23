@@ -33,7 +33,7 @@ _KEY_PREFIXES = "api|service|auth|app|crtfc|access|private|subscription|consumer
 # 앞 낱말과 `key` 사이는 없어도·`_`·`-`·`.`·한 칸 공백 어느 것이든 이름이다(`API key: x`·`secret key = x`·`api.key=x` — 자연어 문장에서 흔한 모양, PCSEC1 D4).
 _NAME_WORDS = "password|passwd|secret|token|credential|sessionid|session_id|(?:" + _KEY_PREFIXES + ")[ _.-]?key"
 _COMPOUND_WORDS = "(?:" + _KEY_PREFIXES + ")[_-]?(?:key|token)|(?:access|refresh|id)[_-]?token|(?:client|api|app)[_-]?secret"
-_QUERY_NAMES = ("(?:access|refresh|id)[_-]?token|token|(?:" + _KEY_PREFIXES + ")[_-]?key|x-api-key|x-naver-client-secret|ocp-apim-subscription-key|key|(?:client|api)[_-]?secret|secret|password|passwd|pwd|sig|signature|auth|authorization|bearer|cookies?|"
+_QUERY_NAMES = ("(?:access|refresh|id)[_-]?token|token|(?:" + _KEY_PREFIXES + ")[_-]?key|x-api-key|x-naver-client-secret|ocp-apim-subscription-key|key|client[_-]?id|(?:client|api)[_-]?secret|secret|password|passwd|pwd|sig|signature|auth|authorization|bearer|cookies?|"
                  "private_token|x-amz-signature|x-amz-credential|session|sessionid|session_id|jwt")
 _QUERY_SECRET = re.compile(r"(?i)([?&;](?:" + _QUERY_NAMES + r")=)(?!\[가림: 주소 인자\])[^&\s#\"']+")
 _QUERY_CODE = re.compile(r"(?i)([?&;]code=)(?!\[가림: 주소 인자\])[^&\s#\"']{8,}")           # `?code=200` 같은 짧은 값은 상태 번호라 두고, OAuth 인증 코드처럼 긴 것만

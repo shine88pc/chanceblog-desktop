@@ -213,6 +213,15 @@ def release_problems(release, lock=None):
         problems.append("THIRD_PARTY_NOTICES.txt 가 비어 있다")
     elif "geos" not in notice.lower() or "lgpl" not in notice.lower():
         problems.append("THIRD_PARTY_NOTICES.txt 가 GEOS·LGPL 을 말하지 않는다(운영자 확인 030 ② 의 고지 대상)")
+    if notice is not None and notice.strip():                # 고지문 [5] 절(모델·글자 사전의 이름·출처·라이선스 표기)이 압축 파일 쪽에서도 있어야 한다 — 빌드 쪽 문이 우회돼도 여기서 거른다(독립 검증 S2 의 I3, 감사 후속)
+        sections = [line for line in notice.splitlines() if line.startswith("[5] ")]
+        if len(sections) != 1:
+            problems.append("THIRD_PARTY_NOTICES.txt 에 모델과 글자 사전의 [5] 절이 정확히 하나여야 한다(지금 %d개)" % len(sections))
+        elif lock is not None and not lock_bad:
+            part = notice[notice.index(sections[0]):]
+            for key, (want_size, want_sha) in sorted(expected.items()):
+                if "파일 %s (%d바이트, SHA-256 %s)" % (key, want_size, want_sha) not in part:
+                    problems.append("고지문 [5] 절이 모델·사전의 잠금 값(크기·SHA-256)과 다르거나 없다: " + key)
     license_files = sorted(name for name in entries if name.startswith(LICENSES_PREFIX))
     facts["license_files"] = len(license_files)
     if not license_files:

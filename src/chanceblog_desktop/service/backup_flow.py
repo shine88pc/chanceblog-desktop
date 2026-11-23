@@ -21,15 +21,16 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import time
 import unicodedata
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from ..content import schema_guard
-from ..content.store import SCHEMA_STATEMENTS, Store, _read_only_uri
+from ..content.store import SCHEMA_STATEMENTS, WAL_TEXT, Store, _read_only_uri, same_database, wal_header
 from ..content.store import SCHEMA_VERSION as STORE_SCHEMA_VERSION
 from ..errors import AppError
 from ..security import scan
@@ -282,14 +283,50 @@ def _remove_quietly(path):
         return False
 
 
+REPARSE_POINT = 0x400                                                    # 윈도 파일 속성 FILE_ATTRIBUTE_REPARSE_POINT — 심볼릭 링크·junction(정션)·마운트 지점이 가진다
+LINK_TAGS = frozenset({0xA000000C, 0xA0000003})                          # 이름을 다른 곳으로 돌리는 reparse 종류 — 심볼릭 링크(IO_REPARSE_TAG_SYMLINK)·junction 과 마운트 지점(IO_REPARSE_TAG_MOUNT_POINT). OneDrive 같은 클라우드 파일 자리표시는 아니다
+
+
+def _is_link(path):
+    """그 경로 **자신**이 링크인가 — 심볼릭 링크이거나 윈도 reparse point(junction·마운트 지점 …)이면 참(AS-S1 권고-1, D-608). 링크를 따라가지 않고 그 이름을 `os.lstat` 로 본다.
+    윈도에서 junction 의 `is_symlink()` 는 거짓이고 `is_dir()` 은 링크를 따라가서, 그 둘만으로는 폴더 자리에 놓인 junction 을 못 거른다(목록을 보기만 해도 그 목적지의 앱 이름 파일이 지워졌다).
+    reparse point 인데 종류(`st_reparse_tag`)가 링크가 아니면(클라우드 파일 자리표시 …) 링크로 보지 않는다. 없는 경로는 거짓, 읽을 수 없으면 참(알 수 없으면 따라가지 않는다).
+    `st_file_attributes` 는 윈도에만 있고 다른 운영체제에서는 0 으로 읽는다(심볼릭 링크는 `S_ISLNK`)."""
+    path = Path(path)
+    try:
+        if path.is_symlink():                                            # 심볼릭 링크(윈도 junction 은 여기서 거짓이라 아래 reparse 속성이 따로 본다)
+            return True
+        info = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if not getattr(info, "st_file_attributes", 0) & REPARSE_POINT:
+        return False
+    tag = getattr(info, "st_reparse_tag", None)
+    return tag is None or tag in LINK_TAGS
+
+
+def _clear_stage(stage):
+    """복원이 쓸 고정 이름 임시 파일(`<이름>.restoring`) 자리를 비운다 — 옛 찌꺼기나 미리 심은 링크가 있으면 그 이름 자체를 지운다(링크가 가리키는 곳은 건드리지 않는다).
+    지우고도 링크가 남아 있으면 그 자리에 쓰지 않고 멈춘다(AS-S1 참고-3, D-608). 오류는 `OSError` 다 — 복원 흐름·되돌리기가 이미 그 오류를 쉬운 문구로 바꾼다."""
+    _remove_quietly(stage)
+    if _is_link(stage):
+        raise OSError(errno.EPERM, "임시 파일 자리에 링크가 있어 치우지 못했다")
+
+
 def _remove_known_folder(folder, allowed=KNOWN_FILES):
     """앱이 만드는 이름(`allowed`)의 파일만 지우고 비면 폴더를 없앤다 → 없앴는가. 낯선 파일(사용자가 넣은 것)이 있으면 그 폴더는 그대로 둔다."""
     folder = Path(folder)
     try:
+        if _is_link(folder):                                             # 폴더 자신이 링크이면 따라가지 않는다 — 그 목적지의 파일을 지우지 않는다(D-608)
+            return False
         if not folder.is_dir():
             return True
         entries = list(folder.iterdir())
-        if any(entry.name not in allowed or entry.is_symlink() or not entry.is_file() for entry in entries):
+        if any(entry.name not in allowed or _is_link(entry) or not entry.is_file() for entry in entries):
             return False
         for entry in entries:
             os.unlink(entry)
@@ -385,8 +422,10 @@ def _temp_folders(ctx):
     """만들다 멈춘 임시 폴더들(`full-….tmp`·`before-….tmp`) — 백업 폴더와 안전 사본 폴더 안에서 앱이 만든 이름의 진짜 폴더만(링크는 따라가지 않는다). 읽기만 한다."""
     found = []
     for root in (ctx.workspace.backups_dir, _safety_root(ctx)):
+        if _is_link(root):                                               # 폴더 두 곳 자신이 링크이면(안전 사본 폴더에 junction 을 심어 둔 경우 …) 그 안을 훑지 않는다 — 목록을 보기만 해도 목적지의 폴더가 지워졌다(AS-S1 2차 권고-2, D-618)
+            continue
         try:
-            found += [entry for entry in Path(root).iterdir() if STALE_TEMP.fullmatch(entry.name) and entry.is_dir() and not entry.is_symlink()]
+            found += [entry for entry in Path(root).iterdir() if STALE_TEMP.fullmatch(entry.name) and entry.is_dir() and not _is_link(entry)]
         except OSError:
             continue
     return found
@@ -606,6 +645,9 @@ def _snapshot(component, source, target, found):
     except AppError as error:
         _remove_quietly(target)
         raise _Skip(error.code) from None
+    except RecursionError:                                              # 아주 깊게 겹친 JSON — 그 파일 하나만 건너뛰고 나머지는 계속 담는다(백업이 통째로 멈추지 않는다, D-613)
+        _remove_quietly(target)
+        raise _Skip(DAMAGED_CODE[component.kind]) from None
 
 
 # ---- 키·토큰 모양 훑기(만든 사본을 훑는다) ----------------------------------------------------------------------------------------------------
@@ -683,6 +725,15 @@ def _scan_connection(sink, db, name):
                     _scan_cell(sink, value, area, table, column, ref)
 
 
+def _scan_json_safely(sink, parsed, *place):
+    """`_scan_json_value` 를 부른다 → 끝까지 훑었는가. 아주 깊게 겹친 값(파이썬 재귀 한도와 json 의 C 한도 사이 1000–1500 단)은 재귀 한도에 걸려 거짓이다 — 부른 쪽이 그 글을 통째로 일반 글로 다시 훑는다(D-613)."""
+    try:
+        _scan_json_value(sink, parsed, *place)
+    except RecursionError:
+        return False
+    return True
+
+
 def _scan_cell(sink, value, area, table, column, ref):
     if isinstance(value, bytes):
         value = value.decode("utf-8", "replace")
@@ -694,8 +745,7 @@ def _scan_cell(sink, value, area, table, column, ref):
             parsed = json.loads(value)
         except (ValueError, RecursionError):
             parsed = None
-        if parsed is not None:
-            _scan_json_value(sink, parsed, area, field, ref)
+        if parsed is not None and _scan_json_safely(sink, parsed, area, field, ref):
             return
     _scan_text(sink, value, " · ".join(part for part in (area, field, ref) if part), _clip(area))
 
@@ -703,10 +753,12 @@ def _scan_cell(sink, value, area, table, column, ref):
 def _scan_json_bytes(sink, data, name):
     """JSON 파일의 바이트(디스크에 쓰기 전의 것이거나 읽어 온 것)를 훑는다. JSON 으로 읽을 수 없으면 AppError."""
     try:
-        parsed = json.loads(data.decode("utf-8-sig"))
+        text = data.decode("utf-8-sig")
+        parsed = json.loads(text)
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise AppError("TOPIC_FILE_INVALID", {"파일": name}, detail="훑으려고 읽었지만 읽을 수 없다") from None
-    _scan_json_value(sink, parsed, AREA[name])
+    if not _scan_json_safely(sink, parsed, AREA[name]):                  # 너무 깊어 구조를 따라가지 못하면 글 전체를 일반 글로 다시 훑는다 — 깊이 겹친 JSON 에 숨긴 키 모양도 놓치지 않는다(D-613)
+        _scan_text(sink, text, AREA[name], _clip(AREA[name]))
 
 
 def _scan_json_leniently(sink, data, name):
@@ -739,6 +791,9 @@ def scan_folder(folder, names, lenient=frozenset()):
         except (AppError, sqlite3.Error):
             if name not in lenient:
                 raise
+        except RecursionError:                                          # 아주 깊게 겹친 JSON 은 쉬운 오류로 바꾼다(원시 RecursionError 가 새어 나가지 않게, D-613)
+            if name not in lenient:
+                raise AppError("TOPIC_FILE_INVALID", {"파일": name}, detail="너무 깊게 겹쳐 훑을 수 없다") from None
     return found
 
 
@@ -880,13 +935,15 @@ def _verify_folder(folder):
     """백업 폴더를 읽기만 해서 확인한다 → 목록. 목록 모양·폴더 안의 파일(이름·종류)·크기·해시를 본다(안의 보관함·JSON·설정이 온전한지는 `_verify_backup` 이 이어서 이 프로그램이 읽는 방법 그대로 읽어 본다).
     틀리면 FULL_BACKUP_INVALID(이유 `manifest`·`files`·`hash`·`content`) — 더 새로운 앱의 백업은 STORE_VERSION_UNSUPPORTED. 아무것도 쓰지 않는다."""
     folder = Path(folder)
+    if _is_link(folder):                                                 # 백업 폴더 자신이 링크(junction 포함)이면 읽지 않는다(D-608)
+        raise _invalid(folder, "files")
     manifest = _parse_manifest(folder)
     _check_version(folder, manifest)
     try:
         entries = {entry.name: entry for entry in folder.iterdir()}
     except OSError:
         raise _invalid(folder, "files") from None
-    if set(entries) != set(manifest["files"]) | {MANIFEST_NAME} or any(entry.is_symlink() or not entry.is_file() for entry in entries.values()):
+    if set(entries) != set(manifest["files"]) | {MANIFEST_NAME} or any(_is_link(entry) or not entry.is_file() for entry in entries.values()):
         raise _invalid(folder, "files")
     for name, info in manifest["files"].items():
         if BY_NAME[name].kind in (JSON_FILE, SETTINGS) and info["size"] > MAX_JSON_BYTES:                  # 앱이 만드는 JSON·설정은 이 크기를 넘지 않는다(백업을 만들 때 같은 상한으로 거절한다) — 읽기 전에 거절한다(L8, D-554)
@@ -933,6 +990,8 @@ def _check_structure(folder, name):
     component = BY_NAME[name]
     if component.kind not in (STORE, ENGINE):
         return
+    if wal_header(folder / name):                                        # 열기 전에 머리 바이트로 거절한다 — WAL 머리의 파일은 읽기 전용으로 열기만 해도 이 백업 폴더에 `-wal`·`-shm` 을 만들어 그 폴더를 영영 깨진 것으로 만든다(AS-S1 권고-2, D-609)
+        raise _invalid(folder, "structure", detail=f"{name}: {WAL_TEXT}")
     try:
         foreign = _foreign_in(component, folder / name, defer_newer=True)
     except AppError as error:
@@ -960,15 +1019,39 @@ def _refuse_if_undo_impossible(ctx, names, live):
         raise FlowError("RESTORE_FAILED", {"이유": LIVE_STRUCTURE_TEXT}, detail="지금 보관함에 앱이 만들지 않는 구조가 있다 — " + "; ".join(found), reason=LIVE_STRUCTURE)
 
 
+_DRIVE_ABSOLUTE = re.compile(r"[A-Za-z]:\\")                              # 구분자를 역슬래시로 통일한 글의 앞머리 — 드라이브 글자 절대경로(`C:\…`)
+_NT_NAMESPACE = re.compile(r"(?i)\\(?:\?\?|dosdevices|global\?\?)(?:\\|$)")        # 같은 글의 앞머리(대소문자는 가리지 않는다) — 윈도 NT 이름공간 표기(`\??\UNC\서버\공유`·`\??\GLOBALROOT\Device\Mup\…`·`\DosDevices\…`·`\GLOBAL??\…`)
+
+
+def _plain_local_shape(text):
+    """'연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양인가 — **허용 목록**이다(AS-S1 필수-3, D-605). 받는 모양은 넷뿐이다: ① 빈 글(연결 안 함) ② 드라이브 글자 절대경로(`C:\\…`·`C:/…`)
+    ③ 맨 앞이 구분자가 아닌 글(상대 경로·홈 폴더 약식 — 앞 물결표·드라이브 글자만 있는 상대 경로) ④ 맨 앞 구분자가 **하나뿐**인 경로(`/home/me/…`) — 단 ④ 는 NT 이름공간 접두(`\\??\\`·`\\DosDevices\\`·`\\GLOBAL??\\`)가 아닐 때만이다.
+    그 밖은 받지 않는다: 구분자 둘 이상으로 시작하는 서버·확장·장치 경로, 그리고 NT 이름공간 표기(윈도 파일 호출이 `\\??\\UNC\\서버\\공유` 를 네트워크 공급자로 보낸다). 구분자는 `/` 와 `\\` 를 같게 보고 대소문자는 가리지 않으며 맨 앞 공백은 걷고 본다
+    (윈도 경로 읽기가 맨 앞 공백을 건너뛸 수 있다). 순수 글자 판정이라 파일 시스템·네트워크를 부르지 않는다."""
+    probe = text.lstrip().replace("/", "\\")
+    if not probe:
+        return True
+    if _DRIVE_ABSOLUTE.match(probe) or probe[0] != "\\":
+        return True
+    return probe[1:2] != "\\" and not _NT_NAMESPACE.match(probe)
+
+
+def _opened_text(text):
+    """앱이 그 글로 **실제로 여는** 글(AS-S1 2차 필수-1, D-616) — `Path(os.path.expanduser(글))` 를 윈도 방식(`PureWindowsPath` — 리눅스 CI 에서도 같은 결과)으로 정리한 글이다.
+    pathlib 은 겹친 구분자와 `.` 마디를 지우고 다시 만든다 — 그래서 가드가 글자 그대로만 보면 `/./??/UNC/서버/공유`(맨 앞 구분자 바로 뒤가 `.`)는 보통 경로로 보이지만 앱이 여는 글은 `\\??\\UNC\\서버\\공유` 다.
+    `..` 마디는 지우지 않으므로(`/../??/UNC/…` 는 정리 뒤에도 NT 접두가 아니다 — 윈도도 현재 드라이브 안으로 푼다) 그 글은 안전하다. 순수 글자 변환이라 파일 시스템·네트워크를 부르지 않는다."""
+    return str(PureWindowsPath(os.path.expanduser(text)))
+
+
 def _repo_path_problem(text):
-    """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554).
-    네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로 포함)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검), 조작한 백업이 남의 서버를 가리키면
-    이 PC 가 그 서버에 접속하면서 윈도 로그인 정보를 보낼 수 있다. 빈 글(연결 안 함)·드라이브 경로·상대 경로·홈 폴더 약식으로 쓴 경로는 그대로 받는다."""
+    """되돌릴 설정의 '연결한 폴더' 글이 이 PC 의 보통 폴더 경로 모양이 아니면 그 이유의 고정 낱말(`length`·`control`·`network`·`url`), 맞으면 빈 글(L8, D-554 — 거절 목록에서 허용 목록으로 D-605).
+    네트워크 경로(UNC — 역슬래시 둘이나 슬래시 둘로 시작하는 서버 경로, 확장·장치 경로, NT 이름공간 표기 포함 — `_plain_local_shape`)·주소(`://`)·제어 문자·너무 긴 글은 들이지 않는다 — 앱은 이 경로가 폴더인지 알아보려고 열어 보는데(복원 직후의 안내와 점검),
+    조작한 백업이 남의 서버를 가리키면 이 PC 가 그 서버에 접속하면서 윈도 로그인 정보를 보낼 수 있다. 빈 글(연결 안 함)·드라이브 경로·상대 경로·홈 폴더 약식으로 쓴 경로는 그대로 받는다."""
     if len(text) > MAX_REPO_PATH:
         return "length"
     if any(unicodedata.category(char) in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") for char in text):
         return "control"
-    if text.replace("/", "\\").startswith("\\\\"):
+    if not (_plain_local_shape(text) and _plain_local_shape(_opened_text(text))):         # 글자 그대로와 앱이 여는 글(정리된 글) 둘 다 보통 경로 모양일 때만 받는다(D-616)
         return "network"
     if "://" in text:
         return "url"
@@ -992,14 +1075,18 @@ def _check_content(folder, name):
         raise _invalid(folder, "content", detail=f"{name}: {error.code}") from None
     except OSError as error:
         raise _invalid(folder, "content", detail=f"{name}: {type(error).__name__}") from None
+    except RecursionError:                                               # 아주 깊게 겹친 JSON — 읽을 수 없는 파일과 같게 거절한다(D-613)
+        raise _invalid(folder, "content", detail=f"{name}: 너무 깊게 겹친 JSON") from None
     if problem:                                                          # 경로 글은 되풀이하지 않는다 — 고정 낱말뿐(L8, D-554)
         raise _invalid(folder, "content", detail=f"{name}: 연결한 폴더 글이 보통 폴더 경로 모양이 아니다({problem})")
 
 
 def _folders(root, pattern=FULL_NAME):
-    """폴더 안의 앱이 만든 모양(`pattern`)의 백업 폴더들(새 것이 먼저)."""
+    """폴더 안의 앱이 만든 모양(`pattern`)의 백업 폴더들(새 것이 먼저). 그 폴더(`root`) 자신이 링크이면 빈 목록이다(목록·정리·복원이 링크 목적지를 보지 않는다 — D-618)."""
+    if _is_link(root):
+        return []
     try:
-        found = [entry for entry in Path(root).iterdir() if entry.is_dir() and pattern.fullmatch(entry.name)]
+        found = [entry for entry in Path(root).iterdir() if entry.is_dir() and pattern.fullmatch(entry.name) and not _is_link(entry)]
     except OSError:
         return []
     return sorted(found, key=lambda entry: (_stamp_of(entry.name), len(entry.name), entry.name), reverse=True)
@@ -1010,7 +1097,7 @@ def _quick_row(folder, kind):
     folder = Path(folder)
     try:
         manifest = _parse_manifest(folder)
-        sizes = {entry.name: entry.stat().st_size for entry in folder.iterdir() if entry.is_file() and not entry.is_symlink()}
+        sizes = {entry.name: entry.stat().st_size for entry in folder.iterdir() if entry.is_file() and not _is_link(entry)}
     except FlowError as error:
         return _broken_row(folder, kind, error.reason or "manifest")
     except OSError:
@@ -1051,7 +1138,7 @@ def _free_name(root, name):
 def _prune(root, keep, pattern=FULL_NAME, protect=(), moment=None):
     """가장 새 `keep` 개만 남기고 지운다. `protect` 의 이름(방금 만든 것·되돌리는 데 쓰는 것)은 절대 지우지 않고 가장 새 것으로 센다. **시계가 거꾸로 갔거나 다른 PC 에서 가져와 `moment`(지금)보다 미래 날짜인 폴더는 가장 낡은 것으로 센다** —
     미래 날짜의 옛 백업이 지금 만든 백업보다 앞서 서서 방금 만든 것을 지우는 일이 없다(D-460)."""
-    limit = moment.strftime(SIDE_STAMP) if moment is not None else ""
+    limit = moment.strftime(SIDE_STAMP) if moment is not None else ""      # 정리할 후보는 `_folders` 가 구한다 — 그 폴더(`root`) 자신이 링크이면 빈 목록이라 아무것도 지우지 않는다(D-618)
 
     def rank(entry):
         stamp = _stamp_of(entry.name)
@@ -1155,12 +1242,12 @@ def create_full_backup(ctx, *, step=None):
 def _resolve(ctx, source):
     """되돌릴 백업 폴더 — 이름(`full-날짜-시각`, 백업 폴더나 안전 사본 폴더 안)이거나 폴더 경로(`Path`). 없으면 FULL_BACKUP_INVALID. 이름이 아닌 글(경로 모양)은 이름으로 받지 않는다."""
     if isinstance(source, Path):
-        if source.is_dir():
+        if source.is_dir() and not _is_link(source):                     # 링크(junction 포함)인 폴더는 백업 폴더로 받지 않는다(D-608)
             return source
         raise _invalid(source, "missing")
     if isinstance(source, str):
         root = ctx.workspace.backups_dir if FULL_NAME.fullmatch(source) else (_safety_root(ctx) if SAFETY_NAME.fullmatch(source) else None)
-        if root is not None and (root / source).is_dir():
+        if root is not None and not _is_link(root) and (root / source).is_dir() and not _is_link(root / source):       # 폴더 자신도 링크가 아니어야 한다(D-618)
             return root / source
     raise FlowError("FULL_BACKUP_INVALID", {"파일": _shown_name(source), "이유": INVALID_REASONS["missing"]}, detail="백업 폴더에서 찾을 수 없다", reason="missing")
 
@@ -1204,11 +1291,14 @@ def _live_state(ctx, component, healed=False):
         if error.code in STORE_DAMAGED or error.code in ("TOPIC_FILE_INVALID", "SETTINGS_INVALID", "CONTENT_INVALID"):
             return "damaged"
         raise
+    except RecursionError:                                               # 지금 JSON 이 아주 깊게 겹쳐 읽을 수 없다 — 깨진 파일과 같게 지우지 않고 옆으로 옮겨 둔다(D-613)
+        return "damaged"
 
 
 def _restore_database(component, path, source):
     """보관함 하나를 백업 파일의 내용으로 한 번에 바꾼다(SQLite 백업 방식 — 도중에 실패하면 지금 보관함은 그대로다)."""
     with (Store.open(path) if component.kind == STORE else open_for_write(path)) as database:
+        database.undo_failed_restore = True                              # 덮은 뒤 판 올리기가 실패하면 낮은 층이 덮기 전 내용으로 되돌린다 — 못 하면 오류에 `left_overwritten` 표시가 달린다(AS-S1 필수-4, D-606)
         database.restore_from(source)
 
 
@@ -1306,6 +1396,7 @@ def _apply(ctx, folder, manifest, names, live, safety_folder, state, moment, ste
         _make_folder(target.parent)
         state["originals"][component.name] = target.read_bytes() if target.is_file() else None
         stage = target.with_name(target.name + ".restoring")
+        _clear_stage(stage)                                              # 고정 이름이라 미리 심은 링크가 있으면 그 이름을 지우고 쓴다 — 링크가 가리키는 곳에 쓰지 않는다(D-608)
         _write_durably(stage, (folder / component.name).read_bytes())
         state["staged"].append(stage)
     for component in plain:
@@ -1317,7 +1408,12 @@ def _apply(ctx, folder, manifest, names, live, safety_folder, state, moment, ste
         target = _component_path(ctx, component)
         if live[component.name] in ("missing", "blank", "damaged"):
             state["new_db"][component.name] = "blank" if live[component.name] == "blank" else "absent"
-        _restore_database(component, target, folder / component.name)
+        try:
+            _restore_database(component, target, folder / component.name)
+        except BaseException as error:
+            if getattr(error, "left_overwritten", False):                # 보관함이 백업 내용으로 덮인 채 남았다 — 덮은 뒤 판 올리기가 실패했는데 낮은 층이 덮기 전 내용으로 되돌리지 못했다(AS-S1 필수-4, D-606)
+                state["db_done"].append(component.name)                   # 바꾼 것으로 센다 — 아래 `_roll_back` 이 안전 사본에서 되돌린다(덮이지 않은 채 실패한 보관함은 건드리지 않는다)
+            raise
         state["db_done"].append(component.name)
     step(0.9, "바뀐 것을 다시 읽어 확인하는 중")
     for component in names:
@@ -1341,6 +1437,8 @@ def _roll_back(ctx, names, live, safety_folder, state):
                     _write_durably(path, b"")
             elif name in state["db_done"] and safety_folder is not None:
                 _restore_database(component, path, safety_folder / name)
+                if not same_database(path, safety_folder / name):          # 되돌린 뒤 지금 보관함이 안전 사본과 같은지 확인한다 — 다르면 '원래대로 돌렸다' 고 말하지 않고 알리며 표지를 남긴다(D-606)
+                    left.append(f"{component.label}은(는) 되돌린 뒤에도 안전 사본({safety_folder.name})과 내용이 달라요 — 원래 내용은 안전 사본에 그대로 있어요")
         except (AppError, OSError, sqlite3.Error):
             left.append(f"{component.label}은(는) 원래대로 돌리지 못했어요 — 원래 내용은 안전 사본({safety_folder.name if safety_folder else '없음'})에 있어요")
     for name in reversed(state["swapped"]):
@@ -1351,6 +1449,7 @@ def _roll_back(ctx, names, live, safety_folder, state):
                 _remove_file(target)
             else:
                 temp = target.with_name(target.name + ".restoring")
+                _clear_stage(temp)
                 _write_durably(temp, original)
                 _swap_in(temp, target)
         except OSError:
@@ -1382,7 +1481,9 @@ def _outcome(ctx, folder, manifest, names, live, safety):
             repo = Settings(ctx.workspace.settings_path).repo_path()
         except AppError:
             repo = ""
-        if repo and not Path(os.path.expanduser(repo)).is_dir():
+        if repo and _repo_path_problem(repo):                            # 한 번 더 — 보통 폴더 경로 모양이 아닌 글은 열어 보지 않는다(복원 전 확인이 이미 거절했지만 이 PC 가 남의 서버에 접속할 수 있는 호출이라 방어를 겹친다, D-605)
+            notes.append("연결해 둔 chanceblog 폴더의 경로가 이 PC 의 보통 폴더 경로 모양이 아니라서 열어 보지 않았어요 — 필요하면 설정에서 다시 연결해 주세요")
+        elif repo and not Path(os.path.expanduser(repo)).is_dir():
             notes.append("연결해 둔 chanceblog 폴더를 이 PC 에서 찾지 못했어요 — 필요하면 설정에서 다시 연결해 주세요")
     status = STATUS_COMPLETE if manifest["status"] == STATUS_COMPLETE else STATUS_PARTIAL
     return RestoreOutcome(status, folder.name, safety.row.name if safety is not None else "", tuple(lines), tuple(notes))

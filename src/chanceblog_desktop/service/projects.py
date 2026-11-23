@@ -276,6 +276,7 @@ def restore_store(ctx, backup_path=None, *, latest=False, confirmed):
     safety = ctx.workspace.backups_dir / "before-restore"
     with ctx.store() as store:
         saved = store.backup(safety, now=_free_moment(ctx, safety, store))              # 바꾸기 직전 상태 — 같은 초에 두 번 복구해도 앞 사본을 덮어쓰지 않는다
+        store.undo_failed_restore = True                                                  # 덮은 뒤 판 올리기가 실패해도 덮기 전 내용으로 되돌린다(AS-S1 필수-4, D-606) — 바로 앞에서 만든 사본(`saved`)과 별개로 이 연결 안에서
         try:
             store.restore_from(source)
         except AppError as error:

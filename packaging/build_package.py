@@ -127,9 +127,10 @@ def hidden_imports(repo):
 
 
 def pyinstaller_args(repo, out, version_file, imports):
-    """`python -m PyInstaller` 뒤에 붙일 인자 — 한 폴더(--onedir)·창 없음(--windowed)·UTF-8 모드·GUI 전용 시작 파일. UAC 관리자 옵션(--uac-admin)·한 파일(--onefile)은 쓰지 않는다."""
+    """`python -m PyInstaller` 뒤에 붙일 인자 — 한 폴더(--onedir)·창 없음(--windowed)·UPX 압축 안 함(--noupx)·UTF-8 모드·GUI 전용 시작 파일. UAC 관리자 옵션(--uac-admin)·한 파일(--onefile)은 쓰지 않는다.
+    `--noupx` 는 UPX 가 PATH 에 있을 때만 쓰이던 것을 명시해 빌드 결과가 환경에 따라 달라지지 않게 한다(AS-S1 참고-21, D-614) — 동작은 UPX 를 쓰지 않는 쪽뿐이다."""
     repo, out = Path(repo), Path(out)
-    args = ["--noconfirm", "--clean", "--onedir", "--windowed", "--name", pc.EXE_NAME,
+    args = ["--noconfirm", "--clean", "--onedir", "--windowed", "--noupx", "--name", pc.EXE_NAME,
             "--distpath", str(out / "dist"), "--workpath", str(out / "work"), "--specpath", str(out / "spec"),
             "--paths", str(repo / "src"), "--python-option", "X utf8", "--version-file", str(version_file), "--log-level", "INFO"]
     for name in EXCLUDED_MODULES:

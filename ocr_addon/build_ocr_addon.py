@@ -487,9 +487,19 @@ def collect_licenses(dst, packages, distribution=None):
             if not target or target.startswith("/") or ":" in target or ".." in target.split("/"):
                 raise BuildError("라이선스 파일 경로가 안전하지 않다: %s" % text)
             destination = os.path.join(root, name, *target.split("/"))
+            source = str(dist.locate_file(item))
+            if target in names:                                  # 같은 도착 경로가 한 번 더 나왔다(예: numpy 의 dist-info/licenses/numpy/ma/LICENSE 와 numpy/ma/LICENSE) — 내용이 같으면 한 번만 센다
+                try:
+                    with open(source, "rb") as first, open(destination, "rb") as second:
+                        same = first.read() == second.read()
+                except OSError as error:
+                    raise BuildError("라이선스 파일을 비교하지 못했다(%s): %s" % (text, type(error).__name__)) from None
+                if not same:                                     # 내용이 다르면 먼저 복사한 쪽이 덮여 라이선스 글이 사라지므로 멈춘다(조용히 덮지 않는다)
+                    raise BuildError("라이선스 파일 둘이 같은 도착 경로(%s)에 서로 다른 내용으로 겹친다 — 한쪽 글이 사라지므로 빌드를 멈춘다" % target)
+                continue
             try:
                 os.makedirs(os.path.dirname(destination), exist_ok=True)
-                shutil.copyfile(str(dist.locate_file(item)), destination)
+                shutil.copyfile(source, destination)
             except OSError as error:
                 raise BuildError("라이선스 파일을 복사하지 못했다(%s): %s" % (text, type(error).__name__)) from None
             names.append(target)
@@ -518,7 +528,7 @@ def check_model_records(models):
     common = {"role", "label", "file", "bytes", "sha256", "repo", "commit", "source_file", "license_tag"}
     for item in models:
         role = item.get("role") if isinstance(item, dict) else None
-        if role not in fixed or item.get("file") != fixed[role][0] or item.get("label") != fixed[role][1]:
+        if not isinstance(role, str) or role not in fixed or item.get("file") != fixed[role][0] or item.get("label") != fixed[role][1]:       # 역할이 글이 아니면(목록·사전 — 해시할 수 없어 TypeError 가 났다) 같은 BuildError
             raise BuildError("알 수 없는 모델 칸이 있다 — 고지문 [5] 절을 쓸 수 없다")
         if set(item) != common | ({"git_blob", "entries"} if role == "dict" else set()):
             raise BuildError("모델 칸(%s)의 칸 이름이 정해진 것과 다르다 — 고지문 [5] 절을 쓸 수 없다" % role)
@@ -585,7 +595,7 @@ def render_notices(packages, geos, collected, removed=(), models=None):
              "",
              "[1] 이 묶음에 든 제3자 부품 (이름 | 버전 | 라이선스 표기 | 라이선스 전문 파일)"]
     for package in bundled:
-        files = collected.get(package["name"]) or []
+        files = sorted(set(collected.get(package["name"]) or []))                         # 같은 파일을 두 번 센 목록이 와도 표의 개수는 실제 파일 수(고지문 [1] 표의 numpy 20 개 대 실제 18 개 — 감사 후속)
         where = "%s/%s/ (%d개 파일)" % (LICENSES_DIR, package["name"], len(files)) if files else "(휠에 라이선스 파일이 없다 — 표기만 적는다)"
         lines.append("- %s | %s | %s | %s" % (package["name"], package.get("version") or "?", package.get("license_metadata") or "?", where))
     lines += ["각 부품의 라이선스 전문은 이 폴더의 licenses 폴더에 부품 이름별로 들어 있다.",

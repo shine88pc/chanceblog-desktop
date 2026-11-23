@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from ..core import gauges as G, tokens as K
 from ..core.text import T
 from . import theme
-from .components import Badge, ElidedLabel, label, repolish
+from .components import Badge, ElidedLabel, label, plain_tooltip, repolish
 
 
 class ScoreRing(QWidget):
@@ -27,7 +27,7 @@ class ScoreRing(QWidget):
         self.side = G.ring_pixels(size)
         self.setFixedSize(self.side, self.side)
         self.setAccessibleName(G.score_spoken(score))
-        self.setToolTip(G.score_spoken(score))
+        self.setToolTip(plain_tooltip(G.score_spoken(score)))
 
     def sizeHint(self):
         return QSize(self.side, self.side)
