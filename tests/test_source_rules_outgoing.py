@@ -36,7 +36,7 @@ BUILTINS_HOLDERS = {"builtins", "__builtins__"}                                 
 DYNAMIC_HOLDERS = {"os": "getattr(os)", "builtins": "getattr(builtins)", "__builtins__": "getattr(builtins)"}   # `X.__dict__`·`X.__getattribute__`·`vars(X)` 가 이름 없이 꺼낼 수 있는 곳 — 걸리는 이름
 REEXPORT_HOLDERS = {"os", "_os"}                                                 # `glob.os.system`·`tempfile._os.system`·`os.path.os.system` 처럼 다른 모듈이 다시 내놓는 `os`
 
-# (파일, 쓰는 것) → 이유. 이 표가 앱이 바깥과 닿는 길의 전부다.
+# (파일, 쓰는 것) → 이유. 이 표가 정직한 코드가 바깥과 닿는 길의 전부다(회귀 그물 — 일부러 숨기는 코드를 막는 방어가 아니다, AS-S1 2차 권고-3·D-619).
 ALLOWED = {
     ("publish/gitrepo.py", "subprocess"): "git 하위 프로세스를 띄우는 유일한 곳(`run_command`) — 외부 Write 관문(`capabilities.require_external_write`)이 첫 줄이라 이 빌드에서는 한 번도 띄우지 않는다",
     ("ui/ocr_adapter.py", "subprocess"): "이 PC 의 글자 읽기 작업자를 띄우는 유일한 곳(`_launch`) — `LOCAL_OCR` 관문이 첫 줄이고 인자는 고정, 셸 없음, 소켓·인터넷 코드 없음, 바깥에 쓰지 않는다(이 PC 안의 계산, 결정 D-512)",
@@ -478,7 +478,7 @@ class BypassShapesTest(unittest.TestCase):
     def test_the_security_document_calls_this_check_a_regression_net_for_honest_code_and_not_a_defence(self):
         text = (ss.ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
         self.assertIn("정직한 코드의 회귀 그물", text)
-        self.assertNotIn("이 표가 앱이 바깥과 닿는 길의 전부다 — 우회도 다 본다", text)
+        self.assertIn("**의도적** 우회는 막지 못하고", text, "옛 한계(D-359)는 그대로 남는다")
 
 
 if __name__ == "__main__":

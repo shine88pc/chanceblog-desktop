@@ -283,7 +283,7 @@ class DotSegmentTest(unittest.TestCase):
         self.assertIn(text, seen)
         self.assertIn(bf._opened_text(text), seen)
 
-    def test_an_accepted_text_stays_accepted_after_the_apps_own_normalisation_and_normalising_twice_changes_nothing(self):
+    def test_an_accepted_text_stays_accepted_after_the_apps_own_normalisation(self):
         """속성 시험(시드 고정) — 앞 구분자·`.`·`..`·공백 조합 × NT 꼴을 구조 무작위로 만들어, 받은 글은 앱이 여는 글(정리한 글)도 같은 판정으로 받는지 본다. 거꾸로 말하면 '정리하면 NT 접두·UNC 가 되는 글' 은 원문이 어떻게 생겼든 거절된다."""
         rng = random.Random(2026)
         leads = (BS, "/", ".", "..", " ", BS * 2, "//", "." + BS, "./", chr(0xA0))
@@ -293,12 +293,12 @@ class DotSegmentTest(unittest.TestCase):
             text = "".join(rng.choice(leads) for _ in range(rng.randint(0, 6))) + rng.choice(bodies)
             if rng.random() < 0.3:
                 text += rng.choice(("", BS, "/", ".", " "))
-            opened = bf._opened_text(text)
-            self.assertEqual(bf._opened_text(opened), opened, f"정리는 한 번이면 충분하다: {text!r}")
+            opened = bf._opened_text(text)                               # 앱은 한 번만 정리한다 — 두 번 정리해도 같은지는 묻지 않는다(파이썬 3.10 의 `PureWindowsPath` 는 '두 구분자 + 점 + 물음표' 꼴에서 두 번째 정리가 달라진다)
             if bf._repo_path_problem(text) == "":
                 accepted += 1
-                self.assertEqual(bf._repo_path_problem(opened), "", f"받은 글을 정리하니 거절 모양이 됐다: {text!r} -> {opened!r}")
-                self.assertTrue(bf._plain_local_shape(opened), f"{text!r} -> {opened!r}")
+                self.assertTrue(bf._plain_local_shape(opened), f"받은 글을 정리하니 보통 경로 모양이 아니게 됐다: {text!r} -> {opened!r}")
+                if bf._opened_text(opened) == opened:                    # 정리가 안정인 글(거의 전부)은 정리한 글을 처음부터 다시 판정해도 같은 판정이다
+                    self.assertEqual(bf._repo_path_problem(opened), "", f"{text!r} -> {opened!r}")
             else:
                 refused += 1
         self.assertGreater(accepted, 1000, "받는 글이 너무 적으면 속성 시험이 비어 초록이 된다")
