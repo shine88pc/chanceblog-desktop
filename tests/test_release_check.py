@@ -12,7 +12,9 @@ import ast
 import importlib.util
 import io
 import json
+import os
 import re
+import subprocess
 import sys
 import unittest
 from contextlib import redirect_stdout
@@ -720,14 +722,6 @@ class Item11Test(RepoCase):
         import packaging_support as ps
         self.assertEqual(rc.SELFTEST_KEYS, ps.SELFTEST_KEYS)
 
-    @unittest.skipUnless(sys.platform == "win32", "윈도 실행 파일의 자가 점검 — 앱이 쓰는 환경에서만 함수로 돌려 본다")
-    @unittest.skipIf(importlib.util.find_spec("PySide6") is not None, "PySide6 가 있으면 자가 점검이 창(오프스크린)을 만든다 — 화면 시험과 한 프로세스에서 섞지 않는다")
-    def test_the_real_selftest_runs_in_process_and_returns_the_twelve_checks_without_a_failure(self):
-        results = rc.run_repo_selftest(ROOT)
-        failed, absent, passed, skipped = rc.summarize_selftest(results)
-        self.assertEqual((failed, absent), ([], []))
-        self.assertEqual(passed + skipped, len(rc.SELFTEST_KEYS))
-
     def test_the_default_runner_loads_the_entry_file_by_path_and_leaves_sys_path_and_bytecode_flag_alone(self):
         before_path, previous = list(sys.path), sys.dont_write_bytecode
         sys.dont_write_bytecode = False                              # 보통 파이썬처럼 .pyc 를 쓰는 상태에서도 쓰지 않는지 본다
@@ -932,6 +926,56 @@ class CommandLineTest(RepoCase):
             code = rc.main(["--root", str(self.root)], selftest_runner=rs.selftest_ok)
         self.assertEqual(code, 0)
         self.assertIn("| 12 |", buffer.getvalue())
+
+
+class EndToEndTest(unittest.TestCase):
+    """진짜 스크립트를 **새 프로세스**로 돌린다 — 열두 점검(`--selftest`)은 그 프로세스 안에서 함수로 불린다. 시험 프로세스에는 앱의 명령줄 모듈이 이미 불려 있을 수 있고
+    열두 점검의 '명령줄 모듈을 불러오지 않았다' 확인이 그것을 실패로 보므로, 진짜 자가 점검은 같은 프로세스에서 돌리지 않는다."""
+
+    def run_script(self, *args, cwd=None):
+        env = {key: value for key, value in os.environ.items() if key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PYTHONDONTWRITEBYTECODE")}       # .pyc 를 쓰는 보통 환경 — 스크립트가 스스로 안 쓰는지 본다
+        env.update(PYTHONUTF8="1")
+        return subprocess.run([sys.executable, "-X", "utf8", str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8", env=env, cwd=cwd, timeout=240)
+
+    def watched(self):
+        return tuple(rs.tree_fingerprint(ROOT / name) for name in ("packaging", "scripts", "src", "docs"))
+
+    @unittest.skipUnless(sys.platform == "win32", "윈도 실행 파일의 자가 점검 — 앱이 쓰는 환경에서만 진짜로 돌려 본다")
+    @unittest.skipIf(importlib.util.find_spec("PySide6") is not None, "PySide6 가 있으면 자가 점검이 오프스크린 창을 만든다 — 화면 시험 환경에서는 건너뛴다")
+    def test_the_real_script_in_its_own_process_runs_the_real_selftest_exits_zero_and_leaves_no_trace(self):
+        before = self.watched()
+        with rs.temp_dir() as elsewhere:
+            done = self.run_script("--json", cwd=elsewhere)
+            leftovers = os.listdir(elsewhere)
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        data = json.loads(done.stdout)
+        self.assertEqual([row["number"] for row in data["rows"]], list(range(1, 13)))
+        row = data["rows"][10]
+        self.assertIn(row["status"], (NOT_YET, MANUAL), row["basis"])
+        self.assertIn("실패 0", row["basis"])
+        self.assertEqual(leftovers, [], "실행한 폴더에 아무것도 만들지 않는다")
+        self.assertEqual(self.watched(), before, "저장소의 packaging·scripts·src·docs 는 한 바이트도 바뀌지 않는다(.pyc 도 안 쓴다)")
+
+    def test_a_candidate_folder_with_a_key_makes_the_real_process_exit_one_and_print_no_key(self):
+        import scan_samples as S
+        import secret_support
+        secret = S.github()
+        with rs.temp_dir() as folder:
+            rs.write_files(folder, {"logs/app.log": f"앞\n{secret}\n", "ok.txt": "글\n"})
+            done = self.run_script("--scan-dir", folder)
+            folder_text = str(folder)
+        self.assertEqual(done.returncode, 1, done.stderr[-600:])
+        self.assertIn("logs/app.log:2 GitHub 토큰", done.stdout)
+        self.assertIn("종료 코드: 1", done.stdout)
+        secret_support.assert_no_secret(self, secret, done.stdout, what="표준 출력")
+        secret_support.assert_no_secret(self, secret, done.stderr, what="표준 오류")
+        self.assertNotIn(folder_text, done.stdout + done.stderr)
+
+    def test_an_unknown_option_is_a_usage_error_exit_code_two_from_the_real_process(self):
+        done = self.run_script("--모르는-옵션")
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(done.stdout, "")
+        self.assertIn("release_check.py", done.stderr)
 
 
 class ReadOnlyTest(RepoCase):
