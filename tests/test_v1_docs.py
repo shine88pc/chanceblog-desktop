@@ -9,6 +9,14 @@ v1.0 시험지 초안(`docs/PERSONAL_PC_TEST_V1_DRAFT.md`)·이관 노트 틀(`d
   4) 릴리스 노트 규칙의 참고 구현(절 고르기)이 실제 CHANGELOG 의 모든 머리 줄을 읽을 수 있고 규칙대로 거절한다. 규칙이 '아직 없다' 고 쓴 스크립트는 정말 없다(생기면 문서를 고치게 한다).
   5) 시험지 초안이 단계·체크 칸·보고 표를 갖추고, 앱 화면 글자와 같은 단추 이름을 부르고, 가짜 키만 쓰고, 승인 전 두 단계를 승인 뒤에만 하라고 적는다.
   6) 이관 노트 틀의 사실이 코드와 같다 — 구조 번호(글 보관함 2·주제 엔진 보관함 2)·오류 이름·백업이 담는/담지 않는 파일.
+
+병합 때 빨개질 수 있는 곳(재작업 — 검증 Q R5) — 정당한 변경이면 시험을 약하게 하지 말고 아래 짝을 함께 고친다:
+  · 화면 글자·연결 용도 이름을 바꾼 갈래(GUI·NET·BLOGGER) → 시험지 초안(PERSONAL_PC_TEST_V1_DRAFT.md)의 같은 글자(PersonalPcTestDraftTest 의 화면 글자 시험).
+  · 잠금 파일·빌드 옵션·시험 조각 수·도구 이름을 바꾼 갈래(INSTALLER·RELEASE) → MIGRATION §6·README 새 PC 절(NewCloneGuideTest — 값은 잠금 파일·ci.yml·소스에서 읽어 견주므로 안내만 같게 고치면 된다).
+  · 구조 번호(판)를 올리거나 백업 구성을 바꾼 갈래(UPDATE 등) → 이관 노트 틀 §5 표(MigrationNotesTemplateTest — 표와 코드의 견줌).
+  · 점검표의 '대기' 행 문장을 고친 갈래 → 그 행을 '고침' 으로(ChecklistTest), VERSION 을 올리는 DOCS(b) → B01 을 '고침' 으로(버전 사실 시험은 B01 이 '고침' 이면 건너뛴다).
+  · 릴리스 워크플로·본문 스크립트·종합 점검 스크립트를 만든 갈래(RELEASE·FINAL) → RELEASE.md 새 절의 표와 '아직 없다' 문장(ReleaseNotesRuleTest).
+  · 결정 행을 더한 모든 갈래 → python scripts/gen_decision_index.py 로 색인을 다시 만든다(test_decision_index 의 최신 시험).
 """
 import ast
 import importlib.util
@@ -151,10 +159,11 @@ class NewCloneGuideTest(unittest.TestCase):
 
     def test_the_lock_file_has_the_two_runtime_lines_the_guide_names(self):
         lock = read("packaging/requirements-package.txt")
-        for line in ("PySide6_Essentials==6.12.0", "shiboken6==6.12.0"):
-            self.assertIn(line, lock)
-            self.assertIn(line.replace("==", " "), self.guide, "안내가 잠금 파일의 버전을 그대로 적는다")
-        self.assertFalse((ROOT / "requirements-dev.txt").exists(), "가이드가 '없다' 고 적은 파일이 생겼다 — 안내를 고친다")
+        for package in ("PySide6_Essentials", "shiboken6"):                    # 재작업(검증 Q R5): 버전 숫자를 이 시험에 적지 않고 잠금 파일에서 읽어 안내와 견준다 — 잠금을 올리는 갈래(INSTALLER)가 안내(MIGRATION §6)만 같은 버전으로 고치면 초록이다
+            found = re.findall(rf"(?m)^{package}==(\S+)\s*$", lock)
+            self.assertEqual(len(found), 1, f"잠금 파일에 {package}== 줄이 정확히 하나여야 한다")
+            self.assertIn(f"{package} {found[0]}", self.guide, f"안내가 잠금 파일의 {package} 버전({found[0]})을 그대로 적는다 — 잠금을 올린 갈래(INSTALLER)는 MIGRATION §6 의 같은 버전도 함께 고친다")
+        self.assertFalse((ROOT / "requirements-dev.txt").exists(), "가이드가 '없다' 고 적은 파일이 생겼다 — 안내를 고친다(INSTALLER 갈래가 만들었다면 MIGRATION §6·README 새 PC 절)")
         self.assertIn("`requirements-dev.txt` 가 **없다**", self.guide)
 
     def test_the_only_outside_package_the_app_code_imports_is_pyside6(self):
@@ -314,9 +323,11 @@ class ChecklistTest(unittest.TestCase):
         self.assertIn("`security/scan.py`", rows["G04"][2])
 
     def test_the_version_facts_the_checklist_relies_on_are_true(self):
-        self.assertIn("preview", read("VERSION"), "VERSION 이 미리보기 버전이 아니게 됐다 — 점검표 B01 을 '고침' 으로")
-        packaging_support = read("tests/packaging_support.py")
-        self.assertIn('VERSION = "0.1.0-preview.1"', packaging_support, "B01 이 말한 시험 상수가 달라졌다")
+        b01_status = next(row[-1] for row in self.rows if row[1] == "B01")
+        if b01_status == "대기":                           # 재작업(검증 Q R5): 1.0.0 으로 올리기 전의 사실만 지킨다 — DOCS(b) 가 B01 을 '고침' 으로 바꾸면 건너뛴다('고침' 행은 조각이 없어야 한다는 시험이 대신 지킨다)
+            self.assertIn("preview", read("VERSION"), "VERSION 이 미리보기 버전이 아니게 됐다 — 점검표 B01 을 '고침' 으로")
+            packaging_support = read("tests/packaging_support.py")
+            self.assertIn('VERSION = "0.1.0-preview.1"', packaging_support, "B01 이 말한 시험 상수가 달라졌다")
         changelog_head = re.search(r"^## \[([^\]]+)\]", read("CHANGELOG.md"), re.M).group(1)
         self.assertEqual(changelog_head, read("VERSION").strip())
 
@@ -429,9 +440,9 @@ class ReleaseNotesRuleTest(unittest.TestCase):
         notes_row = next(row for row in rows if "Release 본문" in row)
         check_row = next(row for row in rows if "후보 빌드" in row)
         workflows = [path.name.lower() for path in (ROOT / ".github" / "workflows").glob("*.y*ml")]
-        self.assertEqual("**없음**" in tag_row, not any("release" in name for name in workflows), "릴리스 워크플로가 생겼거나 없어졌는데 표의 태그 줄이 그대로다")
-        self.assertEqual("**없음**" in notes_row, not (ROOT / "scripts" / "release_notes.py").exists(), "본문 만드는 스크립트가 생겼거나 없어졌는데 표의 본문 줄이 그대로다")
-        self.assertEqual("**없음**" in check_row, not (ROOT / "scripts" / "release_check.py").exists(), "종합 점검 스크립트가 생겼거나 없어졌는데 표의 점검 줄이 그대로다")
+        self.assertEqual("**없음**" in tag_row, not any("release" in name for name in workflows), "릴리스 워크플로가 생겼거나 없어졌는데 표의 태그 줄이 그대로다 — 워크플로를 만든 갈래(RELEASE)가 RELEASE.md 새 절 4 의 표를 '있음' 으로 고친다")
+        self.assertEqual("**없음**" in notes_row, not (ROOT / "scripts" / "release_notes.py").exists(), "본문 만드는 스크립트가 생겼거나 없어졌는데 표의 본문 줄이 그대로다 — 스크립트를 만든 갈래(RELEASE)가 표와 3 의 3 문장을 고친다")
+        self.assertEqual("**없음**" in check_row, not (ROOT / "scripts" / "release_check.py").exists(), "종합 점검 스크립트가 생겼거나 없어졌는데 표의 점검 줄이 그대로다 — 만든 갈래(FINAL)가 표와 점검표 3번 표의 '아직 없다' 문장을 고친다")
         self.assertIn("VersionTest", table)
         self.assertTrue((ROOT / "tests" / "test_repo_layout.py").is_file() and "class VersionTest" in read("tests/test_repo_layout.py"))
 
@@ -537,12 +548,13 @@ class PersonalPcTestDraftTest(unittest.TestCase):
                   "연결 안 됨 — 키 없이도 쓸 수 있어요")
         for label in labels:
             with self.subTest(label=label):
-                self.assertIn(label, real, f"시험지 초안이 부르는 '{label}' 이 앱의 화면 글자에 없다")
+                self.assertIn(label, real, f"시험지 초안이 부르는 '{label}' 이 앱의 화면 글자에 없다 — 화면 글자를 바꾼 갈래(GUI·NET·BLOGGER)가 시험지 초안(PERSONAL_PC_TEST_V1_DRAFT.md)의 같은 글자도 함께 고친다")
                 self.assertIn(label, self.text, label)
         purpose = connections.PURPOSES["ai_assist"]
-        self.assertEqual(purpose.label, "AI 보조(선택)")
-        self.assertEqual([field.label for field in purpose.fields], ["API 키"])
-        self.assertEqual(connections.PURPOSES["naver_apihub"].label, "NAVER API HUB 검색어 트렌드")
+        hint = "연결 용도 이름을 바꾼 갈래(NET·BLOGGER)가 시험지 초안의 같은 이름도 함께 고친다"
+        self.assertEqual(purpose.label, "AI 보조(선택)", hint)
+        self.assertEqual([field.label for field in purpose.fields], ["API 키"], hint)
+        self.assertEqual(connections.PURPOSES["naver_apihub"].label, "NAVER API HUB 검색어 트렌드", hint)
         for needle in ("`AI 보조(선택)` 카드", "`API 키`", "NAVER API HUB 검색어 트렌드"):
             self.assertIn(needle, self.text, needle)
         self.assertIn("이미 열려 있거나 열리는 중이에요", read("src/chanceblog_desktop/ui/single_instance.py") + read("src/chanceblog_desktop/ui/launcher.py") + "".join(real))
@@ -633,8 +645,8 @@ class MigrationNotesTemplateTest(unittest.TestCase):
         engine_row = next(row for row in rows if "`topic_engine/topic_engine.db`" in row)
         for label, row, version in (("글 보관함", store_row, content_store.SCHEMA_VERSION), ("주제 엔진 보관함", engine_row, topic_store.SCHEMA_VERSION)):
             cells = [cell.strip() for cell in row.strip("|").split("|")]
-            self.assertEqual(cells[3], str(version), f"{label}: 이관 노트 틀 §5 표의 '지금 판' 이 코드의 구조 번호와 다르다 — 표를 고친다")
-        self.assertEqual((content_store.SCHEMA_VERSION, topic_store.SCHEMA_VERSION), (2, 2))
+            self.assertEqual(cells[3], str(version), f"{label}: 이관 노트 틀 §5 표의 '지금 판' 이 코드의 구조 번호와 다르다 — 판을 올린 갈래(UPDATE 등)가 표의 이 칸을 같은 번호로 고친다")
+            self.assertGreaterEqual(version, 2, f"{label}: 구조 번호가 이 틀을 쓴 때의 2 보다 낮아졌다(내려간 적이 없다)")      # 재작업(검증 Q R5): 위 표-코드 비교와 겹치던 리터럴 (2, 2) 대신 아래쪽 한계만 둔다
 
     def test_the_error_names_exist_in_the_error_catalog_and_the_troubleshooting_table(self):
         trouble = read("docs/TROUBLESHOOTING.md")
@@ -662,7 +674,7 @@ class MigrationNotesTemplateTest(unittest.TestCase):
                 kept_in_table |= names
             elif cells[5].startswith("담지 않는다"):
                 left_out_in_table |= names
-        self.assertEqual(kept_in_table, kept, "표가 '담는다' 로 적은 파일이 백업 코드의 목록(COMPONENTS)과 다르다")
+        self.assertEqual(kept_in_table, kept, "표가 '담는다' 로 적은 파일이 백업 코드의 목록(COMPONENTS)과 다르다 — 백업 구성을 바꾼 갈래(UPDATE 등)가 이관 노트 틀 §5 표도 함께 고친다")
         self.assertEqual(left_out_in_table & kept, set(), "표가 '담지 않는다' 로 적은 파일을 백업이 담고 있다")
         for name in ("connections.json", "quota_state.json"):
             self.assertIn(name, left_out_in_table, name)
