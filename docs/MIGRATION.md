@@ -165,7 +165,7 @@ git status --short
 - 새 PowerShell 창에서, 작업 트리가 깨끗한 상태로 한다(`git status --short` 가 비어 있어야 한다. 커밋하지 않은 변경·새 파일이 있거나 `src`·`vendor`·`packaging` 안에 git 이 무시하는 파일이 있으면 빌드가 아무것도 만들지 않고 멈춘다).
 - 결과는 `dist\package\release` 에 네 파일이다: 압축 파일(`ChanceBlogDesktop-<VERSION>-win64.zip`)·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json`. 빌드는 끝에 묶음 실행 파일의 `--selftest` 12항목이 모두 통과해야 압축 파일을 만든다. 옵션 `--out-dir`·`--skip-scan`·`--allow-missing-gate` 는 [`PACKAGE.md`](PACKAGE.md) §2 에 있다(`--allow-missing-gate` 는 시험 빌드 전용이라 쓰지 않는다).
 - 멈추면 `빌드를 멈췄어요: …` 한 문장이 나오고 종료 코드가 2 이다. 문장 읽는 법은 [`PACKAGE.md`](PACKAGE.md) 의 '실패 문장 읽는 법'.
-- **확인 못 함**: 로컬 빌드는 이 절을 쓰면서 돌리지 않았다(PyInstaller 를 설치하지 않았다). 같은 순서를 GitHub Actions 의 수동 빌드가 2026-11-13 에 한 번 성공했고 운영자가 개인 PC 에서 시험지 0–6 단계를 통과했다(블로그 저장소 이슈 #190 — 그 뒤 앱 소스가 많이 바뀌어 새 빌드의 재시험이 필요하다).
+- **확인 못 함**: 로컬 빌드는 이 절을 쓰면서 돌리지 않았다(PyInstaller 를 설치하지 않았다). 같은 순서로 GitHub Actions 의 수동 빌드가 만든 묶음을 운영자가 2026-11-13 에 개인 PC 에서 시험지로 한 번 시험해 보고했다(블로그 저장소 이슈 #190 — 그 보고로 고친 것이 CHANGELOG 의 SINGLEWIN 줄이다). 그 뒤 앱 소스가 많이 바뀌어 새 빌드로 다시 시험해야 한다.
 
 방법 둘(PC 에 도구를 깔지 않고): GitHub 의 `Actions` 탭 → `Package — 개인 PC 제한 시험용 빌드(수동)` → `Run workflow` 는 **운영자가 직접 누른다**(AI 는 워크플로를 실행하지 않는다). 끝난 실행의 `Artifacts` 에서 받는 법은 [`PERSONAL_PC_TEST.md`](PERSONAL_PC_TEST.md) 0-0 에 있다(보관 14일).
 

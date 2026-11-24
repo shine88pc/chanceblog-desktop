@@ -40,9 +40,22 @@ def read(rel):
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
+NEXT_SECTION = chr(10) + "## "                            # 다음 `## ` 절의 머리(앞 줄바꿈 포함)
+
+
 def part(text, start, end=None):
-    """`start` 로 시작하는 줄부터 `end` 로 시작하는 다음 줄 앞(또는 끝)까지. 없으면 시험이 실패한다."""
+    """`start` 로 시작하는 줄부터 `end` 로 시작하는 다음 줄 앞(또는 끝)까지. 없으면 시험이 실패한다.
+    `end` 가 NEXT_SECTION 이면 다음 `## ` 절 앞까지이고 그런 절이 없으면 문서 끝까지다 — 이 묶음이 끝에 덧붙인 절을 읽을 때 쓴다(다른 갈래가 그 뒤에 새 절을 덧붙여도 그 글은 읽지 않는다)."""
     first = text.index(start)
+    if end == NEXT_SECTION:
+        lines = text[first:].split(chr(10))
+        fenced = False
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("```"):                     # 코드 블록 안의 `## ` 줄(틀의 예)은 절의 머리가 아니다
+                fenced = not fenced
+            elif index > 0 and not fenced and line.startswith("## "):
+                return chr(10).join(lines[:index]) + chr(10)
+        return text[first:]
     last = text.index(end, first + len(start)) if end else len(text)
     return text[first:last]
 
@@ -56,9 +69,9 @@ def clean(testcase, text, name=""):
 
 class HygieneTest(unittest.TestCase):
     ADDED = {
-        "README.md 새 PC 절": ("README.md", "## 새 PC 에서 처음부터 — 개발자 시작 순서", None),
-        "MIGRATION.md §6": ("docs/MIGRATION.md", "## 6. 새 clone 에서 처음부터", None),
-        "RELEASE.md 릴리스 노트 규칙": ("docs/RELEASE.md", "## 릴리스 노트 규칙", None),
+        "README.md 새 PC 절": ("README.md", "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION),
+        "MIGRATION.md §6": ("docs/MIGRATION.md", "## 6. 새 clone 에서 처음부터", NEXT_SECTION),
+        "RELEASE.md 릴리스 노트 규칙": ("docs/RELEASE.md", "## 릴리스 노트 규칙", NEXT_SECTION),
     }
 
     def test_the_new_documents_and_the_added_sections_have_no_tilde_no_web_address_and_no_double_braces(self):
@@ -98,14 +111,13 @@ class HygieneTest(unittest.TestCase):
 
 class NewCloneGuideTest(unittest.TestCase):
     def setUp(self):
-        self.guide = part(read("docs/MIGRATION.md"), "## 6. 새 clone 에서 처음부터")
+        self.guide = part(read("docs/MIGRATION.md"), "## 6. 새 clone 에서 처음부터", NEXT_SECTION)
 
     def test_the_guide_has_the_five_subsections_and_says_honestly_what_was_not_checked(self):
         for heading in ("### 6-1. 준비물", "### 6-2. 순서", "### 6-3. 지금 상태", "### 6-4. 도구 표", "### 6-5. 막혔을 때"):
             self.assertIn(heading, self.guide, heading)
-        for needle in ("새 PC 에서 처음부터 끝까지 따라 해 본 기록은 아직 없다", "확인 못 함", "설치 명령은 이 절을 쓰면서 실행하지 않았다", "PYTHONPATH", "저장소 **밖**"):
+        for needle in ("이 절을 어떻게 확인했나", "PYTHONPATH", "저장소 **밖**"):               # 확인 상태의 문장 자체('아직 없다'·'확인 못 함')는 점검표 A15·A16 이 고칠 때 바뀌므로 못박지 않는다
             self.assertIn(needle, self.guide, needle)
-        self.assertGreaterEqual(self.guide.count("확인 못 함"), 4)
 
     def test_every_command_and_option_the_guide_names_exists_in_the_sources(self):
         launcher = read("src/chanceblog_desktop/ui/launcher.py")
@@ -125,6 +137,17 @@ class NewCloneGuideTest(unittest.TestCase):
             with self.subTest(file=rel):
                 self.assertTrue((ROOT / rel).is_file())
                 self.assertIn(Path(rel).name, self.guide, "도구 표나 순서에 이 파일 이름이 있어야 한다")
+
+    def test_every_option_word_in_the_guide_and_the_readme_summary_is_a_real_option_of_this_repository_or_of_a_named_outside_tool(self):
+        sources = "".join(read(rel) for rel in ("src/chanceblog_desktop/ui/launcher.py", "packaging/build_package.py", "scripts/ci_shard.py", "scripts/sync_errors.py", "scripts/sync_core.py",
+                                                  "packaging/gui_entry.py", "scripts/gen_decision_index.py"))
+        known = set(re.findall(r'"(--[a-z][a-z-]+)"', sources))
+        outside = {"--help", "--require-hashes", "--dry-run", "--short"}          # 이 저장소의 도구가 아니라 pip·git 의 옵션이거나 모든 명령의 도움말
+        readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION)
+        for name, text in (("MIGRATION §6", self.guide), ("README 새 PC 절", readme)):
+            used = set(re.findall(r"--[a-z][a-z-]+", text))
+            self.assertEqual(used - known - outside, set(), f"{name}: 소스에 없는 옵션 이름 — 오타이거나 옵션이 바뀌었다")
+        self.assertTrue({"--sample", "--data-dir", "--check", "--list", "--selftest", "--out-dir", "--skip-scan", "--allow-missing-gate"} <= known)
 
     def test_the_lock_file_has_the_two_runtime_lines_the_guide_names(self):
         lock = read("packaging/requirements-package.txt")
@@ -152,12 +175,11 @@ class NewCloneGuideTest(unittest.TestCase):
         self.assertIn("앱 코드가 쓰는 바깥 패키지는 PySide6 하나뿐", self.guide)
 
     def test_the_readme_summary_runs_the_same_steps_as_the_guide(self):
-        readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서")
+        readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION)
         for command in ("git clone", "python -m venv ..\\chanceblog-venv", "-m pip install -r packaging/requirements-package.txt", "chanceblog_desktop --help", "scripts/ci_shard.py 1 3",
                         "chanceblog_desktop gui --sample", "packaging/build_package.py"):
             self.assertIn(command, readme, command)
         self.assertIn("docs/MIGRATION.md", readme)
-        self.assertIn("설치 파일은 아직 없습니다", readme, "v1.0 올릴 때 고칠 문장 — V1_RELEASE_CHECKLIST A09")
 
 
 class ChecklistTest(unittest.TestCase):
@@ -273,7 +295,7 @@ SAMPLE_CHANGELOG = """# 변경 이력
 
 class ReleaseNotesRuleTest(unittest.TestCase):
     def setUp(self):
-        self.rule = part(read("docs/RELEASE.md"), "## 릴리스 노트 규칙")
+        self.rule = part(read("docs/RELEASE.md"), "## 릴리스 노트 규칙", NEXT_SECTION)
 
     def test_the_reference_implementation_picks_the_section_the_rule_describes(self):
         head, body = release_section(SAMPLE_CHANGELOG, "1.0.0")
@@ -302,18 +324,35 @@ class ReleaseNotesRuleTest(unittest.TestCase):
         self.assertGreater(len(body), 0)
 
     def test_the_section_states_the_rule_and_marks_every_outside_tool_fact_as_needing_confirmation(self):
-        for needle in ("정본은 `CHANGELOG.md` 의 `## [X.Y.Z] — 날짜` 절이다", "### 요약", "### 자세히", "### 이관 노트", "20,000자", "정확히 하나", "다음 `## [` 줄 앞까지",
+        for needle in ("정본은 `CHANGELOG.md` 의 `## [X.Y.Z] — 날짜` 절이다", "### 요약", "### 자세히", "### 이관 노트", "20,000자", "정확히 하나", "**20,000자 이하**", "다음 `## [` 줄 앞까지",
                        "글자 그대로 같아야 한다", "초안 릴리스", "Publish release", "`vX.Y.Z`", "확인 C", "MIGRATION_NOTES_TEMPLATE.md", "V1_RELEASE_CHECKLIST.md"):
             self.assertIn(needle, self.rule, needle)
-        self.assertGreaterEqual(self.rule.count("확인 필요"), 5)
-        self.assertIn("이 절은 설계다 — 아직 아무것도 구현하지 않았다", self.rule)
         self.assertIn("| `VERSION` = `CHANGELOG.md` 맨 위 절의 버전 |", self.rule)
+
+    def test_every_line_that_states_an_outside_tool_fact_says_it_is_not_confirmed(self):
+        keywords = ("본문 한도", "본문 길이 한도", "--notes-file", "태그 생성 시점", "불변 릴리스", "자동 생성")
+        lines = [line for line in self.rule.splitlines() if any(word in line for word in keywords)]
+        self.assertGreaterEqual(len(lines), 5)
+        for line in lines:
+            self.assertTrue("확인 필요" in line or "원문 대조 필요" in line, f"바깥 도구의 사실을 확인 필요 표시 없이 적었다: {line[:60]}")
 
     def test_the_four_things_that_must_match_are_either_tested_today_or_marked_as_missing(self):
         table = part(self.rule, "### 4. 같아야 하는 것들", "### 5.")
         rows = [line for line in table.splitlines() if line.startswith("| ") and not line.startswith("| 같아야")]
         self.assertEqual(len(rows), 6)
-        self.assertEqual(len([row for row in rows if "**없음**" in row]), 3, "아직 없는 것(태그 일치·본문 일치·종합 점검)은 '없음' 이라고 적는다")
+        for row in rows:
+            cells = [cell.strip() for cell in row.strip("|").split("|")]
+            self.assertEqual(len(cells), 3, row)
+            if "**없음**" in cells[2]:
+                self.assertIn("갈래", cells[2], "아직 없는 것은 어느 갈래의 몫인지 적는다")
+        self.assertGreaterEqual(len([row for row in rows if "있음" in row]), 1)
+        tag_row = next(row for row in rows if "태그 이름" in row)
+        notes_row = next(row for row in rows if "Release 본문" in row)
+        check_row = next(row for row in rows if "후보 빌드" in row)
+        workflows = [path.name.lower() for path in (ROOT / ".github" / "workflows").glob("*.y*ml")]
+        self.assertEqual("**없음**" in tag_row, not any("release" in name for name in workflows), "릴리스 워크플로가 생겼거나 없어졌는데 표의 태그 줄이 그대로다")
+        self.assertEqual("**없음**" in notes_row, not (ROOT / "scripts" / "release_notes.py").exists(), "본문 만드는 스크립트가 생겼거나 없어졌는데 표의 본문 줄이 그대로다")
+        self.assertEqual("**없음**" in check_row, not (ROOT / "scripts" / "release_check.py").exists(), "종합 점검 스크립트가 생겼거나 없어졌는데 표의 점검 줄이 그대로다")
         self.assertIn("VersionTest", table)
         self.assertTrue((ROOT / "tests" / "test_repo_layout.py").is_file() and "class VersionTest" in read("tests/test_repo_layout.py"))
 
@@ -386,7 +425,7 @@ class PersonalPcTestDraftTest(unittest.TestCase):
                 self.assertIn(f"**{row_id}.", self.text, f"보고 표의 {row_id} 에 해당하는 단계 글이 없다")
 
     def test_the_two_real_service_steps_wait_for_approval_and_login_goes_only_into_the_companys_own_window(self):
-        for needle in ("9단계(GitHub)와 10단계(Google)뿐", "번호 있는 요청에서 승인한 뒤에만", "승인 전", "그 회사의 로그인 창에만", "앱·이 시험지·보고·사진·AI 대화창 어디에도 적지 않습니다"):
+        for needle in ("0단계의 릴리스 화면(GitHub", "9단계(GitHub)·10단계(Google)뿐", "번호 있는 요청에서 승인한 뒤에만", "승인 전", "그 회사의 로그인 창에만", "앱·이 시험지·보고·사진·AI 대화창 어디에도 적지 않습니다"):
             self.assertIn(needle, self.text, needle)
         step9 = part(self.text, "## 9단계.", "## 10단계.")
         step10 = part(self.text, "## 10단계.", "## 11단계.")
@@ -476,6 +515,12 @@ class MigrationNotesTemplateTest(unittest.TestCase):
             self.assertIn(code, CATALOG, code)
             self.assertIn(f"| `{code}` |", trouble, code)
 
+    def test_every_error_like_name_in_the_template_is_a_real_error_code_or_a_known_file_or_constant_name(self):
+        names = set(re.findall(r"(?<![A-Za-z0-9_])[A-Z]{2,}(?:_[A-Z0-9]+)+(?![A-Za-z0-9_])", self.text))
+        other = {"MIGRATION_NOTES", "DECISIONS_INDEX", "SCHEMA_VERSION"}            # 파일 이름·소스 상수 이름(오류 코드가 아니다)
+        self.assertEqual({name for name in names if name not in other and name not in CATALOG}, set(), "오류 이름의 오타이거나 없어진 코드")
+        self.assertTrue({"MIGRATION_FAILED", "MIGRATION_BLOCKED", "STORE_VERSION_UNSUPPORTED", "STORE_CORRUPT"} <= names)
+
     def test_what_the_template_says_the_full_backup_keeps_and_leaves_out_is_what_the_backup_code_does(self):
         table = part(self.text, "## 5. 사용자 데이터가 어디에 있나", "## 6.")
         kept = {component.name for component in backup_flow.COMPONENTS}
@@ -497,7 +542,7 @@ class MigrationNotesTemplateTest(unittest.TestCase):
         self.assertNotIn("references", kept)
 
     def test_it_says_that_a_lower_version_does_not_open_newer_data_and_that_keys_live_outside_the_data(self):
-        for needle in ("낮은 버전이 열지 않는다", "올리기 전에 만든 백업을 복원", "Windows 자격 증명 관리자", "Credential 제외됨", "한 바이트도 바꾸지 않는다", "같은 사실", "확인 못 함"):
+        for needle in ("낮은 버전이 열지 않는다", "올리기 전에 만든 백업을 복원", "Windows 자격 증명 관리자", "Credential 제외됨", "한 바이트도 바꾸지 않는다", "같은 사실"):
             self.assertIn(needle, self.text, needle)
         self.assertIn("STORE_VERSION_UNSUPPORTED", self.text)
 

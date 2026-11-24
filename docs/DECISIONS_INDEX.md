@@ -7,7 +7,7 @@
 
 ## 쓰는 법
 
-- **번호를 알 때** — 그 행 전문(한 행이 아주 길 수 있다)은 PowerShell 에서 `Select-String -Encoding utf8 -Path docs/DECISIONS.md -Pattern '^\| D-475 \|' | ForEach-Object {$_.Line}`, 다른 쉘에서는 `grep -n '^| D-475 |' docs/DECISIONS.md`. 앞 160자만 보려면 AGENTS.md 의 마지막 10행 명령처럼 `Substring` 으로 자른다.
+- **번호를 알 때** — 그 행 전문(한 행이 아주 길 수 있다)은 PowerShell 에서 `Select-String -Encoding utf8 -Path docs/DECISIONS.md -Pattern '^\| D-343 \|' | ForEach-Object {$_.Line}`, 다른 쉘에서는 `grep -n '^| D-343 |' docs/DECISIONS.md`. 앞 160자만 보려면 AGENTS.md 의 마지막 10행 명령처럼 `Substring` 으로 자른다.
 - **주제만 알 때** — 이 파일에서 낱말로 찾는다(`Select-String -Path docs/DECISIONS_INDEX.md -Pattern '백업'`). 요약에 없으면 `DECISIONS.md` 전체 검색이 필요하다.
 - **가장 최근** — 맨 아래 표가 가장 큰 번호들이다. 지금 진행 중인 일은 이 색인이 아니라 `AGENTS.md` §0 이 알려 주는 곳에서 읽는다.
 

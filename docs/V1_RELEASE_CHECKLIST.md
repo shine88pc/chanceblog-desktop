@@ -26,14 +26,15 @@
 | A06 | `README.md:129` | `화면은 아직 일부뿐입니다` | 화면 목록을 릴리스 때의 화면 범위로 다시 적는다 | — | GUI | 대기 |
 | A07 | `README.md:129` | `사이드바의 흐린 '다음 단계' 목록에 이름만 보이고 누를 수 없습니다` | 발행 기록 화면이 메뉴로 올라온 사실로(GUI 갈래가 만들지 않으면 그대로 둔다) | — | GUI | 대기 |
 | A08 | `README.md:39` | `초안을 쓰는 일은 아직 없습니다` | **이미 낡았다**: 같은 문서의 `draft body`(규칙 기반 초안 본문) 설명과 어긋난다. '네이버 검색 데이터를 모으는 일(키가 필요합니다)은 아직 없습니다' 로 줄인다 | — | DOCS(b) | 대기 |
-| A09 | `README.md:165` | `**설치 파일은 아직 없습니다**` | 새 PC 절(2026-11-24 에 덧붙인 것)의 첫머리를 '설치 파일로 설치하는 길' 안내와 '소스로 실행하는 개발자용' 으로 나눠 바꾼다 | — | DOCS(b) | 대기 |
-| A10 | `README.md:180` | `새 PC 에서 처음부터 끝까지 따라 해 본 기록은 아직 없습니다` | 운영자나 새 clone 검증자가 따라 해 본 날짜와 결과를 적는다(해 보지 않았다면 이 문장을 그대로 둔다) | — | FINAL | 대기 |
+| A09 | `README.md:168` | `**설치 파일은 아직 없습니다**` | 새 PC 절(2026-11-24 에 덧붙인 것)의 첫머리를 '설치 파일로 설치하는 길' 안내와 '소스로 실행하는 개발자용' 으로 나눠 바꾼다 | — | DOCS(b) | 대기 |
+| A10 | `README.md:183` | `새 PC 에서 처음부터 끝까지 따라 해 본 기록은 아직 없습니다` | 운영자나 새 clone 검증자가 따라 해 본 날짜와 결과를 적는다(해 보지 않았다면 이 문장을 그대로 둔다) | — | FINAL | 대기 |
 | A11 | `README.md:150` | `개인 PC 제한 시험용 Package 만들기(개발자용)와 운영자가 개인 PC 에서 해 보는 시험지` | 문서 표의 이 줄을 휴대용 Package 만들기(개발자용)와 릴리스 시험지로 | test_docs_entrance(표에 문서 이름이 있는지만 본다) | DOCS(b) | 대기 |
 | A12 | `AGENTS.md:7` | `지금은 다음 PC(개인 PC 또는 빈 공용 PC — 운영자 확인 대기)로의 이전을 준비 중이다` | PC 이전이 끝났거나 정해진 사실로(릴리스와 별개 — 이전이 끝나면 고친다) | test_docs_entrance(AGENTS 단언) | 총괄 | 대기 |
 | A13 | `docs/MIGRATION.md:5` | `다음 PC(개인 PC 또는 빈 공용 PC — 운영자 확인 대기)로의 이전을 준비하고 있다` | 같은 사실로(위 A12 와 함께) | — | 총괄 | 대기 |
 | A14 | `docs/MIGRATION.md:1` | `# 회사 PC → 개인 PC 이관과 새 PC 준비` | 제목이 처음 이관만 말한다. 새 PC 마다 쓰는 문서이니 '새 PC 준비와 이관' 처럼(README 문서 표의 설명도 함께) | test_repo_layout(문서가 있는지만 본다) | DOCS(b) | 대기 |
 | A15 | `docs/MIGRATION.md:176` | `설치 파일(Setup)·자동 업데이트·시작 메뉴·제거 프로그램이 아직 없다` | §6-3 알려 둔 한계를 설치 도구 결정 뒤의 사실로(설치형·휴대용의 차이 표) | — | INSTALLER·DOCS(b) | 대기 |
 | A16 | `docs/MIGRATION.md:62` | `새 PC 에서 처음부터 끝까지 따라 해 본 기록은 아직 없다` | §6 머리말을 따라 해 본 날짜와 결과로(위 A10 과 함께) | — | FINAL | 대기 |
+| A17 | `README.md:87` | `초안 문장은 아직 만들지 않습니다` | **이미 낡았다**(A08 과 같은 뿌리): 작성 기반(`draft plan`)은 뼈대만 만들고 초안 문장은 아래의 `draft body` 가 규칙으로 만든다고 적는다 | — | DOCS(b) | 대기 |
 
 ### 2-2. 버전·변경 이력
 
@@ -86,13 +87,13 @@
 
 | 번호 | 파일:줄 | 찾는 조각 | 바꿀 문장 초안 | 같이 볼 시험 | 담당 | 상태 |
 |---|---|---|---|---|---|---|
-| E01 | `src/chanceblog_desktop/ui/core/version.py:6` | `개인 PC 제한 시험용, 미서명 Package` | 화면 '정보' 카드의 안내 한 줄을 v1.0 의 사실(설치형·휴대용·서명 여부)로 | test_ui_c1a_core·test_packaging_version_info·test_packaging_common | INSTALLER·RELEASE | 대기 |
+| E01 | `src/chanceblog_desktop/ui/core/version.py:6` | `개인 PC 제한 시험용, 미서명 Package` | 화면 '정보' 카드의 안내 한 줄을 v1.0 의 사실(설치형·휴대용·서명 여부)로 | test_packaging_version_info·test_packaging_common | INSTALLER·RELEASE | 대기 |
 | E02 | `packaging/pkgcommon.py:16` | `personal-pc-preview` | 묶음 정보의 채널 이름(`PACKAGE_INFO.json` 의 channel)을 정식 채널 이름으로. 화면의 `version.py` 와 같은 값이어야 한다(시험이 지킨다) | test_packaging_common·test_packaging_manifest·test_packaging_version_info | INSTALLER·RELEASE | 대기 |
 | E03 | `packaging/pkgcommon.py:17` | `개인 PC 제한 시험용, 미서명 Package` | 묶음 정보·윈도 버전 정보의 안내 문구(NOTICE) | test_packaging_common·test_packaging_manifest·test_packaging_qt | INSTALLER·RELEASE | 대기 |
 | E04 | `packaging/make_manifest.py:63` | `공개 배포용이 아닙니다. 앱 자체의 라이선스는 아직 정해지지 않았습니다` | 라이선스 결정(확인 C) 뒤의 사실로 | test_packaging_manifest | DOCS(b) | 대기 |
 | E05 | `packaging/make_manifest.py:463` | `정식 0.1.0 이 아닙니다` | 정식 판이면 이 설명 줄을 지우거나 바꾼다 | test_packaging_manifest | DOCS(b) | 대기 |
-| E06 | `src/chanceblog_desktop/ui/core/text.py:97` | `이 시험 버전은 글을 GitHub 에 올리지 않아 Git 로그인도 안 써요` | 외부 게시를 켠 범위에 맞는 안내 글로(`nokey_note_off`) | test_external_write_gate·test_service_keys_cli | PUBPR | 대기 |
-| E07 | `src/chanceblog_desktop/ui/core/text.py:99` | `이 시험 버전은 Blogger 로 글을 보내지 않아요` | Blogger 를 연 뒤의 안내 글로(`purpose_blogger_off`) | test_external_write_gate | BLOGGER | 대기 |
+| E06 | `src/chanceblog_desktop/ui/core/text.py:97` | `이 시험 버전은 글을 GitHub 에 올리지 않아 Git 로그인도 안 써요` | 외부 게시를 켠 범위에 맞는 안내 글로(`nokey_note_off`) | test_ui_settings·test_ui_qt_keys | PUBPR | 대기 |
+| E07 | `src/chanceblog_desktop/ui/core/text.py:99` | `이 시험 버전은 Blogger 로 글을 보내지 않아요` | Blogger 를 연 뒤의 안내 글로(`purpose_blogger_off`) | test_blogger_input_off·test_ui_qt_settings | BLOGGER | 대기 |
 
 ### 2-6. 워크플로 (`.github/` — T3 라서 운영자 승인 뒤에만)
 
