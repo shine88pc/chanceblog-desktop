@@ -1,0 +1,915 @@
+"""접속 틀 클라이언트(`net/client.py`) 시험 — 가짜 전송기(소켓 모양, 소켓은 한 번도 열리지 않는다)로 NET 설계서의 NT-13·NT-17·NT-19–NT-30·NT-32·NT-35–NT-38 을 확인한다(D-728에서 D-731).
+
+지키는 것:
+  1) 관문이 접속 코드의 첫 문장이고, 스위치가 꺼져 있으면 전송기를 한 번도 부르기 전에 거절한다(NT-13·17).
+  2) 호스트·길·질의 표가 설계서와 정확히 같다(NT-19). 보낸 바이트는 용도별 고정 모양과 바이트 단위로 같다(NT-20). 호스트·포트·스킴·사용자 정보·닮은 이름·표 밖 모양은 연결 **전에** 거절한다(NT-21·22·23).
+  3) 이동은 기본 거절이고 허용 용도만 호스트·https·횟수가 제한된다(NT-24). 큰 응답·압축된 응답·느린 응답을 막는다(NT-25·26·27). 모든 실패는 카탈로그 코드가 되고 주소·서버 글이 없다(NT-28).
+  4) 자체 재시도 0(NT-29), 쿨다운(NT-30), 보낸 뒤 실패만 `outcome_unknown`(NT-37), 접속 기록의 칸(NT-38), 카나리가 어디에도 새지 않음(NT-32), 응답이 닿는 곳의 표(NT-35), 틀린 응답은 아무것도 남기지 않음(NT-36).
+네트워크 없이 돈다(`Tripwire` 가 바깥 호출을 막는 안에서 돈다).
+"""
+import ast
+import contextlib
+import dataclasses
+import hashlib
+import http.client
+import io
+import re
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import net_support as ns  # noqa: E402
+import outgoing_support as og  # noqa: E402
+
+from chanceblog_desktop import capabilities  # noqa: E402
+from chanceblog_desktop.errors import CATALOG, AppError  # noqa: E402
+from chanceblog_desktop.net import client, endpoints, errors, parse, usage  # noqa: E402
+from chanceblog_desktop.publish import gitrepo  # noqa: E402
+
+SRC = HERE.parent / "src" / "chanceblog_desktop"
+HOST_UPDATE = "github.com"
+UPDATE_PATH = "/own/app/releases/latest/download/update-manifest.json"
+UPDATE_URL = f"https://{HOST_UPDATE}{UPDATE_PATH}"
+SITE = f"{gitrepo.EXPECTED_OWNER.lower()}.github.io"
+SITE_URL = f"https://{SITE}/blog/posts.json?cb=app"
+BLOG = "https://www.googleapis.com/blogger/v3/blogs/123456"
+JSON = [("Content-Type", "application/json")]
+OK_JSON = ns.http_response(200, headers=JSON, body=b'{"id": "1"}')
+ALL_SWITCHES = ns.ALL_NET_SWITCHES
+
+
+def run(test, response, use="update_check", url=UPDATE_URL, *, method="GET", switches=None, harness=None, **kwargs):
+    """가짜 전송기로 요청 하나 — (환경, 응답) 을 돌려준다. 접속 차단 장치 안에서 돈다(소켓이 한 번이라도 열리면 빨개진다)."""
+    switches = ns.USE_SWITCHES[use] if switches is None else switches
+    env = harness or ns.Harness(test, response, switches=switches)
+    with env, og.Tripwire() as wire:
+        result = env.client.request(use, method, url, **kwargs)
+    test.assertEqual(wire.calls, [], "진짜 바깥 호출이 일어났다")
+    return env, result
+
+
+def raised(test, response, *args, **kwargs):
+    """요청이 `NetError` 로 끝나야 하는 경우 — (환경, 오류)."""
+    switches = kwargs.pop("switches", None)
+    use = args[0] if args else kwargs.get("use", "update_check")
+    env = kwargs.pop("harness", None) or ns.Harness(test, response, switches=ns.USE_SWITCHES[use] if switches is None else switches)
+    with env, og.Tripwire() as wire:
+        with test.assertRaises(errors.NetError) as caught:
+            env.client.request(*args, **kwargs) if args else env.client.request("update_check", "GET", UPDATE_URL, **kwargs)
+    test.assertEqual(wire.calls, [])
+    return env, caught.exception
+
+
+class GateTest(unittest.TestCase):
+    def test_every_net_entry_point_passes_its_gate_as_its_first_statement(self):
+        """NT-13 — 클라이언트의 두 공개 함수는 첫 문장이 `capabilities.require_net` 이다(설명 글 다음 첫 문장)."""
+        tree = ast.parse((SRC / "net" / "client.py").read_text(encoding="utf-8"))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "NetClient")
+        for name in ("request", "request_to_file"):
+            function = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
+            body = [node for node in function.body if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
+            self.assertTrue(isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Call) and ast.unparse(body[0].value.func) == "capabilities.require_net", f"{name}: {ast.unparse(body[0])[:70]}")
+            self.assertEqual(ast.unparse(body[0].value.args[0]), "use")
+
+    def test_client_refuses_before_any_transport_when_the_switch_is_off(self):
+        """NT-17 — 용도마다 스위치가 꺼져 있으면 전송기 호출 0·알맞은 오류 코드, 쿨다운·기록도 건드리지 않는다."""
+        wanted = {"update_check": "NETWORK_DISABLED", "pages_site": "EXTERNAL_WRITE_DISABLED", "blogger_oauth": "NETWORK_DISABLED", "blogger_read": "NETWORK_DISABLED", "blogger_draft": "EXTERNAL_WRITE_DISABLED"}
+        urls = {"update_check": UPDATE_URL, "pages_site": SITE_URL, "blogger_oauth": "https://oauth2.googleapis.com/token", "blogger_read": BLOG, "blogger_draft": BLOG + "/posts?isDraft=true"}
+        for use, code in wanted.items():
+            with self.subTest(use=use):
+                env = ns.Harness(self, OK_JSON, switches=())
+                with env, og.Tripwire() as wire:
+                    with self.assertRaises(AppError) as caught:
+                        env.client.request(use, "POST" if use in ("blogger_oauth", "blogger_draft") else "GET", urls[use], body=b"x" if use in ("blogger_oauth", "blogger_draft") else None)
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual((env.dials, wire.calls, env.usage.records()), ([], [], ()))
+                self.assertFalse(env.usage.resting(use))
+        for use in ("pages_site", "blogger_draft"):
+            with self.subTest(only_write=use):
+                env = ns.Harness(self, OK_JSON, switches=("EXTERNAL_WRITE",))
+                with env, self.assertRaises(AppError) as caught:
+                    env.client.request(use, "GET", SITE_URL)
+                self.assertEqual((caught.exception.code, env.dials), ("NETWORK_DISABLED", []), "윗 스위치만 켜서는 열리지 않는다")
+        env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"])
+        with env, self.assertRaises(AppError) as caught:                      # 모르는 용도 이름도 관문에서 거절된다(전송기 0)
+            env.client.request("update_check_x", "GET", UPDATE_URL)
+        self.assertEqual((caught.exception.code, env.dials), ("NETWORK_DISABLED", []))
+        with env, self.assertRaises(AppError) as caught:                      # git 의 용도는 이 클라이언트의 표에 없다
+            with mock.patch.object(capabilities, "PAGES_BRANCH_PUSH", True), mock.patch.object(capabilities, "EXTERNAL_WRITE", True):
+                env.client.request("pages_branch", "GET", UPDATE_URL)
+        self.assertEqual((caught.exception.code, env.dials), ("UNEXPECTED_ERROR", []))
+
+    def test_the_client_needs_a_version_in_the_documented_shape(self):
+        for bad in (None, "", "1.2", "x1.2.3", "1.2.3 ", "1.2.3\r\nX: y", 123):
+            with self.subTest(bad=repr(bad)), self.assertRaises(errors.NetError):
+                client.NetClient(version=bad)
+        client.NetClient(version="1.2.3")
+        client.NetClient(version="0.1.0-preview.1")
+
+
+class HostTableTest(unittest.TestCase):
+    EXPECTED = {
+        "update_check": ("github.com", ("GET",), ()),
+        "pages_site": (SITE, ("GET",), None),
+        "blogger_oauth": ("oauth2.googleapis.com", ("POST", "POST"), ()),
+        "blogger_read": ("www.googleapis.com", ("GET", "GET", "GET"), None),
+        "blogger_draft": ("www.googleapis.com", ("POST",), (("isDraft", "true"),)),
+    }
+
+    def test_host_table_is_exactly_the_documented_hosts_and_paths(self):
+        """NT-19 — 설계서 3.6 의 표와 소스 표가 같다: 호스트·방법·고정 질의·길 모양."""
+        self.assertEqual(sorted(endpoints.ENDPOINTS), sorted(self.EXPECTED))
+        for use, (host, methods, query) in self.EXPECTED.items():
+            endpoint = endpoints.ENDPOINTS[use]
+            with self.subTest(use=use):
+                self.assertEqual(endpoint.host, host)
+                self.assertEqual(tuple(route.method for route in endpoint.routes), methods)
+                if query is not None:
+                    self.assertEqual({route.query for route in endpoint.routes}, {query})
+        self.assertEqual(endpoints.table_problems(), [])
+        hosts = {endpoint.host for endpoint in endpoints.ENDPOINTS.values()} | {host for endpoint in endpoints.ENDPOINTS.values() for host in endpoint.redirect_hosts}
+        self.assertEqual(sorted(hosts), sorted({"github.com", SITE, "oauth2.googleapis.com", "www.googleapis.com"}), "표에 있는 호스트가 정확히 이 넷이다")
+        self.assertEqual(endpoints.ENDPOINTS["update_check"].redirect_hosts, (), "업데이트 확인의 이동 호스트는 UPDATE 갈래가 확정할 때까지 비어 있다 — 이동은 모두 거절된다")
+        self.assertLessEqual(len({endpoints.ENDPOINTS["update_check"].host} | set(endpoints.ENDPOINTS["update_check"].redirect_hosts)), 2, "업데이트 확인의 호스트는 최대 둘이다(설계서 3.6)")
+
+    def test_the_blogger_routes_are_the_six_documented_shapes(self):
+        read = endpoints.ENDPOINTS["blogger_read"].routes
+        self.assertEqual([route.shown for route in read], ["/blogger/v3/blogs/<번호>", "/blogger/v3/blogs/<번호>/posts", "/blogger/v3/blogs/<번호>/posts/<번호>"])
+        self.assertEqual(read[1].query, (("status", "DRAFT"), ("orderBy", "UPDATED"), ("maxResults", "5"), ("fetchBodies", "false"), ("view", "ADMIN")))
+        self.assertEqual(read[2].query, (("view", "ADMIN"),))
+        self.assertTrue(all(route.bearer and not route.max_body for route in read))
+        site = endpoints.ENDPOINTS["pages_site"].routes[0]
+        self.assertEqual([key for key, _value in site.query], ["cb"])
+        self.assertTrue(all(site.query[0][1].fullmatch(value) for value in ("app", "app-1", "app-12", "app-123")))
+        self.assertFalse(any(site.query[0][1].fullmatch(value) for value in ("", "other", "app-", "app-1234", "app-x", "xapp", "app ", "APP", "app-1&x=2")), "`cb` 값은 app 또는 app-<시도 번호> 뿐이다")
+        self.assertEqual([route.shown for route in endpoints.ENDPOINTS["blogger_oauth"].routes], ["/token", "/revoke"])
+        self.assertTrue(all(not route.bearer for route in endpoints.ENDPOINTS["blogger_oauth"].routes), "토큰 요청에는 접근 토큰을 붙이지 않는다")
+        self.assertEqual(endpoints.ENDPOINTS["blogger_draft"].routes[0].max_body, 1024 * 1024)
+        self.assertEqual(endpoints.ENDPOINTS["blogger_oauth"].routes[0].max_body, 4096)
+        self.assertFalse(endpoints.ENDPOINTS["pages_site"].routes[0].bearer, "공개 사이트에는 토큰을 붙이지 않는다")
+
+    def test_the_page_host_comes_from_the_one_owner_constant_the_origin_check_uses(self):
+        self.assertEqual(SITE, f"{gitrepo.EXPECTED_OWNER.lower()}.github.io")
+        self.assertTrue(gitrepo.EXPECTED_ORIGIN.match(f"https://github.com/{gitrepo.EXPECTED_OWNER}/{gitrepo.EXPECTED_REPO}.git"))
+        self.assertIn(re.escape(gitrepo.EXPECTED_OWNER) + "/" + re.escape(gitrepo.EXPECTED_REPO), gitrepo.EXPECTED_ORIGIN.pattern)
+        self.assertFalse(gitrepo.EXPECTED_ORIGIN.match(f"https://github.com/{gitrepo.EXPECTED_OWNER}x/{gitrepo.EXPECTED_REPO}.git"))
+
+    def test_the_table_validator_catches_bad_tables(self):
+        good = endpoints.ENDPOINTS["update_check"]
+        bad_hosts = ("GitHub.com", "github.com.", "github.com:443", "user@github.com", "gıthub.com", "140.82.1.1", "github", "*.github.com", "a..b.com", "-a.github.com", "")
+        for host in bad_hosts:
+            with self.subTest(host=host):
+                self.assertTrue(endpoints.table_problems({"update_check": dataclasses.replace(good, host=host)}), host)
+        self.assertTrue(endpoints.table_problems({"update_check": dataclasses.replace(good, max_redirects=5)}))
+        self.assertTrue(endpoints.table_problems({"update_check": dataclasses.replace(good, redirect_hosts=("cdn.example.com",), max_redirects=0)}))
+        self.assertTrue(endpoints.table_problems({"update_check": dataclasses.replace(good, accept_encodings=("gzip",))}))
+        self.assertTrue(endpoints.table_problems({"other": good}), "표 키와 용도 이름이 다르다")
+        self.assertTrue(endpoints.table_problems({"update_check": dataclasses.replace(good, routes=())}))
+
+
+def golden(method, path, host, *, accept="application/json", encoding="identity", extra=(), body=b""):
+    """설계서 3.8 의 요청 모양을 손으로 적은 것(코드와 따로) — 머리글 순서까지 고정이다."""
+    lines = [f"{method} {path} HTTP/1.1", f"Host: {host}", f"User-Agent: ChanceBlogDesktop/{ns.VERSION}", f"Accept: {accept}", f"Accept-Encoding: {encoding}", "Connection: close"]
+    lines += [f"{name}: {value}" for name, value in extra]
+    return ("\r\n".join(lines) + "\r\n\r\n").encode("ascii") + body
+
+
+class RequestBytesTest(unittest.TestCase):
+    def sent(self, env):
+        return bytes(env.last_socket.sent)
+
+    def test_request_bytes_equal_the_golden_shape_for_every_use(self):
+        """NT-20 — 보낸 바이트가 용도별 고정 모양과 같다(업데이트 확인은 설계서 3.8 의 모양과 바이트 단위로 같고 버전 번호만 다르다)."""
+        env, _ = run(self, OK_JSON)
+        self.assertEqual(self.sent(env), golden("GET", UPDATE_PATH, "github.com"))
+        env, _ = run(self, ns.http_response(200, body=b"[]"), "pages_site", SITE_URL)
+        self.assertEqual(self.sent(env), golden("GET", "/blog/posts.json?cb=app", SITE, accept="*/*", extra=[("Cache-Control", "no-cache")]))
+        env, _ = run(self, OK_JSON, "blogger_read", BLOG, bearer="tok.en-1_2")
+        self.assertEqual(self.sent(env), golden("GET", "/blogger/v3/blogs/123456", "www.googleapis.com", extra=[("Authorization", "Bearer tok.en-1_2")]))
+        env, _ = run(self, OK_JSON, "blogger_read", endpoints.url_for("blogger_read", "GET", "/blogger/v3/blogs/9/posts"), bearer="t")
+        self.assertEqual(self.sent(env), golden("GET", "/blogger/v3/blogs/9/posts?status=DRAFT&orderBy=UPDATED&maxResults=5&fetchBodies=false&view=ADMIN", "www.googleapis.com", extra=[("Authorization", "Bearer t")]))
+        env, _ = run(self, OK_JSON, "blogger_read", endpoints.url_for("blogger_read", "GET", "/blogger/v3/blogs/9/posts/8"), bearer="t")
+        self.assertEqual(self.sent(env), golden("GET", "/blogger/v3/blogs/9/posts/8?view=ADMIN", "www.googleapis.com", extra=[("Authorization", "Bearer t")]))
+        payload = '{"kind": "blogger#post", "title": "가짜 제목"}'.encode("utf-8")
+        env, _ = run(self, OK_JSON, "blogger_draft", endpoints.url_for("blogger_draft", "POST", "/blogger/v3/blogs/9/posts"), method="POST", body=payload, bearer="t")
+        self.assertEqual(self.sent(env), golden("POST", "/blogger/v3/blogs/9/posts?isDraft=true", "www.googleapis.com",
+                                                  extra=[("Content-Type", "application/json; charset=UTF-8"), ("Content-Length", str(len(payload))), ("Authorization", "Bearer t")], body=payload))
+        form = b"grant_type=refresh_token&client_id=a&refresh_token=b"
+        env, _ = run(self, OK_JSON, "blogger_oauth", "https://oauth2.googleapis.com/token", method="POST", body=form)
+        self.assertEqual(self.sent(env), golden("POST", "/token", "oauth2.googleapis.com", extra=[("Content-Type", "application/x-www-form-urlencoded"), ("Content-Length", str(len(form)))], body=form))
+
+    def test_only_the_documented_header_names_are_ever_sent_and_nothing_else_is_added(self):
+        allowed = {"Host", "User-Agent", "Accept", "Accept-Encoding", "Connection", "Content-Type", "Content-Length", "Authorization", "Cache-Control"}
+        cases = [("update_check", UPDATE_URL, "GET", None, None), ("pages_site", SITE_URL, "GET", None, None), ("blogger_read", BLOG, "GET", None, "t"),
+                 ("blogger_draft", BLOG + "/posts?isDraft=true", "POST", b"{}", "t"), ("blogger_oauth", "https://oauth2.googleapis.com/revoke", "POST", b"token=x", None)]
+        for use, url, method, body, bearer in cases:
+            with self.subTest(use=use):
+                env, _ = run(self, OK_JSON, use, url, method=method, body=body, bearer=bearer)
+                head = bytes(env.last_socket.sent).split(b"\r\n\r\n")[0].decode("ascii").split("\r\n")
+                names = [line.split(":", 1)[0] for line in head[1:]]
+                self.assertEqual(len(names), len(set(names)), "같은 머리글이 두 번 나갔다")
+                self.assertTrue(set(names) <= allowed, set(names) - allowed)
+                for banned in ("Cookie", "Referer", "Origin", "Accept-Language", "DNT", "X-"):
+                    self.assertFalse(any(name.startswith(banned) for name in names), banned)
+                self.assertEqual(head[0].split(" ")[2], "HTTP/1.1")
+                if use != "blogger_read" and use != "blogger_draft":
+                    self.assertNotIn("Authorization", names, "접근 토큰은 Blogger API 요청에만 붙는다")
+
+    def test_the_user_agent_is_the_only_place_the_version_goes_and_nothing_else_about_this_pc_is_sent(self):
+        import getpass
+        import os
+        import platform
+        env, _ = run(self, OK_JSON)
+        wire = bytes(env.last_socket.sent).decode("ascii")
+        for secret in {getpass.getuser(), os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), platform.node(), str(Path.home()), str(Path.cwd()), sys.executable, tempfile.gettempdir()}:
+            if len(secret) >= 3:
+                self.assertNotIn(secret.lower(), wire.lower())
+        self.assertEqual(re.findall(r"User-Agent: (.*)\r\n", wire), ["ChanceBlogDesktop/" + ns.VERSION])
+
+    def test_the_request_goes_out_in_one_header_block_and_the_body_follows_exactly(self):
+        payload = b'{"a": 1}'
+        env, _ = run(self, OK_JSON, "blogger_draft", BLOG + "/posts?isDraft=true", method="POST", body=payload, bearer="t")
+        parts = env.last_socket.send_calls
+        self.assertEqual(parts[-1], payload)
+        self.assertTrue(parts[0].endswith(b"\r\n\r\n"))
+
+
+class ShapeRefusalTest(unittest.TestCase):
+    def refused(self, label, url=UPDATE_URL, *, use="update_check", method="GET", **kwargs):
+        with self.subTest(label=label):
+            env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES[use])
+            with env, og.Tripwire() as wire:
+                with self.assertRaises(errors.NetError) as caught:
+                    env.client.request(use, method, url, **kwargs)
+            self.assertEqual((caught.exception.code, env.dials, wire.calls, env.usage.records()), ("UNEXPECTED_ERROR", [], [], ()), label)
+            self.assertFalse(env.usage.resting(use), "접속 전 거절은 쿨다운 계수에 넣지 않는다")
+            self.assertEqual(env.usage._active, set(), "진행 중 표시가 풀려야 한다")
+            return caught.exception
+
+    def test_host_port_scheme_userinfo_and_look_alike_names_are_refused_before_connect(self):
+        """NT-21 — http 스킴·포트·`@`·숫자 IP·유니코드 닮은 이름·끝의 점·표 밖 호스트는 연결 전에 거절한다."""
+        bad = {
+            "평문": f"http://{HOST_UPDATE}{UPDATE_PATH}", "포트": f"https://{HOST_UPDATE}:443{UPDATE_PATH}", "다른 포트": f"https://{HOST_UPDATE}:8443{UPDATE_PATH}", "사용자 정보": f"https://user@{HOST_UPDATE}{UPDATE_PATH}",
+            "골뱅이 속임": f"https://{HOST_UPDATE}@evil.example.test{UPDATE_PATH}", "하위 도메인": f"https://x.{HOST_UPDATE}{UPDATE_PATH}", "뒤에 붙임": f"https://{HOST_UPDATE}.evil.example.test{UPDATE_PATH}",
+            "끝의 점": f"https://{HOST_UPDATE}.{UPDATE_PATH}", "숫자 IP": f"https://140.82.112.3{UPDATE_PATH}", "닮은 글자": f"https://g\u0131thub.com{UPDATE_PATH}", "켈빈 기호": f"https://github.co\u212a{UPDATE_PATH}",
+            "조각": f"https://{HOST_UPDATE}{UPDATE_PATH}#x", "상대 주소": UPDATE_PATH, "스킴 없음": f"//{HOST_UPDATE}{UPDATE_PATH}", "다른 호스트": f"https://example.test{UPDATE_PATH}", "역슬래시": f"https://{HOST_UPDATE}\\@evil.example.test{UPDATE_PATH}",
+            "빈 글": "", "글이 아님": None, "너무 긺": f"https://{HOST_UPDATE}/" + "a" * 600,
+        }
+        for label, url in bad.items():
+            self.refused(label, url)
+        for use, host in (("blogger_read", "oauth2.googleapis.com"), ("blogger_oauth", "www.googleapis.com")):                       # 다른 용도의 호스트도 이 용도에서는 표 밖이다
+            self.refused(f"{use} 에 {host}", f"https://{host}/token" if use == "blogger_oauth" else f"https://{host}/blogger/v3/blogs/1", use=use, method="POST" if use == "blogger_oauth" else "GET", body=b"x" if use == "blogger_oauth" else None)
+        with ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"]) as env:                                        # 대문자는 같은 호스트다(소문자 표와 견준다)
+            self.assertEqual(env.client.request("update_check", "GET", f"https://GITHUB.com{UPDATE_PATH}").status, 200)
+        self.assertIn(f"Host: {HOST_UPDATE}\r\n".encode(), bytes(env.last_socket.sent), "보내는 Host 는 늘 표의 글이다")
+
+    def test_path_query_header_and_body_outside_the_shape_are_refused(self):
+        """NT-22 — 표 밖의 길·질의 키·방법·머리글·본문 크기."""
+        self.refused("다른 길", f"https://{HOST_UPDATE}/own/app/releases/latest/download/../x")
+        self.refused("길이 한 구간 모자람", f"https://{HOST_UPDATE}/own/releases/latest/download/a.json")
+        self.refused("질의 더함", UPDATE_URL + "?a=1")
+        self.refused("POST", method="POST")
+        self.refused("본문이 있는 GET", body=b"x")
+        self.refused("토큰을 못 붙이는 길", bearer="t")
+        self.refused("압축 요청", accept_encoding="gzip")
+        self.refused("한도가 표보다 큼", limit=10 ** 9)
+        self.refused("한도가 음수", limit=-1)
+        self.refused("한도가 불리언", limit=True)
+        self.refused("pages_site 질의 없음", f"https://{SITE}/blog/posts.json", use="pages_site")
+        self.refused("pages_site 질의 키가 다름", f"https://{SITE}/blog/posts.json?x=app", use="pages_site")
+        self.refused("pages_site 질의 값이 다름", f"https://{SITE}/blog/posts.json?cb=other", use="pages_site")
+        self.refused("pages_site 질의 값이 길다", f"https://{SITE}/blog/posts.json?cb=app-1234", use="pages_site")
+        for ok_value in ("app", "app-1", "app-27"):                                                # 경계 값은 통과한다(vendor 확인 도구는 시도마다 app-<번호> 를 보낸다)
+            with ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["pages_site"]) as env:
+                self.assertEqual(env.client.request("pages_site", "GET", f"https://{SITE}/blog/posts.json?cb={ok_value}").status, 200, ok_value)
+        self.refused("pages_site 질의가 둘", f"https://{SITE}/blog/posts.json?cb=app&cb=app", use="pages_site")
+        self.refused("pages_site 점점 구간", f"https://{SITE}/blog/../x?cb=app", use="pages_site")
+        self.refused("pages_site 인코딩된 점점", f"https://{SITE}/blog/%2e%2e/x?cb=app", use="pages_site")
+        self.refused("pages_site 인코딩된 슬래시", f"https://{SITE}/blog%2fx?cb=app", use="pages_site")
+        self.refused("pages_site 널", f"https://{SITE}/blog%00?cb=app", use="pages_site")
+        self.refused("pages_site 압축 요청인데 본문을 읽음", SITE_URL, use="pages_site", accept_encoding="gzip")
+        self.refused("blogger 번호가 숫자가 아님", "https://www.googleapis.com/blogger/v3/blogs/abc", use="blogger_read")
+        self.refused("blogger 번호가 길다", "https://www.googleapis.com/blogger/v3/blogs/" + "1" * 26, use="blogger_read")
+        self.refused("blogger fields 질의", BLOG + "?fields=id", use="blogger_read")
+        self.refused("blogger 질의 순서가 다름", "https://www.googleapis.com/blogger/v3/blogs/1/posts?orderBy=UPDATED&status=DRAFT&maxResults=5&fetchBodies=false&view=ADMIN", use="blogger_read")
+        self.refused("blogger 초안이 아님", "https://www.googleapis.com/blogger/v3/blogs/1/posts?isDraft=false", use="blogger_draft", method="POST", body=b"{}")
+        self.refused("blogger 초안 질의 없음", "https://www.googleapis.com/blogger/v3/blogs/1/posts", use="blogger_draft", method="POST", body=b"{}")
+        self.refused("blogger 초안 본문 없음", BLOG + "/posts?isDraft=true", use="blogger_draft", method="POST")
+        self.refused("blogger 초안 본문이 1 MiB 초과", BLOG + "/posts?isDraft=true", use="blogger_draft", method="POST", body=b"x" * (1024 * 1024 + 1))
+        self.refused("blogger 읽기에 POST", BLOG, use="blogger_read", method="POST", body=b"x")
+        self.refused("토큰 요청에 접근 토큰", "https://oauth2.googleapis.com/token", use="blogger_oauth", method="POST", body=b"x", bearer="t")
+        self.refused("토큰 요청 본문이 4 KiB 초과", "https://oauth2.googleapis.com/token", use="blogger_oauth", method="POST", body=b"x" * 4097)
+        self.refused("토큰 길이 초과", BLOG, use="blogger_read", bearer="a" * 4097)
+        self.refused("토큰 모양", BLOG, use="blogger_read", bearer="has space")
+        for ok_limit in (0, 1024 * 1024):                                                          # 경계 값은 통과한다(대조 — 위 거절들이 빈 실험이 아니다)
+            with self.subTest(ok_limit=ok_limit), ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"]) as env:
+                self.assertEqual(env.client.request("update_check", "GET", UPDATE_URL, limit=ok_limit).status, 200)
+
+    def test_header_and_crlf_injection_is_refused(self):
+        """NT-23 — 줄바꿈·널이 든 값은 접속 전에 거절한다(`http.client` 의 검사와 이중)."""
+        self.refused("주소의 CRLF", f"https://{HOST_UPDATE}{UPDATE_PATH}\r\nX-Evil: 1")
+        self.refused("주소의 LF", f"https://{HOST_UPDATE}{UPDATE_PATH}\nX-Evil: 1")
+        self.refused("주소의 널", f"https://{HOST_UPDATE}{UPDATE_PATH}\x00")
+        self.refused("주소의 공백", f"https://{HOST_UPDATE}{UPDATE_PATH} HTTP/1.0")
+        self.refused("토큰의 CRLF", BLOG, use="blogger_read", bearer="abc\r\nX-Evil: 1")
+        self.refused("토큰의 널", BLOG, use="blogger_read", bearer="abc\x00")
+        self.refused("pages_site 의 CRLF", f"https://{SITE}/blog\r\nX: 1?cb=app", use="pages_site")
+        conn = http.client.HTTPSConnection("example.test")
+        conn.putrequest("GET", "/ok")
+        with self.assertRaises(ValueError):
+            conn.putheader("X-Test", "a\r\nX-Evil: 1")                 # 두 번째 겹 — 표준 라이브러리 자신의 검사
+        with self.assertRaises((ValueError, http.client.InvalidURL)):
+            http.client.HTTPSConnection("example.test").putrequest("GET", "/a\r\nX: 1")
+
+    def test_a_refused_shape_never_counts_as_a_failure_and_never_leaves_an_active_marker(self):
+        env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"])
+        with env:
+            for _ in range(6):
+                with self.assertRaises(errors.NetError):
+                    env.client.request("update_check", "GET", "http://github.com/x")
+            self.assertEqual(env.client.request("update_check", "GET", UPDATE_URL).status, 200, "모양 거절이 여섯 번이어도 쉬지 않는다")
+
+
+class RedirectTest(unittest.TestCase):
+    def redirect(self, location, status=302):
+        return ns.http_response(status, "Found", headers=[("Location", location)])
+
+    def test_redirects_are_refused_by_default_and_the_second_request_is_never_made(self):
+        """NT-24 — 기본은 거절(업데이트 확인 표는 이동 0): 전송 시도는 한 번뿐이다."""
+        for status in (301, 302, 303, 307, 308):
+            with self.subTest(status=status):
+                env, error = raised(self, self.redirect(f"https://{HOST_UPDATE}/elsewhere", status))
+                self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+                self.assertIn(errors.REASON_REDIRECT, error.rendered().message)
+                self.assertEqual(len(env.dials), 1)
+
+    def test_pages_site_follows_same_host_redirects_up_to_two_and_checks_each_step(self):
+        site = lambda path: f"https://{SITE}{path}?cb=app"        # noqa: E731
+        final = ns.http_response(200, body=b"[]")
+        sockets = [ns.FakeSocket(self.redirect("/a/b?cb=app")), ns.FakeSocket(self.redirect(site("/c"), 301)), ns.FakeSocket(final)]
+        env, response = run(self, b"", "pages_site", SITE_URL, harness=ns.Harness(self, sockets=sockets, switches=ns.USE_SWITCHES["pages_site"]))
+        self.assertEqual((response.status, response.body, len(env.dials)), (200, b"[]", 3))
+        env.last_socket                                              # 마지막 연결도 같은 호스트다
+        self.assertTrue(all(host == SITE for host, _address in env.dials))
+        sockets = [ns.FakeSocket(self.redirect("/1?cb=app")), ns.FakeSocket(self.redirect("/2?cb=app")), ns.FakeSocket(self.redirect("/3?cb=app")), ns.FakeSocket(final)]
+        env, error = raised(self, b"", "pages_site", "GET", SITE_URL, harness=ns.Harness(self, sockets=sockets, switches=ns.USE_SWITCHES["pages_site"]))
+        self.assertEqual((error.code, len(env.dials)), ("NET_RESPONSE_INVALID", 3), "이동은 최대 두 번 — 세 번째 이동은 거절")
+
+    def test_redirects_to_other_hosts_plain_http_userinfo_ports_loops_and_bad_shapes_are_refused(self):
+        bad = {"다른 호스트": "https://evil.example.test/x?cb=app", "평문": f"http://{SITE}/x?cb=app", "사용자 정보": f"https://u@{SITE}/x?cb=app", "포트": f"https://{SITE}:444/x?cb=app",
+               "질의 없음": "/x", "표 밖 길": "/a/%2e%2e/b?cb=app", "자기 자신": SITE_URL, "공백": "/x y?cb=app", "닮은 이름": f"https://{SITE}.evil.example.test/x?cb=app",
+               "스킴만 같음": "//evil.example.test/x?cb=app", "아주 긴 주소": "/" + "a" * 2500 + "?cb=app", "비 ASCII": "/\ud55c?cb=app"}
+        for label, location in bad.items():
+            with self.subTest(label=label):
+                try:
+                    location.encode("latin-1")
+                except UnicodeEncodeError:
+                    continue                                          # 헤더 줄에 실을 수 없는 글은 가짜 서버도 보낼 수 없다
+                env, error = raised(self, self.redirect(location), "pages_site", "GET", SITE_URL, switches=ns.USE_SWITCHES["pages_site"])
+                self.assertEqual(error.code, "NET_RESPONSE_INVALID", label)
+                self.assertEqual(len(env.dials), 1, label)
+
+    def test_a_redirect_without_exactly_one_location_is_refused_and_a_post_never_follows(self):
+        env, error = raised(self, ns.http_response(302, "Found"), "pages_site", "GET", SITE_URL, switches=ns.USE_SWITCHES["pages_site"])
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        two = ns.http_response(302, "Found", headers=[("Location", "/a?cb=app"), ("Location", "/b?cb=app")])
+        env, error = raised(self, two, "pages_site", "GET", SITE_URL, switches=ns.USE_SWITCHES["pages_site"])
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        env, error = raised(self, self.redirect("/token"), "blogger_oauth", "POST", "https://oauth2.googleapis.com/token", body=b"x")
+        self.assertEqual((error.code, len(env.dials)), ("NET_RESPONSE_INVALID", 1))
+
+    def test_a_listed_other_host_is_followed_without_the_token_and_an_unlisted_one_is_not(self):
+        base = endpoints.ENDPOINTS["blogger_read"]
+        table = dict(endpoints.ENDPOINTS, blogger_read=dataclasses.replace(base, max_redirects=2, redirect_hosts=("cdn.example.net",)))
+        first = self.redirect("https://cdn.example.net/f/x?sig=ab-1&e=2")
+        final = ns.http_response(200, body=b"{}")
+        sockets = [ns.FakeSocket(first), ns.FakeSocket(final)]
+        env = ns.Harness(self, sockets=sockets, switches=ns.USE_SWITCHES["blogger_read"])
+        with mock.patch.object(client, "ENDPOINTS", table):
+            _env, response = run(self, b"", "blogger_read", BLOG, harness=env, bearer="SECRETTOKEN")
+        self.assertEqual((response.status, response.host, [host for host, _ in env.dials]), (200, "cdn.example.net", ["www.googleapis.com", "cdn.example.net"]))
+        second = bytes(sockets[1].sent).decode("ascii")
+        self.assertNotIn("SECRETTOKEN", second, "다른 호스트로는 토큰을 보내지 않는다")
+        self.assertIn("Host: cdn.example.net\r\n", second)
+        self.assertIn("SECRETTOKEN", bytes(sockets[0].sent).decode("ascii"))
+        for location in ("https://other.example.net/f", "https://cdn.example.net/f?x=<script>", "https://cdn.example.net:8443/f", "http://cdn.example.net/f"):
+            with self.subTest(location=location), mock.patch.object(client, "ENDPOINTS", table):
+                env, error = raised(self, self.redirect(location), "blogger_read", "GET", BLOG, bearer="t", switches=ns.USE_SWITCHES["blogger_read"])
+                self.assertEqual((error.code, len(env.dials)), ("NET_RESPONSE_INVALID", 1))
+
+
+class ResponseLimitsTest(unittest.TestCase):
+    def test_response_size_limit_by_content_length_and_by_stream(self):
+        """NT-25 — 선언 크기와 실제 크기 모두. 정확히 한도는 통과, 한 바이트 넘으면 거절."""
+        limit = 1024
+        env, response = run(self, ns.http_response(200, body=b"x" * limit), limit=limit)
+        self.assertEqual(len(response.body), limit)
+        env, error = raised(self, ns.http_response(200, body=b"x" * (limit + 1)), limit=limit)
+        self.assertEqual((error.code, error.outcome_unknown), ("NET_RESPONSE_INVALID", True))
+        self.assertIn(errors.REASON_TOO_LARGE, error.rendered().message)
+        env, error = raised(self, ns.http_response(200, length=False, body=b"x" * (limit + 50)), limit=limit)              # 길이 없이 연결을 닫아 끝내는 응답
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        env, error = raised(self, ns.http_response(200, chunked=True, body=b"x" * (limit + 50)), limit=limit)             # 덩어리 응답
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        env, error = raised(self, ns.http_response(200, headers=[("Content-Length", "999999999999")], length=False, body=b""), limit=limit)
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        for value in ("-5", "1e3", "0x10", " ", "1" * 20, "+5", "5.0"):
+            with self.subTest(content_length=value):
+                env, error = raised(self, ns.http_response(200, headers=[("Content-Length", value)], length=False, body=b"abc"), limit=limit)
+                self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        env, response = run(self, ns.http_response(200, chunked=True, body=b"y" * 777), limit=limit)
+        self.assertEqual(response.body, b"y" * 777)
+
+    def test_a_short_body_and_two_content_lengths_are_refused_and_status_only_reads_no_body(self):
+        env, error = raised(self, b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        self.assertIn(errors.REASON_LENGTH, error.rendered().message)
+        two = b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc"
+        env, error = raised(self, two)
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        env, response = run(self, ns.http_response(200, body=b"z" * 5000), limit=0)
+        self.assertEqual((response.status, response.body), (200, b""), "상태만 볼 때 본문을 읽지 않는다(돌려주는 본문이 없다)")
+
+    def test_too_many_or_too_big_headers_are_refused(self):
+        many = ns.http_response(200, headers=[(f"X-H{i}", "v") for i in range(120)], body=b"{}")
+        env, error = raised(self, many)
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        big = ns.http_response(200, headers=[(f"X-B{i}", "v" * 8000) for i in range(10)], body=b"{}")
+        env, error = raised(self, big)
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+        env, error = raised(self, b"HTTP/1.1 200 OK\r\nX-Long: " + b"a" * 70000 + b"\r\n\r\n")
+        self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+
+    def test_content_encoding_other_than_identity_is_refused(self):
+        """NT-26 — 압축된 응답은 거절한다(압축 폭탄). 본문을 읽지 않는 상태 확인(`limit=0`)만 `Accept-Encoding: gzip` 을 허용한다."""
+        for value in ("gzip", "deflate", "br", "GZIP", "identity, gzip"):
+            with self.subTest(value=value):
+                env, error = raised(self, ns.http_response(200, headers=[("Content-Encoding", value)], body=b"{}"))
+                self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+                self.assertIn(errors.REASON_ENCODING, error.rendered().message)
+        for value in ("identity", "Identity", ""):
+            with self.subTest(ok=value):
+                env, response = run(self, ns.http_response(200, headers=[("Content-Encoding", value)], body=b"{}"))
+                self.assertEqual(response.body, b"{}")
+        env, response = run(self, ns.http_response(200, headers=[("Content-Encoding", "gzip")], body=b"\x1f\x8b" * 100), "pages_site", SITE_URL.replace("posts.json", "x"), accept_encoding="gzip", limit=0)
+        self.assertEqual((response.status, response.body), (200, b""))
+        self.assertIn(b"Accept-Encoding: gzip\r\n", bytes(env.last_socket.sent))
+
+
+class DeadlineTest(unittest.TestCase):
+    def test_slow_headers_and_slow_body_stop_at_the_total_deadline(self):
+        """NT-27 — 한 바이트씩 찔끔 보내는 서버가 총 시간 안에 끊긴다(소켓 제한은 작업마다라 이것만으로는 못 막는다 — 마감 껍데기가 막는다)."""
+        clock = ns.FakeClock()
+        slow = ns.http_response(200, body=b"x" * 5)
+        env = ns.Harness(self, slow, clock=clock, delay=10.0, chunk=1, switches=ns.USE_SWITCHES["update_check"])
+        with env, self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL)
+        error = caught.exception
+        self.assertEqual((error.code, error.outcome_unknown), ("NETWORK_TIMEOUT", True))
+        self.assertLessEqual(clock.now - 1000.0, endpoints.TOTAL_TIMEOUT + 0.001, "총 시간을 넘겨서까지 읽었다")
+        self.assertGreaterEqual(clock.now - 1000.0, endpoints.TOTAL_TIMEOUT - 10.001)
+        self.assertLess(min(env.last_socket.timeouts), 15.0, "남은 시간이 작업 제한보다 작아지면 소켓 제한을 줄인다")
+        self.assertEqual(env.usage.records()[0].error, "NETWORK_TIMEOUT")
+        # 머리글은 빨리 오고 본문만 찔끔 오는 경우
+        head = ns.http_response(200, body=b"y" * 200)
+        sock = ns.FakeSocket(head, clock=clock, delay=0.0, chunk=len(head) - 200)
+        calls = {"n": 0}
+        original = sock.recv_into
+
+        def drip(buffer):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                sock.delay = 9.0
+                sock.chunk = 1
+            return original(buffer)
+        sock.recv_into = drip
+        clock.now = 1000.0
+        env = ns.Harness(self, clock=clock, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+        with env, self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL)
+        self.assertEqual(caught.exception.code, "NETWORK_TIMEOUT")
+        self.assertLessEqual(clock.now - 1000.0, endpoints.TOTAL_TIMEOUT + 0.001)
+
+    def test_one_slow_read_beyond_the_socket_limit_is_a_timeout_and_the_deadline_is_counted_from_the_start(self):
+        clock = ns.FakeClock()
+        env = ns.Harness(self, ns.http_response(200, body=b"{}"), clock=clock, delay=16.0, switches=ns.USE_SWITCHES["update_check"])
+        with env, self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL)
+        self.assertEqual(caught.exception.code, "NETWORK_TIMEOUT")
+        self.assertEqual(env.last_socket.timeouts[0], endpoints.IO_TIMEOUT)
+
+    def test_a_connect_that_returns_after_the_deadline_stops_before_the_handshake(self):
+        clock = ns.FakeClock()
+
+        class SlowDial(ns.Harness):
+            def _dial(self, connection, address):
+                sock = super()._dial(connection, address)
+                clock.advance(40.0)                                   # 이름 풀이가 오래 걸렸다
+                return sock
+        env = SlowDial(self, ns.http_response(200, body=b"{}"), clock=clock, switches=ns.USE_SWITCHES["update_check"])
+        secured = []
+        with env, mock.patch.object(client, "_secure", lambda connection, raw: secured.append(1) or raw), self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL)
+        self.assertEqual((caught.exception.code, caught.exception.outcome_unknown, secured), ("NETWORK_TIMEOUT", False, []))
+
+
+class ErrorMappingTest(unittest.TestCase):
+    def secret_exception(self, kind=OSError):
+        return kind(f"{ns.CANARY} https://{HOST_UPDATE}{UPDATE_PATH} server said: 'secret details' C:\\Users\\someone\\x")
+
+    def assert_clean(self, error):
+        everything = [str(error), repr(error.args), error.detail, error.log_line(), error.rendered().message, error.rendered().action, error.rendered().card_action, repr(error.slots)]
+        for text in everything:
+            for leak in (ns.CANARY, HOST_UPDATE, UPDATE_PATH, "secret details", "someone", "server said", "https://"):
+                self.assertNotIn(leak, text, f"{error.code}: {leak} 가 {text[:60]!r} 에 있다")
+        self.assertIn(error.code, CATALOG)
+
+    def test_every_failure_maps_to_a_catalog_code_without_url_or_server_text(self):
+        """NT-28 — 전송 중 터진 모든 예외는 표의 코드가 되고, 예외 문장·주소·서버 글·경로가 문구·세부·기록 어디에도 없다."""
+        import ssl
+        cases = [
+            ("이름 풀이", dict(dial_error=self.secret_exception(OSError)), "NETWORK_OFFLINE", False),
+            ("연결 거부", dict(dial_error=self.secret_exception(ConnectionRefusedError)), "NETWORK_OFFLINE", False),
+            ("연결 시간 초과", dict(dial_error=self.secret_exception(TimeoutError)), "NETWORK_TIMEOUT", False),
+            ("보내다 끊김", dict(send_error=self.secret_exception(ConnectionResetError)), "NETWORK_OFFLINE", True),
+            ("보내다 시간 초과", dict(send_error=self.secret_exception(TimeoutError)), "NETWORK_TIMEOUT", True),
+            ("읽다 끊김", dict(read_error=self.secret_exception(ConnectionAbortedError)), "NETWORK_OFFLINE", True),
+            ("읽다 시간 초과", dict(read_error=self.secret_exception(TimeoutError)), "NETWORK_TIMEOUT", True),
+            ("읽다 TLS 오류", dict(read_error=self.secret_exception(ssl.SSLError)), "NETWORK_OFFLINE", True),
+            ("답 없이 끊김", dict(), "NETWORK_OFFLINE", True),
+            ("상태 줄이 이상함", dict(response=b"BOGUS\r\n\r\n"), "NET_RESPONSE_INVALID", True),
+            ("머리글 줄이 너무 긺", dict(response=b"HTTP/1.1 200 OK\r\n" + b"a" * 70000), "NET_RESPONSE_INVALID", True),
+        ]
+        for label, spec, code, unknown in cases:
+            with self.subTest(label=label):
+                env = ns.Harness(self, spec.get("response", b""), dial_error=spec.get("dial_error"), send_error=spec.get("send_error"), read_error=spec.get("read_error"), switches=ns.USE_SWITCHES["update_check"])
+                with env, self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL)
+                error = caught.exception
+                self.assertEqual((error.code, error.outcome_unknown), (code, unknown), label)
+                self.assert_clean(error)
+                records = repr(env.usage.records())
+                for leak in (ns.CANARY, "secret details", "someone"):
+                    self.assertNotIn(leak, records)
+                self.assertEqual(env.usage.records()[0].error, code)
+
+    def test_tls_failures_at_the_handshake_are_tls_failed_and_never_say_why_in_words(self):
+        import ssl
+        for exception in (self.secret_exception(ssl.SSLCertVerificationError), self.secret_exception(ssl.SSLError), ssl.CertificateError(f"{ns.CANARY} hostname mismatch")):
+            with self.subTest(kind=type(exception).__name__):
+                env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"])
+                with env, mock.patch.object(client, "_secure", mock.Mock(side_effect=exception)), self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL)
+                self.assertEqual((caught.exception.code, caught.exception.outcome_unknown), ("NET_TLS_FAILED", False))
+                self.assert_clean(caught.exception)
+                self.assertTrue(env.last_socket.closed, "핸드셰이크가 실패하면 열린 소켓을 닫는다")
+
+    def test_status_codes_map_to_the_documented_default_codes(self):
+        """3.4 의 기본표 — 2xx 는 정상, 400·422 REQUEST_INVALID, 401 KEY_AUTH_FAILED, 403 은 사유가 한도면 API_RATE_LIMITED, 429 API_RATE_LIMITED, 5xx 넷 API_SERVER_ERROR, 그 밖은 NET_RESPONSE_INVALID."""
+        expected = {200: None, 201: None, 204: None, 299: None, 400: "REQUEST_INVALID", 422: "REQUEST_INVALID", 401: "KEY_AUTH_FAILED", 403: "KEY_AUTH_FAILED", 404: "NET_RESPONSE_INVALID", 405: "NET_RESPONSE_INVALID",
+                    409: "NET_RESPONSE_INVALID", 429: "API_RATE_LIMITED", 500: "API_SERVER_ERROR", 502: "API_SERVER_ERROR", 503: "API_SERVER_ERROR", 504: "API_SERVER_ERROR", 501: "NET_RESPONSE_INVALID", 505: "NET_RESPONSE_INVALID"}
+        for status, code in expected.items():
+            with self.subTest(status=status):
+                response = client.NetResponse(status=status, use="update_check", host=HOST_UPDATE, body=b"SERVER TEXT secret details")
+                if code is None:
+                    response.raise_for_status()
+                    continue
+                with self.assertRaises(errors.NetError) as caught:
+                    response.raise_for_status()
+                self.assertEqual(caught.exception.code, code)
+                self.assert_clean_status(caught.exception)
+        for reason in errors.RATE_LIMIT_REASONS:
+            with self.assertRaises(errors.NetError) as caught:
+                client.NetResponse(status=403, use="blogger_read", host="x.example").raise_for_status(reason=reason)
+            self.assertEqual(caught.exception.code, "API_RATE_LIMITED", reason)
+        with self.assertRaises(errors.NetError) as caught:
+            client.NetResponse(status=403, use="blogger_read", host="x.example").raise_for_status(reason="forbidden")
+        self.assertEqual(caught.exception.code, "KEY_AUTH_FAILED")
+        with self.assertRaises(errors.NetError) as caught:
+            client.NetResponse(status=401, use="blogger_read", host="x.example").raise_for_status(overrides={401: "BLOGGER_AUTH_EXPIRED"})
+        self.assertEqual(caught.exception.code, "BLOGGER_AUTH_EXPIRED")
+        self.assertEqual([errors.counts_as_failure(status) for status in (200, 400, 422, 429, 401, 403, 404, 500, 503)], [False, False, False, False, True, True, True, True, True])
+
+    def assert_clean_status(self, error):
+        for text in (str(error), error.detail, error.log_line(), error.rendered().message, error.rendered().action):
+            self.assertNotIn("SERVER TEXT", text)
+            self.assertNotIn("secret details", text)
+
+    def test_a_status_that_is_not_ok_comes_back_as_a_response_and_is_recorded_with_its_default_code(self):
+        env, response = run(self, ns.http_response(503, "Service Unavailable", body=b"<html>oops secret details</html>"))
+        self.assertEqual((response.status, response.ok), (503, False))
+        self.assertEqual((env.usage.records()[0].status, env.usage.records()[0].error), (503, "API_SERVER_ERROR"))
+        self.assertNotIn("secret details", repr(response), "본문은 repr 에 찍히지 않는다")
+        self.assertNotIn("secret details", repr(env.usage.records()))
+
+    def test_the_client_never_retries_by_itself(self):
+        """NT-29 — 실패해도 전송 시도는 1회다(503·연결 실패·끊김 모두)."""
+        env, response = run(self, ns.http_response(503, "Service Unavailable"))
+        self.assertEqual(len(env.dials), 1)
+        for spec in (dict(dial_error=OSError("x")), dict(send_error=ConnectionResetError("x")), dict(read_error=TimeoutError("x"))):
+            with self.subTest(spec=list(spec)):
+                env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"], **spec)
+                with env, self.assertRaises(errors.NetError):
+                    env.client.request("update_check", "GET", UPDATE_URL)
+                self.assertEqual(len(env.dials), 1)
+        env = ns.Harness(self, sockets=[ns.FakeSocket(b""), ns.FakeSocket(OK_JSON)], switches=ns.USE_SWITCHES["update_check"])
+        with env, self.assertRaises(errors.NetError):
+            env.client.request("update_check", "GET", UPDATE_URL)
+        self.assertEqual((len(env.dials), len(env.sockets)), (1, 1), "두 번째 가짜 서버는 쓰이지 않았다")
+
+    def test_outcome_unknown_is_reported_only_after_the_request_was_sent(self):
+        """NT-37 — 보내기 전 실패(풀이·연결·TLS)는 False, 보낸 뒤 실패(보내다 끊김·답 없음·읽다 끊김)는 True."""
+        import ssl
+        before = [dict(dial_error=OSError("x")), dict(dial_error=TimeoutError("x"))]
+        for spec in before:
+            env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["blogger_draft"], **spec)
+            with env, self.assertRaises(errors.NetError) as caught:
+                env.client.request("blogger_draft", "POST", BLOG + "/posts?isDraft=true", body=b"{}", bearer="t")
+            self.assertFalse(caught.exception.outcome_unknown)
+        env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["blogger_draft"])
+        with env, mock.patch.object(client, "_secure", mock.Mock(side_effect=ssl.SSLError("x"))), self.assertRaises(errors.NetError) as caught:
+            env.client.request("blogger_draft", "POST", BLOG + "/posts?isDraft=true", body=b"{}", bearer="t")
+        self.assertFalse(caught.exception.outcome_unknown)
+        for spec in (dict(send_error=ConnectionResetError("x")), dict(read_error=ConnectionResetError("x")), dict(read_error=TimeoutError("x")), dict()):
+            with self.subTest(spec=list(spec)):
+                env = ns.Harness(self, b"", switches=ns.USE_SWITCHES["blogger_draft"], **spec)
+                with env, self.assertRaises(errors.NetError) as caught:
+                    env.client.request("blogger_draft", "POST", BLOG + "/posts?isDraft=true", body=b"{}", bearer="t")
+                self.assertTrue(caught.exception.outcome_unknown)
+
+
+class CooldownTest(unittest.TestCase):
+    def test_cooldown_after_three_failures_and_half_open_probe(self):
+        """NT-30 — 연속 3번 실패하면 5분 쉰다(쉬는 동안 즉시 거절·접속 0), 끝나면 한 건만 보내 보고 실패하면 두 배(10분·20분·상한 30분), 성공하면 닫힌다."""
+        clock = ns.FakeClock()
+        env = ns.Harness(self, clock=clock, switches=ns.USE_SWITCHES["update_check"], dial_error=OSError("x"))
+        with env:
+            for _ in range(3):
+                with self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL)
+                self.assertEqual(caught.exception.code, "NETWORK_OFFLINE")
+            self.assertEqual(len(env.dials), 3)
+            with self.assertRaises(errors.NetError) as caught:
+                env.client.request("update_check", "GET", UPDATE_URL)
+            self.assertEqual(caught.exception.code, "NET_COOLDOWN")
+            self.assertEqual(len(env.dials), 3, "쉬는 동안에는 접속하지 않는다")
+            self.assertRegex(caught.exception.slots["재시도 가능 시각"], r"^\d\d:\d\d$")
+            self.assertEqual(caught.exception.rendered().retry_kind, "after_user")
+            self.assertEqual(len(env.usage.records()), 3, "쉬는 중 거절은 접속 기록에 남지 않는다")
+            clock.advance(usage.REST_SECONDS[0] + 1)                                               # 5분이 지났다 — 반쯤 열림: 한 건만 보내 본다
+            with self.assertRaises(errors.NetError) as caught:
+                env.client.request("update_check", "GET", UPDATE_URL)
+            self.assertEqual((caught.exception.code, len(env.dials)), ("NETWORK_OFFLINE", 4))
+            with self.assertRaises(errors.NetError) as caught:                                    # 그 한 건이 실패했으니 곧바로 더 길게(10분) 쉰다
+                env.client.request("update_check", "GET", UPDATE_URL)
+            self.assertEqual((caught.exception.code, len(env.dials)), ("NET_COOLDOWN", 4))
+        self.assertTrue(env.usage.resting("update_check"))
+        # 성공하면 닫힌다
+        clock = ns.FakeClock()
+        env = ns.Harness(self, clock=clock, switches=ns.USE_SWITCHES["update_check"], dial_error=OSError("x"))
+        with env:
+            for _ in range(3):
+                with self.assertRaises(errors.NetError):
+                    env.client.request("update_check", "GET", UPDATE_URL)
+            clock.advance(usage.REST_SECONDS[0] + 1)
+            env.dial_error = None
+            env.template["data"] = OK_JSON
+            self.assertEqual(env.client.request("update_check", "GET", UPDATE_URL).status, 200)
+            self.assertFalse(env.usage.resting("update_check"))
+            for _ in range(2):
+                env.dial_error = OSError("x")
+                with self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL)
+                self.assertEqual(caught.exception.code, "NETWORK_OFFLINE", "닫힌 뒤에는 다시 세어 처음부터다")
+
+    def test_rest_lengths_double_up_to_the_cap_and_a_failed_probe_rests_longer(self):
+        clock = ns.FakeClock()
+        env = ns.Harness(self, clock=clock, switches=ns.USE_SWITCHES["update_check"], dial_error=OSError("x"))
+        rests = []
+        with env:
+            for _ in range(3):
+                with self.assertRaises(errors.NetError):
+                    env.client.request("update_check", "GET", UPDATE_URL)
+            for _ in range(5):
+                state = env.usage._state["update_check"]
+                rests.append(round(state["until"] - clock.now))
+                clock.advance(rests[-1] + 1)
+                with self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL)                          # 반쯤 열림의 한 건 — 실패
+                self.assertEqual(caught.exception.code, "NETWORK_OFFLINE")
+        self.assertEqual(rests, [300, 600, 1200, 1800, 1800])
+
+    def test_user_mistakes_and_rate_limits_do_not_count_toward_resting_but_server_errors_do(self):
+        for status, rests in ((400, False), (422, False), (429, False), (401, True), (403, True), (404, True), (500, True), (503, True)):
+            with self.subTest(status=status):
+                env = ns.Harness(self, ns.http_response(status, "x"), switches=ns.USE_SWITCHES["update_check"])
+                with env:
+                    for _ in range(3):
+                        self.assertEqual(env.client.request("update_check", "GET", UPDATE_URL).status, status)
+                    self.assertEqual(env.usage.resting("update_check"), rests)
+
+    def test_cooldown_is_per_use_and_a_second_request_in_flight_is_refused(self):
+        clock = ns.FakeClock()
+        env = ns.Harness(self, clock=clock, switches=("EXTERNAL_WRITE", "NET_UPDATE_CHECK", "NET_PAGES_SITE"), dial_error=OSError("x"))
+        with env:
+            for _ in range(3):
+                with self.assertRaises(errors.NetError):
+                    env.client.request("update_check", "GET", UPDATE_URL)
+            env.dial_error = None
+            env.template["data"] = ns.http_response(200, body=b"[]")
+            self.assertEqual(env.client.request("pages_site", "GET", SITE_URL).status, 200, "다른 용도는 쉬지 않는다")
+            env.usage.begin("pages_site")
+            with self.assertRaises(errors.NetError) as caught:                      # 진행 중인 같은 용도의 두 번째 요청
+                env.client.request("pages_site", "GET", SITE_URL)
+            self.assertEqual(caught.exception.code, "NET_COOLDOWN")
+            env.usage.abort("pages_site")
+            self.assertEqual(env.client.request("pages_site", "GET", SITE_URL).status, 200)
+
+    def test_the_usage_log_is_a_ring_of_fifty_and_only_takes_the_documented_fields(self):
+        """NT-38 — 접속 기록은 고리 50건이고 칸은 정해진 것뿐이며(머리글·본문·질의 값·토큰·주소 없음) 숫자 ID 는 `<번호>` 로 가린다."""
+        self.assertEqual(usage.RECORD_FIELDS, ("at", "use", "host", "method", "route", "status", "error", "sent", "received", "seconds"))
+        with ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["blogger_read"]) as env:
+            for number in range(55):
+                env.template["data"] = OK_JSON
+                env.client.request("blogger_read", "GET", f"https://www.googleapis.com/blogger/v3/blogs/{number}0123/posts?status=DRAFT&orderBy=UPDATED&maxResults=5&fetchBodies=false&view=ADMIN", bearer="CANARY_TOKEN")
+            records = env.usage.records()
+            self.assertEqual(len(records), 50)
+            self.assertEqual({record.route for record in records}, {"/blogger/v3/blogs/<번호>/posts"})
+            text = repr(records)
+            for leak in ("CANARY_TOKEN", "status=DRAFT", "0123", "Bearer", "Authorization", "orderBy"):
+                self.assertNotIn(leak, text)
+            self.assertEqual({field.name for field in dataclasses.fields(records[0])}, set(usage.RECORD_FIELDS))
+            with self.assertRaises(ValueError):
+                env.usage.record(at=0, use="x", host="h", method="GET", route="r", status=0, error="", sent=0, received=0, seconds=0.0, body="secret")
+            self.assertEqual(records[0].host, "www.googleapis.com")
+            self.assertEqual((records[0].method, records[0].status, records[0].error), ("GET", 200, ""))
+            self.assertGreater(records[0].sent, 0)
+            self.assertGreater(records[0].received, 0)
+        with ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"], dial_error=OSError("x")) as env:
+            with self.assertRaises(errors.NetError):
+                env.client.request("update_check", "GET", UPDATE_URL)
+            self.assertEqual((env.usage.records()[0].status, env.usage.records()[0].error), (0, "NETWORK_OFFLINE"))
+
+
+class LeakTest(unittest.TestCase):
+    def test_canary_never_appears_in_request_bytes_logs_errors_or_records(self):
+        """NT-32 — 사진 이름·OCR 글·사용자 이름·데이터 폴더 경로의 카나리가 요청 바이트·표준 출력·오류·기록 어디에도 없다(요청에 실리는 것은 표의 값과 호출하는 쪽이 정한 토큰·본문뿐)."""
+        canary = ns.CANARY
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / f"{canary}_data"
+            data_dir.mkdir()
+            (data_dir / f"{canary}_photo.jpg").write_bytes(b"x")
+            (data_dir / "ocr.txt").write_text(f"{canary} OCR 글", encoding="utf-8")
+            with mock.patch.dict("os.environ", {"USERNAME": canary + "user", "LOCALAPPDATA": str(data_dir), "COMPUTERNAME": canary + "pc"}):
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    env, _ = run(self, OK_JSON, "blogger_read", BLOG, bearer="TOKEN123")
+                    env2 = ns.Harness(self, b"", dial_error=OSError(canary), switches=ns.USE_SWITCHES["update_check"])
+                    with env2, self.assertRaises(errors.NetError) as caught:
+                        env2.client.request("update_check", "GET", UPDATE_URL)
+                wire = bytes(env.last_socket.sent).decode("ascii")
+                self.assertNotIn(canary, wire)
+                self.assertEqual(wire.count("TOKEN123"), 1, "토큰은 Authorization 한 곳에만 있다")
+                for text in (out.getvalue(), err.getvalue(), repr(env.usage.records()), repr(env2.usage.records()), caught.exception.log_line(), str(caught.exception), caught.exception.detail):
+                    self.assertNotIn(canary, text)
+                    self.assertNotIn("TOKEN123", text)
+        self.assertEqual((out.getvalue(), err.getvalue()), ("", ""), "클라이언트는 아무것도 출력하지 않는다")
+
+
+class SourceFlowTest(unittest.TestCase):
+    """NT-35 — 응답에서 온 값이 닿는 곳의 표: `net/` 소스에서 위험한 호출(파일·경로·명령·정규식·형식·동적 실행)이 이 표의 것뿐이다. 새 호출이 생기면 이 표를 읽고 이유와 함께 더한다."""
+
+    SINKS = {"open", "eval", "exec", "compile", "getattr", "setattr", "__import__", "os.system", "os.popen", "os.unlink", "os.remove", "os.rename", "os.replace", "os.mkdir", "os.makedirs", "os.fspath",
+             "os.getenv", "os.environ.get", "shutil.rmtree", "importlib.import_module"}
+    # (파일, 함수, 부르는 것) → 이유 — 응답 값은 이 가운데 어디에도 닿지 않는다(받은 글은 바이트·고른 머리글·표 안의 글로만 흐른다)
+    ALLOWED = {
+        ("client.py", "NetClient._read_body", "getattr"): "`OSError` 의 `errno` 숫자만 읽어 디스크 부족을 가른다 — 응답과 무관(내려받기 파일 쓰기 실패)",
+        ("client.py", "_trust_env_changed", "os.environ.get"): "신뢰 저장소를 바꾸는 환경 변수 두 개의 이름(상수)을 읽는다 — 응답과 무관",
+        ("client.py", "_FileSink.__init__", "os.fspath"): "호출하는 쪽이 정한 목적지 경로를 글로 바꾼다(응답이 정한 이름이 아니다)",
+        ("client.py", "_FileSink.open", "open"): "호출하는 쪽이 정한 새 파일 한 곳을 만든다(`xb` — 이미 있으면 실패)",
+        ("client.py", "_FileSink.discard", "os.unlink"): "성공하지 못한 내려받기 파일을 지운다(같은 목적지)",
+    }
+
+    def calls(self):
+        found = {}
+        for path in sorted((SRC / "net").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for owner in ast.walk(tree):
+                if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    parents = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and owner in node.body]
+                    qualified = f"{parents[0].name}.{owner.name}" if parents else owner.name
+                    for node in ast.walk(owner):
+                        if isinstance(node, ast.Call):
+                            name = ast.unparse(node.func)
+                            if name in self.SINKS or name.startswith("subprocess.") or name.endswith(".format"):
+                                found[(path.name, qualified, name)] = node.lineno
+        return found
+
+    def test_response_data_never_reaches_paths_commands_or_format_strings(self):
+        found = self.calls()
+        self.assertEqual(sorted(found), sorted(self.ALLOWED), "net/ 에서 위험한 호출이 표와 다르다 — 새로 생겼거나 사라졌다. 응답 값이 닿지 않는 이유와 함께 표에 더한다")
+        for key, reason in self.ALLOWED.items():
+            self.assertGreater(len(reason), 15, key)
+
+    def test_no_dynamic_format_or_regex_is_built_from_data_in_the_net_package(self):
+        for path in sorted((SRC / "net").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and ast.unparse(node.func) in ("re.compile", "re.match", "re.fullmatch", "re.search", "re.sub", "re.findall", "re.split"):
+                    first = node.args[0]
+                    constant_name = lambda item: isinstance(item, ast.Name) and item.id.lstrip("_").isupper()          # noqa: E731 - 모듈 맨 위의 상수(대문자 이름)
+                    ok = (isinstance(first, ast.Constant) or (isinstance(first, ast.Name) and (first.id == "pattern" or constant_name(first)))
+                          or (isinstance(first, ast.JoinedStr) and all(constant_name(part.value) for part in first.values if isinstance(part, ast.FormattedValue))))
+                    self.assertTrue(ok, f"{path.name}:{node.lineno} 정규식은 상수 글(또는 대문자 상수·호출하는 쪽의 pattern 인자)로만 만든다")
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+                    self.fail(f"{path.name}:{node.lineno} 글자 서식(.format) 을 쓰지 않는다")
+                if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+                    self.fail(f"{path.name}:{node.lineno} % 서식을 쓰지 않는다")
+
+
+class FileDownloadTest(unittest.TestCase):
+    """UPDATE 가 쓰는 `request_to_file` — 같은 관문·표·시간 규칙, 목적지는 호출하는 쪽이 정한 새 파일 한 곳, 틀리면 지운다(NT-36 — 틀린 응답은 아무것도 남기지 않는다)."""
+
+    def table(self, **changes):
+        base = endpoints.ENDPOINTS["update_check"]
+        route = dataclasses.replace(base.routes[0], download=True)
+        return dict(endpoints.ENDPOINTS, update_check=dataclasses.replace(base, routes=(route,), download_timeout=600.0, max_download=1024 * 1024, **changes))
+
+    def download(self, response, dest, **kwargs):
+        env = ns.Harness(self, response, switches=ns.USE_SWITCHES["update_check"])
+        with mock.patch.object(client, "ENDPOINTS", self.table()), env, og.Tripwire() as wire:
+            try:
+                result = env.client.request_to_file("update_check", "GET", UPDATE_URL, dest, **kwargs)
+            except errors.NetError as error:
+                result = error
+        self.assertEqual(wire.calls, [])
+        return env, result
+
+    def test_a_good_download_writes_exactly_the_body_and_reports_its_hash(self):
+        body = bytes(range(256)) * 300
+        digest = hashlib.sha256(body).hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "part.bin"
+            env, result = self.download(ns.http_response(200, body=body), dest, max_bytes=len(body), expected_sha256=digest)
+            self.assertEqual((result.status, result.file_size, result.file_sha256, result.body), (200, len(body), digest, b""))
+            self.assertEqual(dest.read_bytes(), body)
+            self.assertEqual(env.usage.records()[0].received > len(body), True)
+
+    def test_every_bad_download_leaves_no_file_behind(self):
+        """NT-36 — 해시가 틀리거나 너무 크거나 짧거나 압축됐거나 상태가 나쁘거나 중간에 끊겨도 목적지에 파일이 남지 않는다."""
+        body = b"abcdef" * 100
+        good = hashlib.sha256(body).hexdigest()
+        cases = {
+            "해시가 다름": (ns.http_response(200, body=body), dict(max_bytes=10_000, expected_sha256="0" * 64), "NET_RESPONSE_INVALID"),
+            "선언 크기가 큼": (ns.http_response(200, body=body), dict(max_bytes=10), "NET_RESPONSE_INVALID"),
+            "길이 없이 큼": (ns.http_response(200, length=False, body=body), dict(max_bytes=10), "NET_RESPONSE_INVALID"),
+            "짧게 끊김": (b"HTTP/1.1 200 OK\r\nContent-Length: 600\r\n\r\nabc", dict(max_bytes=10_000), "NET_RESPONSE_INVALID"),
+            "압축됨": (ns.http_response(200, headers=[("Content-Encoding", "gzip")], body=body), dict(max_bytes=10_000), "NET_RESPONSE_INVALID"),
+            "중간에 끊김": (ns.http_response(200, body=body)[:-100] + b"", dict(max_bytes=10_000, expected_sha256=good), "NET_RESPONSE_INVALID"),
+        }
+        for label, (response, kwargs, code) in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                dest = Path(tmp) / "part.bin"
+                env, result = self.download(response, dest, **kwargs)
+                self.assertIsInstance(result, errors.NetError, label)
+                self.assertEqual(result.code, code, label)
+                self.assertFalse(dest.exists(), f"{label}: 파일이 남았다")
+        for status in (404, 500):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                dest = Path(tmp) / "part.bin"
+                env, result = self.download(ns.http_response(status, "x", body=b"error page"), dest, max_bytes=10_000)
+                self.assertEqual((result.status, dest.exists()), (status, False))
+
+    def test_the_destination_is_chosen_by_the_caller_only_and_an_existing_file_is_never_touched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "exists.bin"
+            dest.write_bytes(b"keep me")
+            env, result = self.download(ns.http_response(200, body=b"new"), dest, max_bytes=100)
+            self.assertEqual((type(result).__name__, result.code, env.dials), ("NetError", "UNEXPECTED_ERROR", []), "이미 있으면 접속 전에 거절")
+            self.assertEqual(dest.read_bytes(), b"keep me")
+            redirect = ns.http_response(200, headers=[("Content-Disposition", 'attachment; filename="../../evil.txt"')], body=b"new")
+            env, result = self.download(redirect, Path(tmp) / "mine.bin", max_bytes=100)
+            self.assertEqual((result.status, sorted(path.name for path in Path(tmp).iterdir())), (200, ["exists.bin", "mine.bin"]), "응답이 정한 이름은 쓰지 않는다")
+
+    def test_a_use_without_a_download_route_refuses_to_download_before_connecting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"])
+            with env, self.assertRaises(errors.NetError) as caught:
+                env.client.request_to_file("update_check", "GET", UPDATE_URL, Path(tmp) / "x.bin", max_bytes=100)
+            self.assertEqual((caught.exception.code, env.dials, list(Path(tmp).iterdir())), ("UNEXPECTED_ERROR", [], []))
+            env = ns.Harness(self, OK_JSON, switches=())
+            with env, self.assertRaises(AppError) as caught:                                    # 스위치가 꺼져 있으면 같은 관문에서 거절
+                env.client.request_to_file("update_check", "GET", UPDATE_URL, Path(tmp) / "x.bin", max_bytes=100)
+            self.assertEqual((caught.exception.code, env.dials), ("NETWORK_DISABLED", []))
+            for bad in ("zz", "A" * 64, "0" * 63):
+                with self.subTest(sha=bad), mock.patch.object(client, "ENDPOINTS", self.table()), ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"]) as env:
+                    with self.assertRaises(errors.NetError):
+                        env.client.request_to_file("update_check", "GET", UPDATE_URL, Path(tmp) / "y.bin", max_bytes=100, expected_sha256=bad)
+
+
+if __name__ == "__main__":
+    unittest.main()

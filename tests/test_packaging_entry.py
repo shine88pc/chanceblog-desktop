@@ -482,24 +482,31 @@ class VendorCheckTest(unittest.TestCase):
 
 
 class CapabilitiesCheckTest(unittest.TestCase):
+    ALL_OFF = {name: False for name in pc.GATE_CONSTANTS if name not in pc.INFORMATIONAL_SWITCHES}        # 알림 줄이 아닌 상수 일곱 — 모두 꺼진 모듈(NET 설계서 E9: 대상이 둘에서 일곱으로 늘었다)
+
     def fake(self, **values):
         module = types.SimpleNamespace(**values)
         return lambda name: module
 
+    def off(self, **changes):
+        """모두 꺼진 가짜 모듈에서 몇 개만 바꾼 것 — 옛 시험이 상수 둘만 적던 자리."""
+        return self.fake(**{**self.ALL_OFF, **changes})
+
     def test_both_gates_false_passes(self):
-        self.assertEqual(ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False)).status, "ok")
+        self.assertEqual(ge.check_capabilities(import_module=self.off()).status, "ok")
+        self.assertEqual(ge.check_capabilities(import_module=self.off(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False)).status, "ok")
 
     def test_the_local_ocr_gate_is_an_information_line_and_never_a_failure(self):
         """결정 D-512(설계 3-8 (5-2)) — 글자 읽기 작업자 관문은 정보 줄이다. 켜져 있어도 실패가 아니고, 없는 옛 모듈도 그대로 통과한다. 외부 쓰기 두 관문은 그대로 실패 조건이다."""
-        off = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False, LOCAL_OCR=False))
+        off = ge.check_capabilities(import_module=self.off(LOCAL_OCR=False))
         self.assertEqual(off.status, "ok")
         self.assertIn("LOCAL_OCR=False", off.text)
-        on = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False, LOCAL_OCR=True))
+        on = ge.check_capabilities(import_module=self.off(LOCAL_OCR=True))
         self.assertEqual(on.status, "ok")
         self.assertIn("LOCAL_OCR=True", on.text)
-        absent = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False))
+        absent = ge.check_capabilities(import_module=self.off())
         self.assertEqual((absent.status, "LOCAL_OCR" in absent.text), ("ok", False))
-        still_fails = ge.check_capabilities(import_module=self.fake(EXTERNAL_WRITE=True, BLOGGER_OAUTH_INPUT=False, LOCAL_OCR=False))
+        still_fails = ge.check_capabilities(import_module=self.off(EXTERNAL_WRITE=True, LOCAL_OCR=False))
         self.assertEqual(still_fails.status, "fail")
 
     def test_a_missing_module_fails_with_the_sentence_the_build_looks_for(self):
@@ -538,20 +545,59 @@ class CapabilitiesCheckTest(unittest.TestCase):
             self.assertEqual(override, allowed)
 
     def test_an_open_gate_or_a_missing_or_non_boolean_value_fails_and_is_not_the_missing_module_sentence(self):
+        without = lambda name: {key: value for key, value in self.ALL_OFF.items() if key != name}      # noqa: E731 - 그 상수만 빠진 모듈
         cases = {
-            "external true": dict(EXTERNAL_WRITE=True, BLOGGER_OAUTH_INPUT=False),
-            "blogger true": dict(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=True),
-            "external missing": dict(BLOGGER_OAUTH_INPUT=False),
-            "blogger missing": dict(EXTERNAL_WRITE=False),
-            "external zero": dict(EXTERNAL_WRITE=0, BLOGGER_OAUTH_INPUT=False),
-            "external none": dict(EXTERNAL_WRITE=None, BLOGGER_OAUTH_INPUT=False),
-            "blogger empty text": dict(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=""),
+            "external true": {**self.ALL_OFF, "EXTERNAL_WRITE": True},
+            "blogger true": {**self.ALL_OFF, "BLOGGER_OAUTH_INPUT": True},
+            "external missing": without("EXTERNAL_WRITE"),
+            "blogger missing": without("BLOGGER_OAUTH_INPUT"),
+            "external zero": {**self.ALL_OFF, "EXTERNAL_WRITE": 0},
+            "external none": {**self.ALL_OFF, "EXTERNAL_WRITE": None},
+            "blogger empty text": {**self.ALL_OFF, "BLOGGER_OAUTH_INPUT": ""},
+            # E9 — 인터넷 접속 스위치 다섯: 켜졌거나·빠졌거나·참 비슷한 값이면 모두 실패다
+            **{f"{name} true": {**self.ALL_OFF, name: True} for name in ("NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")},
+            **{f"{name} missing": without(name) for name in ("NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")},
+            **{f"{name} one": {**self.ALL_OFF, name: 1} for name in ("NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")},
+            "the old two only": dict(EXTERNAL_WRITE=False, BLOGGER_OAUTH_INPUT=False),
         }
         for name, values in cases.items():
             with self.subTest(name=name):
                 result = ge.check_capabilities(import_module=self.fake(**values))
                 self.assertEqual(result.status, "fail", name)
                 self.assertNotIn("모듈이 없어요", result.text)
+
+    def test_selftest_capabilities_compares_the_open_set_with_the_shipped_table(self):
+        """NT-60(NET 설계서 E9) — 켜진 상수의 집합이 출하 표와 **정확히 같을 때만** 통과한다: 표가 비어 있으면 모두 꺼져야 하고, 표에 이름을 올리면 그 상수만 켜져 있어야 한다(표 밖이 켜져도·표의 것이 꺼져도 실패)."""
+        names = [name for name in pc.GATE_CONSTANTS if name not in pc.INFORMATIONAL_SWITCHES]
+        self.assertEqual(pc.SHIPPED_OPEN_SWITCHES, (), "지금 출하 표는 비어 있다 — 켜진 채 내보내는 것은 0")
+        with mock.patch.object(pc, "SHIPPED_OPEN_SWITCHES", ("NET_UPDATE_CHECK",)):
+            self.assertEqual(ge.check_capabilities(import_module=self.off(NET_UPDATE_CHECK=True)).status, "ok", "표의 것만 켜져 있으면 통과")
+            self.assertIn("NET_UPDATE_CHECK", ge.check_capabilities(import_module=self.off(NET_UPDATE_CHECK=True)).text)
+            closed = ge.check_capabilities(import_module=self.off())
+            self.assertEqual(closed.status, "fail", "표의 것이 꺼져 있으면 실패")
+            self.assertIn("NET_UPDATE_CHECK", closed.text)
+            for other in names:
+                if other != "NET_UPDATE_CHECK":
+                    with self.subTest(other=other):
+                        result = ge.check_capabilities(import_module=self.off(NET_UPDATE_CHECK=True, **{other: True}))
+                        self.assertEqual(result.status, "fail", "표 밖이 켜져 있으면 실패")
+                        self.assertIn(other, result.text)
+        for name in names:                                                                  # 지금 표(빈 표)에서는 어떤 상수가 켜져도 실패
+            with self.subTest(open=name):
+                result = ge.check_capabilities(import_module=self.off(**{name: True}))
+                self.assertEqual(result.status, "fail")
+                self.assertIn(name, result.text)
+        self.assertEqual(ge.check_capabilities(import_module=self.off(LOCAL_OCR=True)).status, "ok", "글자 읽기 작업자 관문은 알림 줄이라 켜져도 실패가 아니다")
+
+    def test_the_check_reads_the_union_of_the_modules_table_and_the_tools_table_so_a_dropped_name_cannot_hide_a_constant(self):
+        """M-NET-20 — 모듈이 `SWITCH_NAMES` 에서 이름 하나를 빼도(그리고 그 상수를 True 로 켜도) 점검은 도구가 아는 표로 그 상수를 본다."""
+        everything = {name: False for name in pc.GATE_CONSTANTS if name not in pc.INFORMATIONAL_SWITCHES}
+        values = {**everything, "NET_BLOGGER_DRAFT": True, "SWITCH_NAMES": tuple(name for name in everything if name != "NET_BLOGGER_DRAFT")}
+        result = ge.check_capabilities(import_module=self.fake(**values))
+        self.assertEqual(result.status, "fail")
+        self.assertIn("NET_BLOGGER_DRAFT", result.text)
+        partial = {**everything, "NET_BLOGGER_DRAFT": True, "SWITCH_NAMES": ("EXTERNAL_WRITE",)}                       # 표를 거의 비워도 마찬가지
+        self.assertEqual(ge.check_capabilities(import_module=self.fake(**partial)).status, "fail")
 
     def test_the_real_repository_state_matches_whether_the_module_exists(self):
         result = ge.check_capabilities()
@@ -560,6 +606,43 @@ class CapabilitiesCheckTest(unittest.TestCase):
         else:
             self.assertEqual(result.status, "fail")
             self.assertIn("모듈이 없어요", result.text)
+
+
+class TlsCheckTest(unittest.TestCase):
+    """NT-62(NET 설계서 C9) — `--selftest` 의 TLS 부품 점검은 **알림**이다: 접속하지 않고, 실패해도 늘 `ok` 라서 빌드를 거절하지 않는다."""
+
+    def test_selftest_tls_item_is_informational(self):
+        good = ge.check_tls()
+        self.assertEqual((good.key, good.status), ("tls", "ok"))
+        self.assertIn("접속은 하지 않았어요", good.text)
+        for label, importer in (("ssl 이 없다", lambda name: (_ for _ in ()).throw(ImportError("x"))), ("기본 환경을 못 만든다", lambda name: types.SimpleNamespace(OPENSSL_VERSION="OpenSSL x", create_default_context=lambda: (_ for _ in ()).throw(OSError("secret path C:/hidden")))),
+                                ("루트 표가 깨졌다", lambda name: types.SimpleNamespace(OPENSSL_VERSION="OpenSSL x", create_default_context=lambda: types.SimpleNamespace(cert_store_stats=lambda: (_ for _ in ()).throw(ValueError("x")))))):
+            with self.subTest(label=label):
+                result = ge.check_tls(import_module=importer)
+                self.assertEqual(result.status, "ok", "실패해도 빌드를 거절하지 않는다")
+                self.assertTrue(result.text.startswith("알림"), result.text)
+                self.assertNotIn("hidden", result.text)
+        fake = types.SimpleNamespace(OPENSSL_VERSION="OpenSSL 3.x", create_default_context=lambda: types.SimpleNamespace(cert_store_stats=lambda: {"x509_ca": 0}))
+        windows = ge.check_tls(import_module=lambda name: fake, platform="win32")
+        self.assertEqual((windows.status, windows.text.startswith("알림")), ("ok", True), "윈도에서 루트를 못 읽으면 알림")
+        other = ge.check_tls(import_module=lambda name: fake, platform="linux")
+        self.assertFalse(other.text.startswith("알림"), "윈도가 아니면 루트 0 도 알림이 아니다(리눅스 CI 는 루트를 다른 방식으로 읽는다)")
+
+    def test_the_build_never_refuses_over_the_tls_item_and_does_not_require_it(self):
+        parsed = ps.build_package.parse_selftest(ps.selftest_text(overrides={"tls": ("ok", "알림: 점검하지 못했어요")}))
+        ok, _gate, _override, bad = ps.build_package.judge_selftest(parsed, allow_missing_gate=False)
+        self.assertEqual((ok, bad), (True, []))
+        dropped = ps.build_package.parse_selftest(ps.selftest_text(drop=("tls",)))
+        ok, _gate, _override, bad = ps.build_package.judge_selftest(dropped, allow_missing_gate=False)
+        self.assertEqual((ok, bad), (True, []), "옛 묶음처럼 tls 줄이 없어도 거절 조건이 아니다(알림 점검)")
+
+    def test_gui_entry_stays_free_of_static_network_imports_and_imports_ssl_only_by_name_inside_the_one_check(self):
+        text = (ps.PACKAGING / "gui_entry.py").read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        self.assertNotIn("ssl", imported)
+        code = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value == "ssl"]
+        self.assertEqual(len(code), 1, "글자 'ssl' 은 `check_tls` 의 이름으로 가져오는 한 곳뿐이다")
 
 
 class UacCheckTest(unittest.TestCase):

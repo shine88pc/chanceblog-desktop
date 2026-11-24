@@ -512,3 +512,125 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 ### 이 묶음이 하지 않은 것(D-615)
 
 감사 참고-4·5·6·14–17·19·22 는 이월한다(막지 않아도 되는 참고 — 대부분 외부 쓰기를 켜는 변경 때 같이). 되돌리기의 메모리 사본은 보관함 크기만큼 메모리를 쓰고 시간 한도는 없다(전체 백업의 사본에는 있다). `requirements-package.txt` 해시 잠금은 `.github/`·잠금 파일이라 제안만이다. 2차 검증의 참고 가운데 이월·한계로 적어 두는 것: `same_database` 는 두 보관함의 판이 다르면 표마다 행 수만 견준다(판이 다르고 행 수가 같은데 내용이 다른 경우는 못 본다 — 안전 사본이 옛 판일 때뿐이고 되돌림이 페이지 단위 복사라 실제 위험은 작다) · 옛 `restore` 명령은 덮인 채 되돌리지 못해도 방금 만든 사본으로 되돌리지 않는다(이중 실패에서만이고 옛 동작과 같다) · 복원 임시 파일 `.restoring` 을 O_EXCL 로 만들지 않는다(지운 직후 같은 이름에 링크를 다시 심는 틈 — 같은 사용자 위협) · 링크 종류는 심볼릭 링크·마운트 지점 둘로 못박았다(이름을 돌리는 새 종류는 name surrogate 비트로 가를 수 있다) · 백업 설정 경로 안내 한 줄(`INCLUDED_PATH_NOTE`)은 아직 화면에 오르지 않는다 · `client_id` 가림은 주소 인자 꼴뿐이다(폼 본문·설정 줄·JSON 은 한계 ⑦ 과 같은 부류).
+
+## 인터넷 접속 스위치 표와 출하 표(NET 갈래 — D-720에서 D-739, 운영자 확인 038 ①: 구현 준비까지, 스위치는 모두 꺼진 채)
+
+앱 v1.0 의 인터넷 접속 셋(업데이트 확인·Pages 가지 올리기·Blogger 초안 저장)의 **구현 준비**다 — 켜는 일(스위치를 `True` 로 바꾸는 소스 변경)은 갈래마다 구현·독립 검증 뒤에 새 번호로 다시 승인받는다. 접속은 두 개의 문으로만 나간다: ① 표준 라이브러리 보안 접속(TLS) 클라이언트 `net/client.py` 한 곳 ② 기존 git 하위 프로세스 한 곳(`publish/gitrepo.py`). 새 접속마다 별개의 **소스 상수 스위치**(`capabilities.py`, 기본 False)를 두고, 설정 파일·환경 변수·명령줄·화면에는 켜는 길이 없다(시험 `test_net_switches` 와 `NoWayToTurnItOnTest` 가 소스에서 확인한다).
+
+### 스위치 표
+
+이 표가 스위치의 전부다. 시험(`test_net_switches.SwitchTablesTest`)이 소스의 대문자 상수·`capabilities.SWITCH_NAMES`·`packaging/pkgcommon.py` 의 `GATE_CONSTANTS`·이 표가 서로 같음을 지킨다 — 새 상수를 한 곳에서 빼먹으면 빨개진다.
+
+| 상수 | 출하 값 | 읽는 함수 | `require_net` 용도 | 함께 켜져 있어야 하는 것 |
+|---|---|---|---|---|
+| `EXTERNAL_WRITE` | False | `external_write_enabled()` | (윗 스위치 — 쓰기 용도 셋이 함께 요구한다) | — |
+| `BLOGGER_OAUTH_INPUT` | False | `blogger_oauth_input_enabled()` | (Blogger 입력 칸 — 용도 없음) | — |
+| `LOCAL_OCR` | False | `local_ocr_enabled()` | (이 PC 안 계산 — 용도 없음, `require_local_ocr`) | — |
+| `NET_UPDATE_CHECK` | False | `net_update_check_enabled()` | `update_check` | 없음 |
+| `NET_PAGES_SITE` | False | `net_pages_site_enabled()` | `pages_site` | `EXTERNAL_WRITE` |
+| `PAGES_BRANCH_PUSH` | False | `pages_branch_push_enabled()` | `pages_branch` | `EXTERNAL_WRITE` |
+| `NET_BLOGGER_OAUTH` | False | `net_blogger_oauth_enabled()` | `blogger_oauth`·`blogger_read` | 없음 |
+| `NET_BLOGGER_DRAFT` | False | `net_blogger_draft_enabled()` | `blogger_draft` | `EXTERNAL_WRITE`·`NET_BLOGGER_OAUTH` |
+
+### 용도 표
+
+`capabilities.require_net(용도, 작업)` 은 용도 이름마다 필요한 상수가 **모두 글자 그대로 `True`** 일 때만 지난다(1·'yes' 같은 참 비슷한 값은 못 연다). 모르는 용도 이름은 거절한다. 윗 스위치가 필요한 용도에서 `EXTERNAL_WRITE` 가 꺼져 있으면 옛 문구 그대로 `EXTERNAL_WRITE_DISABLED`, 그 밖의 거절은 `NETWORK_DISABLED` 다. `EXTERNAL_WRITE` 만 켜서는 아무것도 열리지 않는다(좁은 스위치가 함께 있어야 한다).
+
+| 용도 | 필요한 것 | 윗 스위치 `EXTERNAL_WRITE` | 쓰는 갈래 |
+|---|---|---|---|
+| `update_check` | `NET_UPDATE_CHECK` | 아니오(읽기) | UPDATE |
+| `pages_site` | `NET_PAGES_SITE` | 예(올리기 흐름의 일부) | PUBPR |
+| `pages_branch` | `PAGES_BRANCH_PUSH` | 예 | PUBPR |
+| `blogger_oauth` | `NET_BLOGGER_OAUTH` | 아니오(내용을 쓰지 않는 로그인) | BLOGGER |
+| `blogger_read` | `NET_BLOGGER_OAUTH` | 아니오(Blogger 읽기 요청) | BLOGGER |
+| `blogger_draft` | `NET_BLOGGER_OAUTH` + `NET_BLOGGER_DRAFT` | 예(초안 저장 POST) | BLOGGER |
+
+### 출하 표와 자가 점검
+
+`packaging/pkgcommon.py` 의 `SHIPPED_OPEN_SWITCHES` 가 **켜진 채 내보내도 되는 스위치의 이름표**다. **지금은 빈 표다(켜진 것 0).** 묶음의 `--selftest` `capabilities` 점검(`packaging/gui_entry.py`)은 켜진(글자 그대로 `True`) 상수의 집합이 이 표와 **정확히 같을 때만** 통과한다 — 표 밖이 켜졌거나 표의 것이 꺼졌거나, 상수가 없거나 True·False 가 아니면 실패하고 빌드는 산출물을 만들지 않는다(예전의 '`EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT` 둘 다 False' 와 같은 엄격함이고 대상이 일곱으로 늘었다. `LOCAL_OCR` 는 예전처럼 알림 줄). 켜는 변경은 **상수 한 줄 + 출하 표 한 줄**이고, 켜는 확인(번호 있는 승인)을 받은 스위치만 표에 더한다. 어느 스위치도 이 갈래에서 켜지 않는다.
+
+## 인터넷 접속 공통 틀(`net/`) — 규칙과 위협 대응 (NET 갈래 N2–N4, D-724에서 D-737, 구현 준비까지 — 스위치는 모두 꺼진 채)
+
+새 인터넷 접속은 **두 개의 문**으로만 나간다. ① `net/client.py`(표준 라이브러리 `http`·`ssl` 을 가져오는 **유일한 파일**) ② 기존 git 하위 프로세스(`publish/gitrepo.py`). 접속 클라이언트 객체는 어댑터 공장 안에서만 만들어지고, 어댑터는 스위치가 켜져야 꽂힌다(`service/wiring.py` — 모든 `register` 호출이 스위치 `if` 안). 그래서 **스위치가 모두 꺼진 기본 빌드에서는 접속 클라이언트가 한 번도 만들어지지 않는다**. 켠 뒤에도 접속은 사용자가 누를 때만 일어난다(시작 때·예약·백그라운드 접속 없음).
+
+### 고정 호스트 표(`net/endpoints.py` — 소스 상수, 설정·환경·명령줄에서 읽지 않는다)
+
+호스트는 정확히 일치(ASCII·소문자·점 없음·포트 없음 — 와일드카드·하위 도메인·설정으로 더하기 없음)해야 하고, 길은 정규식 전체 일치, 질의는 길마다 고정이다. 표 밖의 요청은 **접속하기 전에** 거절한다.
+
+| 용도 | 호스트 | 방법·길(모양) | 고정 질의 | 쓰는 갈래 |
+|---|---|---|---|---|
+| `update_check` | `github.com`(자리표시자 — UPDATE 갈래가 확정·확장, 이동 호스트 0) | GET 정적 주소 한 모양 | 없음 | UPDATE |
+| `pages_site` | 글 저장소 소유자의 `github.io` 한 곳(`gitrepo.EXPECTED_OWNER` 에서 만든다 — origin 정규식과 같은 상수) | GET, 허용 문자 집합의 길(`..`·`%2e`·`%2f`·`%5c`·`%00` 금지) | `cb` = `app` 또는 `app-<시도 번호>`(vendor 확인 도구가 시도마다 바꿔 보낸다) | PUBPR |
+| `blogger_oauth` | `oauth2.googleapis.com` | POST `/token`·`/revoke` 둘뿐(양식 인코딩, 본문 4 KiB 이하) | 없음 | BLOGGER |
+| `blogger_read` | `googleapis.com` 의 `www` 호스트 | GET `/blogger/v3/blogs/<번호>`·`…/posts`·`…/posts/<번호>`(번호는 숫자 25자 이하) | 길마다 고정(`status=DRAFT&orderBy=UPDATED&maxResults=5&fetchBodies=false&view=ADMIN`·`view=ADMIN`) | BLOGGER |
+| `blogger_draft` | `googleapis.com` 의 `www` 호스트 | POST `/blogger/v3/blogs/<번호>/posts`(JSON 본문 1 MiB 이하) | `isDraft=true` | BLOGGER |
+
+브라우저로만 여는 주소(로그인 안내)와 git 이 접속하는 곳은 이 표에 없다(앱이 접속하지 않는다).
+
+### 한도·머리글·응답 규칙
+
+| 항목 | 값 |
+|---|---|
+| 시간 | 연결 10초 · 소켓 작업 한 번 15초 · **요청 하나의 총 30초**(마감 감시) · 내려받기는 용도 표가 정한다 |
+| 크기 | 받는 본문 기본 1 MiB(`blogger_*` 2 MiB·`pages_site` 20 MiB) · 보내는 본문은 길마다 한도 · 받은 머리글 64 KiB·100개 |
+| 이동(3xx) | **기본 거절**. `pages_site` 만 같은 호스트 최대 2번, 다른 호스트는 용도 표의 `redirect_hosts` 에 있을 때만 · 매 단계 표와 견준다 · 다른 호스트에는 토큰을 보내지 않는다 |
+| 재시도 | 클라이언트 자체 **0**(호출하는 쪽 규칙: 일시 오류 최대 1번). 쓰기 요청의 '보낸 뒤 실패' 는 `outcome_unknown=True` 로 알리고 자동으로 다시 보내지 않는다 |
+| 쿨다운 | 같은 용도가 연속 3번 실패하면 5분 쉼(10분·20분·상한 30분) — 400·422·429 는 세지 않는다 · 쉬는 중·진행 중인 같은 용도의 두 번째 요청은 접속 없이 `NET_COOLDOWN` |
+| 요청에 싣는 것 | 표의 머리글뿐: `Host`·`User-Agent`(`ChanceBlogDesktop/<버전>` — 버전 번호가 앱에서 나가는 유일한 값)·`Accept`·`Accept-Encoding: identity`·`Connection: close`·본문 길의 `Content-Type`·`Content-Length`·Blogger 읽기·쓰기만 `Authorization: Bearer`·`pages_site` 만 `Cache-Control: no-cache`. `Cookie`·`Referer`·사용자 이름·컴퓨터 이름·경로는 **싣지 않는다** |
+| 응답 | 데이터로만 읽는다: 크기를 먼저 보고 바이트로 받음 → UTF-8 엄격 → 엄격한 JSON(중복 키·`NaN`·깊이 20 초과·정수 20자리 초과·문자열 100만 글자 초과 거절) → 용도별 모양 검사(모르는 필드는 읽지도 않는다). 응답 속 주소·글은 요청·경로·명령·문구에 쓰지 않는다 |
+| 접속 기록 | 메모리 고리 50건(시각·용도·호스트·방법·길 이름(숫자 번호는 `<번호>`)·상태 또는 오류 코드·바이트·시간). **파일에 쓰지 않는다**. 보는 곳: `doctor` 의 '인터넷 접속' 줄 |
+
+### 보안 접속(TLS) 규칙
+
+보안 환경은 `ssl.create_default_context()`(인증서 검증 필수·호스트 이름 확인, 윈도에서는 `CA`·`ROOT` 저장소)에 **최소 TLS 1.2 를 명시**한다. 검증을 끄거나 낮추는 이름(`_create_unverified_context`·`CERT_NONE`·`CERT_OPTIONAL`·`check_hostname`·`verify_mode` 대입·낮은 `minimum_version`·`set_ciphers` 등)은 `src/` 어디에도 없고 시험이 소스에서 확인한다. 생산 코드에는 보안 환경이나 전송기를 바깥에서 넣는 매개변수가 없다(시험은 모듈 함수를 `mock.patch.object` 로 바꾼다) — 그래도 바꿔 끼운 보안 환경이 검증을 낮췄으면 접속하지 않는다(마지막 방어). 프록시·터널·쿠키·자동 이동은 쓰지 않는다. 신뢰 저장소를 바꾸는 환경 변수 `SSL_CERT_FILE`·`SSL_CERT_DIR` 가 설정돼 있으면 **접속하지 않는다**(`NET_TLS_FAILED`) — 윈도의 파이썬 3.12 에서 이 변수가 기본 보안 환경에 믿는 곳을 실제로 더하는 것을 시험이 확인했다(D-730).
+
+### 총 시간 감시를 읽는 쪽 안에 넣은 까닭(설계서와 다르게 한 점, D-729)
+
+설계서는 '다른 스레드가 연결을 닫는 감시 타이머' 를 가정했고 윈도에서 막힌 읽기가 깨는지 시험해야 한다고 적었다(Q10). 실측하니(윈도 파이썬 3.12.0, 루프백 서버) `http.client` 처럼 `makefile` 이 열려 있으면 다른 스레드의 `close()` 는 막힌 읽기를 깨우지 못했고(서버가 다음 바이트를 보낼 때에야 풀림) `shutdown` 도 깨우지 못했다. 깨우려면 `net/client.py` 에 `socket` 가져오기가 필요해 **허용 표가 늘 판**이었다. 그래서 연결 위에 마감을 아는 껍데기(`_DeadlineSocket`)를 씌워 보내기·읽기 직전마다 남은 시간을 보고 소켓 제한을 `min(작업 제한, 남은 시간)` 으로 줄인다 — 스레드도 `socket` 가져오기도 없고 허용 표는 그대로다. 진짜 TLS 연결에서 찔끔 보내는 서버를 총 시간 1.5초로 끊는 데 1.50초 걸렸다(시험 `RealSocketDeadlineTest`). 이름 풀이만은 운영체제가 끝낼 때까지 끊을 수 없다(풀이가 돌아온 뒤 마감을 넘겼으면 곧바로 끝낸다 — 알려진 한계).
+
+### 허용 목록 — 범주 표 다섯, 정확히 6곳(D-735)
+
+`tests/test_source_rules_outgoing.py` 의 허용 표가 갈래마다 같은 줄을 고쳐 충돌하지 않게 범주 표로 쪼개졌다. 새 접속 갈래는 **자기 범주 표에 한 줄**만 더한다. '정확히 N곳' 단언은 그대로이고 약해지지 않았다(변이가 항목 하나 빼기·더하기·호스트 하나 바꾸기를 모두 잡는다).
+
+| 범주 표 | 곳수 | 항목 |
+|---|---|---|
+| `ALLOWED_GIT_WRITE` | 1 | `publish/gitrepo.py` · `subprocess` |
+| `ALLOWED_LOCAL_WORKER` | 1 | `ui/ocr_adapter.py` · `subprocess` |
+| `ALLOWED_BROWSER` | 2 | `ui/qt/shell.py`·`ui/qt/components.py` · `QDesktopServices` |
+| `ALLOWED_NET_CLIENT` | 2 | `net/client.py` · `http`, `net/client.py` · `ssl` — NET 갈래가 더했다 |
+| `ALLOWED_LOOPBACK` | 0 | BLOGGER 갈래가 `net/loopback.py` · `socket` 한 줄을 더해 1곳이 된다 |
+
+더 엄격해진 것: 접속·쓰기 범주의 이유에는 관문 이름(`require_…`)이 있어야 하고, `http`·`ssl` 은 한 파일에만·`socket` 은 루프백 범주 표의 파일에만 허용된다. `vendor/scripts/verify_pages_deploy.py` 의 `http`·`urllib` 두 줄은 vendor 가 불변이라 지우지 않고 이유에 '앱은 `fetcher` 를 주입해 이 길을 쓰지 않는다' 를 더했다 — 공개 주소 확인은 `net/site.py` 의 `fetcher` 로 이 틀을 지난다(시험이 vendor 의 `fetch`·`urlopen` 이 한 번도 불리지 않음을 확인한다). D-415 의 거절 목록(Qt 네트워크·`-x64` OpenSSL)은 한 줄도 바뀌지 않았다.
+
+### 위협 표(적대적으로 — 서버·네트워크·같은 PC 의 다른 프로그램·우리 코드의 실수가 모두 나쁘게 행동한다고 본다)와 시험
+
+| # | 위협 | 대응 | 시험 |
+|---|---|---|---|
+| T-01 | 가짜 서버(이름 풀이 속임·가로챔) | 호스트 고정 + 인증서·호스트 이름 확인·최소 TLS 1.2(끄는 길 없음). 한계: PC 의 신뢰 저장소에 악성 루트가 이미 있으면 막지 못한다 | `test_net_tls` 의 정상·다른 이름·만료·믿지 않는 발급자·TLS 1.1·약한 환경 |
+| T-02 | 변조 응답 | 엄격한 읽기·모양 검사·모르는 필드 버림 | `test_net_parse`·`ResponseLimitsTest`·`FileDownloadTest` |
+| T-03 | 거대·압축 응답 | 선언 크기·읽는 동안 누적 크기·`identity` 만 | `ResponseLimitsTest` |
+| T-04 | 느린 응답 | 연결 10초·작업 15초·총 30초 마감 껍데기·쿨다운 | `DeadlineTest`·`RealSocketDeadlineTest` |
+| T-05 | 이동(다른 호스트·평문·반복) | 기본 거절·표·https·횟수·반복 거절 | `RedirectTest` |
+| T-06 | 로그·오류의 비밀 | 예외 문장·주소·머리글을 버리고 종류 이름만 | `ErrorMappingTest`·`LeakTest` |
+| T-07 | 사진·읽은 글 유출 | 본문은 표의 모양뿐 — 요청에 실릴 길이 구조적으로 없다 | `LeakTest`·`RequestBytesTest` |
+| T-08 | 경로·사용자 이름·컴퓨터 이름 | 머리글 표에 없고 `User-Agent` 는 버전뿐 | `RequestBytesTest` |
+| T-09 | 토큰이 파일로 샘 | 이 틀은 응답을 파일에 쓰지 않는다(`request_to_file` 의 호출자 지정 새 파일 한 곳 제외) | `SourceFlowTest`·`FileDownloadTest` |
+| T-10 | 재시도 폭주·단추 연타 | 자체 재시도 0·쿨다운·진행 중 거절 | `ErrorMappingTest`·`CooldownTest` |
+| T-11 | 로컬 소켓 가로채기 | 소켓은 루프백 범주 표의 파일 한 곳(BLOGGER 갈래)뿐 | `ImportScopeTest` |
+| T-12 | 신뢰 설정 환경 변수 | 설정돼 있으면 접속하지 않음 | `TrustEnvironmentTest` |
+| T-13 | TLS 약화 코드가 들어옴 | 이름 금지 소스 훑기·마지막 방어 | `test_no_tls_weakening_name_appears_anywhere_in_src`·약한 환경 시험 |
+| T-14 | 접속 코드가 흩어져 숨음 | 범주별 정확한 표·탐지기(정직한 코드의 회귀 그물 — 의도적 우회는 못 막는다)·네 겹이 함께 | `ImportScopeTest`·`CategoryTablesTest` |
+| T-15 | 스위치를 몰래 켬 | 소스 상수·읽는 함수·출하 표·`--selftest` | `test_net_switches`·`test_packaging_entry` |
+| T-16 | 응답 글이 화면·명령에 주입됨 | 응답 글은 문구에 끼우지 않고 코드만 받는다 | `ErrorMappingTest`·`SourceFlowTest` |
+| T-17 | 오류 문구에 응답·주소·머리글 | `net/errors.py` 는 종류 이름만 | `ErrorMappingTest` |
+| T-18 | PC 시계·낡은 신뢰 루트 | `NET_TLS_FAILED` 안내가 '날짜와 시간' 부터(운영자 실기에서 확인) | `NoticesAndPackageTest` 의 문구 시험 |
+| T-19 | 프록시·보안 장비 환경 | 프록시를 쓰지 않고 실패를 알린다 | `test_no_proxy_or_tunnel_names_in_src`·`ErrorMappingTest` |
+| T-20 | 의존성·공급망 | 외부 패키지 0·`urllib`(parse 말고)·`requests` 등 가져오기 금지 | `ImportScopeTest` |
+| T-21 | 시험이 실제 외부에 접속 | 가짜 전송기·`Tripwire`(루프백 전용 모드)·차단 러너 | `TripwireLoopbackTest` |
+| T-22 | 몰래 자동 접속 | 사용자 동작이 유일한 시작 — 스위치를 모두 켠 채로도 0 | `test_net_zero` |
+| T-23 | 접속 기록·진단 복사의 비밀 | 기록 칸 고정·파일에 쓰지 않음 | `CooldownTest.test_the_usage_log…`·`LeakTest` |
+| T-24 | 호스트 이름 속임(닮은 글자·`@`·IP·포트·끝의 점) | 모양 검사 | `ShapeRefusalTest` |
+| T-25 | 요청 분할·머리글 주입 | 값 검사 + `http.client` 의 검사 | `ShapeRefusalTest` |
+| T-26 | 내려받기 목적지 속임 | 목적지는 호출하는 쪽이 정한 새 파일 한 곳, 응답이 정한 이름은 쓰지 않음 | `FileDownloadTest` |
+
+> **정직한 한계**: 소스 훑기 탐지기는 정직한 코드의 회귀 그물이지 일부러 숨기는 코드를 막는 방어가 아니다(위 '허용 목록' 절의 `HONEST_LIMITS` 와 같은 이야기). 이 틀의 안전은 탐지기 하나에 기대지 않고 **관문 · 어댑터 등록 · 스위치 · 접속 0 시험** 네 겹이 함께 막는다. 알려진 한계 둘: 이름 풀이 시간은 끊을 수 없다 · 중복 요청 거절은 `NET_COOLDOWN` 코드를 재사용해 문구가 완벽히 맞지는 않는다(GUI 가 단추를 막는 것이 1차 방어).

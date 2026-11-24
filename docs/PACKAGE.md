@@ -80,7 +80,8 @@ python -m venv ..\chanceblog-package-venv
 | `file_hashes` | 정보 파일의 파일별 SHA-256 목록과 실제 파일이 모두 같다(압축 해제 실패·백신 격리로 빠진 파일을 찾는다) |
 | `licenses` | `LICENSES/` 의 다섯 파일이 있고 LGPL·GPL 전문과 고지문의 핵심 문장이 있다 |
 | `vendor_core` | 앱이 찾는 `vendor/` 자리가 실제 자리와 같고 `VENDOR.json` 해시가 같고 모듈이 불러와지며 그 파일들이 쓰는 표준 모듈이 묶음에 있다 |
-| `capabilities` | 외부 쓰기 관문 `EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT` 이 둘 다 `False`(모듈이 없어도 실패 — '모듈이 없음'과 '모듈은 있는데 안에서 가져오기 실패'는 다른 글로 알리고 `--allow-missing-gate` 는 앞의 것만 넘긴다) |
+| `capabilities` | 소스 상수 스위치(외부 쓰기 `EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT`·인터넷 접속 다섯 — `LOCAL_OCR` 는 알림 줄)에서 **켜진 것의 집합이 출하 표(`packaging/pkgcommon.py` 의 `SHIPPED_OPEN_SWITCHES`)와 정확히 같다** — 표 밖이 켜졌거나 표의 것이 꺼졌거나 상수가 없으면 실패. 지금 표는 비어 있어 모두 `False` 여야 한다(D-722). 모듈이 없어도 실패 — '모듈이 없음'과 '모듈은 있는데 안에서 가져오기 실패'는 다른 글로 알리고 `--allow-missing-gate` 는 앞의 것만 넘긴다 |
+| `tls` | 보안 접속(TLS) 부품 — `ssl` 이 불러와지고 기본 보안 환경이 만들어지며 윈도 신뢰 저장소에서 루트를 읽는다. 접속은 하지 않고 **실패해도 알림일 뿐 빌드를 거절하지 않는다**(묶음에서 `_ssl`·`libssl` 이 빠진 것을 빨리 알리려는 점검 — D-415 의 쌍둥이, D-723) |
 | `uac_manifest` | 실행 파일 매니페스트가 `asInvoker`(관리자 권한 요구 0) |
 | `qt_plugins` | `platforms/qwindows.dll`·`imageformats/qjpeg·qwebp·qsvg` 가 있고 `QImageReader` 가 jpeg·png·webp·svg 를 읽는다 |
 | `qt_screens` | 창 없이(offscreen) 화면 여섯(홈·후보·초안·Seed·블로그·설정)이 열리고 처리 못 한 예외가 없다 |
@@ -91,14 +92,14 @@ python -m venv ..\chanceblog-package-venv
 
 ## 7. 외부 쓰기 경계
 
-이 Package 는 외부로 쓰는 길이 없어야 한다(운영자 결정 5항). 이 묶음이 하는 일은 **빌드·시작 쪽의 경계**다: 시작 파일이 명령줄을 열지 않고, `--selftest` 가 `capabilities` 상수를 확인하며, 빌드가 관문 없는 소스를 거절한다(`--allow-missing-gate` 는 시험 빌드 표시를 남긴다). 앱 안의 외부 쓰기 차단(외부 쓰기 서비스 비활성·어댑터 미등록·실행 시점 관문·Network Write 0 시험)은 보안 수정 묶음의 몫이다. 묶음 안에는 네트워크를 쓸 수 있는 표준 모듈(`ssl`·`socket`·`urllib` 등)과 `publish/` 코드가 **들어 있을 수 있다**(앱의 서비스 층이 가져오므로) — 화면은 그 길을 부르지 않는다는 것이 보안 묶음의 시험이 지키는 사실이다. 빌드의 관문 점검(`--selftest` 의 `capabilities`)은 상수 두 개(`EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT`)가 `False` 로 적혀 있는지만 읽는다 — 환경 변수로 값을 정하는 코드나 `require_external_write` 함수가 없는 경우를 이 점검이 잡는다고 보지 않는다(실제 차단은 보안 수정 묶음의 시험 몫, D-443).
+이 Package 는 외부로 쓰는 길이 없어야 한다(운영자 결정 5항). 이 묶음이 하는 일은 **빌드·시작 쪽의 경계**다: 시작 파일이 명령줄을 열지 않고, `--selftest` 가 `capabilities` 상수를 확인하며, 빌드가 관문 없는 소스를 거절한다(`--allow-missing-gate` 는 시험 빌드 표시를 남긴다). 앱 안의 외부 쓰기 차단(외부 쓰기 서비스 비활성·어댑터 미등록·실행 시점 관문·Network Write 0 시험)은 보안 수정 묶음의 몫이다. 묶음 안에는 네트워크를 쓸 수 있는 표준 모듈(`ssl`·`socket`·`urllib` 등)과 `publish/` 코드가 **들어 있을 수 있다**(앱의 서비스 층이 가져오므로) — 화면은 그 길을 부르지 않는다는 것이 보안 묶음의 시험이 지키는 사실이다. 빌드의 관문 점검(`--selftest` 의 `capabilities`)은 예전에는 상수 두 개(`EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT`)가 `False` 로 적혀 있는지만 읽었고, 지금은 소스 상수 스위치 일곱에서 켜진 것의 집합이 **출하 표와 정확히 같은지**를 읽는다(지금 표는 비어 있어 '켜진 것 0' 이 곧 통과 조건 — D-722) — 환경 변수로 값을 정하는 코드나 `require_external_write` 함수가 없는 경우를 이 점검이 잡는다고 보지 않는다(실제 차단은 보안 수정 묶음의 시험 몫, D-443).
 
 ## 8. 제3자 고지 (법률 판단이 아니다)
 
 묶음 안 `LICENSES/THIRD_PARTY_NOTICES.md` 에 구성 요소 표가 있고, 전문은 같은 폴더에 있다.
 
 - **PySide6(Qt for Python)·Shiboken6·Qt 6 는 LGPL 이다.** 패키지의 라이선스 표기는 `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only` 이고 이 묶음은 **LGPL-3.0 조건**으로 쓴다. 지키는 것: 라이선스 전문(`LGPL-3.0.txt`, LGPL-3.0 이 GPL-3.0 의 조건을 포함하므로 `GPL-3.0.txt` 도) 동봉 · **동적 링크**(Qt DLL·PySide6 모듈이 `_internal/PySide6` 안에 별개 파일로 있어 같은 버전의 파일로 바꿔 끼울 수 있다 — 한 파일로 합치지 않았다) · 소스를 얻는 방법 안내(Qt 프로젝트·PySide 프로젝트) · 이 앱이 Qt·PySide6 를 고치지 않았다는 사실.
-- **OpenSSL**: Python 이 싣는 `libssl-3.dll`·`libcrypto-3.dll`(Apache-2.0)뿐이다. Qt 네트워크 파이썬 모듈(QtNetwork)·TLS 플러그인과 그 `-x64` OpenSSL 은 묶음에서 뺐다(앱이 쓰지 않는다 — 독립 검증 전에는 빌드 PC 의 PATH 에 있던 다른 프로그램의 DLL 이 들어 있었다, D-415).
+- **OpenSSL**: Python 이 싣는 `libssl-3.dll`·`libcrypto-3.dll`(Apache-2.0)뿐이다. 이 DLL 과 Python 표준 `ssl` 은 **이 앱의 접속 틀(`net/`)이 보안 접속(TLS)에 쓴다**(스위치가 모두 꺼진 지금은 접속하지 않는다) — 인증서는 윈도 신뢰 저장소를 쓰고 앱은 인증서 묶음을 싣지 않는다(D-737). Qt 네트워크 파이썬 모듈(QtNetwork)·TLS 플러그인과 그 `-x64` OpenSSL 은 묶음에서 뺐다(앱이 쓰지 않는다 — 독립 검증 전에는 빌드 PC 의 PATH 에 있던 다른 프로그램의 DLL 이 들어 있었다, D-415).
 - **Python 런타임**(PSF License)·**PyInstaller 부트로더**(GPL-2.0 와 '비공개 프로그램도 만들 수 있게 하는' 예외)의 라이선스 전문도 동봉한다.
 - 전문의 출처: 이 PC 에 설치된 Git for Windows 의 라이선스 폴더에 있던 FSF 원문을 한 글자도 바꾸지 않고 복사했다(`packaging/LICENSES/SOURCES.txt` 에 크기·SHA-256). 공식 배포처의 원문과 대조는 하지 못했다.
 - **알려진 한계**: Qt 안의 제3자 구성 요소(libpng·FreeType·HarfBuzz 등)와 Python 이 싣는 DLL(OpenSSL 등)의 개별 고지는 각 프로젝트 문서를 따르며 이 묶음이 모두 담았다고 보장하지 않는다. 앱 자체의 라이선스는 아직 정해지지 않았다(D-13) — 그래서 개인 시험용이며 공개 배포하지 않는다.
