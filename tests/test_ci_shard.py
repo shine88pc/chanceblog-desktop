@@ -20,7 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "ci_shard.py"
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci_shard  # noqa: E402
+import workflow_golden as golden  # noqa: E402  (ci.yml·package.yml 을 구조로 읽는 허용 목록 규칙 — AS-S2 권고-7, D-693)
 
 
 def real_names():
@@ -243,6 +245,11 @@ class CiWorkflowShardTest(unittest.TestCase):
         self.assertIn("fail-fast: false", self.stripped)
         for needle in ("windows-latest", "ubuntu-latest", "'3.10'", "'3.12'"):
             self.assertIn(needle, self.text)
+
+    def test_the_whole_workflow_is_exactly_the_approved_structure(self):
+        # AS-S2 권고-7(D-693): 위 시험들은 낱말·정규식이라 작업 단위 permissions·env·matrix 의 self-hosted·액션의 소유자·SHA·persist-credentials: true 를 못 봤다(감사의 살아남은 변이 여섯).
+        # 글을 구조로 읽어 최상위·작업·단계 키와 with·env·run 값과 matrix, 액션의 `소유자/저장소@커밋` 쌍을 승인된 목록과 글자 그대로 견준다(`tests/workflow_golden.py`).
+        self.assertEqual(golden.ci_problems(self.ci), [])
 
 
 if __name__ == "__main__":
