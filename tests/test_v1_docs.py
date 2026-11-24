@@ -373,7 +373,7 @@ class ReleaseNotesRuleTest(unittest.TestCase):
 
 
 class PersonalPcTestDraftTest(unittest.TestCase):
-    ROW_IDS = ("0-1", "0-2", "0-3", "1-1", "1-2", "1-3", "1-4", "2", "3", "4-1", "4-3", "4-4", "4-5", "4-6", "5-1", "5-2", "5-3", "6-3", "6-4", "6-5", "7-2", "7-4", "7-5",
+    ROW_IDS = ("0-1", "0-2", "0-3", "0-5", "1-1", "1-2", "1-3", "1-4", "2", "3", "4-1", "4-3", "4-4", "4-5", "4-6", "5-1", "5-2", "5-3", "6-3", "6-4", "6-5", "7-2", "7-4", "7-5",
                "8-1", "8-2", "8-3", "9-4", "9-6", "9-7", "10-1", "10-4", "10-5", "10-6")
 
     def setUp(self):
@@ -483,6 +483,55 @@ class PersonalPcTestDraftTest(unittest.TestCase):
         for line in self.text.splitlines():
             if "해당 없음" in line:
                 self.assertTrue(any(word in line for word in ("(선택)", "쓸 수 없", "아니라", "경우에만", "않았을 때만")), line)
+
+    def test_the_stop_list_names_all_six_reasons_in_the_operators_own_words(self):
+        """재작업(검증 Q R4 — QD12: '④' 를 지워도 초록이었다·S 권고-3: ⑥ 이 더해졌다) — 멈추고 바로 알릴 일 여섯이 모두 있다."""
+        stop = next(line for line in self.text.splitlines() if line.startswith("**멈추고 바로 알릴 일**"))
+        for needle in ("① 앱을 설치하거나 열거나 쓰는 중에 관리자 권한(UAC", "② 앱이 키·비밀번호·계정을 **앱 안의 칸에** 달라고 함", "③ 앱이 브라우저를 열었는데 안내와 다른 곳임",
+                       "④ 화면에 키처럼 보이는 긴 글자가 그대로 보임", "⑤ 업데이트나 되돌리기를 하다 **내 글이 사라진 것처럼 보임**", "아무것도 더 누르지 마세요", "올리기 전에 만든 백업이 있습니다",
+                       "⑥ 0-5 에서 이 계정에 진짜로 쓰는 데이터·키가 **이미 있음**"):
+            self.assertIn(needle, stop, needle)
+
+    def test_the_undo_and_safety_sentences_of_the_steps_that_touch_files_stay_as_they_are(self):
+        """재작업(검증 Q R4 — QD10·QD11·QD14) — 초안이라도 운영자가 따라 하는 글이라 되돌림·안전 문장을 못박는다(바꾸려면 새 사실로 고치고 이 시험을 함께 고친다)."""
+        step0 = part(self.text, "## 0단계.", "## 1단계.")
+        for needle in ("(관리자 권한으로 열지 않습니다)", "**열지 말고** 이름만 적어 알려 주세요", "풀거나 설치하지 말고 알려 주세요", "**이름에 `TESTBUILD` 가 들어 있으면 시험 빌드이니 여기서 멈추고 알려 주세요.**",
+                       "**한 글자도 다르지 않고** 같습니다"):
+            self.assertIn(needle, step0, needle)
+        step5 = part(self.text, "## 5단계.", "## 6단계.")
+        for needle in ("낮은 버전은 높은 버전의 데이터를 열지 않아 데이터를 지킵니다", "이것은 정상입니다", "**4단계의 '올리기 전 백업'** 을 복원합니다"):
+            self.assertIn(needle, step5, needle)
+        step8 = part(self.text, "## 8단계.", "## 9단계.")
+        for needle in ("`계속` 단추가 보여도 **누르지 마세요**", "눌러서 권한을 주면 그 폴더의 접근 권한이 바뀝니다", "폴더가 열려 버리면 **실패**", "'액세스 거부' 가 나오고 안이 열리지 않습니다",
+                       "**앱 때문에 생긴 문제가 아닙니다.**", "암호는 Windows 의 그 창에만 넣고", "하나 더** 필요합니다(관리자 계정이면 안 됩니다)"):
+            self.assertIn(needle, step8, needle)
+
+    def test_the_real_data_check_comes_before_every_step_that_writes_data_and_the_cleanup_never_deletes_what_may_be_real(self):
+        """재작업(검증 S 권고-3·Q R4 — QD13: '지우지 마세요' 가 '지우세요' 로 뒤집혀도 초록이었다) — 이 계정에 진짜 데이터·키가 이미 있는지 1단계 전에 보고, 지우기 단계는 진짜일 수 있는 것을 지우지 않는다."""
+        step0 = part(self.text, "## 0단계.", "## 1단계.")
+        for needle in ("**0-5. 이 계정에 진짜 데이터·키가 이미 있는지 먼저 확인**", "**1단계 전에** 봅니다", "`ChanceblogDesktop` 폴더가 **이미 있는지**", "`ChanceBlogDesktop:` 로 시작하는 줄이 **이미 있는지**",
+                       "**통과**: 둘 다 없습니다", "이 계정에서는 시험을 이어 가지 말고", "시험 전용 표준 계정", "폴더를 통째로 다른 곳에 복사해 둔 뒤", "**지우지 않습니다**"):
+            self.assertIn(needle, step0, needle)
+        self.assertLess(self.text.index("**0-5."), self.text.index("## 1단계."), "진짜 데이터 확인은 시험 데이터를 만드는 1단계보다 앞에 있다")
+        step12 = part(self.text, "## 12단계.", "## 막혔을 때")
+        for needle in ("(진짜 블로그·Seed·초안이 들어 있다면) 지우지 마세요.**", "0-5 에서 이미 있던 폴더도 마찬가지입니다", "6-6 과 같습니다", "남은 줄이 있으면 **지우지 말고**",
+                       "진짜 키가 든 줄일 수 있고", "분명할 때만 `제거` 합니다", "**지우지 말고 그대로 두고**"):
+            self.assertIn(needle, step12, needle)
+        self.assertNotIn("남았다면 `제거`", step12, "자격 증명을 곧바로 지우라고 시키던 옛 문장이 되살아났다")
+        step6_6 = next(line for line in self.text.splitlines() if line.startswith("- [ ] **6-6."))
+        self.assertIn("**지우지 말고** 알려 주세요", step6_6)
+        for line in self.text.splitlines():
+            if "자격 증명" in line and "제거" in line:
+                self.assertTrue("지우지 말고" in line, f"자격 증명 줄에 지우지 말라는 말이 있어야 한다: {line[:60]}")
+
+    def test_the_blogger_consent_screen_step_does_not_assert_a_permission_name_it_could_not_check(self):
+        """재작업(검증 S 권고-2) — 10-1 은 Blogger 동의 창의 권한 이름을 단정하지 않고 '확인 필요' 로 표시한 채 창에 적힌 이름을 그대로 적게 한다."""
+        step10 = part(self.text, "## 10단계.", "## 11단계.")
+        line = next(item for item in step10.splitlines() if item.startswith("- [ ] **10-1."))
+        for needle in ("동의 창에 적힌 권한 이름을 그대로 읽어", "'동의 창에 적힌 권한' 칸에 옮겨 적습니다", "〔확인 필요: Blogger 가 실제로 요구하는 권한 이름", "〔확인 필요: BLOGGER 갈래가 정한 권한〕",
+                       "계정 전체·삭제처럼 더 넓어 보이면 **누르지 말고** 알려 주세요"):
+            self.assertIn(needle, line, needle)
+        self.assertNotIn("'글 쓰기(초안)' 범위뿐인지", self.text, "확인하지 못한 Blogger 권한 이름을 단정하던 옛 문장이 되살아났다")
 
 
 class MigrationNotesTemplateTest(unittest.TestCase):
