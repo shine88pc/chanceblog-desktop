@@ -1,6 +1,6 @@
 name: "Installer spike — 설치 도구 시험(수동, 병합 뒤 운영자 실행)"
 
-# 설치 도구(Velopack 과 Inno Setup)를 같은 PyInstaller 묶음에 적용해 무음 설치·제거·업데이트·훅 인자·한국어·Defender·크기·시간을 재는 시험 흐름이다(운영자 확인 037 ①, 설계서 INSTALLER 3-1, 결정 D-700에서 D-709, 실행 안내 docs/INSTALLER_SPIKE_RUN.md).
+# 설치 도구(Velopack 과 Inno Setup)를 같은 PyInstaller 묶음에 적용해 무음 설치·제거·업데이트·훅 인자·한국어·Defender·크기·시간을 재는 시험 흐름이다(운영자 확인 037 ①, 설계서 INSTALLER 3-1, 결정 D-700에서 D-708, 실행 안내 docs/INSTALLER_SPIKE_RUN.md).
 # 수동 실행(workflow_dispatch)만이다 — 푸시·PR·예약 실행으로는 돌지 않고 입력칸도 없다(글을 받아 명령에 넣는 길이 없다).
 # 읽기 권한만 쓰고(permissions: contents: read) 비밀 값(secrets.*)·토큰을 쓰지 않으며 서명·릴리스 게시·태그 단계가 없다. 액션은 package.yml 과 같은 전체 커밋 SHA 셋뿐이다(새 액션 0).
 # 밖으로 나가는 곳은 셋이다: ① 액션 내려받기와 올리기(GitHub) ② 파이썬 패키지 저장소(PyPI) — 빌드 도구 잠금 파일, 그리고 Velopack 파이썬 휠(해시 검사, 크기와 SHA-256 재대조) ③ vpk 패키지를 받는 GitHub 릴리스 호스트 — 고정 주소·크기·SHA-256 대조(packaging/spike/fetch_tools.py).

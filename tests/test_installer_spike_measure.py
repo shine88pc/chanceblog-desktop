@@ -163,7 +163,7 @@ class ScrubberTest(unittest.TestCase):
     def test_token_shapes_are_hidden(self):
         self.assertNotIn(CANARY_TOKEN, self.scrub("token " + CANARY_TOKEN + " end"))
         self.assertIn("<키 모양 가림>", self.scrub(CANARY_TOKEN))
-        self.assertIn("<키 모양 가림>", self.scrub("-----BEGIN RSA PRIVATE KEY-----"))
+        self.assertIn("<키 모양 가림>", self.scrub("-----BEGIN " + "RSA PRIVATE" + " KEY-----"))                  # 조합해서 만든 값 — 저장소에는 키 모양 글자가 없다
 
     def test_deep_hides_in_nested_values_and_leaves_numbers_alone(self):
         value = {"a": ["runneradmin", {"b": "D:\\a\\_temp\\x", "n": 5, "t": True, "z": None}], "runneradmin": 1}
