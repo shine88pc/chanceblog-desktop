@@ -306,8 +306,8 @@ def decision_numbers(text):
 
 
 def index_numbers(text):
-    """결정 색인 표의 결정 번호들 — 표 줄의 첫 칸 맨 앞이 `D-12`(굵게·링크로 감싸도 된다)인 것."""
-    return {int(number) for number in re.findall(r"^\|\s*(?:\*\*|\[)*D-([0-9]+)(?![0-9])", text, re.M)}
+    """결정 색인 표의 결정 번호들 — 표 줄의 첫 칸 맨 앞이 `D-12`(굵게·링크·코드 글자로 감싸도 된다)인 것."""
+    return {int(number) for number in re.findall(r"^\|\s*(?:\*\*|\[|`)*D-([0-9]+)(?![0-9])", text, re.M)}
 
 
 def markdown_data_rows(text):
@@ -950,7 +950,7 @@ def build_parser():
     parser = argparse.ArgumentParser(prog="release_check.py", description="앱 v1.0 완료 기준 열두 항목 점검표(읽기 전용 — v1.0 을 선언하지 않는다)")
     parser.add_argument("--scan-dir", action="append", default=[], metavar="폴더", help="후보 산출물 폴더의 키·토큰 모양을 훑어 10번 항목에 반영한다(여러 번 줄 수 있다)")
     parser.add_argument("--json", action="store_true", help="표 대신 JSON 으로 낸다")
-    parser.add_argument("--root", default=None, metavar="폴더", help="점검할 저장소 폴더(기본: 이 스크립트가 있는 저장소)")
+    parser.add_argument("--root", default=None, metavar="폴더", help="점검할 저장소 폴더(기본: 이 스크립트가 있는 저장소). 다른 사본을 주면 그 사본의 자가 점검 코드를 실행하니 믿는 사본에만 쓴다")
     return parser
 
 

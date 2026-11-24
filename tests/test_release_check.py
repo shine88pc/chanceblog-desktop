@@ -194,7 +194,7 @@ class Item1Test(RepoCase):
 
 class Item2Test(RepoCase):
     def index_text(self, numbers, style="plain"):
-        cells = {"plain": "D-{n}", "bold": "**D-{n}**", "link": "[D-{n}](DECISIONS.md)"}[style]
+        cells = {"plain": "D-{n}", "bold": "**D-{n}**", "link": "[D-{n}](DECISIONS.md)", "code": "`D-{n}`"}[style]
         return "# 결정 색인\n\n| 번호 | 요약 |\n|---|---|\n" + "".join(f"| {cells.format(n=number)} | 요약 {number} |\n" for number in numbers) + rs.filler("색인")
 
     def test_a_missing_or_empty_entrance_doc_is_a_fail(self):
@@ -220,7 +220,7 @@ class Item2Test(RepoCase):
         self.assertIn(rc.DECISION_INDEX, row.basis)
 
     def test_an_index_that_matches_the_decision_log_makes_it_manual_for_the_blank_ai_test(self):
-        for style in ("plain", "bold", "link"):
+        for style in ("plain", "bold", "link", "code"):
             with self.subTest(style=style):
                 row = self.row_after(2, extra={rc.DECISION_INDEX: self.index_text([1, 18, 19], style)})
                 self.assertEqual(row.status, MANUAL)
@@ -256,7 +256,7 @@ class Item2Test(RepoCase):
 
     def test_decision_and_index_number_readers(self):
         self.assertEqual(rc.decision_numbers("| D-01 | a |\n| D-130 | b |\n본문 D-99 는 아니다\n| D-130 | c |\n"), {1, 130})
-        self.assertEqual(rc.index_numbers("| **D-5** | x |\n| [D-7](a.md) | y |\n| D-100 | z |\n| 번호 | x |\n설명 D-9\n"), {5, 7, 100})
+        self.assertEqual(rc.index_numbers("| **D-5** | x |\n| [D-7](a.md) | y |\n| D-100 | z |\n| 번호 | x |\n설명 D-9\n| `D-11` | w |\n"), {5, 7, 11, 100})
         self.assertEqual(rc.index_numbers("| D-1000 | x |\n"), {1000})
 
 
@@ -956,6 +956,7 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(leftovers, [], "실행한 폴더에 아무것도 만들지 않는다")
         self.assertEqual(self.watched(), before, "저장소의 packaging·scripts·src·docs 는 한 바이트도 바뀌지 않는다(.pyc 도 안 쓴다)")
 
+    @unittest.skipIf(importlib.util.find_spec("PySide6") is not None, "PySide6 가 있으면 자가 점검이 오프스크린 창을 만든다(Qt 공용 잠금 밖에서는 띄우지 않는다)")
     def test_a_candidate_folder_with_a_key_makes_the_real_process_exit_one_and_print_no_key(self):
         import scan_samples as S
         import secret_support

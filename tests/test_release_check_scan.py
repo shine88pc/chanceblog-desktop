@@ -74,6 +74,14 @@ class BasicsTest(FolderCase):
         result = self.scan()
         self.assertEqual(sorted(item.path for item in result.findings), ["data.bin", "x.db"])
 
+    def test_a_key_inside_a_compiled_module_file_is_found_like_in_any_other_binary(self):
+        import marshal
+        pyc = b"\x00" * 16 + marshal.dumps(compile(f'TOKEN = "{KEY}"\n', "mod.py", "exec"))                    # 묶음의 .pyc 와 같은 모양 — 글자 상수가 바이트 그대로 들어 있다
+        self.put({"lib/mod.pyc": pyc, "lib/clean.pyc": b"\x00" * 16 + marshal.dumps(compile("X = 1\n", "clean.py", "exec"))})
+        result = self.scan()
+        self.assertEqual([(item.path, item.label) for item in result.findings], [("lib/mod.pyc", "GitHub 토큰")])
+        self.assertEqual((result.files_read, result.unread), (2, []))
+
     def test_utf16_files_with_a_bom_are_read_as_utf16(self):
         text = f"앞 줄\n{KEY}\n끝\n"
         self.put({"le.txt": text.encode("utf-16"), "be.txt": codecs.BOM_UTF16_BE + text.encode("utf-16-be")})
@@ -276,6 +284,14 @@ class ZipTest(FolderCase):
         self.assertEqual([(item.path, item.line) for item in result.findings], [("pack.zip!inner/a.txt", 2)])
         self.assertEqual((result.archives_opened, result.files_read, result.unread), (1, 2, []))
         self.assertEqual(result.bytes_read, len(f"앞\n{KEY}\n".encode("utf-8")) + len("문제 없는 글\n".encode("utf-8")))
+
+    def test_a_compiled_module_inside_the_bundle_library_zip_is_searched(self):
+        import marshal
+        pyc = b"\x00" * 16 + marshal.dumps(compile(f'TOKEN = "{KEY}"\n', "mod.py", "exec"))
+        self.make_zip("_internal/base_library.zip", {"os.pyc": pyc, "clean.pyc": b"\x00" * 16 + marshal.dumps(compile("X = 1\n", "clean.py", "exec"))})
+        result = self.scan()
+        self.assertEqual([(item.path, item.label) for item in result.findings], [("_internal/base_library.zip!os.pyc", "GitHub 토큰")])
+        self.assertEqual((result.archives_opened, result.files_read, result.unread), (1, 2, []))
 
     def test_stored_members_and_zips_without_a_zip_suffix_are_read_too(self):
         self.make_zip("pack.bin", {"a.txt": f"{KEY}\n"}, compression=zipfile.ZIP_STORED)
