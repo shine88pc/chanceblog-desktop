@@ -3,8 +3,8 @@
 
 지키는 것(`qt_problems` 가 문제 글을 모으고, 진짜 파일은 빈 목록이어야 하며, 일부러 틀리게 만든 사본은 모두 걸려야 한다):
   1) 잡은 `test`(오늘 그대로) 다음에 `qt` 하나 — 최상위 키·권한(`contents: read` 한 줄, 잡 권한 없음)·비밀 0.
-  2) `qt` 잡: 윈도(`windows-latest`)·파이썬 `'3.12'` 고정(행렬은 조각 하나뿐), `fail-fast: false`, 시간 한도 40분 이상(`test` 잡도), 이름이 `Qt 시험 (` 으로 시작해 기존 이름 시험과 안 부딪히고 조각 총수가 환경 변수와 같다.
-  3) 단계 넷: 가져오기·파이썬(둘 다 `test` 잡과 **같은 SHA**, 이 파일의 액션은 그 둘뿐)·`python scripts/ci_qt_setup.py`(환경·옵션 없음)·`python scripts/ci_shard.py`(환경 변수 정확히 다섯: PYTHONUTF8·CI_SHARD·CI_SHARD_TOTAL·CI_REQUIRE_QT=1·QT_QPA_PLATFORM=offscreen).
+  2) `qt` 잡: 윈도(`windows-latest`)·파이썬 `'3.12'` 고정(행렬은 조각 하나뿐), `fail-fast: false`, 시간 한도 **정확히 40분**(`test` 잡도 — 하한 40분은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한 40분은 `auto-pr.yml` 의 최대 대기 40분(`AUTOPR_MAX_WAIT_SECONDS` 2400 초)이라 그보다 길면 병합 문턱이 시간 한도보다 먼저 포기한다 — 독립 검증 R1), 이름이 `Qt 시험 (` 으로 시작해 기존 이름 시험과 안 부딪히고 조각 총수가 환경 변수와 같다.
+  3) 단계 넷: 가져오기·파이썬(둘 다 `test` 잡과 **같은 SHA**, 이 파일의 액션은 그 둘뿐)·`python scripts/ci_qt_setup.py`(환경·옵션 없음)·`python scripts/ci_shard.py`(환경 변수 정확히 다섯: PYTHONUTF8·CI_SHARD·CI_SHARD_TOTAL·CI_REQUIRE_QT=1·QT_QPA_PLATFORM=offscreen). 단계마다 맨 위 키 집합도 글자 그대로 못박는다(가져오기·파이썬은 `uses`·`with`, 설치는 `name`·`run`, 시험은 `name`·`env`·`run` — `shell`·`working-directory`·단계 수준 `timeout-minutes`·`id` 같은 낯선 키가 붙으면 빨개진다 — 독립 검증 R3, `test` 잡의 세 단계도 같다).
   4) `test` 잡의 시험 단계에는 `CI_REQUIRE_QT`·`QT_QPA_PLATFORM` 이 없다(열두 칸은 Qt 건너뜀이 정상이다) — 그리고 `if:`·`continue-on-error`·`include:`·`exclude:`·잡·파일 수준 `env:` 가 어디에도 없다.
 """
 import re
@@ -17,6 +17,12 @@ EXPECTED_TOP = ["name", "on", "permissions", "concurrency", "jobs"]
 ALLOWED_ACTIONS = {"actions/checkout", "actions/setup-python"}
 QT_ENV = {"PYTHONUTF8": "'1'", "CI_SHARD": "${{ matrix.shard }}", "CI_REQUIRE_QT": "'1'", "QT_QPA_PLATFORM": "offscreen"}       # CI_SHARD_TOTAL 은 따로(조각 총수)
 FORBIDDEN_WORDS = ("if:", "continue-on-error", "include:", "exclude:", "pull_request")
+# 시간 한도(분): 하한은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한은 `auto-pr.yml` 의 최대 대기 40분(AUTOPR_MAX_WAIT_SECONDS 2400 초)이다 —
+# 한도가 그보다 길면 병합 문턱이 칸의 시간 한도보다 먼저 포기한다. 둘이 같아 값은 정확히 40 하나다(독립 검증 R1; 같다는 사실은 RealWorkflowTest 가 auto-pr.yml 을 읽어 지킨다).
+TIMEOUT_MINUTES = 40
+# 단계마다 맨 위 키 집합(정렬한 목록) — `shell`·`working-directory`·단계 수준 `timeout-minutes`·`id` 같은 낯선 키가 붙어도 통과하던 틈(독립 검증 R3)을 닫는다.
+STEP_KEYS = {"가져오기": ["uses", "with"], "파이썬": ["uses", "with"], "설치": ["name", "run"], "시험": ["env", "name", "run"]}
+STEP_KINDS = {"test": ("가져오기", "파이썬", "시험"), "qt": ("가져오기", "파이썬", "설치", "시험")}
 
 
 def code_lines(text):
@@ -92,6 +98,16 @@ def step_block(step, key):
     return block if inside else None
 
 
+def step_keys(step):
+    """단계 하나의 맨 위 키들(대시 줄의 첫 키와 여덟 칸 들여쓴 키들) → 정렬한 목록. 같은 키가 두 번 나오면 두 번 들어 있다."""
+    keys = []
+    for line in step:
+        found = re.match(r"^(?:      - |        )([A-Za-z_][A-Za-z0-9_-]*):", line)
+        if found:
+            keys.append(found.group(1))
+    return sorted(keys)
+
+
 def uses_of(step):
     return step_value(step, "uses")
 
@@ -139,8 +155,10 @@ def qt_problems(text):
         return problems
     for name, job in jobs.items():
         minutes = job_value(job, "timeout-minutes")
-        if not (minutes or "").isdigit() or int(minutes) < 40:
-            problems.append(f"{name}: 시간 한도가 40분 이상이어야 한다({minutes})")
+        if not (minutes or "").isdigit() or int(minutes) < TIMEOUT_MINUTES:
+            problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분 이상이어야 한다({minutes})")
+        elif int(minutes) > TIMEOUT_MINUTES:
+            problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분을 넘으면 안 된다 — auto-pr.yml 의 최대 대기 {TIMEOUT_MINUTES}분보다 길면 병합 문턱이 먼저 포기한다({minutes})")
         if "      fail-fast: false" not in job:
             problems.append(f"{name}: fail-fast: false 가 없다")
     test, qt = jobs["test"], jobs["qt"]
@@ -158,7 +176,11 @@ def qt_problems(text):
     if len(qt_steps) != 4:
         problems.append(f"qt 잡 단계가 넷이 아니다({len(qt_steps)})")
         return problems
-    total = (step_block(qt_steps[3], "env") or {}).get("CI_SHARD_TOTAL", "")
+    for job_name, steps in (("test", test_steps), ("qt", qt_steps)):
+        for index, kind in enumerate(STEP_KINDS[job_name]):
+            if step_keys(steps[index]) != STEP_KEYS[kind]:
+                problems.append(f"{job_name} 잡 {index + 1}번째 단계({kind})의 키가 정확히 {STEP_KEYS[kind]} 가 아니다(shell·working-directory·timeout-minutes·id 같은 키 금지): {step_keys(steps[index])}")
+    total =(step_block(qt_steps[3], "env") or {}).get("CI_SHARD_TOTAL", "")
     count = int(total.strip("'")) if re.fullmatch(r"'\d+'", total) else 0
     if count < 1 or shard_list(qt) != list(range(1, count + 1)):
         problems.append(f"qt 잡 조각 목록 {shard_list(qt)} 이 1..CI_SHARD_TOTAL({total}) 과 다르다")
@@ -218,6 +240,22 @@ class RealWorkflowTest(unittest.TestCase):
     def test_the_qt_job_reads_the_two_pins_only_from_the_lock_file_and_the_ci_file_names_no_package(self):
         for word in ("PySide6_Essentials", "shiboken6", "pip install", "requirements"):
             self.assertNotIn(word, "\n".join(code_lines(self.text)), word)
+
+    def test_the_job_time_limit_is_exactly_the_max_wait_of_the_auto_pr_workflow(self):
+        """값 40 은 auto-pr.yml 의 최대 대기 40분(AUTOPR_MAX_WAIT_SECONDS 2400 초)과 같다 — 위 설명이 낡아 가지 않도록 그 파일을 읽어 같은지 지킨다(독립 검증 R1)."""
+        auto_pr = (ROOT / ".github" / "workflows" / "auto-pr.yml").read_text(encoding="utf-8")
+        found = re.findall(r"^\s*AUTOPR_MAX_WAIT_SECONDS:\s*'(\d+)'\s*$", auto_pr, re.M)
+        self.assertEqual(len(found), 1, "auto-pr.yml 에 최대 대기 시간 줄이 정확히 하나여야 한다")
+        self.assertEqual(int(found[0]), TIMEOUT_MINUTES * 60)
+        for name, job in jobs_of(code_lines(self.text)).items():
+            self.assertEqual(job_value(job, "timeout-minutes"), str(TIMEOUT_MINUTES), name)
+
+    def test_every_step_of_both_jobs_has_exactly_the_keys_the_check_names(self):
+        jobs = jobs_of(code_lines(self.text))
+        for job_name, kinds in STEP_KINDS.items():
+            steps = job_steps(jobs[job_name])
+            self.assertEqual(len(steps), len(kinds), job_name)
+            self.assertEqual([step_keys(step) for step in steps], [STEP_KEYS[kind] for kind in kinds], job_name)
 
     def test_the_workflow_names_the_documentation_it_points_at(self):
         self.assertIn("docs/CI_QT.md", self.text)
@@ -281,14 +319,32 @@ class MutationTest(unittest.TestCase):
         yield "파일 수준 env 추가", text.replace("\njobs:\n", "\nenv:\n  PIP_INDEX_URL: something\n\njobs:\n", 1)
         yield "pull_request 이벤트 추가", text.replace("on:\n  push:\n", "on:\n  pull_request:\n  push:\n", 1)
 
+    def reasoned_mutations(self):
+        """독립 검증 R1·R3 — 단계에 낯선 키가 붙거나 시간 한도가 위로 벗어난 사본. 걸리는 것만으로는 모자라 **그 이유**(문제 글에 들어 있어야 할 낱말)까지 맞아야 걸린 것으로 센다 —
+        옛 시험이 이 변이를 우연히(끼어든 줄·글자 겹침) 걸었던 것처럼 보이는 일을 막는다(구현자 변이 V21·V26 이 사실은 살아남았던 사건)."""
+        text = self.text
+        keys, limit = "의 키가 정확히", "분을 넘으면 안 된다"
+        yield "qt 시험 단계에 shell", mutated(text, "        run: python scripts/ci_shard.py", "        shell: bash\n        run: python scripts/ci_shard.py"), keys
+        yield "qt 설치 단계에 working-directory", mutated(text, "        run: python scripts/ci_qt_setup.py", "        working-directory: scripts\n        run: python scripts/ci_qt_setup.py"), keys
+        yield "qt 설치 단계에 단계 수준 timeout-minutes", mutated(text, "      - name: PySide6 두 줄만 설치·점검\n", "      - name: PySide6 두 줄만 설치·점검\n        timeout-minutes: 1\n"), keys
+        yield "qt 가져오기 단계에 id", mutated(text, "        with:\n          persist-credentials: false\n", "        id: first\n        with:\n          persist-credentials: false\n"), keys
+        yield "qt 시험 단계에 run 이 두 번", mutated(text, "        run: python scripts/ci_shard.py", "        run: python scripts/ci_shard.py\n        run: python scripts/ci_shard.py"), keys
+        yield "test 잡 시험 단계에 shell", mutated(text, "        run: python scripts/ci_shard.py", "        shell: bash\n        run: python scripts/ci_shard.py", within="test"), keys
+        yield "qt 시간 한도 400분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 400"), limit
+        yield "qt 시간 한도 41분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 41"), limit
+        yield "test 잡 시간 한도 41분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 41", within="test"), limit
+
     def test_every_broken_copy_is_caught(self):
         count = 0
-        for label, broken in self.mutations():
+        for label, broken, reason in [(label, broken, None) for label, broken in self.mutations()] + list(self.reasoned_mutations()):
             with self.subTest(mutation=label):
                 self.assertNotEqual(broken, self.text, "변이가 글을 바꾸지 못했다")
-                self.assertTrue(qt_problems(broken), f"살아남은 변이: {label}")
+                problems = qt_problems(broken)
+                self.assertTrue(problems, f"살아남은 변이: {label}")
+                if reason:
+                    self.assertTrue(any(reason in problem for problem in problems), f"엉뚱한 이유로 걸렸다(이유 글 {reason!r}): {label} → {problems}")
                 count += 1
-        self.assertGreaterEqual(count, 28)
+        self.assertGreaterEqual(count, 37)
 
 
 if __name__ == "__main__":
