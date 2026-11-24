@@ -164,7 +164,7 @@ class ShellTest(Base):
     def test_the_screen_table_has_one_builder_per_real_menu_and_the_old_placeholder_screens_cannot_be_opened(self):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 '나머지 넷이 같은 자리표시를 그린다' 를 보았다. 이제 표는 완성된 화면(홈·설정)뿐이고 옛 자리표시 화면 이름을 불러도 열리지 않는다."""
         self.assertEqual(list(S.SCREEN_BUILDERS), [key for key, _label, _icon in app_state.NAV])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성 줄이 더해졌다 / 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])     # 의도적 갱신(글 흐름 1a, D-633): 글 검토 줄이 더해졌다 / 의도적 갱신(P4e, D-282): 초안 작성 줄이 더해졌다 / 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
         self.assertIsNot(S.SCREEN_BUILDERS["settings"], S.SCREEN_BUILDERS["home"])
         window = self.make(settings=False)
         for key in ("draft", "history"):                                                              # 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열린다 / 의도적 갱신(P4d, D-270): 'topics' 도 이제 완성된 화면이라 열린다(`test_ui_qt_candidates` 가 확인)
