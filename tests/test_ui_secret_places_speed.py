@@ -5,6 +5,7 @@
 
 이 파일이 못박는 것:
   1) **판정은 옛 방식과 같다** — 옛 `secret_spots`·`_place`·`secret_places` 를 시험 도구 `tests/draft_gate_oracle.py` 에 그대로 옮겨 두고, 서로 다른 입력 수천 개(정상 글·주소·파일 이름·키 모양·같은 토큰 되풀이·검사기가 찾는 모양·겹치는 자리)에서 결과가 한 글자도 다르지 않다.
+     (한 가지만 새 방식이다 — 2번 묶음의 감사 참고-12 가 미리보기 앞 글 안의 다른 걸린 자리를 `[가림]` 으로 바꿨다. 옛 방식 그대로의 출력과 다른 입력은 걸린 자리가 둘 이상인 글뿐임을 아래에서 못박는다.)
   2) 자리를 합치는 함수(`_add_free_spans`)는 옛 '앞의 모든 자리와 견주기' 와 무작위 구간 수천 개에서 같다(길이 0인 자리·같은 시작·같은 끝·이웃한 자리 포함).
   3) 검사기는 글 하나에 **한 번만** 돈다(막은 자리가 수백 개여도) — 호출 횟수로 못박는다(시간 비율은 흔들려서 보조로만 본다).
   4) 병적인 입력(같은 토큰·검사기 모양·정상 주소·긴 덩어리·줄바꿈 가득)의 2만 자가 몇 초 안에 끝나고, 길이 열 배에 시간이 열 배 안쪽(여유를 둔 스무 배 미만)으로만 늘어난다.
@@ -88,6 +89,26 @@ class SameAnswersTest(unittest.TestCase):
         self.assertGreater(with_spots, 800, "(전제) 걸린 글이 충분히 섞여 있다")
         self.assertGreater(with_scanner, 300, "(전제) 검사기가 찾는 모양이 든 글이 충분히 섞여 있다")
 
+    def test_the_preview_differs_from_the_verbatim_old_one_only_next_to_another_hit(self):
+        """미리보기가 옛 방식 그대로의 출력과 다른 것은 감사 참고-12 의 이웃 가림 하나뿐이다 — 걸린 자리가 하나뿐인 글은 한 글자도 다르지 않다."""
+        rng = random.Random(683)
+        differing, single_hit = 0, 0
+        for number in range(2400):
+            text = make_text(rng, heavy=number % 6 == 0)
+            spots = old_secret_spots(text)
+            kept = old_secret_places(("본문", text), hide_neighbors=False)
+            now = rules.secret_places(("본문", text))
+            if len(spots) <= 1:
+                single_hit += bool(spots)
+                self.assertEqual(now, kept, text[:60])
+            else:
+                differing += now != kept
+        self.assertGreater(single_hit, 200, "(전제) 걸린 자리가 하나뿐인 글이 충분히 섞여 있다")
+        self.assertGreater(differing, 100, "(전제) 이웃한 걸린 자리가 있는 글에서는 실제로 달라진다 — 앞 비밀의 꼬리가 미리보기에 되풀이되던 것")
+        old_tail = old_secret_places(("본문", "Zq8xK2mP9vL4nR7tY1wE5uI3 Zq8xK2mP9vL4nR7tY1wE5uI3"), hide_neighbors=False)
+        self.assertTrue(any("4nR7tY1wE5uI3" in place for place in old_tail), "(전제) 옛 방식은 앞 비밀의 꼬리 13자를 되풀이했다")
+        self.assertFalse(any("4nR7tY1wE5uI3" in place for place in rules.secret_places(("본문", "Zq8xK2mP9vL4nR7tY1wE5uI3 Zq8xK2mP9vL4nR7tY1wE5uI3"))))
+
     def test_special_inputs_equal_the_old_ones(self):
         for text in ("", " ", "정상 글입니다.", KEY_SHAPED, KEY_SHAPED * 3, (KEY_SHAPED + " ") * 40, "앞 글 " + KEY_SHAPED + " 뒤 글", 123, None, ["a"], "가" * 100_001, "x" * 100_000, "-----BEGIN " + "PRIVATE KEY-----" * 3,
                      "https://example.com/?k=" + KEY_SHAPED, KEY_SHAPED + ".jpg", "Bea" + "rer " + mixed("sp", 30) + " " + KEY_SHAPED):
@@ -148,7 +169,7 @@ class FewScannerRunsTest(unittest.TestCase):
         with self.counting() as spy:
             places = rules.secret_places(("본문", body))
         self.assertEqual(spy.call_count, 1)
-        self.assertEqual(places, old_secret_places(("본문", body)), "미리보기는 옛 방식과 같다")
+        self.assertEqual(places, old_secret_places(("본문", body)), "미리보기는 옛 방식(이웃 가림만 새 방식)과 같다")
         self.assertLessEqual(len(places), 2, "같은 미리보기는 한 번만 보인다(맨 앞 자리만 앞 글이 없어 하나 더)")
         with self.counting() as spy:
             rules.secret_places(("제목", "짧은 제목"), ("본문", body), ("키워드", "예시 낱말"))

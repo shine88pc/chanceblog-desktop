@@ -2,6 +2,8 @@
 
 감사 때의 `secret_spots`·`_place`·`secret_places`(main 9439047)를 그대로 옮겼다 — 같은 `draft_rules` 안의 바뀌지 않은 도우미(`_ADDRESS`·`_address_hit`·`_spot`·`_KEY_RUN`·`_scanner_spans` …)를 부른다. **고치지 않는다**: 이 사본이 바뀌면 '같다' 는 증거가 사라진다.
 `old_secret_spots` 는 이름 붙은 값(D-682)을 모른다 — 새 판정과 같은 입력은 이름 낱말이 없는 글이고, 이름 낱말이 든 글에서는 새 판정이 옛 판정을 **포함**한다(더 막을 뿐 덜 막지 않는다).
+`old_secret_places` 는 기본으로 한 가지만 새 방식을 따른다 — 감사 참고-12(D-682)가 미리보기 앞 글 안의 **다른 걸린 자리**(앞 비밀의 꼬리)를 `[가림]` 표시로 바꿨다(`hide_neighbors=True`). `hide_neighbors=False` 는 옛 방식 그대로이고,
+둘이 다른 입력은 걸린 자리가 둘 이상인 글뿐이다(시험이 못박는다).
 """
 from chanceblog_desktop.ui.core import draft_rules as rules
 from chanceblog_desktop.ui.core.text import T
@@ -40,9 +42,10 @@ def old_secret_spots(text):
     return tuple(sorted(spots))
 
 
-def old_place(name, text, start, end):
+def old_place(name, text, start, end, before=None):
     from chanceblog_desktop.security.mask import mask
-    before = text[max(0, start - rules.CONTEXT_BEFORE):start]
+    if before is None:
+        before = text[max(0, start - rules.CONTEXT_BEFORE):start]
     hit = text[start:end]
     masked = mask(hit)
     front = T["drf_spot_hidden"] if not hit else (masked if masked != hit else T["drf_spot_hidden"])
@@ -53,11 +56,18 @@ def old_place(name, text, start, end):
     return f"{name} — " + ("…" if start > rules.CONTEXT_BEFORE else "") + rules.shown(before + front, rules.PREVIEW)
 
 
-def old_secret_places(*named):
+def old_secret_places(*named, hide_neighbors=True):
     places = []
     for name, text in named:
-        for start, end in old_secret_spots(text):
-            place = old_place(name, text, start, end) if isinstance(text, str) else str(name)
+        spots = old_secret_spots(text)
+        covered = rules._covered(spots) if hide_neighbors and isinstance(text, str) and len(spots) > 1 else None
+        for start, end in spots:
+            if not isinstance(text, str):
+                place = str(name)
+            elif covered:
+                place = old_place(name, text, start, end, rules._context_before(text, start, covered))
+            else:
+                place = old_place(name, text, start, end)
             if place not in places:
                 places.append(place)
             if len(places) >= rules.SPOT_LIMIT:

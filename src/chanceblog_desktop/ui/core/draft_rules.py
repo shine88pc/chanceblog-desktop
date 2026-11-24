@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
@@ -247,6 +247,12 @@ def _scanner_spans(text):
     return tuple((starts[item.line - 1] + item.col_start - 1, starts[item.line - 1] + item.col_end) for item in found)
 
 
+def _named_value_spans(text):
+    """`이름: 값` 꼴에서 값이 키·비밀번호처럼 생긴 자리들 → ((시작, 끝), …) — 규칙은 `security/shape.named_secret_spans`(결정 D-682, 감사 AS-S2 권고-1). 무거운 모듈이라 늦게 가져온다."""
+    from ...security.shape import named_secret_spans
+    return named_secret_spans(text)
+
+
 def _add_free_spans(spots, spans):
     """`spots` 에 `spans`(검사기가 찾은 자리들) 중 **겹치지 않는 것만** 더한 목록 — `spans` 는 순서대로 보고, 이미 있는 자리(`spots`)나 앞서 더한 자리와 겹치면 그 자리가 대신한다(겹침 = 시작이 상대의 끝보다 앞이고 상대의 시작이 끝보다 앞).
     예전에는 자리마다 앞의 모든 자리와 하나씩 견줘(제곱 시간 — 같은 모양이 수천 번 되풀이되는 글에서 몇 분) 큰 글이 멈춘 듯 보였다(감사 AS-S2 권고-4). 이제 정렬한 목록에서 이분 탐색으로 견준다 — **결과는 같다**(시험이 옛 방식과 무작위로 견준다).
@@ -274,7 +280,8 @@ def _add_free_spans(spots, spans):
 
 def secret_spots(text):
     """글에서 키·토큰 모양이 걸린 자리들 — ((시작, 끝), …) 순서대로. 없으면 빈 튜플. 글이 아니거나 너무 길면 믿을 수 없어 처음 한 자리를 돌려준다(실패 열림 금지).
-    주소·파일 이름 모양은 알려진 키 모양만 보고(`_address_hit`), 그 밖의 덩어리는 `looks_secret`(접두사·긴 영숫자)을 그대로 쓴다. 정본 패턴(`has_key_shape`)은 글 전체에 건다."""
+    주소·파일 이름 모양은 알려진 키 모양만 보고(`_address_hit`), 그 밖의 덩어리는 `looks_secret`(접두사·긴 영숫자)을 그대로 쓴다. 정본 패턴(`has_key_shape`)은 글 전체에 건다.
+    주소를 지운 글에서는 `이름: 값` 꼴(`비밀번호: 값`·`시크릿=값` 처럼 값이 키·비밀번호로 보이는 것)도 걸린 자리로 센다(`security/shape.named_secret_spans`, 결정 D-682)."""
     from ...security.mask import has_key_shape, mask
     from ...security.shape import MAX_SCAN_CHARS, looks_secret
     if not isinstance(text, str):
@@ -301,6 +308,7 @@ def secret_spots(text):
     if not spots and has_key_shape(text):                                        # 여러 덩어리에 걸친 정본 패턴(`Bearer …`·개인 키 블록 …)
         at = _first_difference(text, mask(text))
         spots.append((at, at + 1))
+    spots = _add_free_spans(spots, _named_value_spans(rest))                      # `password: 값`·`secret=값` 도(D-682 — 주소를 지운 글에서만: 주소 안의 인자는 위의 주소 규칙이 본다. 위에서 이미 잡은 자리와 겹치면 그 자리가 대신한다)
     return tuple(sorted(_add_free_spans(spots, _scanner_spans(text))))           # 검사기의 여섯 유형도 같은 관문에서 막는다(위에서 이미 잡은 자리와 겹치면 그 자리가 대신한다)
 
 
@@ -309,10 +317,42 @@ def has_secret(*texts):
     return any(secret_spots(text) for text in texts)
 
 
-def _place(name, text, start, end):
+def _covered(spots):
+    """걸린 자리들을 서로 겹치지 않는 구간들(시작 순, 겹치거나 이어지면 하나로)로 합친다 → (구간 목록, 끝 목록). 글자가 없는 자리(길이 0)는 가릴 글자가 없어 뺀다."""
+    merged = []
+    for start, end in sorted(spots):
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged, [end for _start, end in merged]
+
+
+def _context_before(text, start, covered):
+    """걸린 곳 앞의 글(`CONTEXT_BEFORE` 글자) — 그 안에 **다른 걸린 자리**가 걸쳐 있으면(앞의 비밀의 꼬리) 그 글자를 `[가림]` 표시 하나로 바꾼다. 앞의 비밀이 다음 자리의 미리보기에 되풀이되지 않게(감사 AS-S2 참고-12 —
+    특히 `비밀번호: 값 / 토큰: 값` 처럼 짧은 이름 붙은 값이 이웃할 때)."""
+    low = max(0, start - CONTEXT_BEFORE)
+    if not covered:
+        return text[low:start]
+    merged, ends = covered
+    pieces, cursor = [], low
+    for index in range(bisect_right(ends, low), len(merged)):
+        other_start, other_end = merged[index]
+        if other_start >= start:
+            break
+        pieces += [text[cursor:max(cursor, other_start)], T["drf_spot_hidden"]]
+        cursor = min(other_end, start)
+    pieces.append(text[cursor:start])
+    return "".join(pieces)
+
+
+def _place(name, text, start, end, covered=None):
     """막은 자리 하나의 미리보기 — `이름 — …걸린 곳 앞의 글 + 걸린 곳의 앞부분`(전체 PREVIEW 글자). 정본 비밀 모양은 가려서(`[가림: …]`), 그 밖의 긴 덩어리(알아보지 못한 영숫자)는 글자 없이 `[가림]` 표시만 남는다 — 앞 글자도 화면에 되풀이하지 않는다(PCSEC1 D16)."""
     from ...security.mask import mask
-    before = text[max(0, start - CONTEXT_BEFORE):start]
+    before = _context_before(text, start, covered) if covered else text[max(0, start - CONTEXT_BEFORE):start]
     hit = text[start:end]
     masked = mask(hit)
     front = T["drf_spot_hidden"] if not hit else (masked if masked != hit else T["drf_spot_hidden"])      # 길이가 0 인 자리(이름·모양으로 알아본 것)는 글자를 보이지 않고 어디서부터인지만 짚는다
@@ -327,8 +367,10 @@ def secret_places(*named):
     """((이름, 글), …) → 키·토큰 모양을 막은 자리의 미리보기들(`SPOT_LIMIT` 개까지, 같은 것은 한 번) — 없으면 빈 튜플. 이름은 화면에 보이는 말(`제목`·`본문`·`키워드` …)이다."""
     places = []
     for name, text in named:
-        for start, end in secret_spots(text):
-            place = _place(name, text, start, end) if isinstance(text, str) else str(name)       # 글이 아닌 값은 이름만(미리볼 글이 없다)
+        spots = secret_spots(text)
+        covered = _covered(spots) if isinstance(text, str) and len(spots) > 1 else None
+        for start, end in spots:
+            place = _place(name, text, start, end, covered) if isinstance(text, str) else str(name)       # 글이 아닌 값은 이름만(미리볼 글이 없다)
             if place not in places:
                 places.append(place)
             if len(places) >= SPOT_LIMIT:
