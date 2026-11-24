@@ -5,7 +5,7 @@
     python -X utf8 scripts/release_check.py --scan-dir 폴더 [--scan-dir 폴더 ...]
                                                                  후보 산출물 폴더(설치 파일 푼 것·zip 푼 것·로그·백업·진단 복사본)의 키·토큰 모양 훑기를 10번 항목에 반영
     python -X utf8 scripts/release_check.py --json               같은 결과를 JSON 으로
-    python -X utf8 scripts/release_check.py --root 폴더           다른 저장소 사본을 점검(시험용)
+    python -X utf8 scripts/release_check.py --root 폴더           다른 저장소 사본을 점검(시험용 — 열두 점검을 부르느라 그 사본의 packaging/gui_entry.py 와 앱 코드가 실행되므로 믿는 사본에만 쓴다)
 
 지키는 것:
   · **읽기 전용**이다. 파일을 만들거나 바꾸지 않고, 네트워크·하위 프로세스를 쓰지 않는다(표준 라이브러리와 앱의 `security/scan.py` 만 쓴다).
@@ -22,7 +22,7 @@
 
 후보 산출물 훑기(`scan_folder`)는 새 검사 규칙을 만들지 않고 `security/scan.py` 의 `scan_secrets` 만 부른다. 규칙:
   · 폴더 안 모든 파일을 글이든 이진 파일이든 끝까지 읽어 훑는다(글자 부호는 UTF-8, 맨 앞이 UTF-16 표지면 UTF-16). 큰 파일은 덩어리로 읽고 덩어리 사이를 겹쳐 경계에 걸친 키도 놓치지 않는다.
-  · zip 은 풀지 않고 안의 파일을 메모리에서 읽어 훑는다. 다른 압축 형식·링크(정션 포함)·너무 큰 파일·읽기 실패·깨진 압축은 훑지 못한 것이므로 **조용히 건너뛰지 않고** '읽지 못함' 으로 세어 표에 드러내고, 하나라도 있으면 FAIL 이다(0 이라고 말할 수 없다).
+  · zip 은 풀지 않고 안의 파일을 메모리에서 읽어 훑는다. 다른 압축 형식·링크(정션 포함)·클라우드(OneDrive 등)에만 있는 자리표시·너무 큰 파일·읽기 실패·깨진 압축은 훑지 못한 것이므로 **조용히 건너뛰지 않고** '읽지 못함' 으로 세어 표에 드러내고, 하나라도 있으면 FAIL 이다(0 이라고 말할 수 없다).
   · 파일이 하나도 없는 폴더·열 수 없는 폴더도 FAIL 이다(엉뚱한 폴더를 골랐을 수 있다).
   · 결과에는 파일 경로·유형·줄 번호만 있고 키 글자는 어디에도 없다. 키처럼 보이는 파일 이름은 가려서 보인다.
 """
@@ -115,10 +115,12 @@ ZIP_MAGIC = b"PK\x03\x04"
 OTHER_ARCHIVES = ((b"\x1f\x8b", "gzip"), (b"BZh", "bzip2"), (b"\xfd7zXZ\x00", "xz"), (b"7z\xbc\xaf\x27\x1c", "7z"), (b"Rar!", "rar"), (b"MSCF", "cab"))
 _NEWLINE = re.compile(r"\r\n|\n|\r")                     # `security/scan.py` 가 줄을 세는 방법과 같다(시험이 같음을 지킨다)
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+_CLOUD_ONLY = 0x1000 | 0x40000 | 0x400000                # 윈도 파일 속성 OFFLINE·RECALL_ON_OPEN·RECALL_ON_DATA_ACCESS — 클라우드(OneDrive 등)에만 있어 읽으면 내려받기가 시작되는 자리표시
 _NAME_SURROGATE = 0x20000000                             # 윈도 재해석 지점 표의 '다른 이름을 가리킨다' 비트 — 심볼릭 링크·정션만 켜져 있다(OneDrive 자리표시는 꺼져 있다)
 
 REASON_TEXT = {
     "link": "링크(따라가지 않음)",
+    "cloud_only": "클라우드에만 있는 자리표시(읽으면 내려받기가 시작돼 열지 않음)",
     "too_big": "너무 큰 파일",
     "os_error": "읽을 수 없음",
     "other_archive": "열지 못하는 압축 형식",
@@ -871,6 +873,8 @@ def scan_folder(folder, label="폴더 1", *, chunk_bytes=CHUNK_BYTES, overlap_ch
                 continue
             if is_link(info):
                 result.unread.append(Unread(_shown(scan, rel), "link"))
+            elif getattr(info, "st_file_attributes", 0) & _CLOUD_ONLY:
+                result.unread.append(Unread(_shown(scan, rel), "cloud_only"))
             elif stat.S_ISDIR(info.st_mode):
                 folders.append(full)
             elif stat.S_ISREG(info.st_mode):
@@ -959,7 +963,11 @@ def main(argv=None, *, out=None, selftest_runner=None):
         except (OSError, ValueError):
             pass
     root = Path(args.root) if args.root else ROOT
-    scans = [scan_folder(Path(folder), f"폴더 {number}") for number, folder in enumerate(args.scan_dir, 1)]
+    scans = []
+    for number, folder in enumerate(args.scan_dir, 1):
+        if out is None:
+            print(f"폴더 {number} 훑는 중(큰 폴더는 몇 분 걸린다)", file=sys.stderr)
+        scans.append(scan_folder(Path(folder), f"폴더 {number}"))
     rows = run_checks(root, selftest_runner=selftest_runner, scans=scans)
     version = read_version(root)
     print(render_json(rows, scans, version) if args.json else render_report(rows, scans, version), file=stream)

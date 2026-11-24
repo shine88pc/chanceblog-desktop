@@ -210,6 +210,13 @@ class ChunkBoundaryTest(unittest.TestCase):
                 hits, _ = self.run_stream(data, chunk, overlap=64)
                 self.assertEqual([line for _, line in hits], [61])
 
+    def test_lines_separated_only_by_carriage_returns_are_counted_across_chunks(self):
+        data = ("".join(f"줄{number}\r" for number in range(60)) + KEY + "\r").encode("utf-8")
+        for chunk in range(5, 45):
+            with self.subTest(chunk=chunk):
+                hits, _ = self.run_stream(data, chunk, overlap=64)
+                self.assertEqual([line for _, line in hits], [61])
+
     def test_a_multibyte_character_split_between_chunks_is_decoded_correctly(self):
         data = ("가나다라마바사" * 10 + "\n" + KEY + "\n").encode("utf-8")
         for chunk in (1, 2, 4, 5, 7):
@@ -438,6 +445,28 @@ class UnreadTest(FolderCase):
         self.assertEqual(sorted((item.path, item.reason) for item in result.unread), [("linked", "link"), ("linkfile.txt", "link")])
         self.assertEqual([item.path for item in result.findings], ["real/inside.txt"])           # 링크 안은 들여다보지 않는다
         self.assertEqual(result.files_read, 2)
+
+    def test_cloud_only_placeholders_are_never_opened_and_are_counted_as_unread(self):
+        for bit in (0x1000, 0x40000, 0x400000):
+            with self.subTest(bit=hex(bit)):
+                with rs.temp_dir() as folder:
+                    rs.write_files(folder, {"cloud.txt": f"{KEY}\n", "local.txt": "글\n", "cloudfolder/inner.txt": f"{KEY}\n"})
+                    real_lstat, real_open, opened = os.lstat, open, []
+
+                    def fake_lstat(path, *args, **kwargs):
+                        info = real_lstat(path, *args, **kwargs)
+                        if Path(path).name in ("cloud.txt", "cloudfolder"):
+                            return types.SimpleNamespace(st_mode=info.st_mode, st_size=info.st_size, st_file_attributes=0x400 | bit, st_reparse_tag=0x9000001A)     # 클라우드 자리표시는 재해석 지점이지만 링크는 아니다
+                        return info
+
+                    def opener(path):
+                        opened.append(Path(path).name)
+                        return real_open(path, "rb")
+                    with mock.patch("os.lstat", fake_lstat):
+                        result = rc.scan_folder(folder, opener=opener)
+                self.assertEqual(sorted((item.path, item.reason) for item in result.unread), [("cloud.txt", "cloud_only"), ("cloudfolder", "cloud_only")])
+                self.assertEqual(opened, ["local.txt"])                  # 자리표시는 열지도 않고 그 폴더 안을 읽지도 않는다
+                self.assertEqual((result.findings, result.files_read), ([], 1))
 
     def test_a_real_symbolic_link_is_not_followed_when_the_system_allows_making_one(self):
         self.put({"target/inside.txt": f"{KEY}\n"})

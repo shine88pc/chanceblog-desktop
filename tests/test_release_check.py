@@ -729,13 +729,15 @@ class Item11Test(RepoCase):
         self.assertEqual(passed + skipped, len(rc.SELFTEST_KEYS))
 
     def test_the_default_runner_loads_the_entry_file_by_path_and_leaves_sys_path_and_bytecode_flag_alone(self):
-        before_path, before_flag = list(sys.path), sys.dont_write_bytecode
+        before_path, previous = list(sys.path), sys.dont_write_bytecode
+        sys.dont_write_bytecode = False                              # 보통 파이썬처럼 .pyc 를 쓰는 상태에서도 쓰지 않는지 본다
+        self.addCleanup(setattr, sys, "dont_write_bytecode", previous)
         with rs.temp_dir() as other:
             rs.write_files(other, {"packaging/gui_entry.py": "def run_selftest():\n    return ['가짜 결과']\n"})
             self.assertEqual(rc.run_repo_selftest(other), ["가짜 결과"])
             self.assertFalse((Path(other) / "packaging" / "__pycache__").exists())
         self.assertEqual(sys.path, before_path)
-        self.assertEqual(sys.dont_write_bytecode, before_flag)
+        self.assertFalse(sys.dont_write_bytecode)                    # 불러오는 동안만 껐다가 되돌린다
 
 
 class Item12Test(RepoCase):
@@ -836,7 +838,11 @@ class CommandLineTest(RepoCase):
         code, text = self.run_main("--root", str(self.root))
         self.assertEqual(code, 1)
         self.assertIn("틀린 항목(FAIL): 1, 2", text)
+        self.assertIn("요약: PASS 2 · FAIL 2 · 수동(운영자) 2 · 아직(미구현) 6", text)
         self.assertIn("종료 코드: 1", text)
+        _, as_json = self.run_main("--root", str(self.root), "--json")
+        self.assertEqual(json.loads(as_json)["summary"], {PASS: 2, FAIL: 2, MANUAL: 2, NOT_YET: 6})
+        self.assertEqual(json.loads(as_json)["exit_code"], 1)
 
     def test_the_json_output_has_rows_summary_exit_code_and_scans(self):
         self.build()
@@ -879,6 +885,19 @@ class CommandLineTest(RepoCase):
         secret_support.assert_no_secret(self, secret, as_json, what="JSON")
         self.assertNotIn(folder_text, text)                                    # 이 PC 의 폴더 경로(사용자 이름이 들어 있을 수 있다)를 내지 않는다
         self.assertNotIn(folder_text, as_json)
+
+    def test_the_json_lists_every_finding_and_every_unread_file_with_path_kind_line_and_reason(self):
+        import scan_samples as S
+        self.build()
+        with rs.temp_dir() as folder:
+            rs.write_files(folder, {"logs/app.log": f"앞 줄\n{S.github()}\n", "bundle.gz": b"\x1f\x8b\x08\x00" + "압축 흉내".encode("utf-8"), "clean.txt": "깨끗한 글\n"})
+            code, text = self.run_main("--root", str(self.root), "--scan-dir", folder, "--json")
+        scan = json.loads(text)["scans"][0]
+        self.assertEqual(code, 1)
+        self.assertEqual(scan["findings"], [{"path": "logs/app.log", "kind": "GitHub 토큰", "line": 2}])
+        self.assertEqual(scan["unread"], [{"path": "bundle.gz", "reason": "other_archive"}])
+        self.assertEqual((scan["files_read"], scan["archives_opened"], scan["openable"]), (2, 0, True))
+        self.assertEqual(scan["bytes_read"], len(f"앞 줄\n{S.github()}\n".encode("utf-8")) + len("깨끗한 글\n".encode("utf-8")))
 
     def test_a_missing_scan_dir_is_a_fail_for_item_ten(self):
         self.build()
