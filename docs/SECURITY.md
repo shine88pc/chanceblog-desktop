@@ -160,7 +160,7 @@
 | URL 질의·요청 헤더 | 주소 인자 이름 규칙, `Authorization`·`Cookie`·`Set-Cookie`·`X-API-Key` 줄 규칙 |
 | UI 메시지 | `display_text`, 위젯 글 전수 훑기 시험 |
 | 시험 실패 출력 | `tests/secret_support.assert_no_secret`(새·바꾼 시험), `MaskingTextTestRunner`(옛 시험은 한 줄도 고치지 않고 — CI 의 조각 러너 `scripts/ci_shard.py` 가 이 러너를 쓴다) |
-| 워크플로 산출물(artifact) | `test_workflow_artifacts`(`.github` 는 읽기만 — 업로드 단계가 있으면 그 경로를 허용 목록 네 모양(`ALLOWED_UPLOAD_FILES`: 패키지 압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json`)으로만 제한하고(새 업로드를 더하려면 이 목록과 결정을 같이 고친다), `secrets.` 는 `env:` 로만 넘기며 비밀 환경 변수·환경 전체를 출력하지 않는다) |
+| 워크플로 산출물(artifact) | `test_workflow_artifacts`(`.github` 는 읽기만 — 업로드 단계가 있으면 그 경로를 허용 목록 여섯 모양(`ALLOWED_UPLOAD_FILES`: 패키지 압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json`, 그리고 설치 도구 시험 보고서 `INSTALLER_SPIKE_REPORT.md`·`INSTALLER_SPIKE_REPORT.json`)으로만 제한하고(새 업로드를 더하려면 이 목록과 결정을 같이 고친다), `secrets.` 는 `env:` 로만 넘기며 비밀 환경 변수·환경 전체를 출력하지 않는다) |
 
 가리는 이름: `Authorization`·`api_key`·`apikey`·`serviceKey`·`access_token`·`refresh_token`·`client_secret`·`password`·`Cookie`·`Set-Cookie`·`X-API-Key` 와 그 계열(`authKey`·`appKey`·`secretKey`·`X-Naver-Client-Secret`·`Ocp-Apim-Subscription-Key`·`crtfc_key`·`access_key`·`private_key`·`subscription_key`). `…key` 는 앞 낱말이 붙은 것만 이름이다(`monkey`·`keyword` 는 아니다). 규칙은 `Authorization` 줄은 값 전체(알려진 스킴 낱말만 남김), `Cookie` 는 **이름 불문 모든 값**(쿠키 이름은 남김), `Set-Cookie` 는 첫 쌍과 모르는 속성, 눈속임(전각·키릴·그리스 동형 문자·퍼센트·이스케이프 JSON·따옴표 두 겹·탭·base64 로 감싼 값 깊이 1·쪼갠 값)은 풀어서 가린다. 측정(`tests/pcsec1_mask_cases.py` 163건): 새는 입력 62 → 5, 오탐은 정상 글 122개와 앱이 실제로 내는 글 2,118개에서 0, 20만 자 입력 CPU 시간 최대 3.12 0.41초·3.10 0.50초(부하 PC 에서 세 번 중 최소 — 시험 한도는 2초).
 
