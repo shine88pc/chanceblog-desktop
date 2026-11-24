@@ -99,7 +99,8 @@ def strings(tree):
 
 class PackageTest(unittest.TestCase):
     def test_the_package_has_exactly_the_expected_modules(self):
-        self.assertEqual([path.name for path in FILES], ["__init__.py", "backup.py", "file.py", "store.py"], "모듈을 더하거나 뺐다면 이 목록과 docs/ARCHITECTURE.md §5 의 topicdb 행을 의식적으로 함께 고친다")
+        # 의도적 갱신(AS-S2 권고-5, D-691): 받은 백업을 읽는 SQLite 연결의 시간 상한·길이 한도를 거는 잎 모듈 `limits.py`(표준 라이브러리만 — 다른 안쪽 모듈을 가져오지 않는다)를 더했다
+        self.assertEqual([path.name for path in FILES], ["__init__.py", "backup.py", "file.py", "limits.py", "store.py"], "모듈을 더하거나 뺐다면 이 목록과 docs/ARCHITECTURE.md §5 의 topicdb 행을 의식적으로 함께 고친다")
 
     def test_every_module_starts_with_an_explanation_and_the_init_is_only_that(self):
         for path in FILES:
