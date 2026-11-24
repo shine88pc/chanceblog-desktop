@@ -524,7 +524,7 @@ def check_8(repo):
 def _pieces(repo, folder, test):
     found = []
     for rel, _full in repo.walk_files(folder):
-        if test(rel.rsplit("/", 1)[-1].lower()):
+        if test(rel.lower()):
             found.append(rel)
     return found
 
@@ -581,7 +581,7 @@ def _megabytes(size):
 
 
 def _installer_pieces(repo):
-    return _pieces(repo, "packaging", lambda name: "install" in name or name.endswith(".iss") or "velopack" in name or "vpk" in name)
+    return _pieces(repo, "packaging", lambda path: "install" in path or path.endswith(".iss") or "velopack" in path or "vpk" in path)
 
 
 def summarize_selftest(results):
@@ -703,38 +703,35 @@ class _TooBig(Exception):
 
 def scan_stream(stream, scan, *, chunk_bytes=CHUNK_BYTES, overlap_chars=OVERLAP_CHARS, limit_bytes=None):
     """열린 바이트 흐름 하나를 끝까지 훑는다 → `([(유형, 줄), ...], 읽은 바이트)`. `security/scan.py` 의 `scan_secrets` 만 부른다.
-    덩어리마다 앞 덩어리의 끝 `overlap_chars` 글자를 겹쳐 붙여 훑고, 겹친 부분 안에서 끝난 발견(앞 덩어리가 이미 본 것)은 한 번만 센다. 줄 번호는 흐름 맨 앞부터 센 값이다."""
+    덩어리마다 앞 덩어리의 끝 `overlap_chars` 글자를 겹쳐 붙여 훑는다. 한 발견을 정확히 한 번만 세려고, 덩어리 끝에서 `overlap_chars` 의 절반 안쪽에 끝나는 발견은
+    다음 덩어리로 미룬다(끝이 잘려 모양이 달라지거나 짧은 앞부분만 걸리는 것을 막는다) — 마지막 덩어리에서는 남은 것을 모두 센다. 줄 번호는 흐름 맨 앞부터 센 값이다."""
     findings, total = [], 0
-    block = stream.read(chunk_bytes)
+    block = stream.read(max(chunk_bytes, 4))                    # 첫 덩어리는 글자 부호 표지(UTF-16 BOM)를 알아볼 만큼은 읽는다
     if not block:
         return findings, 0
     decoder = _decoder(block)
-    tail, lines_before, edge_kinds = "", 0, set()
+    margin = max(overlap_chars // 2, 1)
+    tail, lines_before, reported = "", 0, 0                     # reported: tail 기준으로 그 위치까지 끝난 발견은 이미 센 것
     while block:
         total += len(block)
         if limit_bytes is not None and total > limit_bytes:
             raise _TooBig()
         following = stream.read(chunk_bytes)
-        combined = tail + decoder.decode(block, final=not following)
+        last = not following
+        combined = tail + decoder.decode(block, final=last)
         block = following
+        limit = len(combined) if last else len(combined) - margin
         hits = scan.scan_secrets(combined)
-        touching = set()
         if hits:
             starts = _line_starts(combined)
             for hit in hits:
-                begin, end = starts[hit.line - 1] + hit.col_start - 1, starts[hit.line - 1] + hit.col_end
-                if end == len(combined):
-                    touching.add(hit.kind)                              # 덩어리 끝에 닿은 발견 — 다음 덩어리에서 더 길게 이어질 수 있다
-                if end <= len(tail):
-                    continue                                            # 겹친 부분 안에서 끝난 발견은 앞 덩어리가 이미 센 것이다
-                if begin < len(tail) and hit.kind in edge_kinds:
-                    continue                                            # 앞 덩어리 끝에서 이미 센 같은 유형의 발견이 이어진 것(한 번만 센다)
-                findings.append((hit.kind, lines_before + hit.line))
-        edge_kinds = touching
+                if reported < starts[hit.line - 1] + hit.col_end <= limit:
+                    findings.append((hit.kind, lines_before + hit.line))
         keep = combined[-overlap_chars:] if len(combined) > overlap_chars else combined
         dropped = combined[:len(combined) - len(keep)]
         if dropped.endswith("\r") and keep.startswith("\n"):
             dropped, keep = dropped[:-1], "\r" + keep
+        reported = max(limit - len(dropped), 0)
         lines_before += len(_NEWLINE.findall(dropped))
         tail = keep
     return findings, total

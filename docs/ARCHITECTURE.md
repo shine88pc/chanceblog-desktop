@@ -284,3 +284,19 @@ backups/
 - **본체와의 관계**: 본체 `packaging/build_package.py` 의 함수 몇 개(출력 폴더 점검·좁힌 PATH 의 PyInstaller 환경·DLL 출처 점검·금지 파일 이름)를 읽기 전용으로 가져다 쓴다 — 본체 코드는 그대로이고, 본체 묶음 점검(`UNEXPECTED_BUNDLED` 의 `PIL` 등)은 이 묶음에 돌지 않는다(점검은 서로 별개, 사실표는 `PACKAGE_OCR.md` 9절).
 - **산출물**: `ChanceBlogDesktop-OCR-<버전>-win64.zip`(맨 위 폴더 `ocr` — 앱이 본체 옆에서 찾는 이름)·`SHA256SUMS`·`PACKAGE_INFO.json`. 올리기 직전에 `ocr_addon/verify_release.py`(산출물 점검 — 파일 자체를 다시 읽어 해시·크기·파일 목록·모델 잠금 값·라이선스 고지 파일 `licenses/`·`THIRD_PARTY_NOTICES.txt` 가 압축 파일 안에 있는지 확인하고, FFmpeg DLL·인증서 파일·기본 모델·OpenSSL·진짜 `urllib3`·`certifi` 같은 '없어야 할 것'과 정보 파일의 빌드 점검 결과도 압축 파일 쪽에서 다시 판정)가 한 번 더 본다. 안의 `OCR_INFO.json` 은 앱의 추가 도구 확인(`service/ocr_addon.py`)이 읽는 정보 파일이고, 시험이 가짜 묶음으로 만든 정보 파일을 앱의 확인 함수에 넣어 ok 로 읽히는지 본다.
 - **시험(모두 빌드·네트워크 없이)**: `test_ocr_addon_build_rules`(규칙)·`test_ocr_addon_fetch`(모델 받기, 가짜 응답)·`test_ocr_addon_build_flow`(흐름·정보 파일·zip, 가짜 단계)·`test_ocr_addon_verify_release`(산출물 점검, 진짜 빌드 함수로 만든 가짜 묶음)·`test_package_ocr_workflow`(워크플로 글 규칙)·`test_workflow_yaml_support`(그 규칙이 쓰는 작은 YAML 읽개 — 흐름식·앵커·겹친 키·줄 나눔처럼 읽히거나 보이지 않는 글자를 거절하는지)·`test_ocr_addon_merged_flow`(합친 흐름 — 고지 만들기·점검·정보 파일·압축·산출물 점검·앱의 확인을 진짜 함수로 한 줄기에 잇고 단계를 하나씩 불러도 같은 압축 파일이 나오는지).
+
+## 릴리스 후보 점검 — `scripts/release_check.py` (D-670 이후)
+
+앱 v1.0 완료 기준 열두 항목([`DECISIONS.md`](DECISIONS.md) '1.0.0 완료 기준')이 채워졌는지 **한 번에 표로 보여 주는 읽기 전용 도구**다. **v1.0 을 선언하지 않는다** — 결과를 보여 줄 뿐이고 선언은 운영자 몫이다. 표준 라이브러리와 앱의 `security/scan.py` 만 쓰고, 파일을 만들거나 바꾸지 않으며, 네트워크·하위 프로세스를 쓰지 않는다(결정 D-670–D-674).
+
+```text
+python -X utf8 scripts/release_check.py                                    열두 항목 표(상태와 근거 한 줄)
+python -X utf8 scripts/release_check.py --scan-dir 폴더 --scan-dir 폴더      후보 산출물 폴더의 키·토큰 모양 훑기를 10번 항목에 반영(여러 번 줄 수 있다)
+python -X utf8 scripts/release_check.py --json                             같은 결과를 JSON 으로
+```
+
+- **상태 넷**: `PASS`(자동으로 볼 수 있는 것이 모두 맞고 운영자가 따로 할 일이 없다) · `FAIL`(틀린 것이 있다) · `수동(운영자)`(자동 확인은 끝났고 운영자나 독립 점검자가 직접 해 봐야 판정된다) · `아직(미구현)`(판정에 필요한 구현·문서가 아직 없다). 여러 이유가 겹치면 FAIL, 아직, 수동, PASS 순으로 센 쪽이 이긴다(D-671).
+- **종료 코드**: FAIL 이 하나라도 있으면 1, 없으면 0(아직·수동은 0 이지만 표와 요약에 분명히 보인다), 사용법 오류는 2. 표 밑에는 '수동' 번호와 '아직' 번호가 따로 적힌다 — 운영자 시험지 단계와 이어 보는 목록이다.
+- **자동으로 보는 것**(항목별): 1 새 clone 준비물 · 2 입구·핵심 문서와 결정 색인 · 3 'AI 없이 동작해야 하는 기능' 열일곱 개와 D-18 표 · 4 관문 상수와 용도 표의 기본값(소스 구문만 읽는다) · 5 Pages 올리기 코드와 외부 쓰기 관문 · 6 Blogger 코드와 입력 관문 · 7 네이버 코드와 화면 연결 · 8 `src`·`packaging`·`.github`·`ocr_addon` 의 티스토리 낱말 0 · 9 백업 코드와 업데이트 모듈 · 10 보안 코드와 후보 폴더 키 모양 훑기 · 11 열두 점검(`--selftest`)을 **함수로** 부른 결과와 설치 도구 흔적 · 12 `VERSION` 의 SemVer 와 `CHANGELOG.md` 맨 위 절·화면의 버전 읽는 곳.
+- **후보 산출물 훑기**(`--scan-dir`): 설치 파일을 푼 것·zip 푼 것·로그·백업·진단 복사본의 모든 파일을 `security/scan.py` 의 `scan_secrets` 로 훑는다 — **새 검사 규칙은 없다.** 글이든 이진 파일이든 덩어리로 끝까지 읽고 덩어리 사이를 겹쳐 경계에 걸친 키도 한 번만 센다. zip 은 풀지 않고 안을 읽는다. 링크·너무 큰 파일·읽기 실패·열지 못하는 압축 형식·깨진 zip 은 **조용히 건너뛰지 않고 '읽지 못함' 으로 세어 표에 드러내며, 하나라도 있으면 FAIL**(0 이라고 말할 수 없다)이다. 결과에는 상대 경로·유형·줄 번호만 있고 키 글자와 이 PC 의 폴더 경로는 없다(D-672).
+- **알려 둔 한계**: 구현이 있는지는 파일 이름·소스 글로 보는 어림짐작이다(D-671·D-674). 압축된 설치 파일 안쪽은 먼저 풀어서 폴더로 줘야 본다. 12번의 GitHub Release 일치와 새 clone 빌드·시험·설치·제거·휴대용 실행은 운영자 PC 에서 직접 해 봐야 한다(수동).
