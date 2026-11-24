@@ -458,6 +458,18 @@ class SourceShapeTest(unittest.TestCase):
         self.assertNotIn("_is_link", bk.__all__)
         self.assertNotIn("is_link", bk.__all__)
 
+    def test_the_shared_link_module_is_a_leaf_that_imports_only_the_standard_library(self):
+        # `test_topicdb_rules.ALLOWED_INTERNAL` 에 `fslink` 를 더한 것(D-690)의 짝: 그 허용이 '낮은 층이 높은 층을 거꾸로 가져오는 길' 이 되지 않게
+        # 이 모듈이 가져오는 것을 표준 라이브러리 셋으로 글자 그대로 못박는다(하나라도 늘면 이 시험이 먼저 빨개져 의식적으로 고치게 된다) — 안쪽 모듈·상대 가져오기·바깥 연결 모듈이 없다.
+        found = set()
+        for node in ast.walk(ast.parse(FSLINK_SOURCE.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                found.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0, "상대 가져오기가 있다: " + ast.unparse(node))
+                found.add((node.module or "").split(".")[0])
+        self.assertEqual(found, {"__future__", "os", "pathlib", "stat"})
+
 
 if __name__ == "__main__":
     unittest.main()

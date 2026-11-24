@@ -11,6 +11,7 @@
   3) 끝없는 재귀 질의는 **이 PC 를 지키려고** 한도를 먼저 건 연결에서만, 그리고 모든 연결을 몇 초 뒤 강제로 끊는 안전망(`SafetyNet`) 아래에서만 돌린다.
 네트워크·실제 시계 없이 돈다(시간 상한 시험은 가짜 시계).
 """
+import ast
 import contextlib
 import datetime
 import hashlib
@@ -435,6 +436,19 @@ class ReadLimitsTest(Base):
             reason, detail = self.reason_and_detail(bk.read_backup, folder)
         self.assertEqual(net.fired, 0)
         self.assertIn("too big", detail, "길이 한도가 그 칸을 읽지 못하게 했다(한도가 없으면 읽은 뒤 JSON 오류로 거절돼 이 문구가 없다)")
+
+
+class LeafModuleTest(unittest.TestCase):
+    def test_the_limit_module_imports_only_sqlite3_and_time_and_never_another_inner_module(self):
+        # 머리말의 약속('다른 안쪽 모듈을 가져오지 않는다 · 외부 접속도 파일 쓰기도 하지 않는다')을 글자 그대로 못박는다 — `test_topicdb_rules` 는 `errors` 같은 허용된 안쪽 모듈의 가져오기를 막지 못한다.
+        found = set()
+        for node in ast.walk(ast.parse(Path(lim().__file__).read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                found.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0, "상대 가져오기가 있다: " + ast.unparse(node))
+                found.add((node.module or "").split(".")[0])
+        self.assertEqual(found, {"__future__", "sqlite3", "time"})
 
 
 if __name__ == "__main__":
