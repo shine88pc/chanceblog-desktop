@@ -968,11 +968,23 @@ class NoBytecodeTest(RepoCase):
     def test_main_runs_with_bytecode_writing_off_and_restores_it_even_when_it_ends_by_exit(self):
         self.build()
         out = io.StringIO()
+        real_parser = rc.build_parser
+
+        def spied_parser():                                          # 명령줄을 읽는 일(argparse 가 늦게 가져오는 모듈 포함)도 .pyc 쓰기를 끈 안에서 한다 — scan_folder·run_checks 의 감싸개와 따로 main 의 감싸개를 본다
+            parser = real_parser()
+            parse = parser.parse_args
+
+            def watching(argv=None):
+                self.seen.append(("parse", sys.dont_write_bytecode))
+                return parse(argv)
+            parser.parse_args = watching
+            return parser
         with rs.temp_dir() as folder:
             rs.write_files(folder, {"a.txt": "글\n"})
-            with mock.patch.object(rc, "scan_stream", self.spy(rc.scan_stream)):
+            with mock.patch.object(rc, "scan_stream", self.spy(rc.scan_stream)), mock.patch.object(rc, "build_parser", spied_parser):
                 rc.main(["--root", str(self.root), "--scan-dir", folder], out=out, selftest_runner=self.spy(rs.selftest_ok))
-        self.assertTrue(len(self.seen) >= 2 and all(self.seen), self.seen)
+        self.assertEqual(self.seen[0], ("parse", True), self.seen)
+        self.assertTrue(len(self.seen) >= 3 and all(item is True for item in self.seen[1:]), self.seen)
         self.assertFalse(sys.dont_write_bytecode)
         with mock.patch("sys.stderr", new_callable=io.StringIO):
             with self.assertRaises(SystemExit):
