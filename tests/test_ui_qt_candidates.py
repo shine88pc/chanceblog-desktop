@@ -331,10 +331,10 @@ class Base(unittest.TestCase):
 class MenuTest(Base):
     def test_the_topic_menu_is_in_the_core_group_after_home_and_opens_the_new_screen(self):
         window = self.make(page=None)
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual(window.nav_buttons["topics"].accessibleName(), "주제 후보 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         window.nav_buttons["topics"].click()
         self.assertTrue(self.loaded(window))
         self.settle()

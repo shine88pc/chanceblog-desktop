@@ -163,7 +163,7 @@ class Base(unittest.TestCase):
 class MenuAndLayoutTest(Base):
     def test_the_blog_menu_is_in_the_data_group_and_opens_the_new_screen(self):
         window = self.make(page=None)
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 같은 묶음의 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 같은 묶음의 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual(window.nav_buttons["blogs"].accessibleName(), "블로그 관리 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
         window.nav_buttons["blogs"].click()
@@ -173,7 +173,7 @@ class MenuAndLayoutTest(Base):
         self.assertEqual(len(self.ui(window).cards), 3, "의도적 갱신(blogsel, D-493): 슬롯 카드 다섯이 아니라 등록한 블로그(예시 데이터는 셋)만 카드다 — 끝에 '블로그 추가' 카드가 하나 더 있다")
         self.assertIsNotNone(self.ui(window).add_card)
         self.assertEqual(len(self.ui(window).fields), 18, "의도적 갱신(P4c, D-240): 주제 설정 칸 셋(우선 키워드·제외 키워드·선호 글 유형)이 더해져 폼 칸이 열다섯에서 열여덟이 되었다")
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])       # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): 화면 표에 Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])       # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): 화면 표에 Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["발행 기록"])        # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 '다음 단계' 목록에서 빠졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리는 완성돼 '다음 단계' 목록에서 빠졌다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 빠졌다
 
     def test_the_cards_show_only_the_registered_blogs_with_their_alias_and_never_a_slot_name(self):

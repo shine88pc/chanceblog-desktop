@@ -314,9 +314,9 @@ class Base(unittest.TestCase):
 class MenuTest(Base):
     def test_the_draft_menu_is_in_the_core_group_after_the_topics_and_the_next_steps_keep_only_the_history(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])    # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual(window.nav_buttons["drafts"].accessibleName(), "초안 작성 메뉴로 이동")
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])    # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["발행 기록"])
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
 

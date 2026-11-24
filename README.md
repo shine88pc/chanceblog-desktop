@@ -154,6 +154,7 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`CHANGELOG.md`](CHANGELOG.md) · `VERSION` | 변경 이력과 현재 버전 |
 | [`docs/TOPIC_ENGINE_PLAN.md`](docs/TOPIC_ENGINE_PLAN.md) | 주제 엔진(5채널 주제 선정 전략)을 코드에 얹는 순서와 결정 A–H(계획 문서 — 만든 것과 날짜는 `DECISIONS.md`) |
 | [`docs/P4_REVIEW_ITEMS.md`](docs/P4_REVIEW_ITEMS.md) | 화면(P4) 작업 전에 다시 보고하기로 한 7가지 검토 항목의 기록 |
+| [`docs/UI_POST_FLOW.md`](docs/UI_POST_FLOW.md) | 글 흐름 화면(글 검토) 1a 의 설계와 D-18 기능 → 화면 → 시험 매트릭스 |
 
 ## 개발 방식
 

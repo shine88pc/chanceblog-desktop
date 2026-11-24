@@ -240,7 +240,7 @@ class PostsAdapterReadTest(Base):
             raise AppError("DATA_DIR_UNSAFE", {"경로": "C:/비밀 경로/폴더"}, detail="git 저장소 안이다")
         provider = posts_adapter.ServicePostsProvider(context_factory=refuse)
         failure = self.failure_of(provider.load_posts, SAFE, NEVER)
-        self.assertEqual((failure.kind, failure.user_message), ("io", T["post_fail_io"]))
+        self.assertEqual((failure.kind, failure.user_message), ("io", T["post_fail_io_read"]), "목록을 읽다가 난 문제는 '쓰지 못했어요' 가 아니라 읽기 문장이다")
         self.assertNotIn("비밀 경로", failure.user_message)
 
 
@@ -251,7 +251,7 @@ class PostsAdapterReviewTest(Base):
         report = outcome.review
         self.assertEqual(outcome.kind, "reviewed")
         self.assertEqual((report.project_id, report.platform, report.revision, report.status), (project_id, posts.PAGES, 1, st.REVIEW_REQUIRED))
-        self.assertEqual((report.gate_ok, report.gate_codes, report.warnings, report.secrets, report.similarity, report.sample), (True, (), (), (), None, False))
+        self.assertEqual((report.gate_ok, report.gate_codes, report.warnings, report.spots, report.similarity, report.sample), (True, (), (), (), None, False))
         self.assertEqual(report.health.stage, "general")
         self.assertEqual(len(report.summary), 1)
         self.assertIn("경제·일", report.summary[0])
@@ -285,10 +285,24 @@ class PostsAdapterReviewTest(Base):
         ss.inject_text(self.ctx, project_id, text=ss.ko_text() + NL + NL + "이 영양제를 먹으면 통증이 완전히 사라집니다. 맨 끝에 " + KEY)
         report = self.do_review(project_id).review
         self.assertEqual(report.health.stage, "stop")
-        self.assertEqual(report.secrets[0][0], T["drf_where_body"])
-        self.assertEqual(report.secrets[0][2], "Google API 키")
+        self.assertEqual(report.spots[0][0], T["drf_where_body"])
+        self.assertEqual(report.spots[0][2], "Google API 키")
         self.assertNotIn(KEY, repr(report), "검토 결과에는 키 글이 없다")
         self.assertNotIn(KEY[:10], repr(report.health.places))
+
+    def test_a_stored_key_shape_in_an_image_description_is_caught_by_the_review_and_by_the_last_check_at_approval(self):
+        from chanceblog_desktop.content.model import Asset
+        project_id = self.do_import().detail.project_id
+        self.do_review(project_id)
+        with ctx_store(self.ctx, project_id) as (store, project):
+            project.assets = (Asset("a.png", alt="설명 " + KEY),)                      # 옛 버전이 저장한 것처럼 보관함에 직접 — 서비스의 쓰기 길은 이제 이 칸도 거절한다
+            store.save(project)
+        report = self.do_review(project_id).review
+        self.assertEqual((report.spots[0][0], report.spots[0][2]), (T["post_where_assets"], "Google API 키"))
+        self.assertNotIn(KEY[:10], repr(report))
+        failure = self.failure_of(self.do_approve, project_id, 1)
+        self.assertEqual((failure.kind, failure.code, failure.user_message), ("gate", "REVIEW_BLOCKED", T["post_fail_blocked"]))
+        self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED, "승인되지 않았다")
 
     def test_the_detail_preview_of_a_stored_key_shape_is_masked(self):
         project_id = self.do_import().detail.project_id
@@ -436,6 +450,15 @@ class PostsAdapterFailureTest(Base):
         self.assertEqual(failure.kind, "corrupt")
         self.assertEqual(posts_adapter.failure_of(AppError("STATUS_TRANSITION_INVALID"), action="read").kind, "other")
 
+    def test_a_problem_found_while_reading_never_says_it_could_not_write(self):
+        for code in ("FILE_WRITE_FAILED", "DISK_FULL", "FILE_IN_USE", "STORE_RECOVERY_PENDING"):
+            with self.subTest(code=code):
+                failure = posts_adapter.failure_of(AppError(code), action="read")
+                self.assertEqual((failure.kind in ("io", "disk"), failure.user_message, failure.code), (True, T["post_fail_io_read"], code))
+        self.assertEqual(posts_adapter.failure_of(AppError("FILE_WRITE_FAILED"), action="import").user_message, T["post_fail_io"], "쓰다가 난 문제는 그대로 쓰기 문장이다")
+        self.assertEqual(posts_adapter.failure_of(AppError("DISK_FULL"), action="approve").user_message, T["post_fail_disk"])
+        self.assertNotIn("쓰지 못했어요", T["post_fail_io_read"])
+
     def test_a_check_failure_at_approval_is_a_gate_sentence_and_at_review_a_value_sentence(self):
         error = AppError("CHECK_FAILED", {"걸린 항목 목록": "RAW_HTML"})
         self.assertEqual(posts_adapter.failure_of(error, action="approve").kind, "gate")
@@ -498,7 +521,7 @@ class PostsFakeMatchesRealTest(Base):
         project_id = detail.project_id
         steps.append(detail.platform(posts.PAGES).status)
         outcome = provider.review_post(posts.ReviewRequest(project_id, posts.PAGES, VALUES), SAFE, NEVER)
-        steps.append((outcome.detail.platform(posts.PAGES).status, outcome.review.gate_ok, outcome.review.health.stage, bool(outcome.review.secrets)))
+        steps.append((outcome.detail.platform(posts.PAGES).status, outcome.review.gate_ok, outcome.review.health.stage, bool(outcome.review.spots)))
         try:
             steps.append(provider.approve_post(posts.ApproveRequest(project_id, posts.PAGES, detail.revision), SAFE, NEVER).detail.platform(posts.PAGES).status)
         except posts.PostFailure as failure:

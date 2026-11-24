@@ -143,6 +143,16 @@ class PostsRulesTest(unittest.TestCase):
         self.assertEqual(rules.secret_spots(KEY, "")[0][0], T["drf_where_title"])
         self.assertEqual(rules.secret_spots(None, None), ())
 
+    def test_secret_spots_also_look_at_the_image_names_and_descriptions(self):
+        from chanceblog_desktop.content.model import Asset
+        keyed = (Asset("a.png", alt=f"설명 {KEY}"),)
+        found = rules.secret_spots("제목", "본문", (), keyed)
+        self.assertEqual(found, ((T["post_where_assets"], 1, "Google API 키"),), "저장 때 훑는 이미지 칸을 검토에서도 훑는다")
+        self.assertNotIn(KEY, repr(found))
+        self.assertEqual(rules.text_blocks("제목", "본문", (), keyed), ("secret",), "승인 직전의 재검사도 이미지 칸을 본다")
+        self.assertEqual(rules.secret_spots("제목", "본문", (), (Asset("b.png", alt="평범한 설명"),)), ())
+        self.assertEqual(rules.secret_spots("제목", "본문", (), None), ())
+
     def test_health_review_uses_the_draft_screen_judge_sentence_by_sentence(self):
         stop = rules.health_of("제목", "이 영양제를 먹으면 통증이 완전히 사라집니다.")
         self.assertEqual(stop.stage, "stop")
@@ -218,12 +228,12 @@ class PostsRulesTest(unittest.TestCase):
         self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=general)), ())
         self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, gate_ok=False, health=general)), ("gate",))
         self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=stop)), ("health",))
-        self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=general, secrets=(("본문", 1, "Google API 키"),))), ("secret",))
+        self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=general, spots=(("본문", 1, "Google API 키"),))), ("secret",))
         self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=general, similarity=posts.SimilarityInfo("high", 0.9))), ("similarity",))
         self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=general, similarity=posts.SimilarityInfo("warn", 0.5))), (), "경고만이면 막지 않는다")
         self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=None)), ("incomplete",), "건강 판정이 빠진 결과는 믿지 않는다")
         self.assertEqual(rules.review_blocks(None), ("incomplete",))
-        self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, gate_ok=False, health=stop, secrets=(("본문", 1, "x"),), similarity=posts.SimilarityInfo("high", 1.0))), ("gate", "health", "secret", "similarity"))
+        self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, gate_ok=False, health=stop, spots=(("본문", 1, "x"),), similarity=posts.SimilarityInfo("high", 1.0))), ("gate", "health", "secret", "similarity"))
 
     def test_the_pages_values_are_checked_at_the_renderer_limits(self):
         from chanceblog_desktop.render import pages as renderer
@@ -241,7 +251,7 @@ class PostsRulesTest(unittest.TestCase):
         self.assertEqual(edit(tags="가" * (renderer.MAX_TAG + 1)), {"tags": "post_pv_p_tags"})
         self.assertEqual(edit(description="가" * renderer.MAX_DESCRIPTION), {})
         self.assertEqual(edit(description="가" * (renderer.MAX_DESCRIPTION + 1)), {"description": "post_pv_p_desc"})
-        for bad in ("", "http://img.example.invalid/a.jpg", "https://", "https:///a", "ftp://x/a", "https://img.example.invalid/a b.jpg", "img.example.invalid/a.jpg", "javascript:alert(1)", "https://" + "a" * 1500):
+        for bad in ("", "ht" + "tp://img.example.invalid/a.jpg", "https://", "https:///a", "ftp://x/a", "https://img.example.invalid/a b.jpg", "img.example.invalid/a.jpg", "javascript:alert(1)", "https://" + "a" * 1500):
             with self.subTest(url=bad[:30]):
                 self.assertEqual(edit(image_url=bad), {"image_url": "post_pv_p_image"})
         values = rules.pages_values_of({**RAW, "tags": " 하나 , 둘，셋、 ,, ", "category": " 생활 "})
@@ -366,10 +376,16 @@ class PostsStatesCoreTest(unittest.TestCase):
         project_id = row_ids(controller)[0]
         open_post(controller, project_id)
         controller.provider.projects.pop(project_id)
-        controller.apply_loaded(controller.provider.load_posts(SAFE, NEVER))
+        self.assertEqual(open_post(controller, project_id), "gone", "그 글을 다시 읽으니 없다")
         view = controller.view()
         self.assertEqual((view["mode"], view["notice"]), ("list", {"level": "warning", "text": T["post_detail_gone"]}))
         self.assertEqual(open_post(make(), "exm99999"), "unknown")
+        late = make("empty")                                                   # 늦게 온 옛 목록이 방금 가져온 글을 닫지 않는다
+        stale = late.provider.load_posts(SAFE, NEVER)
+        late.open_import()
+        drive(late, lambda **cb: late.start_import("방금 가져온 글", post_fake.sample_text(), **cb))
+        late.apply_loaded(stale)
+        self.assertEqual((late.view()["mode"], late.view()["detail"]["title"]), ("detail", "방금 가져온 글"))
 
     def test_a_detail_that_cannot_be_read_shows_an_error_with_back_and_retry(self):
         provider = post_fake.FakePostsProvider(fail={"load_post": posts.PostFailure(T["post_fail_read"], code="STORE_CORRUPT", kind="corrupt")})
@@ -529,8 +545,60 @@ class PostsImportCoreTest(unittest.TestCase):
         controller.keep_import()
         self.assertTrue(controller.import_open and not controller.import_ask)
         self.assertEqual(controller.request_close_import(), "ask")
-        self.assertEqual(controller.request_close_import(), "closed", "확인 줄이 떠 있을 때 한 번 더 닫으면 닫힌다")
+        self.assertEqual(controller.request_close_import(), "ask", "확인 줄이 떠 있을 때 취소를 또 눌러도 닫히지 않는다 — 그래도 닫기를 눌러야 닫힌다")
+        self.assertTrue(controller.import_open and controller.import_dirty and controller.import_ask)
+        self.assertEqual(controller.close_import(), "closed")
         self.assertFalse(controller.import_open or controller.import_dirty)
+
+    def test_the_wait_for_the_app_close_is_a_controller_state_that_goes_down_with_the_question(self):
+        controller = make("empty")
+        self.assertEqual(controller.request_quit(), "none", "열린 가져오기가 없으면 그대로 닫는다")
+        controller.open_import()
+        self.assertEqual(controller.request_quit(), "none", "입력이 없으면 묻지 않는다")
+        controller.import_edited(True)
+        self.assertEqual(controller.request_quit(), "ask")
+        self.assertTrue(controller.import_ask and controller.import_quit)
+        controller.keep_import()
+        self.assertFalse(controller.import_quit or controller.import_ask, "계속 쓰기")
+        controller.request_quit()
+        controller.import_edited(True)
+        self.assertFalse(controller.import_quit or controller.import_ask, "확인 줄이 뜬 뒤 계속 입력하면 앱 닫기를 기다리지 않는다")
+        controller.request_quit()
+        self.assertEqual(controller.request_close_import(), "ask")
+        self.assertTrue(controller.import_ask)
+        self.assertFalse(controller.import_quit, "대화만 닫으려는 뜻이라 그래도 닫기가 앱을 닫지 않는다")
+        controller.request_quit()
+        controller.close_import()
+        self.assertFalse(controller.import_quit)
+        controller.open_import()
+        self.assertFalse(controller.import_quit, "새 가져오기는 낡은 기다림 없이 시작한다")
+
+    def test_a_write_in_progress_blocks_the_app_close_question_and_a_failed_write_leaves_no_wait(self):
+        import threading
+        gate = threading.Event()
+
+        class Gated(post_fake.FakePostsProvider):
+            def import_post(self, request, progress, cancelled):
+                gate.wait(10)
+                raise posts.PostFailure(T["post_fail_input_plain"], code="CONTENT_INVALID", kind="input")
+
+        provider = Gated("empty")
+        controller = posts_view.PostsController(provider, jobs.JobRunner())
+        controller.apply_loaded(provider.load_posts(SAFE, NEVER))
+        controller.open_import()
+        controller.import_edited(True)
+        results = {}
+        status, job = controller.start_import("제목", post_fake.sample_text(), on_error=lambda failure, _p: results.setdefault("failed", failure))
+        self.assertEqual(status, "started")
+        self.assertEqual(controller.request_quit(), "busy", "가져오는 중에는 앱 닫기 확인 줄을 띄우지 않는다")
+        self.assertFalse(controller.import_quit or controller.import_ask, "그래서 낡은 기다림 표시도 남지 않는다")
+        gate.set()
+        job.join(10)
+        controller.apply_write_failed(results["failed"])
+        self.assertTrue(controller.import_open, "실패하면 대화는 열려 있다")
+        self.assertFalse(controller.import_quit)
+        self.assertEqual(controller.request_close_import(), "ask")
+        self.assertFalse(controller.import_quit, "그 뒤 대화만 닫는 길이 앱을 닫지 않는다")
 
     def test_the_app_close_question_exists_only_while_typed_text_would_be_lost(self):
         controller = make("empty")
@@ -561,6 +629,19 @@ class PostsImportCoreTest(unittest.TestCase):
         job.join(10)
         controller.apply_file(again["ok"])
         self.assertEqual(controller.import_note, T["post_im_cp949"])
+
+    def test_a_file_read_over_a_typed_body_says_how_to_undo_it(self):
+        controller = make("empty")
+        controller.open_import()
+        results = {}
+        _s, job = controller.start_read_file("C:/폴더/글.md", on_done=lambda result, _p: results.setdefault("ok", result))
+        job.join(10)
+        controller.apply_file(results["ok"], replaced=True)
+        self.assertTrue(controller.import_note.startswith(T["post_im_read_ok"]))
+        self.assertTrue(controller.import_note.endswith(T["post_im_replaced"]), "이미 쓴 본문이 바뀌었으면 되돌리는 법을 알린다")
+        self.assertIn("Ctrl+Z", T["post_im_replaced"])
+        controller.apply_file(results["ok"])
+        self.assertEqual(controller.import_note, T["post_im_read_ok"], "빈 칸에 채울 때는 알릴 것이 없다")
 
     def test_a_file_that_cannot_be_read_shows_the_reason_and_leaves_the_fields_alone(self):
         controller = make("empty")
@@ -726,6 +807,52 @@ class PostsReviewCoreTest(unittest.TestCase):
         self.assertTrue(controller.pages_open)
         self.assertEqual(controller.pages_view()["message"], T["post_gate_header_value"])
         self.assertEqual(controller.pages_raw[controller.open_id]["category"], "생활", "값은 남아 있다")
+
+    def test_a_key_shaped_pages_value_keeps_the_dialog_open_and_is_never_remembered(self):
+        refused = posts.PostFailure(T["post_fail_secret"].format(where="한 줄 설명", kinds="Google API 키"), code="SECRET_SHAPE_FOUND", kind="secret")
+        controller = self.opened(fail={"review_post": refused})
+        controller.open_pages()
+        keyed = dict(RAW, description=f"설명 {KEY}")
+        status, end, todo = review_pages(controller, keyed)
+        self.assertEqual((status, end, todo), ("started", "failed", {}))
+        self.assertTrue(controller.pages_open, "키 모양 거절도 대화를 열어 둔 채 이유만 보인다")
+        self.assertIn("Google API 키", controller.pages_view()["message"])
+        self.assertNotIn(controller.open_id, controller.pages_raw, "거절된 키 모양 글이 든 값은 기억하지 않는다")
+        controller.close_pages(keyed)
+        self.assertNotIn(controller.open_id, controller.pages_raw, "닫을 때도 기억하지 않는다")
+        self.assertEqual(controller.open_pages()["description"], "", "다시 열어도 칸에 다시 채워지지 않는다")
+        self.assertNotIn(KEY[:12], repr(controller.pages_raw) + repr(controller.view()) + repr(controller.pages_view()))
+
+    def test_the_pages_values_are_remembered_when_the_dialog_is_closed_without_a_review(self):
+        controller = self.opened()
+        controller.open_pages()
+        self.assertTrue(controller.close_pages(dict(RAW)))
+        self.assertFalse(controller.pages_open)
+        self.assertEqual(controller.pages_raw[controller.open_id], RAW, "취소·Esc 로 닫아도 쓰던 값은 이 앱을 연 동안 남는다")
+        again = controller.open_pages()
+        self.assertEqual((again["category"], again["tags"]), ("생활", "에너지, 습관"))
+        controller.close_pages()
+        self.assertEqual(controller.pages_raw[controller.open_id], RAW, "값 없이 닫으면 기억을 지우지 않는다")
+        self.assertFalse(controller.remember_pages("딕셔너리가 아니다"))
+        controller.close_post()
+        self.assertFalse(controller.remember_pages(dict(RAW)), "열린 글이 없으면 기억하지 않는다")
+
+    def test_a_refused_approval_drops_the_old_review_so_a_new_one_is_needed(self):
+        for kind, code in (("gate", "CHECK_FAILED"), ("similarity", "NAVER_SIMILARITY_HIGH")):
+            with self.subTest(kind=kind):
+                controller = make("empty", fail={"approve_post": posts.PostFailure(T["post_fail_gate"], code=code, kind=kind)})
+                project_id = long_post(controller.provider, "검토할 글")
+                controller.apply_loaded(controller.provider.load_posts(SAFE, NEVER))
+                open_post(controller, project_id)
+                review_pages(controller)
+                self.assertTrue(controller.approval()[0])
+                status, end, todo = approve(controller)
+                self.assertEqual((status, end, todo), ("started", "failed", {}))
+                self.assertIsNone(controller.review, "서비스가 승인 순간에 거절했으면 '통과' 로 보이던 옛 결과를 더 믿지 않는다")
+                self.assertEqual(controller.approval(), (False, "post_res_lost"))
+                result = controller.view()["detail"]["review"]["panel"]["result"]
+                self.assertEqual((result["state"], result["sections"]), ("lost", []))
+                self.assertFalse(controller.view()["detail"]["review"]["panel"]["approve"]["enabled"])
 
     def test_a_review_of_the_approved_state_revokes_the_approval_and_says_so(self):
         controller = self.opened()
@@ -1018,6 +1145,114 @@ class PostsConcurrencyCoreTest(unittest.TestCase):
         self.assertEqual(T["nav_posts"], "글 검토")
         self.assertEqual(dict((key, icon) for key, _label, icon in app_state.NAV)["posts"], "check_circle")
         self.assertNotIn("posts", [key for key, _label, _icon in app_state.NEXT_STEPS])
+
+
+class PostsStaleReadsCoreTest(unittest.TestCase):
+    """읽기는 쓰기와 따로 도는 작업이라 쓰기가 끝난 뒤에 쓰기 전 모습이 늦게 도착할 수 있다 — 세대 번호가 그런 낡은 결과를 버린다."""
+
+    def read_list(self, controller):
+        results = {}
+        job = controller.start_load(on_done=lambda result, _p: results.setdefault("ok", result))
+        job.join(10)
+        return results["ok"]
+
+    def test_a_list_read_that_started_before_a_write_ended_is_dropped_and_a_new_one_is_taken(self):
+        controller = make("empty")
+        old = self.read_list(controller)                                        # 읽기는 끝났지만 셸이 아직 받지 않았다(쓰기 전 모습)
+        before = controller.data
+        controller.open_import()
+        drive(controller, lambda **cb: controller.start_import("방금 가져온 글", post_fake.sample_text(), **cb))
+        self.assertTrue(controller.is_stale(old))
+        self.assertFalse(controller.apply_loaded(old), "쓰기 전 목록은 받지 않는다")
+        self.assertIs(controller.data, before)
+        fresh = self.read_list(controller)
+        self.assertFalse(controller.is_stale(fresh))
+        self.assertTrue(controller.apply_loaded(fresh))
+        self.assertEqual(len(controller.data.rows), 1)
+        self.assertTrue(controller.apply_loaded(controller.provider.load_posts(SAFE, NEVER)), "세대 번호가 없는(직접 만든) 값은 낡았다고 보지 않는다")
+
+    def test_a_detail_read_that_started_before_a_write_ended_never_puts_the_old_state_back(self):
+        controller = make("empty")
+        project_id = long_post(controller.provider)
+        controller.apply_loaded(controller.provider.load_posts(SAFE, NEVER))
+        open_post(controller, project_id)
+        results = {}
+        _status, job = controller.start_open(project_id, on_done=lambda result, _p: results.setdefault("ok", result))
+        job.join(10)
+        old = results["ok"]                                                     # 쓰기 전 모습('시작 전')을 읽은 결과
+        review_pages(controller)
+        self.assertEqual(controller.detail.platform(posts.PAGES).status, st.REVIEW_REQUIRED)
+        self.assertTrue(controller.is_stale(old))
+        self.assertFalse(controller.apply_detail(old))
+        self.assertEqual(controller.detail.platform(posts.PAGES).status, st.REVIEW_REQUIRED, "화면이 쓰기 전 모습으로 되돌아가지 않는다")
+        again = {}
+        job = controller.reload_detail(on_done=lambda result, _p: again.setdefault("ok", result))
+        job.join(10)
+        self.assertTrue(controller.apply_detail(again["ok"]), "쓰기가 끝난 뒤에 시작한 읽기는 받는다")
+
+    def test_every_write_end_raises_the_generation_whether_it_worked_or_not(self):
+        controller = make("empty")
+        controller.open_import()
+        start = controller.epoch
+        drive(controller, lambda **cb: controller.start_import("가져온 글", post_fake.sample_text(), **cb))
+        self.assertEqual(controller.epoch, start + 1)
+        failing = make("empty", fail={"import_post": posts.PostFailure(T["post_fail_input_plain"], code="CONTENT_INVALID", kind="input")})
+        failing.open_import()
+        drive(failing, lambda **cb: failing.start_import("가져온 글", post_fake.sample_text(), **cb))
+        self.assertEqual(failing.epoch, 1, "실패한 쓰기도 세대를 올린다")
+        failing.apply_write_unexpected(RuntimeError("x"))
+        self.assertEqual(failing.epoch, 2)
+        failing.apply_unexpected(RuntimeError("y"))
+        self.assertEqual(failing.epoch, 3, "받아 둔 값을 모두 버릴 때도")
+
+    def test_a_late_failure_never_touches_a_closed_post_or_another_post(self):
+        provider = post_fake.FakePostsProvider(fail={"load_post": posts.PostFailure(T["post_fail_notfound"], code="CONTENT_NOT_FOUND", kind="notfound")})
+        controller = posts_view.PostsController(provider, jobs.JobRunner())
+        controller.apply_loaded(provider.load_posts(SAFE, NEVER))
+        first, second = row_ids(controller)[:2]
+        results = {}
+        _status, job = controller.start_open(first, on_error=lambda failure, _p: results.setdefault("failed", failure))
+        job.join(10)
+        failure = results["failed"]
+        self.assertEqual(failure.read_of, (first, 0), "어느 글을 어느 세대에 읽다 실패했는지 붙어 있다")
+        controller.close_post()
+        self.assertEqual(controller.apply_detail_failed(failure), "ignored", "이미 닫은 글의 늦은 실패는 오류 상태를 남기지 않는다")
+        self.assertEqual((controller.open_id, controller.detail_state), (None, "none"))
+        provider.fail.clear()
+        open_post(controller, second)
+        self.assertEqual(controller.apply_detail_failed(failure), "ignored", "다른 글을 열어 둔 동안 늦게 온 '없음' 실패가 그 글을 닫지 않는다")
+        self.assertEqual((controller.open_id, controller.detail_state), (second, "normal"))
+        controller.epoch += 1                                                   # 읽는 동안 쓰기가 끝났다
+        late = posts.PostFailure("x", code="STORE_CORRUPT", kind="corrupt")
+        late.read_of = (second, controller.epoch - 1)
+        self.assertEqual(controller.apply_detail_failed(late), "stale", "같은 글의 낡은 실패는 다시 읽게 한다")
+        self.assertEqual(controller.detail_state, "normal", "낡은 실패가 오류 화면을 만들지 않는다")
+
+    def test_reloading_the_open_post_does_not_need_the_list_to_know_it_yet(self):
+        controller = make("empty")
+        controller.open_import()
+        drive(controller, lambda **cb: controller.start_import("방금 가져온 글", post_fake.sample_text(), **cb))
+        self.assertIsNone(controller.row(controller.open_id), "목록은 아직 새 글을 모른다")
+        results = {}
+        job = controller.reload_detail(on_done=lambda result, _p: results.setdefault("ok", result))
+        self.assertIsNotNone(job, "'다시 시도' 가 조용히 아무 일도 하지 않으면 안 된다")
+        job.join(10)
+        self.assertTrue(controller.apply_detail(results["ok"]))
+        self.assertEqual(controller.start_open("없는번호"), ("unknown", None), "처음 여는 길은 목록에 있는 글만 연다")
+
+    def test_a_re_read_after_a_failure_keeps_the_notice_that_says_why_but_opening_a_post_clears_it(self):
+        controller = make("empty")
+        project_id = long_post(controller.provider)
+        controller.apply_loaded(controller.provider.load_posts(SAFE, NEVER))
+        open_post(controller, project_id)
+        controller.notice = ("error", "글이 바뀌었어요")
+        controller.reload_detail(keep_notice=True).join(10)
+        self.assertEqual(controller.notice, ("error", "글이 바뀌었어요"), "왜 다시 읽는지 알리는 안내가 곧바로 사라지면 안 된다")
+        controller.reload_detail().join(10)
+        self.assertIsNone(controller.notice, "그냥 다시 읽을 때는 지난 알림을 거둔다")
+        controller.notice = ("ok", "지난 알림")
+        controller.start_open(project_id)[1].join(10)
+        self.assertIsNone(controller.notice, "글을 새로 열면 지난 알림을 거둔다")
 
 
 class PostsTextTest(unittest.TestCase):

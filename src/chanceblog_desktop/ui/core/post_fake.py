@@ -35,7 +35,7 @@ def sample_text(chars=1500):
 def fake_gates(markdown, lang):
     """서비스 관문의 흉내 — 본문 분량(`LEN_BODY`)·HTML 태그(`RAW_HTML`)·이 PC 의 폴더 경로(`LOCAL_PATH`) → (사유 줄들, 참고 줄들). 줄 모양은 서비스와 같은 `[코드] 설명` 이다."""
     reasons = []
-    readable = len(re.sub(r"\s+", "", re.sub(r"[`*_>#|~-]", " ", markdown)))
+    readable = len(re.sub(r"\s+", "", re.sub(r"[`*_>#|\x7e-]", " ", markdown)))
     if readable < LENGTH_MIN.get(lang, 1000):
         reasons.append(f"[LEN_BODY] 본문 {readable}자 (최소 {LENGTH_MIN.get(lang, 1000)}자)")
     if _HTML.search(markdown):
@@ -199,7 +199,7 @@ class FakePostsProvider(PostsProvider):
         similarity = self._similarity(project, platform)
         summary = (T["post_summary_pages"].format(category=rules.shown(request.pages.category, 60), lang=T["post_lang_" + lang], kb=max(1, len(project.source_content.encode("utf-8")) // 1024)),) if platform == PAGES             else (T["post_summary_naver"].format(title=rules.shown(project.title, 60), chars=f"{len(project.source_content):,}", paragraphs=project.source_content.count(chr(10) * 2) + 1),)
         report = ReviewReport(project.project_id, platform, project.revision, project.variants[platform].status, not reasons, rules.unique_codes(reasons), tuple(rules.shown(item, 400) for item in reasons),
-                              warnings, summary, similarity, rules.health_of(project.title, project.source_content), rules.secret_spots(project.title, project.source_content, project.references), True)
+                              warnings, summary, similarity, rules.health_of(project.title, project.source_content), rules.secret_spots(project.title, project.source_content, project.references, project.assets), True)
         return PostOutcome("reviewed", self._detail(project), report)
 
     def _similarity(self, project, platform):
@@ -221,7 +221,7 @@ class FakePostsProvider(PostsProvider):
         variant = project.variant(platform)
         if variant.status != st.REVIEW_REQUIRED:
             raise PostFailure(T["post_fail_state"], code="STATUS_TRANSITION_INVALID", kind="state")
-        if rules.text_blocks(project.title, project.source_content, project.references):
+        if rules.text_blocks(project.title, project.source_content, project.references, project.assets):
             raise PostFailure(T["post_fail_blocked"], code="REVIEW_BLOCKED", kind="gate")
         lang = self.stored.get((project.project_id, platform), "ko")
         if platform == PAGES and fake_gates(project.source_content, lang)[0]:

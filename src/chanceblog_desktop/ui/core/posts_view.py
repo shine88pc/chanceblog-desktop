@@ -7,10 +7,14 @@
     켜져도 **확인창이 먼저**다 — `approve_dialog` 를 부르지 않고(= 확인창을 보이지 않고) `start_approve` 를 부르면 아무것도 하지 않는다(`unconfirmed`).
   · **입력은 지워지지 않는다**: 가져오기·Pages 값 대화의 글은 칸(위젯)에만 있다. 실패해도 대화는 그대로 열려 있고 칸의 글도 그대로다(이유만 대화 안에 보인다). 컨트롤러는 '입력이 있나' 만 안다.
   · 목록은 한 번에 `PAGE` 개만 그린다(`더 보기`). 모든 동적 글(제목·사유)은 **가린 뒤에 줄인다**. 오류 코드는 접힌 진단 정보에만 있고 문장은 종류별로 정해진 쉬운 말이다.
-  · **앱을 닫을 때** 가져오기 대화에 입력이 있으면 확인창이 먼저다(`close_dialog`). 화면을 옮겨도 열린 글·고른 플랫폼은 컨트롤러에 남는다.
+  · **앱을 닫을 때** 가져오기 대화에 입력이 있으면 같은 대화 안의 확인 줄이 먼저다(`request_quit`). 화면을 옮겨도 열린 글·고른 플랫폼은 컨트롤러에 남는다.
+  · **낡은 읽기 결과는 받지 않는다**: 쓰기가 끝날 때마다 세대 번호(`epoch`)가 오르고, 그 전에 시작한 읽기의 결과는 쓰기 전 모습이라 버린다(`is_stale` — 셸이 다시 읽는다). 낡은 읽기의 실패도 다른 글·닫은 글에는 닿지 않는다.
+  · **Pages 값**: 대화를 닫으면(어느 길로든) 칸의 값을 이 앱을 연 동안만 기억해 다시 열 때 채워 준다. 키·토큰 모양이 든 값은 기억하지 않는다(`remember_pages`).
 실제 글 제목·본문은 이 코드에 없다(받은 값을 가려서 보이기만 한다).
 """
 from __future__ import annotations
+
+from dataclasses import replace
 
 from ...content import status as st
 from . import post_rules as rules
@@ -33,10 +37,19 @@ SIMILARITY_TEXT = {"ok": "post_naver_similarity_ok", "warn": "post_naver_similar
 SIMILARITY_BADGE = {"ok": "pass", "warn": "check", "high": "block"}
 
 
+PAGES_FIELDS = ("category", "lang", "image_url", "tags", "description")      # Pages 값 칸의 이름들
+KEPT_OPEN_KINDS = ("input", "check", "secret", "other", "locked", "disk", "io")   # Pages 값 대화를 열어 둔 채 이유만 보이는 실패 종류(값은 칸에 그대로다)
+
+
 def _failure_text(failure):
     """실패의 문장 — 어댑터·가짜가 종류별로 만든 고정 문장이고, 어떤 값이 와도 비밀 모양을 가린 뒤 줄여 낸다."""
     from .app_state import clean_failure
     return clean_failure(failure).user_message
+
+
+def _stamped(item, epoch):
+    """읽은 값에 세대 번호를 붙인다(값 객체는 바꿀 수 없어 새로 만든다) — 세대 번호 칸이 없는 값은 그대로 둔다."""
+    return replace(item, epoch=epoch) if hasattr(item, "epoch") else item
 
 
 class PostsController:
@@ -63,6 +76,7 @@ class PostsController:
         self.notice = None                                   # (수준, 글) — 마지막 동작의 결과
         self.pending = None                                  # 돌고 있는 쓰기: {"kind", …}
         self.approve_asked = None                            # 확인창을 보인 승인 (글 번호, 플랫폼, 판) — 이것과 같은 승인만 시작한다
+        self.epoch = 0                                       # 쓰기가 끝날 때마다 오른다 — 그 전에 시작한 읽기의 결과는 낡은 것이라 받지 않는다
         # 대화상자
         self.import_open = False
         self.import_kind = "markdown"
@@ -70,6 +84,7 @@ class PostsController:
         self.import_message = ""
         self.import_note = ""
         self.import_ask = False                              # 닫기 전 '입력이 사라져요' 확인 줄을 보이는 중
+        self.import_quit = False                             # 그 확인 줄이 앱 닫기(X)를 기다리는 중 — `그래도 닫기` 를 누르면 앱도 닫힌다(확인 줄이 거두어지면 함께 내려간다)
         self.pages_open = False
         self.pages_problems = {}
         self.pages_message = ""
@@ -97,7 +112,8 @@ class PostsController:
         """글 목록을 작업 스레드에서 읽는다 — 이미 읽는 중이거나 쓰는 중이면 None. 처음이거나 오류 뒤에는 '읽는 중' 모습이 되고, 보이는 내용이 있으면 그대로 둔 채 새 값이 오면 바꾼다."""
         if self.busy:
             return None
-        job = self.runner.start(LOAD_KEY, self.provider.load_posts, on_progress=on_progress, on_done=on_done, on_error=on_error, on_cancel=on_cancel)
+        epoch = self.epoch
+        job = self.runner.start(LOAD_KEY, lambda progress, cancelled: _stamped(self.provider.load_posts(progress, cancelled), epoch), on_progress=on_progress, on_done=on_done, on_error=on_error, on_cancel=on_cancel)
         if job is None:
             return None
         self.load_count += 1
@@ -113,12 +129,17 @@ class PostsController:
             return "offline"
         return "partial" if any(row.error for row in data.rows) else "normal"
 
+    def is_stale(self, item):
+        """읽는 동안 쓰기가 끝났나 — 세대 번호가 붙은 읽기 결과가 지금 세대와 다르면 쓰기 전 모습이다(번호가 없는 값은 낡았다고 보지 않는다)."""
+        stamp = getattr(item, "epoch", None)
+        return stamp is not None and stamp != self.epoch
+
     def apply_loaded(self, data):
+        """읽은 목록을 받는다 → 받았으면 True. 읽는 동안 쓰기가 끝났으면(쓰기 전 목록이라) 버리고 False — 셸이 다시 읽는다."""
+        if self.is_stale(data):
+            return False
         self.data, self.failure = data, None
-        self.state = self._state_for(data)
-        if self.open_id is not None and not any(row.project_id == self.open_id and not row.error for row in data.rows):
-            self.close_post()                                # 열어 둔 글이 그 사이 사라졌다(또는 읽을 수 없게 됐다)
-            self.notice = ("warning", T["post_detail_gone"])
+        self.state = self._state_for(data)                   # 열어 둔 글이 그 사이 사라졌는지는 목록이 아니라 그 글을 다시 읽을 때 안다(늦게 온 옛 목록이 방금 가져온 글을 닫지 않게)
         return True
 
     def apply_load_failed(self, failure, when=None):
@@ -131,6 +152,7 @@ class PostsController:
         """화면 스레드의 슬롯에서 예상하지 못한 예외가 났다 — 받아 둔 값을 버리고 오류 상태로(쉬운 문장 + 예외 이름만 진단 정보에). 대화상자의 입력은 칸에 남는다."""
         from .app_state import clean_failure
         self.data, self.pending = None, None
+        self.epoch += 1                                      # 받아 둔 값을 모두 버렸다 — 아직 오고 있는 읽기 결과도 받지 않는다
         self.close_post()
         self.failure, self.failed_at = clean_failure(JobFailure(T["job_failed"], code=type(error).__name__)), when
         self.state = "error"
@@ -160,30 +182,52 @@ class PostsController:
             return "unknown", None
         if self.open_id != project_id:
             self.platform, self.review, self.approve_asked = self._default_platform(project_id), None, None
-        job = self.runner.start(DETAIL_KEY, lambda progress, cancelled: self.provider.load_post(project_id, progress, cancelled), on_progress=on_progress, on_done=on_done, on_error=on_error, on_cancel=on_cancel)
+        return self._start_detail(project_id, {"on_progress": on_progress, "on_done": on_done, "on_error": on_error, "on_cancel": on_cancel})
+
+    def _start_detail(self, project_id, callbacks, keep_notice=False):
+        """그 글을 작업 스레드에서 읽는다 — 목록에 그 글이 있는지는 보지 않는다(방금 가져온 글은 목록이 아직 모른다). 읽기를 시작할 때의 세대 번호를 결과·실패에 붙인다.
+        글을 새로 열 때는 지난 알림을 거두고, 실패·낡음 뒤 **같은 글을 다시 읽을 때는 알림을 남긴다**(왜 다시 읽는지 알리는 안내가 곧바로 사라지지 않게)."""
+        epoch = self.epoch
+
+        def work(progress, cancelled):
+            try:
+                return _stamped(self.provider.load_post(project_id, progress, cancelled), epoch)
+            except JobFailure as failure:
+                failure.read_of = (project_id, epoch)        # 어느 글을 어느 세대에 읽다가 실패했나 — 늦게 온 실패가 다른 글에 닿지 않게
+                raise
+
+        job = self.runner.start(DETAIL_KEY, work, **callbacks)
         if job is None:
             return "busy", None
-        self.open_id, self.notice = project_id, None
+        self.open_id = project_id
+        if not keep_notice:
+            self.notice = None
         if self.detail is None or self.detail.project_id != project_id or self.detail_state == "error":
             self.detail, self.detail_state = None, "loading"
         return "started", job
 
-    def reload_detail(self, **callbacks):
-        """열린 글을 다시 읽는다(쓰기 뒤·낡음 뒤). 열린 글이 없으면 None."""
+    def reload_detail(self, keep_notice=False, **callbacks):
+        """열린 글을 다시 읽는다(쓰기 뒤·낡음 뒤). 열린 글이 없으면 None. `keep_notice` — 방금 실패·낡음을 알린 안내를 남긴 채 읽는다(그냥 다시 읽을 때는 지난 알림을 거둔다)."""
         if self.open_id is None:
             return None
-        return self.start_open(self.open_id, **callbacks)[1]
+        return self._start_detail(self.open_id, {"on_progress": None, "on_done": None, "on_error": None, "on_cancel": None} | callbacks, keep_notice)[1]
 
     def apply_detail(self, detail):
-        """읽은 글을 받는다 — 그 사이 다른 글을 열었거나 닫았으면(늦게 온 결과) 버린다."""
-        if detail is None or detail.project_id != self.open_id:
+        """읽은 글을 받는다 — 그 사이 다른 글을 열었거나 닫았으면(늦게 온 결과) 버리고, 읽는 동안 쓰기가 끝났어도(쓰기 전 모습이라) 버린다."""
+        if detail is None or detail.project_id != self.open_id or self.is_stale(detail):
             return False
         self.detail, self.detail_state, self.detail_failure = detail, "normal", None
         return True
 
     def apply_detail_failed(self, failure, when=None):
-        """글 읽기가 실패했다 → `"gone"`(글이 없다 — 목록으로 돌아가 다시 읽어야 한다) 또는 `"error"`."""
+        """글 읽기가 실패했다 → `"gone"`(글이 없다 — 목록으로 돌아가 다시 읽어야 한다) · `"error"` · `"stale"`(읽는 동안 쓰기가 끝났다 — 셸이 그 글을 다시 읽는다) ·
+        `"ignored"`(그 글을 이미 닫았거나 다른 글을 열었다 — 늦게 온 실패는 아무것도 바꾸지 않는다)."""
         from .app_state import clean_failure
+        read_of = getattr(failure, "read_of", None)
+        if self.open_id is None or (read_of is not None and read_of[0] != self.open_id):
+            return "ignored"
+        if read_of is not None and read_of[1] != self.epoch:
+            return "stale"
         if getattr(failure, "kind", "") == "notfound":
             self.close_post()
             self.notice = ("warning", T["post_detail_gone"])
@@ -209,7 +253,7 @@ class PostsController:
     def open_import(self):
         if self.busy or self.import_open:
             return False
-        self.import_open, self.import_dirty, self.import_message, self.import_note, self.import_ask = True, False, "", "", False
+        self.import_open, self.import_dirty, self.import_message, self.import_note, self.import_ask, self.import_quit = True, False, "", "", False, False
         self.import_kind = "markdown"
         return True
 
@@ -220,29 +264,40 @@ class PostsController:
         return True
 
     def import_edited(self, dirty):
-        """칸을 고쳤다 — 입력이 있는지만 안다(글은 받지 않는다). 고치면 이전 거절 문장·확인 줄은 거둔다."""
-        self.import_dirty, self.import_message, self.import_ask = bool(dirty), "", False
+        """칸을 고쳤다 — 입력이 있는지만 안다(글은 받지 않는다). 고치면 이전 거절 문장·확인 줄·앱 닫기 기다림은 거둔다."""
+        self.import_dirty, self.import_message, self.import_ask, self.import_quit = bool(dirty), "", False, False
         return True
 
     def request_close_import(self):
-        """대화를 닫으려 한다 → `"closed"`(닫았다) · `"ask"`(입력이 있어 확인 줄을 보인다 — `그래도 닫기` 를 눌러야 닫는다) · `"busy"`(가져오는 중에는 닫지 않는다)."""
+        """대화를 닫으려 한다 → `"closed"`(닫았다) · `"ask"`(입력이 있어 확인 줄을 보인다 — **`그래도 닫기`(`close_import`) 를 눌러야 닫힌다**. 확인 줄이 떠 있을 때 `취소` 를 또 눌러도 닫지 않는다) · `"busy"`(가져오는 중에는 닫지 않는다).
+        이 길은 대화만 닫으려는 뜻이라 앱 닫기를 기다리던 것이 있어도 거둔다."""
         if not self.import_open:
             return "closed"
         if self.busy:
             return "busy"
-        if self.import_dirty and not self.import_ask:
-            self.import_ask = True
+        if self.import_dirty:
+            self.import_ask, self.import_quit = True, False
             return "ask"
         return self.close_import()
 
+    def request_quit(self):
+        """창 닫기(X·Alt+F4)가 왔다 → `"none"`(가져오는 글이 없어 그대로 닫는다) · `"busy"`(가져오는 중이라 닫지 않는다) · `"ask"`(같은 대화 안에 확인 줄을 보이고 앱 닫기를 기다린다 — `그래도 닫기` 가 앱도 닫는다).
+        기다림 표시(`import_quit`)는 확인 줄이 거두어지는 모든 길(`계속 쓰기`·입력·`취소`·닫힘·새 가져오기)에서 함께 내려간다."""
+        if not self.has_unsaved():
+            return "none"
+        if self.busy:
+            return "busy"
+        self.import_ask, self.import_quit = True, True
+        return "ask"
+
     def close_import(self):
-        self.import_open = self.import_dirty = self.import_ask = False
+        self.import_open = self.import_dirty = self.import_ask = self.import_quit = False
         self.import_message = self.import_note = ""
         return "closed"
 
     def keep_import(self):
-        """`계속 쓰기` — 확인 줄을 거둔다."""
-        self.import_ask = False
+        """`계속 쓰기` — 확인 줄과 앱 닫기 기다림을 거둔다."""
+        self.import_ask = self.import_quit = False
         return True
 
     def has_unsaved(self):
@@ -264,10 +319,11 @@ class PostsController:
         self.import_message, self.import_note = "", ""
         return "started", job
 
-    def apply_file(self, outcome):
-        """읽은 파일을 받는다 → `ImportFile`(셸이 칸에 채우고 버린다). 글은 이 컨트롤러가 쥐지 않는다."""
+    def apply_file(self, outcome, replaced=False):
+        """읽은 파일을 받는다 → `ImportFile`(셸이 칸에 채우고 버린다). 글은 이 컨트롤러가 쥐지 않는다. `replaced` — 본문 칸에 글이 이미 있어 바꾸게 됐다(되돌리려면 Ctrl+Z 라고 알린다)."""
         file = outcome.file
-        self.import_note = T["post_im_cp949"] if file.encoding == "cp949" else T["post_im_read_ok"]
+        note = T["post_im_cp949"] if file.encoding == "cp949" else T["post_im_read_ok"]
+        self.import_note = note + " " + T["post_im_replaced"] if replaced else note
         self.import_message = ""
         return file
 
@@ -283,7 +339,7 @@ class PostsController:
             self.import_message = T["post_fail_input_plain"]
             return "invalid", None
         request = ImportRequest(self.import_kind, title, body)
-        self.import_message, self.import_note, self.import_ask = "", "", False
+        self.import_message, self.import_note, self.import_ask, self.import_quit = "", "", False, False
         return self._start("import", {}, lambda progress, cancelled: self.provider.import_post(request, progress, cancelled), callbacks)
 
     # ---- Pages 검토 값 대화 ----
@@ -294,8 +350,21 @@ class PostsController:
         self.pages_open, self.pages_problems, self.pages_message = True, {}, ""
         return dict(self.pages_raw.get(self.open_id) or rules.pages_raw_of(None))
 
-    def close_pages(self):
+    def close_pages(self, raw=None):
+        """Pages 값 대화를 닫는다 — `raw`(닫을 때 칸에 있던 값)가 있으면 이 앱을 연 동안 다시 열 때 채워 주려고 기억한다(`remember_pages`)."""
+        if raw is not None:
+            self.remember_pages(raw)
         self.pages_open, self.pages_problems, self.pages_message = False, {}, ""
+        return True
+
+    def remember_pages(self, raw):
+        """쓰던 Pages 값을 이 앱을 연 동안만 기억한다(파일에 쓰지 않는다) → 기억했으면 True. **키·토큰 모양이 든 값은 기억하지 않는다**(거절된 글이 다음에 열 때 칸에 다시 채워지지 않게). 열린 글이 없으면 기억하지 않는다."""
+        if self.open_id is None or not isinstance(raw, dict):
+            return False
+        values = {name: str(raw.get(name) or "") for name in PAGES_FIELDS}
+        if rules.secret_spots("", "\n".join(values[name] for name in ("category", "image_url", "tags", "description"))):
+            return False
+        self.pages_raw[self.open_id] = values
         return True
 
     # ---- 검토·승인·승인 취소(쓰기) ----
@@ -326,7 +395,7 @@ class PostsController:
             if problems:
                 return "invalid", problems
             pages = rules.pages_values_of(raw)
-            self.pages_raw[detail.project_id] = dict(raw)
+            self.remember_pages(raw)                         # 값은 칸에 그대로 있고, 컨트롤러는 키 모양이 없을 때만 다시 열 때 쓸 값을 기억한다
         request = ReviewRequest(detail.project_id, platform, pages)
         self.platform, self.approve_asked = platform, None
         self.pages_message = ""
@@ -378,6 +447,7 @@ class PostsController:
     def apply_write_ok(self, outcome):
         """쓰기가 끝났다 — 새 모습을 받는다 → 셸이 할 일(`{"reload_list": 참}` — 목록의 상태 글이 바뀌었다)."""
         work, self.pending = self.pending or {"kind": ""}, None
+        self.epoch += 1                                      # 이제 이 쓰기 전에 시작한 읽기는 낡은 것이다
         detail = outcome.detail
         if outcome.kind == "imported":
             self.close_import()
@@ -400,23 +470,27 @@ class PostsController:
     def apply_write_failed(self, failure):
         """쓰기가 실패했다 — 입력은 그대로다. 글이 바뀌었거나 사라졌거나 상태가 달라졌으면 `{"reload": 참}` 을 돌려줘 화면이 최신 상태를 다시 읽게 한다. 문장은 종류별로 정해진 쉬운 말뿐이다."""
         work, self.pending = self.pending or {"kind": ""}, None
+        self.epoch += 1                                      # 실패해도 쓰기가 끝났다 — 그 전에 시작한 읽기 말고 지금부터 읽은 것만 믿는다
         kind = getattr(failure, "kind", "other")
         text = _failure_text(failure) if failure is not None else T["post_fail_other"]
         if work["kind"] == "import":
             self.import_message = text
             return {}
-        if work["kind"] == "review" and self.pages_open and kind in ("input", "check", "other", "locked", "disk", "io"):
-            self.pages_message = text                        # Pages 값 대화는 열어 둔 채 이유만 보인다 — 값은 칸에 그대로다
+        if work["kind"] == "review" and self.pages_open and kind in KEPT_OPEN_KINDS:
+            self.pages_message = text                        # Pages 값 대화는 열어 둔 채 이유만 보인다 — 값은 칸에 그대로다(키 모양이 든 값은 컨트롤러가 기억하지 않는다)
             return {}
         self.close_pages()
         self.notice = ("error", text)
         if kind in RELOAD_KINDS:
             self.review = None
             return {"reload": True}
+        if work["kind"] == "approve" and kind in ("gate", "similarity"):
+            self.review = None                               # 서비스가 승인 순간에 다시 검사해 거절했다 — 옛 검토 결과는 더 믿지 않는다(다시 검토해야 승인할 수 있다)
         return {}
 
     def apply_write_unexpected(self, error):
         self.pending = None
+        self.epoch += 1
         self.close_pages()
         self.notice = ("error", T["post_fail_other"])
 
@@ -461,9 +535,9 @@ class PostsController:
             if health.places:
                 lines += [T["post_health_places"] + ": " + place for place in health.places]
             sections.append(self._section("health", T["post_sec_health"], HEALTH_BADGE.get(health.stage, "check"), lines))
-        if review.secrets:
-            where = ", ".join(f"{name} {line}번째 줄" for name, line, _kind in review.secrets[:3]) + (f" 외 {len(review.secrets) - 3}건" if len(review.secrets) > 3 else "")
-            kinds = "·".join(dict.fromkeys(kind for _name, _line, kind in review.secrets))
+        if review.spots:
+            where = ", ".join(f"{name} {line}번째 줄" for name, line, _kind in review.spots[:3]) + (f" 외 {len(review.spots) - 3}건" if len(review.spots) > 3 else "")
+            kinds = "·".join(dict.fromkeys(kind for _name, _line, kind in review.spots))
             sections.append(self._section("secret", T["post_sec_secret"], "block", [T["post_secret_found"].format(where=where, kinds=kinds)]))
         else:
             sections.append(self._section("secret", T["post_sec_secret"], "pass", [T["post_secret_none"]]))
@@ -583,7 +657,7 @@ class PostsController:
             elif state == "partial":
                 banner = ("alert", T["post_partial"].format(n=sum(1 for row in data.rows if row.error)))
         return {
-            "title": T["post_title"], "sub": T["post_sub"], "sample": sample, "sample_tag": T["sample_tag"], "state": state, "mode": "detail" if self.open_id is not None else "list", "busy": self.busy,
+            "title": T["post_title"], "sub": T["post_sub"], "sample": sample, "sample_tag": T["sample_tag"], "sample_tip": T["post_sample_tip"], "state": state, "mode": "detail" if self.open_id is not None else "list", "busy": self.busy,
             "import": {"text": T["post_import"], "a11y": T["post_import_a11y"], "enabled": not self.busy and not self.import_open}, "reload": {"text": T["post_reload"], "a11y": T["post_reload_a11y"], "enabled": state != "loading" and not self.busy},
             "banner": banner, "notice": {"level": self.notice[0], "text": self.notice[1]} if self.notice else None,
             "loading": {"text": T["post_loading"], "a11y": T["post_loading_a11y"]},

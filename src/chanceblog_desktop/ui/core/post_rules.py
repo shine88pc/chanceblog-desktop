@@ -102,11 +102,16 @@ def build_preview(markdown, *, refs=0, assets=0):
 
 
 # ---- 비밀 모양·건강 효과 단정 -----------------------------------------------------------------------------------------------------------------
-def secret_spots(title, body, references=()):
-    """제목·본문·출처에서 키·토큰 모양을 찾는다 → ((칸 이름, 줄, 유형 이름), …) — 위치와 유형뿐이다(글은 어디에도 없다). 저장 때(`new_project`)와 같은 검사기라서 기준이 같다."""
+def _asset_lines(assets):
+    """이미지 자리들 → 파일 이름과 설명을 한 줄씩 적은 글(검사기에 넣을 글 — 저장 때도 이 둘을 훑는다)."""
+    return "\n".join(f"{getattr(item, 'filename', '')} {getattr(item, 'alt', '')}".strip() for item in assets) if assets else ""
+
+
+def secret_spots(title, body, references=(), assets=()):
+    """제목·본문·출처·이미지 이름과 설명에서 키·토큰 모양을 찾는다 → ((칸 이름, 줄, 유형 이름), …) — 위치와 유형뿐이다(글은 어디에도 없다). 저장 때(`new_project`)와 같은 검사기라서 기준이 같다."""
     from ...security import scan
     fields = {}
-    for name, value in ((T["drf_where_title"], title), (T["drf_where_body"], body), (T["post_where_refs"], "\n".join(str(item) for item in references) if references else "")):
+    for name, value in ((T["drf_where_title"], title), (T["drf_where_body"], body), (T["post_where_refs"], "\n".join(str(item) for item in references) if references else ""), (T["post_where_assets"], _asset_lines(assets))):
         if isinstance(value, str) and value:
             fields[name] = value
     try:
@@ -121,12 +126,12 @@ def health_of(title, body):
     return review_health((T["drf_where_title"], (title,) if isinstance(title, str) else ()), (T["drf_where_body"], health_units(body)))
 
 
-def text_blocks(title, body, references=()):
-    """글 자신(제목·본문·출처)이 승인을 막는 이유들 → `("health",)`·`("secret",)` 같은 튜플(막는 것이 없으면 비어 있다). 컨트롤러의 검토 결과와 별개로 **공급자가 승인 직전에 글을 다시 읽어 한 번 더** 건다 — 화면 틀이 어긋나도 막힌 글이 승인되지 않게."""
+def text_blocks(title, body, references=(), assets=()):
+    """글 자신(제목·본문·출처·이미지 이름과 설명)이 승인을 막는 이유들 → `("health",)`·`("secret",)` 같은 튜플(막는 것이 없으면 비어 있다). 컨트롤러의 검토 결과와 별개로 **공급자가 승인 직전에 글을 다시 읽어 한 번 더** 건다 — 화면 틀이 어긋나도 막힌 글이 승인되지 않게."""
     found = []
     if health_of(title, body).stage == HEALTH_STOP:
         found.append("health")
-    if secret_spots(title, body, references):
+    if secret_spots(title, body, references, assets):
         found.append("secret")
     return tuple(found)
 
@@ -169,7 +174,7 @@ def review_blocks(review):
         blocks.append("incomplete")
     elif review.health.stage == HEALTH_STOP:
         blocks.append("health")
-    if review.secrets:
+    if review.spots:
         blocks.append("secret")
     if review.similarity is not None and review.similarity.blocks:
         blocks.append("similarity")

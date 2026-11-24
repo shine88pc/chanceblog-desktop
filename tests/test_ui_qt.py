@@ -128,7 +128,7 @@ class ShellTest(QtBase):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 메뉴 6개를 못박았다. 운영자 2026-11-06 확인 요청 004 의 답 — 완성된 화면(홈·설정)만 실제 메뉴다.
         의도적 갱신(UI-C1d, D-201): 옛 시험은 홈의 요약 카드 4·추천 행 5·칩 5 를 봤다. 새 홈은 KPI 넷·Naver A 추천(5)·Naver B 추천(4)·작성 중 초안(3)·최근 발행(3)·연결 상태 한 줄이고 칩은 없다."""
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])    # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴로 올랐다(옛 값 홈·설정 둘) — 시험 이름의 '둘' 은 그대로 둔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 홈 다음에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])    # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴로 올랐다(옛 값 홈·설정 둘) — 시험 이름의 '둘' 은 그대로 둔다 / 의도적 갱신(Seed 관리, D-230): Seed 관리도 완성돼 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 홈 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertTrue(window.nav_buttons["home"].isChecked())
         page = window.screen_widget
         self.assertEqual(len(page.findChildren(board_module.KpiCard)), 4)

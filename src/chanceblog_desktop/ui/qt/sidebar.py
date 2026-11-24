@@ -58,7 +58,7 @@ class Sidebar(QFrame):
         pad = K.FRAME["sidebar_pad"]
         layout = QVBoxLayout(self)
         layout.setContentsMargins(pad, K.SPACE["1"], pad, K.SPACE["1"])                  # 위아래 4 — 메뉴가 하나 늘어(블로그 관리, P4b D-210: 16→8) 또 하나 늘어(초안 작성, P4e D-282: 8→4) 최소 창(900×560)에서도 사이드바가 들어가게 세로 여백을 줄였다
-        layout.setSpacing(K.SPACE["1"])
+        layout.setSpacing(0)                                                               # 의도적 갱신(글 흐름 1a, D-637): 글 검토 메뉴가 하나 더 늘어 사이드바 최소 높이가 540(한도 500)이 되었다 — 줄 높이(44)·글자·아이콘은 그대로 두고 항목 사이 4 를 없애 480 으로 둔다(묶음 사이는 `gap`·묶음 이름 아래는 `TITLE_GAP` 이 그대로 띄운다)
         self.nav_buttons = {}                                                              # 실제로 열 수 있는 화면(홈·설정)만
         self.group_titles = {}                                                             # 묶음 이름 — 실제 메뉴가 있는 묶음만 있다
         for index, (group_key, label_key, items) in enumerate(nav_groups()):

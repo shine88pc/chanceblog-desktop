@@ -46,6 +46,8 @@ def failure_of(error, *, action="read"):
         text = T["post_fail_input"].format(field=field) if field else T["post_fail_input_plain"]
     elif kind == "check":
         text = T["post_fail_check"] if action == "import" else T["post_gate_header_value"]
+    elif kind in ("io", "disk") and action == "read":
+        text = T["post_fail_io_read"]                                              # 읽다가 난 문제에 '파일에 쓰지 못했어요' 라고 하지 않는다
     else:
         text = T[SENTENCE_OF_KIND[kind]]
     return PostFailure(text, code=error.code, kind=kind)
@@ -155,18 +157,18 @@ class ServicePostsProvider(PostsProvider):
     def _report(self, result, view):
         """검토 요청의 결과 + 글에 건 두 점검(건강 효과 단정·비밀 모양) → `ReviewReport`. 점검은 가짜 공급자와 **같은 함수**(`post_rules`)이고 글 자신(제목·본문·출처)에 건다."""
         health = rules.health_of(view.title, view.source_content)
-        secrets = rules.secret_spots(view.title, view.source_content, view.references)
+        spots = rules.secret_spots(view.title, view.source_content, view.references, view.assets)
         if result.platform == PAGES:
             preview, gates = result.pages, result.pages.gates
             summary = (T["post_summary_pages"].format(category=rules.shown(preview.category, 60), lang=T.get("post_lang_" + preview.lang, preview.lang), kb=max(1, round(preview.size_bytes / 1024))),)
             return ReviewReport(view.project_id, result.platform, view.revision, result.status, bool(gates.ok), rules.unique_codes(gates.reasons), tuple(rules.shown(item, 400) for item in gates.reasons),
-                                tuple(rules.shown(item, 300) for item in gates.warnings), summary, None, health, secrets, False)
+                                tuple(rules.shown(item, 300) for item in gates.warnings), summary, None, health, spots, False)
         package = result.naver.package
         similarity = None
         if result.similarity is not None:
             similarity = SimilarityInfo(result.similarity.level, float(result.similarity.overall), tuple(rules.shown(item, 300) for item in result.similarity.reasons))
         summary = (T["post_summary_naver"].format(title=rules.shown(package.title, 60), chars=f"{package.chars:,}", paragraphs=package.paragraphs),)
-        return ReviewReport(view.project_id, result.platform, view.revision, result.status, True, (), (), tuple(rules.shown(item, 300) for item in package.warnings), summary, similarity, health, secrets, False)
+        return ReviewReport(view.project_id, result.platform, view.revision, result.status, True, (), (), tuple(rules.shown(item, 300) for item in package.warnings), summary, similarity, health, spots, False)
 
     def approve_post(self, request, progress, cancelled):
         ctx = self._context("approve")
@@ -178,7 +180,7 @@ class ServicePostsProvider(PostsProvider):
             raise PostFailure(T["post_fail_state"], code="STATUS_TRANSITION_INVALID", kind="state")
         if state.rendered_revision != current.revision:
             raise PostFailure(T["post_fail_stale"], code="STALE", kind="stale")           # 저장된 렌더링이 지금 판의 것이 아니다
-        if rules.text_blocks(current.title, current.source_content, current.references):
+        if rules.text_blocks(current.title, current.source_content, current.references, current.assets):
             raise PostFailure(T["post_fail_blocked"], code="REVIEW_BLOCKED", kind="gate")  # 건강 효과 단정·비밀 모양이 있는 글은 화면 규칙과 별개로 여기서도 승인하지 않는다
         try:
             review_service.grant_approval(ctx, request.project_id, request.platform, similarity_approved=False)       # 서비스가 승인 순간에 관문(Pages)·유사도(네이버)를 다시 검사한다 — 걸리면 승인하지 않는다

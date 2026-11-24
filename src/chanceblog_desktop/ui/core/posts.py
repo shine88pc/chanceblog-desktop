@@ -1,6 +1,6 @@
 """글 검토 화면(글 흐름 1a, 결정 D-620 이후)이 아는 값과 공급자의 모양 — 화면은 이 모양만 안다. 실제 서비스(`service/projects.py`·`review.py`)는 얇은 어댑터(`ui/posts_adapter.py`)가 같은 모양으로 맞추고, 메모리에서만 일하는 가짜(`post_fake.py`)가 예시·시험을 맡는다.
 
-이 화면이 **파일에 쓰는 일은 사용자가 눌렀을 때뿐이고 다섯**이다 — 가져오기(`import_post`)·검토 시작(`review_post`)·승인(`approve_post`)·승인 취소(`revoke_post`) 넷과, 그 앞의 파일 읽기(`read_import_file`)는 읽기뿐이다.
+이 화면이 **글 저장소에 쓰는 일은 사용자가 눌렀을 때뿐이고 넷**이다 — 가져오기(`import_post`)·검토 시작(`review_post`)·승인(`approve_post`)·승인 취소(`revoke_post`). 그 앞의 파일 읽기(`read_import_file`)는 읽기뿐이다.
 읽기(`load_posts`·`load_post`)는 파일도 폴더도 만들지 않는다. 모든 메서드는 **작업 스레드**에서 불린다(화면 스레드가 아니다). PySide6 도 파일도 서비스도 모른다.
 글(제목·본문)은 값 객체의 `repr` 에 나오지 않는다(오류·로그에 글이 새지 않게).
 """
@@ -44,6 +44,7 @@ class PostsData:
     state: str = "ok"                                        # ok · missing(글 저장소 파일이 아직 없다 — 빈 목록)
     sample: bool = False
     offline: bool = False                                    # 예시에서만(실제 읽기는 네트워크를 쓰지 않는다)
+    epoch: object = None                                     # 컨트롤러가 읽기를 시작할 때 붙이는 세대 번호 — 그 뒤에 쓰기가 끝났으면 이 값은 낡은 것이라 버린다(공급자는 비워 둔다)
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class PostDetail:
     platforms: tuple = ()                                    # PlatformStatus × `PLATFORMS` 순서
     preview: object = None                                   # PostPreview
     sample: bool = False
+    epoch: object = None                                     # 읽기 세대 번호(`PostsData.epoch` 와 같다)
 
     def platform(self, key):
         return next((item for item in self.platforms if item.platform == key), None)
@@ -116,7 +118,7 @@ class ReviewReport:
     summary: tuple = ()                                      # 만든 글의 한 줄 요약 글들(분야·언어·크기, 제목·글자 수 …)
     similarity: object = None                                # SimilarityInfo 또는 None
     health: object = None                                    # `draft_rules.HealthReview` (단계·막힘 문장 앞부분)
-    secrets: tuple = ()                                      # ((칸 이름, 줄, 유형 이름), …) — 위치·유형뿐
+    spots: tuple = ()                                        # ((칸 이름, 줄, 유형 이름), …) — 키·토큰 모양이 있는 위치와 유형뿐(글 자체는 어디에도 없다)
     sample: bool = False
 
 
