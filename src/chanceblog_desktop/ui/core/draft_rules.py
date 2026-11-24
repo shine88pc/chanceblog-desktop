@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from bisect import bisect_left
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
@@ -246,6 +247,31 @@ def _scanner_spans(text):
     return tuple((starts[item.line - 1] + item.col_start - 1, starts[item.line - 1] + item.col_end) for item in found)
 
 
+def _add_free_spans(spots, spans):
+    """`spots` 에 `spans`(검사기가 찾은 자리들) 중 **겹치지 않는 것만** 더한 목록 — `spans` 는 순서대로 보고, 이미 있는 자리(`spots`)나 앞서 더한 자리와 겹치면 그 자리가 대신한다(겹침 = 시작이 상대의 끝보다 앞이고 상대의 시작이 끝보다 앞).
+    예전에는 자리마다 앞의 모든 자리와 하나씩 견줘(제곱 시간 — 같은 모양이 수천 번 되풀이되는 글에서 몇 분) 큰 글이 멈춘 듯 보였다(감사 AS-S2 권고-4). 이제 정렬한 목록에서 이분 탐색으로 견준다 — **결과는 같다**(시험이 옛 방식과 무작위로 견준다).
+    ① 이미 있는 자리: 시작 순으로 정렬하고 '여기까지 나온 가장 먼 끝' 을 미리 구해 둔다(서로 겹쳐도 된다) ② 더한 자리: 서로 겹치지 않으므로 시작 순이면 끝도 순서대로여서 마지막 끝만 보면 된다."""
+    ordered = sorted(spots)
+    starts = [start for start, _end in ordered]
+    reach, farthest = [], None
+    for _start, end in ordered:
+        farthest = end if farthest is None or end > farthest else farthest
+        reach.append(farthest)
+    added, kept_starts, kept_ends = [], [], []
+    for span in spans:
+        before = bisect_left(starts, span[1])                                      # 시작이 이 자리의 끝보다 앞인 기존 자리의 수
+        if before and reach[before - 1] > span[0]:
+            continue
+        before = bisect_left(kept_starts, span[1])
+        if before and kept_ends[before - 1] > span[0]:
+            continue
+        at = bisect_left(added, span)
+        added.insert(at, span)
+        kept_starts.insert(at, span[0])
+        kept_ends.insert(at, span[1])
+    return list(spots) + added
+
+
 def secret_spots(text):
     """글에서 키·토큰 모양이 걸린 자리들 — ((시작, 끝), …) 순서대로. 없으면 빈 튜플. 글이 아니거나 너무 길면 믿을 수 없어 처음 한 자리를 돌려준다(실패 열림 금지).
     주소·파일 이름 모양은 알려진 키 모양만 보고(`_address_hit`), 그 밖의 덩어리는 `looks_secret`(접두사·긴 영숫자)을 그대로 쓴다. 정본 패턴(`has_key_shape`)은 글 전체에 건다."""
@@ -275,10 +301,7 @@ def secret_spots(text):
     if not spots and has_key_shape(text):                                        # 여러 덩어리에 걸친 정본 패턴(`Bearer …`·개인 키 블록 …)
         at = _first_difference(text, mask(text))
         spots.append((at, at + 1))
-    for span in _scanner_spans(text):                                            # 검사기의 여섯 유형도 같은 관문에서 막는다(위에서 이미 잡은 자리와 겹치면 그 자리가 대신한다)
-        if not any(span[0] < other[1] and other[0] < span[1] for other in spots):
-            spots.append(span)
-    return tuple(sorted(spots))
+    return tuple(sorted(_add_free_spans(spots, _scanner_spans(text))))           # 검사기의 여섯 유형도 같은 관문에서 막는다(위에서 이미 잡은 자리와 겹치면 그 자리가 대신한다)
 
 
 def has_secret(*texts):
@@ -293,8 +316,8 @@ def _place(name, text, start, end):
     hit = text[start:end]
     masked = mask(hit)
     front = T["drf_spot_hidden"] if not hit else (masked if masked != hit else T["drf_spot_hidden"])      # 길이가 0 인 자리(이름·모양으로 알아본 것)는 글자를 보이지 않고 어디서부터인지만 짚는다
-    if hit and masked == hit and any(start < other_end and other_start < end for other_start, other_end in _scanner_spans(text)):
-        front = T["drf_spot_hidden"]                                                         # 검사기가 찾은 자리와 겹치는데 가려지지 않는 글자는 한 자도 되풀이하지 않는다 — 어디서부터인지만 짚는다(PCSEC1 M3)
+    # 검사기가 찾은 자리와 겹치는데 가려지지 않는 글자는 한 자도 되풀이하지 않는다(PCSEC1 M3) — 위 `front` 한 줄이 이미 그렇게 한다(가려지지 않는 글은 늘 표시만 남는다).
+    # 예전에는 여기서 자리마다 글 전체를 검사기로 다시 훑어 같은 값을 다시 내놓았다 — 결과가 같아서 지웠다(감사 AS-S2 권고-4: 같은 토큰 수천 개에서 제곱 시간).
     if hit and masked != hit and before.endswith("="):
         front = T["drf_spot_hidden"]                                                         # `key=` 바로 뒤의 가림 이름이 `shown` 의 주소 인자 가림에 한 번 더 걸려 닫는 괄호가 남는 겉모양을 막는다
     return f"{name} — " + ("…" if start > CONTEXT_BEFORE else "") + shown(before + front, PREVIEW)
