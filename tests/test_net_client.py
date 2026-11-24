@@ -225,7 +225,11 @@ class RequestBytesTest(unittest.TestCase):
         import platform
         env, _ = run(self, OK_JSON)
         wire = bytes(env.last_socket.sent).decode("ascii")
-        for secret in {getpass.getuser(), os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), platform.node(), str(Path.home()), str(Path.cwd()), sys.executable, tempfile.gettempdir()}:
+        try:
+            user = getpass.getuser()
+        except Exception:                                  # noqa: BLE001 - 사용자 이름을 알 수 없는 컨테이너에서도 시험이 돈다
+            user = ""
+        for secret in {user, os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), platform.node(), str(Path.home()), str(Path.cwd()), sys.executable, tempfile.gettempdir()}:
             if len(secret) >= 3:
                 self.assertNotIn(secret.lower(), wire.lower())
         self.assertEqual(re.findall(r"User-Agent: (.*)\r\n", wire), ["ChanceBlogDesktop/" + ns.VERSION])
@@ -711,6 +715,22 @@ class CooldownTest(unittest.TestCase):
                     for _ in range(3):
                         self.assertEqual(env.client.request("update_check", "GET", UPDATE_URL).status, status)
                     self.assertEqual(env.usage.resting("update_check"), rests)
+
+    def test_an_expected_404_while_waiting_for_a_deployment_never_rests_the_public_site_check(self):
+        """공개 사이트 확인은 글이 열릴 때까지 404 가 이어지는 것이 정상이다 — 계수에서 빠진다(다른 용도의 404 는 센다). 5xx 는 센다."""
+        self.assertEqual(endpoints.ENDPOINTS["pages_site"].uncounted_statuses, (400, 404, 422, 429))
+        self.assertEqual(endpoints.ENDPOINTS["update_check"].uncounted_statuses, (400, 422, 429))
+        env = ns.Harness(self, ns.http_response(404, "Not Found"), switches=ns.USE_SWITCHES["pages_site"])
+        with env:
+            for _ in range(8):
+                self.assertEqual(env.client.request("pages_site", "GET", SITE_URL).status, 404)
+            self.assertFalse(env.usage.resting("pages_site"), "404 가 여덟 번 이어져도 쉬지 않는다")
+            env.template["data"] = ns.http_response(503, "Service Unavailable")
+            for _ in range(3):
+                self.assertEqual(env.client.request("pages_site", "GET", SITE_URL).status, 503)
+            self.assertTrue(env.usage.resting("pages_site"), "5xx 는 센다")
+        self.assertEqual(endpoints.table_problems({"pages_site": dataclasses.replace(endpoints.ENDPOINTS["pages_site"], uncounted_statuses=(404,))}) != [], True, "400·422·429 는 늘 빠져야 한다")
+        self.assertEqual(endpoints.table_problems({"pages_site": dataclasses.replace(endpoints.ENDPOINTS["pages_site"], uncounted_statuses=(400, 422, 429, 500))}) != [], True, "4xx 만 더할 수 있다")
 
     def test_cooldown_is_per_use_and_a_second_request_in_flight_is_refused(self):
         clock = ns.FakeClock()

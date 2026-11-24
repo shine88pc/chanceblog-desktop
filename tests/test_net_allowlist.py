@@ -240,6 +240,54 @@ class VendorFetchTest(unittest.TestCase):
         self.assertTrue(all(record.use == "pages_site" for record in env.usage.records()))
 
 
+class NarrowGateTest(unittest.TestCase):
+    """NT-13(쓰기·올리기 흐름 쪽)·NT-17 — 공개 주소 확인 네 곳은 첫 문장이 옛 관문(`require_external_write`), **둘째 문장이 좁은 관문**(`require_net('pages_site', …)`)이다. `EXTERNAL_WRITE` 만 켠 채로는 전송기·하위 프로세스·가짜 backend 를 한 번도 부르기 전에 `NETWORK_DISABLED` 로 거절한다."""
+
+    SITES = (("publish/deploy.py", "check_deployed"), ("service/backend.py", "GitPagesBackend.check_deployed"), ("service/pages_flow.py", "check_pages_deploy"), ("service/cli.py", "cmd_check_deploy"))
+
+    def test_every_public_check_entry_point_passes_both_gates_as_its_first_two_statements(self):
+        import test_external_write_gate as gate
+        for rel, name in self.SITES:
+            with self.subTest(entry=f"{rel}:{name}"):
+                body = gate.statements(gate.function_node(gate.parse(rel), name))
+                self.assertTrue(gate.is_gate_call(body[0]), f"{rel}:{name} 의 첫 문장이 옛 관문이 아니다")
+                second = ast.unparse(body[1])
+                self.assertTrue(second.startswith("capabilities.require_net('pages_site',"), f"{rel}:{name} 의 둘째 문장이 좁은 관문이 아니다 — {second[:70]}")
+
+    def test_with_only_the_upper_switch_on_the_four_checks_refuse_before_any_outgoing_call_or_fake_backend_use(self):
+        import io
+
+        import service_support as ss
+        from chanceblog_desktop.errors import AppError
+        from chanceblog_desktop.service import cli, pages_flow
+        from chanceblog_desktop.service.backend import GitPagesBackend
+        from chanceblog_desktop.render.pages import PagesPost
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(capabilities, "EXTERNAL_WRITE", True):
+            backend = ss.FakeBackend()
+            ctx = ss.make_ctx(Path(tmp), backend=backend)
+            project_id = ss.make_approved(ctx)
+            backend.calls.clear()
+            post = PagesPost(ss.KO_PATH, ss.ko_text(), "경제·일", "ko")
+            spied = []
+            git_backend = GitPagesBackend(git=lambda *a, **k: spied.append(a), expected_origin=ss.LOCAL_ORIGIN)
+            cases = {"check_deployed": lambda: deploy.check_deployed(Path(tmp) / "chanceblog", post.path, post.text), "GitPagesBackend.check_deployed": lambda: git_backend.check_deployed(Path(tmp), post, ss.NOW, 1, 1),
+                     "check_pages_deploy": lambda: pages_flow.check_pages_deploy(ctx, project_id)}
+            for label, call in cases.items():
+                with self.subTest(label=label), og.Tripwire() as wire:
+                    with self.assertRaises(AppError) as caught:
+                        call()
+                    self.assertEqual((caught.exception.code, wire.calls), ("NETWORK_DISABLED", []), label)
+            out, err = io.StringIO(), io.StringIO()
+            with og.Tripwire() as wire:
+                code = cli.main(["check-deploy", project_id], out=out, err=err, ctx=ctx, env={})
+            self.assertEqual((code, wire.calls, out.getvalue()), (1, [], ""))
+            self.assertIn("NETWORK_DISABLED", err.getvalue())
+            self.assertEqual((backend.calls, spied), ([], []), "가짜 backend·가짜 git 은 한 번도 불리지 않았다")
+        with mock.patch.object(capabilities, "EXTERNAL_WRITE", True), mock.patch.object(capabilities, "NET_PAGES_SITE", True), self.assertRaises(Exception) as caught:
+            deploy.check_deployed(Path("not-a-repo"), "_posts/2026-11-01-x.md", "x")                 # 두 스위치가 모두 켜지면 관문은 지나고 그 다음의 일(저장소 읽기)에서 멈춘다
+        self.assertNotEqual(getattr(caught.exception, "code", ""), "NETWORK_DISABLED")
+
+
 class RegistrationScopeTest(unittest.TestCase):
     def test_no_code_in_src_registers_an_adapter_outside_the_one_wiring_file_and_every_call_sits_in_a_switch_if(self):
         """E4 — `register` 호출은 `service/wiring.py` 한 곳뿐이고 그 호출은 스위치를 읽는 함수(`capabilities.…_enabled()`)의 `if` 안에 있다."""
@@ -256,6 +304,20 @@ class RegistrationScopeTest(unittest.TestCase):
                             guarded = True
                     calls.append((path.relative_to(SRC).as_posix(), guarded))
         self.assertEqual(calls, [("service/wiring.py", True), ("service/wiring.py", True)], "어댑터를 꽂는 곳은 wiring.py 의 스위치 `if` 안 두 줄뿐이다")
+
+    def test_net_client_objects_are_made_in_one_known_place_for_now(self):
+        """NT-18(3.11.4 의 4) — 접속 클라이언트 객체(`NetClient(…)`)를 만드는 곳이 `src/` 에 표의 곳뿐이다. 지금은 공개 주소 확인용 fetcher(`net/site.py::site_fetcher`)의 기본값 한 곳이고,
+        그곳은 `check_deployed` 의 두 관문(옛 관문 + `require_net('pages_site')`) 뒤에서만 불린다. PUBPR·BLOGGER 갈래가 자기 어댑터 공장의 한 줄을 이 표에 더한다."""
+        found = []
+        for path in files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "NetClient":
+                    function = next((outer.name for outer in ast.walk(tree) if isinstance(outer, ast.FunctionDef) and node in ast.walk(outer)), "")
+                    found.append((path.relative_to(SRC).as_posix(), function))
+        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher")], "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다")
+        callers = [path.relative_to(SRC).as_posix() for path in files() if "site_fetcher(" in path.read_text(encoding="utf-8") and path.name != "site.py"]
+        self.assertEqual(callers, ["publish/deploy.py"], "site_fetcher 를 부르는 곳은 두 관문을 지난 공개 주소 확인뿐이다")
 
     def test_the_scan_catches_an_unguarded_register_in_a_synthetic_file(self):
         source = "from . import external\ndef go():\n    external.register('pages_git', lambda **p: 1)\n"

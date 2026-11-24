@@ -23,7 +23,7 @@ IO_TIMEOUT = 15.0                 # 소켓 작업(보내기·읽기) 한 번
 TOTAL_TIMEOUT = 30.0              # 요청 하나의 총 시간 — 마감 감시가 강제한다(소켓 제한은 작업마다라 찔끔 보내는 서버가 붙잡을 수 있다)
 MAX_HEADER_BYTES = 64 * KIB       # 받은 머리글 전체의 상한(`http.client` 의 줄 한도·개수 100 위에 더한 우리 쪽 한도)
 MAX_URL_CHARS = 500               # 요청 주소(길 + 질의) 길이 상한
-MAX_BEARER_CHARS = 4096           # 접근 토큰 글자 수 상한(모양은 `[A-Za-z0-9._~+/=-]` 뿐)
+MAX_BEARER_CHARS = 4096           # 접근 토큰 글자 수 상한(모양은 영문·숫자와 점·밑줄·더하기·빗금·등호·붙임표 정도 — `client.py` 의 `_BEARER`)
 USER_AGENT_PREFIX = "ChanceBlogDesktop/"   # 앱에서 나가는 유일한 값은 이 뒤의 버전 번호다(업데이트 확인의 약속)
 
 NUMBER = r"[0-9]{1,25}"           # 블로그·글 번호 — 숫자만
@@ -36,13 +36,20 @@ SITE_PATH = re.compile(r"/(?!(?:.*/)?\.\.(?:/|$))(?!.*%(?:2[eEfF]|5[cC]|00))(?:%
 class Route:
     """허용하는 요청 모양 하나 — 방법 + 길(정규식 전체 일치) + 고정 질의."""
     method: str
-    path: "re.Pattern[str]"
+    path: object                     # 정확히 같아야 하는 글(고정 길) 또는 전체 일치하는 정규식(번호가 든 길)
     shown: str                       # 접속 기록에 적는 '길 이름'(숫자 ID 는 `<번호>`) — 요청 값이 아니라 표의 글이다
     query: tuple = ()                # 정확히 이 (키, 값) 쌍들만 허용한다(없으면 질의 없음). 값은 글(정확히 같아야 함)이거나 컴파일된 정규식(전체 일치)이다
     bearer: bool = False             # `Authorization: Bearer` 를 붙여도 되는 길
     content_type: str = ""           # 본문이 있는 길의 고정 Content-Type
     max_body: int = 0                # 보내는 본문의 상한(바이트) — 0 이면 본문 없음
     download: bool = False           # `request_to_file` 로 내려받아도 되는 길
+
+    def matches(self, path):
+        """요청 길이 이 길과 전체가 같은가(고정 길은 글이 정확히 같고, 모양이 있는 길은 정규식 전체 일치)."""
+        return path == self.path if isinstance(self.path, str) else self.path.fullmatch(path) is not None
+
+    def path_text(self):
+        return self.path if isinstance(self.path, str) else self.path.pattern
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,7 @@ class Endpoint:
     download_timeout: float = 0.0    # `request_to_file` 의 총 시간(0 이면 이 용도는 내려받기를 하지 않는다)
     max_download: int = 0             # `request_to_file` 로 받을 수 있는 파일 크기 상한(바이트)
     keep_headers: tuple = ()          # 기본으로 고르는 머리글(retry-after·content-type·content-length·x-ratelimit-*) 말고 이 용도가 더 고르는 응답 머리글(소문자) — 쓸 것만 고른다
+    uncounted_statuses: tuple = (400, 422, 429)   # 연속 실패 계수(쿨다운)에 넣지 않는 HTTP 상태 — 사용자 실수(400·422)와 한도 안내(429). 공개 사이트 확인은 '아직 안 열렸다'(404)가 기다리는 동안의 정상 답이라 더 뺀다
 
 
 def _routes(*items):
@@ -81,13 +89,14 @@ ENDPOINTS = {
     "pages_site": Endpoint(
         use="pages_site", host=_PAGES_HOST, accept="*/*", max_response=20 * MIB, label="공개 주소 확인", max_redirects=2, cache_control="no-cache",
         accept_encodings=("identity", "gzip", "deflate"), keep_headers=("age", "last-modified", "cache-control", "x-cache"),           # vendor 확인 도구가 CDN 상태를 읽는 진단 머리글 넷
+        uncounted_statuses=(400, 404, 422, 429),                                                                                      # 글이 열릴 때까지 404 가 이어지는 것은 정상이다 — 쿨다운에 세지 않는다(세면 12분 기다림 도중 5분을 쉬어 버린다)
         routes=_routes(Route("GET", SITE_PATH, "/(공개 사이트)", query=(("cb", CACHE_BUSTER),))),
     ),
     # Blogger 로그인 서버 — 토큰 받기·갱신·취소(양식 인코딩 본문 4 KiB 이하)
     "blogger_oauth": Endpoint(
         use="blogger_oauth", host="oauth2.googleapis.com", accept="application/json", max_response=1 * MIB, label="Blogger 로그인",
-        routes=_routes(Route("POST", re.compile(r"/token"), "/token", content_type="application/x-www-form-urlencoded", max_body=4 * KIB),
-                       Route("POST", re.compile(r"/revoke"), "/revoke", content_type="application/x-www-form-urlencoded", max_body=4 * KIB)),
+        routes=_routes(Route("POST", "/token", "/token", content_type="application/x-www-form-urlencoded", max_body=4 * KIB),
+                       Route("POST", "/revoke", "/revoke", content_type="application/x-www-form-urlencoded", max_body=4 * KIB)),
     ),
     # Blogger API 읽기 — 블로그 확인(A)·같은 제목 초안 찾기(C)·초안인지 확인(D)
     "blogger_read": Endpoint(
@@ -132,6 +141,8 @@ def table_problems(table=None):
             problems.append(f"{key}: 이동 호스트가 있는데 이동을 허용하지 않는다")
         if endpoint.max_response <= 0 or endpoint.total_timeout <= 0 or endpoint.total_timeout > 600:
             problems.append(f"{key}: 크기·시간 한도가 틀리다")
+        if not all(isinstance(code, int) and 400 <= code <= 499 for code in endpoint.uncounted_statuses) or not {400, 422, 429} <= set(endpoint.uncounted_statuses):
+            problems.append(f"{key}: 계수에서 빼는 상태가 틀리다(400·422·429 는 늘 빠지고 4xx 만 더할 수 있다)")
         if "identity" not in endpoint.accept_encodings:
             problems.append(f"{key}: identity 가 없다")
         for route in endpoint.routes:
@@ -145,7 +156,7 @@ def table_problems(table=None):
                 problems.append(f"{key}: POST 에 본문 한도·종류가 없다")
             if route.bearer and endpoint.host.endswith(".github.io"):
                 problems.append(f"{key}: 공개 사이트에는 토큰을 붙이지 않는다")
-            if not route.path.pattern.startswith(("/",)):
+            if not route.path_text().startswith("/"):
                 problems.append(f"{key}: 길 모양이 / 로 시작하지 않는다")
     return problems
 
@@ -154,7 +165,7 @@ def url_for(use, method, path):
     """표의 길 모양에 맞는 요청 주소를 만든다(질의는 그 길의 고정 쌍) — 어댑터가 주소를 손으로 이어 붙이지 않게 하는 도우미. 표에 없는 길이면 KeyError."""
     endpoint = ENDPOINTS[use]
     for route in endpoint.routes:
-        if route.method == method and route.path.fullmatch(path):
+        if route.method == method and route.matches(path):
             if any(not isinstance(value, str) for _key, value in route.query):
                 raise KeyError(use)                                  # 값이 정규식인 길(공개 사이트)은 호출하는 쪽이 질의를 정한다
             return f"https://{endpoint.host}{path}" + ("?" + urlencode(route.query) if route.query else "")

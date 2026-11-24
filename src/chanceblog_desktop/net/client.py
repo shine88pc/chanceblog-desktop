@@ -29,8 +29,8 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 from .. import capabilities
 from . import parse as parsing
 from .endpoints import CONNECT_TIMEOUT, ENDPOINTS, IO_TIMEOUT, MAX_BEARER_CHARS, MAX_HEADER_BYTES, MAX_URL_CHARS, user_agent
-from .errors import (REASON_ENCODING, REASON_HASH, REASON_HEADERS, REASON_LENGTH, REASON_REDIRECT, REASON_SHAPE, REASON_TOO_LARGE, NetError, code_for_status, counts_as_failure, from_exception, invalid,
-                     program_error, status_error)
+from .errors import (REASON_ENCODING, REASON_HASH, REASON_HEADERS, REASON_LENGTH, REASON_REDIRECT, REASON_SHAPE, REASON_TOO_LARGE, NetError, code_for_status, from_exception, invalid, program_error,
+                     status_error)
 from .usage import SESSION
 
 READ_CHUNK = 64 * 1024
@@ -241,7 +241,7 @@ def _plan(endpoint, method, url, body, bearer, accept_encoding, limit, *, downlo
         raise program_error(use, "url") from None
     if parts.scheme != "https" or parts.fragment or port is not None or "@" in parts.netloc or parts.netloc.lower() != endpoint.host:
         raise program_error(use, "host")                     # 평문·포트·사용자 정보·숫자 IP·닮은 이름·끝의 점·표 밖 호스트 모두 여기서 끝난다
-    route = next((item for item in endpoint.routes if item.method == method and item.path.fullmatch(parts.path)), None)
+    route = next((item for item in endpoint.routes if item.method == method and item.matches(parts.path)), None)
     if route is None:
         raise program_error(use, "route")
     try:
@@ -419,12 +419,14 @@ class NetClient:
             self.usage.abort(use)
             return
         status, code = trace.status, trace.error
+        endpoint = ENDPOINTS.get(use)
+        quiet = endpoint.uncounted_statuses if endpoint is not None else (400, 422, 429)
         if code:
             ok, counts = False, True                                   # 전송 실패·모양이 틀린 답 — 연속 실패에 센다
         elif 200 <= status <= 299:
             ok, counts = True, False
         elif status:
-            ok, counts = False, counts_as_failure(status)             # 400·422·429 는 센다 안 함
+            ok, counts = False, status not in quiet                    # 400·422·429(와 용도 표가 더한 상태)는 센다 안 함
             code = code_for_status(status) or ""
         else:
             self.usage.abort(use)                                      # 끊김(키보드 인터럽트 등) — 결과를 모른다
