@@ -349,7 +349,7 @@ def notices_text(version, packages, commit):
         f"| Python 런타임 | {sys.version.split()[0]} | PSF License(PYTHON-LICENSE.txt) | 프로그램 실행 |",
         "| PyInstaller 부트로더 | 빌드 도구 버전과 같음 | GPL-2.0 와 부트로더 예외(PYINSTALLER-COPYING.txt) | 실행 파일의 시작 부분 |",
         f"| vendor/ (chanceblog 의 파이프라인 파일 4개·스크립트 1개) | 저장소 커밋 {commit[:7]} | 이 저장소 소유자의 코드(한 글자도 바꾸지 않고 가져옴) | 글 검사·변환 |",
-        "| OpenSSL 3 (libssl-3.dll·libcrypto-3.dll) | Python 3.12 가 함께 싣는 것 | Apache-2.0 | Python 의 암호·인증 표준 모듈(`_ssl` — 화면은 쓰지 않음). Qt 의 네트워크 파이썬 모듈(QtNetwork)·TLS 플러그인과 그 OpenSSL(`-x64` 이름)은 앱이 쓰지 않아 묶음에서 뺐고, 들어 있으면 빌드가 거절합니다(Qt6Network.dll 자체는 PySide6 의 Qt DLL 이고 Qt 의 터치 플러그인 qtuiotouchplugin.dll 이 가져오기 때문에 남습니다) |",
+        "| OpenSSL 3 (libssl-3.dll·libcrypto-3.dll) | Python 3.12 가 함께 싣는 것 | Apache-2.0 | Python 표준 `ssl`(`_ssl`) — **이 앱의 접속 틀(`net/`)이 보안 접속(TLS)에 쓴다**(스위치가 모두 꺼진 지금은 접속하지 않는다). 인증서는 윈도 신뢰 저장소를 쓰고 앱은 인증서 묶음(CA bundle)을 싣지 않는다. Qt 의 네트워크 파이썬 모듈(QtNetwork)·TLS 플러그인과 그 OpenSSL(`-x64` 이름)은 앱이 쓰지 않아 묶음에서 뺐고, 들어 있으면 빌드가 거절합니다(Qt6Network.dll 자체는 PySide6 의 Qt DLL 이고 Qt 의 터치 플러그인 qtuiotouchplugin.dll 이 가져오기 때문에 남습니다) |",
         "| libffi · SQLite · bzip2 · liblzma | Python 3.12 가 함께 싣는 것 | MIT · 퍼블릭 도메인 · BSD 계열 · 퍼블릭 도메인 | Python 표준 모듈(ctypes·sqlite3·bz2·lzma) |",
         "| Microsoft Visual C++ 런타임(VCRUNTIME140·MSVCP140) | 빌드한 PC 의 것 | Microsoft 의 재배포 가능 구성 요소 | Python·Qt 의 실행에 필요 |",
         "| Mesa 소프트웨어 OpenGL(opengl32sw.dll) | PySide6 배포본과 같음 | MIT 계열 | 그래픽 장치가 없을 때의 대체(Qt 가 싣는 것) |", "",

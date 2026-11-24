@@ -21,7 +21,9 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "packaging"))
 import outgoing_support as og  # noqa: E402
+import pkgcommon  # noqa: E402
 import secret_support as sec  # noqa: E402
 import service_support as ss  # noqa: E402
 
@@ -79,6 +81,12 @@ class ConstantTest(unittest.TestCase):
         self.assertIs(capabilities.BLOGGER_OAUTH_INPUT, False)
         self.assertFalse(capabilities.external_write_enabled())
         self.assertFalse(capabilities.blogger_oauth_input_enabled())
+        # NET 설계서 E5(D-720) — 대상이 `SWITCH_NAMES` 전체(여덟)로 늘었고 '모두 꺼짐' 이 '출하 표와 같음' 으로 일반화됐다(켜진 채 내보내도 되는 것은 출하 표의 이름뿐 — 지금은 빈 표)
+        self.assertEqual(len(capabilities.SWITCH_NAMES), 8)
+        for name in capabilities.SWITCH_NAMES:
+            self.assertIsInstance(getattr(capabilities, name), bool, name)
+        self.assertEqual({name for name in capabilities.SWITCH_NAMES if getattr(capabilities, name) is True}, set(pkgcommon.SHIPPED_OPEN_SWITCHES))
+        self.assertEqual(pkgcommon.SHIPPED_OPEN_SWITCHES, (), "지금 켜진 채 내보내도 되는 스위치는 없다")
 
     def test_the_gate_refuses_with_the_catalog_code_and_names_the_operation(self):
         with self.assertRaises(AppError) as caught:
@@ -113,28 +121,30 @@ class NoWayToTurnItOnTest(unittest.TestCase):
     """켜는 길이 없다 — 소스에서 직접 확인한다(설정 파일·환경 변수·명령줄·화면·등록)."""
 
     def test_nothing_in_src_stores_to_the_constant_except_the_one_false_in_capabilities(self):
-        stores = []
-        for path in src_files():
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                targets = []
-                if isinstance(node, ast.Assign):
-                    targets = node.targets
-                elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-                    targets = [node.target]
-                for target in targets:
-                    for item in ast.walk(target):
-                        if (isinstance(item, ast.Name) and item.id == "EXTERNAL_WRITE") or (isinstance(item, ast.Attribute) and item.attr == "EXTERNAL_WRITE"):
-                            stores.append((path.relative_to(SRC).as_posix(), node.lineno, ast.unparse(node.value) if getattr(node, "value", None) is not None else ""))
-        self.assertEqual(len(stores), 1, "소스 상수에 값을 넣는 곳은 capabilities.py 의 `EXTERNAL_WRITE = False` 하나뿐이다")
-        self.assertEqual((stores[0][0], stores[0][2]), ("capabilities.py", "False"))
+        for switch in capabilities.SWITCH_NAMES:                         # NET 설계서 E6 — 스위치 여덟 전부(예전에는 EXTERNAL_WRITE 하나)
+            stores = []
+            for path in src_files():
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                    targets = []
+                    if isinstance(node, ast.Assign):
+                        targets = node.targets
+                    elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                        targets = [node.target]
+                    for target in targets:
+                        for item in ast.walk(target):
+                            if (isinstance(item, ast.Name) and item.id == switch) or (isinstance(item, ast.Attribute) and item.attr == switch):
+                                stores.append((path.relative_to(SRC).as_posix(), node.lineno, ast.unparse(node.value) if getattr(node, "value", None) is not None else ""))
+            self.assertEqual(len(stores), 1, f"소스 상수에 값을 넣는 곳은 capabilities.py 의 `{switch} = False` 하나뿐이다")
+            self.assertEqual((stores[0][0], stores[0][2]), ("capabilities.py", "False"), switch)
 
     def test_no_other_module_even_names_the_constant_and_no_code_sets_it_by_string(self):
         found = []
+        names = set(capabilities.SWITCH_NAMES)                           # NET 설계서 E6 — 스위치 여덟 전부
         for path in src_files():
             if path.name == "capabilities.py":
                 continue
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                if (isinstance(node, ast.Name) and node.id == "EXTERNAL_WRITE") or (isinstance(node, ast.Attribute) and node.attr == "EXTERNAL_WRITE")                         or (isinstance(node, ast.Constant) and node.value == "EXTERNAL_WRITE"):          # 이름을 글자로 쓰는 길(setattr·환경 변수 이름)도 없다
+                if (isinstance(node, ast.Name) and node.id in names) or (isinstance(node, ast.Attribute) and node.attr in names) or (isinstance(node, ast.Constant) and node.value in names):          # 이름을 글자로 쓰는 길(setattr·환경 변수 이름)도 없다
                     found.append((path.relative_to(SRC).as_posix(), getattr(node, "lineno", 0)))
         self.assertEqual(found, [], "capabilities.py 밖에서는 상수 이름을 쓰지 않는다 — 부르는 것은 관문 함수뿐이다")
 
@@ -146,6 +156,8 @@ class NoWayToTurnItOnTest(unittest.TestCase):
         for word in ("environ", "getenv", "argv", "settings", "json", "open(", "read_text", "import os", "import sys", "argparse"):
             self.assertNotIn(word, body, f"capabilities.py 는 바깥에서 값을 읽지 않는다: {word}")
         self.assertIn("EXTERNAL_WRITE = False", code)
+        for switch in capabilities.SWITCH_NAMES:                         # NET 설계서 E6 — 스위치 여덟 전부
+            self.assertIn(f"{switch} = False", code, switch)
 
     def test_the_settings_file_has_no_field_for_it_and_still_refuses_unknown_fields(self):
         text = (SRC / "service" / "context.py").read_text(encoding="utf-8")
@@ -180,15 +192,24 @@ class NoWayToTurnItOnTest(unittest.TestCase):
         self.assertEqual(sorted(set(re.findall(r'ENV_[A-Z_]+ = "([A-Z_]+)"', text))), ["CHANCEBLOG_DESKTOP_DATA", "CHANCEBLOG_LOCAL_REPO"])
 
     def test_no_code_in_src_registers_an_adapter(self):
+        """NET 설계서 E4(D-733) — 옛 단언 '`register` 호출 0' 은 '호출은 새 파일 `service/wiring.py` 한 곳뿐이고 모두 스위치를 읽는 함수의 `if` 안에 있으며 `registered_kinds()` 는 켜진 스위치에 해당하는 종류와 정확히 같다' 로 바뀌었다.
+        기본 빌드(스위치 모두 꺼짐)에서는 지금과 똑같이 아무것도 꽂히지 않는다. 양쪽 방향(켜졌는데 등록 안 됨·켜지지 않았는데 등록됨)은 `test_net_zero.RegistrationFollowsSwitchesTest` 가 확인한다."""
         calls = []
         for path in src_files():
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+            for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     name = ast.unparse(node.func)
                     if name in ("external.register", "register", "external.registered", "registered") and path.name != "external.py":
-                        calls.append((path.relative_to(SRC).as_posix(), node.lineno, name))
-        self.assertEqual(calls, [], "어댑터를 꽂는 코드가 src 에 없다(시험만 꽂는다)")
-        self.assertEqual(external.registered_kinds(), (), "이 빌드는 어떤 어댑터도 꽂지 않는다")
+                        guarded, cursor = False, node
+                        while cursor in parents:
+                            cursor = parents[cursor]
+                            if isinstance(cursor, ast.If) and re.search(r"capabilities\.\w+_enabled\(\)", ast.unparse(cursor.test)):
+                                guarded = True
+                        calls.append((path.relative_to(SRC).as_posix(), name, guarded))
+        self.assertEqual(calls, [("service/wiring.py", "external.register", True), ("service/wiring.py", "external.register", True)], "어댑터를 꽂는 코드는 wiring.py 의 스위치 `if` 안 두 줄뿐이다(시험은 `external.registered` 로 꽂는다)")
+        self.assertEqual(external.registered_kinds(), (), "이 빌드(스위치 모두 꺼짐)는 어떤 어댑터도 꽂지 않는다")
 
     def test_the_registry_only_knows_three_kinds_and_a_test_can_plug_one_temporarily(self):
         self.assertEqual(external.KINDS, ("pages_git", "blogger", "naver_publish"))

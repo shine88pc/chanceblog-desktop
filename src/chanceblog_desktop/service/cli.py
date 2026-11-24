@@ -378,6 +378,7 @@ def cmd_publish_pages(ctx, args):
 
 def cmd_check_deploy(ctx, args):
     capabilities.require_external_write("공개 주소 확인(check-deploy)")
+    capabilities.require_net("pages_site", "공개 주소 확인(check-deploy)")        # 둘째 문장: 좁은 스위치도 함께(NET 설계서 3.3)
     report = pages_flow.check_pages_deploy(ctx, args.id, deadline=args.wait)
     return Output(fmt.publish_report_lines(report), report.to_dict())
 
