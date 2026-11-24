@@ -85,7 +85,7 @@ class ReadLockTest(unittest.TestCase):
         self.assertEqual([name for name, _version, _hashes in lock.requirements], ["PySide6_Essentials", "shiboken6"])
         self.assertEqual({version for _name, version, _hashes in lock.requirements}, {lock.version})
         self.assertRegex(lock.version, r"^\d+\.\d+\.\d+$")
-        self.assertFalse(lock.hashed, "지금 잠금에는 해시가 없다(해시 잠금은 따로 승인받는 일, D-711)")
+        self.assertEqual(lock.hashed, all(hashes for _name, _version, hashes in lock.requirements), "해시 표시는 두 줄 모두에 해시가 있을 때만 켜진다(지금 잠금에는 해시가 없다 — 해시 잠금은 따로 승인받는 일, D-711)")
 
     def test_a_good_lock_reads_to_two_pins(self):
         lock = good_lock()
@@ -449,9 +449,10 @@ class MainFlowTest(unittest.TestCase):
         for argv in (("--bogus",), ("--lock=",), ("--dry-run", "--probe-only"), ("extra",)):
             with self.subTest(argv=argv):
                 fake = FakeRun()
-                code, _out, _err = run_main(*argv, run=fake, lookup=self.ok_lookup, probe_function=fake_facts)
+                code, _out, err = run_main(*argv, run=fake, lookup=self.ok_lookup, probe_function=fake_facts)
                 self.assertEqual(code, 2)
                 self.assertEqual(fake.calls, [])
+                self.assertIn("인자를 읽지 못했다", err, "잠금을 읽다 실패한 것이 아니라 인자 자체가 거절돼야 한다")
 
     def test_a_failed_pip_exits_three_and_stops_before_the_probe(self):
         def boom():
