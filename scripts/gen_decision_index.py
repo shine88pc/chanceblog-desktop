@@ -6,6 +6,9 @@
     python scripts/gen_decision_index.py          # docs/DECISIONS_INDEX.md 를 다시 쓴다
     python scripts/gen_decision_index.py --check  # 쓰지 않고 색인이 낡았으면 종료 코드 1 (시험이 같은 검사를 한다)
 
+정본을 덮어쓰지 않는다(검증 S 권고-1·Q R7) — `--out` 이 `--source` 와 같은 파일이면(경로를 풀어 같은 파일이면 상대·절대·`..`·심볼릭 링크·하드 링크 모두) 두 모드 다 거절하고, 이미 있는 출력 파일이
+이 도구가 만든 색인(첫 줄이 `# 결정 색인 (자동 생성` 으로 시작)이 아니면 쓰지 않는다. 폴더가 없거나 읽고 쓸 수 없는 파일이어도 오류 글을 남기고 거절한다(종료 코드 2, 아무것도 쓰지 않는다).
+
 한 줄 요약은 사람이 쓰지 않고 자동으로 만든다: 행의 결정 칸이 굵은 글(별표 둘로 싼 글)로 시작하면 그 첫머리를(거의 모든 행이 그렇다), 아니면 첫 문장을 쓴다. 링크는 글자만 남기고
 굵은 표시·물결표·웹 주소·이중 중괄호·세로줄은 문서 규칙에 맞게 바꾼다. 100자를 넘으면 **글자 사이가 아니라 띄어쓰기에서만** 자르고 끝에 줄임표(…)를 붙인다 —
 따옴표·괄호·코드(백틱) 안에서는 자르지 않는다(자른 곳이 안전한지는 `tests/test_decision_index.py` 가 모든 행에서 확인한다).
@@ -29,6 +32,7 @@ SUMMARY_MIN_CUT = 24         # 너무 짧게 잘라 뜻이 사라지는 것을 �
 SHORT_LEAD = 16              # 굵은 첫머리가 이보다 짧으면(예: '잠금'·'버전 규칙') 이름표일 뿐이라 첫 문장 전체를 요약 재료로 쓴다
 ELLIPSIS = "…"
 NO_GRADE = "—"
+INDEX_TITLE = "# 결정 색인 (자동 생성"   # 이 도구가 만든 색인 파일 첫 줄의 앞부분(아래 HEAD 의 첫 줄) — 이것으로 시작하지 않는 기존 파일은 덮어쓰지 않는다(시험이 HEAD 와 같은지 본다)
 TILDE = chr(0x7E)            # 소스에도 물결표·이중 중괄호를 글자 그대로 적지 않는다(문서 규칙 — 시험도 같은 방식)
 DOUBLE_OPEN, DOUBLE_CLOSE = "{" * 2, "}" * 2
 
@@ -251,32 +255,62 @@ def expected_text(source=SOURCE):
     return render(parse(Path(source).read_text(encoding="utf-8"), Path(source).name))
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--check", action="store_true", help="파일을 쓰지 않고 색인이 결정 기록과 같은지만 본다(다르면 종료 코드 1)")
-    parser.add_argument("--source", default=str(SOURCE), help="결정 기록 파일(기본: docs/DECISIONS.md) — 시험이 임시 파일로 확인하려고 둔 옵션")
-    parser.add_argument("--out", default=str(OUT), help="색인 파일(기본: docs/DECISIONS_INDEX.md)")
-    args = parser.parse_args(argv)
-    out = Path(args.out)
+def read_text(path):
+    """파일 글(UTF-8). 읽을 수 없거나(폴더·권한·없음) 글자가 깨졌으면 사람이 읽는 한 줄로 IndexProblem."""
     try:
-        rows = parse(Path(args.source).read_text(encoding="utf-8"), Path(args.source).name)
-    except IndexProblem as error:
-        print(f"색인을 만들지 못했다: {error}", file=sys.stderr)
-        return 2
+        return path.read_text(encoding="utf-8")
+    except UnicodeError:
+        raise IndexProblem(f"{path.name} 의 글자를 읽지 못했다(UTF-8 이 아니다)") from None
+    except OSError as error:
+        raise IndexProblem(f"{path.name} 를 읽지 못했다({error.strerror or error})") from None
+
+
+def refuse_same_file(source, out):
+    """`--out` 이 결정 기록과 같은 파일이면 IndexProblem — 정본을 색인으로 덮어쓰는 사고를 막는다. 경로 글자가 아니라 파일 자체를 견주므로 상대·절대·`..`·심볼릭 링크·하드 링크 모두 같다고 본다."""
+    try:
+        same = out.exists() and source.exists() and out.samefile(source)
+    except OSError as error:
+        raise IndexProblem(f"출력 파일을 결정 기록과 견주지 못했다({error.strerror or error})") from None
+    if same:
+        raise IndexProblem(f"--out({out.name})이 결정 기록(--source)과 같은 파일이다 — 정본을 색인으로 덮어쓰지 않는다. 다른 파일 이름을 준다")
+
+
+def run(args):
+    source, out = Path(args.source), Path(args.out)
+    refuse_same_file(source, out)
+    rows = parse(read_text(source), source.name)
     wanted = render(rows)
-    current = out.read_text(encoding="utf-8") if out.exists() else None
+    current = read_text(out) if out.exists() else None
     if args.check:
         if current != wanted:
-            print(f"{out.name} 가 {Path(args.source).name} 와 다르다 — `python scripts/gen_decision_index.py` 로 다시 만든다.", file=sys.stderr)
+            print(f"{out.name} 가 {source.name} 와 다르다 — `python scripts/gen_decision_index.py` 로 다시 만든다.", file=sys.stderr)
             return 1
         print(f"{out.name} 가 결정 기록과 같다({len(rows)}행).")
         return 0
     if current == wanted:
         print("바뀐 것이 없다.")
         return 0
-    out.write_text(wanted, encoding="utf-8", newline="\n")
+    if current is not None and not current.startswith(INDEX_TITLE):
+        raise IndexProblem(f"{out.name} 는 이 도구가 만든 색인이 아니라서(첫 줄이 '{INDEX_TITLE}' 으로 시작하지 않는다) 덮어쓰지 않는다 — 다른 파일 이름을 주거나 그 파일을 먼저 치운다")
+    try:
+        out.write_text(wanted, encoding="utf-8", newline="\n")
+    except OSError as error:
+        raise IndexProblem(f"{out.name} 를 쓰지 못했다({error.strerror or error})") from None
     print(f"{out.name} 를 다시 썼다({len(rows)}행).")
     return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--check", action="store_true", help="파일을 쓰지 않고 색인이 결정 기록과 같은지만 본다(다르면 종료 코드 1)")
+    parser.add_argument("--source", default=str(SOURCE), help="결정 기록 파일(기본: docs/DECISIONS.md) — 시험이 임시 파일로 확인하려고 둔 옵션")
+    parser.add_argument("--out", default=str(OUT), help="색인 파일(기본: docs/DECISIONS_INDEX.md) — 결정 기록과 같은 파일이거나 이 도구가 만든 색인이 아닌 기존 파일이면 거절한다")
+    args = parser.parse_args(argv)
+    try:
+        return run(args)
+    except IndexProblem as error:
+        print(f"색인을 만들지 못했다: {error}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

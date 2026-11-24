@@ -8,11 +8,19 @@
   5) 만드는 규칙(굵은 첫머리·짧은 첫머리는 첫 문장·링크 걷기·문서 규칙 글자 바꾸기·등급 읽기·자르기)을 만든 입력으로 확인한다.
   6) 도구가 읽기 전용이다 — 표준 라이브러리만 가져오고, `--check` 는 아무것도 쓰지 않으며, 낡으면 종료 코드 1·결정 기록이 깨졌으면 2, 쓸 때도 색인 한 파일뿐이고 결정 기록은 한 바이트도 안 바뀐다.
   7) 문서가 도구를 안내한다 — README 문서 표·새 PC 안내의 도구 표·AGENTS.md 한 줄.
+  8) 출력 가드(재작업 — 검증 S 권고-1·Q R7) — `--out` 이 결정 기록과 같은 파일이면(상대·절대·`..`·링크 이름) 두 모드 다, 이 도구가 만든 색인이 아닌 기존 파일이면 쓸 때 거절하고(종료 코드 2·결정 기록은 한 바이트도
+     안 바뀐다), 폴더가 없거나 폴더·없는 파일이어도 오류 글 한 줄로 끝난다(트레이스백 없음).
+  9) 만드는 규칙의 경계(재작업 — Q R6·I1) — 헤더의 '가장 최근 날짜'·건너뛴 번호의 시작과 '없음'·등급을 읽는 칸 순서·등급을 읽는 범위·코드 블록 울타리 종류·늘려 주는 한계·자르기 바닥·빈 머리·대괄호 같은 짝·
+     대문자 웹 주소·홀수 따옴표를 입력을 만들어 확인한다.
 """
 import ast
+import contextlib
 import hashlib
 import importlib.util
+import io
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -366,6 +374,191 @@ class ToolIsReadOnlyTest(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("색인을 만들지 못했다", err)
             self.assertFalse(out.exists())
+
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def run_tool(*args, cwd=None):
+    """도구를 새 프로세스로 부른다(실제 명령줄 그대로) → (종료 코드, 표준 출력, 표준 오류)."""
+    completed = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8", cwd=cwd)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def call_main(*args):
+    """같은 일을 이 프로세스 안에서(빠르게) → (종료 코드, 표준 출력, 표준 오류)."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = GEN.main(list(args))
+    return code, out.getvalue(), err.getvalue()
+
+
+class OutputGuardTest(unittest.TestCase):
+    """정본을 색인으로 덮어쓰지 못하게 막는 가드(검증 S 권고-1·Q R7 — 도구는 '읽기 전용' 이라고 약속하는데 `--out` 을 `--source` 와 같게 주면 1.4MB 정본이 색인으로 바뀌었다)."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, str(self.folder), True)
+        self.source = self.folder / "DECISIONS.md"
+        self.source.write_text(SAMPLE, encoding="utf-8", newline="\n")
+        self.digest = digest(self.source)
+
+    def assert_refused(self, code, err, word):
+        self.assertEqual(code, 2, err)
+        self.assertIn("색인을 만들지 못했다", err)
+        self.assertIn(word, err)
+        self.assertNotIn("Traceback", err, "처리하지 않은 예외가 아니라 오류 글 한 줄이어야 한다")
+        self.assertEqual(digest(self.source), self.digest, "결정 기록은 한 바이트도 바뀌지 않는다")
+
+    def test_the_same_path_is_refused_in_write_mode_and_in_check_mode_without_writing_anything(self):
+        for mode in ([], ["--check"]):
+            with self.subTest(mode=mode):
+                code, out, err = call_main(*mode, "--source", str(self.source), "--out", str(self.source))
+                self.assert_refused(code, err, "같은 파일")
+                self.assertEqual(out, "", "거절하면서 성공 문구를 내지 않는다")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["DECISIONS.md"])
+
+    def other_names_of_the_decision_log(self):
+        """결정 기록을 가리키는 다른 이름들 — 만들 수 있는 것만(심볼릭 링크는 권한이 없으면 못 만든다)."""
+        (self.folder / "sub").mkdir()
+        names = {"dotdot": self.folder / "sub" / ".." / "DECISIONS.md"}
+        for label, make in (("hardlink", os.link), ("symlink", os.symlink)):
+            path = self.folder / f"{label}.md"
+            try:
+                make(str(self.source), str(path))
+            except (OSError, NotImplementedError, AttributeError):
+                continue
+            names[label] = path
+        if (self.folder / "decisions.md").exists():                         # 대소문자를 가리지 않는 파일 시스템(윈도·맥)
+            names["case"] = self.folder / "decisions.md"
+        return names
+
+    def test_every_other_name_of_the_same_file_is_caught_in_both_directions(self):
+        names = self.other_names_of_the_decision_log()
+        self.assertGreaterEqual(len(names), 3, "별칭을 셋 이상 시험해야 한다(경로 풀기·하드 링크는 어느 환경에서도 만들 수 있다)")
+        self.assertIn("dotdot", names)
+        for label, alias in names.items():
+            for source, out in ((self.source, alias), (alias, self.source)):
+                with self.subTest(alias=label, source=source.name, out=out.name):
+                    code, _stdout, err = call_main("--source", str(source), "--out", str(out))
+                    self.assert_refused(code, err, "같은 파일")
+                    code, _stdout, err = call_main("--check", "--source", str(source), "--out", str(out))
+                    self.assert_refused(code, err, "같은 파일")
+        self.assertEqual(digest(self.source), self.digest)
+
+    def test_a_relative_name_through_the_real_command_line_is_caught_too(self):
+        (self.folder / "sub").mkdir()
+        code, stdout, err = run_tool("--source", "DECISIONS.md", "--out", "sub/../DECISIONS.md", cwd=str(self.folder))
+        self.assert_refused(code, err, "같은 파일")
+        self.assertEqual(stdout, "")
+
+    def test_an_existing_file_that_is_not_an_index_is_never_overwritten(self):
+        out = self.folder / "OUT.md"
+        for label, data, word in (("직접 쓴 글", "내가 직접 쓴 글이다\n".encode("utf-8"), "덮어쓰지 않는다"), ("빈 파일", b"", "덮어쓰지 않는다"),
+                                  ("다른 문서", "# 다른 문서\n\n본문\n".encode("utf-8"), "덮어쓰지 않는다"), ("글자가 깨진 파일", b"\xff\xfe\x00\x01", "글자")):
+            out.write_bytes(data)
+            with self.subTest(file=label):
+                code, _stdout, err = call_main("--source", str(self.source), "--out", str(out))
+                self.assert_refused(code, err, word)
+                self.assertEqual(out.read_bytes(), data, "있던 파일은 한 바이트도 바뀌지 않는다")
+
+    def test_a_missing_file_and_a_stale_index_made_by_the_tool_are_still_written(self):
+        fresh = GEN.render(GEN.parse(SAMPLE))
+        new_file = self.folder / "NEW.md"
+        code, stdout, err = call_main("--source", str(self.source), "--out", str(new_file))
+        self.assertEqual((code, new_file.read_text(encoding="utf-8")), (0, fresh), err)
+        stale = self.folder / "STALE.md"
+        stale.write_text(fresh.replace("D-05", "D-99"), encoding="utf-8", newline="\n")
+        code, stdout, err = call_main("--source", str(self.source), "--out", str(stale))
+        self.assertEqual((code, stale.read_text(encoding="utf-8")), (0, fresh), err)
+        self.assertIn("다시 썼다", stdout)
+
+    def test_a_missing_folder_a_folder_as_the_output_and_a_missing_source_end_with_one_line_not_a_traceback(self):
+        cases = (("없는 폴더", ["--source", str(self.source), "--out", str(self.folder / "nope" / "INDEX.md")], "쓰지 못했다"),
+                 ("폴더를 출력으로", ["--source", str(self.source), "--out", str(self.folder)], "읽지 못했다"),
+                 ("없는 결정 기록", ["--source", str(self.folder / "NONE.md"), "--out", str(self.folder / "INDEX.md")], "읽지 못했다"))
+        for label, args, word in cases:
+            for mode in ([], ["--check"]):
+                if label == "없는 폴더" and mode:
+                    continue                                    # --check 는 쓰지 않으므로 없는 폴더는 '없는 색인' 일 뿐이다(종료 코드 1)
+                with self.subTest(case=label, mode=mode):
+                    code, _stdout, err = call_main(*mode, *args)
+                    self.assert_refused(code, err, word)
+        self.assertFalse((self.folder / "nope").exists())
+        self.assertFalse((self.folder / "INDEX.md").exists())
+
+    def test_the_title_the_guard_looks_for_is_what_the_tool_writes_and_what_is_committed(self):
+        self.assertTrue(GEN.HEAD.startswith(GEN.INDEX_TITLE))
+        self.assertTrue(GEN.render(GEN.parse(SAMPLE)).startswith(GEN.INDEX_TITLE))
+        self.assertTrue(read(INDEX).startswith(GEN.INDEX_TITLE), "올려 둔 색인이 가드가 찾는 첫 줄로 시작하지 않으면 도구가 그 파일을 다시 쓰지 못한다")
+        self.assertEqual(GEN.INDEX_TITLE, "# 결정 색인 (자동 생성")
+
+
+class GeneratorEdgeTest(unittest.TestCase):
+    """만드는 규칙의 경계와 틈(재작업 — 검증 Q R6·I1: 실제 결정 기록으로는 드러나지 않고 앞으로 행이 더해지면 드러날 곳)을 입력을 만들어 못박는다."""
+
+    def test_the_head_names_the_latest_date_not_the_date_of_the_biggest_number(self):
+        text = ("| D-01 | 2026-12-01 | **번호는 작지만 날짜가 가장 늦은 결정이다** | 확정 |\n"
+                "| D-02 | 2026-10-01 | **번호는 크지만 날짜가 이른 결정이다 둘째** | 확정 |\n")
+        head = GEN.render(GEN.parse(text))
+        self.assertIn("가장 앞 번호 D-01 · 가장 큰 번호 D-02 · 가장 최근 날짜 2026-12-01", head)
+
+    def test_the_gap_list_starts_at_the_first_number_of_the_log_and_says_none_when_there_is_no_gap(self):
+        def gaps(*numbers):
+            rows = "".join(f"| D-{n:02d} | 2026-11-0{n % 9 + 1} | **{n}번째 결정의 굵은 첫머리가 충분히 길다** | 확정 |\n" for n in numbers)
+            return GEN.render(GEN.parse(rows)).split("숫자만): ", 1)[1].split("\n", 1)[0]
+
+        self.assertEqual(gaps(5, 7), "6", "건너뛴 번호는 가장 앞 번호부터 센다(1 부터가 아니다)")
+        self.assertEqual(gaps(5, 6, 7), "없음")
+        self.assertEqual(gaps(3, 4, 9, 12, 13), "5–8, 10–11")
+
+    def test_the_decision_cell_is_read_before_the_status_cell_and_the_longer_phrase_before_the_shorter(self):
+        self.assertEqual(GEN.grade_of("**가** 변경 등급 T1 로 한다", "확정 변경 등급 T2"), "T1", "같은 표기가 두 칸에 있으면 결정 칸이 먼저")
+        self.assertEqual(GEN.grade_of("**가** 등급 T0 로 한다", "확정 등급 T3"), "T0")
+        self.assertEqual(GEN.grade_of("**가** 등급 T3 로 본다", "확정 변경 등급 T1"), "T1", "'변경 등급' 표기가 칸에 상관없이 '등급' 표기보다 앞선다")
+        self.assertEqual(GEN.grade_of("**가** 설명", "구현 완료. T2 — 독립 검증"), "T2", "표기 말이 없어도 상태 칸의 T 낱말은 읽는다")
+
+    def test_the_grade_in_the_head_of_the_decision_is_read_only_inside_the_first_300_characters(self):
+        for filler, wanted in ((250, "T2"), (320, "—")):
+            with self.subTest(filler=filler):
+                self.assertEqual(GEN.grade_of("**가**" + "가" * filler + "(AS-S1, T2) 끝", ""), wanted)
+        self.assertEqual(GEN.grade_of("**가**(AS-S1, T2— 설명)", ""), "T2", "등급 바로 뒤의 줄표(—)도 끝 표시다")
+
+    def test_a_fence_line_of_the_other_kind_inside_a_code_block_does_not_close_it(self):
+        text = ("| D-1 | 2026-01-01 | **진짜 결정이다 첫째** | 확정 |\n```text\n" + TILDE * 3 + "\n| D-2 | 2026-01-01 | **예시이다 둘째** | 확정 |\n```\n"
+                "| D-3 | 2026-01-01 | **진짜 결정이다 셋째** | 확정 |\n")
+        self.assertEqual([row[0] for row in GEN.parse(text)], ["D-1", "D-3"], "``` 로 연 블록은 ``` 로만 닫는다")
+
+    def test_the_cut_floor_is_exactly_24_characters_and_the_stretch_limit_exactly_140(self):
+        self.assertEqual(GEN.shorten("가" * 24 + " " + "나" * 100), "가" * 24 + GEN.ELLIPSIS, "앞에 24글자가 남는 띄어쓰기는 자를 수 있다")
+        self.assertEqual(GEN.shorten("가" * 23 + " " + "나" * 100), "가" * 23 + " " + "나" * 100, "23글자만 남기는 곳은 자르지 않는다")
+        self.assertEqual(GEN.shorten("가" * 120 + " " + "나" * 30), "가" * 120 + GEN.ELLIPSIS, "100자 안에 안전한 곳이 없으면 140자 안의 가장 이른 곳까지 늘려 준다")
+        self.assertEqual(GEN.shorten("가" * 141 + " " + "나" * 10), "가" * 141 + " " + "나" * 10, "140자 밖은 늘려 주지 않는다")
+
+    def test_a_head_that_is_only_separators_is_not_turned_into_an_ellipsis(self):
+        text = "·" * 30 + "가" * 100
+        self.assertEqual(GEN.shorten(text), text)
+
+    def test_shorten_never_cuts_inside_square_brackets_double_corners_curly_quotes_or_braces(self):
+        filler = "가" * 30
+        prefix = "앞 글 스물네 글자가 넘게 이어지는 첫 부분입니다"
+        for opener, closer in (("[", "]"), ("『", "』"), ("‘", "’"), ("“", "”"), ("{", "}")):
+            text = f"{prefix} {opener}{filler} {filler} {filler}{closer} 뒤 글 {filler} 끝"
+            got = GEN.shorten(text, limit=60, hard_max=90)
+            with self.subTest(opener=opener):
+                self.assertEqual(got, prefix + GEN.ELLIPSIS, "안쪽 띄어쓰기에서 자르지 않고 그 앞에서 끊는다")
+
+    def test_an_odd_number_of_straight_quotes_is_an_apostrophe_and_does_not_block_later_cuts(self):
+        text = "첫 부분 글자가 스물네 글자를 넘는 설명이다 it's " + " ".join(["가나다라마"] * 30)
+        got = GEN.shorten(text)
+        self.assertTrue(got.endswith(GEN.ELLIPSIS))
+        self.assertGreater(len(got), text.index("'") + 20, "아포스트로피 하나 때문에 그 앞에서 잘리면 안 된다")
+
+    def test_a_capitalised_web_address_scheme_is_removed_like_the_lower_case_one(self):
+        got = GEN.tidy(f"{SCHEME.upper()}Example.org/a 와 {SCHEME[:-3].capitalize()}://x.y")
+        self.assertEqual(got, "Example.org/a 와 x.y")
+        self.assertIsNone(URL.search(got))
 
 
 class DocsPointToTheToolTest(unittest.TestCase):
