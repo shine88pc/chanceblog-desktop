@@ -62,7 +62,7 @@
 
 1. **쉬운 한국어**로 쓴다(읽는 사람은 비개발자 운영자다). 영문 약어·파일 이름에는 풀이를 붙이고 화면의 단추·카드 이름은 화면과 글자 그대로 쓴다.
 2. **사실만 쓴다.** '안전하다·문제없다' 처럼 증거 없는 말을 쓰지 않고, 확인하지 못한 것은 '확인 못 함' 이라고 적는다. 시험이 지키는 사실에는 '근거' 에 그 시험 이름을 적는다.
-3. **되돌릴 수 있는지를 반드시 쓴다.** 이 앱은 더 새로운 버전이 만든 데이터를 낮은 버전이 열지 않는다(`STORE_VERSION_UNSUPPORTED` — 데이터가 망가지지 않게 한 바이트도 바꾸지 않는다). 그래서 '이전 버전으로 되돌리기'는 **올리기 전에 만든 백업을 복원**하는 일이다. 이 문장은 데이터 판이 오른 버전의 노트에 늘 들어간다.
+3. **되돌릴 수 있는지를 반드시 쓴다.** 이 앱은 더 새로운 버전이 만든 데이터를 낮은 버전이 열지 않는다(글 보관함은 `STORE_VERSION_UNSUPPORTED`, 주제 엔진 보관함은 `TOPIC_STORE_VERSION_UNSUPPORTED` — 데이터가 망가지지 않게 한 바이트도 바꾸지 않는다). 그래서 '이전 버전으로 되돌리기'는 **올리기 전에 만든 백업을 복원**하는 일이다. 이 문장은 데이터 판이 오른 버전의 노트에 늘 들어간다.
 4. **키(API 키·토큰)는 데이터가 아니라 Windows 자격 증명 관리자에 있다.** 백업에는 담기지 않고(`Credential 제외됨`) 업데이트로 바뀌지 않는 것이 보통이다 — 바뀌는 버전이면 맨 위 '한눈에' 에 따로 적는다.
 5. 경로는 `%LOCALAPPDATA%\ChanceblogDesktop` 처럼 환경 변수로 쓰고 실제 사용자 이름이 든 경로·실제 블로그 이름·개인 정보를 쓰지 않는다(예시는 가짜 이름만).
 6. 물결표·웹 주소·이중 중괄호를 쓰지 않는다(숫자 범위는 en dash). 이 틀의 「 」 는 채울 곳을 뜻할 뿐이다.
@@ -93,7 +93,7 @@
 | 글 보관함의 지금 판과 올리는 함수 | `src/chanceblog_desktop/content/store.py` 의 `SCHEMA_VERSION`·`MIGRATIONS` |
 | 주제 엔진 보관함의 지금 판 | `src/chanceblog_desktop/topicdb/store.py` 의 `SCHEMA_VERSION` |
 | JSON 파일의 `schema` 와 사본 이름 | `src/chanceblog_desktop/service/blog_profiles.py`·`seed_manage.py` 와 `topics/` 의 파일 읽기 |
-| 오류 이름과 하실 일 | [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) §7(`MIGRATION_FAILED`·`MIGRATION_BLOCKED`·`STORE_VERSION_UNSUPPORTED`·`STORE_CORRUPT`) |
+| 오류 이름과 하실 일 | [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) §7(`MIGRATION_FAILED`·`MIGRATION_BLOCKED`·`STORE_VERSION_UNSUPPORTED`·`TOPIC_STORE_VERSION_UNSUPPORTED`·`STORE_CORRUPT`) |
 | 백업에 담기는 것과 복원 순서 | [`ARCHITECTURE.md`](ARCHITECTURE.md) §12 와 `service/backup_flow.py` |
 | 판을 올리는 동작의 시험 | `tests/test_content_migration.py`·`test_content_store.py`·`test_service_backup_*` |
 | 이 버전이 실제로 바꾼 것 | `CHANGELOG.md` 의 같은 버전 절과 `DECISIONS.md`([`DECISIONS_INDEX.md`](DECISIONS_INDEX.md) 로 찾는다) |
@@ -102,4 +102,4 @@
 
 - **이전 버전을 다시 설치하는 방법**은 설치 도구(확인 A)와 업데이트 방식(확인 B)이 정해져야 적을 수 있다 — 그때까지 틀의 '되돌리기' 에는 백업 복원만 적는다.
 - 사용자 데이터 폴더가 압축·설치 폴더 **밖**(`%LOCALAPPDATA%\ChanceblogDesktop`)에 있는 것은 지금도 사실이다([`ARCHITECTURE.md`](ARCHITECTURE.md) §10·[`PACKAGE.md`](PACKAGE.md) §9) — 업데이트가 앱 폴더만 바꾸면 데이터는 남는다(업데이트 방식이 정해진 뒤 시험으로 확인한다). 제거할 때 데이터를 지우는지(추천: 기본 보존, 지우는 법은 문서로)는 확인 C 의 몫이다.
-- 이 틀을 지키는 시험은 아직 없다. 첫 노트를 만들 때 '절 머리 줄이 CHANGELOG 의 같은 버전과 같다·틀의 소제목이 모두 있다·금지 글자가 없다' 를 지키는 시험을 더한다(시험 아이디어는 [`RELEASE.md`](RELEASE.md) 의 '릴리스 노트 규칙' 5).
+- 이 틀로 **만든 노트**를 지키는 시험은 아직 없다(이 틀 문서의 사실 — 구조 번호·오류 이름·백업이 담는 파일 — 은 `tests/test_v1_docs.py` 의 MigrationNotesTemplateTest 가 지킨다). 첫 노트를 만들 때 '절 머리 줄이 CHANGELOG 의 같은 버전과 같다·틀의 소제목이 모두 있다·금지 글자가 없다' 를 지키는 시험을 더한다(시험 아이디어는 [`RELEASE.md`](RELEASE.md) 의 '릴리스 노트 규칙' 5).

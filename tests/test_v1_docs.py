@@ -190,6 +190,20 @@ class NewCloneGuideTest(unittest.TestCase):
             self.assertIn(command, readme, command)
         self.assertIn("docs/MIGRATION.md", readme)
 
+    def test_the_guide_states_no_counts_that_go_stale_and_names_the_places_that_really_hold_the_basic_command(self):
+        """재작업(검증 S 참고-4·참고-7·참고-8, Q I3) — 시험 개수·조각별 파일 수는 시험이 늘면 낡아 안내에 적지 않고, 기본 시험 명령의 출처는 그 명령이 실제로 있는 곳이며, gui 는 --help 목록에 없다."""
+        self.assertIsNone(re.search(r"\d{1,3},\d{3}\s*개", self.guide), "시험 개수는 시험이 늘면 낡는다 — 안내에 적지 않는다")
+        self.assertNotIn("104·106·111", self.guide)
+        self.assertIn("(`README.md` 의 '개발 방식' 절과 위 §2 의 'AI 가 하는 일' 4번에 적힌 기본 명령)", self.guide)
+        command = "python -m unittest discover -s tests"
+        self.assertIn(command, part(read("README.md"), "## 개발 방식", NEXT_SECTION))
+        self.assertIn(command, part(read("docs/MIGRATION.md"), "## 2. 새 PC 준비 순서", NEXT_SECTION))
+        for rel in ("AGENTS.md", "CLAUDE.md"):
+            self.assertNotIn(command, read(rel), f"{rel} 에 이 명령이 생겼다 — 안내의 출처 문장에 {rel} 도 넣는다")
+        self.assertIn("`gui` 는 이 목록에 나오지 않는다", self.guide)
+        self.assertIn('sys.argv[1] == "gui"', read("src/chanceblog_desktop/__main__.py"))
+        self.assertNotIn('"gui"', read("src/chanceblog_desktop/service/cli.py"), "gui 가 명령 목록(--help)에 들어갔다 — 안내의 '목록에 나오지 않는다' 를 고친다")
+
     @staticmethod
     def command_lines(text):
         """```text 코드 블록 안의 줄 — 빈 줄은 빼고 줄 끝의 '  # 설명' 은 뗀다."""
@@ -209,6 +223,7 @@ class NewCloneGuideTest(unittest.TestCase):
         readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION)
         shards = [int(number) for number in re.search(r"shard: \[([0-9, ]+)\]", read(".github/workflows/ci.yml")).group(1).split(",")]
         repo_name = re.search(r'REPOSITORY = "[^/"]+/([^"]+)"', read("packaging/make_manifest.py")).group(1)
+        by_name = {path.name: path for folder in ("scripts", "packaging") for path in (ROOT / folder).glob("*.py")}
         self.assertEqual(read("README.md").splitlines()[0], f"# {repo_name}", "README 첫 줄의 저장소 이름과 빌드 도구의 REPOSITORY 이름이 같다")
         backslash = chr(92)
         for name, text in (("MIGRATION §6", self.guide), ("README 새 PC 절", readme)):
@@ -237,6 +252,13 @@ class NewCloneGuideTest(unittest.TestCase):
                 self.assertIn(int(number), shards, f"{name}: 시험 조각 번호 {number} 는 CI 의 칸 목록 {shards} 에 없다")
             for test_file in re.findall(r'-p "(test_\w+\.py)"', text):
                 self.assertTrue((ROOT / "tests" / test_file).is_file(), f"{name}: 없는 시험 파일 {test_file}")
+            for span in lines + re.findall(r"`([^`\n]+)`", text):                 # 코드 블록의 줄과 글 속 백틱 토막 — 옵션을 그 줄이 부르는 도구의 소스와 하나씩 견준다(검증 Q I5: 여러 소스의 합집합이면 한 파일에서 이름이 바뀌어도 통과했다)
+                options = [option for option in re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", span) if option != "--help"]
+                tools = [by_name[found] for found in re.findall(r"([\w-]+\.py)(?![\w])", span) if found in by_name]
+                if "-m chanceblog_desktop gui" in span:
+                    tools.append(ROOT / "src" / "chanceblog_desktop" / "ui" / "launcher.py")
+                for option in options if tools else ():
+                    self.assertTrue(any(f'"{option}"' in tool.read_text(encoding="utf-8") for tool in tools), f"{name}: {span[:60]!r} 의 옵션 {option} 을 {', '.join(tool.name for tool in tools)} 가 모른다")
         listed = {int(number) for number, _count in re.findall(r"ci_shard\.py (\d+) (\d+)\s*$", self.guide, flags=re.M)}
         self.assertEqual(listed, set(shards), "MIGRATION §6 의 시험 줄이 CI 조각을 하나도 빠뜨리지 않는다")
 
@@ -301,6 +323,12 @@ class ChecklistTest(unittest.TestCase):
         exists = (ROOT / "scripts" / "release_check.py").exists()
         says_missing = "`scripts/release_check.py` — 아직 없다" in self.text
         self.assertEqual(exists, not says_missing, "scripts/release_check.py 가 생겼거나 없어졌는데 점검표의 '아직 없다' 문장이 그대로다")
+
+    def test_row_a12_names_no_test_that_does_not_pin_it_and_row_d10_demands_a_one_to_one_comparison_with_the_old_sheet(self):
+        """재작업(검증 S 참고-2·참고-5) — A12 의 '같이 볼 시험' 은 그 문장을 못박는 시험이 없어 '—', D10 은 기존 시험지를 새 시험지로 바꾸기 전에 항목을 1:1 로 맞춘 대조표를 요구한다."""
+        by_id = {row[1]: row for row in self.rows}
+        self.assertEqual(by_id["A12"][6], "—", "A12 의 문장을 못박는 시험이 생겼다면 그 모듈 이름을 적는다")
+        self.assertIn("1:1 로 맞춘 대조표", by_id["D10"][5])
 
     def test_the_commands_in_the_non_sentence_table_name_real_scripts_and_real_options(self):
         """재작업(검증 Q R2 — QD03: G05 의 `--check` 를 `--chek` 로 틀려도 초록이었다) — 3번 표의 백틱 명령은 실제 스크립트와 그 스크립트가 아는 옵션이다."""
@@ -615,6 +643,13 @@ class PersonalPcTestDraftTest(unittest.TestCase):
             if "자격 증명" in line and "제거" in line:
                 self.assertTrue("지우지 말고" in line, f"자격 증명 줄에 지우지 말라는 말이 있어야 한다: {line[:60]}")
 
+    def test_downloaded_files_are_run_only_after_the_checks_and_the_old_sheet_is_compared_before_it_is_replaced(self):
+        """재작업(검증 S 참고-2·참고-3) — 설치·실행·업데이트 앞에 '0-2·0-3 을 통과한 파일만' 이 있고, 이 초안이 기존 시험지를 대신하기 전에 항목을 1:1 로 맞춰 본다."""
+        self.assertIn("(**0-2·0-3 을 통과한 파일만**)", part(self.text, "## 1단계.", "## 2단계."))
+        self.assertIn("받은 파일은 0-2·0-3 과 같은 검사를 먼저 합니다", part(self.text, "## 5단계.", "## 6단계."))
+        self.assertIn("**0-2·0-3 을 통과한 압축 파일**에서 푼 것만", part(self.text, "## 7단계.", "## 8단계."))
+        self.assertIn("기존 시험지의 모든 항목(사진 넣기·본문 복사 같은 선택 칸 포함)과 이 초안을 1:1 로 맞춰 보아", self.text)
+
     def test_the_blogger_consent_screen_step_does_not_assert_a_permission_name_it_could_not_check(self):
         """재작업(검증 S 권고-2) — 10-1 은 Blogger 동의 창의 권한 이름을 단정하지 않고 '확인 필요' 로 표시한 채 창에 적힌 이름을 그대로 적게 한다."""
         step10 = part(self.text, "## 10단계.", "## 11단계.")
@@ -650,7 +685,7 @@ class MigrationNotesTemplateTest(unittest.TestCase):
 
     def test_the_error_names_exist_in_the_error_catalog_and_the_troubleshooting_table(self):
         trouble = read("docs/TROUBLESHOOTING.md")
-        for code in ("MIGRATION_FAILED", "MIGRATION_BLOCKED", "STORE_VERSION_UNSUPPORTED", "STORE_CORRUPT"):
+        for code in ("MIGRATION_FAILED", "MIGRATION_BLOCKED", "STORE_VERSION_UNSUPPORTED", "TOPIC_STORE_VERSION_UNSUPPORTED", "STORE_CORRUPT"):
             self.assertIn(code, self.text, code)
             self.assertIn(code, CATALOG, code)
             self.assertIn(f"| `{code}` |", trouble, code)
@@ -659,7 +694,7 @@ class MigrationNotesTemplateTest(unittest.TestCase):
         names = set(re.findall(r"(?<![A-Za-z0-9_])[A-Z]{2,}(?:_[A-Z0-9]+)+(?![A-Za-z0-9_])", self.text))
         other = {"MIGRATION_NOTES", "DECISIONS_INDEX", "SCHEMA_VERSION"}            # 파일 이름·소스 상수 이름(오류 코드가 아니다)
         self.assertEqual({name for name in names if name not in other and name not in CATALOG}, set(), "오류 이름의 오타이거나 없어진 코드")
-        self.assertTrue({"MIGRATION_FAILED", "MIGRATION_BLOCKED", "STORE_VERSION_UNSUPPORTED", "STORE_CORRUPT"} <= names)
+        self.assertTrue({"MIGRATION_FAILED", "MIGRATION_BLOCKED", "STORE_VERSION_UNSUPPORTED", "TOPIC_STORE_VERSION_UNSUPPORTED", "STORE_CORRUPT"} <= names)
 
     def test_what_the_template_says_the_full_backup_keeps_and_leaves_out_is_what_the_backup_code_does(self):
         table = part(self.text, "## 5. 사용자 데이터가 어디에 있나", "## 6.")
@@ -685,6 +720,10 @@ class MigrationNotesTemplateTest(unittest.TestCase):
         for needle in ("낮은 버전이 열지 않는다", "올리기 전에 만든 백업을 복원", "Windows 자격 증명 관리자", "Credential 제외됨", "한 바이트도 바꾸지 않는다", "같은 사실"):
             self.assertIn(needle, self.text, needle)
         self.assertIn("STORE_VERSION_UNSUPPORTED", self.text)
+        self.assertIn("글 보관함은 `STORE_VERSION_UNSUPPORTED`, 주제 엔진 보관함은 `TOPIC_STORE_VERSION_UNSUPPORTED`", self.text, "열지 않는 규칙은 두 보관함 모두의 것이다(검증 S 참고-6)")
+        self.assertIn("이 틀로 **만든 노트**를 지키는 시험은 아직 없다", self.text)
+        self.assertIn('"TOPIC_STORE_VERSION_UNSUPPORTED"', read("src/chanceblog_desktop/topicdb/file.py"), "주제 엔진 보관함이 이 오류를 일으키는 곳")
+        self.assertIn('"STORE_VERSION_UNSUPPORTED"', read("src/chanceblog_desktop/content/store.py"), "글 보관함이 이 오류를 일으키는 곳")
 
 
 if __name__ == "__main__":

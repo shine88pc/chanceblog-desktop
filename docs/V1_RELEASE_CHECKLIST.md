@@ -29,7 +29,7 @@
 | A09 | `README.md:168` | `**설치 파일은 아직 없습니다**` | 새 PC 절(2026-11-24 에 덧붙인 것)의 첫머리를 '설치 파일로 설치하는 길' 안내와 '소스로 실행하는 개발자용' 으로 나눠 바꾼다 | — | DOCS(b) | 대기 |
 | A10 | `README.md:183` | `새 PC 에서 처음부터 끝까지 따라 해 본 기록은 아직 없습니다` | 운영자나 새 clone 검증자가 따라 해 본 날짜와 결과를 적는다(해 보지 않았다면 이 문장을 그대로 둔다) | — | FINAL | 대기 |
 | A11 | `README.md:150` | `개인 PC 제한 시험용 Package 만들기(개발자용)와 운영자가 개인 PC 에서 해 보는 시험지` | 문서 표의 이 줄을 휴대용 Package 만들기(개발자용)와 릴리스 시험지로 | test_docs_entrance(표에 문서 이름이 있는지만 본다) | DOCS(b) | 대기 |
-| A12 | `AGENTS.md:7` | `지금은 다음 PC(개인 PC 또는 빈 공용 PC — 운영자 확인 대기)로의 이전을 준비 중이다` | PC 이전이 끝났거나 정해진 사실로(릴리스와 별개 — 이전이 끝나면 고친다) | test_docs_entrance(AGENTS 단언) | 총괄 | 대기 |
+| A12 | `AGENTS.md:7` | `지금은 다음 PC(개인 PC 또는 빈 공용 PC — 운영자 확인 대기)로의 이전을 준비 중이다` | PC 이전이 끝났거나 정해진 사실로(릴리스와 별개 — 이전이 끝나면 고친다) | — | 총괄 | 대기 |
 | A13 | `docs/MIGRATION.md:5` | `다음 PC(개인 PC 또는 빈 공용 PC — 운영자 확인 대기)로의 이전을 준비하고 있다` | 같은 사실로(위 A12 와 함께) | — | 총괄 | 대기 |
 | A14 | `docs/MIGRATION.md:1` | `# 회사 PC → 개인 PC 이관과 새 PC 준비` | 제목이 처음 이관만 말한다. 새 PC 마다 쓰는 문서이니 '새 PC 준비와 이관' 처럼(README 문서 표의 설명도 함께) | test_repo_layout(문서가 있는지만 본다) | DOCS(b) | 대기 |
 | A15 | `docs/MIGRATION.md:176` | `설치 파일(Setup)·자동 업데이트·시작 메뉴·제거 프로그램이 아직 없다` | §6-3 알려 둔 한계를 설치 도구 결정 뒤의 사실로(설치형·휴대용의 차이 표) | — | INSTALLER·DOCS(b) | 대기 |
@@ -80,7 +80,7 @@
 | D07 | `docs/PACKAGE.md:113` | `아이콘이 없다` | 아이콘이 들어갔다면 사실로 | test_packaging_docs(§10 에 이 낱말이 있다는 단언) | INSTALLER | 대기 |
 | D08 | `docs/PACKAGE.md:115` | `업데이트·롤백·마이그레이션 코드가 없다` | UPDATE 가 만든 사실(내려받기·백업·적용·롤백)과 남은 한계로 | test_packaging_docs(§10 에 '업데이트·롤백' 이 있다는 단언) | UPDATE | 대기 |
 | D09 | `docs/PACKAGE.md:33` | `ChanceBlogDesktop-0.1.0-preview.1-win64.zip` | 예시 파일 이름의 버전(`VERSION` 을 따른다). 같은 이름이 시험지·시험에도 있다 | test_docs_entrance·test_packaging_docs | DOCS(b) | 대기 |
-| D10 | `docs/PERSONAL_PC_TEST.md:1` | `개인 PC 제한 시험 안내서 — ChanceBlog Desktop 0.1.0-preview.1` | 새 시험지로 바꾼다(초안은 [`PERSONAL_PC_TEST_V1_DRAFT.md`](PERSONAL_PC_TEST_V1_DRAFT.md)). 단계 번호·제목·보고 표 행 이름을 못박는 시험도 새 시험지에 맞춰 강화한다 | test_packaging_docs·test_docs_entrance(화면 배치·0-0 단계 단언) | FINAL | 대기 |
+| D10 | `docs/PERSONAL_PC_TEST.md:1` | `개인 PC 제한 시험 안내서 — ChanceBlog Desktop 0.1.0-preview.1` | 새 시험지로 바꾼다(초안은 [`PERSONAL_PC_TEST_V1_DRAFT.md`](PERSONAL_PC_TEST_V1_DRAFT.md)). **바꾸기 전에 기존 시험지 0–8단계의 모든 항목(사진 넣기·본문 복사 같은 선택 칸 포함)과 초안을 1:1 로 맞춘 대조표를 만들어, 초안에 없는 시험이 일부러 뺀 것인지 확인한다.** 단계 번호·제목·보고 표 행 이름을 못박는 시험도 새 시험지에 맞춰 강화한다 | test_packaging_docs·test_docs_entrance(화면 배치·0-0 단계 단언) | FINAL | 대기 |
 | D11 | `docs/PACKAGE_OCR.md:3` | `개인 PC 제한 시험용, 미서명 추가 도구` | 글자 읽기 추가 도구는 v1.0 에 넣지 않는 것이 추천이라(확인 D) 고치지 않는다. 넣기로 하면 그때 따로 | test_ocr_addon_docs_facts | — | 고치지 않음 |
 
 ### 2-5. 제품 코드 안의 문구와 이름 (T2 — 이 갈래는 만지지 않는다)

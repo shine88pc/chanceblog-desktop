@@ -578,8 +578,9 @@ class DocsPointToTheToolTest(unittest.TestCase):
         agents = read(ROOT / "AGENTS.md")
         lines = [line for line in agents.splitlines() if "DECISIONS_INDEX.md" in line]
         self.assertEqual(len(lines), 1, "AGENTS.md 에는 결정 색인 안내 한 줄뿐이다")
-        for needle in ("scripts/gen_decision_index.py", "정본은 `docs/DECISIONS.md`"):
+        for needle in ("scripts/gen_decision_index.py", "정본은 `docs/DECISIONS.md`", "병합 충돌이 나면 색인 파일을 손으로 합치지 말고 한쪽을 고른 뒤 같은 명령으로 다시 만든다"):
             self.assertIn(needle, lines[0], needle)
+        self.assertIn("같은 파일이거나 이 도구가 만든 색인이 아닌 기존 파일이면 쓰지 않고 거절한다", tools, "도구 표가 출력 가드를 알린다")
         self.assertNotIn(TILDE, lines[0])
         self.assertIsNone(URL.search(lines[0]))
 

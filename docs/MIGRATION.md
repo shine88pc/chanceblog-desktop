@@ -123,7 +123,7 @@ $env:PYTHONPATH = "src"
 
 | 명령 | 이렇게 나오면 정상 | 확인 |
 |---|---|---|
-| `--help` | 명령 목록(`doctor`·`connect`·`new`·… `topics`)과 맨 끝의 '처음이라면: doctor → connect 폴더 → new → …' 줄 | 실행함 |
+| `--help` | 명령 목록(`doctor`·`connect`·`new`·… `topics`)과 맨 끝의 '처음이라면: doctor → connect 폴더 → new → …' 줄. `gui` 는 이 목록에 나오지 않는다(아래 6번에서 따로 연다) | 실행함 |
 | `doctor` | 점검 결과 목록과 끝 줄 `고쳐야 할 것 0개, 주의 N개`. 새 PC 에는 백업·연결한 chanceblog 저장소가 없어 '주의' 가 나오는 것이 정상이다. 읽기만 한다 | 실행함 |
 | `sync_errors.py --check` | `errors/catalog.py 가 문서와 같다.` | 실행함 |
 | `sync_core.py --check` | `vendor/ 가 VENDOR.json 과 같다.` | 실행함 |
@@ -137,8 +137,8 @@ $env:PYTHONPATH = "src"
 ..\chanceblog-venv\Scripts\python scripts/ci_shard.py 3 3
 ```
 
-- CI 가 쓰는 방식이다(세 조각 — 시험 파일 사이를 겹치지 않게 나눈다). 조각 하나를 돌리기 전에 `… ci_shard.py 1 3 --list` 로 그 조각의 시험 파일 이름만 볼 수 있다(2026-11-24 에 세 조각이 104·106·111 개 파일로 나뉘는 것을 확인했다). 하나라도 실패하면 종료 코드가 0 이 아니다.
-- 한 번에 다 돌리는 `python -m unittest discover -s tests`(`AGENTS.md`·`CLAUDE.md` 의 기본 명령)도 같은 시험이다. 시험이 많아(2026-11-24 에 발견되는 시험 13,300개) **오래 걸린다 — 처음에는 한 파일씩 해 보라**: `..\chanceblog-venv\Scripts\python -m unittest discover -s tests -p "test_repo_layout.py"`.
+- CI 가 쓰는 방식이다(세 조각 — 시험 파일 사이를 겹치지 않게 나눈다). 조각 하나를 돌리기 전에 `… ci_shard.py 1 3 --list` 로 그 조각의 시험 파일 이름만 볼 수 있다(조각마다 시험 파일이 몇 개인지는 시험이 늘면 달라지므로 문서에 적지 않고 `--list` 의 줄 수로 센다). 하나라도 실패하면 종료 코드가 0 이 아니다.
+- 한 번에 다 돌리는 `python -m unittest discover -s tests`(`README.md` 의 '개발 방식' 절과 위 §2 의 'AI 가 하는 일' 4번에 적힌 기본 명령)도 같은 시험이다. 시험이 많아(수천 개이고 계속 늘어난다 — 개수는 문서에 적지 않는다) **오래 걸린다 — 처음에는 한 파일씩 해 보라**: `..\chanceblog-venv\Scripts\python -m unittest discover -s tests -p "test_repo_layout.py"`.
 - 시험은 네트워크와 실제 비밀 없이 돌아야 한다(`AGENTS.md` §4). 화면(Qt) 시험은 PySide6 가 있을 때만 돌고(창은 뜨지 않는다 — offscreen) 없으면 통째로 건너뛴다. **정식 CI 에는 PySide6 가 없어 화면 시험이 CI 에서는 건너뛰어진다**(D-32) — 화면 시험은 개발 PC 에서 따로 돌린다.
 - 전체 시험은 이 절을 쓰면서 돌리지 않았다(**확인 못 함**). 새 PC 에서 처음 돌릴 때 실패가 나오면 시험 이름과 메시지를 그대로 알려 달라 — 환경 탓인지 코드 탓인지 가려야 한다. 한 건만 실패하면 그 시험 파일만 다시 돌려 본다.
 
@@ -187,7 +187,7 @@ git status --short
 | `scripts/ci_shard.py` | 시험을 N조각으로 나눠 한 조각만 돌린다(CI 와 같은 방식). `--list` 는 파일 이름만 보여 준다 | 실행함 |
 | `scripts/sync_errors.py` | `TROUBLESHOOTING.md` 의 오류 코드 표에서 `errors/catalog.py` 를 만든다. `--check` 는 쓰지 않고 견주기만 한다 | 실행함 |
 | `scripts/sync_core.py` | chanceblog 의 핵심 코드를 `vendor/` 에 원본 그대로 가져온다. `--check` 는 견주기만 한다([`ARCHITECTURE.md`](ARCHITECTURE.md) §4) | 실행함(`--check`) |
-| `scripts/gen_decision_index.py` | `DECISIONS.md` 에서 결정 색인 [`DECISIONS_INDEX.md`](DECISIONS_INDEX.md) 를 만든다. `--check` 는 견주기만 한다 | 시험이 지킴 |
+| `scripts/gen_decision_index.py` | `DECISIONS.md` 에서 결정 색인 [`DECISIONS_INDEX.md`](DECISIONS_INDEX.md) 를 만든다. `--check` 는 견주기만 한다. `--out` 이 결정 기록과 같은 파일이거나 이 도구가 만든 색인이 아닌 기존 파일이면 쓰지 않고 거절한다(종료 코드 2) | 시험이 지킴 |
 | `scripts/ui_capture.py`·`ui_gallery.py`·`ui_image_check.py`·`ui_bench.py`·`ui_offscreen.py` | 화면 사진·부품 모음·사진 형식 점검·성능(창 없이, PySide6 필요) | 머리글만 읽음 |
 | `packaging/build_package.py` | 시험용 Package 만들기 | `--help` 실행함 |
 | `packaging/gui_entry.py` | 묶음의 시작 파일. 소스에서는 `--selftest` 만 쓴다 | 실행함 |
