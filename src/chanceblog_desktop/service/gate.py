@@ -359,7 +359,7 @@ def run_gates(text, *, local_paths=()):
     if local_path_problem(text, local_paths):
         reasons.append("[LOCAL_PATH] 글에 이 PC 의 폴더 경로가 들어 있다(저장소에 올리지 않는다)")
     if named_secret_spans(_strip_invisible(text)):
-        reasons.append("[NAMED_SECRET] 글에 '비밀번호: 값'·'secret=값' 처럼 이름 뒤에 키·비밀번호로 보이는 값을 적은 글이 있다(저장소에 올리지 않는다) — 그 값을 지우거나 문장으로 바꿔 쓴다")
+        reasons.append("[NAMED_SECRET] 글에 '비밀번호: 값'·'시크릿=값' 처럼 이름 뒤에 키·비밀번호로 보이는 값을 적은 글이 있다(저장소에 올리지 않는다) — 그 값을 지우거나 문장으로 바꿔 쓴다")
     return GateReport(not reasons, tuple(reasons), tuple(warnings), chars, blocking)
 
 

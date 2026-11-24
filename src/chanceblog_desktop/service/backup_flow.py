@@ -33,7 +33,7 @@ from ..content import schema_guard
 from ..content.store import SCHEMA_STATEMENTS, WAL_TEXT, Store, _read_only_uri, same_database, wal_header
 from ..content.store import SCHEMA_VERSION as STORE_SCHEMA_VERSION
 from ..errors import AppError
-from ..security import scan
+from ..security import scan, views
 from ..security.backup_note import CREDENTIAL_NOTE, EXCLUDED, RESTORE_NOTE
 from ..topicdb.backup import MAX_JSON_BYTES, check_json_bytes
 from ..topicdb.store import TopicStore, open_for_write, open_read_only
@@ -735,9 +735,23 @@ def _scan_json_safely(sink, parsed, *place):
 
 
 def _scan_cell(sink, value, area, table, column, ref):
-    if isinstance(value, bytes):
-        value = value.decode("utf-8", "replace")
-    if not isinstance(value, str) or not value:
+    """칸 하나를 훑는다. 앱은 BLOB 칸을 `json.loads(바이트)` 로 읽어 UTF-16·UTF-32 도 읽으므로 바이트는 UTF-8 만이 아니라 여러 모양으로 푼 보기를 모두 훑고, 글은 널 글자를 뺀 모양·이스케이프를 푼 모양도 훑는다
+    (결정 D-683, 감사 AS-S2 권고-3 — 보기만 늘 뿐 예전에 걸리던 것은 그대로 걸린다). 어느 보기에서든 걸리면 거기서 멈춘다(같은 칸의 위치가 여러 번 적히지 않게)."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        shown = views.blob_views(value)
+    elif isinstance(value, str) and value:
+        shown = views.text_views(value)
+    else:
+        return
+    before = len(sink)
+    for view in shown:
+        _scan_cell_text(sink, view, area, table, column, ref)
+        if len(sink) > before:
+            return
+
+
+def _scan_cell_text(sink, value, area, table, column, ref):
+    if not value:
         return
     field = FIELD_LABEL.get((table, column)) or (f"{table}.{column}" if _SAFE_KEY.fullmatch(table) and _SAFE_KEY.fullmatch(column) else "표 안의 글")
     if value[:1] in "{[":
