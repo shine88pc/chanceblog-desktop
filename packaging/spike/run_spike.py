@@ -208,6 +208,7 @@ def cmd_install_tools(ctx):
     ctx.state["job_deadline"] = ctx.host.wall() + JOB_LIMIT_SECONDS
     lock = load_lock()
     tools_dir = ctx.work / "tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
     tools = ctx.state["tools"]
     shown = ctx.host.run(["dotnet", "--version"], timeout=60)
     tools["dotnet"] = {"version": version_text(shown.text())}

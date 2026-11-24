@@ -152,3 +152,9 @@ python -m venv ..\chanceblog-package-venv
 ## 글자 읽기 추가 도구(선택 기능)는 따로 만든다 (D-527 에서 D-533)
 
 사진 속 글자를 이 PC 안에서만 읽는 작업자 프로그램은 본체 Package 와 **별개의 압축 파일**이다 — 만드는 법·운영자가 받는 법·점검 규칙·핀 갱신 정책·막힐 수 있는 곳은 [`PACKAGE_OCR.md`](PACKAGE_OCR.md) 에 있다. 본체 묶음에는 이 도구가 들어가지 않고 본체 빌드 흐름(`package.yml`)과 위의 점검은 그대로다(추가 도구용 점검은 `ocr_addon/build_rules.py` 로 따로 둔다).
+
+## 설치 도구 시험(수동, 병합 뒤 운영자 실행) (D-700 에서 D-708)
+
+설치 파일(Setup)을 만드는 도구를 문서가 아니라 **측정**으로 고르려고 수동 워크플로 한 개와 스크립트를 더했다(운영자 확인 037 ①, 변경 등급 T3 예외 — 설계서 INSTALLER 3-1). 구성: `.github/workflows/installer-spike.yml`(수동 실행만·입력칸 0·읽기 권한만·비밀 0·`package.yml` 과 같은 SHA 고정 액션만·보고서 둘만 올림)과 `packaging/spike/` — `tools.lock.json`(고정 도구 둘의 크기·SHA-256)·`fetch_tools.py`(고정 호스트 하나에서만, 크기·시간 상한, 받은 직후 크기와 SHA-256 이 다르면 지우고 실패)·`run_spike.py`(`install-tools`·`build-bundles`·`pack`·`measure`·`report` 다섯 단계)·`measure.py`(측정 M01에서 M22 와 판정 부품)·`spike_app.py`·`spike_app_sdk.py`(훅 인자·버전·종료 코드를 흉내 내는 작은 앱)·`ChanceBlogSpike.iss`(Inno 스크립트). 세 갈래(A Velopack 과 파이썬 SDK, B Velopack SDK 없이, C Inno Setup)를 같은 PyInstaller 묶음에 적용해 무음 설치·제거·업데이트·훅·한국어·Defender·크기·시간을 재고 관문 G1에서 G8 을 판정한다. 시험 쪽은 이 워크플로의 업로드 모양 둘(`INSTALLER_SPIKE_REPORT.md`·`.json`)을 '올려도 되는 파일 모양' 에 더했다(허용 모양은 정확히 여섯 — 결정 D-344·D-700).
+
+**이 가지는 준비만 한다.** 이 워크플로는 이 PC 에서 실행하지 않았고 병합과 실행은 운영자만 한다(수동 실행은 파일이 main 에 있어야 Run workflow 단추가 보인다). 운영자 안내는 [`INSTALLER_SPIKE_RUN.md`](INSTALLER_SPIKE_RUN.md). 결과로 설치 도구를 정하는 일(점수 다시 매기기)과 `packaging/` 변경 목록은 설계서 I-A 이후 갈래의 몫이다.

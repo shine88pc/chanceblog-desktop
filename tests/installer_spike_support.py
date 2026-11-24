@@ -5,6 +5,7 @@
 """
 import importlib.util
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -278,3 +279,49 @@ def violations(text, reference_refs):
         problems.append(f"비밀 출력 규칙에 걸린다: {wf.secret_output_problems(text)}")
     problems += structure_problems(text, reference_refs)
     return problems
+
+
+# ---- 합성 PE(시험용) ------------------------------------------------------------------------------------------------------------------------
+
+def build_pe(imports=(), delay=(), plus=True, manifest=None):
+    """가져오기 표를 가진 가장 작은 PE 파일(바이트) — 시험용 합성이다."""
+    data = bytearray(0x1000)
+    data[0:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x80)
+    data[0x80:0x84] = b"PE\x00\x00"
+    optional_size = 240 if plus else 224
+    struct.pack_into("<HHIIIHH", data, 0x84, 0x8664 if plus else 0x14C, 1, 0, 0, 0, optional_size, 0x22)
+    optional = 0x98
+    struct.pack_into("<H", data, optional, 0x20B if plus else 0x10B)
+    directory_at = optional + (112 if plus else 96)
+    struct.pack_into("<I", data, directory_at - 4, 16)
+    section_at = optional + optional_size
+    data[section_at:section_at + 8] = b".idata\x00\x00"
+    struct.pack_into("<IIII", data, section_at + 8, 0x800, 0x2000, 0x800, 0x400)
+    raw, base_rva = 0x400, 0x2000
+    cursor = 0x400 + 0x300                                  # 이름 글을 두는 자리(앞쪽 0x300 은 표용)
+    names_at = {}
+    for name in list(imports) + list(delay):
+        names_at[name] = cursor
+        data[cursor:cursor + len(name) + 1] = name.encode("ascii") + b"\x00"
+        cursor += len(name) + 2
+
+    def rva_of(offset):
+        return base_rva + (offset - raw)
+
+    table = raw
+    for name in imports:
+        struct.pack_into("<IIIII", data, table, 0, 0, 0, rva_of(names_at[name]), 0)
+        table += 20
+    import_size = table + 20 - raw
+    delay_table = raw + 0x180
+    for name in delay:
+        struct.pack_into("<IIIIIIII", data, delay_table, 1, rva_of(names_at[name]), 0, 0, 0, 0, 0, 0)
+        delay_table += 32
+    if imports:
+        struct.pack_into("<II", data, directory_at + 8, rva_of(raw), import_size)
+    if delay:
+        struct.pack_into("<II", data, directory_at + 8 * 13, rva_of(raw + 0x180), len(delay) * 32 + 32)
+    if manifest:
+        data[0xE00:0xE00 + len(manifest)] = manifest
+    return bytes(data)

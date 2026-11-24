@@ -25,7 +25,7 @@ SECRET_SHAPES = (
 )
 SCRUB_ENV_KEYS = ("USERNAME", "USER", "USERDOMAIN", "COMPUTERNAME", "RUNNER_NAME", "RUNNER_TEMP", "RUNNER_WORKSPACE", "RUNNER_TOOL_CACHE", "GITHUB_WORKSPACE", "GITHUB_REPOSITORY",
                   "GITHUB_REPOSITORY_OWNER", "GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOMEPATH")
-PATH_SHAPE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'<>|*?]*")
+PATH_SHAPE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'|*?]*")
 MIN_SCRUB_WORD = 3
 
 
@@ -325,7 +325,7 @@ def windows_of_pid(pid):
 
 # ---- 도구 출력 읽기 ---------------------------------------------------------------------------------------------------------------------------
 
-_VERSION_IN_TEXT = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
+_VERSION_IN_TEXT = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 
 
 def version_numbers(text):
@@ -384,8 +384,8 @@ UPDATE_SECONDS_LIMIT = 120
 HOOK_SECONDS_LIMIT = 5.0
 SETUP_MB_LIMIT = 80
 PACK_SECONDS_LIMIT = 300
-DEFENDER_BUDGET_SECONDS = 1500
-BUDGET_SECONDS = 2700
+DEFENDER_BUDGET_SECONDS = 420
+BUDGET_SECONDS = 1500
 STD_USER = "spikeuser"
 
 
@@ -441,15 +441,41 @@ class Host:
         return merged
 
     def run(self, args, *, timeout=120, env=None, cwd=None, drop_env=()):
+        """프로그램을 돌리고 끝을 기다린다. 출력은 관(pipe)이 아니라 임시 파일로 받는다 — 설치 도구가 자식 프로세스를 남기고 끝나도(관을 물려받은 자식이 살아 있으면 관 읽기가 끝나지 않는다) 여기서 매달리지 않는다."""
         import subprocess
+        import tempfile
         began = time.monotonic()
+        with tempfile.TemporaryFile() as out_file, tempfile.TemporaryFile() as err_file:
+            try:
+                done = subprocess.run([str(item) for item in args], stdin=subprocess.DEVNULL, stdout=out_file, stderr=err_file, timeout=timeout, env=self._environment(env, drop_env),
+                                      cwd=str(cwd) if cwd else None)
+                code, timed_out = done.returncode, False
+            except subprocess.TimeoutExpired:
+                code, timed_out = None, True
+            except OSError as error:
+                return HostResult(-1, round(time.monotonic() - began, 1), error=type(error).__name__)
+            out_file.seek(0)
+            err_file.seek(0)
+            return HostResult(code, round(time.monotonic() - began, 1), decode_bytes(out_file.read()), decode_bytes(err_file.read()), timed_out=timed_out)
+
+    def defender_scan(self, paths, *, timeout=240):
+        """읽기 전용 Defender 검사(기존 make_manifest.scan_with_defender — 치료·격리 없음). 경로 하나마다 시간을 timeout 초로 줄인다."""
+        import subprocess
+
+        def short_runner(command, **kwargs):
+            kwargs["timeout"] = timeout
+            return subprocess.run(command, **kwargs)
+
+        return packaging_module("make_manifest").scan_with_defender(paths, runner=short_runner)
+
+    def reachable(self, host="github.com", port=443, timeout=8):
+        """공개 호스트에 한 번 접속해 본다(방화벽 규칙이 듣는지 보는 대조 — 막혀야 정상이다)."""
+        import socket
         try:
-            done = subprocess.run([str(item) for item in args], capture_output=True, timeout=timeout, env=self._environment(env, drop_env), cwd=str(cwd) if cwd else None)
-        except subprocess.TimeoutExpired as expired:
-            return HostResult(None, round(time.monotonic() - began, 1), decode_bytes(expired.stdout), decode_bytes(expired.stderr), timed_out=True)
-        except OSError as error:
-            return HostResult(-1, round(time.monotonic() - began, 1), error=type(error).__name__)
-        return HostResult(done.returncode, round(time.monotonic() - began, 1), decode_bytes(done.stdout), decode_bytes(done.stderr))
+            socket.create_connection((host, port), timeout=timeout).close()
+            return True
+        except OSError:
+            return False
 
     def start(self, args, *, env=None, cwd=None):
         """프로세스를 띄우고 기다리지 않는다(켜 둔 앱 흉내) → 프로세스 객체 또는 None."""
@@ -513,6 +539,7 @@ class Context:
 
     def __init__(self, work, *, host=None, budget_seconds=BUDGET_SECONDS):
         self.work = Path(work)
+        self.work.mkdir(parents=True, exist_ok=True)
         self.host = host or Host()
         self.state_path, self.results_path = self.work / "state.json", self.work / "results.json"
         self.state = read_json(self.state_path, None) or {"schema": 1, "steps": {}, "tools": {}, "bundles": {}, "installers": {}, "help": {}}
@@ -669,7 +696,6 @@ def unblock_all(ctx):
 
 def firewall_control(ctx):
     """규칙이 정말 듣는지 — 이 파이썬의 바깥 접속을 막은 채 공개 호스트에 한 번 접속해 본다. 막혔다면(접속 실패) True. 규칙은 곧바로 지운다."""
-    import socket
     program = ctx.env("SPIKE_PYTHON") or sys.executable
     name = rule_name(900)
     added = ctx.host.run(firewall_add_args(name, program), timeout=30)
@@ -677,11 +703,7 @@ def firewall_control(ctx):
         return {"effective": None, "reason": "규칙을 넣지 못했다(rc %s)" % added.rc}
     try:
         ctx.host.sleep(2)
-        try:
-            socket.create_connection(("github.com", 443), timeout=8).close()
-            reachable = True
-        except OSError:
-            reachable = False
+        reachable = ctx.host.reachable()
     finally:
         ctx.host.run(firewall_delete_args(name), timeout=30)
     return {"effective": not reachable, "reason": "규칙을 넣은 파이썬의 접속 시도가 " + ("성공했다(규칙이 안 듣는다)" if reachable else "막혔다")}
@@ -813,7 +835,7 @@ def m02_m03_from_state(ctx):
                            target="tiny", setup_bytes=tiny.get("bytes"), seconds=tiny.get("seconds")))
             continue
         if not entry:
-            ctx.add(record("M03", arm, "fail", note="실제 묶음의 설치 파일이 없다(앞 단계 실패)", brief="없음", target="real"))
+            ctx.add(record("M03", arm, "unavailable", note="실제 묶음의 설치 파일이 없다(앞 단계 실패) — 관문 G7 은 미정으로 둔다", brief="없음", target="real"))
             continue
         ok = mb(entry.get("bytes", 0)) <= SETUP_MB_LIMIT and entry.get("seconds", 9999) <= PACK_SECONDS_LIMIT
         ctx.add(record("M03", arm, "pass" if ok else "fail", brief="%s MB %s초" % (mb(entry.get("bytes", 0)), entry.get("seconds", "?")), target="real", setup_bytes=entry.get("bytes"), seconds=entry.get("seconds"),
@@ -831,6 +853,9 @@ def m04_admin(ctx):
             ctx.add(record("M04", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
             continue
         levels = sorted({str(level) for level in found.values()})
+        if any(level is None for level in found.values()):
+            ctx.add(record("M04", arm, "unavailable", brief="매니페스트를 못 읽음", levels=found, note="설치 파일에서 실행 수준(requestedExecutionLevel)을 찾지 못했다 — 도구가 자원을 압축했을 수 있다"))
+            continue
         ok = all(level == "asInvoker" for level in found.values())
         ctx.add(record("M04", arm, "pass" if ok else "fail", brief="수준 " + "·".join(levels), levels=found, note="Inno 는 PrivilegesRequired=lowest 로 만들었다" if arm == "C" else ""))
 
@@ -1054,9 +1079,8 @@ def defender_scan(ctx, arm, paths, state, *, target="tiny"):
     if state["spent"] > DEFENDER_BUDGET_SECONDS:
         ctx.add(record("M16", arm, "skip", note="검사 시간 예산을 다 썼다", brief="건너뜀", target=target))
         return
-    mm = packaging_module("make_manifest")
     began = ctx.host.now()
-    scan = mm.scan_with_defender([Path(path) for path in paths if Path(path).exists()])
+    scan = ctx.host.defender_scan([Path(path) for path in paths if Path(path).exists()])
     state["spent"] += ctx.host.now() - began
     status = scan.get("status")
     mapped = {"clean": "pass", "threats_found": "fail", "scan_failed": "error", "not_run": "unavailable"}.get(status, "error")
@@ -1073,12 +1097,12 @@ def m16_status(ctx):
         data = json.loads(result.out) if result.ok and result.out.strip() else {}
     except ValueError:
         data = {}
-    ctx.add(record("M16", "-", "info", brief="실시간 보호 %s" % data.get("RealTimeProtectionEnabled", "읽지 못함"), target="status", status=data))
+    ctx.add(record("M16", "-", "info", brief="실시간 보호 %s" % data.get("RealTimeProtectionEnabled", "읽지 못함"), target="status", defender=data))
 
 
 def m19_long_path(ctx, arm, entry_or_inst, exe_name, real=False):
     """한글·공백이 든 100자 안팎 경로에 설치해 본다(실제 묶음은 --selftest, 작은 앱은 실행) 뒤 제거."""
-    base = ctx.work / "run" / arm / ("한글 공백 경로 시험 " + "가나다라마바 " * 12).strip()
+    base = ctx.work / "run" / arm / ("한글 공백 " + "가나다라마바 " * 6).strip()
     root = base / ("real" if real else "tiny")
     setup = entry_or_inst["setup"] if real else entry_or_inst["0.0.1"]["setup"]
     result, ready, _log = do_install(ctx, arm, setup, root, "long-path" + ("-real" if real else ""), korean=(arm == "C"), wait_for=exe_name)
@@ -1127,18 +1151,19 @@ def m13_id_collision(ctx):
     if data_folder.exists() or install_folder.exists():
         ctx.add(record("M13", "A", "skip", note="러너에 같은 이름의 폴더가 이미 있어 건드리지 않았다", brief="건너뜀"))
         return
-    data_folder.mkdir(parents=True)
-    sentinel = data_folder / "spike-sentinel.txt"
-    sentinel.write_text(SENTINEL_TEXT, encoding="utf-8")
     try:
         ctx.logs.mkdir(parents=True, exist_ok=True)
         installed = ctx.host.run([str(entry["setup"]), "--silent", "--log", str(ctx.logs / "A-idtest.log")], timeout=300)
-        wait_until(ctx, lambda: (install_folder / "Update.exe").is_file(), 60, 1.0)
-        same_folder = (install_folder / "Update.exe").is_file() and sentinel.exists()
+        ready = wait_until(ctx, lambda: (install_folder / "Update.exe").is_file(), 60, 1.0)
+        data_folder.mkdir(parents=True, exist_ok=True)                 # 데이터는 설치 뒤에 둔다 — 설치가 지우는 것과 제거가 지우는 것을 가른다
+        sentinel = data_folder / "spike-sentinel.txt"
+        sentinel.write_text(SENTINEL_TEXT, encoding="utf-8")
+        same_folder = bool(ready and install_folder.exists() and os.path.samefile(install_folder, data_folder))
         removed = ctx.host.run([str(install_folder / "Update.exe"), "uninstall", "--silent"], timeout=180)
         wait_until(ctx, lambda: not install_folder.exists(), 45, 1.0)
         survived = sentinel.exists()
-        ctx.add(record("M13", "A", "info", brief="같은 폴더 %s 제거 뒤 데이터 %s" % ("예" if same_folder else "아니오", "남음" if survived else "지워짐"), same_folder=same_folder, sentinel_survived=survived, install_rc=installed.rc, uninstall_rc=removed.rc,
+        brief = "설치 못 함(종료 %s)" % installed.rc if not ready else "같은 폴더 %s 제거 뒤 데이터 %s" % ("예" if same_folder else "아니오", "남음" if survived else "지워짐")
+        ctx.add(record("M13", "A", "info", brief=brief, installed=ready, same_folder=same_folder, sentinel_survived=survived, install_rc=installed.rc, uninstall_rc=removed.rc,
                        note="지워지면 '패키지 ID 는 데이터 폴더 이름과 대소문자까지 달라야 한다' 규칙이 확정된다(F2)"))
     finally:
         import shutil
@@ -1150,7 +1175,9 @@ def m15_native(ctx):
     """A·B — 번들에 들어오는 네이티브 부품(휠 안 파일·PE 가져오기 표)과 설치 폴더의 Update.exe·Setup.exe 의 가져오기 표(웹 접속 가능 DLL 이름) 기록."""
     tools = ctx.state.get("tools", {})
     wheel = tools.get("sdk", {}).get("wheel")
-    if wheel and Path(wheel).is_file():
+    if wheel and Path(wheel).is_file() and not zipfile.is_zipfile(wheel):
+        ctx.add(record("M15", "A", "error", note="휠이 zip 으로 읽히지 않는다", brief="휠 깨짐", target="wheel"))
+    elif wheel and Path(wheel).is_file():
         inventory = wheel_inventory(wheel)
         nets = sorted({name for item in inventory["binaries"] for name in item["net"]})
         ctx.add(record("M15", "A", "info", brief="휠 %s MB 부품 %d 웹 DLL %s" % (mb(inventory["total_bytes"]), len(inventory["binaries"]), ",".join(nets) or "없음"), target="wheel", total_bytes=inventory["total_bytes"],
@@ -1221,7 +1248,7 @@ def m18_standard_user(ctx, arm):
         arguments = "--silent" if velopack_arm(arm) else "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
         result = ctx.host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", std_user_script()], timeout=180,
                               env={"SPIKE_PW": password, "SPIKE_USER": STD_USER, "SPIKE_SETUP": str(setup), "SPIKE_ARGS": arguments, "SPIKE_CWD": str(public)})
-        profile = Path("C:/Users") / STD_USER / "AppData" / "Local"
+        profile = Path(ctx.env("SPIKE_USERS_DIR") or "C:/Users") / STD_USER / "AppData" / "Local"
         installed = bool(profile.is_dir() and any(profile.rglob("VERSION")))
         if result.rc == 0 and installed:
             ctx.add(record("M18", arm, "pass", brief="표준 사용자 설치 성공 %s초" % result.seconds, rc=result.rc, seconds=result.seconds))

@@ -44,3 +44,7 @@ Velopack 의 롤백·서명 검증은 '문서에 없음'일 뿐 코드는 미확
 **설치 시험 항목(화면, D-32)**: 설치 파일에 PySide6 와 함께 **JPG·PNG·WebP 를 읽는 Qt 이미지 형식 플러그인**(`PySide6/plugins/imageformats` 의 `qjpeg`·`qwebp`)이 들어갔는지, 설치된 환경에서 `QImageReader.supportedImageFormats()` 에 `jpeg`·`png`·`webp` 가 있는지, 실제 윈도 125%·150% 화면·한글 입력기·화면 읽기 프로그램에서 홈 화면이 잘리지 않는지 확인한다([`UI_IMAGES.md`](UI_IMAGES.md) §4, [`UI_VISUAL_QA.md`](UI_VISUAL_QA.md) §6).
 
 **라이선스 확인(화면, D-32)**: **PySide6(Qt for Python)는 LGPL 이다.** 개발·시험에 쓰는 것은 문제없지만 PySide6 를 설치 파일에 넣어 배포하기 전에는 ① 고지(저작권·라이선스 문구·LGPL 전문·소스를 얻는 방법을 설치 파일·앱 안 '정보' 에 싣기) ② 재배포 조건(사용자가 PySide6·Qt 라이브러리를 바꿔 끼울 수 있게 동적 링크 상태로 두는 것 — 단일 파일로 합치거나 정적으로 묶는 방식은 조건을 따져 봐야 한다) 을 검토해야 한다. 앱 자체의 라이선스가 미정(D-13)이라 그 결정과 함께 정한다.
+
+## 설치 도구 시험(수동, 병합 뒤 운영자 실행)
+
+위 '방식' 의 도구 선택(Velopack 1순위·Inno Setup 2순위)은 아직 측정으로 확인되지 않았다. 그래서 수동 워크플로 `installer-spike.yml` 과 `packaging/spike/` 스크립트를 더했다(운영자 확인 037 ①, 결정 D-700 에서 D-708 — 설치 도구 시험 한 번의 결과로 D-04 를 '선택됨' 에서 '확정' 으로 바꾸거나 2순위로 간다). 이 시험은 릴리스가 아니다: 태그·릴리스·서명·시크릿이 없고, 올리는 것은 보고서 둘(14일 보관)뿐이다. 실행 방법은 [`INSTALLER_SPIKE_RUN.md`](INSTALLER_SPIKE_RUN.md), 구성과 한계는 [`PACKAGE.md`](PACKAGE.md) 의 같은 이름 절.
