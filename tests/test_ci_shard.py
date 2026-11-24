@@ -8,6 +8,8 @@
   4) 작은 가짜 시험 폴더로 실제 실행: 조각마다 자기 파일만 돌고, 실패하는 파일과 불러오기에 실패하는 파일이 그 조각을 빨갛게 만든다.
   5) `ci.yml` 의 조각 목록(`shard: [1, 2, 3]`)과 `CI_SHARD_TOTAL` 이 같고, `run:` 안에 `${{ }}` 가 없고, `fail-fast: false` 가 그대로다.
 """
+import ast
+import io
 import os
 import re
 import subprocess
@@ -16,6 +18,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "ci_shard.py"
@@ -243,6 +246,305 @@ class CiWorkflowShardTest(unittest.TestCase):
         self.assertIn("fail-fast: false", self.stripped)
         for needle in ("windows-latest", "ubuntu-latest", "'3.10'", "'3.12'"):
             self.assertIn(needle, self.text)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+# 정식 CI 의 Qt 칸(`ci.yml` 의 `qt` 잡, D-710–D-713): `CI_REQUIRE_QT=1` 이면 PySide6 가 없어 건너뛰어졌는데 초록이 되는 일이 없다 — 가드 시험.
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+PASSING_MODULE = "import unittest\nclass P(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"
+FAILING_MODULE = "import unittest\nclass F(unittest.TestCase):\n    def test_bad(self):\n        self.fail('일부러 실패')\n"
+SLOW_MODULE = "import time\nimport unittest\nclass W(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.4)\n"
+
+
+def skipping_module(reason, count=2):
+    """클래스 전체를 `reason` 으로 건너뛰는 가짜 시험 파일(시험 `count` 개)."""
+    methods = "".join(f"    def test_{index}(self):\n        pass\n" for index in range(count))
+    return f"import unittest\n@unittest.skip({reason!r})\nclass S(unittest.TestCase):\n{methods}"
+
+
+SET_UP_CLASS_SKIP = "import unittest\nclass S(unittest.TestCase):\n    @classmethod\n    def setUpClass(cls):\n        raise unittest.SkipTest('PySide6 가 없다')\n    def test_a(self):\n        pass\n"
+MODULE_SKIP = "import unittest\nraise unittest.SkipTest('PySide6 가 없다')\n"
+
+DRIVER = textwrap.dedent('''
+    import sys
+    sys.path.insert(0, sys.argv[1])
+    import ci_shard
+    installed = sys.argv[2] == "yes"
+    ci_shard.qt_installed = lambda: installed        # PySide6 가 깔렸는지를 환경과 상관없이 정한다 — 나머지(가드·러너)는 진짜 코드다
+    sys.exit(ci_shard.main(sys.argv[3:]))
+''')
+
+
+def run_driver(installed, *args, flag=None):
+    env = dict(os.environ, PYTHONUTF8="1")
+    for name in ("CI_SHARD", "CI_SHARD_TOTAL", "CI_REQUIRE_QT"):
+        env.pop(name, None)
+    if flag is not None:
+        env["CI_REQUIRE_QT"] = flag
+    return subprocess.run([sys.executable, "-X", "utf8", "-c", DRIVER, str(ROOT / "scripts"), "yes" if installed else "no", *args],
+                          capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=300)
+
+
+class QtFlagTest(unittest.TestCase):
+    def test_only_one_turns_the_guard_on_and_zero_or_nothing_turns_it_off(self):
+        self.assertIs(ci_shard.qt_required({"CI_REQUIRE_QT": "1"}), True)
+        for off in ({}, {"CI_REQUIRE_QT": ""}, {"CI_REQUIRE_QT": "0"}):
+            self.assertIs(ci_shard.qt_required(off), False, off)
+
+    def test_any_other_value_is_refused_so_a_typo_cannot_switch_the_guard_off_silently(self):
+        for value in ("true", "yes", "on", "2", " 1", "1 ", "01", "True", "ㅣ", "-1"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ci_shard.qt_required({"CI_REQUIRE_QT": value})
+
+    def test_the_flag_name_and_the_word_are_the_documented_ones(self):
+        self.assertEqual((ci_shard.QT_FLAG, ci_shard.QT_WORD), ("CI_REQUIRE_QT", "pyside6"))
+
+    def test_qt_installed_asks_the_same_question_the_qt_test_files_ask(self):
+        with mock.patch.object(ci_shard.importlib.util, "find_spec", return_value=None) as asked:
+            self.assertIs(ci_shard.qt_installed(), False)
+            asked.assert_called_once_with("PySide6")
+        with mock.patch.object(ci_shard.importlib.util, "find_spec", return_value=object()):
+            self.assertIs(ci_shard.qt_installed(), True)
+
+
+class QtSkipReportTest(unittest.TestCase):
+    """진짜 `unittest` 가 만든 `result.skipped` 로 — 시험 파일을 찾아 PySide6 이유와 그 밖의 이유를 가른다."""
+
+    def skips(self):
+        class Plain(unittest.TestCase):
+            @unittest.skip("PySide6 가 설치되어 있지 않다")
+            def test_a(self):
+                pass
+
+            @unittest.skip("git 이 필요하다")
+            def test_b(self):
+                pass
+
+        class Shout(unittest.TestCase):
+            @unittest.skip("PYSIDE6 NOT INSTALLED")
+            def test_c(self):
+                pass
+
+            @unittest.skip("pyside6\n가 없다")
+            def test_d(self):
+                pass
+
+        class SetUp(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                raise unittest.SkipTest("PySide6 가 없다")
+
+            def test_e(self):
+                pass
+
+        suite = unittest.TestSuite([Plain("test_a"), Plain("test_b"), Shout("test_c"), Shout("test_d"), SetUp("test_e")])
+        return unittest.TextTestRunner(stream=io.StringIO()).run(suite).skipped
+
+    def test_pyside6_reasons_are_counted_per_file_in_any_case_and_other_reasons_are_grouped(self):
+        qt, other = ci_shard.qt_skip_report(self.skips())
+        self.assertEqual(qt, {__name__: 4}, "대문자·소문자·줄바꿈이 낀 이유·setUpClass 에서 건너뛴 것까지 모두 이 파일 것으로 센다")
+        self.assertEqual(other, {"git 이 필요하다": 1})
+
+    def test_a_class_level_skip_is_found_in_its_file_even_when_the_class_name_has_odd_characters(self):
+        holders = [test for test, _reason in self.skips() if type(test).__name__ == "_ErrorHolder"]
+        self.assertEqual(len(holders), 1, "setUpClass 에서 건너뛴 것은 시험 자리 표시(_ErrorHolder)로 온다")
+        self.assertEqual(ci_shard.skipped_module(holders[0]), __name__)
+
+    def test_a_skip_without_the_word_is_not_a_qt_skip(self):
+        qt, other = ci_shard.qt_skip_report([(unittest.FunctionTestCase(lambda: None), "관리자(root)는 읽기 전용 파일도 쓸 수 있다")])
+        self.assertEqual((qt, sum(other.values())), ({}, 1))
+
+    def test_nothing_skipped_is_an_empty_report(self):
+        self.assertEqual(ci_shard.qt_skip_report([]), ({}, {}))
+
+
+class QtGuardRunTest(unittest.TestCase):
+    """작은 가짜 시험 폴더로 진짜 `ci_shard.main` 을 자식 프로세스에서 돌린다(PySide6 가 깔렸는지만 환경과 상관없이 정한다)."""
+
+    def folder(self, **modules):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        for name, source in modules.items():
+            (Path(temp.name) / f"{name}.py").write_text(source, encoding="utf-8")
+        return f"--tests-dir={temp.name}"
+
+    def test_without_the_flag_qt_skips_stay_a_normal_green_and_nothing_extra_is_printed(self):
+        folder = self.folder(test_pass=PASSING_MODULE, test_qt_skip=skipping_module("PySide6 가 설치되어 있지 않다"))
+        for installed in (False, True):
+            done = run_driver(installed, "1", "1", folder)
+            self.assertEqual(done.returncode, 0, done.stderr[-400:])
+            self.assertNotIn("Qt 칸", done.stderr)
+            self.assertNotIn("건너뛴 시험", done.stdout)
+            self.assertNotIn("걸린 시간", done.stdout)
+
+    def test_zero_and_an_empty_value_also_leave_the_guard_off(self):
+        folder = self.folder(test_qt_skip=skipping_module("PySide6 가 설치되어 있지 않다"))
+        for flag in ("0", ""):
+            self.assertEqual(run_driver(False, "1", "1", folder, flag=flag).returncode, 0, repr(flag))
+
+    def test_the_flag_without_pyside6_exits_three_before_any_test_runs(self):
+        done = run_driver(False, "1", "1", self.folder(test_pass=PASSING_MODULE), flag="1")
+        self.assertEqual(done.returncode, 3, done.stderr[-400:])
+        self.assertIn("PySide6", done.stderr)
+        self.assertNotIn("Ran ", done.stderr)
+        self.assertNotIn("조각 1/1", done.stdout)
+
+    def test_the_flag_with_pyside6_and_no_pyside6_skips_passes_and_prints_the_information(self):
+        folder = self.folder(test_pass=PASSING_MODULE, test_git=skipping_module("git 이 필요하다", count=3))
+        done = run_driver(True, "1", "1", folder, flag="1")
+        self.assertEqual(done.returncode, 0, done.stderr[-400:])
+        self.assertIn("PySide6 이유 0개", done.stdout)
+        self.assertIn("3개  git 이 필요하다", done.stdout)
+        self.assertIn("시험 파일별 걸린 시간", done.stdout)
+        self.assertIn("test_git", done.stdout)
+        self.assertNotIn("Qt 칸:", done.stderr)
+
+    def test_a_pyside6_skip_exits_one_and_names_the_file_and_the_count(self):
+        folder = self.folder(test_pass=PASSING_MODULE, test_qt_skip=skipping_module("PySide6 가 설치되어 있지 않다", count=2))
+        done = run_driver(True, "1", "1", folder, flag="1")
+        self.assertEqual(done.returncode, 1, done.stderr[-400:])
+        self.assertIn("test_qt_skip: 2개", done.stderr)
+        self.assertNotIn("test_pass:", done.stderr)
+        self.assertIn("PySide6 이유 2개", done.stdout)
+        self.assertIn("OK", done.stderr, "시험 자체는 모두 통과했다 — 가드가 따로 빨갛게 만든 것이다")
+
+    def test_the_word_is_matched_in_any_case_and_inside_a_longer_sentence(self):
+        for reason in ("pyside6 가 없다", "PYSIDE6", "Pyside6", "화면 도구 PySide6 설치가 필요하다 — 이 칸에는 없다"):
+            with self.subTest(reason=reason):
+                done = run_driver(True, "1", "1", self.folder(test_x=skipping_module(reason, count=1)), flag="1")
+                self.assertEqual(done.returncode, 1, done.stderr[-300:])
+                self.assertIn("test_x: 1개", done.stderr)
+
+    def test_a_skip_inside_set_up_class_and_a_skip_when_the_file_is_loaded_are_caught_too(self):
+        done = run_driver(True, "1", "1", self.folder(test_set_up=SET_UP_CLASS_SKIP), flag="1")
+        self.assertEqual(done.returncode, 1, done.stderr[-300:])
+        self.assertIn("test_set_up: 1개", done.stderr)
+        done = run_driver(True, "1", "1", self.folder(test_module_skip=MODULE_SKIP), flag="1")
+        self.assertEqual(done.returncode, 1, done.stderr[-300:])
+        self.assertIn("test_module_skip: 1개", done.stderr)
+
+    def test_other_reasons_are_only_information_and_do_not_fail_the_chamber(self):
+        folder = self.folder(test_pass=PASSING_MODULE, test_a=skipping_module("이 환경에서는 링크를 만들 수 없다", count=2), test_b=skipping_module("git 이 필요하다", count=1))
+        done = run_driver(True, "1", "1", folder, flag="1")
+        self.assertEqual(done.returncode, 0, done.stderr[-300:])
+        self.assertIn("그 밖의 이유 3개", done.stdout)
+        self.assertIn("2개  이 환경에서는 링크를 만들 수 없다", done.stdout)
+
+    def test_a_real_failure_still_fails_and_the_information_is_still_printed(self):
+        done = run_driver(True, "1", "1", self.folder(test_bad=FAILING_MODULE, test_git=skipping_module("git 이 필요하다", count=1)), flag="1")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("일부러 실패", done.stderr)
+        self.assertIn("건너뛴 시험", done.stdout)
+
+    def test_a_failure_and_a_pyside6_skip_together_still_exit_one_and_report_both(self):
+        done = run_driver(True, "1", "1", self.folder(test_bad=FAILING_MODULE, test_qt_skip=skipping_module("PySide6 가 없다", count=1)), flag="1")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("일부러 실패", done.stderr)
+        self.assertIn("test_qt_skip: 1개", done.stderr)
+
+    def test_an_unknown_flag_value_exits_two_and_runs_nothing(self):
+        folder = self.folder(test_pass=PASSING_MODULE)
+        for flag in ("true", "yes", "2", " 1", "on"):
+            with self.subTest(flag=flag):
+                done = run_driver(True, "1", "1", folder, flag=flag)
+                self.assertEqual(done.returncode, 2, done.stderr[-300:])
+                self.assertNotIn("Ran ", done.stderr)
+                self.assertIn("CI_REQUIRE_QT", done.stderr)
+
+    def test_list_mode_ignores_the_requirement_because_nothing_runs(self):
+        done = run_driver(False, "1", "1", "--list", self.folder(test_pass=PASSING_MODULE), flag="1")
+        self.assertEqual(done.returncode, 0, done.stderr[-300:])
+        self.assertEqual(done.stdout.split(), ["test_pass"])
+
+    def test_the_slowest_file_is_listed_first_in_the_time_table(self):
+        done = run_driver(True, "1", "1", self.folder(test_a_fast=PASSING_MODULE, test_z_slow=SLOW_MODULE), flag="1")
+        self.assertEqual(done.returncode, 0, done.stderr[-300:])
+        table = done.stdout.split("시험 파일별 걸린 시간", 1)[1]
+        self.assertLess(table.index("test_z_slow"), table.index("test_a_fast"), table)
+
+    def test_the_real_script_without_pyside6_on_its_path_exits_three(self):
+        # 가짜 대신 진짜 `qt_installed()`: `-S` 로 site-packages 를 빼면 환경이 어떻든 PySide6 를 못 찾는다.
+        folder = self.folder(test_pass=PASSING_MODULE)
+        env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "CI_SHARD", "CI_SHARD_TOTAL")}
+        env.update(PYTHONUTF8="1", CI_REQUIRE_QT="1")
+        done = subprocess.run([sys.executable, "-S", "-X", "utf8", str(SCRIPT), "1", "1", folder], capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=300)
+        self.assertEqual(done.returncode, 3, done.stderr[-400:])
+        self.assertNotIn("Ran ", done.stderr)
+
+
+def qt_flag_names(source, tree):
+    """이 파일에서 `find_spec("PySide6")` 로 정해지는 이름들(보통 HAVE) + 다른 시험 파일에서 가져오는 `HAVE`."""
+    names = {"HAVE"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and "PySide6" in (ast.get_source_segment(source, node.value) or ""):
+            names |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+    return names
+
+
+def qt_skip_problems(source):
+    """한 시험 파일 소스에서 Qt 깃발(`HAVE` 등)을 조건으로 건너뛰는 `skipUnless`·`skipIf` 를 찾아 → (찾은 개수, 이유에 PySide6 가 없는 곳들의 설명)."""
+    tree = ast.parse(source)
+    names = "|".join(re.escape(name) for name in sorted(qt_flag_names(source, tree)))
+    flag = re.compile(r"(?<![A-Za-z_0-9])(?:[A-Za-z_][A-Za-z_0-9]*\.)?(?:" + names + r")(?![A-Za-z_0-9])")
+    found, problems = 0, []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name)) and node.args):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        if name not in ("skipUnless", "skipIf"):
+            continue
+        condition = ast.get_source_segment(source, node.args[0]) or ""
+        if not flag.search(condition):
+            continue
+        found += 1
+        reason = node.args[1] if len(node.args) > 1 else None
+        if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
+            text = reason.value
+        elif isinstance(reason, ast.JoinedStr):
+            text = "".join(part.value for part in reason.values if isinstance(part, ast.Constant))
+        else:
+            problems.append(f"{node.lineno}줄: 건너뜀 이유가 글자 그대로가 아니다")
+            continue
+        if "pyside6" not in text.casefold():
+            problems.append(f"{node.lineno}줄: 건너뜀 이유에 PySide6 낱말이 없다({text[:30]!r})")
+    return found, problems
+
+
+class QtSkipWordRuleTest(unittest.TestCase):
+    """Qt 칸의 가드는 건너뜀 이유의 PySide6 낱말로 '못 돌았다' 를 알아본다 — 새 Qt 시험 파일이 다른 문구로 건너뛰어 가드를 피해 가지 못하게 정적으로 지킨다(설계서 CIQT 3-3)."""
+
+    GOOD = "import importlib.util, unittest\nHAVE = importlib.util.find_spec('PySide6') is not None\n@unittest.skipUnless(HAVE, 'PySide6 가 설치되어 있지 않다')\nclass A(unittest.TestCase):\n    pass\n"
+
+    def test_every_qt_skip_in_the_real_tests_names_pyside6_in_its_reason(self):
+        total, problems = 0, []
+        for path in sorted((ROOT / "tests").glob("test*.py")):
+            found, bad = qt_skip_problems(path.read_text(encoding="utf-8"))
+            total += found
+            problems += [f"{path.name} {item}" for item in bad]
+        self.assertGreater(total, 60, "Qt 깃발로 건너뛰는 곳을 실제로 훑는다(훑기가 깨지면 이 시험이 아무것도 안 본 채 통과하지 않게)")
+        self.assertEqual(problems, [])
+
+    def test_the_scanner_accepts_the_good_shape_and_ignores_other_skips(self):
+        self.assertEqual(qt_skip_problems(self.GOOD), (1, []))
+        other = "import unittest, shutil\nHAVE_GIT = shutil.which('git')\n@unittest.skipUnless(HAVE_GIT, 'git 이 필요하다')\nclass A(unittest.TestCase):\n    pass\n"
+        self.assertEqual(qt_skip_problems(other), (0, []))
+
+    def test_the_scanner_catches_a_reason_without_the_word_or_a_non_literal_reason(self):
+        bad_word = self.GOOD.replace("PySide6 가 설치되어 있지 않다", "화면 도구가 없다")
+        self.assertEqual(qt_skip_problems(bad_word)[0], 1)
+        self.assertEqual(len(qt_skip_problems(bad_word)[1]), 1)
+        dynamic = self.GOOD.replace("'PySide6 가 설치되어 있지 않다'", "REASON")
+        self.assertEqual(len(qt_skip_problems(dynamic)[1]), 1)
+        no_reason = self.GOOD.replace(", 'PySide6 가 설치되어 있지 않다'", "")
+        self.assertEqual(len(qt_skip_problems(no_reason)[1]), 1)
+
+    def test_the_scanner_follows_flag_names_other_than_have_and_flags_taken_from_other_modules(self):
+        renamed = "import importlib.util, unittest\nQT_OK = importlib.util.find_spec('PySide6') is not None\n@unittest.skipIf(not QT_OK, '없다')\nclass A(unittest.TestCase):\n    pass\n"
+        self.assertEqual(len(qt_skip_problems(renamed)[1]), 1)
+        imported = "import unittest\nimport test_ui_qt as tq\n@unittest.skipUnless(tq.HAVE, '없다')\nclass A(unittest.TestCase):\n    pass\n"
+        self.assertEqual(len(qt_skip_problems(imported)[1]), 1)
+        combined = "import unittest\nfrom x import HAVE\nimport os\n@unittest.skipUnless(HAVE and os.name == 'nt', '윈도 글꼴이 있어야 한다')\nclass A(unittest.TestCase):\n    pass\n"
+        self.assertEqual(len(qt_skip_problems(combined)[1]), 1)
 
 
 if __name__ == "__main__":
