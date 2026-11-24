@@ -143,10 +143,10 @@ class EngineFile:
             connection = sqlite3.connect(uri, uri=True, timeout=busy_seconds, isolation_level=None, check_same_thread=False)
         except sqlite3.Error as error:
             raise store_error(error, path) from None
-        if guard is not None:
-            guard.attach(connection)                       # 첫 질의 전에 — 받은 파일의 점검이 한도를 넘지 못하게
         opened = cls(path, connection, busy_seconds=busy_seconds, read_only=True)
         try:
+            if guard is not None:
+                guard.attach(connection)                   # 첫 질의 전에 — 받은 파일의 점검이 한도를 넘지 못하게(붙이다 실패해도 연결은 닫는다)
             opened._prepare_read_only()
         except BaseException:
             connection.close()

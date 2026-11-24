@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 import time
 
-SECONDS = 60.0                                           # 한 번의 읽기(백업 폴더 하나의 보관함 점검)에 줄 수 있는 시간 — 정상 보관함의 점검은 수 ms~수 초, 부하가 큰 PC 의 여유를 두었다
+SECONDS = 60.0                                           # 한 번의 읽기(백업 폴더 하나의 보관함 점검)에 줄 수 있는 시간 — 정상 보관함의 점검은 수 ms에서 수 초, 부하가 큰 PC 의 여유를 두었다
 CHECK_EVERY = 1_000                                      # 가상 기계 명령 이만큼마다 시계를 본다(질의가 끝나지 않아도 끊을 수 있는 가장 잘게 — 너무 잘게 하면 정상 질의가 느려진다)
 MAX_DB_BYTES = 512 * 1024 * 1024                         # 받은 보관함 파일 하나의 크기 상한 — 읽기 전에 stat 으로 본다(앱이 만드는 보관함은 수 MB 안쪽)
 MAX_MANIFEST_BYTES = 1024 * 1024                         # 받은 백업 목록 파일(MANIFEST.json)의 크기 상한 — 정상 목록은 1KB 안쪽이다

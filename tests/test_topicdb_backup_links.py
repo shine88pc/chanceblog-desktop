@@ -30,12 +30,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_topicdb_backup as base  # noqa: E402
 import topics_support as ts  # noqa: E402
 
+from chanceblog_desktop import fslink  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.service import backup_flow as bf  # noqa: E402
 from chanceblog_desktop.topicdb import backup as bk  # noqa: E402
 from chanceblog_desktop.topics import layout, seeds  # noqa: E402
 
 SOURCE = Path(bk.__file__)
+FSLINK_SOURCE = Path(fslink.__file__)                            # 링크 판정 한 곳(`fslink.py`) — 주제 엔진 백업은 그 함수를 가져다 쓴다
 REPARSE_POINT = 0x400                                            # 윈도 파일 속성 FILE_ATTRIBUTE_REPARSE_POINT(제품 상수와 같은 값인지는 아래 시험이 못박는다)
 IO_REPARSE_TAG_CLOUD = 0x9000001A                                # OneDrive 같은 클라우드 파일 자리표시 — 이름을 돌리는 링크가 아니다
 IO_REPARSE_TAG_SYMLINK = 0xA000000C                              # `stat.IO_REPARSE_TAG_*` 는 윈도 C 모듈에만 있어 숫자로 둔다(리눅스에서 AttributeError)
@@ -130,6 +132,10 @@ class IsLinkTest(unittest.TestCase):
         for error, expected in self.ERRORS:
             with self.subTest(error=type(error).__name__), mock.patch.object(os, "lstat", side_effect=error):
                 self.assertEqual(bk._is_link(Path("anything")), expected)
+
+    def test_the_topic_backup_uses_the_one_shared_function(self):
+        self.assertIs(bk._is_link, fslink.is_link)
+        self.assertEqual((bk.REPARSE_POINT, bk.LINK_TAGS), (fslink.REPARSE_POINT, fslink.LINK_TAGS))
 
     def test_the_two_checks_agree_on_every_case_and_share_their_constants(self):
         """'전체 백업과 같은 기준' 을 말이 아니라 표로 못박는다 — 한쪽 기준만 바뀌면 여기서 빨개진다."""
@@ -415,12 +421,14 @@ class SourceShapeTest(unittest.TestCase):
     def called_names(self, name):
         return {node.func.id for node in ast.walk(self.function(name)) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
 
-    def test_no_half_check_is_left_in_the_topic_backup(self):
-        tree = self.tree()
-        function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_is_link")
+    def test_no_half_check_is_left_in_the_topic_backup_and_the_shared_function_holds_the_whole_check(self):
+        outside = [node.lineno for node in ast.walk(self.tree()) if isinstance(node, ast.Attribute) and node.attr == "is_symlink"]
+        self.assertEqual(outside, [], "주제 엔진 백업 안에는 링크를 직접 묻는 반쪽 검사가 없다 — `fslink.is_link` 하나를 쓴다")
+        shared = ast.parse(FSLINK_SOURCE.read_text(encoding="utf-8"))
+        function = next(node for node in ast.walk(shared) if isinstance(node, ast.FunctionDef) and node.name == "is_link")
         inside = {id(node) for node in ast.walk(function)}
-        outside = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "is_symlink" and id(node) not in inside]
-        self.assertEqual(outside, [], "링크 검사는 `_is_link` 하나다")
+        elsewhere = [node.lineno for node in ast.walk(shared) if isinstance(node, ast.Attribute) and node.attr == "is_symlink" and id(node) not in inside]
+        self.assertEqual(elsewhere, [], "링크 검사는 `is_link` 하나다")
         self.assertIn("is_symlink", {node.attr for node in ast.walk(function) if isinstance(node, ast.Attribute)})
 
     def test_every_place_that_walks_or_deletes_backup_folders_asks_the_one_function(self):
@@ -435,13 +443,16 @@ class SourceShapeTest(unittest.TestCase):
         self.assertIn("list_backups", self.called_names("_prune"), "정리는 후보를 목록으로 구한다 — 폴더 자신의 링크 검사를 거친다")
 
     def test_the_link_check_looks_at_the_name_itself_never_through_it_and_uses_numbers_for_the_windows_tags(self):
-        called = {ast.unparse(node.func) for node in ast.walk(self.function("_is_link")) if isinstance(node, ast.Call)}
+        shared = ast.parse(FSLINK_SOURCE.read_text(encoding="utf-8"))
+        function = next(node for node in ast.walk(shared) if isinstance(node, ast.FunctionDef) and node.name == "is_link")
+        called = {ast.unparse(node.func) for node in ast.walk(function) if isinstance(node, ast.Call)}
         self.assertIn("os.lstat", called)
         self.assertNotIn("os.stat", called)
         self.assertEqual(bk.REPARSE_POINT, 0x400)
         self.assertEqual(bk.LINK_TAGS, {IO_REPARSE_TAG_SYMLINK, IO_REPARSE_TAG_MOUNT_POINT}, "이름을 돌리는 재해석 종류는 심볼릭 링크와 junction·마운트 지점뿐이다")
-        used = [node.attr for node in ast.walk(self.tree()) if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "stat" and node.attr.startswith("IO_REPARSE_TAG_")]
-        self.assertEqual(used, [], "윈도에만 있는 stat 이름을 쓰지 않는다 — 숫자로 둔다")
+        for source in (self.tree(), shared):
+            used = [node.attr for node in ast.walk(source) if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "stat" and node.attr.startswith("IO_REPARSE_TAG_")]
+            self.assertEqual(used, [], "윈도에만 있는 stat 이름을 쓰지 않는다 — 숫자로 둔다")
 
     def test_the_public_names_do_not_grow(self):
         self.assertNotIn("_is_link", bk.__all__)

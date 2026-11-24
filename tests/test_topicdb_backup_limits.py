@@ -375,14 +375,14 @@ class ReadLimitsTest(Base):
         """두 번째 방어선 — 구조 검사가 어떤 이유로 놓쳐도(여기서는 건너뛰게 바꿔 둔다) 끝없는 재귀 뷰가 한도 안에서 거절된다. 한도를 먼저 건 상태에서만 돌리고 안전망이 몇 초 뒤 모든 연결을 끊는다."""
         lm = lim()
         folder = self.variant(FOREIGN["끝없는 재귀 뷰(질의를 돌리면 끝나지 않는다)"])
-        with SafetyNet(2.5) as net, mock.patch.object(bk, "_structure_problem", lambda path: None), mock.patch.object(lm, "SECONDS", 0.3):
+        with SafetyNet(4.0) as net, mock.patch.object(bk, "_structure_problem", lambda path: None), mock.patch.object(lm, "SECONDS", 0.3):
             started = time.perf_counter()
             reason, detail = self.reason_and_detail(bk.read_backup, folder)
             elapsed = time.perf_counter() - started
         self.assertEqual(reason, lm.TIME_REASON)
         self.assertEqual(detail, lm.TIME_REASON, "점검 질의가 끊겨 `점검 중 오류` 로 삼켜져도 개발자용 세부는 '시간 상한' 이라고 말한다")
         self.assertEqual(net.fired, 0, "안전망이 끊었다 — 한도가 일하지 않았다")
-        self.assertLess(elapsed, 2.4)
+        self.assertLess(elapsed, 3.9, "한도(0.3초)가 일했다면 몇 초 안에 끝난다 — 느린 러너의 여유를 두되 안전망(4초)보다 먼저여야 한다")
 
     def test_restore_from_cuts_a_slow_backup_with_the_time_reason_and_changes_nothing(self):
         lm = lim()

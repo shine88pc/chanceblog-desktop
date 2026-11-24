@@ -25,7 +25,7 @@ FILES = sorted(TOPICDB.glob("*.py"))
 SERVICE_TOPIC_FILES = [SRC / "service" / name for name in ("topics.py", "topic_files.py", "topic_format.py")]
 FORBIDDEN_IMPORTS = {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "ftplib", "smtplib", "telnetlib", "xmlrpc", "asyncio", "shutil", "tempfile"}
 FORBIDDEN_LAYERS = {"service", "ui", "publish", "render", "jobs", "update", "assist", "check"}
-ALLOWED_INTERNAL = {"content.candidates", "content.schema_guard", "content.store", "echo", "errors", "security.backup_note", "security.mask", "security.refuse", "security.scan"}        # `..` 로 가져오는 안쪽 모듈 — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
+ALLOWED_INTERNAL = {"content.candidates", "content.schema_guard", "content.store", "echo", "errors", "fslink", "security.backup_note", "security.mask", "security.refuse", "security.scan"}        # `..` 로 가져오는 안쪽 모듈(의도적 갱신 — AS-S2 권고-2, D-690: 링크 판정 한 곳 `fslink.py` 는 표준 라이브러리만 쓰는 잎 모듈이라 거꾸로 가져오는 것이 아니다) — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
 # 의도적 갱신(PCSEC1 M3, D-348): 백업 직전 검사(`backup.scan_key_shape`)가 본문 속 비밀 형태 검사기(`security/scan.py`)를 부르고 위치·유형 말을 `security/refuse.py` 에서 받는다 — 둘 다 표준 라이브러리와
 # `echo`·`errors` 만 가져오는 잎 모듈이라 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다(`security.mask` 와 같은 자리). 그 밖의 `security` 모듈·서비스 층은 여전히 허용하지 않는다.
 # 의도적 갱신(BACKUPUI D-467): 백업 목록의 자격 증명 문장(`CREDENTIAL_NOTE`)을 전체 백업의 목록과 **한 상수**로 쓰려고 `security/backup_note.py` 를 가져온다 — 글 상수만 있는 잎 모듈이라(`types` 말고는 아무것도 가져오지 않고 파일·네트워크·시계를 쓰지 않는다) 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다.

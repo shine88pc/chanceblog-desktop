@@ -17,7 +17,6 @@ import json
 import os
 import re
 import sqlite3
-import stat
 from contextlib import closing
 from pathlib import Path
 from typing import NamedTuple
@@ -27,6 +26,8 @@ from ..content.schema_guard import foreign_kinds
 from ..content.store import WAL_TEXT, _read_only_uri, same_database, wal_in_head
 from ..echo import shown_topic_backup
 from ..errors import AppError
+from ..fslink import LINK_TAGS, REPARSE_POINT  # noqa: F401  (시험이 이 이름으로 본다) — 링크 판정은 낮은 층의 한 곳(`fslink.py`)에 있다: 전체 백업의 같은 이름 함수와 같은 기준(AS-S2 권고-2, D-690)
+from ..fslink import is_link as _is_link
 from ..security.backup_note import CREDENTIAL_NOTE
 from ..security.mask import has_key_shape
 from ..security.refuse import kinds_of as secret_kinds, locate as secret_locate, table_label as secret_table_label
@@ -66,31 +67,7 @@ JSON_LOADERS = {layout.CHANNEL_PROFILES_FILE: _profiles_without_keys, layout.SEE
 BACKUP_FILES = layout.USER_DATA_FILES                           # 백업에 들어갈 수 있는 파일 이름 넷(그 밖의 이름은 거절)
 MAX_JSON_BYTES = 8 * 1024 * 1024                                 # JSON 한 파일의 상한(실수로 거대한 파일을 읽지 않게)
 MAX_NAMES = 99                                                   # 같은 초에 만든 백업 이름 번호(-2 … -99)
-REPARSE_POINT = 0x400                                            # 윈도 파일 속성 FILE_ATTRIBUTE_REPARSE_POINT — 심볼릭 링크·junction(정션)·마운트 지점이 가진다(전체 백업 `service/backup_flow.py` 와 같은 값)
-LINK_TAGS = frozenset({0xA000000C, 0xA0000003})                  # 이름을 다른 곳으로 돌리는 재해석 종류 — 심볼릭 링크와 junction·마운트 지점. OneDrive 같은 클라우드 파일 자리표시는 아니다(윈도에만 있는 stat 이름 대신 숫자)
 LINK_REASON = "백업 폴더나 그 안의 파일이 다른 곳을 가리키는 링크(바로가기·정션)라서 쓰지 않습니다 — 링크가 아니라 진짜 백업 폴더를 골라 주세요"
-
-
-def _is_link(path):
-    """그 경로 **자신**이 링크인가 — 심볼릭 링크이거나 윈도 재해석 지점(junction·마운트 지점 …)이면 참(AS-S2 권고-2, D-690). 전체 백업의 같은 이름 함수(`service/backup_flow.py::_is_link`, D-608)와 **같은 기준**이다
-    (시험이 두 함수에 같은 표를 먹여 같은 답을 내는지 못박는다 — 이 모듈은 서비스를 가져올 수 없어 같은 글을 한 번 더 둔다). 링크를 따라가지 않고 그 이름을 `os.lstat` 로 본다.
-    윈도에서 junction 의 `is_symlink()` 는 거짓이고 `is_dir()` 은 링크를 따라가서 그 둘만으로는 폴더 자리에 놓인 junction 을 못 거른다(목록·정리가 목적지의 앱 이름 파일을 지웠다).
-    재해석 지점인데 종류(`st_reparse_tag`)가 링크가 아니면(클라우드 파일 자리표시 …) 링크로 보지 않는다. 없는 경로는 거짓, 읽을 수 없으면 참(알 수 없으면 따라가지 않는다)."""
-    path = Path(path)
-    try:
-        if path.is_symlink():                                    # 심볼릭 링크(윈도 junction 은 여기서 거짓이라 아래 재해석 속성이 따로 본다)
-            return True
-        info = os.lstat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-    except OSError:
-        return True
-    if stat.S_ISLNK(info.st_mode):
-        return True
-    if not getattr(info, "st_file_attributes", 0) & REPARSE_POINT:
-        return False
-    tag = getattr(info, "st_reparse_tag", None)
-    return tag is None or tag in LINK_TAGS
 
 
 class BackupResult(NamedTuple):
