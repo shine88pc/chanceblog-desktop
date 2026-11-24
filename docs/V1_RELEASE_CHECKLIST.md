@@ -125,3 +125,4 @@
 1. 기능 갈래가 먼저 자기 문장을 고친다(GUI → NET → PUBPR → UPDATE → BLOGGER → INSTALLER → RELEASE 의 병합 순서). 고친 갈래는 이 표의 자기 행을 `고침` 으로 바꾼다(시험이 조각이 사라졌는지 본다).
 2. 마지막 DOCS(b) 가 남은 `대기` 를 고치고 `VERSION`·`CHANGELOG.md` 의 `1.0.0` 절·`LICENSE`(확인 C 뒤)를 올린다. 이때 위의 '같이 볼 시험' 가운데 문장을 못박은 단언을 새 사실로 바꾼다 — **약하게 하거나 지우지 않는다**.
 3. FINAL 이 3번 표를 한 번에 확인하고 `대기` 가 0 인지 본 뒤 후보 빌드를 시험한다.
+4. 병합 때 `tests/test_v1_docs.py`·`tests/test_decision_index.py` 가 빨개지면 시험을 약하게 하지 말고 각 시험 모듈 머리말의 '병합 때 빨개질 수 있는 곳' 대로 짝이 되는 문서·표를 함께 고친다(결정 행을 더했다면 `python scripts/gen_decision_index.py` 로 색인을 다시 만든다).

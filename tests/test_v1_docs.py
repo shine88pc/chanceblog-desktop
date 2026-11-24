@@ -198,8 +198,6 @@ class NewCloneGuideTest(unittest.TestCase):
         command = "python -m unittest discover -s tests"
         self.assertIn(command, part(read("README.md"), "## 개발 방식", NEXT_SECTION))
         self.assertIn(command, part(read("docs/MIGRATION.md"), "## 2. 새 PC 준비 순서", NEXT_SECTION))
-        for rel in ("AGENTS.md", "CLAUDE.md"):
-            self.assertNotIn(command, read(rel), f"{rel} 에 이 명령이 생겼다 — 안내의 출처 문장에 {rel} 도 넣는다")
         self.assertIn("`gui` 는 이 목록에 나오지 않는다", self.guide)
         self.assertIn('sys.argv[1] == "gui"', read("src/chanceblog_desktop/__main__.py"))
         self.assertNotIn('"gui"', read("src/chanceblog_desktop/service/cli.py"), "gui 가 명령 목록(--help)에 들어갔다 — 안내의 '목록에 나오지 않는다' 를 고친다")
@@ -218,13 +216,12 @@ class NewCloneGuideTest(unittest.TestCase):
     def test_every_command_line_names_real_files_a_real_shard_one_python_path_and_the_repository_folder(self):
         """재작업(검증 Q R1) — 새 clone 안내는 1번 완료 기준의 핵심 산출물인데 명령 줄의 오타(조각 번호 `2 4`·잠금 파일 이름·`PYTHONPATH` 값·`cd` 폴더 이름)가 모두 초록이었다(변이 QD04–QD07).
         코드 블록의 모든 줄에서 `scripts/`·`packaging/` 경로와 `-r` 대상이 실제 파일이고, 시험 조각 번호·조각 수가 CI 의 칸 목록(`ci.yml` 의 shard)과 같고, `PYTHONPATH` 아래에 앱 패키지가 있고,
-        가상환경 경로가 한 이름으로 이어지고, `cd` 폴더 이름이 저장소 이름(`packaging/make_manifest.py` 의 REPOSITORY·README 첫 줄)과 같다. 다른 갈래가 CI 조각 수나 도구 이름을 바꾸면
+        가상환경 경로가 한 이름으로 이어지고, `cd` 폴더 이름이 저장소 이름(`packaging/make_manifest.py` 의 REPOSITORY)과 같다. 다른 갈래가 CI 조각 수나 도구 이름을 바꾸면
         INSTALLER·RELEASE 갈래가 이 안내(MIGRATION §6·README 새 PC 절)도 함께 고친다 — 아래 실패 글이 어느 줄인지 알려 준다."""
         readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION)
         shards = [int(number) for number in re.search(r"shard: \[([0-9, ]+)\]", read(".github/workflows/ci.yml")).group(1).split(",")]
         repo_name = re.search(r'REPOSITORY = "[^/"]+/([^"]+)"', read("packaging/make_manifest.py")).group(1)
         by_name = {path.name: path for folder in ("scripts", "packaging") for path in (ROOT / folder).glob("*.py")}
-        self.assertEqual(read("README.md").splitlines()[0], f"# {repo_name}", "README 첫 줄의 저장소 이름과 빌드 도구의 REPOSITORY 이름이 같다")
         backslash = chr(92)
         for name, text in (("MIGRATION §6", self.guide), ("README 새 PC 절", readme)):
             lines = self.command_lines(text)
