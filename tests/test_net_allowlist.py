@@ -26,7 +26,7 @@ import test_source_rules_outgoing as sro  # noqa: E402
 
 from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.errors import CATALOG  # noqa: E402
-from chanceblog_desktop.net import client  # noqa: E402
+from chanceblog_desktop.net import client, usage as usage_module  # noqa: E402
 from chanceblog_desktop.publish import deploy, gitrepo  # noqa: E402
 
 SRC = ROOT / "src" / "chanceblog_desktop"
@@ -209,6 +209,7 @@ class VendorFetchTest(unittest.TestCase):
             env.last_socket = sock
             return sock
         outcome = None
+        before = usage_module.SESSION.records()
         with env, mock.patch.object(verifier, "fetch", refuse), mock.patch.object(urllib.request, "urlopen", refuse), mock.patch.object(client, "_dial", factory_dial), og.Tripwire() as wire:
             try:
                 outcome = deploy.check_deployed(site.root, pd.KO_PATH, pd.KO_TEXT, deadline=deadline, interval=1, sleep=world.sleep, clock=world.clock, now=pd.NOW)
@@ -216,6 +217,7 @@ class VendorFetchTest(unittest.TestCase):
                 outcome = error
         self.assertEqual(wire.calls, [])
         self.assertEqual(original.__name__, "_dial")
+        self.assertEqual(usage_module.SESSION.records(), before, "이 환경 밖의 전역 접속 기록에는 아무것도 새지 않는다")
         return env, outcome, pd
 
     def test_without_an_injected_fetcher_the_check_goes_through_the_net_client_and_never_the_vendor_urlopen(self):
@@ -237,7 +239,9 @@ class VendorFetchTest(unittest.TestCase):
         env, outcome, _pd = self.check_without_a_fetcher(open_after=10 ** 6, deadline=0)
         self.assertEqual(getattr(outcome, "code", ""), "PAGES_DEPLOY_NOT_VISIBLE")
         self.assertTrue(env.dials)
-        self.assertTrue(all(record.use == "pages_site" for record in env.usage.records()))
+        records = env.usage.records()
+        self.assertTrue(records, "요청이 이 틀의 접속 기록에 남는다(이 틀을 지났다는 증거 — 기록이 비어 있으면 아래 단언이 빈 단언이 된다)")
+        self.assertTrue(all(record.use == "pages_site" for record in records))
 
 
 class NarrowGateTest(unittest.TestCase):

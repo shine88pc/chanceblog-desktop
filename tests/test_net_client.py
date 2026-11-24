@@ -134,6 +134,9 @@ class HostTableTest(unittest.TestCase):
         hosts = {endpoint.host for endpoint in endpoints.ENDPOINTS.values()} | {host for endpoint in endpoints.ENDPOINTS.values() for host in endpoint.redirect_hosts}
         self.assertEqual(sorted(hosts), sorted({"github.com", SITE, "oauth2.googleapis.com", "www.googleapis.com"}), "표에 있는 호스트가 정확히 이 넷이다")
         self.assertEqual(endpoints.ENDPOINTS["update_check"].redirect_hosts, (), "업데이트 확인의 이동 호스트는 UPDATE 갈래가 확정할 때까지 비어 있다 — 이동은 모두 거절된다")
+        redirects = {use: (endpoint.max_redirects, endpoint.redirect_hosts) for use, endpoint in endpoints.ENDPOINTS.items()}
+        self.assertEqual(redirects, {"update_check": (0, ()), "pages_site": (2, ()), "blogger_oauth": (0, ()), "blogger_read": (0, ()), "blogger_draft": (0, ())},
+                         "이동은 기본 0(거절)이고 열린 곳은 공개 사이트의 같은 호스트 최대 두 번뿐이다(M-NET-10)")
         self.assertLessEqual(len({endpoints.ENDPOINTS["update_check"].host} | set(endpoints.ENDPOINTS["update_check"].redirect_hosts)), 2, "업데이트 확인의 호스트는 최대 둘이다(설계서 3.6)")
 
     def test_the_blogger_routes_are_the_six_documented_shapes(self):
@@ -151,6 +154,22 @@ class HostTableTest(unittest.TestCase):
         self.assertEqual(endpoints.ENDPOINTS["blogger_draft"].routes[0].max_body, 1024 * 1024)
         self.assertEqual(endpoints.ENDPOINTS["blogger_oauth"].routes[0].max_body, 4096)
         self.assertFalse(endpoints.ENDPOINTS["pages_site"].routes[0].bearer, "공개 사이트에는 토큰을 붙이지 않는다")
+
+    def test_the_limits_table_is_exactly_the_documented_values(self):
+        """NT-19 의 둘째 몫 — 설계서 3.7 의 시간·크기·내용 인코딩·캐시·쿨다운 제외 표가 소스 상수와 같다(값을 슬쩍 키우거나 늘리는 틀린 코드가 조용히 지나가지 않게)."""
+        self.assertEqual((endpoints.CONNECT_TIMEOUT, endpoints.IO_TIMEOUT, endpoints.TOTAL_TIMEOUT), (10.0, 15.0, 30.0))
+        self.assertEqual((endpoints.MAX_HEADER_BYTES, endpoints.MAX_URL_CHARS, endpoints.MAX_BEARER_CHARS), (64 * 1024, 500, 4096))
+        mib = 1024 * 1024
+        self.assertEqual({use: endpoint.max_response for use, endpoint in endpoints.ENDPOINTS.items()},
+                         {"update_check": mib, "pages_site": 20 * mib, "blogger_oauth": mib, "blogger_read": 2 * mib, "blogger_draft": 2 * mib})
+        for use, endpoint in endpoints.ENDPOINTS.items():
+            with self.subTest(use=use):
+                self.assertEqual(endpoint.total_timeout, 30.0)
+                self.assertEqual((endpoint.download_timeout, endpoint.max_download), (0.0, 0), "내려받기 표는 UPDATE 갈래가 정할 때까지 비어 있다")
+                self.assertFalse(any(route.download for route in endpoint.routes), "내려받기 길은 UPDATE 갈래가 정할 때까지 없다")
+                self.assertEqual(endpoint.accept_encodings, ("identity", "gzip", "deflate") if use == "pages_site" else ("identity",))
+                self.assertEqual(endpoint.cache_control, "no-cache" if use == "pages_site" else "")
+                self.assertEqual(endpoint.uncounted_statuses, (400, 404, 422, 429) if use == "pages_site" else (400, 422, 429))
 
     def test_the_page_host_comes_from_the_one_owner_constant_the_origin_check_uses(self):
         self.assertEqual(SITE, f"{gitrepo.EXPECTED_OWNER.lower()}.github.io")
@@ -343,13 +362,19 @@ class RedirectTest(unittest.TestCase):
         return ns.http_response(status, "Found", headers=[("Location", location)])
 
     def test_redirects_are_refused_by_default_and_the_second_request_is_never_made(self):
-        """NT-24 — 기본은 거절(업데이트 확인 표는 이동 0): 전송 시도는 한 번뿐이다."""
+        """NT-24 — 기본은 거절(업데이트 확인·Blogger 읽기 표는 이동 0): 전송 시도는 한 번뿐이다. 이동 주소가 표에 맞는 같은 호스트의 올바른 주소여도 따라가지 않는다 —
+        기본값이 0 이라는 것을 직접 못박는다(표 밖 주소만 시험하면 기본값이 3 으로 바뀌어도 표 검사 때문에 거절돼 못 알아챈다 — 변이 M-NET-10 의 첫 실행이 이 틈을 드러내 시험을 강화했다)."""
+        cases = (("update_check", UPDATE_URL, {}, f"https://{HOST_UPDATE}/elsewhere"),
+                 ("update_check", UPDATE_URL, {}, f"https://{HOST_UPDATE}/own/app/releases/latest/download/other.json"),
+                 ("blogger_read", BLOG, {"bearer": "t"}, BLOG + "/posts/1?view=ADMIN"))
         for status in (301, 302, 303, 307, 308):
-            with self.subTest(status=status):
-                env, error = raised(self, self.redirect(f"https://{HOST_UPDATE}/elsewhere", status))
-                self.assertEqual(error.code, "NET_RESPONSE_INVALID")
-                self.assertIn(errors.REASON_REDIRECT, error.rendered().message)
-                self.assertEqual(len(env.dials), 1)
+            for use, url, extra, location in cases:
+                with self.subTest(status=status, use=use, location=location):
+                    sockets = [ns.FakeSocket(self.redirect(location, status)), ns.FakeSocket(OK_JSON)]
+                    env, error = raised(self, b"", use, "GET", url, harness=ns.Harness(self, sockets=sockets, switches=ns.USE_SWITCHES[use]), **extra)
+                    self.assertEqual(error.code, "NET_RESPONSE_INVALID")
+                    self.assertIn(errors.REASON_REDIRECT, error.rendered().message)
+                    self.assertEqual(len(env.dials), 1, "두 번째 요청은 만들어지지 않는다")
 
     def test_pages_site_follows_same_host_redirects_up_to_two_and_checks_each_step(self):
         site = lambda path: f"https://{SITE}{path}?cb=app"        # noqa: E731

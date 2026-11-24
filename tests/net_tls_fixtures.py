@@ -2,7 +2,7 @@
 
 실제 사이트·계정과 무관하다(시험 안에서 이 이름들의 풀이는 가짜 표가 127.0.0.1 로 바꾼다). 개인 키 모양의 글이 저장소 비밀 검사·푸시 보호에 걸리지 않게 **조립 문자열**로 둔다 —
 머리말(대시 다섯 + `BEGIN ` + 종류 + 대시 다섯)을 코드가 이어 붙여 만들고 본문은 64글자 토막으로 나눠 적는다(`CANARY_` 와 같은 방식). 만드는 법: `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 36500`
-(SAN: 첫째 인증서 `github.com`·`www.googleapis.com`·`oauth2.googleapis.com`, 둘째 `other.example.test`, 셋째는 첫째와 같은 이름에 `-not_before 20200101000000Z -not_after 20200102000000Z`).
+(SAN: 첫째 인증서 `github.com`·`googleapis.com` 의 `www` 호스트·`oauth2.googleapis.com`, 둘째 `other.example.test`, 셋째는 첫째와 같은 이름에 `-not_before 20200101000000Z -not_after 20200102000000Z`).
 """
 DASHES = "-" * 5
 NL = chr(10)

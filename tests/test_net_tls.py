@@ -320,6 +320,10 @@ class RealSocketDeadlineTest(TlsBase):
 
     def test_a_server_that_drips_bytes_is_cut_at_the_total_deadline_on_a_real_connection(self):
         server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY, drip=0.2)
+        watchdog = threading.Timer(8.0, server.stop.set)             # 총 시간 감시가 없는 틀린 코드에서도 시험이 끝나게 — 8초 뒤 서버가 찔끔 보내기를 그만두고 연결을 닫는다(그러면 아래 단언이 빨개진다)
+        watchdog.daemon = True
+        watchdog.start()
+        self.addCleanup(watchdog.cancel)
         began = time.monotonic()
         result, usage = self.call(server, total=1.5)
         elapsed = time.monotonic() - began

@@ -133,7 +133,7 @@ class EverySwitchAloneTest(unittest.TestCase):
 
     def test_doctor_without_online_makes_zero_calls_and_lists_open_switches(self):
         """NT-54 — `doctor`(`--online` 없이)는 접속하지 않고 열려 있는 스위치 이름을 알린다(기본은 '없음')."""
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(usage, "SESSION", usage.Usage()):         # 같은 프로세스의 다른 시험이 남긴 전역 세션 기록과 무관하게(CI 는 시험 전부를 한 프로세스로 돈다)
             ctx = self.fresh_ctx(tmp)
             with og.Tripwire() as wire:
                 results = doctor.run_doctor(ctx)

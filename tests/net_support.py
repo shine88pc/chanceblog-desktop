@@ -135,6 +135,8 @@ class Harness:
         self.stack.enter_context(mock.patch.object(client, "_secure", lambda connection, raw: raw))
         self.stack.enter_context(mock.patch.object(client, "_make_context", shared_context))
         self.stack.enter_context(mock.patch.object(client, "_clock", self.clock))
+        self.stack.enter_context(mock.patch.object(client, "SESSION", self.usage))                  # 이 안에서 `usage=` 없이 만들어진 클라이언트(생산 경로)의 기록이 전역 세션에 새지 않고 이 환경의 것에 남는다
+        self.stack.enter_context(mock.patch.object(usage, "SESSION", self.usage))                   # `doctor` 가 읽는 세션도 같은 것
         return self
 
     def __exit__(self, *exc):
