@@ -75,6 +75,37 @@ class Scrubber:
         return value
 
 
+def runner_problem(environ):
+    """GitHub 일회용 윈도 러너 안이 아니면 어긋난 조건의 변수 이름(값은 적지 않는다), 맞으면 ''. 시험은 이 변수 값을 가짜 세계의 환경에 넣어서만 이 장치를 지난다."""
+    if environ.get("GITHUB_ACTIONS") != "true":
+        return "GITHUB_ACTIONS"
+    if environ.get("RUNNER_OS") != "Windows":
+        return "RUNNER_OS"
+    if not environ.get("RUNNER_TEMP"):
+        return "RUNNER_TEMP"
+    return ""
+
+
+def hide_words(value, words):
+    """비밀 낱말(예: 임시 사용자의 임의 비밀번호)이 든 글을 가린다 — 사전·목록·글을 통째로, 긴 낱말부터. 네 글자보다 짧은 낱말은 글 속 우연한 겹침이 많아 무시한다."""
+    ordered = sorted({word for word in words if isinstance(word, str) and len(word) >= 4}, key=lambda item: (-len(item), item))
+    if not ordered:
+        return value
+
+    def walk(item):
+        if isinstance(item, str):
+            for word in ordered:
+                item = item.replace(word, "<가림>")
+            return item
+        if isinstance(item, dict):
+            return {(walk(key) if isinstance(key, str) else key): walk(inner) for key, inner in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [walk(inner) for inner in item]
+        return item
+
+    return walk(value)
+
+
 def tail(text, limit=400):
     """긴 출력의 뒤쪽 limit 글자만(앞은 '…')."""
     text = (text or "").strip()
@@ -387,6 +418,8 @@ PACK_SECONDS_LIMIT = 300
 DEFENDER_BUDGET_SECONDS = 420
 BUDGET_SECONDS = 1500
 STD_USER = "spikeuser"
+RUNNER_REFUSAL = ("이 도구는 GitHub 의 일회용 윈도 러너 안에서만 돈다 — 방화벽 규칙·가짜 자격 증명·임시 사용자 만들기·프로그램 이름으로 끝내기를 하므로 개발 PC 에서는 돌리지 않는다"
+                  "(환경 변수 GITHUB_ACTIONS 가 true, RUNNER_OS 가 Windows 이고 RUNNER_TEMP 가 있어야 한다).")
 
 
 def decode_bytes(data):
@@ -550,12 +583,19 @@ class Context:
         self.budget = budget_seconds
         self.blocked = {}
         self.logs = self.work / "logs"
+        self.secret_words = []
 
     def save(self):
         write_json(self.state_path, self.state)
         write_json(self.results_path, self.results)
 
+    def hide(self, word):
+        """측정 기록에 글이 들어가는 순간 가릴 낱말을 더한다(Scrubber 의 extra 와 같은 뜻). 이 값은 상태 파일에도 쓰지 않으므로 따로 도는 report 단계의 Scrubber 는 모른다 — 그래서 기록을 쓸 때 가린다."""
+        if isinstance(word, str) and len(word) >= 4 and word not in self.secret_words:
+            self.secret_words.append(word)
+
     def add(self, rec):
+        rec = hide_words(rec, self.secret_words)
         self.results.append(rec)
         return rec
 
@@ -669,7 +709,9 @@ def process_names(ctx):
 
 
 def kill_images(ctx, names):
-    """시험이 만든 작은 앱·실제 앱 실행 파일 이름으로 남은 프로세스를 정리한다(러너는 일회용 가상 머신이다)."""
+    """시험이 만든 작은 앱·실제 앱 실행 파일 이름으로 남은 프로세스를 정리한다(러너는 일회용 가상 머신이다). 러너가 아니면 하지 않는다 — 개발 PC 의 실제 앱을 이름으로 끝낼 수 있다."""
+    if runner_problem(ctx.host.environ):
+        return
     for name in names:
         ctx.host.run(["taskkill", "/F", "/T", "/IM", name], timeout=30)
 
@@ -1235,6 +1277,7 @@ def m18_standard_user(ctx, arm):
         ctx.add(record("M18", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
         return
     password = "Sp1ke!" + secrets.token_urlsafe(12)
+    ctx.hide(password)                                              # net user 명령줄에 들어가는 값이다 — 어떤 도구가 되울려도 기록에서는 가린다
     created = ctx.host.run(["net", "user", STD_USER, password, "/add", "/Y"], timeout=60)
     if not created.ok:
         ctx.add(record("M18", arm, "unavailable", note="임시 사용자를 만들지 못했다(rc %s)" % created.rc, brief="시도 불가: 사용자 만들기 실패"))

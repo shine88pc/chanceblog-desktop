@@ -373,6 +373,82 @@ class BadOutcomeTest(unittest.TestCase):
         self.assertEqual(self.boom["state"]["steps"]["measure"]["status"], "ok")
 
 
+class StandardUserPasswordTest(unittest.TestCase):
+    """권고 R2 — 임시 표준 사용자의 임의 비밀번호는 net user 명령줄과 PowerShell 환경 변수로 간다(명령줄에 한 번 들어간다는 점을 숨기지 않는다). 어떤 도구가 되울려도 기록·보고서에 남지 않고, 만든 사용자는 반드시 지운다."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.world, cls.work, cls.codes = pipeline(cls.tmp.name, commands=("install-tools", "build-bundles", "pack"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def setUp(self):
+        self.world.net_user_ok, self.world.std_user_ok, self.world.raise_on = True, False, None
+
+    def attempt(self, arm="A"):
+        """M18 만 직접 돌린다 → (문맥, 이번 시도의 net 호출들, 비밀번호 또는 None)."""
+        before = len(self.world.net_calls)
+        ctx = run.Context(self.work, host=self.world)
+        ctx.results = []                                                                            # 앞 시험이 저장한 기록을 이어받지 않는다
+        with contextlib.redirect_stdout(io.StringIO()):
+            run.measure.m18_standard_user(ctx, arm)
+        calls = self.world.net_calls[before:]
+        adds = [call for call in calls if "/add" in call]
+        return ctx, calls, (adds[0][3] if adds else None)
+
+    def test_the_password_is_new_for_every_attempt_and_long_enough(self):
+        first, second = self.attempt()[2], self.attempt()[2]
+        self.assertTrue(first and second)
+        self.assertNotEqual(first, second)
+        for password in (first, second):
+            self.assertTrue(password.startswith("Sp1ke!"))
+            self.assertGreaterEqual(len(password), 16)
+
+    def test_an_error_text_that_echoes_the_password_does_not_leave_it_in_the_record_the_files_or_the_report(self):
+        ctx, calls, password = self.attempt()                                                      # 가짜 PowerShell 이 실패하며 SPIKE_PW 를 되울린다
+        items = find(ctx.results, "M18", "A")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["status"], "unavailable")
+        self.assertIn("<가림>", items[0]["note"])                                                  # 되울린 글이 있었고 가려졌다 — 가린 것이 없다면 이 시험은 아무것도 보지 못한 것이다
+        ctx.save()
+        block, md, data = run.build_report(ctx)
+        everything = block + md + json.dumps(data, ensure_ascii=False) + json.dumps(ctx.results, ensure_ascii=False) + (self.work / "results.json").read_text(encoding="utf-8") + (self.work / "state.json").read_text(encoding="utf-8")
+        self.assertNotIn(password, everything)
+
+    def test_the_user_is_added_first_and_deleted_last_and_the_delete_line_has_no_password(self):
+        for std_user_ok in (False, True):
+            self.world.std_user_ok = std_user_ok
+            ctx, calls, password = self.attempt()
+            adds = [index for index, call in enumerate(calls) if "/add" in call]
+            deletes = [index for index, call in enumerate(calls) if "/delete" in call]
+            self.assertEqual((len(adds), len(deletes)), (1, 1), std_user_ok)
+            self.assertLess(adds[0], deletes[0])
+            self.assertEqual(calls[adds[0]], ["net", "user", run.measure.STD_USER, password, "/add", "/Y"])
+            self.assertEqual(calls[deletes[0]], ["net", "user", run.measure.STD_USER, "/delete"])
+            self.assertEqual(find(ctx.results, "M18", "A")[0]["status"], "pass" if std_user_ok else "unavailable")
+
+    def test_the_user_is_deleted_even_when_the_install_step_blows_up(self):
+        self.world.raise_on = lambda args: args[0] == "powershell" and "PSCredential" in args[-1]
+        before = len(self.world.net_calls)
+        ctx = run.Context(self.work, host=self.world)
+        with self.assertRaises(RuntimeError):
+            run.measure.m18_standard_user(ctx, "B")
+        calls = self.world.net_calls[before:]
+        self.assertEqual([call for call in calls if "/delete" in call], [["net", "user", run.measure.STD_USER, "/delete"]])
+
+    def test_when_the_user_cannot_be_made_the_echoed_password_is_not_recorded_and_nothing_is_deleted(self):
+        self.world.net_user_ok = False                                                              # 가짜 net user 가 실패하며 비밀번호를 되울린다
+        ctx, calls, password = self.attempt("C")
+        item = find(ctx.results, "M18", "C")[0]
+        self.assertEqual(item["status"], "unavailable")
+        self.assertIn("사용자 만들기 실패", item["values"]["brief"])
+        self.assertNotIn(password, json.dumps(ctx.results, ensure_ascii=False))
+        self.assertEqual([call for call in calls if "/delete" in call], [])                         # 만들지 못한 사용자는 지울 것이 없다
+
+
 class BudgetTest(unittest.TestCase):
     def test_over_budget_flows_are_skipped_and_recorded_not_dropped(self):
         tmp = tempfile.TemporaryDirectory()

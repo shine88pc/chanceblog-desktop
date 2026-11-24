@@ -504,7 +504,7 @@ def build_report(ctx, *, environ=None):
     """보고서 글(md)·사전(json)·결과 블록을 만든다 — 모든 글은 Scrubber 로 가린 것이다."""
     results = ctx.results
     gates = judge(results)
-    scrub = Scrubber(ctx.host.environ if environ is None else environ, extra=[str(ctx.work), str(REPO)])
+    scrub = Scrubber(ctx.host.environ if environ is None else environ, extra=[str(ctx.work), str(REPO), *ctx.secret_words])
     block = result_block(ctx, results, gates, scrub)
     helps = {key: scrub(value) for key, value in ctx.state.get("help", {}).items()}
     data = {"schema": 1, "gates": {arm: {gate: dict(value) for gate, value in rows.items()} for arm, rows in gates.items()}, "results": scrub.deep(results), "steps": scrub.deep(ctx.state.get("steps", {})),
@@ -540,6 +540,11 @@ def main(argv=None, *, host=None):
     parser.add_argument("command", choices=COMMANDS)
     parser.add_argument("--work", required=True, help="작업 폴더(상태·도구·묶음·설치 파일이 쌓인다)")
     args = parser.parse_args(argv)
+    host = host or measure.Host()
+    problem = measure.runner_problem(host.environ)
+    if problem:                                                   # 시작 전에 멈춘다 — 작업 폴더도 만들지 않는다
+        print("[spike] " + measure.RUNNER_REFUSAL + " (어긋난 조건: %s)" % problem, file=sys.stderr)
+        return 2
     ctx = Context(args.work, host=host)
     began = ctx.host.now()
     try:

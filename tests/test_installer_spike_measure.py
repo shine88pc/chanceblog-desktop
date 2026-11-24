@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import installer_spike_support as support  # noqa: E402
@@ -22,6 +23,7 @@ measure = support.load("measure")
 run = support.load("run_spike")
 ROOT = support.ROOT
 CANARY_TOKEN = "gh" + "p_" + "A" * 36
+RUNNER_ENV = {"GITHUB_ACTIONS": "true", "RUNNER_OS": "Windows", "RUNNER_TEMP": "D:\\a\\_temp"}              # 러너 안임을 알리는 환경 — 시험은 이 값을 가짜 환경에 넣어서만 러너 전용 장치(R1)를 지난다
 
 
 from installer_spike_support import build_pe  # noqa: E402,F401  (합성 PE 만들기 — 시험 도우미)
@@ -509,13 +511,118 @@ class ReportTest(unittest.TestCase):
                 def run(self, *args, **kwargs):
                     raise RuntimeError("부서졌다")
 
-            self.assertEqual(run.main(["measure", "--work", str(Path(tmp) / "w1")], host=Exploding({})), 0)
+            self.assertEqual(run.main(["measure", "--work", str(Path(tmp) / "w1")], host=Exploding(dict(RUNNER_ENV))), 0)
             state = json.loads((Path(tmp) / "w1" / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["steps"]["measure"]["status"], "crashed")
             self.assertIn("RuntimeError", state["steps"]["measure"]["error"])
         self.assertEqual(sorted(run.HANDLERS), sorted(run.COMMANDS))
         with self.assertRaises(SystemExit):
             run.main(["no-such-command", "--work", "x"])
+
+
+class RunnerGuardTest(unittest.TestCase):
+    """권고 R1 — 이 도구는 방화벽 규칙·가짜 자격 증명·임시 사용자 만들기·프로그램 이름으로 끝내기를 하므로 GitHub 의 일회용 윈도 러너가 아니면 시작 전에 멈춘다."""
+
+    def test_runner_problem_names_the_first_wrong_variable_and_is_empty_only_on_a_runner(self):
+        self.assertEqual(measure.runner_problem(dict(RUNNER_ENV)), "")
+        self.assertEqual(measure.runner_problem({}), "GITHUB_ACTIONS")
+        for wrong in ("false", "TRUE", "1", "", " true"):
+            self.assertEqual(measure.runner_problem(dict(RUNNER_ENV, GITHUB_ACTIONS=wrong)), "GITHUB_ACTIONS", wrong)
+        for wrong in ("Linux", "macOS", "windows", ""):
+            self.assertEqual(measure.runner_problem(dict(RUNNER_ENV, RUNNER_OS=wrong)), "RUNNER_OS", wrong)
+        self.assertEqual(measure.runner_problem({key: value for key, value in RUNNER_ENV.items() if key != "RUNNER_TEMP"}), "RUNNER_TEMP")
+        self.assertEqual(measure.runner_problem(dict(RUNNER_ENV, RUNNER_TEMP="")), "RUNNER_TEMP")
+
+    def test_every_command_refuses_off_a_runner_before_touching_anything(self):
+        class Untouchable(measure.Host):
+            def run(self, *args, **kwargs):
+                raise AssertionError("러너가 아닌데 프로그램을 돌렸다")
+
+            def start(self, *args, **kwargs):
+                raise AssertionError("러너가 아닌데 프로그램을 띄웠다")
+
+        wrong_environments = (({}, "GITHUB_ACTIONS"), ({"GITHUB_ACTIONS": "true"}, "RUNNER_OS"), ({"GITHUB_ACTIONS": "true", "RUNNER_OS": "Linux", "RUNNER_TEMP": "/tmp/x"}, "RUNNER_OS"),
+                              ({"GITHUB_ACTIONS": CANARY_TOKEN}, "GITHUB_ACTIONS"))
+        for environ, expected in wrong_environments:
+            for command in run.COMMANDS:
+                with tempfile.TemporaryDirectory() as tmp:
+                    work = Path(tmp) / "w"
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                        code = run.main([command, "--work", str(work)], host=Untouchable(environ))
+                    self.assertEqual(code, 2, (command, environ))
+                    self.assertFalse(work.exists(), command)                                   # 작업 폴더도 만들지 않는다
+                    self.assertIn("러너", err.getvalue())
+                    self.assertIn("어긋난 조건: " + expected, err.getvalue())
+                    self.assertNotIn(CANARY_TOKEN, err.getvalue())                          # 변수 이름만 적고 값은 적지 않는다
+
+    def test_without_a_host_the_real_environment_decides_and_a_development_pc_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "w"
+            with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(run.main(["measure", "--work", str(work)]), 2)
+            self.assertFalse(work.exists())
+
+    def test_kill_images_by_name_only_runs_on_a_runner(self):
+        calls = []
+
+        class Recorder(measure.Host):
+            def run(self, args, **kwargs):
+                calls.append(list(args))
+                return measure.HostResult(0, 0.1)
+
+        names = ["ChanceBlogDesktop.exe", "spike_app.exe"]
+        with tempfile.TemporaryDirectory() as tmp:
+            measure.kill_images(measure.Context(Path(tmp) / "a", host=Recorder({})), names)
+            measure.kill_images(measure.Context(Path(tmp) / "b", host=Recorder({"GITHUB_ACTIONS": "true", "RUNNER_OS": "Linux", "RUNNER_TEMP": "x"})), names)
+            self.assertEqual(calls, [])
+            measure.kill_images(measure.Context(Path(tmp) / "c", host=Recorder(dict(RUNNER_ENV))), names)
+        self.assertEqual(calls, [["taskkill", "/F", "/T", "/IM", name] for name in names])
+
+
+class HiddenWordsTest(unittest.TestCase):
+    """권고 R2 — 임시 사용자의 임의 비밀번호는 net user 명령줄에 들어간다. 어떤 도구가 그 줄을 되울려도 기록·보고서에는 남지 않아야 한다."""
+    WORD = "Sp1ke!" + "Zq9xW3kLm2"
+
+    def test_hide_words_hides_in_texts_lists_dicts_and_keys_and_the_longer_word_goes_first(self):
+        value = {"note": "앞 " + self.WORD + " 뒤", "list": [self.WORD, ("x", self.WORD + "tail")], "키 " + self.WORD: 3, "n": 5, "t": True, "z": None}
+        out = measure.hide_words(value, [self.WORD, self.WORD + "tail"])
+        text = json.dumps(out, ensure_ascii=False)
+        self.assertNotIn(self.WORD, text)
+        self.assertNotIn("tail", text)
+        self.assertEqual(out["note"], "앞 <가림> 뒤")
+        self.assertEqual(out["list"], ["<가림>", ["x", "<가림>"]])
+        self.assertEqual((out["n"], out["t"], out["z"], out["키 <가림>"]), (5, True, None, 3))
+
+    def test_short_or_odd_words_are_ignored_and_no_words_means_the_same_object(self):
+        value = {"a": "abc abcd"}
+        self.assertIs(measure.hide_words(value, []), value)
+        self.assertIs(measure.hide_words(value, ["abc", "", None, 5]), value)
+        self.assertEqual(measure.hide_words(value, ["abcd"]), {"a": "abc <가림>"})
+
+    def test_a_context_hides_a_word_from_the_moment_a_record_is_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp, results=[])
+            known_late = ctx.add(rec("M18", "A", "unavailable", note="앞 " + self.WORD))
+            self.assertIn(self.WORD, known_late["note"])                                         # 아직 모르는 낱말은 가릴 수 없다 — 그래서 만들자마자 hide 한다
+            for word in (self.WORD, self.WORD, "ab", "", None):
+                ctx.hide(word)
+            self.assertEqual(ctx.secret_words, [self.WORD])
+            after = ctx.add(rec("M18", "B", "unavailable", note="뒤 " + self.WORD, rows=[{"err": "x " + self.WORD}], brief=self.WORD))
+            self.assertEqual(after["note"], "뒤 <가림>")
+            self.assertEqual(ctx.results[-1], after)
+            self.assertNotIn(self.WORD, json.dumps(ctx.results[1:], ensure_ascii=False))
+            ctx.save()
+            self.assertEqual((Path(tmp) / "work" / "results.json").read_text(encoding="utf-8").count(self.WORD), 1)       # 낱말을 알기 전에 더한 한 건에만 남는다
+
+    def test_the_report_also_hides_the_words_of_the_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            items = passing_results() + [rec("M18", "A", "unavailable", note="접근 거부 " + self.WORD, brief="시도 불가 " + self.WORD, target="tiny")]
+            ctx = make_context(tmp, results=items)
+            ctx.hide(self.WORD)
+            block, md, data = run.build_report(ctx)
+            self.assertNotIn(self.WORD, block + md + json.dumps(data, ensure_ascii=False))
+            self.assertIn("<가림>", md)
 
 
 if __name__ == "__main__":

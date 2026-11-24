@@ -56,13 +56,14 @@ class FakeWorld(measure.Host):
     def __init__(self, tmp, **switches):
         tmp = Path(tmp)
         environ = {"ImageOS": "win25", "ImageVersion": "20261116.335.1", "GITHUB_SHA": "0123456789abcdef", "USERNAME": "runneradmin", "RUNNER_TEMP": str(tmp / "temp"),
-                   "APPDATA": str(tmp / "appdata"), "LOCALAPPDATA": str(tmp / "local"), "USERPROFILE": str(tmp / "profile"), "PUBLIC": str(tmp / "public"), "SPIKE_USERS_DIR": str(tmp / "users"),
+                   "GITHUB_ACTIONS": "true", "RUNNER_OS": "Windows", "APPDATA": str(tmp / "appdata"), "LOCALAPPDATA": str(tmp / "local"), "USERPROFILE": str(tmp / "profile"), "PUBLIC": str(tmp / "public"), "SPIKE_USERS_DIR": str(tmp / "users"),
                    "PATH": ""}
         super().__init__(environ)
         self.tmp = tmp
         self.clock = 0.0
         self.pids = itertools.count(1000)
         self.calls = []
+        self.net_calls = []
         self.running = []
         self.setups, self.packages, self.feeds, self.installs = {}, {}, {}, {}
         self.tokens = itertools.count(1)
@@ -209,7 +210,11 @@ class FakeWorld(measure.Host):
         return self.ok()
 
     def do_net(self, args, env):
-        return measure.HostResult(0 if self.net_user_ok else 2, 0.5, "", "")
+        """`net user 이름 비밀번호 /add` — 인자를 기록한다. 실패하면 비밀번호를 되울리는 오류 글을 낸다(어떤 도구가 명령줄을 되울려도 기록에서 가려지는지 보려고)."""
+        self.net_calls.append(list(args))
+        if self.net_user_ok:
+            return measure.HostResult(0, 0.5, "The command completed successfully.", "")
+        return measure.HostResult(2, 0.5, "", "error: the password " + (args[3] if len(args) > 3 else "") + " does not meet the requirements")
 
     def do_icacls_exe(self, args, env):
         return self.ok()
@@ -228,7 +233,7 @@ class FakeWorld(measure.Host):
                 root.mkdir(parents=True, exist_ok=True)
                 (root / "VERSION").write_text("0.0.1\n", encoding="utf-8")
                 return self.ok()
-            return measure.HostResult(1, 0.5, "", "access denied")
+            return measure.HostResult(1, 0.5, "", "access denied for " + (env or {}).get("SPIKE_PW", ""))
         return self.ok()
 
     def do_dotnet(self, args, env):
