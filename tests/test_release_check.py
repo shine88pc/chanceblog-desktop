@@ -401,7 +401,11 @@ class Item4Test(RepoCase):
     def test_a_purpose_table_that_cannot_be_read_is_a_fail(self):
         for text in ("def _purposes():\n    return ()\n", "class Purpose:\n    pass\n", "깨진 구문 (\n"):
             with self.subTest(text=text[:12]):
-                self.assertEqual(self.row_after(4, extra={f"{APP}/service/connections.py": text}).status, FAIL)
+                row = self.row_after(4, extra={f"{APP}/service/connections.py": text})
+                self.assertEqual(row.status, FAIL)
+                self.assertIn("연결 용도 표", row.basis)                 # 다른 길(예상 못 한 오류·기본값 불일치)로 우연히 FAIL 이 된 것이 아니라 '표를 못 읽었다' 고 말해야 한다
+                self.assertIn("읽지 못했다", row.basis)
+                self.assertNotIn("예상하지 못한 오류", row.basis)
 
     def test_the_real_capabilities_file_is_read_to_the_same_values_as_importing_it(self):
         from chanceblog_desktop import capabilities
@@ -723,9 +727,10 @@ class Item11Test(RepoCase):
         self.assertEqual(rc.SELFTEST_KEYS, ps.SELFTEST_KEYS)
 
     def test_the_default_runner_loads_the_entry_file_by_path_and_leaves_sys_path_and_bytecode_flag_alone(self):
-        before_path, previous = list(sys.path), sys.dont_write_bytecode
-        sys.dont_write_bytecode = False                              # 보통 파이썬처럼 .pyc 를 쓰는 상태에서도 쓰지 않는지 본다
+        before_path, previous, prefix = list(sys.path), sys.dont_write_bytecode, sys.pycache_prefix
+        sys.dont_write_bytecode, sys.pycache_prefix = False, None     # 보통 파이썬처럼 .pyc 를 소스 옆에 쓰는 상태에서도 쓰지 않는지 본다(다른 시험이 앱을 가져와 prefix 를 정해 두었어도)
         self.addCleanup(setattr, sys, "dont_write_bytecode", previous)
+        self.addCleanup(setattr, sys, "pycache_prefix", prefix)
         with rs.temp_dir() as other:
             rs.write_files(other, {"packaging/gui_entry.py": "def run_selftest():\n    return ['가짜 결과']\n"})
             self.assertEqual(rc.run_repo_selftest(other), ["가짜 결과"])
@@ -928,14 +933,72 @@ class CommandLineTest(RepoCase):
         self.assertIn("| 12 |", buffer.getvalue())
 
 
+class NoBytecodeTest(RepoCase):
+    """공개 함수(`scan_folder`·`run_checks`·`main`)는 부르는 동안 .pyc 를 어디에도 쓰지 않고(앱의 `core` 가 `sys.pycache_prefix` 를 사용자 폴더로 돌려 놓으므로 늦게 가져오는 표준 모듈의 .pyc 가 거기 생길 수 있다)
+    끝나면(예외·종료로 끝나도) 원래 값으로 되돌린다."""
+
+    def setUp(self):
+        super().setUp()
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = False                              # 보통 파이썬처럼 .pyc 를 쓰는 상태에서 시작한다
+        self.addCleanup(setattr, sys, "dont_write_bytecode", previous)
+        self.seen = []
+
+    def spy(self, function):
+        def wrapper(*args, **kwargs):
+            self.seen.append(sys.dont_write_bytecode)
+            return function(*args, **kwargs)
+        return wrapper
+
+    def test_scan_folder_runs_with_bytecode_writing_off_and_restores_it(self):
+        with rs.temp_dir() as folder:
+            rs.write_files(folder, {"a.txt": "글\n", "z.zip": b"PK\x03\x04bad"})
+            with mock.patch.object(rc, "scan_stream", self.spy(rc.scan_stream)), mock.patch.object(rc, "_archive_kind", self.spy(rc._archive_kind)):
+                rc.scan_folder(folder)
+        self.assertTrue(self.seen and all(self.seen), self.seen)
+        self.assertFalse(sys.dont_write_bytecode)
+
+    def test_run_checks_runs_with_bytecode_writing_off_and_restores_it(self):
+        self.build()
+        rows = rc.run_checks(self.root, selftest_runner=self.spy(rs.selftest_ok))
+        self.assertEqual(len(rows), 12)
+        self.assertEqual(self.seen, [True])
+        self.assertFalse(sys.dont_write_bytecode)
+
+    def test_main_runs_with_bytecode_writing_off_and_restores_it_even_when_it_ends_by_exit(self):
+        self.build()
+        out = io.StringIO()
+        with rs.temp_dir() as folder:
+            rs.write_files(folder, {"a.txt": "글\n"})
+            with mock.patch.object(rc, "scan_stream", self.spy(rc.scan_stream)):
+                rc.main(["--root", str(self.root), "--scan-dir", folder], out=out, selftest_runner=self.spy(rs.selftest_ok))
+        self.assertTrue(len(self.seen) >= 2 and all(self.seen), self.seen)
+        self.assertFalse(sys.dont_write_bytecode)
+        with mock.patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit):
+                rc.main(["--모르는-옵션"])
+        self.assertFalse(sys.dont_write_bytecode)
+
+    def test_the_default_selftest_loader_also_keeps_it_off_while_running_the_selftest_function(self):
+        with rs.temp_dir() as other:
+            rs.write_files(other, {"packaging/gui_entry.py": "import sys\n\n\ndef run_selftest():\n    return [sys.dont_write_bytecode]\n"})
+            self.assertEqual(rc.run_repo_selftest(other), [True])
+        self.assertFalse(sys.dont_write_bytecode)
+
+
 class EndToEndTest(unittest.TestCase):
     """진짜 스크립트를 **새 프로세스**로 돌린다 — 열두 점검(`--selftest`)은 그 프로세스 안에서 함수로 불린다. 시험 프로세스에는 앱의 명령줄 모듈이 이미 불려 있을 수 있고
     열두 점검의 '명령줄 모듈을 불러오지 않았다' 확인이 그것을 실패로 보므로, 진짜 자가 점검은 같은 프로세스에서 돌리지 않는다."""
 
     def run_script(self, *args, cwd=None):
-        env = {key: value for key, value in os.environ.items() if key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PYTHONDONTWRITEBYTECODE")}       # .pyc 를 쓰는 보통 환경 — 스크립트가 스스로 안 쓰는지 본다
-        env.update(PYTHONUTF8="1")
-        return subprocess.run([sys.executable, "-X", "utf8", str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8", env=env, cwd=cwd, timeout=240)
+        """스크립트를 새 프로세스로 돌린다. 사용자 데이터·캐시 폴더(`LOCALAPPDATA`·`HOME` 등)와 임시 폴더는 빈 폴더로 돌려 두고, 끝난 뒤에도 비어 있어야 한다(앱의 .pyc 캐시·자가 점검의 임시 폴더가 남지 않는다)."""
+        env = {key: value for key, value in os.environ.items() if key.upper() not in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")}       # .pyc 를 쓰는 보통 환경 — 스크립트가 스스로 안 쓰는지 본다
+        with rs.temp_dir() as home, rs.temp_dir() as scratch:
+            env.update(PYTHONUTF8="1", LOCALAPPDATA=home, APPDATA=home, HOME=home, USERPROFILE=home, XDG_CACHE_HOME=home, XDG_DATA_HOME=home, TEMP=scratch, TMP=scratch, TMPDIR=scratch)
+            done = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8", env=env, cwd=cwd, timeout=240)
+            self.assertEqual(os.listdir(home), [], "사용자 데이터·캐시 폴더에 아무것도 만들지 않는다(.pyc 캐시 포함)")
+            self.assertEqual(os.listdir(scratch), [], "임시 폴더에 아무것도 남기지 않는다(자가 점검의 임시 폴더는 지운다)")
+        return done
 
     def watched(self):
         return tuple(rs.tree_fingerprint(ROOT / name) for name in ("packaging", "scripts", "src", "docs"))

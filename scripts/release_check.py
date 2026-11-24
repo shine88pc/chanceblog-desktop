@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import ast
 import codecs
+import contextlib
 import importlib.util
 import json
 import os
@@ -165,17 +166,25 @@ class FolderScan:
 
 
 # ---- 작은 부품 ----------------------------------------------------------------------------------------------------------------------------------
+@contextlib.contextmanager
+def _no_bytecode():
+    """안에서는 .pyc 를 어디에도 쓰지 않는다 — 앱의 `core.use_vendored_core()` 가 `sys.pycache_prefix` 를 사용자 폴더(`%LOCALAPPDATA%` 아래)로 돌려 놓으므로, 가져오기 뒤에 처음 쓰이는 표준 모듈
+    (`encodings.utf_16`·`bz2`·`lzma` 같은 것)의 .pyc 가 거기에 생기지 않게 공개 함수 전체를 이 안에서 돌린다(읽기 전용). 끝나면 원래 값으로 되돌린다."""
+    saved = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        yield
+    finally:
+        sys.dont_write_bytecode = saved
+
+
 def _scan_module():
     """앱의 `security/scan.py` — 이 스크립트가 있는 저장소의 것을 쓴다. 가져오면서 .pyc 를 쓰지 않는다(읽기 전용)."""
     src = str(ROOT / "src")
     if src not in sys.path:
         sys.path.insert(0, src)
-    saved = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
+    with _no_bytecode():
         from chanceblog_desktop.security import scan
-    finally:
-        sys.dont_write_bytecode = saved
     return scan
 
 
@@ -643,20 +652,25 @@ def run_repo_selftest(root=ROOT):
     if spec is None or spec.loader is None:
         raise ImportError("gui_entry.py 를 찾지 못했다")
     module = importlib.util.module_from_spec(spec)
-    saved = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
     sys.path.insert(0, str(packaging))
     try:
-        spec.loader.exec_module(module)
+        with _no_bytecode():
+            spec.loader.exec_module(module)
     finally:
-        sys.dont_write_bytecode = saved
         if str(packaging) in sys.path:
             sys.path.remove(str(packaging))
-    return list(module.run_selftest())
+    with _no_bytecode():
+        return list(module.run_selftest())
 
 
 def run_checks(root=ROOT, *, selftest_runner=None, scans=None):
-    """열두 항목을 점검해 `Row` 열두 개를 번호 순으로 돌려준다. `selftest_runner` 는 자가 점검 결과 목록을 돌려주는 함수(기본: 그 저장소의 것을 함수로 호출), `scans` 는 `FolderScan` 목록."""
+    """열두 항목을 점검해 `Row` 열두 개를 번호 순으로 돌려준다. `selftest_runner` 는 자가 점검 결과 목록을 돌려주는 함수(기본: 그 저장소의 것을 함수로 호출), `scans` 는 `FolderScan` 목록.
+    부르는 동안 .pyc 를 어디에도 쓰지 않는다."""
+    with _no_bytecode():
+        return _run_checks(root, selftest_runner, scans)
+
+
+def _run_checks(root, selftest_runner, scans):
     repo = Repo(root)
     runner = selftest_runner or (lambda: run_repo_selftest(root))
     checks = (
@@ -843,7 +857,12 @@ def _scan_file(full, rel, info, result, scan, options):
 
 def scan_folder(folder, label="폴더 1", *, chunk_bytes=CHUNK_BYTES, overlap_chars=OVERLAP_CHARS, opener=None, link_test=None):
     """폴더 하나를 끝까지 훑는다 → `FolderScan`. 하위 폴더·숨은 파일·확장자가 없는 파일까지 모두 훑고, 훑지 못한 것은 `unread` 에 이유와 함께 모은다(조용히 건너뛰지 않는다).
-    `opener`(파일 경로 → 바이트로 열린 파일)·`link_test`(lstat 결과 → 링크인가)는 시험이 바꿔 끼우는 자리다."""
+    `opener`(파일 경로 → 바이트로 열린 파일)·`link_test`(lstat 결과 → 링크인가)는 시험이 바꿔 끼우는 자리다. 부르는 동안 .pyc 를 어디에도 쓰지 않는다."""
+    with _no_bytecode():
+        return _scan_folder(folder, label, chunk_bytes, overlap_chars, opener, link_test)
+
+
+def _scan_folder(folder, label, chunk_bytes, overlap_chars, opener, link_test):
     scan = _scan_module()
     options = {"opener": opener or (lambda path: open(path, "rb")), "chunk_bytes": chunk_bytes, "overlap_chars": overlap_chars}
     is_link = link_test or _is_link
@@ -955,6 +974,12 @@ def build_parser():
 
 
 def main(argv=None, *, out=None, selftest_runner=None):
+    """명령줄 한 번 — 끝까지 .pyc 를 어디에도 쓰지 않는다(읽기 전용). 종료 코드를 돌려준다."""
+    with _no_bytecode():
+        return _main(argv, out, selftest_runner)
+
+
+def _main(argv, out, selftest_runner):
     args = build_parser().parse_args(argv)
     stream = out or sys.stdout
     if out is None and hasattr(stream, "reconfigure"):
