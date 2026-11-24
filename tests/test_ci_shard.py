@@ -7,6 +7,9 @@
   3) 잘못된 인자(0번·범위 밖·정수 아님·모르는 옵션 …)는 종료 코드 2, 비어 있는 조각은 1 — 아무것도 안 돌고 초록이 되지 않는다.
   4) 작은 가짜 시험 폴더로 실제 실행: 조각마다 자기 파일만 돌고, 실패하는 파일과 불러오기에 실패하는 파일이 그 조각을 빨갛게 만든다.
   5) `ci.yml` 의 조각 목록(`shard: [1, 2, 3]`)과 `CI_SHARD_TOTAL` 이 같고, `run:` 안에 `${{ }}` 가 없고, `fail-fast: false` 가 그대로다.
+     (D-713) 둘째 잡 `qt` 가 생긴 뒤로는 이것을 `test`·`qt` 잡마다 본다(조각 목록·총수·이름 둘·`run:` 줄의 정확한 목록·`fail-fast`·`qt` 는 윈도와 3.12 하나뿐).
+  6) (D-712) Qt 칸의 건너뜀 가드 `CI_REQUIRE_QT`: 1 만 켬(0·없음은 끔, 그 밖은 종료 코드 2)·PySide6 를 못 찾으면 시험 전에 종료 코드 3·PySide6 이유로 건너뛴 시험이 하나라도 있으면 종료 코드 1(대소문자 무시,
+     `setUpClass`·파일 불러오기 건너뜀 포함)·다른 이유의 건너뜀은 알림만·시험 파일별 걸린 시간 표와 오래 걸린 파일의 즉시 알림, 그리고 Qt 깃발(`HAVE`)로 건너뛰는 모든 시험이 이유에 PySide6 낱말을 쓰는지 정적 확인.
 """
 import ast
 import contextlib
@@ -416,26 +419,27 @@ class TimedResultTest(unittest.TestCase):
 
         First.__module__, Second.__module__ = "fake_module_first", "fake_module_second"
         runner = unittest.TextTestRunner(stream=io.StringIO(), resultclass=ci_shard.timed(unittest.TextTestResult))
+        started = time.perf_counter()
         with contextlib.redirect_stdout(io.StringIO()) as out:
             result = runner.run(unittest.TestSuite([First("test_slow"), Second("test_fast")]))
-        return result, out.getvalue()
+        return result, out.getvalue(), time.perf_counter() - started
 
-    def test_seconds_are_summed_per_test_file_and_the_results_stay_the_same(self):
-        result, _out = self.run_two_modules()
+    def test_seconds_are_summed_per_test_file_never_exceed_the_run_and_the_results_stay_the_same(self):
+        result, _out, elapsed = self.run_two_modules()
         self.assertTrue(result.wasSuccessful())
         self.assertEqual(sorted(result.module_seconds), ["fake_module_first", "fake_module_second"])
         self.assertGreaterEqual(result.module_seconds["fake_module_first"], 0.05)
-        self.assertLess(result.module_seconds["fake_module_second"], result.module_seconds["fake_module_first"])
+        self.assertLessEqual(sum(result.module_seconds.values()), elapsed, "파일별 시간의 합은 실행 시간을 넘지 않는다(앞 시험이 끝난 때부터 이어 붙여 센다)")
 
     def test_a_slow_file_is_announced_as_soon_as_the_next_file_starts_and_the_last_one_is_left_to_the_table(self):
         with mock.patch.object(ci_shard, "PROGRESS_SECONDS", 0.01):
-            _result, out = self.run_two_modules()
+            _result, out, _elapsed = self.run_two_modules()
         self.assertIn("[걸린 시간] fake_module_first ", out)
         self.assertNotIn("[걸린 시간] fake_module_second", out)
 
     def test_a_fast_file_is_not_announced(self):
         with mock.patch.object(ci_shard, "PROGRESS_SECONDS", 60):
-            _result, out = self.run_two_modules()
+            _result, out, _elapsed = self.run_two_modules()
         self.assertNotIn("[걸린 시간]", out)
 
     def test_the_default_threshold_is_five_seconds(self):

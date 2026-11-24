@@ -191,7 +191,9 @@ class PipCommandTest(unittest.TestCase):
 
     def test_install_runs_the_fixed_list_without_a_shell_with_a_time_limit_and_utf8(self):
         fake = FakeRun()
-        code, tail = ci_qt_setup.install(good_lock(), run=fake)
+        with mock.patch.dict(os.environ):
+            os.environ.pop("PYTHONUTF8", None)                  # 둘러싼 환경에 PYTHONUTF8 이 있어도(정식 CI 시험 단계는 켜 둔다) 설치 도구에 그 값을 주는 쪽은 이 스크립트여야 한다
+            code, tail = ci_qt_setup.install(good_lock(), run=fake)
         self.assertEqual(code, 0)
         self.assertEqual(len(fake.calls), 1)
         command, kwargs = fake.calls[0]
