@@ -155,6 +155,9 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`docs/TOPIC_ENGINE_PLAN.md`](docs/TOPIC_ENGINE_PLAN.md) | 주제 엔진(5채널 주제 선정 전략)을 코드에 얹는 순서와 결정 A–H(계획 문서 — 만든 것과 날짜는 `DECISIONS.md`) |
 | [`docs/P4_REVIEW_ITEMS.md`](docs/P4_REVIEW_ITEMS.md) | 화면(P4) 작업 전에 다시 보고하기로 한 7가지 검토 항목의 기록 |
 | [`docs/DECISIONS_INDEX.md`](docs/DECISIONS_INDEX.md) | 결정 색인 — 번호·날짜·변경 등급·한 줄 요약(`scripts/gen_decision_index.py` 가 `DECISIONS.md` 에서 자동으로 만든다 — 직접 고치지 않는다) |
+| [`docs/V1_RELEASE_CHECKLIST.md`](docs/V1_RELEASE_CHECKLIST.md) | v1.0 을 올리기 전에 고쳐야 할 낡은 문장 표(파일·줄·현재 문장·바꿀 문장 초안)와 릴리스 직전 점검 목록 — 초안 |
+| [`docs/PERSONAL_PC_TEST_V1_DRAFT.md`](docs/PERSONAL_PC_TEST_V1_DRAFT.md) | v1.0 용 운영자 시험지 초안(설치·제거·업데이트·되돌리기·휴대용·Pages 시험 글·Blogger 초안) — 지금의 시험지는 그대로 |
+| [`docs/MIGRATION_NOTES_TEMPLATE.md`](docs/MIGRATION_NOTES_TEMPLATE.md) | 버전을 올릴 때 사용자 데이터 이관 안내(이관 노트)를 쓰는 틀 — 초안 |
 
 ## 개발 방식
 
