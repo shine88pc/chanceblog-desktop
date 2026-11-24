@@ -181,6 +181,56 @@ class NewCloneGuideTest(unittest.TestCase):
             self.assertIn(command, readme, command)
         self.assertIn("docs/MIGRATION.md", readme)
 
+    @staticmethod
+    def command_lines(text):
+        """```text 코드 블록 안의 줄 — 빈 줄은 빼고 줄 끝의 '  # 설명' 은 뗀다."""
+        lines, fenced = [], False
+        for line in text.splitlines():
+            if line.strip().startswith("```"):
+                fenced = not fenced
+            elif fenced and line.strip():
+                lines.append(re.sub(r"\s+#\s.*$", "", line.strip()))
+        return lines
+
+    def test_every_command_line_names_real_files_a_real_shard_one_python_path_and_the_repository_folder(self):
+        """재작업(검증 Q R1) — 새 clone 안내는 1번 완료 기준의 핵심 산출물인데 명령 줄의 오타(조각 번호 `2 4`·잠금 파일 이름·`PYTHONPATH` 값·`cd` 폴더 이름)가 모두 초록이었다(변이 QD04–QD07).
+        코드 블록의 모든 줄에서 `scripts/`·`packaging/` 경로와 `-r` 대상이 실제 파일이고, 시험 조각 번호·조각 수가 CI 의 칸 목록(`ci.yml` 의 shard)과 같고, `PYTHONPATH` 아래에 앱 패키지가 있고,
+        가상환경 경로가 한 이름으로 이어지고, `cd` 폴더 이름이 저장소 이름(`packaging/make_manifest.py` 의 REPOSITORY·README 첫 줄)과 같다. 다른 갈래가 CI 조각 수나 도구 이름을 바꾸면
+        INSTALLER·RELEASE 갈래가 이 안내(MIGRATION §6·README 새 PC 절)도 함께 고친다 — 아래 실패 글이 어느 줄인지 알려 준다."""
+        readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION)
+        shards = [int(number) for number in re.search(r"shard: \[([0-9, ]+)\]", read(".github/workflows/ci.yml")).group(1).split(",")]
+        repo_name = re.search(r'REPOSITORY = "[^/"]+/([^"]+)"', read("packaging/make_manifest.py")).group(1)
+        self.assertEqual(read("README.md").splitlines()[0], f"# {repo_name}", "README 첫 줄의 저장소 이름과 빌드 도구의 REPOSITORY 이름이 같다")
+        backslash = chr(92)
+        for name, text in (("MIGRATION §6", self.guide), ("README 새 PC 절", readme)):
+            lines = self.command_lines(text)
+            self.assertGreaterEqual(len(lines), 6, f"{name}: 코드 블록의 명령 줄이 줄었다")
+            venvs = {match for line in lines for match in re.findall(r"-m venv (\S+)", line)}
+            self.assertEqual(len(venvs), 1, f"{name}: 가상환경 만드는 줄이 하나여야 한다")
+            venv = venvs.pop()
+            self.assertTrue(any(line.startswith("cd ") for line in lines), f"{name}: cd 줄이 없다")
+            for line in lines:
+                with self.subTest(source=name, line=line[:70]):
+                    for path in re.findall(r"(?<![\w.-])((?:scripts|packaging)/[\w.-]+)", line):
+                        self.assertTrue((ROOT / path).is_file(), f"{name}: 없는 파일 {path} — 도구 이름이 바뀌었으면 안내를 고친다(INSTALLER·RELEASE)")
+                    for target in re.findall(r"\s-r (\S+)", line):
+                        self.assertTrue((ROOT / target).is_file(), f"{name}: 없는 잠금 파일 {target}")
+                    for value in re.findall(r'PYTHONPATH = "([^"]*)"', line):
+                        self.assertTrue((ROOT / value / "chanceblog_desktop" / "__main__.py").is_file(), f"{name}: PYTHONPATH 값 {value!r} 아래에 앱 패키지가 없다")
+                    if "-m chanceblog_desktop" in line:
+                        self.assertTrue((ROOT / "src" / "chanceblog_desktop" / "__main__.py").is_file())
+                    if "Scripts" in line:
+                        self.assertTrue(line.startswith(venv + backslash + "Scripts" + backslash + "python "), f"{name}: 가상환경 경로가 {venv!r} 로 이어지지 않는다")
+                    for folder in re.findall(r"^cd (\S+)$", line):
+                        self.assertEqual(folder, repo_name, f"{name}: cd 폴더 이름이 저장소 이름과 다르다")
+            for number, count in re.findall(r"ci_shard\.py (\d+) (\d+)", text):
+                self.assertEqual(int(count), len(shards), f"{name}: 시험 조각 수가 CI 의 칸 목록(shard: {shards})과 다르다")
+                self.assertIn(int(number), shards, f"{name}: 시험 조각 번호 {number} 는 CI 의 칸 목록 {shards} 에 없다")
+            for test_file in re.findall(r'-p "(test_\w+\.py)"', text):
+                self.assertTrue((ROOT / "tests" / test_file).is_file(), f"{name}: 없는 시험 파일 {test_file}")
+        listed = {int(number) for number, _count in re.findall(r"ci_shard\.py (\d+) (\d+)\s*$", self.guide, flags=re.M)}
+        self.assertEqual(listed, set(shards), "MIGRATION §6 의 시험 줄이 CI 조각을 하나도 빠뜨리지 않는다")
+
 
 class ChecklistTest(unittest.TestCase):
     ROW = re.compile(r"^\| ([A-F]\d\d) \| `([^`:]+):(\d+)` \| `([^`]+)` \| (.+) \| ([^|]+) \| ([^|]+) \| (대기|고침|고치지 않음) \|$")
@@ -199,7 +249,7 @@ class ChecklistTest(unittest.TestCase):
                 cls.rows.append((number, *match.groups()))
 
     def test_the_table_has_the_six_groups_with_numbered_rows_in_order(self):
-        self.assertGreaterEqual(len(self.rows), 40)
+        self.assertGreaterEqual(len(self.rows), 59, "행을 지우지 않는다 — 고친 행은 '고침' 으로 바꾼다(재작업: 하한을 40 에서 지금 값 59 로 올렸다 — 검증 Q R2, 마지막 행을 지워도 번호 연속은 그대로라 초록이었다)")
         ids = [row[1] for row in self.rows]
         self.assertEqual(len(ids), len(set(ids)), "번호가 겹친다")
         for letter, heading in self.GROUPS.items():
@@ -242,6 +292,26 @@ class ChecklistTest(unittest.TestCase):
         exists = (ROOT / "scripts" / "release_check.py").exists()
         says_missing = "`scripts/release_check.py` — 아직 없다" in self.text
         self.assertEqual(exists, not says_missing, "scripts/release_check.py 가 생겼거나 없어졌는데 점검표의 '아직 없다' 문장이 그대로다")
+
+    def test_the_commands_in_the_non_sentence_table_name_real_scripts_and_real_options(self):
+        """재작업(검증 Q R2 — QD03: G05 의 `--check` 를 `--chek` 로 틀려도 초록이었다) — 3번 표의 백틱 명령은 실제 스크립트와 그 스크립트가 아는 옵션이다."""
+        table = part(self.text, "## 3. 문장이 아닌 점검", "## 4.")
+        rows = {row[0]: row for row in re.findall(r"(?m)^\| (G\d\d) \| (.+) \| (.+) \| (.+) \|$", table)}
+        found = []
+        for label, row in rows.items():
+            for command in re.findall(r"`(python [^`]+)`", " ".join(row)):
+                words = command.split()
+                with self.subTest(row=label, command=command):
+                    script = ROOT / words[1]
+                    self.assertTrue(script.is_file(), f"{label}: 없는 스크립트 {words[1]}")
+                    source = script.read_text(encoding="utf-8")
+                    for option in words[2:]:
+                        self.assertTrue(option.startswith("--"), f"{label}: 옵션이 아닌 낱말 {option}")
+                        self.assertIn(f'"{option}"', source, f"{label}: {words[1]} 가 모르는 옵션 {option}")
+                found.append(command)
+        self.assertGreaterEqual(len(found), 3, "3번 표의 python 명령은 지금 G05 한 개와 G06 두 개다(FINAL 갈래가 명령을 더하는 것은 괜찮고, 줄면 점검이 사라진 것이다)")
+        self.assertTrue((ROOT / "src" / "chanceblog_desktop" / "security" / "scan.py").is_file(), "G04 가 훑는다는 security/scan.py 가 없다")
+        self.assertIn("`security/scan.py`", rows["G04"][2])
 
     def test_the_version_facts_the_checklist_relies_on_are_true(self):
         self.assertIn("preview", read("VERSION"), "VERSION 이 미리보기 버전이 아니게 됐다 — 점검표 B01 을 '고침' 으로")
@@ -328,6 +398,15 @@ class ReleaseNotesRuleTest(unittest.TestCase):
                        "글자 그대로 같아야 한다", "초안 릴리스", "Publish release", "`vX.Y.Z`", "확인 C", "MIGRATION_NOTES_TEMPLATE.md", "V1_RELEASE_CHECKLIST.md"):
             self.assertIn(needle, self.rule, needle)
         self.assertIn("| `VERSION` = `CHANGELOG.md` 맨 위 절의 버전 |", self.rule)
+
+    def test_the_second_sentence_of_the_rule_and_the_draft_only_step_are_pinned(self):
+        """재작업(검증 Q R3 — QD09 '손으로 써도 된다'·QD08B '`--publish` 를 쓴다' 로 뒤집어도 초록이었다) — 정본은 CHANGELOG 이고 Release 본문은 만들어 내는 글이며, 공개는 운영자가 직접 하고 고칠 것은 CHANGELOG 를 고친다."""
+        first = part(self.rule, "### 1.", "### 2.")
+        self.assertIn("Release 본문은 그 절에서 **만들어 내는 글**이고 GitHub 화면에서 손으로 쓰거나 고치지 않는다", first)
+        fourth = part(self.rule, "4. **초안으로만**", "### 4.")
+        for needle in ("초안 릴리스로 올리고 운영자가 `Publish release` 를 누른다(`--publish` 를 쓰지 않는다)", "**고칠 것이 있으면 Release 화면이 아니라 CHANGELOG 를 고친 새 커밋으로** 다시 만든다"):
+            self.assertIn(needle, fourth, needle)
+        self.assertEqual(self.rule.count("(`--publish` 를 쓰지 않는다)"), 1, "새 절에 공개 호출을 금지하는 괄호 문장이 하나 있다")
 
     def test_every_line_that_states_an_outside_tool_fact_says_it_is_not_confirmed(self):
         keywords = ("본문 한도", "본문 길이 한도", "--notes-file", "태그 생성 시점", "불변 릴리스", "자동 생성")
