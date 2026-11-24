@@ -37,7 +37,7 @@ SECTION_MARK = re.compile(r"^#\s*\[[A-Za-z0-9_-]+\]\s*$")                      #
 WANTED = ("pyside6-essentials", "shiboken6")                                   # 이 칸이 깔 수 있는 이름 둘(PEP 503 로 정리한 이름)
 HASH_VALUE = r"sha256:[0-9a-f]{64}"
 REQUIREMENT = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[0-9][0-9A-Za-z.+!_-]*)(?P<hashes>(?:\s+--hash=" + HASH_VALUE + r")*)$")
-PIP_TIMEOUT_SECONDS = 1500
+PIP_TIMEOUT_SECONDS = 600                                                     # 83MB 내려받기는 몇 초다 — 10분이 넘으면 이상이라 40분 한도를 다 쓰기 전에 빨갛게 한다
 TAIL_LINES = 20                                                                # 설치가 실패했을 때 보여 주는 설치 도구 출력의 끝 줄 수
 KNOWN_HANGUL_FONTS = ("Malgun Gothic", "맑은 고딕", "Gulim", "굴림", "Dotum", "돋움", "Batang", "바탕", "NanumGothic", "Noto Sans CJK KR", "Noto Sans KR")
 FONT_ALIASES = {"맑은 고딕": "Malgun Gothic", "굴림": "Gulim", "돋움": "Dotum", "바탕": "Batang"}               # 윈도가 한글 이름으로 알려 주는 글꼴의 Qt 쪽(영문) 이름

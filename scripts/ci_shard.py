@@ -14,6 +14,7 @@
   · 환경 변수 CI_REQUIRE_QT=1(정식 CI 의 Qt 칸 — `ci.yml` 의 `qt` 잡, D-710·D-712)이면 'PySide6 가 안 깔려 화면(Qt) 시험이 모두 건너뛰어졌는데 초록' 이 되는 일을 막는다:
     ① 시작 전에 PySide6 를 못 찾으면 종료 코드 3 ② 끝난 뒤 건너뛴 시험 중 이유에 PySide6(대소문자 무시)가 든 것이 하나라도 있으면 종료 코드 1 과 시험 파일별 개수
     ③ 건너뜀 이유별 개수와 시험 파일별 걸린 시간을 정보로 찍는다(다른 이유의 건너뜀은 알림만 — 첫 실행 뒤 허용 목록으로 굳힌다. 걸린 시간은 `WEIGHTS` 를 고칠 때 쓴다).
+    5초 넘게 걸린 시험 파일은 끝나는 즉시 `[걸린 시간] 파일 초` 한 줄도 찍는다(칸이 시간 한도에 잘려도 로그에 남게).
     값은 1(켬)이거나 0·없음(끔)뿐이고 그 밖의 값은 종료 코드 2 다 — 오타로 가드가 꺼진 채 초록이 되지 않게. 없으면 이 규칙들은 모두 오늘과 같다(정식 CI 의 열두 칸).
 """
 from __future__ import annotations
@@ -34,6 +35,7 @@ QT_FLAG = "CI_REQUIRE_QT"
 QT_WORD = "pyside6"           # 건너뜀 이유에 이 낱말이 있으면(대소문자 무시) 'PySide6 가 없어 건너뜀' 으로 본다 — 새 Qt 시험 파일은 건너뜀 문구에 PySide6 를 적는다(test_ci_shard 가 지킨다)
 REASON_LIMIT = 10             # 정보로 찍는 건너뜀 이유의 가짓수 상한
 TIME_LIMIT = 15               # 정보로 찍는 시험 파일별 걸린 시간의 줄 수 상한
+PROGRESS_SECONDS = 5          # 한 시험 파일이 이만큼 이상 걸렸으면 그 파일이 끝나는 즉시 한 줄 찍는다 — 칸이 시간 한도에 잘려도 어느 파일이 얼마나 걸렸는지 로그에 남는다
 FILE_LIMIT = 60               # 실패 때 찍는 시험 파일별 개수의 줄 수 상한
 DEFAULT_WEIGHT = 4            # 20초 미만인 파일 125개의 평균(약 4초)
 # 개발 PC(부하 있음)에서 파일마다 따로 돌려 잰 초(2026-11-07, 143개 파일 6,454개 시험 합계 약 60분). 20초 이상인 파일만 적는다 — 대략의 균형용일 뿐 정확할 필요는 없다.
@@ -192,6 +194,7 @@ def timed(result_class):
             super().__init__(*args, **kwargs)
             self.module_seconds = {}
             self._mark = time.perf_counter()
+            self._current = None
 
         def startTestRun(self):
             super().startTestRun()
@@ -201,6 +204,9 @@ def timed(result_class):
             super().stopTest(test)
             now = time.perf_counter()
             name = module_of(test)
+            if self._current is not None and name != self._current and self.module_seconds.get(self._current, 0.0) >= PROGRESS_SECONDS:
+                print(f"[걸린 시간] {self._current} {self.module_seconds[self._current]:,.1f}초", flush=True)         # 앞 파일이 끝났다 — 마지막 파일은 끝의 표가 맡는다
+            self._current = name
             self.module_seconds[name] = self.module_seconds.get(name, 0.0) + now - self._mark
             self._mark = now
     return Timed

@@ -9,6 +9,7 @@
   5) `ci.yml` 의 조각 목록(`shard: [1, 2, 3]`)과 `CI_SHARD_TOTAL` 이 같고, `run:` 안에 `${{ }}` 가 없고, `fail-fast: false` 가 그대로다.
 """
 import ast
+import contextlib
 import io
 import os
 import re
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -34,6 +36,7 @@ def run_script(*args, env_extra=None):
     env = dict(os.environ, PYTHONUTF8="1")
     env.pop("CI_SHARD", None)
     env.pop("CI_SHARD_TOTAL", None)
+    env.pop("CI_REQUIRE_QT", None)                          # Qt 칸(D-713)의 환경 변수가 이 시험의 자식 프로세스에 새어 들어가 가짜 시험 폴더에서 가드가 켜지는 일이 없게
     env.update(env_extra or {})
     return subprocess.run([sys.executable, "-X", "utf8", str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=300)
 
@@ -203,49 +206,90 @@ def code_lines(text):
     return lines
 
 
+def jobs_of(code):
+    """주석을 뺀 코드 줄들을 `jobs:` 아래 잡마다 나눈다 → {잡 이름: [줄, ...]}(파일 순서, 들여쓰기 그대로). `ci.yml` 에 잡이 둘(`test`·`qt`)이라 '파일에서 하나' 를 찾던 시험들이 잡마다 보게 한다(D-713)."""
+    jobs, current, inside = {}, None, False
+    for line in code:
+        if not line.startswith(" "):
+            inside, current = line.strip() == "jobs:", None
+            continue
+        if not inside:
+            continue
+        header = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if header:
+            current = header.group(1)
+            jobs[current] = []
+        elif current is not None:
+            jobs[current].append(line)
+    return jobs
+
+
 class CiWorkflowShardTest(unittest.TestCase):
+    # 잡마다 이름 접두어와 `run:` 줄의 정확한 목록 — `qt` 잡 이름은 기존 두 접두어(`시험 (`·`시험 실행(`)로 시작하지 않아 안 부딪힌다.
+    NAME_PREFIXES = {"test": ("name: 시험 (", "- name: 시험 실행("), "qt": ("name: Qt 시험 (", "- name: Qt 시험 실행(")}
+    RUNS = {"test": ["run: python scripts/ci_shard.py"], "qt": ["run: python scripts/ci_qt_setup.py", "run: python scripts/ci_shard.py"]}
+
     def setUp(self):
         self.ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.code = code_lines(self.ci)
         self.text = "\n".join(self.code)
         self.stripped = [line.strip() for line in self.code]
+        raw_jobs = jobs_of(self.code)
+        self.job_text = {name: "\n".join(lines) for name, lines in raw_jobs.items()}
+        self.jobs = {name: [line.strip() for line in lines] for name, lines in raw_jobs.items()}
+        self.assertEqual(sorted(self.jobs), ["qt", "test"], "ci.yml 의 잡은 test 와 qt 둘이다(D-713)")
 
-    def total(self):
-        found = re.search(r"^\s+CI_SHARD_TOTAL:\s*'(\d+)'$", self.text, re.M)
-        self.assertIsNotNone(found, "ci.yml 에 CI_SHARD_TOTAL 이 없다")
+    def total(self, job):
+        found = re.search(r"^\s+CI_SHARD_TOTAL:\s*'(\d+)'$", self.job_text[job], re.M)
+        self.assertIsNotNone(found, f"ci.yml 의 {job} 잡에 CI_SHARD_TOTAL 이 없다")
         return int(found.group(1))
 
     def test_the_matrix_shards_and_the_total_agree(self):
-        found = re.search(r"^\s+shard:\s*\[([0-9, ]+)\]$", self.text, re.M)
-        self.assertIsNotNone(found, "ci.yml 의 matrix 에 shard 목록이 없다")
-        shards = [int(item) for item in found.group(1).replace(" ", "").split(",")]
-        self.assertEqual(shards, list(range(1, self.total() + 1)), "shard 목록은 1..CI_SHARD_TOTAL 이어야 한다 — 어긋나면 일부 시험이 안 돈다")
+        for job in self.jobs:
+            with self.subTest(job=job):
+                found = re.search(r"^\s+shard:\s*\[([0-9, ]+)\]$", self.job_text[job], re.M)
+                self.assertIsNotNone(found, f"ci.yml 의 {job} 잡 matrix 에 shard 목록이 없다")
+                shards = [int(item) for item in found.group(1).replace(" ", "").split(",")]
+                self.assertEqual(shards, list(range(1, self.total(job) + 1)), "shard 목록은 1..CI_SHARD_TOTAL 이어야 한다 — 어긋나면 일부 시험이 안 돈다")
 
     def test_the_shard_number_comes_from_the_matrix_in_a_real_code_line(self):
         # 독립 검증 Y07b: `CI_SHARD: '1'  # CI_SHARD: ${{ matrix.shard }}` 처럼 주석에 원문을 남기고 값을 고정하면 모든 작업이 1번 조각만 돌고도 초록이 된다.
-        self.assertIn("CI_SHARD: ${{ matrix.shard }}", self.stripped)
-        self.assertIn("PYTHONUTF8: '1'", self.stripped)
+        for job, lines in self.jobs.items():
+            with self.subTest(job=job):
+                self.assertIn("CI_SHARD: ${{ matrix.shard }}", lines)
+                self.assertIn("PYTHONUTF8: '1'", lines)
 
     def test_the_job_and_step_names_show_the_same_total_as_the_environment(self):
         # 독립 검증 Y09: 이름의 '/3' 이 어긋나도 CI 는 도는 표시 문제지만 PR 화면에서 조각이 몇 개인지 잘못 읽게 된다.
-        needle = "조각 ${{ matrix.shard }}/" + str(self.total())
-        names = [line for line in self.stripped if line.startswith(("name: 시험 (", "- name: 시험 실행("))]
-        self.assertEqual(len(names), 2, names)
-        for line in names:
-            self.assertIn(needle, line)
+        for job, prefixes in self.NAME_PREFIXES.items():
+            with self.subTest(job=job):
+                needle = "조각 ${{ matrix.shard }}/" + str(self.total(job))
+                names = [line for line in self.jobs[job] if line.startswith(prefixes)]
+                self.assertEqual(len(names), 2, names)
+                for line in names:
+                    self.assertIn(needle, line)
 
     def test_the_test_step_calls_the_shard_script_without_putting_expressions_in_run(self):
+        for job, expected in self.RUNS.items():
+            with self.subTest(job=job):
+                self.assertEqual([line for line in self.jobs[job] if line.startswith("run:")], expected)
         runs = [line for line in self.stripped if line.startswith("run:")]
-        self.assertEqual(runs, ["run: python scripts/ci_shard.py"])
+        self.assertEqual(runs, self.RUNS["test"] + self.RUNS["qt"], "파일 전체의 run 줄은 잡마다 정해 둔 것의 합이다")
         self.assertFalse([line for line in runs if "${{" in line])
 
     def test_nothing_can_exclude_skip_or_forgive_a_shard(self):
         # 독립 검증 Y11~Y13: matrix exclude(조각을 통째로 뺌)·continue-on-error(실패를 용서)·if(단계를 건너뜀)가 들어와도 CI 가 초록일 수 있다.
         for forbidden in ("exclude:", "include:", "continue-on-error", "if:"):
             self.assertEqual([line for line in self.code if forbidden in line], [], forbidden)
-        self.assertIn("fail-fast: false", self.stripped)
+        for job, lines in self.jobs.items():
+            with self.subTest(job=job):
+                self.assertIn("fail-fast: false", lines)
         for needle in ("windows-latest", "ubuntu-latest", "'3.10'", "'3.12'"):
             self.assertIn(needle, self.text)
+        self.assertIn("runs-on: windows-latest", self.jobs["qt"])
+        self.assertIn("python-version: '3.12'", self.jobs["qt"])
+        for needle in ("ubuntu-latest", "'3.10'", "matrix.os", "matrix.python"):
+            self.assertNotIn(needle, self.job_text["qt"], f"qt 잡은 윈도·3.12 하나뿐이다: {needle}")
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -253,7 +297,7 @@ class CiWorkflowShardTest(unittest.TestCase):
 # ---------------------------------------------------------------------------------------------------------------------------------------------
 PASSING_MODULE = "import unittest\nclass P(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"
 FAILING_MODULE = "import unittest\nclass F(unittest.TestCase):\n    def test_bad(self):\n        self.fail('일부러 실패')\n"
-SLOW_MODULE = "import time\nimport unittest\nclass W(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.4)\n"
+SLOW_MODULE = "import time\nimport unittest\nclass W(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(0.8)\n"
 
 
 def skipping_module(reason, count=2):
@@ -356,6 +400,46 @@ class QtSkipReportTest(unittest.TestCase):
 
     def test_nothing_skipped_is_an_empty_report(self):
         self.assertEqual(ci_shard.qt_skip_report([]), ({}, {}))
+
+
+class TimedResultTest(unittest.TestCase):
+    """`timed` — 시험 파일마다 걸린 시간을 세고, 오래 걸린 파일은 끝나는 즉시 한 줄 알린다(첫 실행이 시간 한도에 잘려도 로그에 남게)."""
+
+    def run_two_modules(self):
+        class First(unittest.TestCase):
+            def test_slow(self):
+                time.sleep(0.05)
+
+        class Second(unittest.TestCase):
+            def test_fast(self):
+                pass
+
+        First.__module__, Second.__module__ = "fake_module_first", "fake_module_second"
+        runner = unittest.TextTestRunner(stream=io.StringIO(), resultclass=ci_shard.timed(unittest.TextTestResult))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            result = runner.run(unittest.TestSuite([First("test_slow"), Second("test_fast")]))
+        return result, out.getvalue()
+
+    def test_seconds_are_summed_per_test_file_and_the_results_stay_the_same(self):
+        result, _out = self.run_two_modules()
+        self.assertTrue(result.wasSuccessful())
+        self.assertEqual(sorted(result.module_seconds), ["fake_module_first", "fake_module_second"])
+        self.assertGreaterEqual(result.module_seconds["fake_module_first"], 0.05)
+        self.assertLess(result.module_seconds["fake_module_second"], result.module_seconds["fake_module_first"])
+
+    def test_a_slow_file_is_announced_as_soon_as_the_next_file_starts_and_the_last_one_is_left_to_the_table(self):
+        with mock.patch.object(ci_shard, "PROGRESS_SECONDS", 0.01):
+            _result, out = self.run_two_modules()
+        self.assertIn("[걸린 시간] fake_module_first ", out)
+        self.assertNotIn("[걸린 시간] fake_module_second", out)
+
+    def test_a_fast_file_is_not_announced(self):
+        with mock.patch.object(ci_shard, "PROGRESS_SECONDS", 60):
+            _result, out = self.run_two_modules()
+        self.assertNotIn("[걸린 시간]", out)
+
+    def test_the_default_threshold_is_five_seconds(self):
+        self.assertEqual(ci_shard.PROGRESS_SECONDS, 5)
 
 
 class QtGuardRunTest(unittest.TestCase):
@@ -472,19 +556,23 @@ class QtGuardRunTest(unittest.TestCase):
         self.assertNotIn("Ran ", done.stderr)
 
 
-def qt_flag_names(source, tree):
+def qt_flag_names(tree):
     """이 파일에서 `find_spec("PySide6")` 로 정해지는 이름들(보통 HAVE) + 다른 시험 파일에서 가져오는 `HAVE`."""
     names = {"HAVE"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and "PySide6" in (ast.get_source_segment(source, node.value) or ""):
+        if isinstance(node, ast.Assign) and "PySide6" in ast.unparse(node.value):
             names |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+        elif isinstance(node, ast.ImportFrom):
+            names |= {alias.asname for alias in node.names if alias.name == "HAVE" and alias.asname}          # `from test_ui_qt import HAVE as 다른이름`
     return names
 
 
 def qt_skip_problems(source):
     """한 시험 파일 소스에서 Qt 깃발(`HAVE` 등)을 조건으로 건너뛰는 `skipUnless`·`skipIf` 를 찾아 → (찾은 개수, 이유에 PySide6 가 없는 곳들의 설명)."""
+    if "skipUnless" not in source and "skipIf" not in source:
+        return 0, []                                                        # 건너뜀 낱말이 없는 파일은 파싱하지 않는다(시험 파일이 300개가 넘는다)
     tree = ast.parse(source)
-    names = "|".join(re.escape(name) for name in sorted(qt_flag_names(source, tree)))
+    names = "|".join(re.escape(name) for name in sorted(qt_flag_names(tree)))
     flag = re.compile(r"(?<![A-Za-z_0-9])(?:[A-Za-z_][A-Za-z_0-9]*\.)?(?:" + names + r")(?![A-Za-z_0-9])")
     found, problems = 0, []
     for node in ast.walk(tree):
@@ -493,7 +581,7 @@ def qt_skip_problems(source):
         name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
         if name not in ("skipUnless", "skipIf"):
             continue
-        condition = ast.get_source_segment(source, node.args[0]) or ""
+        condition = ast.unparse(node.args[0])
         if not flag.search(condition):
             continue
         found += 1
@@ -543,6 +631,8 @@ class QtSkipWordRuleTest(unittest.TestCase):
         self.assertEqual(len(qt_skip_problems(renamed)[1]), 1)
         imported = "import unittest\nimport test_ui_qt as tq\n@unittest.skipUnless(tq.HAVE, '없다')\nclass A(unittest.TestCase):\n    pass\n"
         self.assertEqual(len(qt_skip_problems(imported)[1]), 1)
+        aliased = "import unittest\nfrom test_ui_qt import HAVE as QT_READY\n@unittest.skipUnless(QT_READY, '없다')\nclass A(unittest.TestCase):\n    pass\n"
+        self.assertEqual(len(qt_skip_problems(aliased)[1]), 1)
         combined = "import unittest\nfrom x import HAVE\nimport os\n@unittest.skipUnless(HAVE and os.name == 'nt', '윈도 글꼴이 있어야 한다')\nclass A(unittest.TestCase):\n    pass\n"
         self.assertEqual(len(qt_skip_problems(combined)[1]), 1)
 

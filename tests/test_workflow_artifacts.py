@@ -242,9 +242,14 @@ class ArtifactRuleTest(unittest.TestCase):
         self.assertIsInstance(notes, list)
 
     def test_the_steps_of_the_real_workflows_are_read(self):
-        ci = steps_of(workflow_texts()["ci.yml"])
-        self.assertEqual(len(ci), 3, "ci.yml 의 단계: 가져오기·파이썬·시험 실행")
-        self.assertTrue(all(uses_of(step) for step in ci[:2]))
+        text = workflow_texts()["ci.yml"]
+        pieces = re.split(r"(?m)^  (?=[A-Za-z0-9_-]+:[ \t]*$)", text.split("\njobs:\n", 1)[1])         # 잡마다 글을 나눈다(들여쓰기 둘의 키 줄 앞에서)
+        per_job = {piece.split(":", 1)[0]: steps_of(piece) for piece in pieces if re.match(r"[A-Za-z0-9_-]+:", piece)}
+        self.assertEqual({name: len(steps) for name, steps in per_job.items()}, {"test": 3, "qt": 4},
+                         "ci.yml 의 단계: test 잡 셋(가져오기·파이썬·시험 실행)·qt 잡 넷(가져오기·파이썬·PySide6 설치·시험 실행)")
+        self.assertEqual(len(steps_of(text)), 7, "파일 전체의 단계는 잡마다의 합이다")
+        for steps in per_job.values():
+            self.assertTrue(all(uses_of(step) for step in steps[:2]))
         auto = steps_of(workflow_texts()["auto-pr.yml"])
         self.assertEqual(len(auto), 1)
 
