@@ -489,6 +489,167 @@ class ResponseLimitsTest(unittest.TestCase):
         self.assertIn(b"Accept-Encoding: gzip\r\n", bytes(env.last_socket.sent))
 
 
+def pieces_of(framing, close, body, *, piece=4000, extra=()):
+    """응답 바이트를 `[머리글, 본문 조각 …]` 으로 — 가짜 소켓이 조각마다 읽기 한 번씩 돌려준다(진짜 보안 연결이 레코드 하나씩 돌려주는 모양). `framing`: length·chunked·none."""
+    lines = ["HTTP/1.1 200 OK", "Content-Type: application/json"] + list(extra)
+    if framing == "length":
+        lines.append(f"Content-Length: {len(body)}")
+    elif framing == "chunked":
+        lines.append("Transfer-Encoding: chunked")
+    if close:
+        lines.append("Connection: close")
+    head = ("\r\n".join(lines) + "\r\n\r\n").encode("ascii")
+    if framing == "chunked":
+        parts = [f"{len(body[i:i + piece]):x}\r\n".encode() + body[i:i + piece] + b"\r\n" for i in range(0, len(body), piece)] + [b"0\r\n\r\n"]
+    else:
+        parts = [body[i:i + 16384] for i in range(0, len(body), 16384)]
+    return [head] + parts
+
+
+class ConnectionCloseTest(unittest.TestCase):
+    """`http.client` 는 응답이 `Connection: close` 이거나 길이가 없으면 본문을 읽기 **전에** 소켓의 `close()` 를 부른다 — 그 뒤에도 본문은 끝까지 읽혀야 하고, 요청이 끝나면 연결은 진짜로 닫혀야 한다(D-738, 독립 검증 Q-R1).
+    진짜 TLS 시험(`test_net_tls.ResponseShapeTest`)은 윈도 3.12 에서만 도는 것으로 측정했으므로, 같은 결함을 **가짜 소켓**(닫은 뒤에 읽으면 진짜처럼 실패한다 — `net_support.FakeSocket`)으로도 지킨다."""
+
+    BODY = b"0123456789abcdef" * 7000                           # 112,000 바이트 — 읽기 버퍼(8 KiB)보다 훨씬 크다
+
+    def fetch(self, framing, close, size, **options):
+        body = self.BODY[:size]
+        sock = ns.FakeSocket(pieces=pieces_of(framing, close, body))
+        env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+        with env, og.Tripwire() as wire:
+            try:
+                result = env.client.request("update_check", "GET", UPDATE_URL, **options)
+            except errors.NetError as error:
+                result = error
+        self.assertEqual(wire.calls, [])
+        return env, sock, body, result
+
+    def test_a_response_that_asks_to_close_is_read_whole_after_http_client_closes_its_end(self):
+        for framing in ("length", "chunked", "none"):
+            for close in (True, False):
+                for size in (12, 9000, 112_000):
+                    with self.subTest(framing=framing, close=close, size=size):
+                        env, sock, body, result = self.fetch(framing, close, size)
+                        self.assertIsInstance(result, client.NetResponse, f"{getattr(result, 'code', '')} {getattr(result, 'detail', '')}")
+                        self.assertEqual((result.status, result.body), (200, body))
+                        self.assertTrue(sock.closed, "끝났으니 연결은 진짜로 닫혀 있다")
+                        self.assertEqual(env.usage.records()[0].error, "")
+
+    def test_every_way_a_request_can_end_closes_the_connection_for_real(self):
+        """성공·2xx 아닌 답·너무 큼·짧음·압축·이동·시간 초과·읽기 오류 — 어떻게 끝나든 진짜 소켓은 닫힌다(읽개가 열려 있다고 새지 않는다)."""
+        big = self.BODY[:30_000]
+        cases = {
+            "성공": (ns.FakeSocket(pieces=pieces_of("length", True, big)), {}),
+            "404": (ns.FakeSocket(pieces=[b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 20000\r\n\r\n", big[:20000]]), {}),
+            "너무 큼": (ns.FakeSocket(pieces=pieces_of("length", True, big)), {"limit": 1000}),
+            "길이 없이 너무 큼": (ns.FakeSocket(pieces=pieces_of("none", True, big)), {"limit": 1000}),
+            "짧게 끊김": (ns.FakeSocket(pieces=[b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 30000\r\n\r\n", big[:9000]]), {}),
+            "압축됨": (ns.FakeSocket(pieces=pieces_of("length", True, big, extra=["Content-Encoding: gzip"])), {}),
+            "이동": (ns.FakeSocket(pieces=[b"HTTP/1.1 302 Found\r\nLocation: https://github.com/a/b\r\nConnection: close\r\nContent-Length: 20000\r\n\r\n", big[:20000]]), {}),
+            "읽기 오류": (ns.FakeSocket(pieces=[b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 30000\r\n\r\n"], read_error=OSError("reset")), {}),
+        }
+        for label, (sock, options) in cases.items():
+            with self.subTest(label=label):
+                env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+                with env, og.Tripwire() as wire:
+                    try:
+                        env.client.request("update_check", "GET", UPDATE_URL, **options)
+                    except errors.NetError:
+                        pass
+                self.assertEqual((wire.calls, sock.closed), ([], True), label)
+
+    def test_a_dripping_body_with_connection_close_still_stops_at_the_total_deadline(self):
+        """응답에 `Connection: close` 가 있어도 찔끔 오는 본문은 마감에서 끊긴다 — 닫힌 소켓 오류(`NETWORK_OFFLINE`)가 아니라 마감 초과(`NETWORK_TIMEOUT`)다."""
+        clock = ns.FakeClock()
+        head = b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 100000\r\n\r\n"
+        sock = ns.FakeSocket(pieces=[head] + [b"x"] * 100_000, clock=clock)
+        calls = {"n": 0}
+        original = sock.recv_into
+
+        def drip(buffer):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                sock.delay = 9.0
+            return original(buffer)
+        sock.recv_into = drip
+        env = ns.Harness(self, clock=clock, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+        with env, self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL)
+        self.assertEqual((caught.exception.code, caught.exception.outcome_unknown), ("NETWORK_TIMEOUT", True), caught.exception.detail)
+        self.assertLessEqual(clock.now - 1000.0, endpoints.TOTAL_TIMEOUT + 0.001)
+        self.assertTrue(sock.closed)
+
+    def test_a_fake_socket_that_is_closed_fails_like_a_real_one(self):
+        """시험 도우미의 약속 — 닫은 소켓을 읽거나 쓰면 실패한다(그래야 위 시험들이 '닫은 뒤 읽기' 결함을 잡는다)."""
+        sock = ns.FakeSocket(b"abc")
+        sock.close()
+        with self.assertRaises(OSError):
+            sock.recv_into(bytearray(3))
+        with self.assertRaises(OSError):
+            sock.sendall(b"x")
+        lenient = ns.FakeSocket(b"abc", strict=False)
+        lenient.close()
+        self.assertEqual(lenient.recv_into(bytearray(3)), 3)
+
+
+class WireCapTest(unittest.TestCase):
+    """받는 바이트 **전체**의 상한(D-738, 독립 검증 S 권고-1). 본문은 누적 크기로 막았지만 머리글·덩어리 틀·끝 머리글(트레일러)·`100 Continue` 구간은 총 시간(30초)에만 묶여 있어,
+    루프백에서 3초 동안 약 164 MiB 를 읽고서야 끝났다(본문 상한은 1 MiB). 이제 읽은 바이트의 합이 `본문 상한 x 2 + 머리글 몫 두 번` 을 넘으면 `NET_RESPONSE_INVALID`(너무 큼)로 끊는다."""
+
+    @staticmethod
+    def flood(head, repeat):
+        def stream():
+            yield head
+            block = repeat * max(1, 65536 // len(repeat))                 # 되풀이하는 글을 통째로 몇 번 이은 덩어리(중간에서 잘리지 않아야 틀이 깨지지 않는다)
+            while True:
+                yield block
+        return ns.FakeSocket(stream=stream())
+
+    def cut(self, sock, *, limit=1000, reason=errors.REASON_TOO_LARGE):
+        env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+        with env, og.Tripwire() as wire, self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL, limit=limit)
+        self.assertEqual(wire.calls, [])
+        error = caught.exception
+        self.assertEqual((error.code, error.outcome_unknown), ("NET_RESPONSE_INVALID", True), f"{error.code} {error.detail} — 읽은 바이트 {sock.served}")
+        self.assertIn(reason, error.rendered().message)
+        cap = 2 * limit + 2 * endpoints.MAX_HEADER_BYTES
+        self.assertLessEqual(sock.served, cap + 8192, f"상한 {cap} 바이트를 넘겨 {sock.served} 바이트나 읽었다")
+        self.assertTrue(sock.closed)
+        self.assertEqual(env.usage.records()[0].error, "NET_RESPONSE_INVALID")
+
+    def test_the_wire_cap_is_twice_the_body_limit_plus_two_header_allowances(self):
+        for limit in (0, 1, 1000, 1024 * 1024, 20 * 1024 * 1024):
+            self.assertEqual(client._wire_cap(limit), 2 * limit + 2 * endpoints.MAX_HEADER_BYTES, limit)
+
+    def test_endless_trailer_lines_after_a_complete_chunked_body_are_cut(self):
+        self.cut(self.flood(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n", b"X-Trailer: " + b"a" * 1000 + b"\r\n"))
+
+    def test_an_endless_run_of_100_continue_answers_is_cut(self):
+        self.cut(self.flood(b"HTTP/1.1 100 Continue\r\n\r\n", b"HTTP/1.1 100 Continue\r\n\r\n"))
+
+    def test_a_flood_of_one_byte_chunks_is_cut_by_the_wire_cap_before_the_body_limit_is_reached(self):
+        """덩어리 하나가 1바이트면 본문 1바이트에 틀이 5바이트다 — 본문 상한만으로는 6배를 읽어야 끊겼다."""
+        self.cut(self.flood(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", b"1\r\nx\r\n"), limit=100_000)
+
+    def test_an_endless_header_block_is_cut(self):
+        """머리글은 `http.client` 의 개수 한도(100개)가 먼저 끊는다 — 상한과 부딪치지 않고 같은 오류 코드로 끝난다(이유 낱말만 다르다)."""
+        self.cut(self.flood(b"HTTP/1.1 200 OK\r\nConnection: close\r\n", b"X-Header: value\r\n"), reason=errors.REASON_SHAPE)
+
+    def test_a_legitimate_response_at_the_body_limit_is_never_cut_by_the_wire_cap(self):
+        """상한 정확히 크기의 본문은(덩어리 틀·머리글이 붙어도) 통과한다 — 틀 몫이 본문의 한 푼도 깎지 않는다."""
+        limit = 1024 * 1024
+        for framing in ("length", "chunked", "none"):
+            with self.subTest(framing=framing):
+                body = (b"0123456789abcdef" * (limit // 16))[:limit]
+                sock = ns.FakeSocket(pieces=pieces_of(framing, True, body, extra=["X-Pad: " + "p" * 3000]))
+                env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+                with env:
+                    response = env.client.request("update_check", "GET", UPDATE_URL)
+                self.assertEqual(len(response.body), limit)
+                self.assertLess(sock.served, client._wire_cap(limit))
+
+
 class DeadlineTest(unittest.TestCase):
     def test_slow_headers_and_slow_body_stop_at_the_total_deadline(self):
         """NT-27 — 한 바이트씩 찔끔 보내는 서버가 총 시간 안에 끊긴다(소켓 제한은 작업마다라 이것만으로는 못 막는다 — 마감 껍데기가 막는다)."""

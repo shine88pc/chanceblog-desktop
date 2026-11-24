@@ -116,6 +116,54 @@ class ImportScopeTest(unittest.TestCase):
                 self.assertTrue(hit, source)
 
 
+def keylog_uses(source):
+    """소스의 코드(독스트링·주석 말고)에서 세션 비밀 로그(`keylog`)가 이름·속성·키워드 인자·글자로 나오는 곳 → [(함수 이름, 노드 종류, 글)]."""
+    tree = ast.parse(source)
+    docstrings = {id(node.body[0].value) for node in ast.walk(tree) if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body
+                  and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant)}
+    owner = {}
+    for function in ast.walk(tree):
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for node in ast.walk(function):
+                owner[id(node)] = function.name                # 바깥 함수부터 훑으므로 안쪽 함수가 나중에 덮어쓴다
+    uses = []
+    for node in ast.walk(tree):
+        label = None
+        if isinstance(node, ast.Attribute):
+            label = node.attr
+        elif isinstance(node, ast.Name):
+            label = node.id
+        elif isinstance(node, (ast.keyword, ast.arg)):
+            label = node.arg
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
+            label = node.value
+        if label and "keylog" in label.lower():
+            uses.append((owner.get(id(node), "<module>"), type(node).__name__, label))
+    return uses
+
+
+class KeyLogScopeTest(unittest.TestCase):
+    def test_session_key_logging_is_named_only_to_turn_it_off_in_the_one_client_file(self):
+        """D-738(독립 검증 S 필수-1) — 세션 비밀 로그(`keylog`)는 `src/` 에서 `net/client.py` 한 파일에만 나오고, 거기서도 `_make_context` 의 끄기 한 줄(`context.keylog_filename = None`)과
+        `_check_context` 의 켜진 환경 거절 한 줄(`context.keylog_filename is not None`)뿐이다. 다른 곳에서 비밀 로그 파일을 대입하거나 환경 변수 이름을 읽으면 빨개진다."""
+        elsewhere = [path.relative_to(SRC).as_posix() for path in files() if re.search("keylog", path.read_text(encoding="utf-8"), re.I) and path.relative_to(SRC).as_posix() != "net/client.py"]
+        self.assertEqual(elsewhere, [], "세션 비밀 로그를 다루는 코드는 접속 클라이언트 한 파일뿐이다")
+        source = (SRC / "net" / "client.py").read_text(encoding="utf-8")
+        self.assertEqual(sorted(keylog_uses(source)), [("_check_context", "Attribute", "keylog_filename"), ("_make_context", "Attribute", "keylog_filename")])
+        tree = ast.parse(source)
+        shapes = sorted(ast.unparse(node) for node in ast.walk(tree) if isinstance(node, (ast.Assign, ast.Compare)) and "keylog" in ast.unparse(node))
+        self.assertEqual(shapes, ["context.keylog_filename = None", "context.keylog_filename is not None"])
+        guard = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_check_context")
+        self.assertIn("raise NetError('NET_TLS_FAILED'", ast.unparse(guard), "켜진 환경은 접속하기 전에 거절한다")
+
+    def test_the_key_log_scan_is_not_blind_it_catches_synthetic_shapes(self):
+        """대조 — 위 규칙이 합성 코드의 비밀 로그 모양(속성 대입·환경 변수 이름·키워드 인자·글자)을 실제로 잡는다(빈 실험이 아니다). 독스트링·주석의 낱말은 코드가 아니라 세지 않는다."""
+        for source in ('ctx.keylog_filename = path', 'import os\nos.environ.get("SSLKEYLOGFILE")', 'make(keylog_filename=path)', 'KEYLOG = 1', 'x = "SSLKEYLOGFILE"', 'def f(keylog):\n    pass'):
+            with self.subTest(source=source):
+                self.assertTrue(keylog_uses(source), source)
+        self.assertEqual(keylog_uses('def f():\n    """세션 비밀 로그(keylog)를 끈다"""\n    # keylog 설명\n    return 1'), [])
+
+
 class CategoryTablesTest(unittest.TestCase):
     def test_allowed_categories_are_exact_disjoint_and_each_network_reason_names_its_gate(self):
         """NT-14 — E1–E3: 범주 표는 정확하고(1·1·2·2·0 = 6곳) 서로 겹치지 않고 합집합이 허용 표이며, 접속·쓰기 범주의 이유에 `require_…` 관문 이름이 있다."""

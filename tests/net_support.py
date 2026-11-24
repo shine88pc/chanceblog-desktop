@@ -57,9 +57,13 @@ def http_response(status=200, reason="OK", headers=(), body=b"", *, chunked=Fals
 
 
 class FakeSocket:
-    """`_dial` 이 돌려주는 가짜 소켓. `script` 는 읽을 때마다 한 조각씩 돌려줄 바이트 목록이거나 한 덩어리 바이트다."""
+    """`_dial` 이 돌려주는 가짜 소켓. 읽을 것은 세 가지 중 하나로 정한다 — `data`(한 덩어리 바이트, `chunk` 바이트씩), `pieces`(읽을 때마다 한 조각씩 — 진짜 보안 연결이 레코드 하나씩 돌려주는 모양),
+    `stream`(조각을 끝없이 돌려주는 반복자 — 홍수 시험).
 
-    def __init__(self, data=b"", *, clock=None, delay=0.0, chunk=1 << 16, read_error=None, send_error=None):
+    **닫은 소켓은 진짜 소켓처럼 실패한다**(`strict`, 기본 켬) — 닫은 뒤에 읽거나 보내면 `OSError`. 예전에는 닫은 뒤에도 계속 읽혀서, 응답이 `Connection: close` 일 때 `http.client` 가 본문을 읽기 전에
+    연결을 닫아 버리는 결함(D-738)을 시험이 못 잡았다."""
+
+    def __init__(self, data=b"", *, clock=None, delay=0.0, chunk=1 << 16, read_error=None, send_error=None, pieces=None, stream=None, strict=True, runaway=64 << 20):
         self.sent = bytearray()
         self.send_calls = []
         self.data = bytes(data)
@@ -69,10 +73,16 @@ class FakeSocket:
         self.chunk = chunk
         self.read_error = read_error
         self.send_error = send_error
+        self.pieces = [bytes(piece) for piece in pieces] if pieces is not None else None
+        self.stream = iter(stream) if stream is not None else None
+        self.carry = b""
+        self.strict = strict
         self.timeout = None
         self.timeouts = []
         self.closed = False
         self.reads = 0
+        self.served = 0                                             # 지금까지 읽어 간 바이트 수(홍수 시험이 '상한에서 끊겼는가' 를 본다)
+        self.runaway = runaway                                      # 이만큼 읽어 가도록 아무도 끊지 않으면 시험이 영원히 돌지 않게 `RuntimeError`(끊는 코드가 없는 틀린 코드에서도 시험이 끝난다)
 
     def settimeout(self, value):
         self.timeout = value
@@ -82,13 +92,42 @@ class FakeSocket:
         return self.timeout
 
     def sendall(self, data):
+        if self.closed and self.strict:
+            raise OSError(9, "Bad file descriptor")
         if self.send_error is not None:
             raise self.send_error
         self.send_calls.append(bytes(data))
         self.sent.extend(data)
 
+    def _next(self, buffer):
+        """한 번 읽을 때 돌려줄 바이트(`buffer` 에 채우고 개수를 돌려준다)."""
+        if self.pieces is not None:
+            if not self.pieces:
+                return 0
+            piece = self.pieces[0]
+            count = min(len(buffer), len(piece))
+            buffer[:count] = piece[:count]
+            if count == len(piece):
+                self.pieces.pop(0)
+            else:
+                self.pieces[0] = piece[count:]
+            return count
+        if self.stream is not None:
+            if not self.carry:
+                self.carry = next(self.stream, b"")
+            count = min(len(buffer), len(self.carry))
+            buffer[:count] = self.carry[:count]
+            self.carry = self.carry[count:]
+            return count
+        count = min(len(buffer), self.chunk, len(self.data) - self.offset)
+        buffer[:count] = self.data[self.offset:self.offset + count]
+        self.offset += count
+        return count
+
     def recv_into(self, buffer):
         self.reads += 1
+        if self.closed and self.strict:
+            raise OSError(9, "Bad file descriptor")                 # 닫은 소켓을 읽으면 진짜 소켓처럼 실패한다
         if self.read_error is not None:
             raise self.read_error
         if self.delay and self.clock is not None:
@@ -96,9 +135,10 @@ class FakeSocket:
                 self.clock.advance(self.timeout)
                 raise TimeoutError("timed out")                     # 소켓 제한 안에 오지 않았다
             self.clock.advance(self.delay)
-        count = min(len(buffer), self.chunk, len(self.data) - self.offset)
-        buffer[:count] = self.data[self.offset:self.offset + count]
-        self.offset += count
+        count = self._next(buffer)
+        self.served += count
+        if self.served > self.runaway:
+            raise RuntimeError("가짜 소켓: 끝없는 흐름을 아무도 끊지 않았다")
         return count
 
     def close(self):

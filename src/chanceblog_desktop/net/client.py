@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import http.client
 import io
@@ -55,9 +56,12 @@ _clock = time.monotonic
 
 
 def _make_context():
-    """보안 환경 — 인증서 검증 필수·호스트 이름 확인(기본값)에 최소 TLS 1.2 를 **명시**한다(기본값이 더 엄격해져도 낮추지 않는다). 윈도에서는 `CA`·`ROOT` 저장소를 읽는다."""
+    """보안 환경 — 인증서 검증 필수·호스트 이름 확인(기본값)에 최소 TLS 1.2 를 **명시**한다(기본값이 더 엄격해져도 낮추지 않는다). 윈도에서는 `CA`·`ROOT` 저장소를 읽는다.
+    **세션 비밀 로그를 끈다**(D-738, 위협 T-09): 파이썬의 `create_default_context()` 는 패킷 분석용 환경 변수(세션 비밀 로그 파일 이름)가 있으면 TLS 세션 비밀을 그 파일에 쓰는 환경을 만든다.
+    이 틀은 접근 토큰이 실리는 길이라 어떤 환경 변수로도 그 트래픽을 푸는 열쇠를 파일에 남기지 않는다."""
     context = ssl.create_default_context()
     context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.keylog_filename = None
     return context
 
 
@@ -77,9 +81,11 @@ def _secure(connection, raw):
 
 
 def _check_context(context):
-    """생산 코드의 마지막 방어 — 검증을 낮춘 보안 환경은 쓰지 않는다(시험이 바꿔 끼운 것도 마찬가지)."""
+    """생산 코드의 마지막 방어 — 검증을 낮추거나 세션 비밀 로그가 켜진 보안 환경은 쓰지 않는다(시험이 바꿔 끼운 것도 마찬가지)."""
     if context.verify_mode != ssl.CERT_REQUIRED or context.check_hostname is not True or context.minimum_version < ssl.TLSVersion.TLSv1_2:
         raise NetError("NET_TLS_FAILED", {}, detail="context:weak")
+    if context.keylog_filename is not None:                # 파이썬 3.10 이상(OpenSSL 1.1.1 이상이 필수)에는 늘 있는 속성이다
+        raise NetError("NET_TLS_FAILED", {}, detail="context:secret_log")
 
 
 def _trust_env_changed():
@@ -88,8 +94,16 @@ def _trust_env_changed():
 
 
 # ---- 마감을 아는 껍데기 ----------------------------------------------------------------------------------------------------------------
+WIRE_FACTOR = 2                                                 # 덩어리 틀(덩어리 하나가 1바이트면 본문 1바이트에 틀 5바이트)을 넉넉히 덮는 배수
+
+
+def _wire_cap(limit):
+    """읽어도 되는 바이트 **전체**의 상한(D-738) — 본문 상한의 두 배(덩어리 틀 몫)에 머리글 몫 두 번(상태 줄·머리글·끝 머리글·`100 Continue`). 본문은 누적 크기로도 막지만 그 밖의 구간은 이것이 막는다."""
+    return WIRE_FACTOR * limit + 2 * MAX_HEADER_BYTES
+
+
 class _DeadlineReader(io.RawIOBase):
-    """`makefile` 이 돌려주는 읽개 — 읽을 때마다 연결 껍데기에 맡겨 마감을 본다."""
+    """`makefile` 이 돌려주는 읽개 — 읽을 때마다 연결 껍데기에 맡겨 마감을 보고, 닫히면 껍데기에 알린다(읽개가 모두 닫혀야 진짜 소켓이 닫힌다)."""
 
     def __init__(self, owner):
         super().__init__()
@@ -101,14 +115,31 @@ class _DeadlineReader(io.RawIOBase):
     def readinto(self, buffer):
         return self._owner.recv_into(buffer)
 
+    def close(self):
+        if self.closed:
+            return
+        try:
+            super().close()
+        finally:
+            self._owner._reader_closed()
+
 
 class _DeadlineSocket:
-    """`http.client` 가 쓰는 소켓 모양(`sendall`·`makefile`·`close`)을 마감과 바이트 계수와 함께 감싼다 — 보내기·읽기 직전마다 남은 시간을 보고 소켓 제한을 `min(작업 제한, 남은 시간)` 으로 줄인다."""
+    """`http.client` 가 쓰는 소켓 모양(`sendall`·`makefile`·`close`)을 마감·바이트 계수·받는 바이트 상한과 함께 감싼다 — 보내기·읽기 직전마다 남은 시간을 보고 소켓 제한을 `min(작업 제한, 남은 시간)` 으로 줄인다.
 
-    def __init__(self, sock, deadline, clock):
+    **`close()` 는 닫기를 요청할 뿐이다**(D-738, 독립 검증 Q-R1). `http.client` 는 응답이 `Connection: close` 이거나 길이가 없으면 본문을 읽기 **전에** `close()` 를 부른다 — 표준 소켓은 `makefile` 읽개가 열려 있는 동안
+    (`_io_refs` 계수) 진짜로는 닫지 않는데 이 껍데기의 자체 `makefile` 에는 그 계수가 없어서, 예전에는 그 호출이 진짜 소켓을 곧바로 닫아 본문을 못 읽고 `NETWORK_OFFLINE` 로 끝났다.
+    이제 읽개를 세어 읽개가 모두 닫혔을 때 진짜로 닫고, 요청이 끝나면 `abort()` 로 남은 읽개와 상관없이 닫는다(연결이 새지 않는다)."""
+
+    def __init__(self, sock, deadline, clock, use, wire_cap):
         self._sock = sock
         self._deadline = deadline
         self._clock = clock
+        self._use = use
+        self._wire_cap = wire_cap
+        self._readers = 0                    # `makefile` 이 만든 읽개 가운데 아직 안 닫힌 것의 수
+        self._closing = False                # `close()` 가 불렸다 — 읽개가 모두 닫히면 진짜로 닫는다
+        self._shut = False                   # 진짜 소켓을 닫았다
         self.sent = 0
         self.received = 0
 
@@ -127,15 +158,37 @@ class _DeadlineSocket:
         self._budget()
         count = self._sock.recv_into(buffer)
         self.received += count
+        if self.received > self._wire_cap:               # 본문 말고 머리글·덩어리 틀·끝 머리글·`100 Continue` 홍수도 여기서 끊긴다(총 시간까지 기다리지 않는다)
+            raise invalid(self._use, REASON_TOO_LARGE, phase="wire", outcome_unknown=True)
         return count
 
     def makefile(self, mode="rb", buffering=None, **_unused):
+        self._readers += 1
         return io.BufferedReader(_DeadlineReader(self), buffer_size=8192)
+
+    def _reader_closed(self):
+        self._readers -= 1
+        if self._closing and self._readers <= 0:
+            self._shut_for_real()
 
     def settimeout(self, value):
         pass
 
     def close(self):
+        """닫기를 요청한다 — 읽개가 열려 있으면 그것들이 모두 닫힐 때까지 진짜 소켓은 열어 둔다."""
+        self._closing = True
+        if self._readers <= 0:
+            self._shut_for_real()
+
+    def abort(self):
+        """요청이 끝났다 — 읽개가 남아 있어도 진짜 소켓을 닫는다(쓰고 난 연결이 새지 않게)."""
+        self._closing = True
+        self._shut_for_real()
+
+    def _shut_for_real(self):
+        if self._shut:
+            return
+        self._shut = True
         try:
             self._sock.close()
         except OSError:
@@ -145,10 +198,12 @@ class _DeadlineSocket:
 class _Connection(http.client.HTTPSConnection):
     """우리가 정한 연결 — 풀이·연결·보안 확인·마감을 한곳에서 한다(`connect` 를 덮어쓴다). 자동 연결·프록시 터널·쿠키 없음."""
 
-    def __init__(self, host, deadline, context, clock):
+    def __init__(self, host, deadline, context, clock, use, wire_cap):
         super().__init__(host, 443, timeout=CONNECT_TIMEOUT, context=context)
         self._deadline = deadline
         self._clock = clock
+        self._use = use
+        self._wire_cap = wire_cap
         self.stage = "connect"
 
     def connect(self):
@@ -170,7 +225,7 @@ class _Connection(http.client.HTTPSConnection):
                 pass
             raise
         self.stage = "send"
-        self.sock = _DeadlineSocket(secure, self._deadline, self._clock)
+        self.sock = _DeadlineSocket(secure, self._deadline, self._clock, self._use, self._wire_cap)
 
 
 # ---- 요청 계획(3단계 — 접속 전 모양 검사) ------------------------------------------------------------------------------------------------
@@ -270,7 +325,8 @@ def _plan(endpoint, method, url, body, bearer, accept_encoding, limit, *, downlo
     cap = endpoint.max_download if download else endpoint.max_response
     if limit is None:
         limit = cap
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0 or limit > cap or (accept_encoding != "identity" and limit != 0):
+    smallest = 1 if download else 0                           # 받을 크기가 0 인 내려받기는 뜻이 없다(빈 파일을 성공으로 남기며 해시 약속을 건너뛰는 길이었다 — D-739)
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < smallest or limit > cap or (accept_encoding != "identity" and limit != 0):
         raise program_error(use, "limit")
     return _Plan(endpoint.host, route, method, parts.path + ("?" + parts.query if parts.query else ""), body, bearer, accept_encoding, limit, endpoint.accept, endpoint.cache_control, endpoint.keep_headers)
 
@@ -475,9 +531,10 @@ class NetClient:
     def _once(self, endpoint, plan, context, deadline, started, trace, sink):
         """연결 한 번 → (`NetResponse`, None) 또는 이동이면 (None, `Location` 글). 4–9 단계."""
         use = endpoint.use
-        conn = _Connection(plan.host, deadline, context, _clock)
+        conn = _Connection(plan.host, deadline, context, _clock, use, _wire_cap(plan.limit))
         stage = "connect"
         sock = None
+        resp = None
         try:
             trace.connecting = True
             conn.connect()                                                       # 4 연결 · 5 보안 확인
@@ -515,18 +572,25 @@ class NetClient:
             if isinstance(sock, _DeadlineSocket):
                 trace.sent += sock.sent
                 trace.received += sock.received
-            conn.close()
+            try:
+                if resp is not None:
+                    with contextlib.suppress(Exception):
+                        resp.close()                                                # 읽개를 닫는다(본문을 끝까지 읽지 않고 끝났어도)
+            finally:
+                conn.close()
+                if isinstance(sock, _DeadlineSocket):
+                    sock.abort()                                                    # 읽개가 남아 있어도 이 요청이 끝났으니 진짜 소켓을 닫는다 — 연결이 새지 않는다
 
     def _read_body(self, use, resp, items, lengths, plan, sink):
         """9 본문 읽기 — 선언된 크기를 먼저 보고, 읽는 동안 누적 크기를 보며(마감은 소켓 껍데기가 지킨다), 압축된 답은 거절한다."""
         status = resp.status
         limit = plan.limit
         success = 200 <= status <= 299
+        if sink is not None and success and status in _NO_BODY_STATUSES:
+            raise invalid(use, REASON_LENGTH, phase="body", outcome_unknown=True)  # 204: 받을 파일이 없다 — 빈 파일을 성공으로 남기지 않는다(해시 약속도 건너뛰지 않는다, D-739)
         if sink is not None and not success:
-            limit = 0                                                            # 내려받기가 실패한 답은 본문을 읽지 않는다
+            limit = 0                                                            # 내려받기가 실패한 답은 본문을 읽지 않는다(파일은 남지 않는다)
         if limit == 0 or status in _NO_BODY_STATUSES:
-            if sink is not None and success:
-                sink.finish()
             return b""
         declared = None
         if lengths:
