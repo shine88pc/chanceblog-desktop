@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 from contextlib import closing
 from pathlib import Path
 from typing import NamedTuple
@@ -64,6 +65,31 @@ JSON_LOADERS = {layout.CHANNEL_PROFILES_FILE: _profiles_without_keys, layout.SEE
 BACKUP_FILES = layout.USER_DATA_FILES                           # 백업에 들어갈 수 있는 파일 이름 넷(그 밖의 이름은 거절)
 MAX_JSON_BYTES = 8 * 1024 * 1024                                 # JSON 한 파일의 상한(실수로 거대한 파일을 읽지 않게)
 MAX_NAMES = 99                                                   # 같은 초에 만든 백업 이름 번호(-2 … -99)
+REPARSE_POINT = 0x400                                            # 윈도 파일 속성 FILE_ATTRIBUTE_REPARSE_POINT — 심볼릭 링크·junction(정션)·마운트 지점이 가진다(전체 백업 `service/backup_flow.py` 와 같은 값)
+LINK_TAGS = frozenset({0xA000000C, 0xA0000003})                  # 이름을 다른 곳으로 돌리는 재해석 종류 — 심볼릭 링크와 junction·마운트 지점. OneDrive 같은 클라우드 파일 자리표시는 아니다(윈도에만 있는 stat 이름 대신 숫자)
+LINK_REASON = "백업 폴더나 그 안의 파일이 다른 곳을 가리키는 링크(바로가기·정션)라서 쓰지 않습니다 — 링크가 아니라 진짜 백업 폴더를 골라 주세요"
+
+
+def _is_link(path):
+    """그 경로 **자신**이 링크인가 — 심볼릭 링크이거나 윈도 재해석 지점(junction·마운트 지점 …)이면 참(AS-S2 권고-2, D-690). 전체 백업의 같은 이름 함수(`service/backup_flow.py::_is_link`, D-608)와 **같은 기준**이다
+    (시험이 두 함수에 같은 표를 먹여 같은 답을 내는지 못박는다 — 이 모듈은 서비스를 가져올 수 없어 같은 글을 한 번 더 둔다). 링크를 따라가지 않고 그 이름을 `os.lstat` 로 본다.
+    윈도에서 junction 의 `is_symlink()` 는 거짓이고 `is_dir()` 은 링크를 따라가서 그 둘만으로는 폴더 자리에 놓인 junction 을 못 거른다(목록·정리가 목적지의 앱 이름 파일을 지웠다).
+    재해석 지점인데 종류(`st_reparse_tag`)가 링크가 아니면(클라우드 파일 자리표시 …) 링크로 보지 않는다. 없는 경로는 거짓, 읽을 수 없으면 참(알 수 없으면 따라가지 않는다)."""
+    path = Path(path)
+    try:
+        if path.is_symlink():                                    # 심볼릭 링크(윈도 junction 은 여기서 거짓이라 아래 재해석 속성이 따로 본다)
+            return True
+        info = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if not getattr(info, "st_file_attributes", 0) & REPARSE_POINT:
+        return False
+    tag = getattr(info, "st_reparse_tag", None)
+    return tag is None or tag in LINK_TAGS
 
 
 class BackupResult(NamedTuple):
@@ -262,11 +288,12 @@ def _structure_problem(path):
 
 
 def list_backups(folder):
-    """백업 폴더들(이름이 앱이 만드는 모양인 것만, 새 것이 먼저)."""
+    """백업 폴더들(이름이 앱이 만드는 모양인 것만, 새 것이 먼저). **링크는 따라가지 않는다**(AS-S2 권고-2, D-690): 폴더 자신이 링크(junction 포함)이면 그 안을 훑지 않고 빈 목록이고,
+    항목이 링크이면 목록에 넣지 않는다 — 정리(`_prune`)가 목록을 쓰므로 링크 목적지의 파일이 '낡은 백업' 으로 지워지지 않는다."""
     folder = Path(folder)
-    if not folder.is_dir():
+    if _is_link(folder) or not folder.is_dir():
         return []
-    return sorted((entry for entry in folder.iterdir() if entry.is_dir() and BACKUP_NAME.fullmatch(entry.name)), key=lambda entry: entry.name, reverse=True)
+    return sorted((entry for entry in folder.iterdir() if BACKUP_NAME.fullmatch(entry.name) and not _is_link(entry) and entry.is_dir()), key=lambda entry: entry.name, reverse=True)
 
 
 _MAX_REF_CHARS = 260                                             # 친 백업 참조의 전체 길이 상한 — 윈도 `_COPY_PATH_LIMIT` 와 같은 기준(진짜 백업 이름은 22자 안팎이고 경로로 준 것도 이보다 짧다)
@@ -354,6 +381,8 @@ def make_backup(data_dir, backups_dir, *, now, keep=KEEP_BACKUPS, names=None):
     created = _missing_folders(backups_dir)                       # 이 백업이 새로 만드는 폴더 — 막히거나 실패하면 빈 채로 남기지 않는다
     try:
         backups_dir.mkdir(parents=True, exist_ok=True)
+        if _is_link(temp):                                        # 임시 이름 자리에 링크가 있으면 따라가지 않고 만들지 않는다 — 그 목적지의 파일을 지우지 않는다(AS-S2 권고-2, D-690)
+            raise AppError("BACKUP_FAILED", detail="임시 백업 폴더 자리에 링크가 있어 따라가지 않고 백업을 만들지 않았다")
         if temp.exists():
             _clear_known(temp)
         temp.mkdir(parents=True)
@@ -408,12 +437,12 @@ def _free_name(folder, name):
 
 
 def _clear_known(folder):
-    """앱이 만드는 파일 이름의 파일만 지우고 비면 폴더를 없앤다 — 낯선 파일이 있으면 그 폴더는 그대로 둔다."""
+    """앱이 만드는 파일 이름의 파일만 지우고 비면 폴더를 없앤다 — 낯선 파일이 있으면 그 폴더는 그대로 둔다. 폴더 자신이나 항목이 링크이면 따라가지 않고 그대로 둔다(그 목적지의 파일을 지우지 않는다 — AS-S2 권고-2, D-690)."""
     folder = Path(folder)
-    if not folder.is_dir():
+    if _is_link(folder) or not folder.is_dir():
         return False
     entries = list(folder.iterdir())
-    if any(entry.name not in (*BACKUP_FILES, MANIFEST_NAME) or not entry.is_file() for entry in entries):
+    if any(entry.name not in (*BACKUP_FILES, MANIFEST_NAME) or _is_link(entry) or not entry.is_file() for entry in entries):
         return False
     for entry in entries:
         _remove_file(entry)
@@ -440,6 +469,8 @@ def _verify_folder(folder):
 
 def _verify_folder_files(folder):
     folder = Path(folder)
+    if _is_link(folder) or _is_link(folder / MANIFEST_NAME):                                  # 폴더 자신이나 목록 파일이 링크이면 읽지 않는다 — 링크 너머의 백업을 쓰지 않는다(AS-S2 권고-2, D-690)
+        raise _invalid(folder, LINK_REASON, detail="백업 폴더나 목록 파일이 링크라 따라가지 않는다")
     try:
         manifest = json.loads((folder / MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
@@ -456,6 +487,8 @@ def _verify_folder_files(folder):
         info = manifest["files"][name]
         if not isinstance(info, dict) or set(info) != {"size", "sha256"}:
             raise _invalid(folder, "백업의 목록 파일 모양이 맞지 않습니다")
+        if _is_link(folder / name):                                                           # 담은 파일이 링크이면 그 목적지를 읽지 않는다(내용·해시가 맞아도 — 읽는 순간 다른 파일일 수 있다)
+            raise _invalid(folder, LINK_REASON, detail=f"{name} 이 링크라 따라가지 않는다")
         data = (folder / name).read_bytes()
         if len(data) != info["size"] or _sha256(data) != info["sha256"]:
             raise _invalid(folder, f"{name} 의 크기나 해시가 목록과 다릅니다(파일이 바뀌었거나 깨졌습니다)")
@@ -478,6 +511,8 @@ def _verify_folder_files(folder):
 def read_backup(folder):
     """백업 폴더를 열어 보지 않고(바꾸지 않고) 온전한지 확인한다 → (목록, {파일 이름: 바이트}). 틀리면 TOPIC_BACKUP_INVALID. 키 모양이 있어도 틀린 백업이다."""
     folder = Path(folder)
+    if _is_link(folder):                                                                      # 폴더 자신이 링크(junction 포함)이면 읽지 않는다 — 링크 너머의 백업으로 되돌리지 않는다(AS-S2 권고-2, D-690)
+        raise _invalid(folder, LINK_REASON, detail="백업 폴더가 링크라 따라가지 않는다")
     if not folder.is_dir() or not BACKUP_NAME.fullmatch(folder.name):
         raise _invalid(folder, "주제 엔진 백업 폴더가 아닙니다")
     manifest, contents = _verify_folder(folder)
@@ -571,7 +606,7 @@ def restore_backup(backup, data_dir, backups_dir, *, now):
             target = data_dir / name
             originals[name] = target.read_bytes() if target.is_file() else None
             stage = data_dir / (name + ".restoring")
-            _write_bytes(stage, contents[name])
+            _write_staged(stage, contents[name])
             staged.append(stage)
         for name in list(originals):
             working = name
@@ -625,6 +660,15 @@ def _remove_quietly(path):
         return False
 
 
+def _write_staged(stage, data):
+    """복원의 임시 이름(`<이름>.restoring` — 고정 이름) 자리를 비운 뒤 쓴다. 미리 심은 링크가 있으면 그 이름 자체만 지우고(링크가 가리키는 곳은 건드리지 않는다) 치우고도 링크가 남아 있으면 쓰지 않고 `OSError` 로 멈춘다
+    (전체 백업의 `_clear_stage` 와 같은 길, AS-S2 권고-2·D-690). 오류는 `OSError` 다 — 복원 흐름·되돌리기가 이미 그 오류를 쉬운 문구로 바꾼다."""
+    _remove_quietly(stage)
+    if _is_link(stage):
+        raise OSError(errno.EPERM, "임시 파일 자리에 링크가 있어 치우지 못했다")
+    _write_bytes(stage, data)
+
+
 def _undo_moves(data_dir, moves):
     """복원이 도중에 실패했을 때 옆으로 옮겨 둔 파일을 제자리로 되돌린다 → 제자리로 돌리지 못한 파일마다 쉬운 말 한 줄(옮겨 둔 이름이 들어 있다 — 그 파일은 그 이름으로 그대로 남아 있다).
     한 파일이 실패해도 나머지는 계속 되돌린다."""
@@ -650,7 +694,7 @@ def _roll_back(data_dir, staged, restored, originals, moves, new_db, engine_back
             if original is None:
                 _remove_file(target)
             else:
-                _write_bytes(temp, original)
+                _write_staged(temp, original)
                 os.replace(temp, target)
         except OSError:
             _remove_quietly(temp)
