@@ -628,6 +628,42 @@ class TlsCheckTest(unittest.TestCase):
         other = ge.check_tls(import_module=lambda name: fake, platform="linux")
         self.assertFalse(other.text.startswith("알림"), "윈도가 아니면 루트 0 도 알림이 아니다(리눅스 CI 는 루트를 다른 방식으로 읽는다)")
 
+    def test_the_tls_item_becomes_a_failure_when_anything_ships_open(self):
+        """D-738(독립 검증 S 권고-3 (a)) — 출하 표가 비어 있으면(지금) 알림이지만, 스위치가 하나라도 켜진 채 출하되면 같은 점검이 실패 조건이다 — `_ssl`·`libssl`·윈도 신뢰 루트가 빠진 묶음으로 접속이 열린 채 나가지 않게."""
+        breakers = (("ssl 이 없다", lambda name: (_ for _ in ()).throw(ImportError("x")), None),
+                    ("기본 환경을 못 만든다", lambda name: types.SimpleNamespace(OPENSSL_VERSION="OpenSSL x", create_default_context=lambda: (_ for _ in ()).throw(OSError("secret path C:/hidden"))), None),
+                    ("루트 표가 깨졌다", lambda name: types.SimpleNamespace(OPENSSL_VERSION="OpenSSL x", create_default_context=lambda: types.SimpleNamespace(cert_store_stats=lambda: (_ for _ in ()).throw(ValueError("x")))), None),
+                    ("윈도에서 루트가 0개", lambda name: types.SimpleNamespace(OPENSSL_VERSION="OpenSSL 3.x", create_default_context=lambda: types.SimpleNamespace(cert_store_stats=lambda: {"x509_ca": 0})), "win32"))
+        for shipped in (("NET_UPDATE_CHECK",), ("EXTERNAL_WRITE", "NET_PAGES_SITE"), ("PAGES_BRANCH_PUSH",)):
+            for label, importer, platform in breakers:
+                with self.subTest(shipped=shipped, label=label):
+                    result = ge.check_tls(import_module=importer, platform=platform, shipped=shipped)
+                    self.assertEqual((result.key, result.status), ("tls", "fail"), "접속이 열린 채 출하하는데 보안 접속 부품이 틀렸다 — 실패여야 한다")
+                    self.assertFalse(result.text.startswith("알림"), result.text)
+                    self.assertNotIn("hidden", result.text)
+        fake = types.SimpleNamespace(OPENSSL_VERSION="OpenSSL 3.x", create_default_context=lambda: types.SimpleNamespace(cert_store_stats=lambda: {"x509_ca": 120}))
+        good = ge.check_tls(import_module=lambda name: fake, platform="win32", shipped=("NET_UPDATE_CHECK",))
+        self.assertEqual((good.status, good.text.startswith("알림")), ("ok", False), "부품이 멀쩡하면 접속이 열려 있어도 통과한다(대조)")
+        for label, importer, platform in breakers:
+            self.assertEqual(ge.check_tls(import_module=importer, platform=platform, shipped=()).status, "ok", f"{label}: 출하 표가 비어 있으면 늘 알림이다")
+        with mock.patch.object(pc, "SHIPPED_OPEN_SWITCHES", ("NET_UPDATE_CHECK",)):
+            self.assertEqual(ge.check_tls(import_module=breakers[0][1]).status, "fail", "기본값은 출하 표(`pkgcommon.SHIPPED_OPEN_SWITCHES`)를 읽는다")
+        self.assertEqual(ge.check_tls(import_module=breakers[0][1]).status, "ok", "지금의 출하 표는 비어 있다")
+
+    def test_the_build_requires_the_tls_line_once_anything_ships_open(self):
+        """같은 규칙의 빌드 쪽 — 출하 표가 비어 있지 않으면 `tls` 줄이 없는 옛 묶음을 거절한다(비어 있는 동안은 있든 없든 거절 조건이 아니다)."""
+        dropped = ps.build_package.parse_selftest(ps.selftest_text(drop=("tls",)))
+        with mock.patch.object(pc, "SHIPPED_OPEN_SWITCHES", ("NET_UPDATE_CHECK",)):
+            ok, _gate, _override, bad = ps.build_package.judge_selftest(dropped, allow_missing_gate=False)
+            self.assertEqual((ok, bad), (False, ["tls"]))
+            whole = ps.build_package.parse_selftest(ps.selftest_text())
+            self.assertEqual(ps.build_package.judge_selftest(whole, allow_missing_gate=False)[:1], (True,))
+            failing = ps.build_package.parse_selftest(ps.selftest_text(overrides={"tls": ("fail", "보안 접속 부품을 점검하지 못했어요")}))
+            ok, _gate, _override, bad = ps.build_package.judge_selftest(failing, allow_missing_gate=False)
+            self.assertEqual((ok, bad), (False, ["tls"]), "tls 점검이 실패하면 빌드를 거절한다")
+        ok, _gate, _override, bad = ps.build_package.judge_selftest(dropped, allow_missing_gate=False)
+        self.assertEqual((ok, bad), (True, []), "출하 표가 비어 있는 동안은 줄이 없어도 거절 조건이 아니다")
+
     def test_the_build_never_refuses_over_the_tls_item_and_does_not_require_it(self):
         parsed = ps.build_package.parse_selftest(ps.selftest_text(overrides={"tls": ("ok", "알림: 점검하지 못했어요")}))
         ok, _gate, _override, bad = ps.build_package.judge_selftest(parsed, allow_missing_gate=False)

@@ -569,6 +569,8 @@ def judge_selftest(parsed, *, allow_missing_gate):
         failed.remove("capabilities")
         override = True
     required = {"utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "uac_manifest", "qt_plugins", "qt_screens", "gui_only_entry", "data_dir_untouched"}
+    if pc.SHIPPED_OPEN_SWITCHES:
+        required.add("tls")                                                                    # 접속이 열린 채 출하하면 보안 접속 부품 점검 줄이 있어야 한다(없는 옛 묶음은 거절 — D-738)
     absent = sorted(required - set(parsed["passed"]) - set(parsed["failed"]))
     ok = not failed and not absent and not parsed["skipped"]
     return ok, gate_present, override, failed + absent

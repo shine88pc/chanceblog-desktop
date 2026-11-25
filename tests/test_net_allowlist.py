@@ -102,6 +102,17 @@ class ImportScopeTest(unittest.TestCase):
         self.assertEqual(problems, [], "TLS 를 약화하는 이름·대입이 있다(`minimum_version = ssl.TLSVersion.TLSv1_2` 한 곳만 허용)")
         self.assertIn("ssl.TLSVersion.TLSv1_2", (SRC / "net" / "client.py").read_text(encoding="utf-8"))
 
+    def test_the_minimum_tls_version_is_set_explicitly_inside_make_context_and_checked_by_the_last_guard(self):
+        """C2(독립 검증 Q N-5) — 최소 TLS 1.2 는 `_make_context` 안의 대입문으로 **명시**한다(기본값이 더 엄격해져도 낮추지 않는다는 설계 규칙). 예전 시험은 `_check_context` 에 같은 글이 있어도 통과했다(변이 Q27).
+        마지막 방어(`_check_context`)는 그 아래 값으로는 접속하지 않는다."""
+        tree = ast.parse((SRC / "net" / "client.py").read_text(encoding="utf-8"))
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        assigns = [ast.unparse(node) for node in ast.walk(functions["_make_context"]) if isinstance(node, ast.Assign)]
+        self.assertIn("context.minimum_version = ssl.TLSVersion.TLSv1_2", assigns)
+        self.assertNotIn("TLSv1_2", ast.unparse(functions["_check_context"]).replace("ssl.TLSVersion.TLSv1_2", ""), "마지막 방어는 1.2 보다 낮은 값을 거절한다")
+        self.assertIn("context.minimum_version < ssl.TLSVersion.TLSv1_2", ast.unparse(functions["_check_context"]))
+        self.assertEqual(client._make_context.__name__, "_make_context")
+
     def test_the_tls_weakening_scan_is_not_blind_it_catches_synthetic_shapes(self):
         """대조 — 위 규칙이 합성 코드의 약화 모양을 실제로 잡는다(빈 실험이 아니다)."""
         bad = ["ssl._create_unverified_context()", "ctx.check_hostname = False", "ctx.verify_mode = ssl.CERT_NONE", "ctx.minimum_version = ssl.TLSVersion.TLSv1", "ctx.set_ciphers('ALL')", "ssl.PROTOCOL_TLSv1",

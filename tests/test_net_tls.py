@@ -6,6 +6,7 @@
 import ast
 import contextlib
 import dataclasses
+import hashlib
 import inspect
 import os
 import re
@@ -30,6 +31,7 @@ from chanceblog_desktop.net import client, endpoints, errors, usage as net_usage
 SRC = HERE.parent / "src" / "chanceblog_desktop"
 URL = "https://github.com/own/app/releases/latest/download/update-manifest.json"
 BODY = b'{"ok": true}'
+WATCH_SECONDS = 5                                  # 서버가 응답을 보낸 뒤 클라이언트가 연결을 닫기를 기다리는 시간(느린 PC 에서도 정상 요청이 거짓 실패하지 않게 넉넉히 — 새는 연결만 이만큼 걸려 빨개진다)
 SWITCHES = ns.USE_SWITCHES["update_check"]
 
 
@@ -37,7 +39,7 @@ class LoopbackTlsServer:
     """한 번에 연결 하나씩 받는 TLS 서버(스레드) — 핸드셰이크가 되면 HTTP 요청 머리글과 **요청 본문(`Content-Length` 만큼)을 모두 읽은 뒤** 응답을 보낸다. 핸드셰이크 오류는 `handshake_errors` 에 이름만 남긴다.
 
     본문을 읽지 않고 답하면 윈도에서 서버가 연결을 닫을 때 RST 가 나가 클라이언트가 응답을 못 받는 일이 가끔 있다(D-738 — 예전 서버가 POST 시험을 약 8퍼센트 빨갛게 했다).
-    `handler(server, conn, head, body)` 가 있으면 응답을 그 함수가 보낸다(응답 모양 시험용). `watch_close` 가 켜져 있으면 응답을 보낸 뒤 보내기 쪽을 닫고 클라이언트가 연결을 닫는지 최대 3초 본다(`closed_by_client`)."""
+    `handler(server, conn, head, body)` 가 있으면 응답을 그 함수가 보낸다(응답 모양 시험용). `watch_close` 가 켜져 있으면 응답을 보낸 뒤 보내기 쪽을 닫고 클라이언트가 연결을 닫는지 최대 5초 본다(`closed_by_client`)."""
 
     def __init__(self, cert, key, *, minimum=None, maximum=None, ciphers=None, drip=None, drip_close=False, silent=False, handler=None, watch_close=False):
         self.dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -134,10 +136,10 @@ class LoopbackTlsServer:
         return head, rest[:need]
 
     def watch(self, conn):
-        """응답을 다 보낸 뒤 보내기 쪽을 닫고(길이 없는 응답은 이것이 '끝' 이다) 클라이언트가 연결을 닫는지 최대 3초 본다 — 닫지 않으면 연결이 새고 있는 것이다."""
+        """응답을 다 보낸 뒤 보내기 쪽을 닫고(길이 없는 응답은 이것이 '끝' 이다) 클라이언트가 연결을 닫는지 최대 5초 본다 — 닫지 않으면 연결이 새고 있는 것이다."""
         try:
             conn.shutdown(socket.SHUT_WR)
-            conn.settimeout(3)
+            conn.settimeout(WATCH_SECONDS)
             while conn.recv(4096):
                 pass
             self.closed_by_client.set()
@@ -207,11 +209,14 @@ class TlsBase(unittest.TestCase):
         self.servers.append(server)
         return server
 
-    def call(self, server, *, context=None, url=URL, total=None, switches=SWITCHES, use="update_check", method="GET", request=None, **kwargs):
-        """진짜 `ssl` 로 서버에 요청한다 → (응답 또는 오류, 사용량). 이름 풀이만 가짜 표다. `request` 는 `NetClient.request` 에 더 넘길 인자(본문·읽을 상한 등)."""
+    def call(self, server, *, context=None, url=URL, total=None, switches=SWITCHES, use="update_check", method="GET", request=None, download=None, table_use=None, **kwargs):
+        """진짜 `ssl` 로 서버에 요청한다 → (응답 또는 오류, 사용량). 이름 풀이만 가짜 표다. `request` 는 `NetClient.request` 에 더 넘길 인자(본문·읽을 상한 등),
+        `download` 가 있으면 `request_to_file` 로 받는다(그 인자 모음 — `dest`·`max_bytes`·`expected_sha256`), `table_use` 는 그 용도의 표 줄을 바꿔 끼운다(내려받기 길 같은 합성 표)."""
         usage = net_usage.Usage()
         net = client.NetClient(version=ns.VERSION, usage=usage)
         table = endpoints.ENDPOINTS
+        if table_use is not None:
+            table = dict(table, **{use: table_use})
         if total is not None:
             table = dict(table, **{use: dataclasses.replace(table[use], total_timeout=total)})
         with contextlib.ExitStack() as stack:
@@ -224,7 +229,7 @@ class TlsBase(unittest.TestCase):
                 stack.enter_context(mock.patch.object(client, key, value))
             wire = stack.enter_context(og.Tripwire(loopback_only=True))
             try:
-                result = net.request(use, method, url, **(request or {}))
+                result = net.request_to_file(use, method, url, **download) if download is not None else net.request(use, method, url, **(request or {}))
             except errors.NetError as error:
                 result = error
         self.assertEqual(wire.calls, [], "루프백 밖으로 나가는 연결이 있었다")
@@ -258,6 +263,40 @@ class ValidCertificateTest(TlsBase):
                 self.assertIn(f"Host: {host}\r\n".encode(), server.requests[0])
 
 
+class CertificateNameTest(TlsBase):
+    """인증서 확인 이름은 **요청한 용도의 표의 호스트**다(고정 글자가 아니다 — D-738, 독립 검증 Q G-4). 예전 시험 인증서는 세 호스트를 모두 이름으로 가져서 확인 이름을 `github.com` 으로 못박아도 시험이 초록이었다(변이 Q28).
+    이름이 하나뿐인 인증서를 내놓는 서버에는 그 이름의 용도만 연결되고 다른 호스트 용도는 `NET_TLS_FAILED` 로 거절된다."""
+
+    USES = (("update_check", "GET", URL, "github.com", None),
+            ("blogger_oauth", "POST", "https://oauth2.googleapis.com/token", "oauth2.googleapis.com", {"body": b"x=1"}),
+            ("blogger_read", "GET", "https://www.googleapis.com/blogger/v3/blogs/1", "www.googleapis.com", {"bearer": "t"}))
+
+    def test_a_certificate_for_one_table_host_is_accepted_only_for_that_host(self):
+        for cert_host, cert, key in (("github.com", fx.ONLY_GITHUB_CERT, fx.ONLY_GITHUB_KEY), ("www.googleapis.com", fx.ONLY_WWW_CERT, fx.ONLY_WWW_KEY)):
+            for use, method, url, host, request in self.USES:
+                with self.subTest(certificate=cert_host, request=host):
+                    server = self.serve(cert, key)
+                    result, usage = self.call(server, context=trusting(cert), use=use, method=method, url=url, switches=ns.USE_SWITCHES[use], request=request)
+                    if host == cert_host:
+                        self.assertIsInstance(result, client.NetResponse, f"{getattr(result, 'code', '')} {getattr(result, 'detail', '')}")
+                        self.assertEqual(result.status, 200)
+                        self.assertIn(f"Host: {host}\r\n".encode(), server.requests[0])
+                    else:
+                        self.assertIsInstance(result, errors.NetError, "이름이 다른 인증서인데 연결됐다")
+                        self.assertEqual((result.code, result.outcome_unknown), ("NET_TLS_FAILED", False))
+                        self.assertEqual(server.requests, [], "핸드셰이크가 실패했으니 서버는 요청을 한 바이트도 받지 못했다")
+                        self.assertEqual(usage.records()[0].error, "NET_TLS_FAILED")
+
+    def test_a_certificate_with_all_three_names_is_accepted_for_all_three_hosts(self):
+        """대조 — 세 이름을 모두 가진 인증서는 세 호스트 모두에 통과한다(위 거절이 이름이 아닌 다른 까닭이 아님을 보인다)."""
+        for use, method, url, host, request in self.USES:
+            with self.subTest(request=host):
+                server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY)
+                result, usage = self.call(server, use=use, method=method, url=url, switches=ns.USE_SWITCHES[use], request=request)
+                self.assertIsInstance(result, client.NetResponse)
+                self.assertEqual(result.status, 200)
+
+
 class ResponseShapeTest(TlsBase):
     """응답의 모양이 달라도 본문을 끝까지 읽고 연결은 끝나면 닫는다(D-738 — 독립 검증 Q-R1).
 
@@ -276,7 +315,7 @@ class ResponseShapeTest(TlsBase):
         self.assertEqual((result.status, len(result.body)), (200, len(body)), label)
         self.assertEqual(result.body, body, f"{label}: 받은 본문이 보낸 것과 다르다")
         self.assertEqual((usage.records()[0].status, usage.records()[0].error), (200, ""), label)
-        self.assertTrue(server.closed_by_client.wait(3), f"{label}: 끝난 뒤 클라이언트가 연결을 닫지 않았다(연결이 샌다)")
+        self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2), f"{label}: 끝난 뒤 클라이언트가 연결을 닫지 않았다(연결이 샌다)")
 
     def test_headers_and_body_sent_separately_are_read_whole_with_or_without_connection_close(self):
         """(a) 머리글과 본문을 따로 보내는 응답(보통의 서버 모양) — 본문이 12바이트여도 레코드가 둘이라 읽기가 둘이다."""
@@ -306,6 +345,27 @@ class ResponseShapeTest(TlsBase):
                 with self.subTest(close=close, size=size):
                     self.assert_read_whole(*self.fetch("chunked", close, size), f"chunked close={close} size={size}")
 
+    def test_a_download_is_written_whole_and_hash_checked_on_every_shape(self):
+        """독립 검증 Q 제안 — `request_to_file` 도 같은 서버 모양(Connection: close·chunked·길이 없음)에서 본문을 끝까지 파일에 쓰고 해시를 맞춰 보며, 해시가 틀리면 파일을 지우고 거절하고, 끝나면 연결을 닫는다."""
+        base = endpoints.ENDPOINTS["update_check"]
+        table_use = dataclasses.replace(base, routes=(dataclasses.replace(base.routes[0], download=True),), download_timeout=60.0, max_download=1024 * 1024)
+        for framing, close, size in (("length", True, 300_000), ("chunked", True, 120_000), ("none", False, 50_000), ("length", False, 20_000)):
+            body = pattern(size)
+            digest = hashlib.sha256(body).hexdigest()
+            with self.subTest(framing=framing, close=close, size=size), tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+                server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY, handler=shaped(body, framing=framing, close=close), watch_close=True)
+                dest = Path(tmp) / "part.bin"
+                result, usage = self.call(server, table_use=table_use, download=dict(dest=dest, max_bytes=len(body), expected_sha256=digest))
+                self.assertIsInstance(result, client.NetResponse, f"{getattr(result, 'code', '')} {getattr(result, 'detail', '')}")
+                self.assertEqual((result.status, result.file_size, result.file_sha256), (200, size, digest))
+                self.assertEqual(dest.read_bytes(), body)
+                self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2))
+                wrong = Path(tmp) / "wrong.bin"
+                server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY, handler=shaped(body, framing=framing, close=close), watch_close=True)
+                result, usage = self.call(server, table_use=table_use, download=dict(dest=wrong, max_bytes=len(body), expected_sha256="0" * 64))
+                self.assertEqual((type(result).__name__, result.code, wrong.exists()), ("NetError", "NET_RESPONSE_INVALID", False), "해시가 틀리면 파일을 지우고 거절한다")
+                self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2))
+
     def test_the_size_limit_still_holds_on_every_shape(self):
         """기존 약속 — 읽을 상한은 어떤 모양이든 지켜진다(선언 크기·덩어리·길이 없음). 한도 안은 통과하고 한 바이트 넘으면 거절한다."""
         limit = 10_000
@@ -317,7 +377,7 @@ class ResponseShapeTest(TlsBase):
                 self.assertIsInstance(result, errors.NetError, framing)
                 self.assertEqual((result.code, result.outcome_unknown), ("NET_RESPONSE_INVALID", True), framing)
                 self.assertIn(errors.REASON_TOO_LARGE, result.rendered().message)
-                self.assertTrue(server.closed_by_client.wait(3), f"{framing}: 거절한 뒤에도 연결을 닫는다")
+                self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2), f"{framing}: 거절한 뒤에도 연결을 닫는다")
 
     def test_an_endless_body_without_length_is_cut_at_the_limit_not_at_the_deadline(self):
         """길이 없이 끝없이 오는 본문은 읽을 상한에서 끊긴다(마감까지 기다리지 않는다)."""
@@ -355,7 +415,7 @@ class ResponseShapeTest(TlsBase):
         result, usage = self.call(server)
         self.assertIsInstance(result, errors.NetError)
         self.assertEqual((result.code, server.accepts), ("NET_RESPONSE_INVALID", 1), "둘째 연결 0")
-        self.assertTrue(server.closed_by_client.wait(3), "거절한 뒤에도 첫 연결을 닫는다")
+        self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2), "거절한 뒤에도 첫 연결을 닫는다")
 
     def test_an_error_status_with_connection_close_comes_back_as_a_response_and_the_connection_is_closed(self):
         """2xx 가 아닌 답(여기서는 404)도 `Connection: close` 와 본문이 있어도 상태·본문을 돌려주고 연결을 닫는다."""
@@ -369,7 +429,7 @@ class ResponseShapeTest(TlsBase):
         result, usage = self.call(server)
         self.assertIsInstance(result, client.NetResponse)
         self.assertEqual((result.status, result.body), (404, body))
-        self.assertTrue(server.closed_by_client.wait(3))
+        self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2))
 
 
 class PostBodyTest(TlsBase):
@@ -623,7 +683,7 @@ class RealSocketDeadlineTest(TlsBase):
         self.assertEqual((type(result).__name__, result.code, result.outcome_unknown), ("NetError", "NETWORK_TIMEOUT", True), getattr(result, "detail", ""))
         self.assertLess(elapsed, 4.0, f"총 시간 1.5초를 넘겨 {elapsed:.1f}초나 걸렸다")
         self.assertGreater(elapsed, 1.0)
-        self.assertTrue(server.closed_by_client.wait(3), "마감으로 끝난 뒤에도 연결을 닫는다")
+        self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2), "마감으로 끝난 뒤에도 연결을 닫는다")
 
     def test_a_server_that_accepts_but_never_speaks_tls_times_out_in_the_connect_limit(self):
         server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY, silent=True)

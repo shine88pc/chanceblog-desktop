@@ -92,9 +92,10 @@ def code_for_status(status, reason=""):
     return "NET_RESPONSE_INVALID"                     # 404·그 밖 — 용도별 매핑이 없으면 모양이 틀린 답으로 본다
 
 
-def counts_as_failure(status):
-    """연속 실패 계수에 넣는 상태인가 — 2xx 는 성공이고, 사용자 실수(400·422)와 한도 안내(429)는 넣지 않는다(3.4)."""
-    return not (200 <= status <= 299 or status in (400, 422, 429))
+def counts_as_failure(status, uncounted=(400, 422, 429)):
+    """연속 실패 계수에 넣는 상태인가 — 2xx 는 성공이고, 사용자 실수(400·422)와 한도 안내(429)는 넣지 않는다(3.4). `uncounted` 는 용도 표(`Endpoint.uncounted_statuses`)가 정한 제외 상태다 —
+    클라이언트의 마무리(`_close_out`)가 이 함수를 쓰므로 표와 어긋난 따로 박은 값이 없다(독립 검증 N-3 — 예전에는 시험만 쓰는 죽은 코드였다)."""
+    return not (200 <= status <= 299 or status in uncounted)
 
 
 def status_error(status, *, use, reason="", overrides=None):

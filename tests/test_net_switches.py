@@ -264,6 +264,26 @@ class SwitchTablesTest(unittest.TestCase):
         shipped_in_source = sorted(name for name in source if getattr(capabilities, name) is True)
         self.assertEqual(shipped_in_source, sorted(pkgcommon.SHIPPED_OPEN_SWITCHES), "소스에서 켜진 상수가 출하 표와 다르다")
 
+    @staticmethod
+    def uses_opened_by(shipped):
+        """출하 표(켜진 채 출하하는 스위치들)가 열어 주는 용도들 — 진리표(`TRUTH`, 코드와 따로 적은 값)로 센다."""
+        return sorted(use for use, (needs_write, names) in TRUTH.items() if all(name in shipped for name in names) and (not needs_write or "EXTERNAL_WRITE" in shipped))
+
+    def test_a_use_whose_route_is_still_a_placeholder_cannot_ship_open(self):
+        """D-738(독립 검증 S 권고-2·3) — 길이 아직 자리표시자인 용도(`endpoints.PLACEHOLDER_USES` — 지금은 `update_check`: 길이 아무 소유자·저장소나 받는다)를 여는 스위치는 출하 표에 오를 수 없다.
+        UPDATE 갈래가 소유자·저장소를 상수 하나에서 만들어 길을 확정하고 이 목록에서 용도를 빼야 켤 수 있다 — 그 전에 표에 올리면 CI 가 빨개진다(켜기 전 조건이 말이 아니라 시험에 묶인다).
+        용도를 목록에서 빼려면 길 글에 '자유로운 구간'(`endpoints.SEGMENT`)이 더는 없어야 한다."""
+        from chanceblog_desktop.net import endpoints
+        self.assertEqual(endpoints.PLACEHOLDER_USES, ("update_check",), "자리표시자 목록이 바뀌었다 — 길을 확정했으면 이 시험의 기대도 함께 고친다")
+        opened = self.uses_opened_by(pkgcommon.SHIPPED_OPEN_SWITCHES)
+        self.assertEqual([use for use in endpoints.PLACEHOLDER_USES if use in opened], [], "자리표시자 길의 용도를 여는 스위치가 출하 표에 올랐다 — 길을 먼저 확정한다")
+        self.assertEqual(self.uses_opened_by(("NET_UPDATE_CHECK",)), ["update_check"], "대조 — 합성 출하 표(NET_UPDATE_CHECK)는 update_check 를 연다")
+        self.assertEqual([use for use in endpoints.PLACEHOLDER_USES if use in self.uses_opened_by(("NET_UPDATE_CHECK",))], ["update_check"], "대조 — 합성 출하 표는 위 규칙에 걸린다(빈 실험이 아니다)")
+        self.assertEqual(self.uses_opened_by(("EXTERNAL_WRITE", "NET_PAGES_SITE")), ["pages_site"])
+        for use, endpoint in endpoints.ENDPOINTS.items():
+            has_free_segment = any(endpoints.SEGMENT in route.path_text() for route in endpoint.routes)
+            self.assertEqual(has_free_segment, use in endpoints.PLACEHOLDER_USES, f"{use}: 길이 자유로운 소유자·저장소 구간을 가졌으면 자리표시자 목록에 있어야 하고, 아니면 없어야 한다")
+
     def test_every_reader_function_is_exported_and_matches_its_constant(self):
         for name, reader in READERS.items():
             self.assertIn(reader, capabilities.__all__, reader)

@@ -306,19 +306,27 @@ def check_capabilities(*, import_module=importlib.import_module):
     return Result("capabilities", "ok", "외부 쓰기·Blogger 입력·인터넷 접속 관문이 모두 꺼져 있어요(켜진 것 0개, 출하 표와 같아요)" + note)
 
 
-def check_tls(*, import_module=importlib.import_module, platform=None):
+def check_tls(*, import_module=importlib.import_module, platform=None, shipped=None):
     """보안 접속(TLS) 부품 점검 — 접속은 하지 않는다(NET 설계서 C9, D-723). `ssl` 이 불러와지고 기본 보안 환경이 만들어지며 윈도 신뢰 저장소에서 루트를 읽는지 본다.
-    묶음에서 `_ssl`·`libssl` 이 빠진 것을 빨리 알리려는 것이고, 이 앱은 아직 인터넷에 접속하지 않으므로 **실패해도 알림일 뿐 빌드 거절 조건이 아니다**(늘 `ok` 로 돌려주고 글이 '알림' 으로 시작한다)."""
+    묶음에서 `_ssl`·`libssl` 이 빠진 것을 빨리 알리려는 것이다. 출하 표(`pkgcommon.SHIPPED_OPEN_SWITCHES`)가 **비어 있는 동안**(지금 — 인터넷에 접속하지 않는다)은 실패해도 알림일 뿐 빌드 거절 조건이 아니다
+    (늘 `ok` 로 돌려주고 글이 '알림' 으로 시작한다). 표에 스위치가 하나라도 오르면(접속이 열린 채 출하) 같은 점검이 **실패 조건**이 된다 — 부품이 빠진 묶음으로 접속이 열린 채 나가지 않게(D-738, 독립 검증 S 권고-3 (a)).
+    `shipped` 는 시험이 출하 표를 바꿔 끼우는 자리다."""
     platform = sys.platform if platform is None else platform
+    strict = bool(pc.SHIPPED_OPEN_SWITCHES if shipped is None else shipped)
+    status = "fail" if strict else "ok"
     try:
         ssl = import_module("ssl")
         version = str(ssl.OPENSSL_VERSION)
         context = ssl.create_default_context()
         roots = int(context.cert_store_stats().get("x509_ca", 0))
-    except Exception as error:      # noqa: BLE001 - 어떤 실패든 알림으로 바꾼다
-        return Result("tls", "ok", f"알림: 보안 접속 부품을 점검하지 못했어요(오류 종류: {type(error).__name__}) — 지금은 인터넷에 접속하지 않아서 실패가 아니에요")
+    except Exception as error:      # noqa: BLE001 - 어떤 실패든 알림(접속이 열려 있으면 실패)으로 바꾼다
+        if strict:
+            return Result("tls", status, f"보안 접속 부품을 점검하지 못했어요(오류 종류: {type(error).__name__}) — 인터넷 접속이 열린 채 내보내는 묶음이라 실패예요")
+        return Result("tls", status, f"알림: 보안 접속 부품을 점검하지 못했어요(오류 종류: {type(error).__name__}) — 지금은 인터넷에 접속하지 않아서 실패가 아니에요")
     if roots <= 0 and platform == "win32":
-        return Result("tls", "ok", f"알림: 윈도 신뢰 저장소에서 인증서 루트를 읽지 못했어요(0개, {version}) — 인터넷 접속이 열리면 안전한 연결이 실패할 수 있어요. 지금은 접속하지 않아요")
+        if strict:
+            return Result("tls", status, f"윈도 신뢰 저장소에서 인증서 루트를 읽지 못했어요(0개, {version}) — 인터넷 접속이 열린 채 내보내는 묶음이라 실패예요")
+        return Result("tls", status, f"알림: 윈도 신뢰 저장소에서 인증서 루트를 읽지 못했어요(0개, {version}) — 인터넷 접속이 열리면 안전한 연결이 실패할 수 있어요. 지금은 접속하지 않아요")
     return Result("tls", "ok", f"보안 접속 부품이 있어요({version}) — 신뢰하는 인증서 루트 {roots}개, 접속은 하지 않았어요")
 
 

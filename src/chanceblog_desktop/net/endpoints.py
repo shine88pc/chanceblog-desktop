@@ -28,8 +28,8 @@ USER_AGENT_PREFIX = "ChanceBlogDesktop/"   # 앱에서 나가는 유일한 값�
 
 NUMBER = r"[0-9]{1,25}"           # 블로그·글 번호 — 숫자만
 CACHE_BUSTER = re.compile(r"app(?:-[0-9]{1,3})?")      # 공개 사이트 질의 `cb` 의 값 — 설계서는 `app` 고정이었지만 vendor 확인 도구가 시도마다 `app-<시도 번호>` 로 바꿔 보낸다(실측: `f"{token}-{tries}"`)
-# 공개 사이트 글 주소(허용 문자 집합): 앞 `/` 로 시작, 길이 500 이하, 퍼센트 부호는 `%XX`, `..` 구간·`%2e`·`%2f`·`%5c`·`%00` 금지(`//`·`./` 는 vendor 확인 도구의 요청 모양이라 허용)
-SITE_PATH = re.compile(r"/(?!(?:.*/)?\.\.(?:/|$))(?!.*%(?:2[eEfF]|5[cC]|00))(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9._~+/-]){0,498}")
+# 공개 사이트 글 주소(허용 문자 집합): 앞 `/` 로 시작(맨 앞 `//` 는 금지 — 독립 검증 N-4), 길이 500 이하, 퍼센트 부호는 `%XX`, `..` 구간·`%2e`·`%2f`·`%5c`·`%00` 금지(구간 사이·끝의 `//` 와 `./` 는 vendor 확인 도구의 요청 모양이라 허용)
+SITE_PATH = re.compile(r"/(?!/)(?!(?:.*/)?\.\.(?:/|$))(?!.*%(?:2[eEfF]|5[cC]|00))(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9._~+/-]){0,498}")
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,10 @@ def _routes(*items):
     return tuple(items)
 
 
+SEGMENT = r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}"      # 길 한 구간 — 첫 글자가 점이 아니다(`.`·`..`·숨은 이름 거절, 독립 검증 G-2)
+# 길이 아직 자리표시자인 용도 — UPDATE 갈래가 소유자·저장소를 상수 하나에서 만들어 길을 확정하면 이 목록에서 뺀다. 이 용도를 여는 스위치는 그 전에는 출하 표에 오를 수 없다(시험이 지킨다, D-738)
+PLACEHOLDER_USES = ("update_check",)
+
 _PAGES_HOST = f"{EXPECTED_OWNER.lower()}.github.io"        # 글 저장소 소유자 상수 하나에서 만든다(연결한 저장소 확인용 `EXPECTED_ORIGIN` 과 같은 상수 — 시험이 둘이 어긋나지 않음을 확인)
 _BLOGGER_POST = f"/blogger/v3/blogs/{NUMBER}/posts"
 
@@ -83,7 +87,7 @@ ENDPOINTS = {
     # 업데이트 확인(읽기, 사용자가 누를 때만) — UPDATE 설계가 확정한다. 지금은 정적 매니페스트 주소 한 모양(GET, 질의 없음)이고 이동은 모두 거절한다.
     "update_check": Endpoint(
         use="update_check", host="github.com", accept="application/json", max_response=1 * MIB, label="업데이트 확인",
-        routes=_routes(Route("GET", re.compile(r"/[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}/releases/latest/download/[A-Za-z0-9._-]{1,100}"), "/(릴리스 최신 자산)")),
+        routes=_routes(Route("GET", re.compile(rf"/{SEGMENT}/{SEGMENT}/releases/latest/download/{SEGMENT}"), "/(릴리스 최신 자산)")),
     ),
     # 올린 글의 공개 주소 확인(읽기) — 호스트 한 곳(소유자의 사이트), 같은 호스트 이동 최대 2번, `cb=app` 고정 질의, `Cache-Control: no-cache`(vendor 확인 도구와 같은 요청 모양)
     "pages_site": Endpoint(
@@ -189,4 +193,5 @@ def user_agent(version):
     return USER_AGENT_PREFIX + str(version)
 
 
-__all__ = ["CACHE_BUSTER", "CONNECT_TIMEOUT", "ENDPOINTS", "Endpoint", "IO_TIMEOUT", "MAX_BEARER_CHARS", "MAX_HEADER_BYTES", "MAX_URL_CHARS", "Route", "SITE_PATH", "TOTAL_TIMEOUT", "USER_AGENT_PREFIX", "app_version", "table_problems", "url_for", "user_agent", "valid_host"]
+__all__ = ["CACHE_BUSTER", "CONNECT_TIMEOUT", "ENDPOINTS", "Endpoint", "IO_TIMEOUT", "MAX_BEARER_CHARS", "MAX_HEADER_BYTES", "MAX_URL_CHARS", "PLACEHOLDER_USES", "Route", "SEGMENT", "SITE_PATH", "TOTAL_TIMEOUT", "USER_AGENT_PREFIX", "app_version", "table_problems", "url_for", "user_agent",
+           "valid_host"]

@@ -12,6 +12,9 @@
 (`shutdown` 도 깨우지 못했다) 깨우려면 `socket` 가져오기가 필요해 허용 표가 늘 판이었다. 그래서 감시를 **읽는 쪽 안**에 넣었다 — 연결 위에 마감을 아는 껍데기(`_DeadlineSocket`)를 씌워 보내기·읽기마다 남은 시간을 보고
 `min(작업 제한, 남은 시간)` 으로 소켓 제한을 줄여 두므로 찔끔 보내는 서버도 마감을 넘기지 못한다(스레드·`socket` 가져오기 없음). 이름 풀이만은 운영체제가 끝낼 때까지 끊을 수 없고 연결은 주소마다 최대 10초라, 주소가 여럿이고 모두 막혀 있으면 풀이·연결 단계가 총 시간을 넘길 수 있다(둘 다 돌아온 뒤 마감을 넘겼으면 핸드셰이크 전에 곧바로 끝낸다 — 알려진 한계).
 
+**닫기 요청과 읽개(D-738)**: `http.client` 는 응답이 `Connection: close` 이거나 길이가 없으면 본문을 읽기 **전에** 소켓의 `close()` 를 부른다 — 껍데기의 `close()` 는 닫기를 요청만 하고 읽개(`makefile`)가 모두 닫혔을 때 진짜로 닫으며,
+요청이 끝나면 `_once` 가 응답·연결을 닫고 `abort()` 로 남은 읽개와 상관없이 닫는다. **받는 바이트 전체의 상한**: 껍데기가 읽은 바이트의 합이 `본문 상한 x 2 + 머리글 몫 두 번` 을 넘으면 끊는다(머리글·덩어리 틀·끝 머리글·`100 Continue` 홍수). 세션 비밀 로그는 `_make_context` 가 끈다.
+
 시험 훅: 생산 코드에는 컨텍스트나 전송기를 바깥에서 넣는 매개변수가 **없다**. 시험은 모듈 함수 `_make_context`·`_resolve`·`_dial`·`_secure`·`_clock` 을 `mock.patch.object` 로 바꾼다(`capabilities` 의 '켜기 훅 없음' 원칙과 같다).
 """
 from __future__ import annotations
@@ -30,8 +33,8 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 from .. import capabilities
 from . import parse as parsing
 from .endpoints import CONNECT_TIMEOUT, ENDPOINTS, IO_TIMEOUT, MAX_BEARER_CHARS, MAX_HEADER_BYTES, MAX_URL_CHARS, user_agent
-from .errors import (REASON_ENCODING, REASON_HASH, REASON_HEADERS, REASON_LENGTH, REASON_REDIRECT, REASON_SHAPE, REASON_TOO_LARGE, NetError, code_for_status, from_exception, invalid, program_error,
-                     status_error)
+from .errors import (REASON_ENCODING, REASON_HASH, REASON_HEADERS, REASON_LENGTH, REASON_REDIRECT, REASON_SHAPE, REASON_TOO_LARGE, NetError, code_for_status, counts_as_failure, from_exception, invalid,
+                     program_error, status_error)
 from .usage import SESSION
 
 READ_CHUNK = 64 * 1024
@@ -463,6 +466,7 @@ class NetClient:
             return self._follow(endpoint, plan, url, context, deadline, started, trace, sink)
         except NetError as error:
             trace.error = error.code
+            error.__context__ = None                                             # 서버가 보낸 줄이 든 원래 예외(예: 잘못된 상태 줄)를 오류에 달고 다니지 않는다(독립 검증 S 참고-2)
             raise
         finally:
             if sink is not None:
@@ -482,7 +486,7 @@ class NetClient:
         elif 200 <= status <= 299:
             ok, counts = True, False
         elif status:
-            ok, counts = False, status not in quiet                    # 400·422·429(와 용도 표가 더한 상태)는 센다 안 함
+            ok, counts = False, counts_as_failure(status, quiet)      # 400·422·429(와 용도 표가 더한 상태)는 센다 안 함
             code = code_for_status(status) or ""
         else:
             self.usage.abort(use)                                      # 끊김(키보드 인터럽트 등) — 결과를 모른다

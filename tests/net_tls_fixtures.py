@@ -1,8 +1,10 @@
-"""접속 틀 TLS 시험용 **버려도 되는** 인증서와 키(NET 설계서 6.1 — 시험 전용 자체 서명, 이 이름들만 SAN 으로, 만료 100년; 만료 시험용 하나만 2020 년에 끝났다).
+"""접속 틀 TLS 시험용 **버려도 되는** 인증서와 키(NET 설계서 6.1 — 시험 전용 자체 서명, 이 이름들만 SAN 으로, 모두 2020-01-01 부터 2119-12-31 까지 유효; 만료 시험용 하나만 2020 년 하루짜리다).
 
 실제 사이트·계정과 무관하다(시험 안에서 이 이름들의 풀이는 가짜 표가 127.0.0.1 로 바꾼다). 개인 키 모양의 글이 저장소 비밀 검사·푸시 보호에 걸리지 않게 **조립 문자열**로 둔다 —
-머리말(대시 다섯 + `BEGIN ` + 종류 + 대시 다섯)을 코드가 이어 붙여 만들고 본문은 64글자 토막으로 나눠 적는다(`CANARY_` 와 같은 방식). 만드는 법: `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 36500`
-(SAN: 첫째 인증서 `github.com`·`googleapis.com` 의 `www` 호스트·`oauth2.googleapis.com`, 둘째 `other.example.test`, 셋째는 첫째와 같은 이름에 `-not_before 20200101000000Z -not_after 20200102000000Z`).
+머리말(대시 다섯 + `BEGIN ` + 종류 + 대시 다섯)을 코드가 이어 붙여 만들고 본문은 64글자 토막으로 나눠 적는다(`CANARY_` 와 같은 방식). 만드는 법: `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+-not_before 20200101000000Z -not_after 21191231235959Z`(시계가 이른 PC·러너에서도 '아직 유효하지 않음' 이 되지 않게 시작을 2020 년으로 당겼다 — 독립 검증 N-2).
+SAN: `GOOD` 은 `github.com`·`www.googleapis.com`·`oauth2.googleapis.com`, `OTHER` 는 `other.example.test`, `ONLY_GITHUB` 는 `github.com` 하나뿐, `ONLY_WWW` 는 `www.googleapis.com` 하나뿐
+(이름 하나짜리 둘은 '인증서 확인 이름이 요청한 용도의 호스트인가' 를 보는 시험용이다 — 독립 검증 G-4), `EXPIRED` 는 `GOOD` 과 같은 이름에 `-not_before 20200101000000Z -not_after 20200102000000Z`.
 """
 DASHES = "-" * 5
 NL = chr(10)
@@ -13,39 +15,72 @@ def _pem(kind, *lines):
 
 
 GOOD_CERT = _pem('CERTIFICATE',
-    'MIIB9DCCAZmgAwIBAgIUNaRzjC8N3TGnx/6Tc/T/T7SppJ8wCgYIKoZIzj0EAwIw',
+    'MIIB9DCCAZmgAwIBAgIUIrRNZBYk3sGFag8r5sGxIhu9RxIwCgYIKoZIzj0EAwIw',
     'KjEoMCYGA1UEAwwfTkVUIHRlc3QgY2VydCAobm90IGEgcmVhbCBzaXRlKTAgFw0y',
-    'NjExMjQxMTQ1NTFaGA8yMTI2MTAzMTExNDU1MVowKjEoMCYGA1UEAwwfTkVUIHRl',
+    'MDAxMDEwMDAwMDBaGA8yMTE5MTIzMTIzNTk1OVowKjEoMCYGA1UEAwwfTkVUIHRl',
     'c3QgY2VydCAobm90IGEgcmVhbCBzaXRlKTBZMBMGByqGSM49AgEGCCqGSM49AwEH',
-    'A0IABAGCGOxvUIy8KN2zwvXuF7GkiY6kbY0Hr8R8cFTrzsOV4NadMCB29wEMhvyv',
-    'R4HQvkIs4zPlF2tE3RGnrvar1aejgZowgZcwQAYDVR0RBDkwN4IKZ2l0aHViLmNv',
+    'A0IABEnQjKzCrzPHDNfqwYtH5z8JetRotBQ/R1kzkLg/MabAiFkS49S6hrNl3zzW',
+    'vnvKi+qktSbR2LbY/RKwuYpKZTijgZowgZcwQAYDVR0RBDkwN4IKZ2l0aHViLmNv',
     'bYISd3d3Lmdvb2dsZWFwaXMuY29tghVvYXV0aDIuZ29vZ2xlYXBpcy5jb20wDwYD',
     'VR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAoQwEwYDVR0lBAwwCgYIKwYBBQUH',
-    'AwEwHQYDVR0OBBYEFOGuFdwB/tJXpEaBVx8qpGmqH+NyMAoGCCqGSM49BAMCA0kA',
-    'MEYCIQD5JJMUoCltsVNo88FOmCU8xM+ZPnlGgUFKCeLzz0CVvAIhAOaFl+Rz6xoD',
-    'a5D75FHphc4ZBB+u3UxuwoOu2lQEyaHy')
+    'AwEwHQYDVR0OBBYEFHlxfPzhv1G+1zh4b/nqAL/9guOYMAoGCCqGSM49BAMCA0kA',
+    'MEYCIQC5qg4d4MJ1dUqEfVxFaKI0UBbOFCHtj1/NgZ/Mz/yc3AIhAOQXapbCFX7Y',
+    'bidVLJCoLKqmZUZ7XK7dz8m/ycw6VLsj')
 
 GOOD_KEY = _pem('PRIVATE KEY',
-    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg3n9wXrnzzKF/V8++',
-    '3bj7Iis6r/4WTP+DLdmGa0b2CUGhRANCAAQBghjsb1CMvCjds8L17hexpImOpG2N',
-    'B6/EfHBU687DleDWnTAgdvcBDIb8r0eB0L5CLOMz5RdrRN0Rp672q9Wn')
+    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgf5uxWpOO7yIvWu5F',
+    '6Xm3otUFOCoVe46+DBPC4aaCRVChRANCAARJ0Iyswq8zxwzX6sGLR+c/CXrUaLQU',
+    'P0dZM5C4PzGmwIhZEuPUuoazZd881r57yovqpLUm0di22P0SsLmKSmU4')
 
 OTHER_CERT = _pem('CERTIFICATE',
-    'MIIBrTCCAVKgAwIBAgIUeqpjSg1D+Okgz92GvmGfYjmcB6wwCgYIKoZIzj0EAwIw',
-    'GTEXMBUGA1UEAwwOTkVUIHRlc3Qgb3RoZXIwIBcNMjYxMTI0MTE0NTUyWhgPMjEy',
-    'NjEwMzExMTQ1NTJaMBkxFzAVBgNVBAMMDk5FVCB0ZXN0IG90aGVyMFkwEwYHKoZI',
-    'zj0CAQYIKoZIzj0DAQcDQgAEuXomnDIsZgdt2lhyjkVdCcquDBE6NzX6OyqQaz0X',
-    'RGNAg77vwwF1/PKIPGz/ihNhQFTtPOJBj3lQjkLa6XrFRqN2MHQwHQYDVR0RBBYw',
+    'MIIBqzCCAVKgAwIBAgIUf/P1BEonJaGR9YiTgcjnIdSOGcQwCgYIKoZIzj0EAwIw',
+    'GTEXMBUGA1UEAwwOTkVUIHRlc3Qgb3RoZXIwIBcNMjAwMTAxMDAwMDAwWhgPMjEx',
+    'OTEyMzEyMzU5NTlaMBkxFzAVBgNVBAMMDk5FVCB0ZXN0IG90aGVyMFkwEwYHKoZI',
+    'zj0CAQYIKoZIzj0DAQcDQgAEaKpqbnvBt7ET8UF9Znvw5bvA+oj9AhYnYOrThtXe',
+    'F65VH6ISAyTpku5k/qWqfj0A9a0RouEOgMqPxXSzy5O1GKN2MHQwHQYDVR0RBBYw',
     'FIISb3RoZXIuZXhhbXBsZS50ZXN0MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/',
-    'BAQDAgKEMBMGA1UdJQQMMAoGCCsGAQUFBwMBMB0GA1UdDgQWBBTVgT1xtwtmj8iC',
-    'i71Kxzs8Ry8+jjAKBggqhkjOPQQDAgNJADBGAiEApuXX7RhTO7qDpEid3uGq99fb',
-    '9anymC06eplxJgr63B4CIQCZhJgAFcoVngt1ppNdgJEb3LOFF9M1jmNLiF8QSJdA',
-    'uA==')
+    'BAQDAgKEMBMGA1UdJQQMMAoGCCsGAQUFBwMBMB0GA1UdDgQWBBSX+sNlkht+uJau',
+    'QM/NJ1dWOLbGkDAKBggqhkjOPQQDAgNHADBEAiAuhlWE7xvyibNI8Idvk4SZYcXx',
+    'zoN69M3Hbb6x5LpU7gIgS5luO/nzP/K7YcWgof+O+kyouTOIb86m50oiJ0DHKz0=')
 
 OTHER_KEY = _pem('PRIVATE KEY',
-    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgh71dosIOEyIPvpaT',
-    'or4HHjRDryEEPhbBfSc+RyEleWWhRANCAAS5eiacMixmB23aWHKORV0Jyq4METo3',
-    'Nfo7KpBrPRdEY0CDvu/DAXX88og8bP+KE2FAVO084kGPeVCOQtrpesVG')
+    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg8DwMecLEO50chi8Y',
+    'BU/Z8w6wsiM4ES7yBAh5JbbMIBChRANCAARoqmpue8G3sRPxQX1me/Dlu8D6iP0C',
+    'Fidg6tOG1d4XrlUfohIDJOmS7mT+pap+PQD1rRGi4Q6Ayo/FdLPLk7UY')
+
+ONLY_GITHUB_CERT = _pem('CERTIFICATE',
+    'MIIBsDCCAVagAwIBAgIUSw+c26fFbR1jP0+fiEyTxWt18vUwCgYIKoZIzj0EAwIw',
+    'HzEdMBsGA1UEAwwUTkVUIHRlc3QgZ2l0aHViIG9ubHkwIBcNMjAwMTAxMDAwMDAw',
+    'WhgPMjExOTEyMzEyMzU5NTlaMB8xHTAbBgNVBAMMFE5FVCB0ZXN0IGdpdGh1YiBv',
+    'bmx5MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEKGwVHEET4p9mfkwrE9aL7IR8',
+    'iNGSfXOeTKWL+FsdIZCEZXNbNLtGmIshdT+uvtLty4vQjH1Wy1Meyo1yYr4DpqNu',
+    'MGwwFQYDVR0RBA4wDIIKZ2l0aHViLmNvbTAPBgNVHRMBAf8EBTADAQH/MA4GA1Ud',
+    'DwEB/wQEAwIChDATBgNVHSUEDDAKBggrBgEFBQcDATAdBgNVHQ4EFgQU74caXDmp',
+    'czzMtNBrT2I81ztEFvYwCgYIKoZIzj0EAwIDSAAwRQIhAJfcfGZApqT16i/uEr0N',
+    'NrwB6lgoDtuNcwl2h0zYgdhpAiA1YOUqQapDCpCST3IhTl3Yh1PmvtrAocOCisGO',
+    'KhY+sQ==')
+
+ONLY_GITHUB_KEY = _pem('PRIVATE KEY',
+    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg2B1L1qBin30V/wVX',
+    'NTNGo+1giFovBMG8Th/2kkuw+s6hRANCAAQobBUcQRPin2Z+TCsT1ovshHyI0ZJ9',
+    'c55MpYv4Wx0hkIRlc1s0u0aYiyF1P66+0u3Li9CMfVbLUx7KjXJivgOm')
+
+ONLY_WWW_CERT = _pem('CERTIFICATE',
+    'MIIBsjCCAVigAwIBAgIUQiA0ZI8/A6p1m1sG5lIQf7Bub2UwCgYIKoZIzj0EAwIw',
+    'HDEaMBgGA1UEAwwRTkVUIHRlc3Qgd3d3IG9ubHkwIBcNMjAwMTAxMDAwMDAwWhgP',
+    'MjExOTEyMzEyMzU5NTlaMBwxGjAYBgNVBAMMEU5FVCB0ZXN0IHd3dyBvbmx5MFkw',
+    'EwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEC7D6yY5zyspulPquPwT0MUcUwl1YixDH',
+    'y3UQ68sXWCXsV4dzeZ1ygkVzaRRP9h94KJVc4AW04ySmBsQqeOAwKqN2MHQwHQYD',
+    'VR0RBBYwFIISd3d3Lmdvb2dsZWFwaXMuY29tMA8GA1UdEwEB/wQFMAMBAf8wDgYD',
+    'VR0PAQH/BAQDAgKEMBMGA1UdJQQMMAoGCCsGAQUFBwMBMB0GA1UdDgQWBBTm9dlT',
+    'T1+QQHplJrOZ4SXxYbfGbTAKBggqhkjOPQQDAgNIADBFAiEAt/K3X3ioG93l0QS3',
+    '3vE35ii1HNIV0o4EW4HvUgsIJ1ECIAt4Chdvf6yH4Oi0TgdETP2tggwFWbQ/T60W',
+    'F7kWDcra')
+
+ONLY_WWW_KEY = _pem('PRIVATE KEY',
+    'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgwB4c/TtagV00GiOV',
+    'LvEOGQduIcSD5b172T4/MHnR5r+hRANCAAQLsPrJjnPKym6U+q4/BPQxRxTCXViL',
+    'EMfLdRDryxdYJexXh3N5nXKCRXNpFE/2H3golVzgBbTjJKYGxCp44DAq')
 
 EXPIRED_CERT = _pem('CERTIFICATE',
     'MIIB8TCCAZegAwIBAgIUFcWtpthq9PZqkNzv8ha7nIF4Hk8wCgYIKoZIzj0EAwIw',
