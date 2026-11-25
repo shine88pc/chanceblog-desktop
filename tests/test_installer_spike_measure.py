@@ -793,6 +793,7 @@ class InnoVersionTest(unittest.TestCase):
         self.assertEqual(measure.inno_text_version("compiler ENGINE VERSION:   inno setup 7.1"), (7, 1))
         self.assertEqual(measure.inno_text_version("Inno Setup version 6.2.2 (u)"), (6, 2, 2))
         self.assertEqual(measure.inno_text_version("Inno Setup 6.5.0 Command-Line Compiler"), (6, 5, 0))
+        self.assertEqual(measure.inno_text_version("Note: Inno Setup 5.6.1 script syntax\nCompiler engine version: Inno Setup 6.7.1\n"), (6, 7, 1))            # 컴파일러가 스스로 밝힌 줄이 글 속의 다른 'Inno Setup 숫자' 보다 앞선다
         for text in ("Inno Setup 6 Command-Line Compiler\nCopyright (C) 1997-2025 Jordan Russell.", "", None, "no version here 1.2.3", "Inno Setup 0.0.0.0"):
             self.assertIsNone(measure.inno_text_version(text), text)
 
