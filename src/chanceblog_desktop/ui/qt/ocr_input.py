@@ -1,5 +1,5 @@
 """글자 읽기에 보낼 사진 한 장을 **메모리에서 읽고 줄이는** Qt 쪽(결정 D-513, 설계서 3-4·2-7, 시험 계획 T-H) — 사진 경로를 받아 `(너비, 높이, RGB 24비트 바이트)` 를 돌려준다. 디스크에 쓰는 것은 0이다.
-읽기 도구(`imagecheck`)의 규칙을 그대로 따른다: `QImageReader` + `setAutoTransform(True)`(휴대폰 회전 정보를 적용 — 원본 파일은 읽기만 한다).
+읽기 도구(`imagecheck`)의 규칙을 그대로 따른다: 파일 앞 12바이트의 표지(JPEG·PNG·WebP)를 읽기 직전에 다시 확인한 뒤에만 형식을 못박은 `QImageReader` 를 만들고(`imagecheck.open_checked` — 결정 D-680), `setAutoTransform(True)`(휴대폰 회전 정보를 적용 — 원본 파일은 읽기만 한다).
 
 줄이는 방법(긴 변을 `size_name`(960 또는 1600) 이하로, 작은 사진은 늘리지 않는다):
   · JPG·WebP 는 `setScaledSize` 로 **읽는 도중에** 줄인다 — 큰 사진도 메모리를 아낀다(긴 변이 12,000px 를 넘어도 경고만 있고 줄여서 읽는다).
@@ -55,10 +55,11 @@ def prepare(path, size_name=pov.SIZE_NORMAL):
     pixels = seen.width * seen.height
     if rules.preview_blocked(seen.format, seen.width, seen.height) or pixels > READ_PIXEL_LIMIT:
         raise AppError("OCR_TOO_BIG")                                             # 읽기 전에 거절한다 — PNG 는 읽은 뒤에야 줄일 수 있어 메모리를 크게 쓴다
-    reader = QImageReader(str(path))
-    reader.setAutoTransform(True)
+    reader, kind = imagecheck.open_checked(path, QImageReader)                    # 읽기 직전에 표지를 다시 보고 형식을 못박는다 — 검사 뒤에 바뀐 파일(SVG 등)이 해석되지 않는다. 표지가 없으면 읽기 도구를 만들지 않는다
+    if reader is None:
+        raise AppError("OCR_FAILED")
     stored = reader.size()
-    if seen.format != "png" and stored.isValid() and max(stored.width(), stored.height()) > side:
+    if kind != "png" and stored.isValid() and max(stored.width(), stored.height()) > side:
         reader.setScaledSize(stored.scaled(QSize(side, side), Qt.KeepAspectRatio))      # JPG·WebP — 읽는 도중에 줄인다(저장된 방향 기준이라 회전은 읽은 뒤에 적용된다)
     image = reader.read()
     if image.isNull():

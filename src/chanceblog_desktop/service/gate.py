@@ -30,6 +30,7 @@ from ..publish.pages import check_post as check_post_file
 from ..render.markdown import markdown_to_html
 from ..render.pages import LANG_PREFIX, MAX_CATEGORY, MAX_DESCRIPTION, MAX_TAG, MAX_TAGS, front_matter_problems
 from ..security.mask import _INVISIBLE, _strip_invisible
+from ..security.shape import named_secret_spans
 
 use_vendored_core()
 from pipeline import gates as core_gates  # noqa: E402  (vendor/ 경로를 먼저 올려야 한다)
@@ -357,6 +358,8 @@ def run_gates(text, *, local_paths=()):
         reasons.append(f"[INVISIBLE] 눈에 안 보이는 글자가 {hidden}개 있다(본문 {len(body)}자) — 글자 수를 채우거나 글을 숨기는 데 쓰일 수 있다. 지운 뒤 다시 만든다")
     if local_path_problem(text, local_paths):
         reasons.append("[LOCAL_PATH] 글에 이 PC 의 폴더 경로가 들어 있다(저장소에 올리지 않는다)")
+    if named_secret_spans(_strip_invisible(text)):
+        reasons.append("[NAMED_SECRET] 글에 '비밀번호: 값'·'시크릿=값' 처럼 이름 뒤에 키·비밀번호로 보이는 값을 적은 글이 있다(저장소에 올리지 않는다) — 그 값을 지우거나 문장으로 바꿔 쓴다")
     return GateReport(not reasons, tuple(reasons), tuple(warnings), chars, blocking)
 
 
