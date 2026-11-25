@@ -25,9 +25,11 @@ from .core.text import T
 KIND_OF_CODE = {"CONTENT_INVALID": "input", "CONFIRMATION_REQUIRED": "input", "CHECK_FAILED": "check", "SECRET_SHAPE_FOUND": "secret", "CONTENT_NOT_FOUND": "notfound", "STATUS_TRANSITION_INVALID": "state",
                 "NAVER_SIMILARITY_HIGH": "similarity", "NAVER_PROFILE_MISSING": "profile", "STORE_LOCKED": "locked", "STORE_CONFLICT": "stale", "DISK_FULL": "disk", "FILE_WRITE_FAILED": "io", "FILE_IN_USE": "io",
                 "FILE_PATH_TOO_LONG": "io", "DATA_DIR_UNSAFE": "io", "STORE_RECOVERY_PENDING": "io", "MIGRATION_BLOCKED": "io", "MIGRATION_FAILED": "io", "STORE_CORRUPT": "corrupt", "SETTINGS_INVALID": "corrupt",
-                "STORE_VERSION_UNSUPPORTED": "newer"}                  # 서비스 오류 코드 → 화면이 다르게 다룰 종류(나머지는 `other`)
+                "STORE_VERSION_UNSUPPORTED": "newer", "NAVER_PACKAGE_INCOMPLETE": "package", "NAVER_PUBLISH_URL_INVALID": "address", "PUBLISHED_URL_REQUIRED": "address",
+                "PUBLISHED_URL_INVALID": "address"}                   # 서비스 오류 코드 → 화면이 다르게 다룰 종류(나머지는 `other`)
 SENTENCE_OF_KIND = {"stale": "post_fail_stale", "notfound": "post_fail_notfound", "state": "post_fail_state", "gate": "post_fail_gate", "similarity": "post_fail_similarity", "profile": "post_fail_profile",
-                    "locked": "post_fail_locked", "disk": "post_fail_disk", "io": "post_fail_io", "corrupt": "post_fail_corrupt", "newer": "post_fail_newer", "other": "post_fail_other"}
+                    "locked": "post_fail_locked", "disk": "post_fail_disk", "io": "post_fail_io", "corrupt": "post_fail_corrupt", "newer": "post_fail_newer", "other": "post_fail_other",
+                    "package": "post_fail_package", "address": "post_fail_address"}
 
 
 def failure_of(error, *, action="read"):
@@ -44,6 +46,9 @@ def failure_of(error, *, action="read"):
     elif kind == "input":
         field = rules.shown(error.slots.get("항목"), 80)
         text = T["post_fail_input"].format(field=field) if field else T["post_fail_input_plain"]
+    elif kind == "package":
+        field = rules.shown(error.slots.get("항목"), 40)                          # 빠진 항목의 고정 이름(`태그` 등) — 입력한 글이 아니다
+        text = T["post_fail_package"].format(field=field) if field else T["post_fail_package_plain"]
     elif kind == "check":
         text = T["post_fail_check"] if action == "import" else T["post_gate_header_value"]
     elif kind in ("io", "disk") and action == "read":
