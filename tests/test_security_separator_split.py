@@ -205,6 +205,24 @@ class ScanSeesThroughTest(unittest.TestCase):
                 with self.subTest(sample=name, start=start):
                     self.assert_found_once("앞 줄\n" + lead + piece + " 뒤", kind, piece, lead)
 
+    def test_a_key_written_in_fullwidth_letters_and_split_by_every_one_of_the_nine_is_one_finding_at_the_original_position(self):
+        """호환(전각) 글자로 쓴 키도 쪼개면 찾는다 — 지운 글은 호환 글자를 접은 글(`_fold`)에서 만들어야 한다. 원문에서 만들면 전각 글자 + 구분 글자 우회가 조용히 열린다(독립 검증 S 권고-4·Q 권고-1)."""
+        def wide(text):
+            return "".join(chr(ord(char) + 0xFEE0) if "!" <= char <= chr(126) else char for char in text)
+        for name, kind, lead, token, prefix in samples():
+            whole = wide(token)
+            self.assertNotEqual(whole, token, name)
+            text = "앞 줄\n" + lead + whole + "\n뒷 줄"
+            with self.subTest(sample=name, code="쪼개지 않음"):
+                self.assertEqual(S.triples(scan.scan_secrets(text)), [(kind, *S.locate(text, whole))], "대조: 쪼개지 않은 전각 키는 원래도 한 건이다")
+            for code in NINE:
+                half = len(whole) // 2
+                piece = whole[:half] + chr(code) + whole[half:]
+                text = "앞 줄\n" + lead + piece + "\n뒷 줄"
+                with self.subTest(sample=name, code=label(code)):
+                    self.assertEqual(S.triples(scan.scan_secrets(text)), [(kind, *S.locate(text, piece))])
+                    self.assertTrue(scan.has_secret(text))
+
     def test_two_separators_in_a_row_and_a_run_of_separators_inside_a_key_count_as_nothing(self):
         for name, kind, lead, token, prefix in samples():
             middle = len(token) // 2
@@ -346,6 +364,20 @@ class StaysStrictTest(unittest.TestCase):
         self.assertEqual([item.kind for item in scan.scan_secrets(text)], ["google_api_key", "github_token"])
         text = github + chr(0x2029) + " " + google[:15] + chr(0x85) + google[15:]
         self.assertEqual([item.kind for item in scan.scan_secrets(text)], ["github_token", "google_api_key"])
+
+    def test_a_split_key_that_only_touches_a_find_is_counted_apart_and_one_that_starts_inside_a_find_is_not(self):
+        """합성의 맞닿음·겹침 판정(독립 검증 S 참고-1·Q 참고 2). 지운 글 눈의 발견이 원문 눈의 발견과 **닿기만** 하면(끝 = 시작) 따로 센다 — PEM 머리 줄 바로 뒤의 쪼갠 AWS 키, 쪼갠 AWS 키 바로 뒤의 PEM 머리 줄은 2건이다.
+        원문 눈의 발견 **안에서 시작하면**(Bearer 값 안에서 시작하는 쪼갠 GitHub 토큰) 같은 비밀이라 더하지 않는다 — 1건이다."""
+        aws, github, header = S.aws(), S.github(), S.pem("")
+        split_aws = aws[:8] + chr(0x2028) + aws[8:]
+        text = "앞 줄\n" + header + split_aws + "\n뒷 줄"
+        self.assertEqual(S.triples(scan.scan_secrets(text)), [("pem_private_key", 2, 1, len(header)), ("aws_access_key", 2, len(header) + 1, len(header) + len(split_aws))])
+        text = "앞 줄\n" + split_aws + header + "\n뒷 줄"
+        self.assertEqual(S.triples(scan.scan_secrets(text)), [("aws_access_key", 2, 1, len(split_aws)), ("pem_private_key", 2, len(split_aws) + 1, len(split_aws) + len(header))])
+        lead = "Authorization: Bearer " + "abcdefghij-"
+        alone = scan.scan_secrets(lead + github[:10])
+        self.assertEqual([item.kind for item in alone], ["bearer_token"], "앞 조각만으로도 Bearer 값이다(원문 눈이 짚는다)")
+        self.assertEqual(S.triples(scan.scan_secrets(lead + github[:10] + chr(0x2028) + github[10:])), S.triples(alone), "그 값 안에서 시작하는 쪼갠 토큰은 따로 세지 않는다 — 1건")
 
     def test_a_whole_key_is_never_reported_twice_when_the_text_also_has_separators_elsewhere(self):
         token = S.github()
@@ -571,14 +603,16 @@ class AdapterTest(unittest.TestCase):
 
 
 class PerformanceTest(unittest.TestCase):
-    """병적 입력(구분 글자만·한 글자 사이마다·키 모양 반복)이 선형 시간이다 — 새 지움·위치표가 제곱으로 느려지지 않는다."""
+    """병적 입력(구분 글자만·한 글자 사이마다·키 모양 반복·짧은 키를 한 번씩 쪼갠 것 반복)이 선형 시간이다 — 새 지움·위치표·합성이 제곱으로 느려지지 않는다."""
 
-    SIZES = (6_400, 64_000)
+    SIZES = (16_000, 64_000)                                                   # 네 배 단계 — 선형이면 약 4배, 제곱이면 약 16배(독립 검증 Q 권고-2)
+    GROWTH_LIMIT = 8                                                           # 선형(4)과 제곱(16) 사이
 
     @staticmethod
     def shapes(size):
         sep_a, sep_b = chr(0x2028), chr(0x85)
         token = S.github()
+        aws = S.aws()
         count = size // 4
         return {
             "구분 글자만": sep_a * size,
@@ -593,6 +627,8 @@ class PerformanceTest(unittest.TestCase):
             "PEM 머리 반복": ("-----BEGIN" + sep_a + " ") * (size // 11),
             "OAuth 이름 반복": ("access_token=" + sep_a) * (size // 14),
             "한글 사이마다": ("가" + sep_a) * (size // 2),
+            "짧은 AWS 키를 한 번씩 쪼갠 것 반복": (aws[:8] + sep_a + aws[8:] + " ") * (size // 22),
+            "통 키와 쪼갠 키 번갈아": (aws + " " + aws[:8] + sep_b + aws[8:] + " ") * (size // 43),
         }
 
     @staticmethod
@@ -612,7 +648,7 @@ class PerformanceTest(unittest.TestCase):
                 low, high = self.best(call, small[name]), self.best(call, big[name])
                 with self.subTest(shape=name, call=call_name):
                     self.assertLess(high, LIMIT_SECONDS, "64,000자가 0.5초 안에 끝나지 않는다")
-                    self.assertLess(high, max(low, 0.002) * 60, "열 배 긴 입력이 육십 배 넘게 걸린다 — 제곱 시간 의심")
+                    self.assertLess(high, max(low, 0.002) * self.GROWTH_LIMIT, "네 배 긴 입력이 여덟 배 넘게 걸린다 — 제곱 시간 의심")
 
     def test_a_hundred_thousand_separators_inside_one_key_still_end_fast_and_find_it(self):
         token = S.github()
@@ -640,7 +676,7 @@ class SourceTest(unittest.TestCase):
 
 class DocsTest(unittest.TestCase):
     """문서 세 곳(결정 행·보안 문서 절·변경 이력 줄)이 있고 말하는 것이 코드와 같다 — 이 묶음의 글은 번호와 낱말로 찾는다(다른 묶음의 행·줄이 늘어도 깨지지 않게 최댓값은 못박지 않는다)."""
-    SENTENCE = "줄 구분 글자도 눈에 안 보이는 글자처럼 지우고 찾는다(U+2028·U+2029·U+0085)"
+    SENTENCE = "줄 구분 글자도 눈에 안 보이는 글자처럼 지우고 찾는다(U+2028·U+2029·U+0085 를 포함한 아홉 글자)"
     HEADING = "### 줄 구분 글자로 쪼갠 키·토큰(SECSEP — D-760)"
 
     @staticmethod
@@ -661,7 +697,7 @@ class DocsTest(unittest.TestCase):
         row = lines[mine[0]]
         self.assertTrue(lines[mine[0] - 1].startswith("| D-"), "큰 결정 표 안(앞 줄이 결정 행)이어야 한다 — 문서 끝에 새 표를 붙이지 않는다")
         self.assertTrue(row.rstrip().endswith("|") and row.split("|")[2].strip() == "2026-11-25")
-        for word in ("SECSEP", "줄 구분 글자", "U+0085", "U+2028", "U+2029", "scan.py", "mask.py", "미리보기", "붙임", "차분", "변이", "T2", "지우고도 찾는다", "한계", "부분집합", "거짓 양성"):
+        for word in ("SECSEP", "줄 구분 글자", "U+0085", "U+2028", "U+2029", "scan.py", "mask.py", "미리보기", "붙임", "차분", "변이", "T2", "지우고도 찾는다", "한계", "부분집합", "거짓 양성", "앞붙임", "SECSEP2", "50개까지"):
             self.assertIn(word, row, word)
         self.assertNotIn(" | ", row[len("| D-760 | 2026-11-25 | "):-1], "결정 칸 속의 세로줄은 색인이 칸 나눔으로 읽는다")
         self.plain(row, "D-760 행")
@@ -674,13 +710,13 @@ class DocsTest(unittest.TestCase):
         self.assertTrue(start < text.index(self.SENTENCE) < end, "저장 검사 절 안에 있어야 한다")
         self.assertEqual(text.count(self.HEADING), 1)
         part = text[text.index(self.HEADING):end]
-        for word in ("U+000B", "U+000C", "U+001C–U+001F", "U+0085", "U+2028", "U+2029", "두 눈", "한계", "미리보기", "붙임", "차분", "mask.py", "scan.py", "`_strip_invisible`"):
+        for word in ("U+000B", "U+000C", "U+001C–U+001F", "U+0085", "U+2028", "U+2029", "두 눈", "한계", "미리보기", "붙임", "차분", "mask.py", "scan.py", "`_strip_invisible`", "앞붙임", "SECSEP2", "50개까지", "VT·U+001C"):
             self.assertIn(word, part, word)
         self.plain(part, "보안 문서의 새 절")
 
     def test_the_changelog_has_one_line_of_this_bundle(self):
-        lines = [line for line in self.read("CHANGELOG.md").splitlines() if "SECSEP" in line]
-        self.assertEqual(len(lines), 1)
+        lines = [line for line in self.read("CHANGELOG.md").splitlines() if line.startswith("- 줄 구분 글자 아홉으로 쪼갠 키·토큰을 저장 검사가 알아본다(SECSEP")]
+        self.assertEqual(len(lines), 1, "이 묶음의 고유 문장으로 찾는다 — 다른 갈래의 줄이 늘어도 깨지지 않는다")
         for word in ("줄 구분 글자 아홉", "security/scan.py", "security/mask.py", "tests/test_security_separator_split.py", "D-760", "T2", "한계"):
             self.assertIn(word, lines[0], word)
         self.plain(lines[0], "변경 이력 줄")
