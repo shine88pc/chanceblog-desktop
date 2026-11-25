@@ -1579,7 +1579,7 @@ def m18_standard_user(ctx, arm):
         return
     try:
         public.mkdir(parents=True, exist_ok=True)
-        ctx.host.run(["icacls", str(public), "/grant", "Users:(OI)(CI)M"], timeout=60)         # 임시 사용자가 로그·임시 파일을 쓸 수 있게(일회용 가상 머신 안의 작업 폴더)
+        ctx.host.run(["icacls", str(public), "/grant", user + ":(OI)(CI)M"], timeout=60)         # 그 임시 사용자만 로그·임시 파일을 쓸 수 있게(Users 모두가 아니라) — 일회용 가상 머신 안의 작업 폴더
         (public / "tmp").mkdir(parents=True, exist_ok=True)
         setup = public / ("setup-%s.exe" % arm)
         shutil.copyfile(inst["0.0.1"]["setup"], setup)

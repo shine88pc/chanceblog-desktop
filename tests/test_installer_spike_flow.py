@@ -1173,7 +1173,8 @@ class StandardUserOutcomeTest(unittest.TestCase):
                 self.assertEqual(("/VERYSILENT" in install["SPIKE_ARGS"]), arm == "C")
                 grants = [index for index, call in enumerate(world.calls) if call[0] == "icacls"]
                 self.assertEqual(len(grants), 1)
-                self.assertEqual(world.calls[grants[0]][2:], ["/grant", "Users:(OI)(CI)M"])         # 임시 사용자가 로그·임시 파일을 쓰려면 읽기만으로는 모자란다
+                self.assertEqual(world.calls[grants[0]][2:], ["/grant", run.measure.std_user_name(arm) + ":(OI)(CI)M"])         # 그 임시 사용자가 로그·임시 파일을 쓰려면 읽기만으로는 모자라고, 그 사용자 하나에게만 준다(Users 모두가 아니다)
+                self.assertNotIn("Users:", " ".join(world.calls[grants[0]]))
 
     def test_the_new_users_folders_are_passed_as_explicit_values_and_the_scripts_set_them_before_starting(self):
         world, ctx, item = self.attempt(std_silent=True)
