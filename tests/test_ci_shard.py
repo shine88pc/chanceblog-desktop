@@ -10,6 +10,8 @@
      (D-713) 둘째 잡 `qt` 가 생긴 뒤로는 이것을 `test`·`qt` 잡마다 본다(조각 목록·총수·이름 둘·`run:` 줄의 정확한 목록·`fail-fast`·`qt` 는 윈도와 3.12 하나뿐).
   6) (D-712) Qt 칸의 건너뜀 가드 `CI_REQUIRE_QT`: 1 만 켬(0·없음은 끔, 그 밖은 종료 코드 2)·PySide6 를 못 찾으면 시험 전에 종료 코드 3·PySide6 이유로 건너뛴 시험이 하나라도 있으면 종료 코드 1(대소문자 무시,
      `setUpClass`·파일 불러오기 건너뜀 포함)·다른 이유의 건너뜀은 알림만·시험 파일별 걸린 시간 표와 오래 걸린 파일의 즉시 알림, 그리고 Qt 깃발(`HAVE`)로 건너뛰는 모든 시험이 이유에 PySide6 낱말을 쓰는지 정적 확인.
+  7) (D-717) Qt 칸 전용 무게 표 `QT_WEIGHTS`·`QT_DEFAULT_WEIGHT` 와 환경 변수 `CI_WEIGHTS`: 없음·빈 값은 기본 표(열두 칸 — 표·기본 무게·나누기 결과를 옛 코드에서 뽑은 고정 값으로 못박는다), `qt` 는 Qt 표,
+     그 밖의 값은 종료 코드 2 · `assign` 은 표와 기본 무게를 인자로 받는 순수 함수 · Qt 표의 키는 모두 진짜 시험 파일이고 값은 측정값 · 표로 나눈 조각이 고르고(가장 무거운 조각이 이상의 1.15배 이하) 빈 조각이 없다.
 """
 import ast
 import contextlib
@@ -42,6 +44,7 @@ def run_script(*args, env_extra=None):
     env.pop("CI_SHARD", None)
     env.pop("CI_SHARD_TOTAL", None)
     env.pop("CI_REQUIRE_QT", None)                          # Qt 칸(D-713)의 환경 변수가 이 시험의 자식 프로세스에 새어 들어가 가짜 시험 폴더에서 가드가 켜지는 일이 없게
+    env.pop("CI_WEIGHTS", None)                             # Qt 칸의 무게 표 고르기(D-717)도 마찬가지 — 이 칸에서 돌 때 기본 표 시험이 Qt 표로 바뀌지 않게
     env.update(env_extra or {})
     return subprocess.run([sys.executable, "-X", "utf8", str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=300)
 
@@ -330,12 +333,14 @@ DRIVER = textwrap.dedent('''
 ''')
 
 
-def run_driver(installed, *args, flag=None):
+def run_driver(installed, *args, flag=None, weights=None):
     env = dict(os.environ, PYTHONUTF8="1")
-    for name in ("CI_SHARD", "CI_SHARD_TOTAL", "CI_REQUIRE_QT"):
+    for name in ("CI_SHARD", "CI_SHARD_TOTAL", "CI_REQUIRE_QT", "CI_WEIGHTS"):
         env.pop(name, None)
     if flag is not None:
         env["CI_REQUIRE_QT"] = flag
+    if weights is not None:
+        env["CI_WEIGHTS"] = weights
     return subprocess.run([sys.executable, "-X", "utf8", "-c", DRIVER, str(ROOT / "scripts"), "yes" if installed else "no", *args],
                           capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=300)
 
@@ -561,7 +566,7 @@ class QtGuardRunTest(unittest.TestCase):
     def test_the_real_script_without_pyside6_on_its_path_exits_three(self):
         # 가짜 대신 진짜 `qt_installed()`: `-S` 로 site-packages 를 빼면 환경이 어떻든 PySide6 를 못 찾는다.
         folder = self.folder(test_pass=PASSING_MODULE)
-        env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "CI_SHARD", "CI_SHARD_TOTAL")}
+        env = {key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", "CI_SHARD", "CI_SHARD_TOTAL", "CI_WEIGHTS")}
         env.update(PYTHONUTF8="1", CI_REQUIRE_QT="1")
         done = subprocess.run([sys.executable, "-S", "-X", "utf8", str(SCRIPT), "1", "1", folder], capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(ROOT), timeout=300)
         self.assertEqual(done.returncode, 3, done.stderr[-400:])
@@ -647,6 +652,259 @@ class QtSkipWordRuleTest(unittest.TestCase):
         self.assertEqual(len(qt_skip_problems(aliased)[1]), 1)
         combined = "import unittest\nfrom x import HAVE\nimport os\n@unittest.skipUnless(HAVE and os.name == 'nt', '윈도 글꼴이 있어야 한다')\nclass A(unittest.TestCase):\n    pass\n"
         self.assertEqual(len(qt_skip_problems(combined)[1]), 1)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+# Qt 칸 전용 무게 표(`QT_WEIGHTS`)와 환경 변수 `CI_WEIGHTS=qt`(D-717) — 표를 인자로 받는 순수한 `assign`·표 고르기·표의 모양과 값·정식 CI 열두 칸(기본 표)은 그대로임을 못박는다.
+# ---------------------------------------------------------------------------------------------------------------------------------------------
+OLD_WEIGHTS = {                       # 이번 변경(D-717) 앞의 기본 표 — 열두 칸은 한 글자도 안 바뀌었다는 증거로 글자 그대로 둔다
+    "test_pages_publish": 780, "test_service_recovery": 460, "test_service_repolock": 430, "test_pages_repo": 265, "test_service_unpushed": 225,
+    "test_service_candidates_process": 180, "test_service_echo": 135, "test_service_pages_git": 130, "test_auto_pr_workflow": 100, "test_vendor_core": 90,
+    "test_service_keys_cli": 75, "test_service_suggest_process": 55, "test_service_draft_process": 40, "test_content_migration": 40, "test_service_pushed_post": 40,
+    "test_topics_generate": 30, "test_service_lock": 25, "test_topicdb_backup": 25,
+}
+FILLERS = [f"test_filler_{index:02d}" for index in range(30)]
+# 옛 코드(이번 변경 앞의 `assign`)에서 뽑은 값: 표의 열여덟 파일 + 기본 무게 파일 서른둘을 세 조각으로 나눈 결과
+FROZEN_THREE = {
+    "test_auto_pr_workflow": 3, "test_content_migration": 2, "test_pages_publish": 1, "test_pages_repo": 3, "test_service_candidates_process": 2, "test_service_draft_process": 1,
+    "test_service_echo": 3, "test_service_keys_cli": 1, "test_service_lock": 1, "test_service_pages_git": 1, "test_service_pushed_post": 3, "test_service_recovery": 2,
+    "test_service_repolock": 3, "test_service_suggest_process": 3, "test_service_unpushed": 2, "test_topicdb_backup": 2, "test_topics_generate": 2, "test_vendor_core": 2,
+    "test_a_brand_new_module": 3, "test_zeta": 1,
+}
+FROZEN_FILLERS_THREE = [3, 3, 3, 3, 3, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3]
+FROZEN_TWO = {"test_pages_publish": 1, "test_pages_repo": 1, "test_service_recovery": 2, "test_service_repolock": 2, "test_service_echo": 2, "test_vendor_core": 2}
+QT_MEASURED_TOP = {                   # 2차 진단(실행 45585260861)이 잰 가장 큰 일곱 — 총괄 지시서의 숫자와 같다
+    "test_ui_qt_references": 1050, "test_ui_qt_seeds": 1000, "test_ui_qt_settings": 977, "test_ui_qt_photo_ocr": 925, "test_ui_qt_polish2": 908, "test_ui_qt_style": 846, "test_ui_qt_polish1": 774,
+}
+
+
+def ci_total(job):
+    """`ci.yml` 의 `job`(`test` 또는 `qt`) 잡이 시험 단계에 주는 CI_SHARD_TOTAL(조각 수) — 표를 시험할 때 조각 수를 시험이 따로 정하지 않고 CI 가 정한 값을 따른다."""
+    code = jobs_of(code_lines((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")))
+    found = re.search(r"^\s+CI_SHARD_TOTAL:\s*'(\d+)'$", "\n".join(code[job]), re.M)
+    assert found, f"ci.yml 의 {job} 잡에 CI_SHARD_TOTAL 이 없다"
+    return int(found.group(1))
+
+
+def loads_of(table, total, weights, default):
+    loads = [0] * total
+    for name, index in table.items():
+        loads[index - 1] += ci_shard.weight_of(name, weights, default)
+    return loads
+
+
+class DefaultTableUnchangedTest(unittest.TestCase):
+    """정식 CI 열두 칸이 쓰는 기본 표의 동작은 이번 변경(D-717, Qt 칸 전용 표)으로 한 글자도 바뀌지 않았다 — 표·기본 무게·나누기 결과를 옛 코드에서 뽑은 고정 값으로 못박는다."""
+
+    NAMES = sorted(OLD_WEIGHTS) + FILLERS + ["test_a_brand_new_module", "test_zeta"]
+
+    def test_the_default_table_and_the_default_weight_are_exactly_the_old_values(self):
+        self.assertEqual(ci_shard.WEIGHTS, OLD_WEIGHTS)
+        self.assertEqual(ci_shard.DEFAULT_WEIGHT, 4)
+        self.assertEqual((ci_shard.weight_of("test_pages_publish"), ci_shard.weight_of("test_not_in_any_table")), (780, 4))
+
+    def test_the_split_of_a_fixed_input_into_three_shards_is_the_old_split(self):
+        table = ci_shard.assign(self.NAMES, 3)
+        self.assertEqual({name: table[name] for name in FROZEN_THREE}, FROZEN_THREE)
+        self.assertEqual([table[name] for name in FILLERS], FROZEN_FILLERS_THREE)
+        self.assertEqual(sorted(table), sorted(self.NAMES))
+
+    def test_the_split_into_two_shards_is_the_old_split_too(self):
+        table = ci_shard.assign(self.NAMES, 2)
+        self.assertEqual({name: table[name] for name in FROZEN_TWO}, FROZEN_TWO)
+
+    def test_passing_the_default_table_explicitly_gives_the_same_split(self):
+        for total in (1, 2, 3, 5):
+            self.assertEqual(ci_shard.assign(self.NAMES, total, ci_shard.WEIGHTS, ci_shard.DEFAULT_WEIGHT), ci_shard.assign(self.NAMES, total), total)
+
+    def test_without_a_table_the_module_tables_are_read_when_assign_runs(self):
+        with mock.patch.object(ci_shard, "WEIGHTS", {"test_x": 100}), mock.patch.object(ci_shard, "DEFAULT_WEIGHT", 1):
+            self.assertEqual(ci_shard.assign(["test_x", "test_y", "test_z"], 2), {"test_x": 1, "test_y": 2, "test_z": 2})
+
+
+class AssignWithATableTest(unittest.TestCase):
+    """`assign` 는 표(와 그 기본 무게)를 인자로 받는 순수 함수다 — 주면 그 표만 쓰고 모듈의 표·환경 변수에 기대지 않는다."""
+
+    NAMES = ["test_a", "test_b", "test_c", "test_d", "test_pages_publish"]
+    WEIGHTS = {"test_a": 10, "test_b": 7}
+
+    def test_a_given_table_and_its_default_are_the_only_weights_used(self):
+        # test_pages_publish 는 기본 표에서는 780 이지만 준 표에 없으니 준 기본 무게 3 이다 — 무거운 순 a(10) b(7) 다음 나머지는 3 씩(이름 순)
+        table = ci_shard.assign(self.NAMES, 2, self.WEIGHTS, 3)
+        self.assertEqual(table, {"test_a": 1, "test_b": 2, "test_c": 2, "test_d": 1, "test_pages_publish": 2})
+        self.assertEqual(ci_shard.weight_of("test_pages_publish", self.WEIGHTS, 3), 3)
+        self.assertEqual(ci_shard.weight_of("test_a", self.WEIGHTS, 3), 10)
+
+    def test_the_default_of_a_given_table_is_not_the_default_tables(self):
+        # 기본 무게를 바꾸면 결과가 달라진다(표에 없는 파일의 무게는 준 기본 무게에서 온다)
+        loads_three = loads_of(ci_shard.assign(self.NAMES, 2, self.WEIGHTS, 3), 2, self.WEIGHTS, 3)
+        loads_nine = loads_of(ci_shard.assign(self.NAMES, 2, self.WEIGHTS, 9), 2, self.WEIGHTS, 9)
+        self.assertEqual(sum(loads_three), 10 + 7 + 3 * 3)
+        self.assertEqual(sum(loads_nine), 10 + 7 + 3 * 9)
+        self.assertEqual(ci_shard.weight_of("test_c", {}, 7), 7, "빈 표도 표다 — 기본 표로 돌아가지 않는다")
+
+    def test_a_given_table_ignores_the_module_tables_and_the_environment(self):
+        expected = ci_shard.assign(self.NAMES, 3, self.WEIGHTS, 2)
+        with mock.patch.dict(os.environ, {"CI_WEIGHTS": "qt", "CI_REQUIRE_QT": "1"}), mock.patch.object(ci_shard, "WEIGHTS", {"test_a": 999}), \
+                mock.patch.object(ci_shard, "DEFAULT_WEIGHT", 77), mock.patch.object(ci_shard, "QT_WEIGHTS", {"test_b": 888}), mock.patch.object(ci_shard, "QT_DEFAULT_WEIGHT", 66):
+            self.assertEqual(ci_shard.assign(self.NAMES, 3, self.WEIGHTS, 2), expected)
+
+    def test_a_given_table_keeps_the_rules_of_the_split(self):
+        names = real_names()
+        first = ci_shard.assign(names, 5, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT)
+        self.assertEqual(first, ci_shard.assign(list(reversed(names)), 5, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), "입력 순서와 상관없이 같은 결과")
+        self.assertEqual(sorted(first), names)
+        for index in range(1, 6):
+            self.assertTrue([name for name in names if first[name] == index], f"{index}번 조각이 비었다")
+
+
+class WeightsFlagTest(unittest.TestCase):
+    """환경 변수 `CI_WEIGHTS` — 없음·빈 값은 기본 표, `qt` 는 Qt 칸 전용 표, 그 밖의 값은 거절(오타로 기본 표를 쓴 채 조각이 쏠려 시간 한도에 걸리지 않게)."""
+
+    def test_nothing_or_an_empty_value_means_the_default_table(self):
+        for env in ({}, {"CI_WEIGHTS": ""}):
+            with self.subTest(env=env):
+                name, weights, default = ci_shard.weights_table(env)
+                self.assertEqual(name, "")
+                self.assertIs(weights, ci_shard.WEIGHTS)
+                self.assertEqual(default, ci_shard.DEFAULT_WEIGHT)
+
+    def test_qt_means_the_qt_table_and_its_own_default(self):
+        name, weights, default = ci_shard.weights_table({"CI_WEIGHTS": "qt"})
+        self.assertEqual(name, "qt")
+        self.assertIs(weights, ci_shard.QT_WEIGHTS)
+        self.assertEqual(default, ci_shard.QT_DEFAULT_WEIGHT)
+
+    def test_any_other_value_is_refused_so_a_typo_cannot_fall_back_to_the_default_table(self):
+        for value in ("QT", "Qt", "qt ", " qt", "default", "test", "0", "1", "true", "on", "qt,qt", "qtt", "q", "ㅂㅅ", "-qt"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                ci_shard.weights_table({"CI_WEIGHTS": value})
+
+    def test_the_flag_name_is_the_documented_one(self):
+        self.assertEqual(ci_shard.WEIGHTS_FLAG, "CI_WEIGHTS")
+
+
+class QtWeightsTableTest(unittest.TestCase):
+    """Qt 칸 전용 무게 표 — 이름이 모두 진짜 시험 파일이고 값이 측정값이며, 이 표로 나눈 조각이 고르고 빈 조각이 없다."""
+
+    def test_every_key_is_a_test_file_that_exists_so_no_stale_name_piles_up(self):
+        names = set(real_names())
+        stale = sorted(name for name in ci_shard.QT_WEIGHTS if name not in names)
+        self.assertEqual(stale, [], "없어졌거나 이름이 바뀐 시험 파일이 Qt 무게표에 남아 있다 — 표를 다시 재거나 이름을 고친다(docs/CI_QT.md)")
+
+    def test_every_value_is_a_positive_whole_number_of_seconds(self):
+        for name, value in ci_shard.QT_WEIGHTS.items():
+            with self.subTest(name=name):
+                self.assertIs(type(value), int)
+                self.assertGreater(value, 0, "무게 0 은 가장 가벼운 조각이 늘 같아 한 조각에 몰린다")
+
+    def test_the_numbers_of_the_second_diagnosis_are_what_the_table_holds(self):
+        # 표를 다시 재면(docs/CI_QT.md) 이 숫자와 결정(D-717)을 함께 고친다 — 슬쩍 바꾸면 여기서 빨개진다
+        for name, seconds in QT_MEASURED_TOP.items():
+            self.assertEqual(ci_shard.QT_WEIGHTS[name], seconds, name)
+        self.assertEqual(sorted(ci_shard.QT_WEIGHTS.values(), reverse=True)[:7], sorted(QT_MEASURED_TOP.values(), reverse=True))
+        self.assertEqual((len(ci_shard.QT_WEIGHTS), sum(ci_shard.QT_WEIGHTS.values())), (209, 16285))
+        self.assertEqual((ci_shard.QT_WEIGHTS["test_pages_publish"], ci_shard.QT_WEIGHTS["test_service_recovery"], ci_shard.QT_WEIGHTS["test_service_repolock"]), (166, 105, 89))
+
+    def test_the_default_weight_is_a_small_value_and_not_the_default_tables(self):
+        self.assertEqual(ci_shard.QT_DEFAULT_WEIGHT, 5)
+        self.assertNotEqual(ci_shard.QT_DEFAULT_WEIGHT, ci_shard.DEFAULT_WEIGHT, "같으면 기본 무게를 잘못 집어도 시험이 모른다")
+        self.assertEqual(ci_shard.weight_of("test_a_brand_new_module", ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), 5)
+        self.assertLess(ci_shard.QT_DEFAULT_WEIGHT, min(ci_shard.QT_WEIGHTS["test_ui_qt_references"], 100))
+
+    def test_the_qt_table_is_its_own_table_measured_on_the_runner(self):
+        self.assertIsNot(ci_shard.QT_WEIGHTS, ci_shard.WEIGHTS)
+        self.assertNotIn("test_ui_qt_references", ci_shard.WEIGHTS)
+        self.assertNotEqual(ci_shard.QT_WEIGHTS["test_pages_publish"], ci_shard.WEIGHTS["test_pages_publish"], "열두 칸 표는 개발 PC 값(780), Qt 칸 표는 러너 값(166)이다")
+
+    def test_the_qt_split_covers_every_test_file_once_and_leaves_no_shard_empty(self):
+        names, total = real_names(), ci_total("qt")
+        self.assertGreaterEqual(total, 2)
+        table = ci_shard.assign(names, total, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT)
+        self.assertEqual(sorted(table), names)
+        self.assertTrue(all(1 <= index <= total for index in table.values()))
+        for index in range(1, total + 1):
+            self.assertTrue([name for name in names if table[name] == index], f"Qt 조각 {index}/{total} 이 비었다")
+
+    def test_the_heaviest_shard_of_the_qt_split_is_within_fifteen_percent_of_the_ideal(self):
+        # 이 값이 깨지면 표를 다시 재라는 신호다(docs/CI_QT.md) — 표로 나눈 가장 무거운 조각이 이상적 합계(전체 무게 ÷ 조각 수)의 1.15배 이하
+        names, total = real_names(), ci_total("qt")
+        loads = loads_of(ci_shard.assign(names, total, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), total, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT)
+        ideal = sum(loads) / total
+        self.assertLessEqual(max(loads), 1.15 * ideal, f"가장 무거운 조각 {max(loads)}초, 이상 {ideal:.0f}초 — {loads}")
+        self.assertGreaterEqual(min(loads), 0.85 * ideal, f"가장 가벼운 조각 {min(loads)}초, 이상 {ideal:.0f}초 — {loads}")
+
+    def test_the_heaviest_files_each_get_a_shard_of_their_own(self):
+        names, total = real_names(), ci_total("qt")
+        table = ci_shard.assign(names, total, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT)
+        heaviest = sorted(ci_shard.QT_WEIGHTS, key=lambda name: (-ci_shard.QT_WEIGHTS[name], name))[:total]
+        self.assertEqual(len({table[name] for name in heaviest}), total, "가장 무거운 파일들이 한 조각에 몰렸다")
+
+    def test_the_qt_split_is_not_the_default_split(self):
+        names = real_names()
+        self.assertNotEqual(ci_shard.assign(names, 12, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), ci_shard.assign(names, 12))
+
+
+class WeightsFlagRunTest(unittest.TestCase):
+    """작은 가짜 시험 폴더로 진짜 `ci_shard.py` 를 자식 프로세스에서 돌려 `CI_WEIGHTS` 가 조각 나누기까지 이어지는지 본다(진짜 시험 폴더는 느려서 쓰지 않는다 — 표 자체는 위에서 진짜 이름으로 본다)."""
+
+    def folder(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        for name in ("test_a_light", "test_ui_qt_references", "test_ui_qt_seeds"):
+            (Path(temp.name) / f"{name}.py").write_text(PASSING_MODULE, encoding="utf-8")
+        return f"--tests-dir={temp.name}"
+
+    def test_the_default_table_splits_by_name_because_every_file_weighs_the_same(self):
+        folder = self.folder()
+        self.assertEqual(run_script("1", "2", "--list", folder).stdout.split(), ["test_a_light", "test_ui_qt_seeds"])
+        self.assertEqual(run_script("2", "2", "--list", folder).stdout.split(), ["test_ui_qt_references"])
+
+    def test_the_qt_table_splits_by_the_measured_seconds(self):
+        folder = self.folder()
+        first = run_script("1", "2", "--list", folder, env_extra={"CI_WEIGHTS": "qt"})
+        second = run_script("2", "2", "--list", folder, env_extra={"CI_WEIGHTS": "qt"})
+        self.assertEqual((first.returncode, second.returncode), (0, 0), first.stderr + second.stderr)
+        self.assertEqual(first.stdout.split(), ["test_ui_qt_references"])
+        self.assertEqual(second.stdout.split(), ["test_a_light", "test_ui_qt_seeds"])
+
+    def test_an_empty_value_is_the_default_table_and_a_typo_exits_two_before_anything_runs(self):
+        folder = self.folder()
+        self.assertEqual(run_script("1", "2", "--list", folder, env_extra={"CI_WEIGHTS": ""}).stdout.split(), ["test_a_light", "test_ui_qt_seeds"])
+        for value in ("QT", "default", "1", "qt "):
+            with self.subTest(value=value):
+                done = run_script("1", "2", folder, env_extra={"CI_WEIGHTS": value})
+                self.assertEqual(done.returncode, 2, done.stderr[-300:])
+                self.assertIn("CI_WEIGHTS", done.stderr)
+                self.assertNotIn("Ran ", done.stderr)
+                self.assertNotIn("조각 1/2", done.stdout)
+
+    def test_the_qt_table_prints_the_plan_of_the_shard_and_the_default_table_prints_nothing_new(self):
+        folder = self.folder()
+        qt = run_script("1", "2", folder, env_extra={"CI_WEIGHTS": "qt"})
+        self.assertEqual(qt.returncode, 0, qt.stderr[-300:])
+        self.assertIn("조각 1/2: 시험 파일 1개·시험 1개 (전체 3개 파일·3개 시험) — 무게 표 qt: 이 조각 1,050초", qt.stdout)
+        plain = run_script("1", "2", folder)
+        self.assertEqual(plain.returncode, 0, plain.stderr[-300:])
+        self.assertIn("조각 1/2: 시험 파일 2개·시험 2개 (전체 3개 파일·3개 시험)\n", plain.stdout)
+        self.assertNotIn("무게 표", plain.stdout)
+
+    def test_the_weights_flag_and_the_qt_guard_work_together_and_independently(self):
+        folder = self.folder()
+        both = run_driver(True, "1", "2", folder, flag="1", weights="qt")
+        self.assertEqual(both.returncode, 0, both.stderr[-300:])
+        self.assertIn("무게 표 qt", both.stdout)
+        self.assertIn("시험 파일별 걸린 시간", both.stdout)
+        guard_only = run_driver(True, "1", "2", folder, flag="1")
+        self.assertNotIn("무게 표", guard_only.stdout)
+        self.assertIn("시험 파일별 걸린 시간", guard_only.stdout)
+        weights_only = run_driver(True, "1", "2", folder, weights="qt")
+        self.assertIn("무게 표 qt", weights_only.stdout)
+        self.assertNotIn("시험 파일별 걸린 시간", weights_only.stdout)
+
+    def test_list_mode_follows_the_table_too_so_a_developer_can_preview_a_qt_shard(self):
+        done = run_script("1", "2", "--list", self.folder(), env_extra={"CI_WEIGHTS": "qt", "CI_REQUIRE_QT": "1"})
+        self.assertEqual((done.returncode, done.stdout.split()), (0, ["test_ui_qt_references"]), done.stderr[-300:])
 
 
 if __name__ == "__main__":
