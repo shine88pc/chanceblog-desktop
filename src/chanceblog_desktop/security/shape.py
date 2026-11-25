@@ -98,3 +98,70 @@ def short_digest(text):
     """한도 묶음 이름에 쓰는 짧은 해시(SHA-256 앞 8자) — 클라이언트 ID 같은 **비밀이 아닌** 칸의 값을 파일에 그대로 적지 않으려고. 비밀 칸의 값에는 쓰지 않는다(약한 값은 해시만으로 대입해 알아낼 수 있다 —
     같은 값을 두 번 넣는 것은 지문이 아니라 보관소의 값을 직접 비교해 막는다)."""
     return hashlib.sha256(("chanceblog-desktop:bucket:1\0" + text).encode("utf-8", "surrogatepass")).hexdigest()[:8]
+
+
+# ---- 이름 붙은 값(`password: …`·`secret=…` — 결정 D-682) -----------------------------------------------------------------------------------
+# 복사 전 관문이 접두사 모양·긴 영숫자 덩어리만 봐서 `password: Hunter2xyz`·`secret=Ab12Cd34` 같은 메모가 막힘도 확인창도 없이 클립보드로 갔다(앱 2차 감사 AS-S2 권고-1). 가리기 규칙(`mask`)은 이런 글을 가리지만
+# 복사 관문은 그 규칙을 쓰지 않았다. 이름 낱말은 가리기 규칙과 **같은 목록**(`mask._NAME_WORDS` — password·secret·token·credential·sessionid·api key 계열)에 한국어 이름 다섯(비밀번호·비번·패스워드·시크릿·인증키)을 더한 것이다.
+# 값이 키·비밀번호처럼 생겼을 때**만** 걸린 자리로 센다 — 글에서 이름 뒤에 값처럼 보이는 낱말이 오는 일은 흔해서(`비밀번호: 8자 이상`·`token = get_token(user1)`) 전부 막으면 쓸 수 없는 관문이 된다:
+#   · 값 머리(따옴표를 뺀 뒤 키·토큰에 쓰이는 글자 — 영문·숫자와 `_ - + / = . : ! @ # $ % ^ *`·물결표 — 로 이어진 부분)가 6자 이상 200자 이하이고 영문자와 숫자가 함께 있다(`Hunter2xyz`·`Ab12Cd34`·`sk_test_1234…`).
+#   · 숫자뿐인 값(`1234`)·글자뿐인 값(`strong`)·짧은 값·자리 표시(`<your password>`·`YOUR_API_KEY`·`********`)·변수 꼴(`$TOKEN_1`)·코드(`req.body.password1`·`get_token(user1)` — 점으로 이은 소문자 이름, 값 머리가 괄호 앞에서 끊긴다)는 아니다.
+#   · 주소 인자(`?token=…`·`&secret=…` — 이름 앞이 `? & ; #`)는 이 규칙이 아니라 주소 규칙이 본다(`draft_rules._address_hit` — 그쪽의 한계는 D-312).
+# 안전한 기본값(위임 규칙)은 '막고 수정을 요청한다'이다 — 예시 값이 비밀번호처럼 생겼으면 예시여도 막는다(안내 문구가 값을 지우거나 문장으로 바꿔 쓰라고 알려 준다). 한계: 값이 숫자뿐이거나 글자뿐이거나 여섯 글자 미만인 비밀번호, 공백이 든 값은 못 본다.
+MIN_NAMED_VALUE, MAX_NAMED_VALUE = 6, 200
+_KO_NAMES = "비밀번호|비번|패스워드|시크릿|인증키"
+_NAMED_NEEDLES = ("password", "passwd", "secret", "token", "credential", "sessionid", "session_id", "key", "비밀번호", "비번", "패스워드", "시크릿", "인증키")        # 이름 낱말이 하나도 없는 글은 정규식을 돌리지 않는다
+_FULLWIDTH_SEPARATORS = chr(0xFF1A) + chr(0xFF1D)                                                      # 전각 `：`·`＝`
+_VALUE_HEAD = re.compile(r"[A-Za-z0-9_\-+/=.\x7e:!@#$%^*]+")
+_CODE_PATH = re.compile(r"[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+")                                      # `req.body.password1` — 점으로 이은 소문자 이름은 코드다
+_CURLY_QUOTES = "".join(chr(code) for code in (0x201C, 0x201D, 0x2018, 0x2019))
+_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-")
+_NAMED_PATTERN = None
+
+
+def _named_pattern():
+    """이름 낱말 + `:`·`=` + 값을 찾는 정규식(처음 부를 때 한 번 만든다 — 가리기 모듈의 이름 목록을 쓰려고 늦게 가져온다). 값은 따옴표로 묶은 글(300자까지)이거나 공백·따옴표·쉼표·세미콜론·`&` 전까지의 덩어리(4–300자)다."""
+    global _NAMED_PATTERN
+    if _NAMED_PATTERN is None:
+        from .mask import _NAME_WORDS
+        _NAMED_PATTERN = re.compile(r"(?i)(?:" + _NAME_WORDS + "|" + _KO_NAMES + r")s?[\"']?[ \t]*[:=" + _FULLWIDTH_SEPARATORS + r"][ \t]*(?P<value>\"[^\"\n]{1,300}\"|'[^'\n]{1,300}'|[^\s\"',;&]{4,300})")
+    return _NAMED_PATTERN
+
+
+def is_secret_like_value(raw):
+    """`이름: 값` 의 값(따옴표로 묶었어도 된다)이 키·비밀번호처럼 생겼는가 — 위 설명의 규칙. 값을 돌려주거나 어디에도 적지 않는다."""
+    if not isinstance(raw, str):
+        return False
+    value = raw[1:-1] if len(raw) >= 2 and raw[0] in "\"'" and raw[-1] == raw[0] else raw
+    head = _VALUE_HEAD.match(value.strip(_CURLY_QUOTES))
+    if head is None:
+        return False
+    token = head.group().rstrip(".:!")
+    if not MIN_NAMED_VALUE <= len(token) <= MAX_NAMED_VALUE or token[0] in "$%" or _CODE_PATH.fullmatch(token):
+        return False
+    return any(ch.isalpha() for ch in token) and any(ch.isdigit() for ch in token)
+
+
+def _after_address_mark(text, start):
+    """이름이 주소 인자(`?이름=…`·`&이름=…`·`;이름=…`·`#이름=…`)의 이름인가 — 이름 앞의 이름 글자(`x_`·`api.`)를 거슬러 올라가 그 앞이 `? & ; #` 이면 주소 인자다(최대 80글자까지만 본다)."""
+    index = start
+    for _ in range(80):
+        if index == 0 or text[index - 1] not in _NAME_CHARS:
+            break
+        index -= 1
+    return index > 0 and text[index - 1] in "?&;#"
+
+
+def named_secret_spans(text):
+    """글 속 '이름: 값' 가운데 값이 키·비밀번호처럼 생긴 것의 자리 → ((시작, 끝), …) 글자 번호(끝은 포함하지 않는다, 따옴표로 묶은 값은 따옴표까지). 값은 돌려주지 않는다.
+    글이 아니거나 너무 길면(`MAX_SCAN_CHARS` 초과 — 그쪽은 길이 한도가 막는다) 빈 튜플이다. 입력 길이에 선형이다(이름 낱말이 없는 글은 정규식을 돌리지 않는다)."""
+    if not isinstance(text, str) or len(text) > MAX_SCAN_CHARS:
+        return ()
+    low = text.lower()
+    if not any(needle in low for needle in _NAMED_NEEDLES):
+        return ()
+    spans = []
+    for found in _named_pattern().finditer(text):
+        if is_secret_like_value(found.group("value")) and not _after_address_mark(text, found.start()):
+            spans.append(found.span("value"))
+    return tuple(spans)

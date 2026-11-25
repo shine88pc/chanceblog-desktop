@@ -350,14 +350,22 @@ class DerivedValuesTest(unittest.TestCase):
         for name in ("tail_hint", "TAIL_MIN_LEN", "TAIL_SHOWN", "head_hint", "prefix_hint", "last4", "mask_tail"):
             self.assertFalse(hasattr(shape, name), name)
         public = sorted(name for name in dir(shape) if not name.startswith("_") and callable(getattr(shape, name)) and getattr(getattr(shape, name), "__module__", "") == shape.__name__)
-        self.assertEqual(public, ["has_hidden_char", "label_problem", "looks_secret", "short_digest", "value_problem"],
-                         "모양을 검사하는 함수와 비밀이 아닌 칸의 해시뿐이다 — 새 함수가 생기면 값의 일부를 내는 것이 아닌지 이 시험에서 확인한다")
+        self.assertEqual(public, ["has_hidden_char", "is_secret_like_value", "label_problem", "looks_secret", "named_secret_spans", "short_digest", "value_problem"],
+                         "모양을 검사하는 함수와 비밀이 아닌 칸의 해시뿐이다 — 새 함수가 생기면 값의 일부를 내는 것이 아닌지 이 시험에서 확인한다(이름 붙은 값 규칙의 두 함수는 참·거짓과 자리 번호만 돌려준다 — 아래에서 직접 본다)")
         secret = "Qx7Zk-Wm3Vp_" + "Ty8Rn2Hs+Jd6Lg4Bf9Nc1Mu"                      # 조립한 가짜 값(저장소 비밀 스캐너가 소스 글자를 훑는다)
         for name in public:
             function = getattr(shape, name)
             if name == "short_digest":
                 self.assertNotIn(secret[-4:], function(secret))
                 self.assertEqual(len(function(secret)), 8)
+            if name == "is_secret_like_value":                                     # 참·거짓만 돌려준다(D-682)
+                self.assertIs(function(secret), True)
+                self.assertIs(function("짧음"), False)
+            if name == "named_secret_spans":                                       # 자리 번호(정수 한 쌍)만 돌려준다 — 값의 글자는 하나도 내지 않는다(D-682)
+                found = function("password: " + secret)
+                self.assertEqual(len(found), 1)
+                self.assertTrue(all(type(number) is int for span in found for number in span))
+                self.assertEqual(found[0][1] - found[0][0], len(secret))
 
 
 

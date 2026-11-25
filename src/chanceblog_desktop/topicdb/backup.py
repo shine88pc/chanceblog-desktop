@@ -30,6 +30,7 @@ from ..security.backup_note import CREDENTIAL_NOTE
 from ..security.mask import has_key_shape
 from ..security.refuse import kinds_of as secret_kinds, locate as secret_locate, table_label as secret_table_label
 from ..security.scan import has_secret, scan_secrets
+from ..security.views import blob_views, unescape_json
 from ..topics import layout
 from ..topics import wording
 from ..topics.channels import invalid_in, profiles_from_dict
@@ -177,6 +178,28 @@ def scan_key_shape(text):
     return False
 
 
+def scan_key_shape_decoded(text):
+    """`scan_key_shape` 인데 JSON 글자 이스케이프(`\\u0041KIA…` — JSON 으로는 같은 글)를 푼 모양도 본다 — 앱은 이스케이프를 푼 값을 쓰는데 원문 글자만 훑으면 쪼갠 가짜 키가 지나간다(결정 D-683, 감사 AS-S2 권고-3)."""
+    if scan_key_shape(text):
+        return True
+    return "\\" in text and scan_key_shape(unescape_json(text))
+
+
+_HEX_BLOB = re.compile(r"X'([0-9A-Fa-f]*)'")                    # `iterdump` 가 BLOB 값을 적는 모양
+
+
+def _line_shaped(line):
+    """보관함 덤프(`iterdump`)의 한 줄에 키·토큰 모양이 있는가 — 글 그대로(이스케이프를 푼 모양까지)와, BLOB 값(`X'16진수'`)은 바이트로 풀어 UTF-8·UTF-16·UTF-32·널 바이트를 뺀 모양까지(그 글의 이스케이프를 푼 모양도) 본다.
+    덤프는 BLOB 을 16진수로만 적어서 예전에는 BLOB 칸의 키가 그대로 지나갔다(감사 AS-S2 권고-3). 길이가 홀수인 16진수 글은 BLOB 이 아니라 글이라 풀지 않는다."""
+    if scan_key_shape_decoded(line):
+        return True
+    for found in _HEX_BLOB.finditer(line):
+        digits = found.group(1)
+        if digits and not len(digits) % 2 and any(scan_key_shape_decoded(view) for view in blob_views(bytes.fromhex(digits))):
+            return True
+    return False
+
+
 def _json_reason(name, text):
     """키·토큰 모양이 든 JSON 파일의 백업 중지 사유 → (쉬운 문장, 개발자용 세부). 검사기가 아는 유형이면 위치(파일·줄)와 유형을 말하고(글은 되풀이하지 않는다) 아니면 파일 이름만 말한다."""
     found = secret_locate(text, name)
@@ -189,7 +212,7 @@ def _json_reason(name, text):
 def _scan_json(name, data):
     check_json_bytes(name, data)
     text = data.decode("utf-8", errors="replace")
-    if scan_key_shape(text):
+    if scan_key_shape_decoded(text):
         reason, detail = _json_reason(name, text)
         raise _blocked(reason, detail=detail)
 
@@ -201,7 +224,7 @@ def _database_key_shaped(path):
     """SQLite 파일의 행 글에 키·토큰 모양이 있는가(읽기 전용 — 파일을 바꾸지 않는다). 씨앗·후보처럼 사용자가 쓴 값은 모두 훑고, 이미 공개된 블로그 글을 읽어 둔 발행 이력 장부(`history_ledger`)는 훑지 않는다 —
     장부 행은 지울 길이 없어 거기서 막히면 백업이 영구히 막히는데, 그 값은 공개된 글에서 온 것이라 백업에 담아도 새로 드러나는 비밀이 없다(D-75)."""
     with closing(sqlite3.connect(_read_only_uri(path), uri=True)) as connection:
-        return any(scan_key_shape(line) for line in connection.iterdump() if not line.startswith(_PUBLIC_ROWS))
+        return any(_line_shaped(line) for line in connection.iterdump() if not line.startswith(_PUBLIC_ROWS))
 
 
 TABLE_NAMES_KO = {"candidates": "후보", "hold_box": "보류함", "hold_history": "보류 이력", "score_snapshots": "점수 기록", "trend_cache": "검색어 트렌드 기록", "candidate_links": "후보 연결",
@@ -218,7 +241,7 @@ def _database_location(path):
             table = match.group(1) if match else ""
             if match:
                 counts[table] = counts.get(table, 0) + 1
-            if not line.startswith(_PUBLIC_ROWS) and scan_key_shape(line):
+            if not line.startswith(_PUBLIC_ROWS) and _line_shaped(line):
                 found = scan_secrets(line)
                 return table, counts.get(table, 0), secret_kinds(found) if found else ""
     return None
@@ -495,7 +518,7 @@ def read_backup(folder):
                 raise _invalid(folder, "백업 안에 키·토큰처럼 보이는 글이 있어 쓰지 않습니다") from None
             except sqlite3.Error as error:
                 raise _invalid(folder, "백업 안의 보관함을 읽을 수 없습니다", detail=detail_of(error)) from None
-        elif scan_key_shape(data.decode("utf-8", errors="replace")):
+        elif scan_key_shape_decoded(data.decode("utf-8", errors="replace")):
             raise _invalid(folder, "백업 안에 키·토큰처럼 보이는 글이 있어 쓰지 않습니다")
     return manifest, contents
 
@@ -531,7 +554,7 @@ def _live_state(data_dir, name):
         check_json_bytes(name, data)
     except AppError:
         return _DAMAGED
-    return _KEYED if scan_key_shape(data.decode("utf-8", errors="replace")) else _OK
+    return _KEYED if scan_key_shape_decoded(data.decode("utf-8", errors="replace")) else _OK
 
 
 def restore_backup(backup, data_dir, backups_dir, *, now):
