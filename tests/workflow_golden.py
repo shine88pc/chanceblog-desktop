@@ -10,7 +10,7 @@ matrix 에 `self-hosted`·작업 단위 `env` 에 `PYTHONPATH`(이상 `ci.yml`),
 `ci.yml` 의 matrix 줄(`os: [ubuntu-latest, windows-latest]` 같은 한 줄 목록)은 읽개가 거절하는 표기라, **정해진 세 줄(들여쓰기 8칸의 os·python·shard)만** 따옴표 글로 바꿔 읽는다 — 다른 곳의 흐름식은 그대로 거절된다.
 
 여러 작업(D-716): `ci.yml` 은 작업이 둘이다 — `test`(열두 칸, 승인값은 D-693 때 그대로)와 `qt`(윈도·파이썬 3.12 의 Qt 칸, D-710–D-713). 명세의 `jobs` 가 작업의 이름·순서·개수를 못박고(작업을 더하거나 빼거나 이름·순서를 바꾸면 문제다) 작업마다 키 집합·`runs-on`·`timeout-minutes`·`strategy`·`env`·단계를
-승인값과 견준다. `qt` 작업은 `name` 도 글자 그대로 못박고 시간 한도는 정확히 40분이다(`auto-pr.yml` 의 최대 대기 40분과 같다 — `tests/test_ci_workflow_qt.py`). `test` 작업은 D-693 의 값(시간 한도 범위 포함)을 그대로 둔다.
+승인값과 견준다. `qt` 작업은 `name` 도 글자 그대로 못박고 시간 한도는 정확히 40분이다(`test` 잡과 같은 값이고 `auto-pr.yml` 의 최대 대기 60분 = 이 한도 40분 + 줄 서는 20분이다 — D-719, `tests/test_ci_workflow_qt.py`). `test` 작업은 D-693 의 값(시간 한도 범위 포함)을 그대로 둔다.
 문제 글에는 `작업 <이름>:` 을 앞에 붙여 어느 작업이 어긋났는지 보이게 한다. 두 작업의 승인값 표는 `tests/test_workflow_golden.py` 가 한 번 더 글자 그대로 못박는다(표를 슬쩍 느슨하게 고치면 그 시험이 빨개진다).
 
 D-717·D-718(Qt 칸 마무리): `qt` 작업의 승인값이 바뀌었다 — 조각 열둘(`shard` 목록·`CI_SHARD_TOTAL`·이름의 `/12`)·Qt 칸 전용 무게 표를 고르는 환경 변수 `CI_WEIGHTS: qt`·작업 수준 `if`(`QT_IF`: 병합 가지 `ai/claude/M…` 와 main 에서만 돈다, 글자 그대로).
