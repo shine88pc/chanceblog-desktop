@@ -392,6 +392,17 @@ class CiWorkflowTest(unittest.TestCase):
         글을 구조로 읽어 최상위·작업·단계 키와 `with`·`env`·`run` 값, matrix, 액션의 `소유자/저장소@커밋` 쌍을 승인된 허용 목록과 글자 그대로 견준다(`tests/workflow_golden.py`)."""
         self.assertEqual(golden.ci_problems(read(".github/workflows/ci.yml")), [])
 
+    def test_the_qt_job_runs_only_on_merge_branches_and_main_while_the_twelve_cells_run_on_every_branch(self):
+        """D-718(운영자 확인 042 ①): 작업 수준 `if` 는 `qt` 잡에만 정확히 한 줄 — 병합 가지(`ai/claude/M…`)와 main 에서만 돈다. `test` 잡(열두 칸)은 모든 가지에서 돈다.
+        글자 그대로의 견줌은 골든 시험(`tests/workflow_golden.py`)이 하고, 여기서는 이 묶음 하나만 돌려도 보이도록 한 줄을 더 건다(감사 탐침이 이 묶음만 돌리는 경우)."""
+        ci = read(".github/workflows/ci.yml").replace("\r\n", "\n")
+        head, marker, tail = ci.partition("\n  qt:\n")
+        self.assertTrue(marker, "ci.yml 에 qt 잡이 없다")
+        condition = "    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')"
+        self.assertEqual([line for line in tail.splitlines() if line.startswith("    if:")], [condition])
+        self.assertEqual([line for line in ci.splitlines() if line.lstrip().startswith("if:")], [condition], "파일 전체의 if 는 qt 잡 수준의 이 한 줄뿐이다")
+        self.assertNotIn("    if:", head, "test 잡(열두 칸)에는 if 가 없다")
+
 
 if __name__ == "__main__":
     unittest.main()
