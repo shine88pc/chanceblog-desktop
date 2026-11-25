@@ -49,7 +49,7 @@ class HistoryData:
 
 @dataclass(frozen=True)
 class LogEntry:
-    stamp: str = ""                                          # 시각(UTC 글, `2026-11-24T05:30:12Z` 모양)
+    at: str = ""                                             # 시각(UTC 글, `2026-11-24T05:30:12Z` 모양)
     source: str = ""                                         # 갈래(`LOG_SOURCES` 중 하나)
     name: str = ""                                           # 오류 클래스 이름
     places: tuple = ()                                       # 코드 위치들(가장 안쪽이 먼저)

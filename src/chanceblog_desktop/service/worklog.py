@@ -17,18 +17,18 @@ MAX_LINES = 200                                                     # 화면에 
 MAX_FILE_BYTES = 2 * errorlog.MAX_BYTES                              # 한 파일에서 읽는 최대 바이트(쓰는 쪽 한도의 두 배)
 SOURCES = frozenset(errorlog.SOURCES)                                # 갈래 — 쓰는 쪽이 정한 고정 낱말 다섯
 _PLACE = r"[A-Za-z0-9_?][A-Za-z0-9_.\-]{0,63}(?::\d{1,7})?"           # 코드 위치(파일:줄) 또는 Qt 분류 이름 — 쓰는 쪽 글자표
-_LINE = re.compile(r"(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) (?P<source>[a-z]{2,12}) (?P<name>[A-Za-z_][A-Za-z0-9_]{0,63}) (?P<places>-|" + _PLACE + r"(?: < " + _PLACE + r"){0,11})")
+_LINE = re.compile(r"(?P<at>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) (?P<source>[a-z]{2,12}) (?P<name>[A-Za-z_][A-Za-z0-9_]{0,63}) (?P<places>-|" + _PLACE + r"(?: < " + _PLACE + r"){0,11})")
 
 
 @dataclass(frozen=True)
 class WorkLogLine:
-    stamp: str                      # 시각(UTC, `2026-11-24T05:30:12Z` 모양)
+    at: str                         # 시각(UTC, `2026-11-24T05:30:12Z` 모양)
     source: str                     # 갈래(`main`·`thread`·`unraisable`·`slot`·`qt`)
     name: str                       # 오류 클래스 이름
     places: tuple                   # 코드 위치들(가장 안쪽이 먼저)
 
     def to_dict(self):
-        return {"stamp": self.stamp, "source": self.source, "name": self.name, "places": list(self.places)}
+        return {"at": self.at, "source": self.source, "name": self.name, "places": list(self.places)}
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ def _parse(text):
     if found is None or found.group("source") not in SOURCES or mask(text.strip()) != text.strip():
         return None
     places = () if found.group("places") == "-" else tuple(found.group("places").split(" < "))
-    return WorkLogLine(found.group("stamp"), found.group("source"), found.group("name"), places)
+    return WorkLogLine(found.group("at"), found.group("source"), found.group("name"), places)
 
 
 def _read_file(path):

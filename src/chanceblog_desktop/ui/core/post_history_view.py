@@ -178,7 +178,7 @@ class HistoryController:
     @staticmethod
     def _log_line(line):
         places = " < ".join(line.places)
-        text = T["hist_log_line"].format(when=rules.when_text(line.stamp, seconds=True) or T["hist_when_unknown"], source=T[LOG_SOURCE_TEXT[line.source]] if line.source in LOG_SOURCES else T["hist_log_source_unknown"],
+        text = T["hist_log_line"].format(when=rules.when_text(line.at, seconds=True) or T["hist_when_unknown"], source=T[LOG_SOURCE_TEXT[line.source]] if line.source in LOG_SOURCES else T["hist_log_source_unknown"],
                                          name=rules.shown(line.name, 80), places=rules.shown(places, 240) if places else T["hist_log_places_none"])
         return rules.shown(text, 400)                         # 칸마다 가린 위에 한 줄 전체도 한 번 더 가린다(키·토큰·끝 4자도 안 보인다)
 

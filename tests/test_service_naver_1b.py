@@ -370,7 +370,7 @@ class WorkLogServiceTest(unittest.TestCase):
     def test_the_lines_come_back_newest_first_split_into_fields(self):
         self.write("errors.log", self.GOOD)
         result = worklog.read_work_log(self.ctx)
-        self.assertEqual([line.stamp for line in result.lines], ["2026-11-24T05:32:00Z", "2026-11-24T05:31:00Z", "2026-11-24T05:30:12Z"])
+        self.assertEqual([line.at for line in result.lines], ["2026-11-24T05:32:00Z", "2026-11-24T05:31:00Z", "2026-11-24T05:30:12Z"])
         self.assertEqual((result.lines[2].source, result.lines[2].name, result.lines[2].places), ("slot", "KeyError", ("post_view.py:123", "shell.py:45")))
         self.assertEqual((result.lines[1].places, result.lines[0].places), ((), ("qt.qpa.xcb", "plugin.cpp:99")))
         self.assertEqual((result.files, result.skipped, result.older), (1, 0, 0))
