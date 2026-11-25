@@ -16,6 +16,7 @@
 - 실제 키가 든 `.env` 는 GitHub 에 올리지 않는다(`.gitignore`). **`.env.example` 에는 변수 이름만** 적는다. 클라우드(Actions)에서 필요한 키는 GitHub Secrets 에만 둔다.
 - 유출이 의심되면 즉시 폐기·재발급한다. 저장소에서 문자열만 지워도 이력에 남는다.
 - **업데이트 서명 개인키와 '공개키는 앱에 내장' 은 미구현 설계다 — 이 시험 버전에는 업데이트 경로가 없다**(앱·`packaging/`·`scripts/` 어디에도 내려받기·서명 검증 코드가 없고 README 는 '설치 파일과 자동 업데이트는 아직 없습니다', `docs/PACKAGE.md` 는 '업데이트·롤백·마이그레이션 코드가 없다', `docs/RELEASE.md` 맨 위는 '장래 설계(미구현)' 라고 적었다). 위 표의 그 줄을 읽고 서명 검증이 이미 있다고 믿지 않도록 덧붙인다(AS-S1 참고-20, D-614).
+- **정정(UPDATE 갈래, D-790에서 D-804):** 바로 위 줄의 '내려받기·서명 검증 코드가 없다' 는 이제 사실이 아니다 — 서명 검증(`update/ed25519.py`·`manifest.py`)·내려받기·복구 코드가 `update/`·`service/update_flow.py` 에 들어왔다. 그러나 이를 부르는 스위치(`NET_UPDATE_CHECK`·`UPDATE_APPLY`)가 모두 `False` 이고 내장 공개키 자리(`SHIPPED_KEYS`)가 비어 있어 이 시험 버전에서는 한 번도 실행되지 않으며, 서명 개인키와 설치 도구 어댑터는 아직 없다. 위 문장은 '실행되는 경로가 없다' 는 뜻으로는 그대로 맞다. 자세한 것은 이 문서 끝의 '업데이트 코드' 절.
 
 ## 2. 로그
 
@@ -28,6 +29,8 @@
 [`RELEASE.md`](RELEASE.md) 의 서명 매니페스트·해시 검증·다운그레이드 거부·불변 릴리스·백업/롤백이 핵심이다. 업데이트 경로는 HTTPS 와 고정 저장소 주소만 쓰고, 서명이 없거나 어긋나면 업데이트를 거부한다.
 
 **이 시험 버전에는 업데이트 경로가 없다(미구현 설계).** 위 문단은 장래 설계이고 지금 코드에는 내려받기·서명 검증·다운그레이드 거부가 없다 — 새 버전은 새로 풀어서 쓴다(AS-S1 참고-20, D-614).
+
+**정정(UPDATE 갈래, D-790에서 D-804):** 위 문단의 '지금 코드에는 내려받기·서명 검증·다운그레이드 거부가 없다' 는 이제 사실이 아니다 — 코드는 들어왔고(`update/`·`service/update_flow.py`, 서명은 Ed25519 검증 전용·표준 라이브러리만) 부르는 스위치가 모두 꺼져 있어 실행되지 않는다. 서명 개인키·내장 공개키·설치 도구 어댑터(U-4)는 아직 없다. 규칙·위협 대응·켜기 전 조건은 이 문서 끝의 '업데이트 코드' 절.
 
 ## 4. 공급망
 
@@ -620,7 +623,7 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 
 | 조건 | 코드·시험에 묶였나 | 맡는 갈래 |
 |---|---|---|
-| `update_check` 길이 자리표시자다(소유자·저장소 구간이 자유롭다) — 이 용도를 여는 `NET_UPDATE_CHECK` 는 길이 확정되기 전에는 출하 표에 오를 수 없다 | 묶였다: `endpoints.PLACEHOLDER_USES` 와 `test_net_switches` 의 `test_a_use_whose_route_is_still_a_placeholder_cannot_ship_open`(어기면 CI 가 빨개진다) | UPDATE 가 소유자·저장소를 상수 하나에서 만들어 길을 확정하고 목록에서 뺀다 |
+| `update_check` 의 길은 확정됐다(D-790 — 소유자·저장소 구간이 상수 하나에서 오고 `endpoints.PLACEHOLDER_USES` 는 빈 목록이다). 이 용도를 여는 `NET_UPDATE_CHECK` 를 켜기 전의 남은 조건은 이 문서 끝의 '업데이트를 켜기 전 필수 조건' 표에 있다 | 묶였다: `endpoints.PLACEHOLDER_USES` 와 `test_net_switches` 의 `test_a_use_whose_route_is_still_a_placeholder_cannot_ship_open`(새 자리표시자 길의 용도를 여는 스위치가 출하 표에 오르면 CI 가 빨개진다 — 합성 목록으로 빈 실험이 아님을 대조), 길 핀 `test_update_net_row` | 해소 — UPDATE 갈래(D-790) |
 | 출하 표에 스위치가 오르면 `--selftest` 의 `tls` 점검이 실패 조건이고 빌드는 `tls` 줄이 없는 묶음을 거절한다 | 묶였다: `gui_entry.check_tls`·`build_package.judge_selftest`·`TlsCheckTest` | (이미 묶임) |
 | `PACKAGE_INFO`·정보 카드에 '열린 스위치 이름' 칸이 아직 없다(설계서 3.3) — 켜는 순간 몰래 열린 채가 아님을 카드로 보이려면 필요하다 | 안 묶임 | GUI·RELEASE |
 | `pages_branch` 용도는 호출하는 곳이 0(죽은 관문)이다 — git 하위 프로세스 함수마다 둘째 관문이 없다 | 안 묶임 | PUBPR 가 함수마다 `require_net("pages_branch", …)` 를 더한다 |
@@ -639,7 +642,7 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 
 | 용도 | 호스트 | 방법·길(모양) | 고정 질의 | 쓰는 갈래 |
 |---|---|---|---|---|
-| `update_check` | `github.com`(자리표시자 — UPDATE 갈래가 확정·확장, 이동 호스트 0) | GET 정적 주소 한 모양(자리표시자: 소유자·저장소 구간은 아직 자유롭다 — `.`·`..`·점으로 시작하는 구간은 못 쓰고, 켜기 전에 UPDATE 갈래가 상수로 고정해야 한다) | 없음 | UPDATE |
+| `update_check` | `github.com`(앱 저장소 — 소유자는 `EXPECTED_OWNER` 상수, 저장소 이름은 `RELEASE_REPO` 상수. 이동 호스트는 `release-assets.githubusercontent.com` 하나뿐·최대 3번, D-790) | GET 둘뿐(정규식 전체 일치): 소유자·저장소 아래 `/releases/latest/download/update-manifest.json`(과 `.sig`), `/releases/download/v<버전>/<파일 이름>`(내려받기 길 — `request_to_file`, 총 600초·200 MiB 이하) | 없음 | UPDATE |
 | `pages_site` | 글 저장소 소유자의 `github.io` 한 곳(`gitrepo.EXPECTED_OWNER` 에서 만든다 — origin 정규식과 같은 상수) | GET, 허용 문자 집합의 길(맨 앞 `//`·`..`·`%2e`·`%2f`·`%5c`·`%00` 금지) | `cb` = `app` 또는 `app-<시도 번호>`(vendor 확인 도구가 시도마다 바꿔 보낸다) | PUBPR |
 | `blogger_oauth` | `oauth2.googleapis.com` | POST `/token`·`/revoke` 둘뿐(양식 인코딩, 본문 4 KiB 이하) | 없음 | BLOGGER |
 | `blogger_read` | `googleapis.com` 의 `www` 호스트 | GET `/blogger/v3/blogs/<번호>`·`…/posts`·`…/posts/<번호>`(번호는 숫자 25자 이하) | 길마다 고정(`status=DRAFT&orderBy=UPDATED&maxResults=5&fetchBodies=false&view=ADMIN`·`view=ADMIN`) | BLOGGER |
@@ -656,7 +659,7 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 | 이동(3xx) | **기본 거절**. `pages_site` 만 같은 호스트 최대 2번, 다른 호스트는 용도 표의 `redirect_hosts` 에 있을 때만 · 매 단계 표와 견준다 · 다른 호스트에는 토큰을 보내지 않는다 · 주소로 읽을 수 없는 `Location`(`//[x` 처럼 대괄호가 안 맞는 글)은 서버 글 없이 고정 문구의 `NET_RESPONSE_INVALID`(이유: 이동)로 끝난다(D-739) |
 | 재시도 | 클라이언트 자체 **0**(호출하는 쪽 규칙: 일시 오류 최대 1번). 쓰기 요청의 '보낸 뒤 실패' 는 `outcome_unknown=True` 로 알리고 자동으로 다시 보내지 않는다 |
 | 쿨다운 | 같은 용도가 연속 3번 실패하면 5분 쉼(10분·20분·상한 30분) — 400·422·429 는 세지 않는다(공개 사이트 확인은 글이 열릴 때까지 이어지는 정상 답 404 도 세지 않는다 — 용도 표의 `uncounted_statuses`) · 쉬는 중·진행 중인 같은 용도의 두 번째 요청은 접속 없이 `NET_COOLDOWN` |
-| 요청에 싣는 것 | 표의 머리글뿐: `Host`·`User-Agent`(`ChanceBlogDesktop/<버전>` — 버전 번호가 앱에서 나가는 유일한 값)·`Accept`·`Accept-Encoding: identity`·`Connection: close`·본문 길의 `Content-Type`·`Content-Length`·Blogger 읽기·쓰기만 `Authorization: Bearer`·`pages_site` 만 `Cache-Control: no-cache`. `Cookie`·`Referer`·사용자 이름·컴퓨터 이름·경로는 **싣지 않는다** |
+| 요청에 싣는 것 | 표의 머리글뿐: `Host`·`User-Agent`(`ChanceBlogDesktop/<버전>` — 버전 번호가 앱에서 나가는 유일한 값. 다만 `update_check` 만은 버전도 싣지 않고 제품 이름 `ChanceBlogDesktop` 뿐이다, D-790)·`Accept`·`Accept-Encoding: identity`·`Connection: close`·본문 길의 `Content-Type`·`Content-Length`·Blogger 읽기·쓰기만 `Authorization: Bearer`·`pages_site` 만 `Cache-Control: no-cache`. `Cookie`·`Referer`·사용자 이름·컴퓨터 이름·경로는 **싣지 않는다** |
 | 응답 | 데이터로만 읽는다: 크기를 먼저 보고 바이트로 받음 → UTF-8 엄격 → 엄격한 JSON(중복 키·`NaN`·깊이 20 초과·정수 20자리 초과·문자열 100만 글자 초과 거절) → 용도별 모양 검사(모르는 필드는 읽지도 않는다). 응답 속 주소·글은 요청·경로·명령·문구에 쓰지 않는다 |
 | 접속 기록 | 메모리 고리 50건(시각·용도·호스트·방법·길 이름(숫자 번호는 `<번호>`)·상태 또는 오류 코드·바이트·시간). **파일에 쓰지 않는다**. 보는 곳: `doctor` 의 '인터넷 접속' 줄 |
 
@@ -718,3 +721,76 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 | T-26 | 내려받기 목적지 속임 | 목적지는 호출하는 쪽이 정한 새 파일 한 곳, 응답이 정한 이름은 쓰지 않음 | `FileDownloadTest` |
 
 > **정직한 한계**: 소스 훑기 탐지기는 정직한 코드의 회귀 그물이지 일부러 숨기는 코드를 막는 방어가 아니다(위 '허용 목록' 절의 `HONEST_LIMITS` 와 같은 이야기). 이 틀의 안전은 탐지기 하나에 기대지 않고 **관문 · 어댑터 등록 · 스위치 · 접속 0 시험** 네 겹이 함께 막는다. 알려진 한계 둘: 이름 풀이 시간은 끊을 수 없다 · 중복 요청 거절은 `NET_COOLDOWN` 코드를 재사용해 문구가 완벽히 맞지는 않는다(GUI 가 단추를 막는 것이 1차 방어).
+
+## 업데이트 코드(`update/`·`service/update_flow.py`) — 서명 확인·내려받기·복구, 스위치는 모두 꺼진 채 (UPDATE 갈래 U-1·U-2·U-3·U-6, D-790에서 D-804)
+
+앱 v1.0 업데이트의 **구현 준비**다. 이 절의 코드는 들어와 있고 시험을 통과하지만 **한 번도 실행되지 않는다**: ① 확인(`NET_UPDATE_CHECK`)과 적용·복구·시작 후크(`UPDATE_APPLY`)의 스위치가 모두 `False` 다 ② 서명을 확인할 내장 공개키 자리(`update/keys.SHIPPED_KEYS`)가 비어 있어 모든 서명 확인이 '모르는 키' 로 거절된다(fail closed) ③ 설치 도구를 띄우는 어댑터가 없다(U-4). 켜는 일은 독립 검증과 운영자 확인 뒤 새 번호로 따로 승인받는다. 앞의 §1·§3 의 '업데이트 경로가 없다(미구현 설계)' 문장은 '실행되는 경로가 없다' 는 뜻으로는 그대로 맞고, '코드가 없다' 는 부분은 이 절이 정정한다.
+
+### 지금 있는 것과 없는 것
+
+| 구성 | 상태 |
+|---|---|
+| 서명 검증기 `update/ed25519.py` | 있음 — Ed25519 **검증 전용**, 표준 라이브러리만(D-791). 서명하는 코드는 앱 어디에도 없다 |
+| 서명 매니페스트 읽기·규칙 `manifest.py`·버전 비교 `versions.py`·키 목록 `keys.py` | 있음 — 접속·파일·시계를 부르지 않는 순수 함수(D-792·D-793·D-801) |
+| 상태 파일·상태 기계·시작 후크·정상 점검·복구 `state.py`·`machine.py`·`health.py`·`recovery.py` | 있음 — 시작 후크는 `UPDATE_APPLY` 가 꺼져 있으면 아무것도 읽지도 쓰지도 않는다(D-794–D-796) |
+| 받기·서비스 `source.py`·`service/update_flow.py` | 있음 — 접속은 접속 틀의 `update_check` 용도 한 길뿐(D-790·D-798) |
+| 폴더에서 업데이트(오프라인) `check_from_folder`·`stage_from_folder` | 있음 — **접속이 없고** `UPDATE_APPLY` 만 필요하다. 고른 폴더는 읽기만 하고 링크를 따라가지 않는다(D-805) |
+| 화면용 데이터 `ui/core/updates.py` | 있음 — Qt 코드는 없다(D-800) |
+| **서명 개인키·내장 공개키** | **없음** — 운영자가 오프라인에서 키 쌍을 만들고 공개키만 소스에 넣는 변경이 따로 온다(D-793) |
+| **설치 도구(Velopack·Inno) 어댑터와 설치 종류 확정** | **없음**(U-4) — 어댑터가 없는 설치 종류는 `UPDATE_APPLY_FAILED`, 휴대용·소스 실행은 `UPDATE_NOT_INSTALLED_KIND` 로 거절한다(D-797) |
+| **매니페스트를 만들고 서명하는 쪽**(릴리스 워크플로) | **없음** — RELEASE 갈래 몫이고 앱이 읽는 규칙은 RELEASE.md 의 '업데이트 매니페스트 schema 1' 절이다 |
+
+### 신뢰의 뿌리와 서명 규칙(D-791에서 D-793)
+
+- **검증 전용·표준 라이브러리만**: RFC 8032 5.1.7 을 `hashlib.sha512` 와 큰 정수로 구현했다. 비정규 점 인코딩·곡선 밖의 점·`S` 가 위수 이상·공개키 또는 서명의 `R` 이 작은 차수 점이면 거절하고 검산은 여덟 곱 식이다. 어떤 입력에도 예외를 내지 않고 `False` 를 돌려준다. 검증은 공개 값(공개키·메시지·서명)만 다루므로 비밀이 새는 시간 차이가 없다.
+- **서명 대상 = 도메인 접두어 + 매니페스트 파일의 바이트 그대로**: 접두어(`ChanceBlogDesktop-update-manifest-v1` + LF)는 같은 키로 다른 것에 서명한 값이 뒤섞이지 않게 하고, JSON 을 다시 쓰지 않으므로 같은 글인데 바이트가 다른 틈이 없다.
+- **서명을 확인하기 전에는 `key_id` 칸 말고는 아무 값도 믿지 않는다**: 크기·줄 끝·엄격한 JSON(중복 키·깊이 4 초과·소수·불리언·null·제어 문자·모르는 칸 거절)을 본 뒤 `key_id` 로 내장 키를 고르고(모르는·폐기 키는 거절) 서명을 확인한다. 그 뒤에야 칸의 모양·범위·서로의 관계를 검사한다.
+- **다운그레이드·재전송·만료**: 낮은 판은 `UPDATE_DOWNGRADE_BLOCKED`, 같은 판은 '최신', 더 높은 판은 `seq` 가 저장된 값보다 **클** 때만 받아들인다. 만료와 '전에 본 시각보다 2일 넘게 뒤로 간 시계' 는 거절한다. 낮은 판은 복구 모드에서 `pending.from` 하나로만 허용된다.
+- **키**: 내장 키는 현재 하나 + 예비 하나(`MAX_KEYS` 2), 폐기 목록의 이름표는 키가 남아 있어도 쓰이지 않는다. 출하 목록은 비어 있다.
+- **주소는 앱이 만든다**: 호스트·저장소는 접속 틀의 표 상수이고 태그·파일 이름은 서명 확인을 통과한 값뿐이라 매니페스트가 임의 주소를 가리킬 길이 없다. 이동은 릴리스 자산 호스트 하나만(최대 3번) 허용한다.
+
+### 스위치 둘의 뜻(D-797)
+
+| 스위치 | 열면 생기는 일 | 꺼져 있을 때 |
+|---|---|---|
+| `NET_UPDATE_CHECK` | 사용자가 '지금 확인' 이나 '내려받고 설치' 를 눌렀을 때 `update_check` 용도의 읽기 요청이 나간다(자동 확인은 없다) | 확인·받기는 접속 전에 `NETWORK_DISABLED`, 등록부에 `update` 어댑터가 꽂히지 않는다 |
+| `UPDATE_APPLY` | 검증된 파일을 설치 도구에 넘기고 복구를 시작하며 시작 후크가 부팅 횟수를 센다 — **접속이 아니라 디스크를 바꾸고 하위 프로세스를 띄우는** 일이라 따로 둔다. 폴더에서 업데이트(고른 폴더를 읽어 같은 규칙으로 확인·복사)도 이 스위치 하나로 열린다 | 적용·복구·폴더에서 업데이트는 `UPDATE_DISABLED`, 시작 후크는 아무것도 읽지도 쓰지도 않는다 |
+
+둘은 서로 독립이다(확인만 켜고 설치는 꺼 둘 수 있다 — 이때 카드는 새 버전을 알리고 릴리스 페이지 열기만 둔다).
+
+### 위협 표(적대적으로 — 서버·네트워크·같은 PC 의 다른 프로그램·우리 코드의 실수가 모두 나쁘게 행동한다고 본다)
+
+| # | 위협 | 대응 | 시험 |
+|---|---|---|---|
+| U1 | 서명 키 없는 공격자가 매니페스트·파일을 위조 | Ed25519 검증 + 내장 공개키(지금은 비어 모두 거절) + 서명 전에는 `key_id` 말고 믿지 않음 + 도메인 접두어 | `test_update_ed25519`(RFC 벡터·비트 뒤집기 전수·말랑함·작은 차수 점·여덟 곱)·`test_update_manifest`(`SignatureBeforeFieldsTest`) |
+| U2 | 서명된 옛 매니페스트 재전송 | 버전 비교 + `seq` 단조(더 높은 판일 때) + 만료. 복구는 `pending.from` 하나로만 낮춘다 | `test_update_manifest`(`EvaluateTest`)·`test_update_recovery` |
+| U3 | 매니페스트는 진짜인데 파일이 바뀜 | 서명된 크기·SHA-256 과 정확히 같을 때만 이름을 바꾸고 적용 직전에 다시 해시한다 | `test_update_flow`(`DownloadTest`·`ApplyTest`) |
+| U4 | 검증 뒤 임시 파일 교체(검사 시점과 사용 시점의 틈) | 현재 사용자만 쓰는 데이터 폴더 + 적용 직전 재해시. **같은 사용자 권한의 악성코드는 앱도 바꿀 수 있어 새 권한이 아니다**(글자 읽기 추가 도구와 같은 한계) | `test_update_flow` |
+| U5 | 매니페스트가 임의 주소를 가리킴 | 주소는 앱이 상수로 만든다 + 호스트 고정 + 이동 호스트 하나 | `test_update_net_row`·`test_net_client`(`HostTableTest`) |
+| U6 | 거대·느린 응답 | 매니페스트 64 KiB·응답 1 MiB·파일 200 MiB·총 600초 + 디스크 여유(파일 합계 x 3 + 백업 예상) | `test_update_flow`(`DownloadTest`)·`test_net_client` |
+| U7 | JSON 폭탄·중복 키·깊은 중첩 | 64 KiB·깊이 4·중복 키·모르는 칸 거절, 엄격한 JSON | `test_update_manifest`(`StructureTest`) |
+| U8 | 시계 조작으로 만료 우회 | `seq` 단조가 1차 방어, 전에 본 시각보다 2일 넘게 뒤로 간 시계는 거절 | `test_update_manifest`(`EvaluateTest`) |
+| U9 | 서명 키 유출 | 폐기 목록·예비 키(새 앱을 **손으로** 설치하게 하는 안내는 RELEASE 몫 — RELEASE 갈래 설계의 순서표 12번) | `test_update_keys`·`test_update_manifest` |
+| U10 | 업데이트가 사용자 데이터를 망침 | 백업이 `complete` 가 아니면 적용 안 함·복원 직전 안전 사본·이관된 경우만 데이터 복원 | `test_update_flow`(`ApplyTest`·`RecoveryTest`) |
+| U11 | 새 판이 안 켜짐 | 부팅 횟수 2·복구 모드(사용자가 눌러야 시작)·수동 복구 안내 | `test_update_state`(`BootHookTest`)·`test_update_recovery`·`test_update_health` |
+| U12 | 안내 글에 악성 문자열 | 평문만·500자 10줄·제어 문자 거절·화면은 `display_text`·링크를 열지 않음 | `test_update_manifest`·`test_ui_update_core` |
+| U13 | 두 앱이 동시에 업데이트 | `locks/update.lock`(진행 중이면 `UPDATE_IN_PROGRESS`, 죽은 프로세스의 잠금은 넘겨받음) | `test_update_flow`(`ApplyTest`·`RecoveryTest`) |
+| U14 | 요청에 개인 정보·사진 | 고정 GET·머리글 다섯·카나리 | `test_update_privacy` |
+| U15 | 휴대용·소스 실행에서 적용 | 설치 종류 감지가 아니면 거절(`UPDATE_NOT_INSTALLED_KIND`) | `test_update_apply`(`InstallKindTest`) |
+| U16 | 앱이 몰래 자동 업데이트 | 스위치 둘 False·자동 확인 없음(확인은 사용자 단추뿐)·어댑터 첫 문장 관문·'접속 0' 시험 | `test_update_switch`·`test_net_zero` |
+| U17 | 고른 폴더(폴더에서 업데이트)가 링크·정션으로 다른 곳을 가리키거나 읽는 사이 바뀜 | 링크·폴더·보통 파일이 아닌 것은 따라가지 않음 + 크기를 먼저 보고 복사하며 해시(바뀐 내용은 서명된 값과 달라 거절) + 고른 폴더는 읽기만 + 이유에 경로·이름 없음. 서명·만료·버전 규칙은 온라인과 같다 | `test_update_folder` |
+
+### 알려진 한계(사실대로)
+
+① **같은 사용자 권한의 악성코드**는 데이터 폴더(상태 파일의 `last_seq`)와 앱 파일(공개키 목록)을 바꿀 수 있다 — 새 권한이 아니라 이 앱 전체의 한계다. ② **상태 파일이 깨지면** `.bak` 으로 옮기고 처음 상태로 시작하므로 `last_seq` 가 0 으로 돌아가 재전송 방어가 약해진다(서명·만료·버전 비교는 그대로 남는다). ③ **PC 의 신뢰 저장소에 악성 루트가 있으면** TLS 가 속지만 서명 확인은 TLS 와 독립이라 그 경우의 마지막 방어다(키가 유출되면 막지 못한다 — U9). ④ **동결 공격**(서버가 새 매니페스트를 안 주고 서명된 옛 것만 준다)은 만료 전에는 구별되지 않는다 — `expires_utc`(발행 후 200일 이하)와 저장소 보호 설정(RELEASE)으로 보완한다(Q12). ⑤ **수제 암호 코드**라 독립 검증(적대적 읽기)이 뒤따른다 — 시험은 RFC 벡터·교차 시험·비트 뒤집기 전수·변이로 지키지만 표준 라이브러리에 서명 검증이 없고 의존성 0 방침이라 검증된 외부 라이브러리를 쓰지 않았다(필요해 보이면 별도 승인). ⑥ 이름 풀이 시간은 끊을 수 없고(접속 틀의 한계 그대로) 내려받기 이어받기는 없다 — 끊기면 처음부터다. ⑦ PC 시계가 크게 틀리면 `UPDATE_MANIFEST_EXPIRED` 로 알린다. ⑧ 설치 종류 감지(`install_kind.py`)와 설치 파일 역할 표(`apply.REQUIRED_ROLES`)는 설치 도구 결정 전의 **잠정** 규칙이다(U-4 가 확정한다). ⑨ 폴더에서 업데이트는 접속 스위치와 무관하게 `UPDATE_APPLY` 하나로 열리고 후보 채널(`rc`)도 읽는다 — 위조 방어는 온라인과 같은 서명 확인이 전부이므로 내장 공개키가 비어 있는 동안은 이 길도 모두 거절한다.
+
+### 업데이트를 켜기 전 필수 조건
+
+| 조건 | 코드·시험에 묶였나 | 맡는 갈래 |
+|---|---|---|
+| 출하 공개키 자리(`SHIPPED_KEYS`)가 비어 있다 — 키가 없으면 모든 확인이 거절되어 업데이트가 열리지 않는다 | 묶였다: `test_update_keys`(출하 목록이 비어 있음을 지킨다 — 키를 넣는 변경은 이 시험을 뒤집는 T3) | 운영자(오프라인 키 쌍 생성, 확인 E-2)·RELEASE |
+| 설치 도구 어댑터가 없다 — 어댑터가 없는 설치 종류는 `UPDATE_APPLY_FAILED` | 묶였다: `test_update_apply`(`AdapterChoiceTest`) | INSTALLER·UPDATE(U-4) |
+| `UPDATE_APPLY` 를 켜기 전에 시작 후크가 정상 표식을 쓰는 화면 쪽 배선(정상 점검의 주입 함수)과 복구 안내 상자가 있어야 한다 | 안 묶임 | UPDATE(U-5)·GUI |
+| `NET_UPDATE_CHECK` 를 켜기 전에 앞의 '켜기 전 필수 조건' 표(정보 카드의 열린 스위치 칸·접속은 작업 스레드에서·첫 실접속 실기)가 먼저다 | 앞 표의 묶임 그대로 | GUI·UPDATE |
+| 첫 실접속(운영자 실기)에서 릴리스 이동 호스트가 `release-assets.githubusercontent.com` 인지, 응답이 `Accept-Encoding: identity`·`Connection: close` 를 따르는지 확인한다(다른 호스트면 표를 바꾸는 T3) | 안 묶임 | UPDATE·RELEASE |
+| 매니페스트를 만드는 쪽의 규칙(서명 대상 바이트·접두어·`seq` 규칙)이 RELEASE.md 의 schema 1 절과 같아야 한다 | 앱 쪽은 묶였다: `test_update_manifest` 가 `tests/update_support.py` 의 참고 서명기(앱 코드와 따로 쓴 구현)로 만든 값만 받아들인다 | RELEASE |
