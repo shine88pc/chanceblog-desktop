@@ -6,6 +6,9 @@
 해법(가장 단순하고 데이터를 만들어 내지 않는 쪽): ① 발행 기록이 있는 PUSHED 글은 지우지 않고 '먼저 `check-deploy` 로 마친 뒤 지운다' 고 알린다(막다른 길을 만들지 않는다).
 ② 그래도 이미 기록 없는 PUSHED 글이 있으면(오래된 백업으로 되돌렸을 때 생긴다) 어느 명령도 서로를 가리키지 않고 '지운다' 는 한 가지 출구만 알리며, 그 글은 지울 수 있다(잃는 것이 없다 — 올라간 글은 저장소에 그대로 있다).
 
+새 흐름(PUBPR)에서 PUSHED 는 '새 가지에 올려 병합을 확인한 글'(`merge-check` 의 결과)이다 — 시험 준비는 올리기 → 병합 확인으로 바뀌었다. 기록 파일만 잃은 PUSHED 글은 보관함 식별자(`가지@커밋`)로 글 경로를 다시 만들어 `check-deploy` 가 이어 가므로
+막다른 길이 아니다(새 시험). **옛 버전이 남긴 PUSHED 글**(식별자도 기록도 없다)만 아래의 막다른 길과 출구 하나로 남는다 — 시험이 그 데이터를 직접 만든다.
+
 지키는 것:
   1) 기록이 있는 PUSHED 글은 지우지 않는다(STATUS_TRANSITION_INVALID — 안내에 `check-deploy 글번호`), 아무것도 바꾸지 않고 백업도 만들지 않는다. 안내대로 마치면(PUBLISHED) 지울 수 있고, 지우기 직전 백업으로 되살려도 막히지 않는다.
   2) 기록이 없는 PUSHED 글: `check-deploy`·`publish-pages`(미리 보기·`--yes`)·`--cancel --yes`·`doctor` 가 모두 같은 출구(`delete 글번호 --yes`)를 말하고 서로를 가리키지 않으며, 그대로 하면 풀린다(원격은 그대로).
@@ -36,10 +39,34 @@ class FakeFlowTest(unittest.TestCase):
         self.journal = Journal(self.ctx.workspace.journal_dir)
 
     def pushed(self):
+        """새 흐름의 PUSHED — 새 가지에 올리고(MERGE_PENDING) 병합을 확인한(`merge-check`) 글."""
+        from chanceblog_desktop.publish.pages import MainCheck
         project_id = ss.make_approved(self.ctx)
-        report = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True, wait=False)
+        pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        report = pages_flow.merge_check_pages(self.ctx, project_id)
         self.assertEqual((report.status, ss.status_of(self.ctx, project_id)), (st.PUSHED, st.PUSHED))
         self.assertIsNotNone(self.journal.read(project_id))
+        return project_id
+
+    def lose_record(self, project_id, *, identifier=False):
+        """발행 기록 파일을 잃은 PUSHED 글. `identifier=True` 면 보관함의 식별자(`가지@커밋`)도 없다 — 옛 버전이 남긴 데이터(막다른 길)."""
+        self.journal.remove(project_id)
+        if identifier:
+            with self.ctx.store() as store:
+                project = store.load(project_id)
+                project.variant("github_pages").remote_id = ""
+                store.save(project)
+
+    def committed_the_old_way(self):
+        """옛 방식으로 이 PC 에 기록해 둔 글(COMMITTED) — 새 흐름은 이 상태를 만들지 않는다."""
+        from chanceblog_desktop.service.journal import PublishRecord
+        project_id = ss.make_approved(self.ctx)
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+            project.transition("github_pages", st.COMMITTED, now=self.ctx.stamp())
+            store.save(project)
+        self.journal.write(PublishRecord(project_id, ss.KO_PATH, "c" * 40, "b" * 40, "committed"))
         return project_id
 
     def listed(self):
@@ -69,9 +96,18 @@ class FakeFlowTest(unittest.TestCase):
         self.assertNotIn("이미 올라간 글", note)
         self.assertIn("`restore 그파일 --yes`", note)
 
+    def test_a_pushed_post_that_lost_only_its_record_is_rebuilt_from_its_identifier_and_finishes(self):
+        """새 흐름의 풀림 — 기록 파일만 잃은 PUSHED 글은 보관함 식별자(`가지@커밋`)와 승인한 글의 머리말로 글 경로를 다시 만들어 공개 확인을 이어 간다(막다른 길이 아니다)."""
+        project_id = self.pushed()
+        self.lose_record(project_id)
+        self.assertIsNone(self.journal.read(project_id))
+        report = pages_flow.check_pages_deploy(self.ctx, project_id)
+        self.assertEqual((report.status, ss.status_of(self.ctx, project_id)), (st.PUBLISHED, st.PUBLISHED))
+        self.assertEqual(self.backend.count("check_deployed"), 1)
+
     def test_a_pushed_post_that_already_lost_its_record_can_be_deleted(self):
         project_id = self.pushed()
-        self.journal.remove(project_id)                      # 막다른 길에 이미 들어선 글 — 지워도 잃는 것이 없다
+        self.lose_record(project_id, identifier=True)       # 옛 버전이 남긴 막다른 길에 이미 들어선 글 — 지워도 잃는 것이 없다
         self.assertIsNone(self.journal.read(project_id))
         deleted, note = projects.delete_project(self.ctx, project_id, confirmed=True)
         self.assertEqual((deleted, self.listed()), (project_id, []))
@@ -86,11 +122,14 @@ class FakeFlowTest(unittest.TestCase):
         self.assertEqual((self.listed(), record.read_text(encoding="utf-8")), ([project_id], "{깨짐"))
 
     def test_the_other_unfinished_state_is_still_refused_as_before(self):
+        """병합을 기다리는 글(MERGE_PENDING)과 옛 방식으로 기록해 둔 글(COMMITTED)도 지우지 않는다(올라간 가지·기록을 잃지 않게)."""
         project_id = ss.make_approved(self.ctx)
-        self.backend.push_errors = [ss.AppError("GIT_PUSH_NETWORK")]
-        with self.assertRaises(ss.AppError):
-            pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
         error = ss.code_of(projects.delete_project, self.ctx, project_id, confirmed=True)
+        self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.MERGE_PENDING))
+        self.assertIsNotNone(self.journal.read(project_id), "지우지 않았으니 발행 기록도 그대로다")
+        other = self.committed_the_old_way()
+        error = ss.code_of(projects.delete_project, self.ctx, other, confirmed=True)
         self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.COMMITTED))
 
     def exit_door(self, text, project_id):
@@ -100,7 +139,7 @@ class FakeFlowTest(unittest.TestCase):
 
     def test_without_its_record_every_command_names_the_same_way_out_and_none_points_at_another(self):
         project_id = self.pushed()
-        self.journal.remove(project_id)
+        self.lose_record(project_id, identifier=True)
         for label, call in (("check-deploy", lambda: pages_flow.check_pages_deploy(self.ctx, project_id)),
                             ("미리 보기", lambda: pages_flow.preview_publish(self.ctx, project_id)),
                             ("올리기 --yes", lambda: pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True))):
@@ -142,14 +181,15 @@ class FakeFlowTest(unittest.TestCase):
         self.assertTrue(self.journal.missing("no-such-post"))
 
     def test_a_committed_post_without_its_record_keeps_its_own_old_message(self):
-        """이 묶음은 PUSHED 만 다룬다 — COMMITTED 인데 기록이 없는 글의 안내는 그대로다(기록이 없다는 사실만)."""
-        project_id = ss.make_approved(self.ctx)
-        self.backend.push_errors = [ss.AppError("GIT_PUSH_NETWORK")]
-        with self.assertRaises(ss.AppError):
-            pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
-        self.journal.remove(project_id)
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, project_id, confirmed=True)
-        self.assertEqual((error.code, error.detail), ("SETTINGS_INVALID", "이어서 올릴 발행 기록 파일이 없다"))
+        """이 묶음은 PUSHED 만 다룬다 — 옛 방식으로 기록해 둔 글(COMMITTED)은 기록이 있든 없든 '이어서 올리는 길은 없어졌다 — --cancel 로 이 PC 의 기록만 되돌린다' 고만 알린다(PUBPR)."""
+        project_id = self.committed_the_old_way()
+        for with_record in (True, False):
+            if not with_record:
+                self.journal.remove(project_id)
+            error = ss.code_of(pages_flow.run_pages_publish, self.ctx, project_id, confirmed=True)
+            self.assertEqual(error.code, "STATUS_TRANSITION_INVALID")
+            self.assertIn(f"`publish-pages {project_id[:8]} --cancel --yes`", error.detail)
+            self.assertIn("이어서 올리는 길은 없어졌다", error.detail)
 
 
 @unittest.skipUnless(ss.HAVE_GIT, "git 이 필요하다")
@@ -181,8 +221,12 @@ class RealFlowTest(unittest.TestCase):
         return ss.git(self.origin, "rev-parse", "main"), ss.git(self.origin, "ls-tree", "-r", "--name-only", "main", "--", "_posts").splitlines()
 
     def pushed(self):
+        """새 가지에 올리고 병합을 흉내 낸(시험이 원격 main 을 가지의 끝으로 옮긴다) 뒤 병합을 확인한 글 — PUSHED."""
         project_id = ss.make_approved(self.ctx)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True, wait=False).status, st.PUSHED)
+        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.MERGE_PENDING)
+        branch, commit = st.split_remote_id(projects.show_project(self.ctx, project_id).variant("github_pages").remote_id)
+        ss.git(self.origin, "update-ref", "refs/heads/main", commit)
+        self.assertEqual(pages_flow.merge_check_pages(self.ctx, project_id).status, st.PUSHED)
         return project_id
 
     def command_in(self, text, verb):
@@ -215,7 +259,26 @@ class RealFlowTest(unittest.TestCase):
         self.assertIn("이미 공개된 글입니다", text5)
         self.assertEqual(self.remote(), remote, "이 모든 것에서 원격은 한 번도 바뀌지 않았다")
 
-    def test_a_post_sent_back_to_pushed_by_an_old_backup_has_one_way_out_and_it_works(self):
+    def test_a_post_sent_back_to_pushed_by_an_old_backup_is_rebuilt_from_its_identifier(self):
+        """새 흐름의 풀림(진짜 git) — 오래된 백업이 글을 '올림' 으로 되돌렸는데 기록 파일은 없어도, 보관함 식별자(`가지@커밋`)로 `check-deploy` 가 이어 가 공개 확인을 마친다. 원격은 그대로다."""
+        project_id = self.pushed()
+        code, out = self.cli("backup")
+        self.assertEqual(code, 0, out)
+        remote = self.remote()
+        self.assertEqual(self.cli("check-deploy", project_id)[0], 0)
+        self.assertEqual(ss.status_of(self.ctx, project_id), st.PUBLISHED)
+        self.assertIsNone(self.journal.read(project_id), "공개가 확인되어 발행 기록을 지웠다")
+        old = projects.list_backups(self.ctx)[0]                                           # 올림 상태일 때의 백업
+        code, text = self.cli("restore", str(old), "--yes")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(ss.status_of(self.ctx, project_id), st.PUSHED, "되돌렸더니 '올림' 인데 기록은 없다")
+        self.assertIsNone(self.journal.read(project_id))
+        code, text = self.cli("check-deploy", project_id)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(ss.status_of(self.ctx, project_id), st.PUBLISHED, "식별자만으로 이어 갔다")
+        self.assertEqual(self.remote(), remote, "원격은 그대로다")
+
+    def test_a_post_sent_back_to_pushed_by_an_old_backup_without_its_identifier_has_one_way_out_and_it_works(self):
         project_id = self.pushed()
         code, out = self.cli("backup")
         self.assertEqual(code, 0, out)
@@ -226,6 +289,10 @@ class RealFlowTest(unittest.TestCase):
         code, text = self.cli("restore", str(old), "--yes")
         self.assertEqual(code, 0, text)
         self.assertEqual(ss.status_of(self.ctx, project_id), st.PUSHED, "되돌렸더니 '올림' 인데 기록은 없다")
+        with self.ctx.store() as store:                                                    # 옛 버전이 남긴 데이터 — 식별자(`가지@커밋`)도 없다
+            project = store.load(project_id)
+            project.variant("github_pages").remote_id = ""
+            store.save(project)
         self.assertIsNone(self.journal.read(project_id))
         remote = self.remote()
         door = None

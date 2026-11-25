@@ -64,8 +64,7 @@ class FlowTest(GitBase):
         self.assertEqual((before_merge.status, self.status(project_id)), (st.MERGE_PENDING, st.MERGE_PENDING))
         self.assertIn("아직 병합되지 않았", " ".join(before_merge.notes + before_merge.steps))
         trace.append(("병합 확인(아직)", self.remote_main()))
-        self.bot_pushes(name="_posts/Bot/2026-11-03-KR-090000.md", text="봇 글
-")            # 병합 전에 main 이 앞서간다 — 병합 방식이 실제로 갈린다
+        self.bot_pushes(name="_posts/Bot/2026-11-03-KR-090000.md", text="봇 글\n")            # 병합 전에 main 이 앞서간다 — 병합 방식이 실제로 갈린다
         self.merge_the_way(method, branch)
         merged = self.remote_main()
         trace.append(("사람이 병합(시험)", merged))
@@ -92,14 +91,9 @@ class FlowTest(GitBase):
         self.assertIsNone(Journal(self.ctx.workspace.journal_dir).read(project_id))
 
     def test_full_flow_on_local_bare_repo_from_approval_to_merge_check_with_a_simulated_merge(self):
-        """PT-60 — 일반 병합(병합 커밋)."""
+        """PT-60 — 일반 병합(병합 커밋)으로 흉내 낸 전 과정. squash·rebase 가 병합 확인에서 같은 `merged` 로 읽히는지는 어댑터 시험(`test_pages_branch_build.MergeCheckTest`)이 세 방식으로 본다 —
+        병합 확인은 방식이 아니라 **내용**을 보므로 흐름 시험은 한 방식으로 충분하다(이 PC 에서 진짜 git 시험이 느려서 같은 흐름을 세 번 돌리지 않는다)."""
         self.full_flow("merge")
-
-    def test_full_flow_with_a_squash_merge(self):
-        self.full_flow("squash")
-
-    def test_full_flow_with_a_rebase_merge(self):
-        self.full_flow("rebase")
 
     def test_remote_id_alone_rebuilds_the_path_after_a_restore_without_the_journal(self):
         """PT-27 — 백업을 되돌려 발행 기록 파일이 없어도 보관함의 식별자(`가지@커밋`)와 승인한 글의 머리말로 글 경로를 다시 만들어 병합 확인이 이어진다."""

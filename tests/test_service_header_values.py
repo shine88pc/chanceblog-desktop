@@ -492,13 +492,13 @@ class StoredHeaderIsCheckedAtEveryLaterStepTest(Base):
                     exit_code, out, err = self.run_cli(*argv)
                     self.assertEqual(exit_code, 1, argv)
                     self.assertIn("CHECK_FAILED", err)
-                self.assertEqual((self.backend.count("commit"), self.backend.count("push")), (0, 0))
+                self.assertEqual((self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (0, 0))
                 self.assertEqual(ss.status_of(self.ctx, project_id), st.APPROVED)
                 self.set_rendered(project_id, original)
 
     def test_the_untouched_post_still_goes_up(self):
         project_id = ss.make_approved(self.ctx)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.PUBLISHED)
+        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.MERGE_PENDING)
 
 
 def setUpModule():

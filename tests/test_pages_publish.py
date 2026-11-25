@@ -362,7 +362,8 @@ class CommitPostTest(PublishBase):
         empty = self.tmp / "empty.gitconfig"
         empty.write_text("", encoding="utf-8")
         head = self.head()
-        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(empty), "GIT_CONFIG_NOSYSTEM": "1"}):
+        # PUBPR: 앱의 git 은 `GIT_CONFIG` 로 시작하는 환경 변수를 지우므로(올리기 길의 환경 정리) 빈 전역 설정은 이 PC 의 홈 폴더를 바꿔 준다
+        with mock.patch.dict(os.environ, {"HOME": str(self.tmp), "USERPROFILE": str(self.tmp), "XDG_CONFIG_HOME": str(self.tmp / "xdg")}):
             for name in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
                 os.environ.pop(name, None)
             error = code_of(self.commit)

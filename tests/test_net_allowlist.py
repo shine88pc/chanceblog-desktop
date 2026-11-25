@@ -247,8 +247,12 @@ class KeyLogScopeTest(unittest.TestCase):
     def test_session_key_logging_is_named_only_to_turn_it_off_in_the_one_client_file(self):
         """D-738(독립 검증 S 필수-1) — 세션 비밀 로그(`keylog`)는 `src/` 에서 `net/client.py` 한 파일에만 나오고, 거기서도 `_make_context` 의 끄기 한 줄(`context.keylog_filename = None`)과
         `_check_context` 의 켜진 환경 거절 한 줄(`context.keylog_filename is not None`)뿐이다. 다른 곳에서 비밀 로그 파일을 대입하거나 환경 변수 이름을 읽으면 빨개진다."""
-        elsewhere = [path.relative_to(SRC).as_posix() for path in files() if re.search("keylog", path.read_text(encoding="utf-8"), re.I) and path.relative_to(SRC).as_posix() != "net/client.py"]
-        self.assertEqual(elsewhere, [], "세션 비밀 로그를 다루는 코드는 접속 클라이언트 한 파일뿐이다")
+        elsewhere = [path.relative_to(SRC).as_posix() for path in files() if re.search("keylog", path.read_text(encoding="utf-8"), re.I) and path.relative_to(SRC).as_posix() not in ("net/client.py", "publish/gitrepo.py")]
+        self.assertEqual(elsewhere, [], "세션 비밀 로그를 다루는 코드는 접속 클라이언트 한 파일뿐이다(git 환경 정리 목록의 이름 하나만 아래에서 따로 본다)")
+        git_source = (SRC / "publish" / "gitrepo.py").read_text(encoding="utf-8")                    # PUBPR: git 올리기 길의 환경에서 이 변수를 **지운다** — 목록에 이름이 한 번 나올 뿐 대입·읽기는 없다
+        self.assertEqual(keylog_uses(git_source), [("<module>", "Constant", "SSLKEYLOGFILE")], "git 쪽은 지우는 환경 변수 목록의 이름 하나뿐이다")
+        listing = next(node for node in ast.parse(git_source).body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "_ENV_DROP_NAMES" for target in node.targets))
+        self.assertIn("SSLKEYLOGFILE", ast.literal_eval(listing.value), "그 이름은 git 환경에서 지우는 목록(`_ENV_DROP_NAMES`)에 있다")
         source = (SRC / "net" / "client.py").read_text(encoding="utf-8")
         self.assertEqual(sorted(keylog_uses(source)), [("_check_context", "Attribute", "keylog_filename"), ("_make_context", "Attribute", "keylog_filename")])
         tree = ast.parse(source)

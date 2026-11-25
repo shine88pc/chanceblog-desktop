@@ -94,7 +94,8 @@ class OperatorExamplesTest(unittest.TestCase):
     def test_git_push_failures_split_into_auth_network_and_rejected(self):
         auth, network, rejected = CATALOG["GIT_PUSH_AUTH"], CATALOG["GIT_PUSH_NETWORK"], CATALOG["GIT_PUSH_REJECTED"]
         self.assertIn("권한", auth.message)
-        self.assertIn("git push", auth.action)
+        self.assertIn("Git 을 쓰는 프로그램", auth.action)
+        self.assertNotIn("git push", auth.action, "main 으로 가는 push 를 권하는 말이 없다(PUBPR)")
         self.assertEqual(auth.retry_kind, RETRY_AFTER)
         self.assertIn("인터넷", network.message)
         self.assertEqual((network.retry_kind, network.retry_max), (RETRY_AUTO, 3))

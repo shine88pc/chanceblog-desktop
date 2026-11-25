@@ -45,12 +45,16 @@ class FakeBase(unittest.TestCase):
         return project_id
 
     def stuck(self, title, *, on_top=False):
-        """올리는 데 실패해 COMMITTED 로 남은 글. on_top 이면 그 commit 이 맨 위(가짜 HEAD)다."""
+        """옛 방식(main 에 곧바로 올리던 시절)으로 올리다 멈춰 COMMITTED 로 남은 글 — 새 흐름은 이 상태를 만들지 않으므로 시험이 옛 데이터를 직접 만든다(상태 + 발행 기록). on_top 이면 그 commit 이 맨 위(가짜 HEAD)다."""
         project_id = self.approved(title)
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        self.assertEqual(ss.code_of(pages_flow.run_pages_publish, self.ctx, project_id, confirmed=True, wait=False).code, "GIT_PUSH_NETWORK")
-        record = self.journal.read(project_id)
-        self.journal.write(PublishRecord(project_id, record.path, TOP if on_top else "e" * 40, record.base, record.stage))
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+            rendered = project.variant("github_pages").rendered
+            project.transition("github_pages", st.COMMITTED, now=self.ctx.stamp())
+            store.save(project)
+        header, _ = gate.split_post(rendered)
+        path = post_path(header["category"], header["lang"], self.ctx.now())
+        self.journal.write(PublishRecord(project_id, path, TOP if on_top else "e" * 40, "b" * 40, STAGE_COMMITTED))
         self.backend.calls.clear()
         return project_id
 
@@ -88,26 +92,32 @@ class FakeBase(unittest.TestCase):
 
 
 class ResumeTest(FakeBase):
-    def test_a_post_that_stopped_before_its_push_is_named_with_both_ways_out(self):
+    def test_a_post_that_stopped_before_its_push_is_named_with_the_one_way_out(self):
+        """옛 방식으로 올리다 멈춘 글 — 예전에는 '이어서 올리거나 되돌린다' 두 길이었고 새 흐름에서는 되돌리는 길 하나다(이어서 올리는 길은 없어졌다). 새 글은 이 글 때문에 막히지 않는다(만들기는 받은 원격 main 에서 시작한다)."""
         first = self.stuck("올리다 멈춘 글", on_top=True)
         self.backend.unpushed = 1
         second = self.approved("새로 올릴 글")
-        error = self.blocked(second)
+        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, second).stage, pages_flow.STAGE_BRANCH, "올리지 않은 옛 commit 이 있어도 새 글은 막히지 않는다")
         short = first[:8]
-        for expected in ("올리지 않은 commit 이 1개", "「올리다 멈춘 글」", f"번호 {short}", f"`publish-pages {short} --yes`", f"`publish-pages {short} --cancel --yes`", "이어서 올리거나", "올리다 멈춘 글"):
-            self.assertIn(expected, error.detail)
         situation = unpushed.describe(self.ctx, self.ctx.repo_path())
         self.assertEqual((situation.kind, situation.ahead, [entry.project_id for entry in situation.entries], situation.entries[0].kind), (unpushed.RESUME, 1, [first], unpushed.KIND_COMMITTED))
+        text = unpushed.action_text(situation)
+        for expected in ("옛 방식으로 올리다 멈춘", "「올리다 멈춘 글」", f"번호 {short}", f"`publish-pages {short} --cancel --yes`", "이어서 올리는 길은 없어졌습니다"):
+            self.assertIn(expected, text)
+        self.assertNotIn(f"`publish-pages {short} --yes`", text, "이어서 올리라는 말은 없다")
 
     def test_a_commit_left_without_a_record_is_named_as_adoptable(self):
+        """기록 직후에 멈춘 옛 commit 도 '이어받아 올리는' 길은 없어지고 되돌리는 길만 안내한다."""
         first = self.approved("기록 직후 멈춘 글")
         self.orphan_of(first)
         self.backend.unpushed = 1
         situation = unpushed.describe(self.ctx, self.ctx.repo_path())
         self.assertEqual((situation.kind, [(entry.project_id, entry.kind) for entry in situation.entries]), (unpushed.RESUME, [(first, unpushed.KIND_ADOPT)]))
         text = unpushed.action_text(situation)
-        for expected in ("올리다 기록(commit) 직후에 멈춘", f"`publish-pages {first[:8]} --yes`", "이어받아 올리거나", f"`publish-pages {first[:8]} --cancel --yes`"):
+        for expected in ("올리다 기록(commit) 직후에 멈춘", "이어서 올리는 길은 없어졌습니다", f"`publish-pages {first[:8]} --cancel --yes`"):
             self.assertIn(expected, text)
+        self.assertNotIn(f"`publish-pages {first[:8]} --yes`", text)
+        self.assertNotIn("이어받아", text)
 
     def test_the_doctor_gives_that_one_instruction_and_never_the_old_contradicting_sentence(self):
         first = self.stuck("올리다 멈춘 글", on_top=True)
@@ -116,12 +126,12 @@ class ResumeTest(FakeBase):
         line = self.repo_line()
         self.assertEqual((line.status, line.code), ("warn", "PAGES_LOCAL_REPO_DIVERGED"))
         self.assertIn("올리지 않은 commit 이 1개", line.message)
-        self.assertIn(f"`publish-pages {short} --yes`", line.action)
+        self.assertIn(f"`publish-pages {short} --cancel --yes`", line.action)
         self.assertEqual(line.action, unpushed.action_text(unpushed.describe(self.ctx, self.ctx.repo_path())))
         items = self.pending()
         self.assertEqual(len(items), 1)
-        self.assertIn(f"publish-pages {short} --yes", items[0].message)
         self.assertIn(f"publish-pages {short} --cancel --yes", items[0].message)
+        self.assertNotIn(f"publish-pages {short} --yes", items[0].message, "이어서 올리라는 말은 없다")
         self.assertEqual(items[0].action, "", "한 줄에 안내가 하나뿐이다")
         for item in self.results():
             self.assertNotIn(OLD_GENERIC, item.action + item.message)
@@ -136,8 +146,8 @@ class ResumeTest(FakeBase):
         items = self.pending()
         self.assertEqual(len(items), 1)
         self.assertIn("기록(commit) 직후에 멈춘 흔적", items[0].message)
-        self.assertIn("이어받아 올리거나", items[0].message)
-        self.assertIn("이어받아", self.repo_line().action)
+        self.assertIn("이어서 올리는 길은 없어졌습니다", items[0].message)
+        self.assertIn("이어서 올리는 길은 없어졌습니다", self.repo_line().action)
         self.assertNotIn(OLD_GENERIC, items[0].message + self.repo_line().action)
 
 
@@ -160,16 +170,7 @@ class OverlapTest(FakeBase):
         self.assertIn("review", text, "되돌린 글은 다시 만들어 승인해야 한다")
         self.assertLess(text.index("「나중에 기록한 글」"), text.index("「먼저 기록한 글」"))
         third = self.approved("세 번째 글")
-        error = self.blocked(third)
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", error.detail)
-
-    def test_pushing_the_earlier_post_is_refused_with_the_same_instruction_before_anything_is_pushed(self):
-        first, second = self.two_stacked()
-        for call in (lambda: pages_flow.plan_pages_publish(self.ctx, first), lambda: pages_flow.run_pages_publish(self.ctx, first, confirmed=True)):
-            error = ss.code_of(call)
-            self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-            self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", error.detail)
-        self.assertEqual((self.backend.count("push"), ss.status_of(self.ctx, first), ss.status_of(self.ctx, second)), (0, st.COMMITTED, st.COMMITTED))
+        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, third).stage, pages_flow.STAGE_BRANCH, "겹친 옛 commit 이 있어도 새 글은 막히지 않는다")
 
     def test_cancelling_the_earlier_post_is_refused_and_the_error_says_which_post_to_cancel_first(self):
         first, second = self.two_stacked()
@@ -186,7 +187,8 @@ class OverlapTest(FakeBase):
         report = pages_flow.cancel_pages_publish(self.ctx, second, confirmed=True)
         self.assertEqual((report.status, ss.status_of(self.ctx, second), self.backend.count("discard")), (st.PUBLISH_FAILED, st.PUBLISH_FAILED, 1))
         self.backend.unpushed = 1
-        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, first).stage, pages_flow.STAGE_PUSH, "남은 글은 같은 명령으로 올릴 수 있다")
+        report = pages_flow.cancel_pages_publish(self.ctx, first, confirmed=True)
+        self.assertEqual((report.status, ss.status_of(self.ctx, first), self.backend.count("discard")), (st.PUBLISH_FAILED, st.PUBLISH_FAILED, 2), "남은 글도 같은 방식으로 되돌린다")
 
     def test_a_post_that_is_already_online_is_not_counted_among_the_unpushed_ones(self):
         first, second = self.two_stacked()
@@ -194,11 +196,6 @@ class OverlapTest(FakeBase):
         self.backend.remote_paths = {self.journal.read(first).path}
         situation = unpushed.describe(self.ctx, self.ctx.repo_path())
         self.assertEqual((situation.kind, [entry.project_id for entry in situation.entries]), (unpushed.RESUME, [second]))
-
-    def test_the_post_on_top_may_still_be_pushed_when_it_is_the_only_one_ahead(self):
-        first, second = self.two_stacked()
-        self.backend.unpushed = 1
-        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, second).stage, pages_flow.STAGE_PUSH, "올리지 않은 commit 이 하나뿐이면 그 글은 이어서 올린다")
 
     def test_the_doctor_says_which_post_to_undo_first_and_which_has_to_wait(self):
         first, second = self.two_stacked()
@@ -211,7 +208,8 @@ class OverlapTest(FakeBase):
         self.assertIn("맨 위(가장 나중)", top.message)
         self.assertIn(f"publish-pages {second[:8]} --cancel --yes", top.message)
         self.assertIn("위에 다른 글의 기록이 쌓여", under.message)
-        self.assertIn(f"publish-pages {first[:8]} --yes", under.message)
+        self.assertIn(f"publish-pages {first[:8]} --cancel --yes", under.message)
+        self.assertNotIn(f"publish-pages {first[:8]} --yes", under.message, "이어서 올리라는 말은 없다")
         for item in self.results():
             self.assertNotIn(OLD_GENERIC, item.action + item.message)
             self.assertNotIn("이어받아", item.action, "겹친 글은 바로 이어받을 수 없다")
@@ -221,11 +219,12 @@ class NotMadeByTheAppTest(FakeBase):
     def test_a_commit_the_app_did_not_make_says_to_look_at_it_by_hand_and_never_offers_to_adopt_or_undo_it(self):
         self.backend.unpushed = 1
         second = self.approved("새로 올릴 글")
-        error = self.blocked(second)
+        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, second).stage, pages_flow.STAGE_BRANCH, "사람이 만든 commit 이 있어도 새 글은 막히지 않는다(객체로만 만들어 그 commit 을 건드리지 않는다)")
+        text = unpushed.action_text(unpushed.describe(self.ctx, self.ctx.repo_path()))
         for expected in ("앱이 만든 글 기록이 아닌 commit 1개", "git log origin/main..HEAD", "지우거나 되돌리지 않습니다"):
-            self.assertIn(expected, error.detail)
-        self.assertNotIn("이어받아", error.detail)
-        self.assertNotIn("--cancel", error.detail)
+            self.assertIn(expected, text)
+        self.assertNotIn("이어받아", text)
+        self.assertNotIn("--cancel", text)
         line = self.repo_line()
         self.assertEqual((line.status, line.code), ("warn", "PAGES_LOCAL_REPO_DIVERGED"))
         self.assertIn("git log origin/main..HEAD", line.action)
@@ -247,7 +246,7 @@ class NotMadeByTheAppTest(FakeBase):
             self.assertNotIn("이어받아", item.message)
             self.assertIn("앱이 만든 것이 아닌 commit", item.message)
         second = self.approved("새로 올릴 글")
-        self.assertIn("앱이 만든 것이 아닙니다", self.blocked(second).detail)
+        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, second).stage, pages_flow.STAGE_BRANCH, "섞여 있어도 새 글은 막히지 않는다")
 
     def test_a_store_that_cannot_be_read_does_not_break_the_analysis(self):
         self.backend.unpushed = 1
@@ -275,45 +274,6 @@ class NotMadeByTheAppTest(FakeBase):
         self.assertEqual(unpushed.describe(self.ctx, self.ctx.repo_path()).ahead, 0)
         self.assertEqual(self.repo_line().status, "ok")
 
-
-class PushRefusedWhileStackedTest(FakeBase):
-    """독립 검증 3차 낮음 10(변이 U13): 올리다(push) `PAGES_LOCAL_REPO_DIVERGED` 로 막혔을 때 오류 세부에 '다른 글의 기록이 같이 쌓여 있다면 어느 글부터 되돌려야 하는지' 가 덧붙는 것을 지키는 시험이 없었다."""
-
-    def stacked(self):
-        first = self.stuck("먼저 기록한 글")
-        second = self.stuck("나중에 기록한 글", on_top=True)
-        self.backend.unpushed = 1                                                        # 올리기 점검은 지나가고(올릴 글 하나로 보인다) push 가 막히는 순간 다른 글이 쌓여 있음을 알게 된다
-        self.backend.hooks["push"] = lambda: setattr(self.backend, "unpushed", 2)
-        self.backend.push_errors = [AppError("PAGES_LOCAL_REPO_DIVERGED", detail="올리지 않은 커밋이 2개다(이 글 하나여야 한다)")]
-        return first, second
-
-    def test_the_refused_push_says_which_post_to_undo_first_after_the_usual_note(self):
-        first, second = self.stacked()
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, first, confirmed=True, wait=False)
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-        parts = error.detail.split(" | ")
-        self.assertEqual(parts[0], "올리지 않은 커밋이 2개다(이 글 하나여야 한다)", "원래 오류가 맨 앞에 있다")
-        self.assertIn("올리지 않고 되돌리려면 --cancel --yes", parts[1], "일반 안내가 그다음")
-        self.assertIn("올리지 않은 글 기록 2개가 겹쳐 있습니다", parts[2], "겹친 글이면 어느 글부터인지가 마지막에 덧붙는다")
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", parts[2])
-        self.assertEqual(ss.status_of(self.ctx, first), st.COMMITTED, "아무것도 바꾸지 않았다")
-
-    def test_the_same_refusal_with_no_other_post_stacked_says_only_this_post_is_waiting(self):
-        first = self.stuck("혼자 기록한 글")
-        self.backend.unpushed = 1
-        self.backend.push_errors = [AppError("PAGES_LOCAL_REPO_DIVERGED", detail="원격이 앞서 있다")]
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, first, confirmed=True, wait=False)
-        self.assertEqual(error.detail.count(" | "), 2, error.detail)
-        self.assertNotIn("겹쳐 있습니다", error.detail)
-        self.assertIn(f"앱이 올리다 멈춘 글 「혼자 기록한 글」(번호 {first[:8]})의 기록입니다", error.detail.split(" | ")[2], "덧붙는 말은 이 글 하나의 기록이라는 안내다")
-
-    def test_other_refusals_get_only_the_usual_note(self):
-        first = self.stuck("그냥 막힌 글")
-        self.backend.unpushed = 1                                                        # 올리지 않은 commit 이 있어서 덧붙임을 만들 수는 있는 상황 — 그래도 DIVERGED 가 아니면 붙이지 않는다
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, first, confirmed=True, wait=False)
-        self.assertIn("올리지 않고 되돌리려면 --cancel --yes", error.detail)
-        self.assertNotIn("publish-pages", error.detail.split("올리지 않고 되돌리려면 --cancel --yes")[1], "다른 글을 가리키는 덧붙임이 없다")
 
 
 LONG_TITLE = ("에너지 절약과 난방비 줄이기를 위한 겨울철 생활 습관 정리 " * 4)[:190]        # 독립 검증 3차가 재현한 약 190자 제목
@@ -356,14 +316,11 @@ class LongTitleTest(FakeBase):
 
     def test_the_cancel_command_is_whole_on_the_screen_for_a_new_post_a_lower_post_a_cancel_and_the_doctor(self):
         first, second = self.overlapped(2)
-        new = self.approved(f"새 글 {LONG_TITLE}")
         door = f"`publish-pages {second[:8]} --cancel --yes`"
-        for label, argv in (("새 글 올리기", ("publish-pages", new, "--yes")), ("새 글 미리 보기", ("publish-pages", new)), ("아래 글 올리기", ("publish-pages", first, "--yes")),
-                            ("아래 글 되돌리기", ("publish-pages", first, "--cancel", "--yes"))):
+        for label, argv in (("아래 글 되돌리기", ("publish-pages", first, "--cancel", "--yes")),):
             with self.subTest(command=label):
-                if "--cancel" in argv:
-                    self.backend.discard_error = AppError("PAGES_LOCAL_REPO_DIVERGED", detail="되돌릴 커밋이 글 하나만 더한 것이 아니다")
-                    self.backend.head_has_post = True                                         # 글이 아직 HEAD 에 있어서 '이미 되돌려졌다' 로 보지 않는다
+                self.backend.discard_error = AppError("PAGES_LOCAL_REPO_DIVERGED", detail="되돌릴 커밋이 글 하나만 더한 것이 아니다")
+                self.backend.head_has_post = True                                         # 글이 아직 HEAD 에 있어서 '이미 되돌려졌다' 로 보지 않는다
                 code, out, err = ss.run_cli(self.ctx, *argv)
                 self.assertEqual(code, 1, err)
                 line = self.detail_line(out, err)
@@ -373,20 +330,8 @@ class LongTitleTest(FakeBase):
         code, out, err = ss.run_cli(self.ctx, "doctor")
         self.assertIn(door, out)
 
-    def test_the_command_is_whole_even_after_the_long_notes_a_push_that_was_refused_adds(self):
-        """올리다(push) 막힌 오류는 앞에 '올리지 않은 커밋이 2개다 … 올리지 않고 되돌리려면 --cancel --yes' 같은 긴 설명이 붙는다 — 그 뒤에도 명령이 보인다."""
-        first, second = self.overlapped(2)
-        self.backend.unpushed = 1                                                         # 올리기 점검은 지나가고(올릴 글 하나) push 가 막히는 순간 겹친 것을 알게 된다
-        self.backend.hooks["push"] = lambda: setattr(self.backend, "unpushed", 2)
-        self.backend.push_errors = [AppError("PAGES_LOCAL_REPO_DIVERGED", detail="올리지 않은 커밋이 2개다(이 글 하나여야 한다)")]
-        code, out, err = ss.run_cli(self.ctx, "publish-pages", second, "--yes", "--no-wait")
-        self.assertEqual(code, 1, out + err)
-        line = self.detail_line(out, err)
-        self.assertIn("올리지 않고 되돌리려면 --cancel --yes", line, "앞의 긴 설명이 붙어 있다")
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", line)
-
     def test_an_adoptable_post_with_a_long_title_is_named_short_too(self):
-        """기록 직후에 멈춘 글(이어받기)의 이름도 같다 — 이름을 만드는 두 곳(기록 있는 글·이어받을 글) 모두 줄인 제목을 쓴다."""
+        """기록 직후에 멈춘 옛 commit 의 글 이름도 줄인 제목을 쓴다(되돌리는 명령만 안내한다)."""
         project_id = self.approved(f"이어받을 글 {LONG_TITLE}")
         self.orphan_of(project_id)
         self.backend.unpushed = 1
@@ -397,7 +342,7 @@ class LongTitleTest(FakeBase):
         text = unpushed.action_text(situation)
         self.assertIn(f"「{entry.title}」(번호 {entry.short})", text)
         self.assertNotIn(LONG_TITLE[:60], text)
-        self.assertIn(f"`publish-pages {entry.short} --yes`", text)
+        self.assertIn(f"`publish-pages {entry.short} --cancel --yes`", text)
 
     def test_a_short_title_is_shown_whole_so_the_old_advice_is_unchanged(self):
         self.stuck("올리다 멈춘 글")
@@ -439,8 +384,7 @@ class OtherDataFolderTest(FakeBase):
         self.assertNotIn("나머지는 앱이 만든 것이 아닙니다", text, "앱이 만든 모양인 commit 을 '앱이 만든 것이 아니다' 라고 하지 않는다")
         self.assertNotIn("그 밖의 commit", text, "직접 만든 commit 은 없다")
         self.assertEqual(self.repo_line().action, text, "doctor 가 같은 말을 한다")
-        error = self.blocked(self.approved("새로 올릴 글"))
-        self.assertIn("`--data-dir`", error.detail, "올리기(미리 보기 포함)도 같은 안내를 한다")
+        self.assertEqual(pages_flow.plan_pages_publish(self.ctx, self.approved("새로 올릴 글")).stage, pages_flow.STAGE_BRANCH, "다른 앱의 옛 commit 이 있어도 새 글은 막히지 않는다")
 
     def test_a_hand_made_commit_next_to_an_app_shaped_one_is_told_separately(self):
         self.stuck("이 데이터 폴더의 글")
@@ -469,7 +413,8 @@ class OtherDataFolderTest(FakeBase):
         self.assertIn("이 글의 기록 위에 다른 commit 이 있어 지금은 올리거나 되돌릴 수 없습니다", line.message)
         self.assertIn("다른 앱이 같은 저장소에 올리다 멈춘 글일 수 있습니다", line.message)
         self.assertNotIn("이 글의 기록이 맨 위", line.message)
-        self.assertIn(f"`publish-pages {first[:8]} --yes`", line.message)
+        self.assertIn(f"`publish-pages {first[:8]} --cancel --yes`", line.message)
+        self.assertNotIn(f"`publish-pages {first[:8]} --yes`", line.message, "이어서 올리라는 말은 없다")
 
     def test_a_hand_made_commit_below_the_top_post_also_says_it_can_be_undone_but_not_pushed(self):
         first = self.stuck("이 데이터 폴더의 글", on_top=True)
@@ -509,13 +454,13 @@ class OtherDataFolderTest(FakeBase):
 
 class AlreadyPushedTest(FakeBase):
     def test_cancelling_a_post_whose_commit_is_already_online_is_refused_with_its_own_code_and_the_same_command_finishes_it(self):
+        """옛 방식으로 올라가 버린 글(상태는 COMMITTED) — 되돌리지 않고 전용 오류로 거절한다. 이어서 마치는 길은 없어졌으므로 안내는 '이 글은 앱이 되돌리지 않는다 — 글은 저장소에서 확인하고 이 글의 기록만 `delete` 로 지울 수 있다'."""
         project_id = self.stuck("올라가 버린 글")
         self.backend.discard_error = AppError("UNEXPECTED_ERROR", detail="이미 원격 main 에 올라간 커밋이라 되돌리지 않는다")
         self.backend.remote_has_post = True
         error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, project_id, confirmed=True)
         self.assertEqual(error.code, "PUBLISH_ALREADY_PUSHED")
-        self.assertIn(f"publish-pages {project_id[:8]} --yes", error.detail)
-        self.assertIn("올림 기록을 마치고 공개 확인까지", error.detail)
+        self.assertIn(f"delete {project_id[:8]} --yes", error.detail)
         shown = error.rendered()
         self.assertIn("이미 공개 저장소에 올라간 글", shown.message)
         self.assertIn("되돌리지", shown.message)
@@ -525,10 +470,8 @@ class AlreadyPushedTest(FakeBase):
         self.assertIn("PUBLISH_ALREADY_PUSHED", err)
         for word in ("UNEXPECTED_ERROR", "로그 내보내기"):
             self.assertNotIn(word, err)
-        self.backend.push_already = True                                                                     # 안내대로 --cancel 없이 같은 명령 — 이미 올라가 있으면 다시 올리지 않는다
-        report = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
-        self.assertEqual(report.status, st.PUBLISHED)
-        self.assertTrue(any("이미 원격 main 에 올라가 있어 다시 올리지 않았습니다" in step for step in report.steps), report.steps)
+        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, project_id, confirmed=True)
+        self.assertEqual(error.code, "STATUS_TRANSITION_INVALID", "이어서 올리는 길은 없어졌다")
 
     def test_an_unexpected_refusal_stays_unexpected_when_the_post_is_not_online(self):
         project_id = self.stuck("그대로 오류")
@@ -542,21 +485,26 @@ class AlreadyPushedTest(FakeBase):
         self.assertEqual(self.repo_line().status, "ok", "올리지 않은 commit 이 아니다")
         items = self.pending()
         self.assertEqual(len(items), 1)
-        self.assertIn("이미 원격 main 에 올라가 있는데 올림 기록을 마치기 전에 멈췄습니다", items[0].message)
-        self.assertIn(f"publish-pages {project_id[:8]} --yes", items[0].message)
+        self.assertIn("옛 방식으로 올리다 멈춘 글이 이미 원격 main 에 올라가 있습니다", items[0].message)
+        self.assertIn(f"delete {project_id[:8]} --yes", items[0].message)
         self.assertNotIn("--cancel", items[0].message)
         self.assertEqual(items[0].action, "")
 
     def test_an_already_pushed_or_public_post_cannot_be_cancelled_and_says_what_to_do(self):
+        from chanceblog_desktop.publish.pages import MainCheck
         pushed = self.approved("올림 상태 글")
-        pages_flow.run_pages_publish(self.ctx, pushed, confirmed=True, wait=False)
+        pages_flow.run_pages_publish(self.ctx, pushed, confirmed=True)
+        error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, pushed, confirmed=True)
+        self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.MERGE_PENDING), "병합 기다리는 글은 `abandon` 으로 정리한다")
+        self.assertIn(f"abandon {pushed[:8]} --yes", error.detail)
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        pages_flow.merge_check_pages(self.ctx, pushed)
         error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, pushed, confirmed=True)
         self.assertEqual(error.code, "PUBLISH_ALREADY_PUSHED")
         self.assertIn(f"check-deploy {pushed[:8]}", error.detail)
         self.assertEqual(self.backend.count("discard"), 0)
-        public = self.approved("공개된 글")
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, public, confirmed=True).status, st.PUBLISHED)
-        error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, public, confirmed=True)
+        self.assertEqual(pages_flow.check_pages_deploy(self.ctx, pushed).status, st.PUBLISHED)
+        error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, pushed, confirmed=True)
         self.assertEqual(error.code, "PUBLISH_ALREADY_PUSHED")
         self.assertIn("이미 공개된", error.detail)
 
@@ -608,8 +556,13 @@ class CancelUnrecordedTest(FakeBase):
 
 class LeftoverRecordTest(FakeBase):
     def publish_fully(self, title="공개될 글"):
+        """새 흐름의 끝까지 — 새 가지에 올리고(MERGE_PENDING) 병합을 확인하고(PUSHED) 공개 확인(PUBLISHED)."""
+        from chanceblog_desktop.publish.pages import MainCheck
         project_id = self.approved(title)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.PUBLISHED)
+        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.MERGE_PENDING)
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        self.assertEqual(pages_flow.merge_check_pages(self.ctx, project_id).status, st.PUSHED)
+        self.assertEqual(pages_flow.check_pages_deploy(self.ctx, project_id).status, st.PUBLISHED)
         return project_id
 
     def leave_the_record_like_a_crash_before_it_was_removed(self, project_id):
@@ -631,7 +584,7 @@ class LeftoverRecordTest(FakeBase):
     def test_check_deploy_and_publish_clean_only_that_posts_own_record(self):
         project_id = self.publish_fully()
         other = self.approved("다른 글")
-        for runner in (lambda: pages_flow.check_pages_deploy(self.ctx, project_id), lambda: pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)):
+        for runner in (lambda: pages_flow.check_pages_deploy(self.ctx, project_id), lambda: pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)):    # 둘 다 공개된 글에 남은 그 글의 기록만 정리한다
             self.leave_the_record_like_a_crash_before_it_was_removed(project_id)
             self.journal.write(PublishRecord(other, ss.KO_PATH, "e" * 40, "b" * 40, STAGE_PUSHED))            # 다른 글의 기록(이 글의 일이 아니다)
             report = runner()
@@ -641,7 +594,7 @@ class LeftoverRecordTest(FakeBase):
             self.assertIsNotNone(self.journal.read(other), "다른 글의 기록은 그대로다")
             self.journal.remove(other)
         self.assertEqual([item for item in self.results() if item.name == "남은 발행 기록"], [])
-        self.assertEqual(self.backend.count("commit"), 0, "정리하려고 다시 올리지는 않았다")
+        self.assertEqual((self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (0, 0), "정리하려고 다시 만들거나 올리지는 않았다")
 
     def test_a_record_that_cannot_be_read_is_not_touched(self):
         project_id = self.publish_fully()
@@ -716,149 +669,6 @@ class RealGit(unittest.TestCase):
     def head(self):
         return ss.git(self.work, "rev-parse", "HEAD")
 
-
-class RealRecoveryTest(RealGit):
-    def test_the_documented_recovery_of_two_stacked_posts_publishes_both_without_any_manual_git(self):
-        first = self.stuck("먼저 기록한 글")
-        second = self.approved("나중에 기록한 글")
-        self.stack_on_top(second)
-        self.assertEqual(ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), "2")
-        head = self.head()
-        text = unpushed.action_text(unpushed.describe(self.ctx, self.work))
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", text, "진짜 저장소에서도 맨 위 글을 가려낸다")
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, first, confirmed=True)                    # 앞 글을 올리려 하면 막히고 같은 안내를 한다
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", error.detail)
-        error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, first, confirmed=True)                 # 앞 글부터 되돌리려 해도 맨 위가 아니라 거절한다
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", error.detail, "되돌리는 쪽 오류에도 어느 글부터인지 적힌다")
-        self.assertEqual((self.head(), ss.status_of(self.ctx, first), ss.status_of(self.ctx, second)), (head, st.COMMITTED, st.COMMITTED), "거절한 동안 아무것도 바뀌지 않았다")
-        self.assertEqual(pages_flow.cancel_pages_publish(self.ctx, second, confirmed=True).status, st.PUBLISH_FAILED)       # 안내: 나중 글부터 --cancel --yes
-        self.assertEqual(ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), "1")
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, first, confirmed=True, wait=False).status, st.PUSHED, "남은 글을 같은 명령으로")
-        review.request_review(self.ctx, second, "github_pages", pages=ss.KO_PARAMS)                          # 되돌린 글은 다시 만들어 승인
-        review.grant_approval(self.ctx, second, "github_pages")
-        self.ctx.clock.advance(seconds=7)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, second, confirmed=True, wait=False).status, st.PUSHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{self.base}..main"), "2", "원격에 두 글이 모두 있다")
-        self.assertEqual(ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), "0")
-        self.assertEqual(ss.git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
-
-    def test_a_commit_the_app_did_not_make_blocks_a_new_post_and_nothing_is_adopted_or_undone(self):
-        ss.commit_file(self.work, "메모.txt", "내가 직접 만든 commit\n", "내 메모")
-        second = self.approved("새로 올릴 글")
-        head, remote = self.head(), ss.git(self.origin, "rev-parse", "main")
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, second, confirmed=True)
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-        for expected in ("앱이 만든 글 기록이 아닌 commit 1개", "git log origin/main..HEAD"):
-            self.assertIn(expected, error.detail)
-        self.assertNotIn("--cancel", error.detail)
-        self.assertEqual((self.head(), ss.git(self.origin, "rev-parse", "main"), ss.status_of(self.ctx, second)), (head, remote, st.APPROVED))
-        line = next(item for item in doctor.run_doctor(self.ctx) if item.name == "연결한 chanceblog 저장소")
-        self.assertEqual((line.status, line.code), ("warn", "PAGES_LOCAL_REPO_DIVERGED"))
-        self.assertIn("git log origin/main..HEAD", line.action)
-
-    def test_a_stuck_post_blocks_a_new_one_and_the_same_command_on_the_stuck_one_unblocks_it(self):
-        first = self.stuck("올리다 멈춘 글")
-        second = self.approved("새로 올릴 글")
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, second, confirmed=True)
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertIn(f"`publish-pages {first[:8]} --yes`", error.detail)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, first, confirmed=True, wait=False).status, st.PUSHED, "안내대로")
-        self.ctx.clock.advance(seconds=7)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, second, confirmed=True, wait=False).status, st.PUSHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{self.base}..main"), "2")
-
-    def test_an_orphan_commit_blocks_a_new_post_and_adopting_it_unblocks(self):
-        first = self.approved("기록 직후 멈춘 글")
-        plan = pages_flow.plan_pages_publish(self.ctx, first)
-        self.backend.commit(self.work, plan.post, plan.title)                                                  # commit 은 했는데 기록은 못 남긴 흔적
-        second = self.approved("새로 올릴 글")
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, second, confirmed=True)
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_DIVERGED")
-        for expected in ("올리다 기록(commit) 직후에 멈춘", f"`publish-pages {first[:8]} --yes`", "이어받아 올리거나"):
-            self.assertIn(expected, error.detail)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, first, confirmed=True, wait=False).status, st.PUSHED)
-        self.ctx.clock.advance(seconds=7)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, second, confirmed=True, wait=False).status, st.PUSHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{self.base}..main"), "2")
-
-    def test_two_apps_with_different_data_folders_that_stacked_their_commits_get_accurate_advice_and_the_advice_works(self):
-        """독립 검증 3차 재현(`e15b_recover.py`)의 모양 — `--data-dir` 이 다른 두 앱이 같은 저장소에 commit 을 쌓았다(저장소 잠금이 `.git` 안으로 옮겨진 뒤로는 새로 생기지 않지만 옛 흔적은 남을 수 있다).
-        앱마다 자기 글만 알아서 '나머지는 앱이 만든 것이 아닙니다' 라고 했던 것을 바로잡고, 안내대로(맨 위 commit 의 글부터 되돌린 뒤 남은 글을 올림) 하면 수동 git 없이 두 글이 모두 올라간다."""
-        first = self.stuck("앱 A 의 글")                                                         # 이 앱(데이터 폴더 A)의 글 — 아래 commit
-        backend_b = GitPagesBackend(git=self.spy, expected_origin=ss.LOCAL_ORIGIN, fetcher=ss.FakeWorld().fetcher)
-        ctx_b = ss.make_ctx(self.tmp / "second-app", backend=backend_b, repo=None, git=self.spy)       # 데이터 폴더가 다른 둘째 앱
-        ctx_b.expected_origin = ss.LOCAL_ORIGIN
-        ctx_b.settings.save_repo_path(str(self.work))
-        journal_b = Journal(ctx_b.workspace.journal_dir)
-        second = ss.make_approved(ctx_b, title="앱 B 의 글")
-        with ctx_b.store() as store:
-            text = store.load(second).variant("github_pages").rendered
-        header, _body = gate.split_post(text)
-        ctx_b.clock.advance(seconds=14)                                                          # 앱 A 의 글(+7초)과 파일 이름의 시각이 다르게
-        path = post_path(header["category"], header["lang"], ctx_b.now())
-        (self.work / path).parent.mkdir(parents=True, exist_ok=True)
-        (self.work / path).write_text(text, encoding="utf-8", newline="\n")
-        ss.git(self.work, "add", "--", path)
-        ss.git(self.work, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "글 올리기(데스크톱 앱): 앱 B 의 글")        # 앱 B 의 commit — 맨 위
-        info = CommitInfo(path, ss.git(self.work, "rev-parse", "HEAD"), ss.git(self.work, "rev-parse", "HEAD^"))
-        pages_flow._record_committed(ctx_b, self.work, journal_b, second, PagesPost(path, text, header["category"], header["lang"]), info, undo_on_failure=False)
-        self.assertEqual(ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), "2")
-        # 앱 A 의 눈: 자기 글(맨 위가 아님) 하나 + 기록 없는 앱 모양 commit 하나
-        situation_a = unpushed.describe(self.ctx, self.work)
-        self.assertEqual((situation_a.kind, situation_a.ahead, len(situation_a.entries), situation_a.foreign, situation_a.top()), (unpushed.MIXED, 2, 1, 1, None))
-        text_a = unpushed.action_text(situation_a)
-        self.assertIn("`--data-dir`", text_a)
-        self.assertNotIn("나머지는 앱이 만든 것이 아닙니다", text_a)
-        error = ss.code_of(pages_flow.run_pages_publish, self.ctx, first, confirmed=True)                    # 아래 글은 올릴 수 없고 같은 안내를 한다
-        self.assertEqual((error.code, "`--data-dir`" in error.detail), ("PAGES_LOCAL_REPO_DIVERGED", True))
-        pending_a = next(item for item in doctor.run_doctor(self.ctx) if item.name == "이어서 처리할 글")
-        self.assertIn("이 글의 기록 위에 다른 commit 이 있어", pending_a.message)
-        # 앱 B 의 눈: 자기 글이 맨 위 — 올릴 수는 없지만 되돌릴 수 있다
-        situation_b = unpushed.describe(ctx_b, self.work)
-        self.assertEqual((situation_b.kind, situation_b.foreign, situation_b.top().project_id), (unpushed.MIXED, 1, second))
-        pending_b = next(item for item in doctor.run_doctor(ctx_b) if item.name == "이어서 처리할 글")
-        self.assertIn("이 글의 기록이 맨 위(가장 나중)이고 그 아래에", pending_b.message)
-        self.assertIn(f"`publish-pages {second[:8]} --cancel --yes`", pending_b.message)
-        # 안내대로: 맨 위(앱 B)의 글부터 되돌린 뒤 남은 글(앱 A)을 올리고, 되돌린 글은 다시 만들어 승인한 뒤 올린다 — 수동 git 없이
-        self.assertEqual(pages_flow.cancel_pages_publish(ctx_b, second, confirmed=True).status, st.PUBLISH_FAILED)
-        self.assertEqual(ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), "1")
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, first, confirmed=True, wait=False).status, st.PUSHED)
-        review.request_review(ctx_b, second, "github_pages", pages=ss.KO_PARAMS)
-        review.grant_approval(ctx_b, second, "github_pages")
-        ctx_b.clock.advance(seconds=7)
-        self.assertEqual(pages_flow.run_pages_publish(ctx_b, second, confirmed=True, wait=False).status, st.PUSHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{self.base}..main"), "2", "원격에 두 글이 모두 있다")
-        self.assertEqual((ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), ss.git(self.work, "status", "--porcelain", "--untracked-files=all")), ("0", ""))
-
-    def test_a_real_commit_that_looks_like_the_apps_is_counted_and_a_hand_made_one_is_not(self):
-        self.assertEqual(self.backend.unpushed_made_by_app(self.work), 0)
-        ss.commit_file(self.work, "메모.txt", "직접 만든 commit\n", "내 메모")
-        self.assertEqual(self.backend.unpushed_made_by_app(self.work), 0, "직접 만든 commit 은 센 것이 아니다")
-        ss.commit_file(self.work, "_posts/x.md", "---\nlayout: post\n---\nx\n", "글 올리기(데스크톱 앱): 다른 앱이 만든 글")
-        ss.commit_file(self.work, "메모2.txt", "또 직접 만든 commit\n", "글 올리기(데스크톱 앱) 아님: 비슷하게 시작하는 내 메모")
-        ss.commit_file(self.work, "메모3.txt", "인용한 commit\n", "내 메모: 글 올리기(데스크톱 앱): 라는 제목을 인용했을 뿐")           # 제목 '맨 앞' 이 아니면 센 것이 아니다
-        self.assertEqual(self.backend.unpushed_made_by_app(self.work), 1)
-        self.assertEqual(ss.git(self.work, "rev-list", "--count", "refs/remotes/origin/main..HEAD"), "4", "읽기만 했다 — 아무것도 바꾸지 않았다")
-        self.assertEqual(self.spy.commands().count("log"), 3)
-        self.assertEqual(ss.git(self.origin, "rev-parse", "main"), self.base)
-
-    def test_a_post_pushed_before_its_record_was_finished_is_refused_by_cancel_with_its_own_code_and_finished_by_the_same_command(self):
-        project_id = self.stuck("올라가 버린 글")
-        ss.git(self.work, "push", "-q", "origin", "HEAD:main")                                                 # 올리기는 끝났는데 올림 기록을 쓰기 전에 멈춘 것과 같은 상태
-        ss.git(self.work, "fetch", "-q", "origin")
-        head = self.head()
-        error = ss.code_of(pages_flow.cancel_pages_publish, self.ctx, project_id, confirmed=True)
-        self.assertEqual(error.code, "PUBLISH_ALREADY_PUSHED")
-        self.assertNotEqual(error.code, "UNEXPECTED_ERROR")
-        self.assertEqual((self.head(), ss.status_of(self.ctx, project_id)), (head, st.COMMITTED), "아무것도 바꾸지 않았다")
-        items = [item for item in doctor.run_doctor(self.ctx) if item.name == "이어서 처리할 글"]
-        self.assertEqual(len(items), 1)
-        self.assertIn("이미 원격 main 에 올라가 있는데 올림 기록을 마치기 전에 멈췄습니다", items[0].message)
-        report = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True, wait=False)
-        self.assertEqual(report.status, st.PUSHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{self.base}..main"), "1", "글은 한 번만 올라갔다")
 
 
 def setUpModule():

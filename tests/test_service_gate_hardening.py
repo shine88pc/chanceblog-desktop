@@ -282,7 +282,7 @@ class WholeFlowBlocksTest(unittest.TestCase):
             error = ss.code_of(call)
             self.assertEqual(error.code, "CHECK_FAILED")
             self.assertIn("RAW_HTML", error.slots["걸린 항목 목록"])
-        self.assertEqual(self.backend.count("commit"), 0)
+        self.assertEqual(self.backend.count("build_branch_commit"), 0)
 
 
 class DirectionControlsInTheBodyTest(unittest.TestCase):

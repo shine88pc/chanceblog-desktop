@@ -170,22 +170,24 @@ class SourceRulesTest(unittest.TestCase):
         self.assertLessEqual(used, READ_ONLY_GIT, f"읽기 전용이 아닌 git 명령: {used - READ_ONLY_GIT}")
 
     def test_the_only_doors_to_commit_push_and_undo_are_the_publish_functions_behind_the_confirmation(self):
-        """backend 의 commit·push·discard 를 부르는 곳을 못 박는다 — 미리 보기·점검·명령줄 같은 곳이 몰래 부르면 여기서 걸린다."""
+        """backend 의 build_branch_commit·push_branch·discard(그리고 읽는 post_on_main·branch_on_remote)를 부르는 곳을 못 박는다 — 미리 보기·점검·명령줄 같은 곳이 몰래 부르면 여기서 걸린다."""
         callers = {}
         for path in FILES:
             tree = parse(path)
             for function in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
                 for node in ast.walk(function):
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("commit", "push", "discard") and ast.unparse(node.func.value).endswith("backend"):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("build_branch_commit", "push_branch", "discard", "post_on_main", "branch_on_remote") and ast.unparse(node.func.value).endswith("backend"):
                         callers.setdefault(node.func.attr, set()).add((path.name, function.name))
-        self.assertEqual(callers, {"commit": {("pages_flow.py", "run_pages_publish")}, "push": {("pages_flow.py", "_push")}, "discard": {("pages_flow.py", "_undo_commit"), ("pages_flow.py", "_record_committed")}})
+        self.assertEqual(callers, {"build_branch_commit": {("pages_flow.py", "_branch_stage")}, "push_branch": {("pages_flow.py", "_branch_stage")}, "discard": {("pages_flow.py", "_undo_commit")},
+                                   "post_on_main": {("pages_flow.py", "merge_check_pages")}, "branch_on_remote": {("pages_flow.py", "merge_check_pages")}})
         tree = parse(SERVICE / "pages_flow.py")
         users = {}
         for function in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
             for node in ast.walk(function):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("_push", "_undo_commit", "_record_committed", "_give_up"):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("_branch_stage", "_undo_commit", "_record_built", "_record_branch_pushed", "_fail_after_refusal", "_record_merged"):
                     users.setdefault(node.func.id, set()).add(function.name)
-        self.assertEqual(users, {"_push": {"run_pages_publish"}, "_undo_commit": {"_give_up", "cancel_pages_publish", "_cancel_unrecorded"}, "_record_committed": {"run_pages_publish"}, "_give_up": {"_push"}})
+        self.assertEqual(users, {"_branch_stage": {"run_pages_publish"}, "_undo_commit": {"cancel_pages_publish", "_cancel_unrecorded"}, "_record_built": {"_branch_stage"}, "_record_branch_pushed": {"_branch_stage"}, "_fail_after_refusal": {"_branch_stage"},
+                                 "_record_merged": {"merge_check_pages"}})
 
     def test_every_write_to_the_repository_happens_inside_the_repo_lock_taken_after_the_post_lock_and_the_public_check_is_outside_it(self):
         tree = parse(SERVICE / "pages_flow.py")
@@ -195,7 +197,7 @@ class SourceRulesTest(unittest.TestCase):
                 (kind is ast.With and any(isinstance(item.context_expr, ast.Call) and ast.unparse(item.context_expr.func) == name for item in node.items))
                 or (kind is ast.Call and ast.unparse(node.func).rsplit(".", 1)[-1] == name))]
 
-        for function_name, writers in (("run_pages_publish", ("commit", "_push", "_record_committed", "_record_pushed")), ("cancel_pages_publish", ("_undo_commit", "_cancel_unrecorded", "_mark_failed"))):
+        for function_name, writers in (("run_pages_publish", ("_branch_stage",)), ("merge_check_pages", ("_record_merged",)), ("cancel_pages_publish", ("_undo_commit", "_cancel_unrecorded", "_mark_failed"))):
             function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
             outer = named(function, "publish_lock", ast.With)
             self.assertEqual(len(outer), 1, function_name)
@@ -328,7 +330,7 @@ class NoLocalPathLeakTest(unittest.TestCase):
             ctx = ss.make_ctx(tmp, backend=backend)
             project_id = ss.make_approved(ctx)
             pages_flow.run_pages_publish(ctx, project_id, confirmed=True)
-            commit = next(call for call in backend.calls if call[0] == "commit")
+            commit = next(call for call in backend.calls if call[0] == "build_branch_commit")
             for text in (commit[1], commit[2], commit[3]):
                 self.assertNotIn(str(tmp), text)
                 self.assertNotIn(str(tmp).replace("\\", "/"), text)
@@ -347,7 +349,7 @@ class NoLocalPathLeakTest(unittest.TestCase):
                     ss.review.request_review(ctx, view.project_id, "github_pages", pages=ss.KO_PARAMS)
                     self.assertEqual(ss.code_of(ss.review.grant_approval, ctx, view.project_id, "github_pages").code, "CHECK_FAILED")
                     self.assertEqual(ss.status_of(ctx, view.project_id), "REVIEW_REQUIRED")
-            self.assertEqual(backend.count("commit"), 0)
+            self.assertEqual(backend.count("build_branch_commit"), 0)
 
 
 # 저장한 초안(LOCALSAVE, D-361) — 글 보관함(`Store`)의 `drafts` 표에 초안을 쓰거나 지우는 서비스 함수는 **둘뿐**이다. 새 쓰기 함수가 생기면 아래 허용 목록에 (파일, 함수)와 이유 한 줄을 더해야 한다(몰래 늘면 걸린다).

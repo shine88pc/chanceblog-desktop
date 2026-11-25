@@ -43,7 +43,7 @@ REEXPORT_HOLDERS = {"os", "_os"}                                                
 # (파일, 쓰는 것) → 이유. 이 표가 정직한 코드가 바깥과 닿는 길의 전부다(회귀 그물 — 일부러 숨기는 코드를 막는 방어가 아니다, AS-S1 2차 권고-3·D-619).
 # NET 갈래(D-735)부터 범주 표 다섯의 합집합이다 — 새 접속 갈래는 **자기 범주 표에 한 줄**만 더한다. 접속·쓰기 범주(`ALLOWED_GIT_WRITE`·`ALLOWED_NET_CLIENT`·`ALLOWED_LOOPBACK`)의 이유에는 관문 이름(`require_…`)이 있어야 한다.
 ALLOWED_GIT_WRITE = {                       # 정확히 1곳 — git 이 접속한다(앱은 git 하위 프로세스를 띄울 뿐이다)
-    ("publish/gitrepo.py", "subprocess"): "git 하위 프로세스를 띄우는 유일한 곳(`run_command`) — 외부 Write 관문(`capabilities.require_external_write`)이 첫 줄이라 이 빌드에서는 한 번도 띄우지 않는다",
+    ("publish/gitrepo.py", "subprocess"): "git 하위 프로세스를 띄우는 유일한 곳(`run_command`) — 외부 Write 관문(`capabilities.require_external_write`)이 첫 줄이라 이 빌드에서는 한 번도 띄우지 않는다. 네트워크 명령(받기·가지 확인·가지 올리기·올리기 점검)은 그 앞의 `run_git` 에서 가지 올리기 전용 인자 표(`network_shape` — 정해진 네 모양뿐, 그 밖은 하위 프로세스 전에 `PAGES_PUSH_REFUSED`)와 둘째 관문 `capabilities.require_net` 를 지난 것만 간다(PUBPR)",
 }
 ALLOWED_LOCAL_WORKER = {                    # 정확히 1곳 — 이 PC 안 계산(바깥에 쓰지 않는다)
     ("ui/ocr_adapter.py", "subprocess"): "이 PC 의 글자 읽기 작업자를 띄우는 유일한 곳(`_launch`) — `LOCAL_OCR` 관문이 첫 줄이고 인자는 고정, 셸 없음, 소켓·인터넷 코드 없음, 바깥에 쓰지 않는다(이 PC 안의 계산, 결정 D-512)",

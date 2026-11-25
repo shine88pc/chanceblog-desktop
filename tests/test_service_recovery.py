@@ -1,11 +1,12 @@
 """서비스 층 — 올리다 프로그램이 죽어도 같은 도구로 복구되는지를 **진짜 git 과 진짜 프로세스 종료(`os._exit`)** 로 확인한다(로컬 bare 저장소, 네트워크 없음).
 
-지키는 것:
-  1) 올리는 흐름의 여덟 지점(before_push·after_push·after_journal_pushed·before_check·after_check·before_journal_remove·**after_commit·after_journal_committed**)에서 프로세스를 갑자기 끝내도
-     같은 명령(`publish-pages --yes`)이 글을 한 번만 올려 PUBLISHED 까지 이어 간다(같은 글이 두 번 올라가지 않는다).
-  2) commit 직후에 죽은 두 지점(승인됨 + 올리지 않은 commit 하나)은 그 commit 이 **이 글의 승인한 렌더링을 그대로 더한 앱의 commit 하나뿐**일 때만 이어받고,
-     `--cancel --yes` 는 그 commit 을 되돌려 저장소를 처음 상태로 돌린다.
-  3) 조금이라도 다르면(내용·다른 파일 섞임·commit 둘·앱의 commit 이 아님·다른 분야 폴더) 이어받지도 되돌리지도 않고 저장소를 그대로 둔다.
+지키는 것(PUBPR — 새 흐름은 새 가지에만 올린다):
+  1) 올리는 흐름의 네 지점(after_build · after_journal_built · after_push · after_journal_branch_pushed)에서 프로세스를 갑자기 끝내도 같은 명령(`publish-pages --yes`)이 새 가지를 **한 번만** 올려
+     MERGE_PENDING 까지 이어 간다(같은 가지가 두 번 올라가지 않고, 원격 main 은 한 번도 움직이지 않고, 작업 폴더는 그대로다). 올리기 전에 적어 둔 `built` 기록이 있으면 같은 커밋을 이어받는다(다시 만들지 않는다).
+  2) 옛 방식으로 이 PC 에 남은 commit(승인됨 + 올리지 않은 commit 하나)은 이어받지 않는다 — `--cancel --yes` 가 **이 글의 승인한 렌더링을 그대로 더한 앱의 commit 하나뿐일 때만** 되돌려 저장소를 처음 상태로 돌린다.
+  3) 조금이라도 다르면(내용·다른 파일 섞임·commit 둘·앱의 commit 이 아님·다른 분야 폴더) 되돌리지도 않고 저장소를 그대로 둔다.
+  4) 백업으로 되돌린 글이 이미 올라간 글을 다시 승인됨으로 되살려도 같은 가지를 이어받을 뿐 두 번째 가지를 만들지 않고, 같은 글은 두 번 공개되지 않는다.
+옛 시험의 '커밋 이어받기'(commit 직후 두 지점)는 새 흐름에 로컬 commit 이 없어 사라졌다 — 같은 목적은 위 1) 의 `built` 기록 이어받기가 한다.
 """
 import os
 import subprocess
@@ -19,11 +20,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 
 from chanceblog_desktop.content import status as st  # noqa: E402
-from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.publish import pages  # noqa: E402
 from chanceblog_desktop.render.pages import PagesPost  # noqa: E402
 from chanceblog_desktop.service import pages_flow, projects  # noqa: E402
-from chanceblog_desktop.service.backend import GitPagesBackend  # noqa: E402
-from chanceblog_desktop.service.journal import STAGE_COMMITTED, Journal  # noqa: E402
+from chanceblog_desktop.service.backend import GitBranchBackend  # noqa: E402
+from chanceblog_desktop.service.journal import STAGE_COMMITTED, Journal, PublishRecord  # noqa: E402
 
 CHILD = textwrap.dedent('''
     import os, sys
@@ -32,7 +33,7 @@ CHILD = textwrap.dedent('''
     import service_support as ss
     ss.external_write_on()                         # 자식 프로세스도 시험이므로 외부 Write 관문을 임시로 연다(소스 상수는 False — PCSEC1 H3)
     from chanceblog_desktop.service import cli
-    from chanceblog_desktop.service.backend import GitPagesBackend
+    from chanceblog_desktop.service.backend import GitBranchBackend
     from chanceblog_desktop.service.context import make_context
     from chanceblog_desktop.service.journal import Journal
 
@@ -48,26 +49,20 @@ CHILD = textwrap.dedent('''
             os._exit(9)                                                  # 정리 없이 갑자기 끝난다(finally·atexit 도 안 돈다)
 
 
-    class Crashing(GitPagesBackend):
-        def commit(self, repo_path, post, title):
-            info = super().commit(repo_path, post, title)
-            crash("after_commit")
-            return info
+    class Crashing(GitBranchBackend):
+        def build_branch_commit(self, repo_path, post, title):
+            built = super().build_branch_commit(repo_path, post, title)
+            crash("after_build")
+            return built
 
-        def push(self, repo_path, post):
+        def push_branch(self, repo_path, built, post):
             crash("before_push")
-            result = super().push(repo_path, post)
+            result = super().push_branch(repo_path, built, post)
             crash("after_push")
             return result
 
-        def check_deployed(self, *args):
-            crash("before_check")
-            result = super().check_deployed(*args)
-            crash("after_check")
-            return result
 
-
-    real_write, real_remove = Journal.write, Journal.remove
+    real_write = Journal.write
 
 
     def write(self, record):
@@ -75,19 +70,14 @@ CHILD = textwrap.dedent('''
         crash("after_journal_" + record.stage)
 
 
-    def remove(self, project_id, **kwargs):
-        crash("before_journal_remove")
-        return real_remove(self, project_id, **kwargs)
-
-
-    Journal.write, Journal.remove = write, remove
+    Journal.write = write
     backend = Crashing(expected_origin=ss.LOCAL_ORIGIN, fetcher=world.fetcher, sleep=world.sleep, monotonic=world.clock)
     ctx = make_context(data_dir=data, repo=repo, backend=backend, expected_origin=ss.LOCAL_ORIGIN, clock=clock)
     sys.exit(cli.main(argv, ctx=ctx))
 ''')
 
-POINTS = ("before_push", "after_push", "after_journal_pushed", "before_check", "after_check", "before_journal_remove", "after_commit", "after_journal_committed")
-NEWLY_RECOVERED = ("after_commit", "after_journal_committed")
+POINTS = ("after_build", "after_journal_built", "after_push", "after_journal_branch_pushed")
+RESUMED = ("after_journal_built", "after_push", "after_journal_branch_pushed")       # 올리기 전에 적어 둔 기록이 있어 같은 커밋을 이어받는 지점
 
 
 class RealGit(unittest.TestCase):
@@ -102,7 +92,7 @@ class RealGit(unittest.TestCase):
         self.tmp = Path(tmp.name)
         self.origin, self.work = self.box.copy_into(self.tmp)
         self.spy = ss.Spy()
-        self.backend = GitPagesBackend(git=self.spy, expected_origin=ss.LOCAL_ORIGIN, fetcher=ss.FakeWorld().fetcher)
+        self.backend = GitBranchBackend(git=self.spy, expected_origin=ss.LOCAL_ORIGIN, fetcher=ss.FakeWorld().fetcher)
         self.ctx = ss.make_ctx(self.tmp, backend=self.backend, repo=None, git=self.spy)
         self.ctx.expected_origin = ss.LOCAL_ORIGIN
         self.ctx.settings.save_repo_path(str(self.work))
@@ -128,20 +118,23 @@ class RealGit(unittest.TestCase):
     def remote(self):
         return ss.git(self.origin, "rev-parse", "main")
 
+    def branches(self):
+        return sorted(ss.git(self.origin, "for-each-ref", "--format=%(refname:short)", "refs/heads/desktop").splitlines())
+
     def child(self, point, minutes, *argv):
         args = [sys.executable, "-X", "utf8", str(self.script), str(ss.ROOT / "src"), str(ss.ROOT / "tests"), str(self.ctx.workspace.root), str(self.work), point, str(minutes), *argv]
         env = {key: value for key, value in os.environ.items() if key not in ("CHANCEBLOG_LOCAL_REPO", "CHANCEBLOG_DESKTOP_DATA")}
         env["PYTHONIOENCODING"] = "utf-8"
-        done = subprocess.run(args, capture_output=True, env=env, timeout=300)
+        done = subprocess.run(args, capture_output=True, env=env, timeout=600)
         return done.returncode, done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
 
     def leftovers(self):
         return sorted(path.name for path in self.ctx.workspace.journal_dir.iterdir() if path.name.endswith(".lock") or ".stale-" in path.name) if self.ctx.workspace.journal_dir.exists() else []
 
     def make_orphan(self, project_id):
-        """commit 직후에 프로그램이 죽은 것과 같은 상태를 이 프로세스 안에서 만든다 — 진짜 commit 은 하고 발행 기록·상태는 남기지 않는다."""
+        """옛 방식으로 commit 직후에 프로그램이 죽은 것과 같은 상태를 이 프로세스 안에서 만든다 — 진짜 commit 은 하고 발행 기록·상태는 남기지 않는다(새 흐름은 이런 commit 을 만들지 않는다)."""
         plan = pages_flow.plan_pages_publish(self.ctx, project_id)
-        info = self.backend.commit(self.work, plan.post, plan.title)
+        info = pages.commit_post(self.work, plan.post, title=plan.title, git=self.spy, expected_origin=ss.LOCAL_ORIGIN)
         return plan, info
 
 
@@ -152,162 +145,72 @@ class CrashPointsTest(RealGit):
     def crash_and_recover(self, point):
         project_id = self.approved()
         approved_text = self.rendering(project_id)
-        before_remote = self.remote()
+        before_remote, head = self.remote(), self.head()
         code, out, err = self.child(point, 0, "publish-pages", project_id, "--yes")
         self.assertEqual(code, 9, f"{point}: 프로세스가 그 지점에서 끝나지 않았다 | {out} | {err}")
-        crashed_status = self.status(project_id)
-        if point in NEWLY_RECOVERED:                                                                # 복구하기 전에 미리 보기는 '이어받는다' 고 말하고 아무것도 바꾸지 않는다
-            snapshot = (self.head(), self.remote(), ss.tree_snapshot(self.work))
-            code, out, err = self.child("-", 0, "publish-pages", project_id)
-            self.assertEqual((code, err), (0, ""), err)
-            self.assertIn("이어받습니다", out)
-            self.assertIn("아직 아무것도 하지 않았습니다", out)
-            self.assertEqual((self.head(), self.remote(), ss.tree_snapshot(self.work)), snapshot)
-            self.assertEqual(self.status(project_id), st.APPROVED)
+        self.assertEqual(self.status(project_id), st.APPROVED, "죽은 뒤에는 아직 '새 가지에 올림' 을 상태에 적지 못했다")
+        snapshot = (self.head(), self.remote(), ss.tree_snapshot(self.work))
+        code, out, err = self.child("-", 0, "publish-pages", project_id)                           # 복구하기 전에 미리 보기는 아무것도 바꾸지 않는다
+        self.assertEqual((code, err), (0, ""), err)
+        self.assertIn("아직 아무것도 하지 않았습니다", out)
+        self.assertEqual((self.head(), self.remote(), ss.tree_snapshot(self.work)), snapshot)
+        self.assertEqual(self.status(project_id), st.APPROVED)
         code, out, err = self.child("-", 0, "publish-pages", project_id, "--yes")                   # 곧바로 같은 명령 — 죽은 작업이 남긴 잠금은 그 프로세스가 이미 없으므로 30분을 기다리지 않고 넘겨받는다
-        self.assertEqual(code, 0, f"{point}: 같은 명령으로 복구되지 않았다 (죽은 뒤 상태 {crashed_status}) | {out} | {err}")
-        self.assertEqual(self.status(project_id), st.PUBLISHED, point)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{before_remote}..main"), "1", f"{point}: 글이 한 번만 올라갔다")
-        self.assertEqual(ss.git(self.origin, "diff-tree", "--no-commit-id", "--name-status", "-r", "main"), f"A\t{ss.KO_PATH}")
-        self.assertEqual(ss.blob(self.origin, f"main:{ss.KO_PATH}"), approved_text, "올라간 글은 승인한 렌더링 그대로다")
-        self.assertEqual(self.head(), self.remote(), "연결한 저장소도 올린 것과 같다")
+        self.assertEqual(code, 0, f"{point}: 같은 명령으로 복구되지 않았다 | {out} | {err}")
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING, point)
+        self.assertEqual(len(self.branches()), 1, f"{point}: 새 가지가 하나만 올라갔다: {self.branches()}")
+        branch = self.branches()[0]
+        self.assertEqual(self.remote(), before_remote, f"{point}: 원격 main 은 한 번도 움직이지 않았다")
+        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{before_remote}..{branch}"), "1")
+        self.assertEqual(ss.git(self.origin, "diff-tree", "--no-commit-id", "--name-status", "-r", branch), f"A\t{ss.KO_PATH}")
+        self.assertEqual(ss.blob(self.origin, f"{branch}:{ss.KO_PATH}"), approved_text, "올라간 글은 승인한 렌더링 그대로다")
+        self.assertEqual(self.head(), head, "연결한 저장소의 HEAD 는 그대로다")
         self.assertEqual(ss.git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
+        self.assertFalse((self.work / ss.KO_PATH).exists(), "작업 폴더에 글 파일을 쓰지 않았다")
         self.assertEqual(self.leftovers(), [], "잠금·옮겨 둔 낡은 파일이 남지 않았다")
         self.assertIn("넘겨받았습니다", out, "죽은 작업이 남긴 낡은 잠금을 넘겨받았다고 알린다")
         self.assertIn("그 프로세스는 이미 끝나 있음", out)
         self.assertEqual(out.count("넘겨받았습니다"), 1, "알림은 한 번만 나온다")
-        if point in NEWLY_RECOVERED:
-            self.assertIn("이어받았습니다", out, "commit 직후에 멈춘 것을 이어받았다고 알린다")
-            self.assertNotIn("글 파일을 만들고", out, "다시 commit 하지 않았다")
-        if point != "before_journal_remove":
-            self.assertIsNone(self.journal.read(project_id), "끝난 글의 발행 기록은 지운다")
+        record = self.journal.read(project_id)
+        self.assertEqual((record.stage, record.branch), ("branch_pushed", branch))
+        if point in RESUMED:
+            self.assertIn("이어받았습니다", out, "올리기 전에 멈춘 것을 이어받았다고 알린다")
+            self.assertNotIn("받은 원격 main 위에 글 파일 하나", out, "다시 만들지 않았다")
+        else:
+            self.assertIn("받은 원격 main 위에 글 파일 하나", out, "기록을 적기 전에 죽었으니 새로 만든다")
 
-    def cancel_puts_back(self, point):
+    def test_after_a_crash_at_after_push_the_branch_is_already_on_the_remote_and_the_same_command_only_records_it(self):
+        """올리기는 끝났는데 `branch_pushed` 기록을 쓰기 전에 죽었다 — 다시 하면 원격에 같은 끝이 이미 있어 두 번째 push 를 하지 않는다."""
         project_id = self.approved()
-        base = self.head()
-        code, _out, err = self.child(point, 0, "publish-pages", project_id, "--yes")
-        self.assertEqual(code, 9, err)
-        self.assertNotEqual(self.head(), base, "올리지 않은 commit 이 있다")
-        code, out, err = self.child("-", 0, "publish-pages", project_id, "--cancel", "--yes")
-        self.assertEqual(code, 0, f"{out} | {err}")
-        self.assertEqual(out.count("넘겨받았습니다"), 1, "알림은 한 번만 나온다")
-        self.assertEqual(self.head(), base, "commit 을 되돌려 처음 상태다")
-        self.assertFalse((self.work / ss.KO_PATH).exists())
-        self.assertEqual(ss.git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
-        self.assertEqual(self.remote(), ss.git(self.work, "rev-parse", "origin/main"), "원격은 처음부터 건드리지 않았다")
-        self.assertEqual(projects.show_project(self.ctx, project_id).variant("github_pages").error_code, "PUBLISH_CANCELLED")
-        self.assertEqual(self.status(project_id), st.PUBLISH_FAILED)
-        self.assertIsNone(self.journal.read(project_id))
-        self.assertEqual(self.leftovers(), [])
-
-
-    def test_after_a_crash_at_after_push_cancel_is_refused_with_its_own_code_and_the_same_command_finishes_the_post(self):
-        """올리기는 끝났는데 올림 기록을 쓰기 전에 죽었다 — `--cancel --yes` 는 이미 올라간 글을 되돌리지 않고 전용 오류(예전에는 UNEXPECTED_ERROR)로 거절하며 어떻게 마무리하는지 알린다."""
-        project_id = self.approved()
-        before_remote = self.remote()
         code, _out, err = self.child("after_push", 0, "publish-pages", project_id, "--yes")
         self.assertEqual(code, 9, err)
-        self.assertEqual(self.status(project_id), st.COMMITTED, "원격에는 올라갔지만 상태는 기록하지 못했다")
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{before_remote}..main"), "1")
-        head = self.head()
-        code, out, err = self.child("-", 0, "publish-pages", project_id, "--cancel", "--yes")
-        self.assertEqual(code, 1)
-        self.assertIn("PUBLISH_ALREADY_PUSHED", err)
-        self.assertNotIn("UNEXPECTED_ERROR", err)
-        self.assertNotIn("로그 내보내기", err)
-        self.assertIn(f"publish-pages {project_id[:8]} --yes", err, "마무리하는 명령을 알려 준다")
-        self.assertEqual((self.head(), self.status(project_id), self.remote()), (head, st.COMMITTED, ss.git(self.origin, "rev-parse", "main")), "아무것도 바꾸지 않았다")
-        code, out, err = self.child("-", 0, "doctor")
-        self.assertIn("이미 원격 main 에 올라가 있는데 올림 기록을 마치기 전에 멈췄습니다", out)
-        code, out, err = self.child("-", 0, "publish-pages", project_id, "--yes")
-        self.assertEqual(code, 0, f"{out} | {err}")
-        self.assertEqual(self.status(project_id), st.PUBLISHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", f"{before_remote}..main"), "1", "글은 한 번만 올라갔다")
-
-    def test_a_crash_before_the_record_is_removed_leaves_a_harmless_record_that_the_next_check_cleans(self):
-        project_id = self.approved()
-        code, _out, err = self.child("before_journal_remove", 0, "publish-pages", project_id, "--yes")
-        self.assertEqual(code, 9, err)
-        self.assertEqual(self.status(project_id), st.PUBLISHED)
-        self.assertIsNotNone(self.journal.read(project_id), "공개됐지만 발행 기록이 남았다")
+        self.assertEqual(self.status(project_id), st.APPROVED, "원격에는 올라갔지만 상태는 기록하지 못했다")
+        self.assertEqual(len(self.branches()), 1)
+        self.assertEqual(self.journal.read(project_id).stage, "built")
         code, out, err = self.child("-", 0, "doctor")
         self.assertEqual(code, 0, err)
-        self.assertIn("남은 발행 기록", out)
-        self.assertIn("해롭지 않습니다", out)
-        self.assertIn(f"check-deploy {project_id[:8]}", out)
-        self.assertIsNotNone(self.journal.read(project_id), "doctor 는 읽기만 한다")
-        code, out, err = self.child("-", 0, "check-deploy", project_id)
+        code, out, err = self.child("-", 0, "publish-pages", project_id, "--yes")
         self.assertEqual(code, 0, f"{out} | {err}")
-        self.assertIn("정리했습니다", out)
-        self.assertIsNone(self.journal.read(project_id), "그 글의 기록만 지웠다")
-        self.assertEqual(self.leftovers(), [])
-        code, out, err = self.child("-", 0, "doctor")
-        self.assertNotIn("남은 발행 기록", out)
+        self.assertIn("같은 가지가 이미 원격에 같은 끝으로 올라가 있어 다시 올리지 않았습니다", out)
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING)
+        self.assertEqual(len(self.branches()), 1, "가지는 한 번만 올라갔다")
 
 
-def _add(name, method, point):
+def _add(name, point):
     def run(self):
-        getattr(self, method)(point)
+        self.crash_and_recover(point)
 
     run.__name__ = name
     setattr(CrashPointsTest, name, run)
 
 
 for _point in POINTS:
-    _add(f"test_a_crash_at_{_point}_is_recovered_by_the_same_command_and_the_post_goes_up_once", "crash_and_recover", _point)
-for _point in NEWLY_RECOVERED:
-    _add(f"test_after_a_crash_at_{_point}_cancel_puts_the_repository_back_exactly", "cancel_puts_back", _point)
+    _add(f"test_a_crash_at_{_point}_is_recovered_by_the_same_command_and_the_branch_goes_up_once", _point)
 
 
 @unittest.skipUnless(ss.HAVE_GIT, "git 이 필요하다")
 class AdoptionInProcessTest(RealGit):
-    def test_the_plan_adopts_an_orphan_commit_and_the_run_records_pushes_and_verifies_it(self):
-        project_id = self.approved()
-        plan, info = self.make_orphan(project_id)
-        self.assertIsNone(self.journal.read(project_id))
-        again = pages_flow.plan_pages_publish(self.ctx, project_id)
-        self.assertEqual((again.stage, again.path, again.adopted.commit, again.adopted.base), (pages_flow.STAGE_ADOPT, ss.KO_PATH, info.commit, info.base))
-        self.assertTrue(any("이어받" in action for action in again.actions))
-        self.ctx.clock.advance(hours=2)                                       # 시각이 달라도 만들어 둔 파일 이름 그대로다
-        calls_before = len(self.spy.calls)
-        report = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
-        self.assertEqual((report.status, report.plan.stage, report.plan.path), (st.PUBLISHED, pages_flow.STAGE_ADOPT, ss.KO_PATH))
-        self.assertTrue(any("이어받았습니다" in step for step in report.steps), report.steps)
-        self.assertNotIn("commit", [call[0] for call in self.spy.calls[calls_before:]], "다시 commit 하지 않았다")
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", "main"), "4", "처음 3개 + 글 하나")
-        self.assertEqual(ss.blob(self.origin, f"main:{ss.KO_PATH}"), self.rendering(project_id))
-        self.assertEqual(self.head(), self.remote())
-
-    def test_an_orphan_is_adopted_even_when_a_bot_pushed_something_else_in_the_meantime(self):
-        project_id = self.approved()
-        self.make_orphan(project_id)
-        bot = self.tmp / "bot"
-        ss.git(self.tmp, "clone", "-q", str(self.origin), "bot")
-        ss.git(bot, "config", "core.autocrlf", "false")
-        ss.commit_file(bot, "_posts/Bot/2026-11-01-KR-090000.md", "봇 글\n", "bot")
-        ss.git(bot, "push", "-q", "origin", "HEAD:main")
-        report = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
-        self.assertEqual(report.status, st.PUBLISHED)
-        self.assertEqual(ss.git(self.origin, "rev-list", "--count", "main"), "5", "봇의 글과 우리 글이 모두 있다")
-        self.assertEqual(ss.blob(self.origin, f"main:{ss.KO_PATH}"), self.rendering(project_id))
-
-    def test_a_failure_while_adopting_leaves_the_found_commit_exactly_as_it_was_and_the_next_run_adopts_again(self):
-        project_id = self.approved()
-        _plan, info = self.make_orphan(project_id)
-        head = self.head()
-        real = pages_flow.Journal.write
-        pages_flow.Journal.write = lambda self_, record: (_ for _ in ()).throw(AppError("FILE_WRITE_FAILED", {"경로": "x"}))
-        try:
-            error = ss.code_of(pages_flow.run_pages_publish, self.ctx, project_id, confirmed=True)
-        finally:
-            pages_flow.Journal.write = real
-        self.assertEqual(error.code, "FILE_WRITE_FAILED")
-        self.assertIn("그대로 두었다", error.detail)
-        self.assertEqual(self.head(), head, "이어받으려던 commit 을 되돌리지 않았다")
-        self.assertEqual(self.status(project_id), st.APPROVED)
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.PUBLISHED)
-        self.assertEqual(self.head(), self.remote())
-        self.assertEqual(info.path, ss.KO_PATH)
+    """옛 방식으로 이 PC 에 남은 commit 은 이어받지 않고 되돌리기만 한다(옛 '이어받기' 시험은 새 흐름의 `built` 이어받기 — 위 CrashPointsTest — 로 옮겼다)."""
 
     def test_cancel_puts_the_orphan_back_and_a_cancelled_post_must_be_reviewed_again(self):
         project_id = self.approved()
@@ -321,7 +224,6 @@ class AdoptionInProcessTest(RealGit):
     def test_cancel_also_clears_an_old_record_left_behind_by_the_crash_after_the_record_was_written(self):
         project_id = self.approved()
         plan, info = self.make_orphan(project_id)
-        from chanceblog_desktop.service.journal import PublishRecord
         self.journal.write(PublishRecord(project_id, plan.path, info.commit, info.base, STAGE_COMMITTED))
         pages_flow.cancel_pages_publish(self.ctx, project_id, confirmed=True)
         self.assertIsNone(self.journal.read(project_id))
@@ -414,13 +316,24 @@ class RestoredPostTest(RealGit):
     """백업으로 되돌린 글이 이미 올라간 글을 다시 '승인됨' 으로 되살려도 같은 글이 두 번 공개되지 않는다."""
 
     def test_a_backup_restored_after_publishing_does_not_publish_the_same_post_twice(self):
+        """새 흐름 — 발행 기록(백업에 들어 있지 않다)이 남아 있어서 되살린 '승인됨' 글은 이미 올린 같은 가지를 이어받을 뿐 두 번째 가지를 만들지 않는다. 병합까지 끝난 뒤라면 같은 내용이 main 에 있어 `DUPLICATE_CONTENT` 로 막힌다."""
         project_id = self.approved()
         backup = projects.backup_store(self.ctx)                                 # 승인된 때의 백업
-        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.PUBLISHED)
-        remote, head = self.remote(), self.head()
+        self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.MERGE_PENDING)
+        branches, remote = self.branches(), self.remote()
+        self.assertEqual(len(branches), 1)
         projects.restore_store(self.ctx, backup, confirmed=True)                                 # 되돌리면 이미 올린 글이 다시 '승인됨' 이다
         self.assertEqual(self.status(project_id), st.APPROVED)
-        self.ctx.clock.advance(hours=1)                                          # 파일 이름이 달라지는 시각(같은 이름이면 같은 주소 검사가 먼저 막는다)
+        self.ctx.clock.advance(hours=1)                                          # 파일 이름이 달라질 시각 — 그래도 남은 발행 기록의 이름·가지를 이어받는다
+        again = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        self.assertEqual((again.status, again.plan.path), (st.MERGE_PENDING, ss.KO_PATH))
+        self.assertEqual((self.branches(), self.remote()), (branches, remote), "두 번째 가지를 만들지 않았다")
+        _branch, commit = st.split_remote_id(projects.show_project(self.ctx, project_id).variant("github_pages").remote_id)
+        ss.git(self.origin, "update-ref", "refs/heads/main", commit)                                 # 병합을 흉내 낸 뒤 — 같은 내용이 main 에 있다
+        ss.git(self.work, "fetch", "-q", "origin")                                                  # 사용자의 git 이 받아 둔 것처럼(점검은 받아 둔 원격 main 을 본다)
+        projects.restore_store(self.ctx, backup, confirmed=True)
+        self.journal.remove(project_id)                                          # 발행 기록까지 잃은 최악의 경우
+        self.ctx.clock.advance(hours=1)
         for call in (lambda: pages_flow.plan_pages_publish(self.ctx, project_id), lambda: pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)):
             error = ss.code_of(call)
             self.assertEqual(error.code, "DUPLICATE_CONTENT")
@@ -428,7 +341,7 @@ class RestoredPostTest(RealGit):
         code, out, err = ss.run_cli(self.ctx, "publish-pages", project_id)
         self.assertEqual(code, 1)
         self.assertIn("DUPLICATE_CONTENT", err)
-        self.assertEqual((self.remote(), self.head(), self.status(project_id)), (remote, head, st.APPROVED), "아무것도 올리지 않았다")
+        self.assertEqual((self.branches(), self.status(project_id)), (branches, st.APPROVED), "아무것도 더 올리지 않았다")
 
     def test_the_same_text_is_found_in_the_working_folder_even_with_windows_line_endings_and_in_the_received_remote_branch(self):
         text = self.rendering(self.approved())

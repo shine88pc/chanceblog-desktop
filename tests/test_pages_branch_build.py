@@ -110,41 +110,76 @@ class BranchBase(unittest.TestCase):
         return dict(line.split(" ") for line in text.splitlines() if line)
 
     def helper_clone(self, name="helper"):
-        """앱이 아닌 시험 도우미(사람·봇)가 쓰는 별도 복제본 — 시험 준비에만 쓴다."""
+        """앱이 아닌 시험 도우미(사람·봇)가 쓰는 별도 복제본 — 병합 단추를 흉내 내거나 앱 밖에서 직접 올려 보는 시험 준비에만 쓴다(복제는 비싸서 꼭 필요한 곳에서만)."""
         target = self.tmp / name
         if not target.exists():
             git(self.tmp, "clone", "-q", str(self.origin), name)
-            git(target, "config", "core.autocrlf", "false")
+            for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
+                git(target, "config", key, value)
         git(target, "pull", "-q", "--ff-only", "origin", "main")
         return target
 
-    def bot_pushes(self, name="_posts/Bot/2026-10-30-KR-090000.md", text="봇 글\n", clone="bot"):
+    def plumb(self, args, data=b"", env=None):
+        """원격(origin, bare) 저장소에 직접 하는 플러밍 명령 — 시험 준비용(복제·작업 폴더 없이 원격의 모양을 정한다). 앱 코드를 거치지 않는다."""
+        done = subprocess.run(["git", "--git-dir", str(self.origin), "-c", "user.name=bot", "-c", "user.email=bot@example.com", "-c", "commit.gpgsign=false", *args], input=data, capture_output=True,
+                              env=dict(os.environ, **(env or {})))
+        if done.returncode != 0:
+            raise AssertionError(f"git {' '.join(args)}: {done.stderr.decode('utf-8', 'replace')}")
+        return done.stdout.decode("utf-8").strip()
+
+    def commit_on_origin(self, name, text, *, ref="refs/heads/main", message="bot", extra_parents=()):
+        """원격의 `ref` 끝(없으면 main 끝) 위에 글 파일 하나를 더한 커밋을 만들어 그 `ref` 를 옮긴다(플러밍: 임시 색인으로 read-tree, update-index, write-tree, commit-tree, update-ref) → 새 커밋."""
+        index = self.tmp / f"origin-{len(list(self.tmp.glob('origin-*.index')))}.index"
+        env = {"GIT_INDEX_FILE": str(index)}
+        blob = self.plumb(["hash-object", "-w", "--stdin"], text.encode("utf-8"))
+        tip = self.plumb(["rev-parse", "--verify", "--quiet", ref]) if self.plumb(["for-each-ref", ref]) else self.plumb(["rev-parse", "--verify", "--quiet", "refs/heads/main"])
+        self.plumb(["read-tree", tip], env=env)
+        self.plumb(["update-index", "--add", "--cacheinfo", f"100644,{blob},{name}"], env=env)
+        tree = self.plumb(["write-tree"], env=env)
+        parents = [item for parent in (tip, *extra_parents) for item in ("-p", parent)]
+        commit = self.plumb(["commit-tree", tree, *parents, "-m", message])
+        self.plumb(["update-ref", ref, commit])
+        return commit
+
+    def bot_pushes(self, name="_posts/Bot/2026-10-30-KR-090000.md", text="봇 글\n", clone=None):
         """다른 쪽(봇·사람)이 원격 main 에 글을 올린다 → 새 main 커밋(시험 준비 — 앱 코드를 거치지 않는다)."""
-        other = self.helper_clone(clone)
-        ss.commit_file(other, name, text, "bot")
-        git(other, "push", "-q", "origin", "HEAD:main")
-        return git(other, "rev-parse", "HEAD")
+        return self.commit_on_origin(name, text)
 
     def merge_into_main(self, built):
         """병합을 흉내 낸다 — 올라간 가지의 끝으로 원격 main 을 앞으로 옮긴다(빨리감기, 시험 준비)."""
         git(self.origin, "update-ref", "refs/heads/main", built.commit)
 
-    def fresh_repo(self, files, name="fresh"):
-        """파일 몇 개만 든 새 저장소(origin 폴더, 작업 폴더) — 분야 폴더가 없거나 `_posts` 가 없는 모양을 만들 때 쓴다."""
-        base = self.tmp / name
-        base.mkdir()
-        origin = base / "origin.git"
-        git(base, "init", "-q", "--bare", str(origin))
-        git(origin, "symbolic-ref", "HEAD", "refs/heads/main")
-        git(base, "clone", "-q", str(origin), "work")
-        work = base / "work"
-        for key, value in (("core.autocrlf", "false"), ("user.name", "운영자"), ("user.email", "operator@example.com"), ("commit.gpgsign", "false")):
-            git(work, "config", key, value)
-        git(work, "checkout", "-q", "-B", "main")
-        for name, text in files.items():
-            ss.commit_file(work, name, text)
-        git(work, "push", "-q", "-u", "origin", "main")
-        return origin, work
+    def set_origin_main_to(self, layout):
+        """원격 main 을 시험이 정한 모양의 **새 뿌리 커밋**으로 바꾼다(플러밍) — layout 은 {이름: 글(파일) 또는 {...}(폴더)}. `_posts` 가 없는 저장소·분야 이름이 파일인 저장소 같은 모양을 복제 없이 만든다."""
+        def tree(node):
+            entries = []
+            for name, value in node.items():
+                if isinstance(value, dict):
+                    entries.append(("040000", "tree", tree(value), name))
+                else:
+                    entries.append(("100644", "blob", self.plumb(["hash-object", "-w", "--stdin"], value.encode("utf-8")), name))
+            return self.plumb(["mktree", "-z"], b"".join(f"{mode} {kind} {number}\t{name}\0".encode("utf-8") for mode, kind, number, name in entries))
+
+        commit = self.plumb(["commit-tree", tree(layout), "-m", "시험이 정한 기준"])
+        git(self.origin, "update-ref", "refs/heads/main", commit)
+        return commit
+
+    def oracle_tree(self, post, base):
+        """오라클 — 같은 글을 `git add`(임시 색인·임시 작업 폴더)로 받은 main(`base`) 위에 더해 `write-tree` 한 트리. 앱이 쓰는 길(객체를 직접 만들기)과 다른 길로 같은 트리를 만든다."""
+        scratch = self.tmp / "oracle_files"
+        target = scratch / post.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(post.text, encoding="utf-8", newline="\n")
+        env = dict(os.environ, GIT_DIR=str(self.work / ".git"), GIT_WORK_TREE=str(scratch), GIT_INDEX_FILE=str(self.tmp / "oracle.index"))
+
+        def run(*args):
+            done = subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.quotePath=false", *args], capture_output=True, env=env)
+            self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+            return done.stdout.decode("utf-8").strip()
+
+        run("read-tree", base)
+        run("add", "--", post.path)
+        return run("write-tree")
 
     def work_state(self):
         """작업 폴더가 '그대로' 인지 견주는 값 — 파일 내용·색인 내용·HEAD·로컬 가지와 태그·설정·HEAD 기록. (원격 추적 참조는 받기가 바꾸는 것이라 뺀다)"""
@@ -187,26 +222,18 @@ class BuildTest(BranchBase):
         self.assertEqual(spy.calls, [], "git 을 한 번도 부르지 않았다")
 
     def test_tree_equals_the_tree_porcelain_would_make(self):
-        """PT-11 — 오라클: 같은 글·같은 기준(받은 main)을 `git add`+`git commit` 으로 만든 트리와 해시가 같다(새 분야 폴더·공백·기호·이미 있는 분야 폴더 모두)."""
-        def oracle_tree(post, name):
-            clone = self.tmp / name
-            git(self.tmp, "clone", "-q", str(self.origin), name)
-            for key, value in (("core.autocrlf", "false"), ("user.name", "t"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
-                git(clone, "config", key, value)
-            ss.commit_file(clone, post.path, post.text, "oracle")
-            return git(clone, "rev-parse", "HEAD^{tree}")
-
-        for number, post in enumerate((self.ko, self.en)):
-            with self.subTest(path=post.path):
-                built = self.build(post)
-                self.assertEqual(git(self.work, "rev-parse", f"{built.commit}^{{tree}}"), oracle_tree(post, f"oracle{number}"))
-        built = self.build()                                           # 이미 있는 분야 폴더에 두 번째 글 — 첫 글을 병합했다고 치고(빨리감기) 같은 분야에 더한다
-        self.push(built)
+        """PT-11 — 오라클: 같은 글·같은 기준(받은 main)을 `git add`(임시 색인)로 만든 트리와 해시가 같다(새 분야 폴더·공백·기호·이미 있는 분야 폴더 모두)."""
+        built = self.build()                                           # 새 분야 폴더(한글·가운뎃점)
+        self.assertEqual(git(self.work, "rev-parse", f"{built.commit}^{{tree}}"), self.oracle_tree(self.ko, built.base))
+        self.push(built)                                               # 이미 있는 분야 폴더에 두 번째 글 — 첫 글을 병합했다고 치고(빨리감기) 같은 분야에 더한다
         self.merge_into_main(built)
         second = Post(KO_PATH_2, KO_TEXT + "\n덧붙인 문단입니다.\n")
         again = self.build(second)
-        self.assertEqual(git(self.work, "rev-parse", f"{again.commit}^{{tree}}"), oracle_tree(second, "oracle_existing"))
+        self.assertEqual(again.base, built.commit)
+        self.assertEqual(git(self.work, "rev-parse", f"{again.commit}^{{tree}}"), self.oracle_tree(second, again.base))
         self.assertEqual(ss.blob(self.work, f"{again.commit}:{KO_PATH}"), KO_TEXT, "먼저 병합된 글은 그대로다")
+        english = self.build(self.en)                                   # 공백·`&` 가 든 분야 폴더(영문 글)도 같은 트리다
+        self.assertEqual(git(self.work, "rev-parse", f"{english.commit}^{{tree}}"), self.oracle_tree(self.en, english.base))
 
     def test_working_tree_index_head_and_local_branches_are_untouched_byte_for_byte(self):
         """PT-12 — 만들기와 올리기가 끝나도 작업 폴더의 파일·색인·HEAD·로컬 가지·설정이 그대로다(내 추적하지 않는 파일도). 원격 추적 참조(받은 main)만 앞으로 간다."""
@@ -230,16 +257,12 @@ class BuildTest(BranchBase):
         git(self.work, "config", "core.autocrlf", "true")
         git(self.work, "config", "core.safecrlf", "true")
         git(self.work, "config", "core.quotePath", "true")
-        other = self.helper_clone("attr")
-        ss.commit_file(other, ".gitattributes", "*.md text eol=crlf\n", "attr")
-        git(other, "push", "-q", "origin", "HEAD:main")
-        for post in (self.ko, self.en):
-            with self.subTest(path=post.path):
-                built = self.build(post)
-                self.push(built, post)
-                data = raw(self.origin, "cat-file", "blob", f"{built.branch}:{post.path}")
-                self.assertEqual(data, post.text.encode("utf-8"))
-                self.assertNotIn(b"\r", data)
+        self.commit_on_origin(".gitattributes", "*.md text eol=crlf\n")
+        built = self.build()
+        self.push(built)
+        data = raw(self.origin, "cat-file", "blob", f"{built.branch}:{KO_PATH}")
+        self.assertEqual(data, KO_TEXT.encode("utf-8"))
+        self.assertNotIn(b"\r", data)
         listing = raw(self.origin, "ls-tree", "-r", "--name-only", "-z", self.remote_branch_of(self.ko)).split(b"\0")
         self.assertIn(KO_PATH.encode("utf-8"), listing, "한글 분야 폴더 이름이 그대로 들어갔다")
 
@@ -254,18 +277,10 @@ class BuildTest(BranchBase):
         added = [line for line in after if line not in base_listing.splitlines()]
         self.assertEqual(len(added), 1, added)
         self.assertTrue(added[0].endswith("\t" + KO_PATH) or added[0].endswith(KO_PATH), added[0])
-        self.assertEqual(len(after), len(base_listing.splitlines()) + 1, "기존 항목은 하나도 사라지거나 바뀌지 않았다(`_posts` 바로 아래의 옛 글 포함)")
-        self.push(built)
-        self.merge_into_main(built)
-        second = Post(KO_PATH_2, KO_TEXT + "\n두 번째 글입니다.\n")
-        again = self.build(second)
-        names = git(self.work, "ls-tree", "-r", "--name-only", "-z", again.commit).split("\0")
-        self.assertIn(KO_PATH, names)
-        self.assertIn(KO_PATH_2, names)
-        self.assertEqual(git(self.work, "rev-list", "--count", f"{built.commit}..{again.commit}"), "1")
-        _origin, fresh = self.fresh_repo({"README.md": "블로그\n", "_config.yml": ss.CONFIG})                 # `_posts` 가 없는 저장소
-        made = pages.build_branch_commit(fresh, self.ko, expected_origin=ss.LOCAL_ORIGIN)
-        self.assertEqual(sorted(name for name in git(fresh, "ls-tree", "-r", "--name-only", "-z", made.commit).split("\0") if name), sorted(["README.md", "_config.yml", KO_PATH]))
+        self.assertEqual(len(after), len(base_listing.splitlines()) + 1, "기존 항목은 하나도 사라지거나 바뀌지 않았다(`_posts` 바로 아래의 옛 글 포함) — 이미 있는 분야 폴더에 더하는 쪽은 PT-11 이 본다")
+        self.set_origin_main_to({"README.md": "블로그\n", "_config.yml": ss.CONFIG})                      # `_posts` 가 없는 저장소 — 빈 트리에서 시작한다
+        made = self.build()
+        self.assertEqual(sorted(name for name in git(self.work, "ls-tree", "-r", "--name-only", "-z", made.commit).split("\0") if name), sorted(["README.md", "_config.yml", KO_PATH]))
 
     def test_a_folder_that_differs_only_in_letter_case_or_is_a_file_is_refused_and_nothing_is_made(self):
         """옛 `…differs_only_in_letter_case…` 시험이 새 흐름으로 — 대소문자만 다른 분야 폴더가 원격에 이미 있으면 만들지 않는다(대소문자를 구분하지 않는 PC 에서 git 이 기존 이름으로 기록해 경로가 어긋난다)."""
@@ -276,10 +291,11 @@ class BuildTest(BranchBase):
         self.assertIn("Society & Policy", error.detail)
         self.assertEqual(spy.pushes(), [])
         self.assertEqual(git(self.work, "for-each-ref", "--format=%(refname)", "refs/heads"), "refs/heads/main")
-        _origin, odd = self.fresh_repo({"README.md": "블로그\n", "_posts": "폴더가 아닌 파일\n"}, "odd1")
-        self.assertEqual(ss.code_of(pages.build_branch_commit, odd, self.ko, expected_origin=ss.LOCAL_ORIGIN).code, "CONTENT_INVALID")
-        _origin2, odd2 = self.fresh_repo({"README.md": "블로그\n", "_posts/경제·일": "분야 이름이 파일\n"}, "odd2")
-        self.assertEqual(ss.code_of(pages.build_branch_commit, odd2, self.ko, expected_origin=ss.LOCAL_ORIGIN).code, "CONTENT_INVALID")
+        self.set_origin_main_to({"README.md": "블로그\n", "_posts": "폴더가 아닌 파일\n"})
+        self.assertEqual(ss.code_of(self.build).code, "CONTENT_INVALID")
+        self.set_origin_main_to({"README.md": "블로그\n", "_posts": {"경제·일": "분야 이름이 파일\n"}})
+        self.assertEqual(ss.code_of(self.build).code, "CONTENT_INVALID")
+        self.assertEqual(set(self.remote_refs()), {"refs/heads/main"})
 
     def test_same_stem_or_same_content_on_origin_main_is_refused(self):
         """PT-15 — 같은 주소(분야가 달라도 날짜-언어-시각이 같음·확장자만 다름)이거나 내용이 똑같은 글이 원격 main 에 있으면 `DUPLICATE_SLUG`·`DUPLICATE_CONTENT`. 만들지도 올리지도 않는다."""
@@ -441,6 +457,34 @@ class PushTest(BranchBase):
         self.assertEqual(done.returncode, 0, "앱 밖에서는 이 저장소가 main 을 받아 준다 — 막는 것은 앱의 인자 표다")
         self.assertNotEqual(self.remote_main(), before, "main 이 실제로 움직였다")
 
+    def test_origin_is_rechecked_right_before_each_network_command(self):
+        """PT-07 — 점검을 마친 **뒤**에 올리는 주소(`pushurl`)가 바뀌어도 네트워크 명령(받기·가지 확인·올리기)은 나가지 않는다: 네트워크 명령 직전마다 origin 을 다시 읽어 정규식과 견준다."""
+        evil = "https://evil.example/elsewhere.git"
+
+        def hostile_at(number, record):
+            counter = {"remote": 0}
+
+            def run(cwd, args, timeout=gitrepo.DEFAULT_TIMEOUT, input_bytes=None):
+                if args[0] == "remote":
+                    counter["remote"] += 1
+                    if counter["remote"] == number:                         # 앞선 점검이 끝난 바로 뒤, 다음 네트워크 명령 앞의 다시 읽기보다 먼저
+                        git(self.work, "remote", "set-url", "--push", "origin", evil)
+                record.append(list(args))
+                return gitrepo.run_git(cwd, args, timeout, input_bytes)
+            return run
+
+        record = []
+        error = ss.code_of(pages.build_branch_commit, self.work, self.ko, git=hostile_at(3, record), expected_origin=ss.LOCAL_ORIGIN)       # inspect_repo 가 둘, 받기 앞의 다시 읽기가 셋째
+        self.assertEqual(error.code, "PAGES_LOCAL_REPO_INVALID")
+        self.assertEqual([call for call in record if call[0] in ("fetch", "push", "ls-remote")], [], "받기도 나가지 않았다")
+        git(self.work, "config", "--unset-all", "remote.origin.pushurl")
+        built = self.build()
+        record = []
+        error = ss.code_of(pages.push_branch, self.work, built, self.ko, git=hostile_at(5, record), expected_origin=ss.LOCAL_ORIGIN)         # inspect 둘 + 가지 확인 앞의 둘 + 올리기 앞의 다시 읽기가 다섯째
+        self.assertEqual(error.code, "PAGES_LOCAL_REPO_INVALID")
+        self.assertEqual([call[0] for call in record if call[0] in ("push",)], [], "올리기는 나가지 않았다")
+        self.assertEqual(set(self.remote_refs()), {"refs/heads/main"}, "원격에 아무것도 올라가지 않았다")
+
     def test_pushing_again_after_it_already_went_through_is_a_success_that_sends_nothing(self):
         """PT-19 (끝이 같음) — 같은 일을 두 번 해도 같은 결과: 이미 올라가 있고 끝이 같으면 보내지 않고 이어 간다."""
         built = self.build()
@@ -464,9 +508,7 @@ class PushTest(BranchBase):
     def test_a_retry_with_the_branch_missing_pushes_and_with_a_different_tip_refuses_without_overwriting(self):
         """PT-19 (가지 없음·끝이 다름) — 가지가 없으면 올리고, 같은 이름에 다른 끝이 이미 있으면 덮어쓰지 않고 `PAGES_PUSH_REFUSED`(이름 충돌)."""
         built = self.build()
-        stranger = self.helper_clone("stranger")
-        ss.commit_file(stranger, "_posts/Bot/2026-10-30-KR-090000.md", "다른 사람의 글\n", "other")
-        git(stranger, "push", "-q", "origin", f"HEAD:refs/heads/{built.branch}")
+        self.commit_on_origin("_posts/Bot/2026-10-30-KR-090000.md", "다른 사람의 글\n", ref=f"refs/heads/{built.branch}", message="other")
         other_tip = git(self.origin, "rev-parse", built.branch)
         spy = Spy()
         error = ss.code_of(pages.push_branch, self.work, built, self.ko, git=spy, expected_origin=ss.LOCAL_ORIGIN)
@@ -524,31 +566,18 @@ class MergeCheckTest(BranchBase):
         return pages.post_on_main(self.work, post or self.ko, expected_origin=ss.LOCAL_ORIGIN, **kwargs)
 
     def test_merge_check_detects_merge_commit_squash_and_rebase_by_content(self):
-        """PT-22 — 일반 병합(병합 커밋)·squash·rebase 어느 쪽이든 원격 main 의 그 경로 내용이 같으면 `merged`, 글을 처음 담은 main 커밋을 함께 돌려준다."""
+        """PT-22 — 일반 병합(병합 커밋 — 부모 둘)·squash·rebase(부모 하나인 새 커밋) 어느 쪽이든 원격 main 의 그 경로 내용이 같으면 `merged`, 글을 처음 담은 main 커밋을 함께 돌려준다.
+        병합 단추를 흉내 내는 일은 복제 없이 플러밍으로 한다(앱 코드를 거치지 않는다): 병합 전에 main 이 앞서가 있는 모양에서, 올라간 가지를 부모로 더한 커밋(merge)이나 같은 글을 새 커밋으로 더한 것(squash·rebase)을 main 에 올린다."""
+        built, post = self.pushed()
         for number, method in enumerate(("merge", "squash", "rebase")):
             with self.subTest(method=method):
-                if subprocess.run(["git", "-C", str(self.origin), "show-ref", "--verify", "--quiet", f"refs/heads/{pages.branch_name(self.ko)}"]).returncode == 0:
-                    git(self.origin, "update-ref", "-d", f"refs/heads/{pages.branch_name(self.ko)}")                       # 앞 반복이 올린 가지를 치운다(시험 준비 — 앱은 지우지 않는다)
                 git(self.origin, "update-ref", "refs/heads/main", self.main0)
-                built, post = self.pushed()
-                self.bot_pushes(name=f"_posts/Bot/2026-10-30-KR-09000{number}.md", text=f"{method} 봇\n", clone=f"bot_{method}")        # main 이 앞서가 있다(병합 방식이 실제로 갈린다)
-                merger = self.helper_clone(f"merger_{method}")
-                for key, value in (("user.name", "t"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
-                    git(merger, "config", key, value)
-                git(merger, "fetch", "-q", "origin", f"refs/heads/{built.branch}:refs/remotes/origin/pr")
-                if method == "merge":
-                    git(merger, "merge", "-q", "--no-ff", "-m", "병합", "origin/pr")
-                elif method == "squash":
-                    git(merger, "merge", "-q", "--squash", "origin/pr")
-                    git(merger, "commit", "-q", "-m", "squash")
-                else:
-                    git(merger, "cherry-pick", "origin/pr")
-                git(merger, "push", "-q", "origin", "HEAD:refs/heads/main")
+                self.bot_pushes(name=f"_posts/Bot/2026-10-30-KR-09000{number}.md", text=f"{method} 봇\n")        # main 이 앞서가 있다(병합 방식이 실제로 갈린다)
+                made = self.commit_on_origin(post.path, post.text, message=method, extra_parents=(built.commit,) if method == "merge" else ())
                 result = self.check(post)
                 self.assertEqual(result.state, "merged")
-                self.assertEqual(git(self.origin, "show", "-s", "--format=%H", result.commit), result.commit)
+                self.assertEqual(result.commit, built.commit if method == "merge" else made, "글을 처음 담은 커밋(병합 커밋이면 가지의 그 커밋, squash·rebase 면 새 커밋)")
                 self.assertEqual(ss.blob(self.origin, f"{result.commit}:{post.path}"), post.text, "그 커밋이 글을 처음 담았다")
-                self.assertNotEqual(result.commit, "", method)
 
     def test_merge_check_reports_not_yet_merged_without_changing_anything(self):
         """PT-23 — 병합 전이면 `not_yet`. 읽기만 한다(작업 폴더 그대로, 원격 그대로)."""

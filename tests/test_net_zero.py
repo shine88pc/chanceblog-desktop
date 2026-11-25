@@ -116,7 +116,7 @@ class EverySwitchAloneTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, switches(*EVERYTHING), og.Tripwire() as wire:
             ctx = make_context(data_dir=str(Path(tmp) / "data"), env={}, clock=ss.Clock())
             self.assertEqual(ctx.git, external.refusing_git)
-            self.assertIsInstance(ctx.backend, external.LocalOnlyBackend, "자리표시자 어댑터도 파일만 읽는 backend 와 같은 일을 한다")
+            self.assertEqual(type(ctx.backend).__name__, "GitBranchBackend", "PUBPR: 스위치가 모두 켜지면 가지 올리기 어댑터가 꽂힌다(자리표시자를 대신한다) — 꽂기만으로는 바깥 호출이 0 이다")
             from chanceblog_desktop.ui.adapters import ServiceHomeProvider
             data = Path(tmp) / "data2"
             data.mkdir()
@@ -198,14 +198,19 @@ class RegistrationFollowsSwitchesTest(unittest.TestCase):
             self.assertEqual(wiring.register_enabled(), ("blogger",), "스위치가 꺼져 있어도 이미 꽂힌 것을 빼지 않는다")
 
     def test_the_placeholder_adapters_open_nothing(self):
-        with switches("EXTERNAL_WRITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH"):
+        """PUBPR — 가지 올리기 어댑터(`pages_git`)는 이제 진짜이지만 만들기·올리기 함수는 입력이 올바르지 않으면 하위 프로세스를 띄우기 전에 거절한다(자리표시자 `LocalOnlyBackend` 의 '무엇이든 거절' 은 꽂히지 않은 빌드가 계속 한다)."""
+        from chanceblog_desktop.errors import AppError
+        with switches("EXTERNAL_WRITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH"), og.Tripwire() as wire:
             wiring.register_enabled()
             backend = external.pages_backend(expected_origin=ss.LOCAL_ORIGIN)
-            self.assertIsInstance(backend, external.LocalOnlyBackend)
-            from chanceblog_desktop.errors import AppError
-            with self.assertRaises(AppError) as caught:
-                backend.push(Path("x"), None)
-            self.assertEqual(caught.exception.code, "EXTERNAL_WRITE_DISABLED")
+            self.assertEqual(type(backend).__name__, "GitBranchBackend")
+            for call in (lambda: backend.push_branch(Path("x"), None, None), lambda: backend.build_branch_commit(Path("x"), None, "")):
+                with self.assertRaises(AppError) as caught:
+                    call()
+                self.assertEqual(caught.exception.code, "CONTENT_INVALID")
+            self.assertEqual(wire.calls, [], "하위 프로세스를 하나도 띄우지 않았다")
+        external.unregister("pages_git")
+        external.unregister("blogger")
 
 
 class TripwireLoopbackTest(unittest.TestCase):

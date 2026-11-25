@@ -304,6 +304,11 @@ class Context:
             raise AppError("PAGES_LOCAL_REPO_INVALID", detail="연결한 chanceblog 폴더가 없다(connect 로 연결한다)")
         return Path(os.path.expanduser(chosen))
 
+    def repo_set_by_environment(self):
+        """환경 변수 CHANCEBLOG_LOCAL_REPO 가 정해져 있는가 — 연결 해제(`disconnect`)는 설정 한 칸만 비우므로 이 변수가 있으면 연결이 계속 보인다고 알리려고 읽는다(환경 변수는 이 모듈만 읽는다)."""
+        env = os.environ if self.env is None else self.env
+        return bool(str(env.get(ENV_REPO) or "").strip())
+
     def repo_path_or_none(self):
         """연결한 폴더, 아직 연결하지 않았으면 None. 설정 파일이 깨진 것까지 '연결 안 함' 으로 숨기지 않는다(SETTINGS_INVALID 는 그대로 낸다)."""
         try:
@@ -329,6 +334,4 @@ def make_context(*, data_dir=None, repo=None, env=None, git=None, expected_origi
     expected = expected_origin or gitrepo.EXPECTED_ORIGIN
     wiring.register_enabled()                                                                              # 켜진 스위치의 어댑터 종류만 꽂는다(모두 꺼진 이 빌드는 아무것도 꽂지 않는다 — `service/wiring.py`)
     backend = backend or external.pages_backend(git=git, expected_origin=expected, fetcher=fetcher, sleep=sleep, monotonic=monotonic)       # 꽂힌 외부 어댑터가 없으면(이 빌드는 늘 없다) 파일만 읽는 backend
-    if git is external.refusing_git:
-        git = getattr(backend, "git", None) or git          # 어댑터가 꽂힌 빌드(켜진 스위치)는 그 어댑터의 git 실행기를 점검(`doctor`)도 쓴다 — 꽂히지 않았으면(기본 빌드) 모든 호출을 거절하는 기본 실행기 그대로다
     return Context(workspace, Settings(workspace.settings_path), backend, git, expected, clock or utc_now, repo or "", env)

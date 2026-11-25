@@ -402,8 +402,7 @@ def cmd_disconnect(ctx, args):
     cleared = ctx.settings.clear_repo_path()
     lines = ["연결을 끊었습니다 — 설정에서 저장소 폴더 위치만 지웠습니다." if cleared else "연결해 둔 저장소가 없어 바꾼 것이 없습니다.",
              "  저장소 폴더·올려 둔 가지·글은 그대로입니다(앱은 올라간 것을 지우지 않습니다). 병합을 기다리는 글은 목록에 남고, 다시 `connect` 로 연결해야 병합을 확인할 수 있습니다."]
-    env = os.environ if ctx.env is None else ctx.env
-    if str(env.get("CHANCEBLOG_LOCAL_REPO") or "").strip():
+    if ctx.repo_set_by_environment():
         lines.append("  환경 변수 CHANCEBLOG_LOCAL_REPO 가 설정돼 있어 그 폴더는 계속 연결된 것으로 보입니다 — 변수를 지워야 완전히 끊깁니다.")
     lines.append("  Git 로그인은 이 PC 의 것이라 앱이 지우지 못합니다 — 지우려면 Windows 자격 증명 관리자에서 `git:` 으로 시작하는 항목을 지웁니다.")
     return Output(lines, {"disconnected": bool(cleared)})

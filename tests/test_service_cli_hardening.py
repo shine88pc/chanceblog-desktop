@@ -148,7 +148,7 @@ class AbbreviationTest(Base):
     def test_the_full_spellings_still_work(self):
         project_id = self.approved()
         self.assertEqual(self.run_cli("publish-pages", project_id, "--yes", "--no-wait", "--wait", "30")[0], 0)
-        self.assertEqual(self.backend.count("commit"), 1)
+        self.assertEqual(self.backend.count("build_branch_commit"), 1)
         self.assertEqual(self.run_cli("list", "--json")[0], 0)
 
 
@@ -189,7 +189,7 @@ class StatusNamesInErrorsTest(Base):
         code, out, err = self.run_cli("publish-pages", fresh, "--yes")
         self.assertEqual(code, 1)
         self.assertIn("시작 전 (NOT_STARTED)", err)
-        self.assertIn("(COMMITTED)", err)
+        self.assertIn("(MERGE_PENDING)", err, "올리려는 다음 단계의 이름(병합 기다리는 중)도 한국어 뜻과 함께 나온다")
         code, out, err = self.run_cli("publish-pages", fresh, "--yes", "--json")
         payload = json.loads(out)
         self.assertIn("시작 전 (NOT_STARTED)", payload["error"]["message"])
@@ -368,7 +368,7 @@ class RestoreSafetyTest(Base):
 class NoSurpriseWritesTest(Base):
     """모든 명령을 `--yes` 없이 돌려 보고 commit·push·되돌리기가 한 번도 불리지 않는다 — 소스 모양을 보는 안전 시험(AST)이 별칭·getattr 로 우회돼도 이 시험은 동작을 본다."""
 
-    GUARDED = ("commit", "push", "discard")
+    GUARDED = ("build_branch_commit", "push_branch", "discard")
 
     def argv_table(self, ids):
         approved, committed, pushed, fresh = ids
@@ -377,6 +377,7 @@ class NoSurpriseWritesTest(Base):
             "doctor": ["doctor"], "connect": ["connect", str(self.ctx.repo_path())], "new": ["new", "--title", "새 글", "--text", ss.ko_text()], "import-html": ["import-html", "--title", "옛 글", "--text", "<p>안녕하세요</p>"],
             "list": ["list"], "show": ["show", approved], "edit": ["edit", fresh, "--title", "고친 제목"], "review": ["review", fresh, "--platform", "pages", *pages], "preview": ["preview", approved, "--platform", "pages", *pages],
             "approve": ["approve", fresh, "--platform", "pages"], "revoke": ["revoke", approved, "--platform", "pages"], "publish-pages": ["publish-pages", approved], "check-deploy": ["check-deploy", pushed],
+            "merge-check": ["merge-check", pushed], "abandon": ["abandon", pushed], "disconnect": ["disconnect"],      # PUBPR: 새 명령 셋도 확인 없이 아무것도 만들거나 올리거나 되돌리지 않는다(`disconnect` 는 설정 한 칸만 비운다)
             "naver-package": ["naver-package", fresh, "--blog", "naver_a"], "naver-done": ["naver-done", fresh, "--blog", "naver_a", "--url", "https://blog.naver.com/x/1"], "naver-profile": ["naver-profile", "show"],
             "backup": ["backup"], "restore": ["restore", "--latest"], "delete": ["delete", fresh], "candidates": ["candidates", "list"], "keys": ["keys", "list"], "draft": ["draft", "plan", "1"],
             "topics": ["topics", "generate"],                    # P3 의도적 갱신: 새 명령 `topics` 도 확인(`--yes`) 없이 아무것도 올리거나 저장하지 않는다(저장은 `generate --yes` 뿐)
@@ -391,7 +392,7 @@ class NoSurpriseWritesTest(Base):
             pages_flow.run_pages_publish(self.ctx, committed, confirmed=True)
         self.ctx.clock.advance(seconds=3)
         pushed = ss.make_approved(self.ctx, title="올린 글")
-        pages_flow.run_pages_publish(self.ctx, pushed, confirmed=True, wait=False)
+        pages_flow.run_pages_publish(self.ctx, pushed, confirmed=True)                                 # 새 가지에 올려 병합을 기다리는 글(MERGE_PENDING)
         fresh = projects.new_project(self.ctx, "아직 시작 전", ss.ko_text()).project_id
         projects.backup_store(self.ctx)
         self.backend.calls.clear()
@@ -410,12 +411,11 @@ class NoSurpriseWritesTest(Base):
         approved = ss.make_approved(self.ctx)
         self.backend.calls.clear()
         self.assertEqual(self.run_cli("publish-pages", approved, "--yes", "--no-wait")[0], 0)
-        self.assertEqual((self.backend.count("commit"), self.backend.count("push")), (1, 1))
-        stuck = ss.make_approved(self.ctx, title="멈춘 글")
+        self.assertEqual((self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (1, 1))
         self.ctx.clock.advance(seconds=2)
-        stuck = ss.make_approved(self.ctx, title="멈춘 글 둘")
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        self.run_cli("publish-pages", stuck, "--yes")
+        stuck = ss.make_approved(self.ctx, title="멈춘 글")
+        from chanceblog_desktop.publish.pages import CommitInfo
+        self.backend.orphan = CommitInfo(ss.KO_PATH, "c" * 40, "b" * 40)                                  # 옛 방식으로 commit 직후에 멈춘 글(새 흐름은 만들지 않는다)
         self.backend.calls.clear()
         self.assertEqual(self.run_cli("publish-pages", stuck, "--cancel", "--yes")[0], 0)
         self.assertEqual(self.backend.count("discard"), 1)
@@ -434,7 +434,7 @@ class RestoredPostIsNotPublishedTwiceTest(Base):
         code, out, err = self.run_cli("publish-pages", project_id)
         self.assertEqual(code, 1)
         self.assertIn("DUPLICATE_CONTENT", err)
-        self.assertEqual((self.backend.count("commit"), self.backend.count("push")), (0, 0))
+        self.assertEqual((self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (0, 0))
         self.assertEqual(ss.status_of(self.ctx, project_id), st.APPROVED)
 
 
@@ -481,8 +481,12 @@ class WaitAndProgressTest(Base):
 
     def test_the_confirmation_record_has_no_markdown_marks(self):
         project_id = ss.make_approved(self.ctx)
+        from chanceblog_desktop.publish.pages import MainCheck
+        pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        pages_flow.merge_check_pages(self.ctx, project_id)
         self.backend.deploy_errors = [AppError("PAGES_DEPLOY_NOT_VISIBLE", detail="### 확인 기록\n- `https://example.invalid/a` → **404** | 두 번째 | > 인용")]
-        report = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        report = pages_flow.check_pages_deploy(self.ctx, project_id)
         note = next(item for item in report.notes if item.startswith("확인 기록:"))
         for mark in ("#", "`", "*", "|", ">"):
             self.assertNotIn(mark, note)
