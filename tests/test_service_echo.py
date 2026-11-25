@@ -48,7 +48,7 @@ UPPER_DIGITS = string.ascii_uppercase + string.digits
 HEX = "0123456789abcdef"
 NOT_HEX_LETTERS = "ghijklmnopqrstuvwxyzGHIJKLMNOPQRSTUVWXYZ"
 NUMBER_SLOTS = frozenset({"번호", "글번호", "항목", "백업파일"})                    # 위치 인자의 이름(metavar)이 이것이면 번호 자리다
-OTHER_SLOTS = frozenset({"폴더", "파일", "용도", "action", "blog", "사용|예비|꺼짐"})   # 번호 자리가 아닌 것으로 알려진 위치 인자(경로·고정 선택지)
+OTHER_SLOTS = frozenset({"폴더", "파일", "용도", "action", "blog", "사용|예비|꺼짐", "영문|한글"})   # 번호 자리가 아닌 것으로 알려진 위치 인자(경로·고정 선택지 — `영문|한글` 은 BLOGGER 갈래의 `blogger` 명령)
 REQUIRED_OPTION_VALUES = {"--blog": "naver_a", "--platform": "naver_a", "--url": "https://example.com/x", "--title": "제목", "--topic": "주제", "--keyword": "키워드", "--name": "기본"}
 PLACEHOLDER = echo.TYPED_NUMBER
 

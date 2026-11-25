@@ -11,6 +11,7 @@ import io
 import json
 import sys
 import threading
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -38,6 +39,13 @@ TWO = {"client_id": bs.CLIENT_ID, "client_secret": bs.CLIENT_SECRET}
 THREE = {**TWO, "refresh_token": bs.REFRESH}
 
 
+def temp_context(case):
+    """임시 데이터 폴더를 쓰는 서비스 문맥 — `TestCase.enterContext` 는 파이썬 3.11 부터라 3.10 에서도 돌도록 정리를 직접 등록한다."""
+    tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    case.addCleanup(tmp.cleanup)
+    return ss.make_ctx(Path(tmp.name), repo=None)
+
+
 class ClosedShapeStaysTestedTest(unittest.TestCase):
     def test_closed_shape_still_holds_when_the_constant_is_patched_false(self):
         """BT-60 — 출하 상수가 True 가 된 뒤를 흉내 낸다(상수를 True 로 둔다): 닫힌 모양 시험 셋은 스스로 False 로 고정하므로 모두 통과해야 한다."""
@@ -57,7 +65,7 @@ class OpenShapeServiceTest(unittest.TestCase):
         opened.start()
         self.addCleanup(opened.stop)
         self.store = MemoryStore()
-        self.ctx = ss.make_ctx(Path(self.enterContext(__import__("tempfile").TemporaryDirectory(ignore_cleanup_errors=True))), repo=None)
+        self.ctx = temp_context(self)
         self.ctx.keystore = self.store
 
     def add(self, fields=TWO, name="영문", **kwargs):
@@ -125,7 +133,7 @@ class OpenShapeCliTest(unittest.TestCase):
         opened.start()
         self.addCleanup(opened.stop)
         self.store = MemoryStore()
-        self.ctx = ss.make_ctx(Path(self.enterContext(__import__("tempfile").TemporaryDirectory(ignore_cleanup_errors=True))), repo=None)
+        self.ctx = temp_context(self)
         self.ctx.keystore = self.store
 
     def run_cli(self, *argv, stdin=None):
@@ -171,7 +179,7 @@ class OpenShapeScreenDataTest(unittest.TestCase):
         opened.start()
         self.addCleanup(opened.stop)
         self.store = MemoryStore()
-        self.ctx = ss.make_ctx(Path(self.enterContext(__import__("tempfile").TemporaryDirectory(ignore_cleanup_errors=True))), repo=None)
+        self.ctx = temp_context(self)
         self.ctx.keystore = self.store
 
     def test_screen_card_has_two_input_boxes_and_no_refresh_token_box(self):

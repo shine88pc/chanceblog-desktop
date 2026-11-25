@@ -70,7 +70,7 @@ class Base(unittest.TestCase):
 
 
 class ConstantTest(unittest.TestCase):
-    def test_the_blogger_input_constant_is_the_shipped_table_value_and_off_in_this_build(self):
+    def test_the_blogger_input_constant_is_off_in_the_shipped_source(self):                  # 이름은 그대로(사라진 id 0) — 본문은 '출하 표의 값과 같고 이 빌드는 False' 로 일반화(NET NT-01, D-722)
         import pkgcommon
         self.assertEqual(capabilities.BLOGGER_OAUTH_INPUT is True, "BLOGGER_OAUTH_INPUT" in pkgcommon.SHIPPED_OPEN_SWITCHES)
         self.assertEqual(capabilities.blogger_oauth_input_enabled(), capabilities.BLOGGER_OAUTH_INPUT is True)
@@ -207,7 +207,7 @@ class ScreenDataTest(Base):
         info = next(item for item in services.sample_connections() if item.key == "blogger")
         self.assertEqual((info.takes_keys, info.providers, info.fields), (False, (), ()))
 
-    def test_with_the_constant_opened_by_a_test_the_two_field_card_is_back(self):
+    def test_with_the_constant_opened_by_a_test_the_three_field_card_is_back(self):           # 이름은 그대로(사라진 id 0) — 지금은 입력 칸이 둘이다(셋째 갱신용 값은 로그인이 받는다, D-775)
         """입력 칸은 둘이고 갱신용 값 칸은 없다(그 값은 로그인이 받아 보관한다) — 예시·실제 공급자가 같다."""
         with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):
             sample = next(item for item in services.sample_connections() if item.key == "blogger")
