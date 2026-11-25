@@ -689,7 +689,7 @@ class NormalPathTest(unittest.TestCase):
                 self.assertEqual(same(typed, PLACEHOLDER), same(known, "a1b2c3d4"), where)
                 self.assertIn(PLACEHOLDER, typed[1] + typed[2], where)
                 compared += 1
-        self.assertEqual(compared, 72, "후보·글 번호 자리 24곳(P3 가 `topics show` 를, DB 가 `draft body` 를 더했다) × 변형 3가지")
+        self.assertEqual(compared, 75, "후보·글 번호 자리 25곳(BLOGGER 갈래가 `blogger save-draft` 를 더했다 — 24 → 25, P3 가 `topics show` 를, DB 가 `draft body` 를 더했다) × 변형 3가지")
 
     def test_an_ordinal_past_the_end_is_said_with_its_number_and_a_real_short_number_is_found(self):
         code, out, err = ss.run_cli(self.world.ctx, "candidates", "show", "999")
