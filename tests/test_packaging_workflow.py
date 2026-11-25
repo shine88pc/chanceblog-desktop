@@ -10,6 +10,7 @@ import re
 import unittest
 
 import packaging_support as ps
+import workflow_golden as golden  # ci.yml·package.yml 을 구조로 읽는 허용 목록 규칙 — AS-S2 권고-7, D-693
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 GOOD = f"""name: "Package"
@@ -127,6 +128,14 @@ class RealWorkflowTest(unittest.TestCase):
         self.assertEqual(ps.workflow_violations(text), [])
         self.assertNotIn("${{ inputs.", text)                                         # 입력칸이 없다 — 글을 받아 명령에 넣는 길이 없다
         self.assertIsNone(re.search(r"(?m)^\s+-\s*run:.*\$\{\{\s*github\.event", text))
+
+    def test_the_workflow_file_if_present_is_exactly_the_approved_structure(self):
+        """AS-S2 권고-7(D-693) — 위 규칙은 낱말·정규식이라 다른 run 단계(내려받기 명령)·한 줄 흐름식 단계로 태그 액션·`pip --extra-index-url`·빌드 명령을 문자열 출력으로 바꾸기·`persist-credentials: true` 를 못 잡았다.
+        글을 구조로 읽어 단계 여섯 개와 각 `with`·`run` 값, 액션의 `소유자/저장소@커밋` 쌍을 승인된 목록과 글자 그대로 견준다(`tests/workflow_golden.py` — `package-ocr.yml` 시험과 같은 방식)."""
+        path = ps.ROOT / ".github" / "workflows" / "package.yml"
+        if not path.exists():
+            self.skipTest("package.yml 이 이 가지에 없다(T3 초안은 별도 가지에 있다)")
+        self.assertEqual(golden.package_problems(path.read_text(encoding="utf-8")), [])
 
     def test_the_other_workflows_are_not_asked_to_follow_these_rules_and_still_exist(self):
         for name in ("ci.yml", "auto-pr.yml"):

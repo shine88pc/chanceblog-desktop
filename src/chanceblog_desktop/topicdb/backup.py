@@ -26,6 +26,8 @@ from ..content.schema_guard import foreign_kinds
 from ..content.store import WAL_TEXT, _read_only_uri, same_database, wal_in_head
 from ..echo import shown_topic_backup
 from ..errors import AppError
+from ..fslink import LINK_TAGS, REPARSE_POINT  # noqa: F401  (시험이 이 이름으로 본다) — 링크 판정은 낮은 층의 한 곳(`fslink.py`)에 있다: 전체 백업의 같은 이름 함수와 같은 기준(AS-S2 권고-2, D-690)
+from ..fslink import is_link as _is_link
 from ..security.backup_note import CREDENTIAL_NOTE
 from ..security.mask import has_key_shape
 from ..security.refuse import kinds_of as secret_kinds, locate as secret_locate, table_label as secret_table_label
@@ -36,6 +38,7 @@ from ..topics import wording
 from ..topics.channels import invalid_in, profiles_from_dict
 from ..topics.schedule import entries_from_dict
 from ..topics.seeds import seeds_from_dict
+from . import limits
 from .file import detail_of
 from .store import TopicStore
 
@@ -65,6 +68,7 @@ JSON_LOADERS = {layout.CHANNEL_PROFILES_FILE: _profiles_without_keys, layout.SEE
 BACKUP_FILES = layout.USER_DATA_FILES                           # 백업에 들어갈 수 있는 파일 이름 넷(그 밖의 이름은 거절)
 MAX_JSON_BYTES = 8 * 1024 * 1024                                 # JSON 한 파일의 상한(실수로 거대한 파일을 읽지 않게)
 MAX_NAMES = 99                                                   # 같은 초에 만든 백업 이름 번호(-2 … -99)
+LINK_REASON = "백업 폴더나 그 안의 파일이 다른 곳을 가리키는 링크(바로가기·정션)라서 쓰지 않습니다 — 링크가 아니라 진짜 백업 폴더를 골라 주세요"
 
 
 class BackupResult(NamedTuple):
@@ -265,31 +269,39 @@ def _scan_database(path):
         raise _blocked(reason, detail=detail)
 
 
-def _database_problem(path):
-    """SQLite 파일이 이 프로그램의 주제 엔진 보관함으로 온전한가(이름표·판·모양·구조 점검·자료 점검) — 문제 문장, 온전하면 None. 파일을 바꾸지 않는다."""
+def _database_problem(path, guard=None):
+    """SQLite 파일이 이 프로그램의 주제 엔진 보관함으로 온전한가(이름표·판·모양·구조 점검·자료 점검) — 문제 문장, 온전하면 None. 파일을 바꾸지 않는다.
+    `guard`(`limits.Guard`)는 **받은 백업**을 읽을 때만 준다 — 점검이 정해 둔 시간 안에 끝나지 않아 끊겼으면 `limits.TIME_REASON` 을 문제로 돌려준다(AS-S2 권고-5, D-691)."""
     try:
-        with TopicStore.open(path, migrate=False) as store:
+        with TopicStore.open(path, migrate=False, guard=guard) as store:
             if store.needs_migration:
                 return None                                       # 옛 판이면 구조는 맞다 — 자료 점검은 지금 판의 표를 기준으로 하므로 건너뛴다
             problems = store.check()
     except AppError as error:
-        return error.detail or error.code
+        return limits.TIME_REASON if guard is not None and guard.tripped else error.detail or error.code
+    if guard is not None and guard.tripped:
+        return limits.TIME_REASON
     return problems[0] if problems else None
 
 
 def _structure_problem(path):
-    """되돌릴 SQLite 사본에 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …)가 있으면 그 종류를 말하는 글, 없으면 None(L8, D-554) — 읽기 전용으로 열어 읽기만 한다. 읽을 수 없으면 `sqlite3.Error`."""
+    """되돌릴 SQLite 사본에 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …)가 있으면 그 종류를 말하는 글, 없으면 None(L8, D-554) — 읽기 전용으로 열어 읽기만 한다. 읽을 수 없으면 `sqlite3.Error`.
+    이 앱보다 새로운 판의 파일은 구조를 보지 않고 None 이다 — 새 판이 더한 표를 '앱이 만들지 않는 구조' 라고 잘못 말하지 않으려는 것이고, 그런 파일은 바로 이어지는 내용 점검(`_database_problem`)이
+    판 번호로 거절한다(그 점검은 판 번호를 질의보다 먼저 본다). 구조 검사는 `sqlite_master` 와 표·색인 정보만 읽고 뷰·표의 행은 읽지 않는다 — 그래서 내용 질의보다 **먼저** 해도 안전하다(AS-S2 권고-5, D-691)."""
     with closing(sqlite3.connect(_read_only_uri(path), uri=True)) as database:
+        if database.execute("PRAGMA user_version").fetchone()[0] > TopicStore.SCHEMA_VERSION:
+            return None
         found = foreign_kinds(database, TopicStore.SCHEMA)
     return describe_foreign(found) if found else None
 
 
 def list_backups(folder):
-    """백업 폴더들(이름이 앱이 만드는 모양인 것만, 새 것이 먼저)."""
+    """백업 폴더들(이름이 앱이 만드는 모양인 것만, 새 것이 먼저). **링크는 따라가지 않는다**(AS-S2 권고-2, D-690): 폴더 자신이 링크(junction 포함)이면 그 안을 훑지 않고 빈 목록이고,
+    항목이 링크이면 목록에 넣지 않는다 — 정리(`_prune`)가 목록을 쓰므로 링크 목적지의 파일이 '낡은 백업' 으로 지워지지 않는다."""
     folder = Path(folder)
-    if not folder.is_dir():
+    if _is_link(folder) or not folder.is_dir():
         return []
-    return sorted((entry for entry in folder.iterdir() if entry.is_dir() and BACKUP_NAME.fullmatch(entry.name)), key=lambda entry: entry.name, reverse=True)
+    return sorted((entry for entry in folder.iterdir() if BACKUP_NAME.fullmatch(entry.name) and not _is_link(entry) and entry.is_dir()), key=lambda entry: entry.name, reverse=True)
 
 
 _MAX_REF_CHARS = 260                                             # 친 백업 참조의 전체 길이 상한 — 윈도 `_COPY_PATH_LIMIT` 와 같은 기준(진짜 백업 이름은 22자 안팎이고 경로로 준 것도 이보다 짧다)
@@ -377,6 +389,8 @@ def make_backup(data_dir, backups_dir, *, now, keep=KEEP_BACKUPS, names=None):
     created = _missing_folders(backups_dir)                       # 이 백업이 새로 만드는 폴더 — 막히거나 실패하면 빈 채로 남기지 않는다
     try:
         backups_dir.mkdir(parents=True, exist_ok=True)
+        if _is_link(temp):                                        # 임시 이름 자리에 링크가 있으면 따라가지 않고 만들지 않는다 — 그 목적지의 파일을 지우지 않는다(AS-S2 권고-2, D-690)
+            raise AppError("BACKUP_FAILED", detail="임시 백업 폴더 자리에 링크가 있어 따라가지 않고 백업을 만들지 않았다")
         if temp.exists():
             _clear_known(temp)
         temp.mkdir(parents=True)
@@ -431,12 +445,12 @@ def _free_name(folder, name):
 
 
 def _clear_known(folder):
-    """앱이 만드는 파일 이름의 파일만 지우고 비면 폴더를 없앤다 — 낯선 파일이 있으면 그 폴더는 그대로 둔다."""
+    """앱이 만드는 파일 이름의 파일만 지우고 비면 폴더를 없앤다 — 낯선 파일이 있으면 그 폴더는 그대로 둔다. 폴더 자신이나 항목이 링크이면 따라가지 않고 그대로 둔다(그 목적지의 파일을 지우지 않는다 — AS-S2 권고-2, D-690)."""
     folder = Path(folder)
-    if not folder.is_dir():
+    if _is_link(folder) or not folder.is_dir():
         return False
     entries = list(folder.iterdir())
-    if any(entry.name not in (*BACKUP_FILES, MANIFEST_NAME) or not entry.is_file() for entry in entries):
+    if any(entry.name not in (*BACKUP_FILES, MANIFEST_NAME) or _is_link(entry) or not entry.is_file() for entry in entries):
         return False
     for entry in entries:
         _remove_file(entry)
@@ -452,17 +466,31 @@ def _prune(folder, keep):
         _clear_known(old)                                         # 못 지워도(낯선 파일이 있거나 쓰는 중) 백업 자체는 성공이다
 
 
-def _verify_folder(folder):
+def _verify_folder(folder, guard=None, before_content=None):
     """묶음 폴더가 온전한가 — 목록 파일과 실제 파일이 같고(이름·크기·해시) 안의 SQLite·JSON 이 모양대로 읽힌다. 틀리면 AppError(TOPIC_BACKUP_INVALID) — 읽은 내용을 돌려준다(`{이름: 바이트}`).
-    파일을 읽다 OS 오류가 나도(권한·목록의 파일 자리가 폴더 …) 같은 TOPIC_BACKUP_INVALID 로 쉽게 알린다."""
+    파일을 읽다 OS 오류가 나도(권한·목록의 파일 자리가 폴더 …) 같은 TOPIC_BACKUP_INVALID 로 쉽게 알린다.
+    `guard`(`limits.Guard`)와 `before_content` 는 **받은 백업**(`read_backup`)만 준다: 파일을 읽기 전에 크기 상한을 보고, 보관함의 내용 점검(질의)을 돌리기 전에 `before_content(이름)` 을 불러
+    구조부터 거절하게 하며, 점검 연결에 시간 상한·길이 한도를 건다(AS-S2 권고-5, D-691). 지금 데이터에서 막 만든 사본을 확인하는 길(`make_backup`)은 주지 않아 동작이 그대로다."""
     try:
-        return _verify_folder_files(folder)
+        return _verify_folder_files(folder, guard, before_content)
     except OSError as error:
         raise _invalid(folder, "백업 안의 파일을 읽을 수 없습니다(파일이 폴더로 바뀌었거나 읽을 권한이 없습니다)", detail=f"{type(error).__name__}: {detail_of(error)}") from None
 
 
-def _verify_folder_files(folder):
+def _too_big(path, limit):
+    """파일이 상한보다 큰가 — 통째로 메모리에 읽기 **전에** 크기만 본다. 크기를 못 읽으면 '아니다' 로 두고 이어서 읽는 쪽이 자기 오류를 낸다."""
+    try:
+        return path.stat().st_size > limit
+    except OSError:
+        return False
+
+
+def _verify_folder_files(folder, guard=None, before_content=None):
     folder = Path(folder)
+    if _is_link(folder) or _is_link(folder / MANIFEST_NAME):                                  # 폴더 자신이나 목록 파일이 링크이면 읽지 않는다 — 링크 너머의 백업을 쓰지 않는다(AS-S2 권고-2, D-690)
+        raise _invalid(folder, LINK_REASON, detail="백업 폴더나 목록 파일이 링크라 따라가지 않는다")
+    if guard is not None and _too_big(folder / MANIFEST_NAME, limits.MAX_MANIFEST_BYTES):         # 받은 백업의 목록 파일이 터무니없이 크면 읽지 않는다(정상 목록은 1KB 안쪽)
+        raise _invalid(folder, limits.BIG_REASON, detail="목록 파일이 너무 크다")
     try:
         manifest = json.loads((folder / MANIFEST_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
@@ -479,6 +507,10 @@ def _verify_folder_files(folder):
         info = manifest["files"][name]
         if not isinstance(info, dict) or set(info) != {"size", "sha256"}:
             raise _invalid(folder, "백업의 목록 파일 모양이 맞지 않습니다")
+        if _is_link(folder / name):                                                           # 담은 파일이 링크이면 그 목적지를 읽지 않는다(내용·해시가 맞아도 — 읽는 순간 다른 파일일 수 있다)
+            raise _invalid(folder, LINK_REASON, detail=f"{name} 이 링크라 따라가지 않는다")
+        if guard is not None and _too_big(folder / name, limits.MAX_DB_BYTES if name == layout.ENGINE_DB_FILE else MAX_JSON_BYTES):         # 받은 파일은 읽기 전에 크기부터 — 몇 GB 짜리를 통째로 읽지 않는다
+            raise _invalid(folder, limits.BIG_REASON, detail=f"{name} 이 너무 크다")
         data = (folder / name).read_bytes()
         if len(data) != info["size"] or _sha256(data) != info["sha256"]:
             raise _invalid(folder, f"{name} 의 크기나 해시가 목록과 다릅니다(파일이 바뀌었거나 깨졌습니다)")
@@ -487,9 +519,11 @@ def _verify_folder_files(folder):
         if name == layout.ENGINE_DB_FILE:
             if wal_in_head(data[:20]):                                # 열기 전에 머리 바이트로 거절한다 — 열면 SQLite 가 백업 폴더에 `-wal`·`-shm` 을 만든다(AS-S1 권고-2, D-609)
                 raise _invalid(folder, "백업 안의 보관함에 앱이 만들지 않는 저널 방식(WAL 머리표시)이 들어 있어 쓰지 않습니다", detail=WAL_TEXT)
-            problem = _database_problem(folder / name)
+            if before_content is not None:
+                before_content(name)                              # 받은 백업은 구조(뷰·트리거·모르는 표)부터 — 내용 질의(`_database_problem`)보다 먼저(AS-S2 권고-5, D-691)
+            problem = _database_problem(folder / name, guard)
             if problem:
-                raise _invalid(folder, "주제 엔진 보관함 사본이 온전하지 않습니다", detail=problem)
+                raise _invalid(folder, limits.TIME_REASON if guard is not None and guard.tripped else "주제 엔진 보관함 사본이 온전하지 않습니다", detail=problem)
         else:
             try:
                 check_json_bytes(name, data)
@@ -501,17 +535,23 @@ def _verify_folder_files(folder):
 def read_backup(folder):
     """백업 폴더를 열어 보지 않고(바꾸지 않고) 온전한지 확인한다 → (목록, {파일 이름: 바이트}). 틀리면 TOPIC_BACKUP_INVALID. 키 모양이 있어도 틀린 백업이다."""
     folder = Path(folder)
+    if _is_link(folder):                                                                      # 폴더 자신이 링크(junction 포함)이면 읽지 않는다 — 링크 너머의 백업으로 되돌리지 않는다(AS-S2 권고-2, D-690)
+        raise _invalid(folder, LINK_REASON, detail="백업 폴더가 링크라 따라가지 않는다")
     if not folder.is_dir() or not BACKUP_NAME.fullmatch(folder.name):
         raise _invalid(folder, "주제 엔진 백업 폴더가 아닙니다")
-    manifest, contents = _verify_folder(folder)
+    guard = limits.Guard()                                                                    # 이 읽기 한 번이 쓰는 모든 SQLite 연결이 한 시간 상한을 나눠 쓴다(AS-S2 권고-5, D-691)
+
+    def structure_first(name):
+        try:
+            foreign = _structure_problem(folder / name)                                        # 조작한 보관함의 트리거·뷰가 통째 복사로 들어오지 못하게 — 내용을 훑기 전에 구조부터(뷰는 질의를 돌리는 순간 CPU·메모리를 쓴다)
+        except sqlite3.Error as error:
+            raise _invalid(folder, "백업 안의 보관함을 읽을 수 없습니다", detail=detail_of(error)) from None
+        if foreign:
+            raise _invalid(folder, "백업 안의 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있어 쓰지 않습니다", detail=f"앱이 만들지 않는 구조: {foreign}")
+
+    manifest, contents = _verify_folder(folder, guard, structure_first)
     for name, data in contents.items():
         if name == layout.ENGINE_DB_FILE:
-            try:
-                foreign = _structure_problem(folder / name)                                    # 조작한 보관함의 트리거·뷰가 통째 복사로 들어오지 못하게 — 내용을 훑기 전에 구조부터
-            except sqlite3.Error as error:
-                raise _invalid(folder, "백업 안의 보관함을 읽을 수 없습니다", detail=detail_of(error)) from None
-            if foreign:
-                raise _invalid(folder, "백업 안의 보관함에 앱이 만들지 않는 구조(트리거·뷰·모르는 표 같은 것)가 들어 있어 쓰지 않습니다", detail=f"앱이 만들지 않는 구조: {foreign}")
             try:
                 _scan_database(folder / name)
             except AppError:
@@ -594,7 +634,7 @@ def restore_backup(backup, data_dir, backups_dir, *, now):
             target = data_dir / name
             originals[name] = target.read_bytes() if target.is_file() else None
             stage = data_dir / (name + ".restoring")
-            _write_bytes(stage, contents[name])
+            _write_staged(stage, contents[name])
             staged.append(stage)
         for name in list(originals):
             working = name
@@ -648,6 +688,15 @@ def _remove_quietly(path):
         return False
 
 
+def _write_staged(stage, data):
+    """복원의 임시 이름(`<이름>.restoring` — 고정 이름) 자리를 비운 뒤 쓴다. 미리 심은 링크가 있으면 그 이름 자체만 지우고(링크가 가리키는 곳은 건드리지 않는다) 치우고도 링크가 남아 있으면 쓰지 않고 `OSError` 로 멈춘다
+    (전체 백업의 `_clear_stage` 와 같은 길, AS-S2 권고-2·D-690). 오류는 `OSError` 다 — 복원 흐름·되돌리기가 이미 그 오류를 쉬운 문구로 바꾼다."""
+    _remove_quietly(stage)
+    if _is_link(stage):
+        raise OSError(errno.EPERM, "임시 파일 자리에 링크가 있어 치우지 못했다")
+    _write_bytes(stage, data)
+
+
 def _undo_moves(data_dir, moves):
     """복원이 도중에 실패했을 때 옆으로 옮겨 둔 파일을 제자리로 되돌린다 → 제자리로 돌리지 못한 파일마다 쉬운 말 한 줄(옮겨 둔 이름이 들어 있다 — 그 파일은 그 이름으로 그대로 남아 있다).
     한 파일이 실패해도 나머지는 계속 되돌린다."""
@@ -673,7 +722,7 @@ def _roll_back(data_dir, staged, restored, originals, moves, new_db, engine_back
             if original is None:
                 _remove_file(target)
             else:
-                _write_bytes(temp, original)
+                _write_staged(temp, original)
                 os.replace(temp, target)
         except OSError:
             _remove_quietly(temp)

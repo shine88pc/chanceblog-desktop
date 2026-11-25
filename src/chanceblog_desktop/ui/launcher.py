@@ -82,6 +82,11 @@ def main(argv=None, *, out=None):
     if problem:
         print(problem, file=out)
         return 1
+    from .. import vendor_pin
+    problem = vendor_pin.start_problem()                                              # 검사 규칙 파일(vendor/)이 소스에 고정된 값과 다르면 열지 않는다(AS-S2 권고-6, D-692) — 수 KB 의 파일 여섯 개를 읽을 뿐이라 시작 시간에 영향이 없다. 설치본은 낯선 파일까지 본다
+    if problem:
+        print(problem, file=out)
+        return 1
     if not has_pyside6():
         print(NEEDS_PYSIDE6, file=out)
         return 1
