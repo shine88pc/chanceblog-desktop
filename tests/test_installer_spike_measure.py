@@ -214,8 +214,11 @@ class SmallPartsTest(unittest.TestCase):
         self.assertIsNone(measure.version_numbers("no digits"))
         self.assertTrue(measure.inno_version_ok((6, 7, 1)))
         self.assertTrue(measure.inno_version_ok((6, 7)))
-        for numbers in ((6, 5, 4), (7, 1, 1), (6,), None, ()):
-            self.assertFalse(measure.inno_version_ok(numbers))
+        # 결정 D-810 — 6.7 줄만이던 문을 6.5.0 이상으로 넓혔다(한글 안내 파일이 들어 있는 첫 판). 예전에 거짓이던 6.5.4·7.1.1 은 이제 참이고, 경계는 아래 새 시험이 촘촘히 지킨다
+        for numbers in ((6, 5, 4), (7, 1, 1)):
+            self.assertIs(measure.inno_version_ok(numbers), True)
+        for numbers in ((6,), None, ()):
+            self.assertFalse(measure.inno_version_ok(numbers))                          # 읽지 못한 값은 여전히 '참' 이 아니다(이제는 None — 아래 새 시험)
 
     def test_read_text_guess_handles_utf8_bom_utf16_and_cp949(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -731,6 +734,468 @@ class StandardUserFoldersTest(unittest.TestCase):
         public, profile = self.folders({"PUBLIC": "D:/Users/Public"})
         self.assertEqual(public, Path("D:/Users/Public") / "spike_std")
         self.assertEqual(profile, Path("D:/Users") / measure.STD_USER / "AppData" / "Local")
+
+
+class EnvironmentNamesTest(unittest.TestCase):
+    """결정 D-810 — 1차 측정의 '러너: ? ?' 의 원인: 윈도는 환경 변수 이름의 대소문자를 가리지 않고 파이썬이 `os.environ` 의 이름을 모두 대문자로 올려 두므로, 사전으로 옮겨 온 환경에서 `ImageOS` 를 그대로 찾으면 못 찾는다."""
+
+    def test_names_are_found_whatever_the_case_and_an_exact_name_wins(self):
+        environ = {"IMAGEOS": "win25", "imageversion": "20261116.335.1", "Exact": "one", "EXACT": "two", "EMPTY": ""}
+        self.assertEqual(measure.env_value(environ, "ImageOS"), "win25")
+        self.assertEqual(measure.env_value(environ, "ImageVersion"), "20261116.335.1")
+        self.assertEqual(measure.env_value(environ, "Exact"), "one")                        # 이름이 그대로 있으면 그것
+        self.assertEqual(measure.env_value(environ, "Empty"), "")                           # 빈 값도 값이다(기본값으로 바꾸지 않는다)
+        self.assertEqual(measure.env_value(environ, "Missing"), "")
+        self.assertEqual(measure.env_value(environ, "Missing", "기본"), "기본")
+        self.assertEqual(measure.env_value({}, "ImageOS", None), None)
+
+    def test_a_dict_copied_from_the_real_environment_is_found_even_where_the_names_are_made_upper_case(self):
+        with mock.patch.dict(os.environ, {"ImageOS": "win99", "ImageVersion": "2026.1"}):
+            host = measure.Host()
+        self.assertEqual(measure.env_value(host.environ, "ImageOS"), "win99")
+        self.assertEqual(measure.env_value(host.environ, "ImageVersion"), "2026.1")
+        if os.name == "nt":                                                                  # 윈도에서는 사전의 이름이 대문자로 바뀌어 있어 그대로 찾으면 못 찾는다 — 이것이 1차 측정의 원인이었다
+            self.assertIsNone(host.environ.get("ImageOS"))
+            self.assertEqual(host.environ.get("IMAGEOS"), "win99")
+
+    def test_the_context_reads_environment_values_the_same_way(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp, environ={"IMAGEVERSION": "7", "PUBLIC": "D:/Users/Public"})
+            self.assertEqual(ctx.env("ImageVersion"), "7")
+            self.assertEqual(ctx.env("public"), "D:/Users/Public")
+            self.assertEqual(ctx.env("nothing", "x"), "x")
+
+
+class InnoVersionTest(unittest.TestCase):
+    """결정 D-810 — Inno Setup 은 6.5.0 이상이면 쓴다. 1차 측정은 6.7 줄만 허용했고 러너 이미지의 파일 버전 자원이 0.0.0.0 이라 갈래 C 를 통째로 못 쟀다."""
+
+    def test_the_gate_is_six_point_five_zero_and_the_boundary_is_exact(self):
+        for numbers in ((6, 5, 0), (6, 5), (6, 5, 0, 0), (6, 5, 4), (6, 7, 1, 0), (6, 8, 0), (7, 0, 0), (7, 1, 1), (10, 0, 0)):
+            self.assertIs(measure.inno_version_ok(numbers), True, numbers)
+        for numbers in ((6, 4, 9), (6, 4, 9, 9), (6, 4), (6, 0, 0), (5, 6, 9), (1, 0)):
+            self.assertIs(measure.inno_version_ok(numbers), False, numbers)
+
+    def test_an_unreadable_version_is_unknown_not_wrong_and_all_zero_means_unreadable(self):
+        for numbers in (None, (), (6,), (0, 0, 0, 0), (0, 0), (0, 0, 0)):
+            self.assertIsNone(measure.inno_version_ok(numbers), numbers)
+            self.assertIsNone(measure.real_version(numbers), numbers)
+        self.assertEqual(measure.real_version((0, 0, 0, 1)), (0, 0, 0, 1))
+        self.assertEqual(measure.real_version([6, 7, 1]), (6, 7, 1))
+
+    def test_the_design_line_is_only_a_note(self):
+        for numbers in ((6, 7, 1), (6, 7), (6, 7, 1, 0)):
+            self.assertTrue(measure.inno_on_design_line(numbers), numbers)
+        for numbers in ((6, 8, 0), (6, 6, 9), (7, 7, 1), (0, 0, 0, 0), None, ()):
+            self.assertFalse(measure.inno_on_design_line(numbers), numbers)
+
+    def test_the_compiler_text_gives_the_engine_version_but_a_major_number_alone_is_not_a_version(self):
+        self.assertEqual(measure.inno_text_version("Inno Setup 6 Command-Line Compiler\nCompiler engine version: Inno Setup 6.7.1\n"), (6, 7, 1))
+        self.assertEqual(measure.inno_text_version("compiler ENGINE VERSION:   inno setup 7.1"), (7, 1))
+        self.assertEqual(measure.inno_text_version("Inno Setup version 6.2.2 (u)"), (6, 2, 2))
+        self.assertEqual(measure.inno_text_version("Inno Setup 6.5.0 Command-Line Compiler"), (6, 5, 0))
+        for text in ("Inno Setup 6 Command-Line Compiler\nCopyright (C) 1997-2025 Jordan Russell.", "", None, "no version here 1.2.3", "Inno Setup 0.0.0.0"):
+            self.assertIsNone(measure.inno_text_version(text), text)
+
+    def test_the_registry_text_gives_the_installed_version_and_prefers_the_entry_whose_folder_holds_the_compiler(self):
+        text = "Inno Setup version 6.7.1|6.7.1|C:\\Program Files (x86)\\Inno Setup 6\\\r\nInno Setup version 7.0.0|7.0.0|C:\\Program Files\\Inno Setup 7\\\r\n"
+        self.assertEqual(measure.inno_registry_version(text, "C:\\Program Files\\Inno Setup 7\\ISCC.exe"), (7, 0, 0))
+        self.assertEqual(measure.inno_registry_version(text, "c:/program files (x86)/inno setup 6/iscc.exe"), (6, 7, 1))
+        self.assertEqual(measure.inno_registry_version(text, "D:\\elsewhere\\ISCC.exe"), (6, 7, 1))                         # 어느 폴더도 안 맞으면 첫 항목
+        self.assertEqual(measure.inno_registry_version(text), (6, 7, 1))
+        for bad in ("", None, "Something else|1.2.3|C:\\x", "Inno Setup version 6.7.1", "Inno Setup|0.0.0.0|C:\\x", "garbage"):
+            self.assertIsNone(measure.inno_registry_version(bad, "C:\\x\\ISCC.exe"), bad)
+
+    def test_all_the_ways_of_reading_are_tried_in_a_fixed_order_and_the_first_real_value_wins(self):
+        class Stub:
+            def __init__(self, usage="", registry="", file_text="FILE=0.0.0.0\r\nPRODUCT=0.0.0.0\r\n"):
+                self.usage, self.registry, self.file_text, self.calls = usage, registry, file_text, []
+
+            def run(self, args, *, timeout=120, env=None, cwd=None, drop_env=()):
+                self.calls.append(list(args))
+                if list(args)[1:] == ["/?"]:
+                    return measure.HostResult(0, 0.1, self.usage, "")
+                if "DisplayVersion" in args[-1]:
+                    return measure.HostResult(0, 0.1, self.registry, "")
+                return measure.HostResult(0, 0.1, self.file_text, "")
+
+        usage, registry, both = "Compiler engine version: Inno Setup 6.9.0", "Inno Setup version 6.7.1|6.7.1|C:\\Inno\\", "FILE=6.5.0.0\r\nPRODUCT=6.6.0.0\r\n"
+        found = measure.read_inno_version(Stub(usage, registry, both), "C:\\Inno\\ISCC.exe")
+        self.assertEqual((found["numbers"], found["source"]), ((6, 9, 0), "컴파일러 출력"))
+        self.assertEqual(found["reads"], {"usage": "6.9.0", "registry": "6.7.1", "product": "6.6.0.0", "file": "6.5.0.0"})            # 읽은 값은 전부 남긴다
+        found = measure.read_inno_version(Stub("Inno Setup 6 Command-Line Compiler", registry, both), "C:\\Inno\\ISCC.exe")
+        self.assertEqual((found["numbers"], found["source"]), ((6, 7, 1), "레지스트리"))
+        found = measure.read_inno_version(Stub("", "", both), "C:\\Inno\\ISCC.exe")
+        self.assertEqual((found["numbers"], found["source"]), ((6, 6, 0, 0), "파일 제품 판"))
+        found = measure.read_inno_version(Stub("", "", "FILE=6.5.0.0\r\nPRODUCT=0.0.0.0\r\n"), "C:\\Inno\\ISCC.exe")
+        self.assertEqual((found["numbers"], found["source"]), ((6, 5, 0, 0), "파일 판"))
+
+    def test_when_nothing_can_be_read_the_reason_names_every_way_and_what_each_gave(self):
+        class Silent:
+            def run(self, args, **kwargs):
+                if "DisplayVersion" in args[-1]:
+                    return measure.HostResult(0, 0.1, "", "")
+                if list(args)[1:] == ["/?"]:
+                    return measure.HostResult(0, 0.1, "Inno Setup 6 Command-Line Compiler\r\n", "")
+                return measure.HostResult(0, 0.1, "FILE=0.0.0.0\r\nPRODUCT=0.0.0.0\r\n", "")
+
+        found = measure.read_inno_version(Silent(), "C:\\Inno\\ISCC.exe")
+        self.assertIsNone(found["numbers"])
+        self.assertEqual(found["source"], "")
+        for word in ("컴파일러 출력 읽히지 않음", "레지스트리 읽히지 않음", "파일 제품 판 빈 값 0.0.0.0", "파일 판 빈 값 0.0.0.0"):
+            self.assertIn(word, found["reason"])
+        self.assertIsNone(measure.inno_version_ok(found["numbers"]))
+
+    def test_a_program_that_cannot_even_start_is_just_unreadable(self):
+        class Broken:
+            def run(self, args, **kwargs):
+                return measure.HostResult(-1, 0.0, error="OSError")
+
+        found = measure.read_inno_version(Broken(), "C:\\nowhere\\ISCC.exe")
+        self.assertIsNone(found["numbers"])
+        self.assertTrue(found["reason"])
+
+
+class SelftestVerdictTest(unittest.TestCase):
+    """결정 D-810 — 1차 측정은 설치본·휴대용 `--selftest` 의 통과 개수가 12 인지를 봤다. 앱이 점검을 열세 개로 늘린 뒤에도(M129) 그대로라 통과 13·실패 0·건너뜀 0 이 실패로 적혔다(M06·M22, 관문 G8)."""
+    NAMES = ("utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "tls", "uac_manifest", "qt_plugins", "qt_screens", "gui_only_entry", "data_dir_untouched")
+
+    def counts(self, names=None, **changes):
+        names = list(self.NAMES if names is None else names)
+        base = {"passed": len(names), "failed": 0, "skipped": 0, "failed_names": [], "passed_names": names, "rc": 0, "judged": True}
+        base.update(changes)
+        return base
+
+    def test_the_real_app_list_is_read_without_importing_the_file_and_agrees_with_the_test_helper_list(self):
+        keys = measure.app_selftest_keys(ROOT)
+        self.assertEqual(keys, support.app_selftest_names())                                 # 다른 방법(정규식)으로 읽은 목록과 같다
+        self.assertGreaterEqual(len(keys), measure.MIN_SELFTEST_PASSED)
+        self.assertIn("tls", keys)
+        self.assertEqual(len(set(keys)), len(keys))
+        self.assertEqual(measure.app_selftest_keys(), keys)                                   # 저장소 위치를 안 줘도 이 도구 파일 위치에서 찾는다
+
+    def test_the_list_reader_accepts_a_tuple_or_a_list_and_gives_up_quietly_on_anything_else(self):
+        cases = {"튜플": ('SELFTEST_KEYS = ("a", "b",\n                 "c")   # 주석\n', ("a", "b", "c")), "목록": ("SELFTEST_KEYS = ['a', 'b']\n", ("a", "b")),
+                 "다른 이름": ("OTHER_KEYS = ('a', 'b')\n", ()), "빈 튜플": ("SELFTEST_KEYS = ()\n", ()), "겹침": ("SELFTEST_KEYS = ('a', 'a')\n", ()), "글 아님": ("SELFTEST_KEYS = ('a', 1)\n", ()),
+                 "빈 글": ("SELFTEST_KEYS = ('a', '')\n", ()), "계산식": ("SELFTEST_KEYS = tuple(name for name in ('a', 'b'))\n", ()), "문법 오류": ("SELFTEST_KEYS = (\n", ()), "숫자": ("SELFTEST_KEYS = 5\n", ())}
+        for label, (source, expected) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "scripts").mkdir()
+                (Path(tmp) / "scripts" / "release_check.py").write_text(source, encoding="utf-8")
+                self.assertEqual(measure.app_selftest_keys(tmp), expected)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(measure.app_selftest_keys(tmp), ())                              # 파일이 없다
+
+    def test_the_reader_never_runs_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "scripts").mkdir()
+            marker = Path(tmp) / "ran.txt"
+            (Path(tmp) / "scripts" / "release_check.py").write_text("open(%r, 'w').write('ran')\nSELFTEST_KEYS = ('a', 'b')\n" % str(marker), encoding="utf-8")
+            self.assertEqual(measure.app_selftest_keys(tmp), ("a", "b"))
+            self.assertFalse(marker.exists())
+
+    def test_thirteen_passed_lines_that_equal_the_apps_list_pass_where_the_old_count_of_twelve_failed(self):
+        verdict = measure.selftest_verdict(self.counts(), self.NAMES)
+        self.assertTrue(verdict["ok"])
+        self.assertEqual((verdict["expected"], verdict["missing"], verdict["extra"]), (13, [], []))
+        self.assertIn("13개와 같다", verdict["basis"])
+
+    def test_a_check_missing_from_the_passed_lines_fails_and_is_named(self):
+        verdict = measure.selftest_verdict(self.counts([name for name in self.NAMES if name != "tls"]), self.NAMES)
+        self.assertFalse(verdict["ok"])
+        self.assertEqual(verdict["missing"], ["tls"])
+        self.assertIn("tls", verdict["basis"])
+
+    def test_extra_checks_the_list_does_not_know_do_not_fail_and_are_noted(self):
+        verdict = measure.selftest_verdict(self.counts(list(self.NAMES) + ["brand_new_check"]), self.NAMES)
+        self.assertTrue(verdict["ok"])
+        self.assertEqual(verdict["extra"], ["brand_new_check"])
+        self.assertIn("brand_new_check", verdict["basis"])
+
+    def test_any_failed_skipped_or_nonzero_exit_or_rejected_judgement_fails_even_with_every_name_present(self):
+        for label, change in (("실패", {"failed": 1}), ("건너뜀", {"skipped": 1}), ("종료 코드", {"rc": 1}), ("종료 코드 없음", {"rc": None}), ("빌드 판정", {"judged": False})):
+            with self.subTest(label):
+                self.assertFalse(measure.selftest_verdict(self.counts(**change), self.NAMES)["ok"])
+
+    def test_without_the_apps_list_the_floor_of_twelve_applies_and_thirteen_still_passes(self):
+        for passed, expected in ((12, True), (13, True), (14, True), (11, False), (0, False)):
+            names = ["check_%02d" % number for number in range(passed)]
+            verdict = measure.selftest_verdict(self.counts(names), ())
+            self.assertEqual(verdict["ok"], expected, passed)
+            self.assertIsNone(verdict["expected"])
+            self.assertIn("목록을 읽지 못해", verdict["basis"])
+        self.assertFalse(measure.selftest_verdict(self.counts(["check"] * 12, failed=1), ())["ok"])
+        self.assertTrue(measure.selftest_verdict(self.counts(), None)["ok"])
+
+    def test_the_verdict_leaves_the_counts_alone_and_the_brief_prints_the_counts_as_they_are(self):
+        counts = self.counts()
+        before = json.dumps(counts, sort_keys=True)
+        verdict = measure.selftest_verdict(counts, self.NAMES)
+        self.assertEqual(json.dumps(counts, sort_keys=True), before)
+        brief = measure.selftest_brief("설치본", dict(counts, basis=verdict["basis"]))
+        self.assertTrue(brief.startswith("설치본 selftest 통과 13 실패 0 건너뜀 0 · "), brief)
+        self.assertIn("앱 점검 목록 13개와 같다", brief)
+
+    def test_the_counts_keep_the_passed_names_in_order(self):
+        parsed = {"passed": ["a", "b"], "failed": ["c"], "skipped": ["d"], "failed_text": {}}
+        counts = measure.parse_selftest_counts(parsed)
+        self.assertEqual((counts["passed"], counts["failed"], counts["skipped"]), (2, 1, 1))
+        self.assertEqual(counts["passed_names"], ["a", "b"])
+        self.assertEqual(counts["failed_names"], ["c"])
+
+
+class StandardUserParsingTest(unittest.TestCase):
+    """결정 D-810 — 표준 사용자 시험의 출력 읽기와 설치 흔적 찾기."""
+
+    def test_the_exit_marker_is_read_in_every_shape_the_script_can_print(self):
+        cases = (("SPIKE_EXIT=0\r\n", 0, ("code", 0)), ("SPIKE_EXIT=42\n", 1, ("code", 42)), ("SPIKE_EXIT=-1073741502\r\n", 1, ("code", -1073741502)), ("앞 글\r\nSPIKE_EXIT=740\r\n", 0, ("code", 740)),
+                 ("SPIKE_EXIT=none\r\n", 0, ("none", None)), ("SPIKE_EXIT=\r\n", 0, ("none", None)), ("SPIKE_EXIT=abc\r\n", 0, ("none", None)),
+                 ("SPIKE_START_ERROR=InvalidOperationException\r\n", 1, ("error", "InvalidOperationException")), ("", 0, ("plain", 0)), ("아무 표지 없음", 7, ("plain", 7)), (None, 3, ("plain", 3)))
+        for text, rc, expected in cases:
+            self.assertEqual(measure.parse_std_exit(text, rc), expected, text)
+
+    def test_a_launch_error_wins_over_an_exit_marker_and_a_marker_inside_a_line_is_not_a_marker(self):
+        self.assertEqual(measure.parse_std_exit("SPIKE_EXIT=0\r\nSPIKE_START_ERROR=Win32Exception\r\n", 1), ("error", "Win32Exception"))
+        self.assertEqual(measure.parse_std_exit("echo SPIKE_EXIT=0 은 표지가 아니다\r\n", 5), ("plain", 5))
+
+    def test_traces_are_found_by_file_name_anywhere_under_the_local_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "Local"
+            for relative in ("ChanceBlogSpikeA/current/VERSION", "ChanceBlogSpikeA/Update.exe", "Programs/ChanceBlogSpikeC/unins000.exe", "Microsoft/Windows/other.txt"):
+                path = local / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x")
+            found = measure.std_user_traces(local, limit=10)
+            self.assertEqual(sorted(found), ["ChanceBlogSpikeA/Update.exe", "ChanceBlogSpikeA/current/VERSION", "Programs/ChanceBlogSpikeC/unins000.exe"])
+            self.assertEqual(len(measure.std_user_traces(local, limit=2)), 2)
+            self.assertEqual(measure.std_user_traces(local / "nothing"), [])
+            (local / "empty").mkdir()
+            self.assertEqual(measure.std_user_traces(local / "empty"), [])
+
+    def test_a_lookalike_file_name_is_not_a_trace_and_the_name_match_ignores_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp)
+            (local / "VERSION.txt").write_bytes(b"x")
+            (local / "my-version").write_bytes(b"x")
+            self.assertEqual(measure.std_user_traces(local), [])
+            (local / "Update.EXE").write_bytes(b"x")
+            self.assertEqual(measure.std_user_traces(local), ["Update.EXE"])
+
+    def test_the_script_sets_the_new_users_variables_before_it_starts_the_program_and_reads_the_exit_code_without_trusting_it(self):
+        script = measure.std_user_script()
+        for variable in ("$env:USERNAME =", "$env:USERPROFILE =", "$env:LOCALAPPDATA =", "$env:APPDATA =", "$env:TEMP =", "$env:TMP ="):
+            self.assertIn(variable, script, variable)
+            self.assertLess(script.index(variable), script.index("Start-Process"), variable)                                   # 띄우기 전에 정한다
+        for word in ("PSCredential", "-Credential", "-LoadUserProfile", "-Wait", "-PassThru", "SPIKE_EXIT=", "SPIKE_START_ERROR=", "$null -eq $code"):
+            self.assertIn(word, script, word)
+        self.assertNotIn("-UseNewEnvironment", script)                                                                         # 현재 사용자의 환경을 불러오는 것으로 알려져 믿지 않는다 — 변수를 명시한다
+        self.assertNotIn("SPIKE_PW'", script)                                                                                  # 비밀번호는 환경 변수 이름으로만 쓰고 글로 박지 않는다
+
+
+class StandardUserNameTest(unittest.TestCase):
+    """결정 D-810 — 갈래마다 다른 임시 사용자 이름(같은 이름을 지웠다 다시 만들면 윈도가 새 프로필 폴더에 컴퓨터 이름을 붙여 흔적을 찾는 곳이 어긋난다)."""
+
+    def test_each_arm_gets_its_own_short_alphanumeric_name_and_its_own_profile_folder(self):
+        names = {arm: measure.std_user_name(arm) for arm in "ABC"}
+        self.assertEqual(names, {"A": "spikeusera", "B": "spikeuserb", "C": "spikeuserc"})
+        for name in names.values():
+            self.assertTrue(name.startswith(measure.STD_USER))
+            self.assertTrue(name.isalnum())
+            self.assertLessEqual(len(name), 20)                                                     # 윈도 사용자 이름은 스무 글자까지
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp, environ={"PUBLIC": "D:/Users/Public"})
+            profiles = {name: measure.std_user_folders(ctx, name)[1] for name in names.values()}
+            self.assertEqual(len(set(profiles.values())), 3)
+            for name, profile in profiles.items():
+                self.assertEqual(profile, Path("D:/Users") / name / "AppData" / "Local")
+            self.assertEqual(measure.std_user_folders(ctx)[1], Path("D:/Users") / measure.STD_USER / "AppData" / "Local")        # 이름을 안 주면 예전 그대로
+
+
+class PeRegionsTest(unittest.TestCase):
+    """결정 D-810 — M17: 1차 측정의 '한글 글 UTF-8 479' 는 실행 파일 전체를 한 번에 세어, 설치 도구가 안에 붙인 앱 묶음의 글자와 설치 도구 자신의 화면 글자를 가르지 못했다."""
+    KOREAN = "설치마법사".encode("utf-8")
+
+    def pe(self, put_at=None, extra=b""):
+        data = bytearray(build_pe(["kernel32.dll"]))
+        if put_at is not None:
+            data[put_at:put_at + len(self.KOREAN)] = self.KOREAN
+        return bytes(data) + extra
+
+    def test_the_end_of_the_sections_is_where_the_appended_chunk_begins(self):
+        self.assertEqual(measure.pe_image_end(self.pe()), 0xC00)                                      # 합성 PE 의 구역은 0x400 에서 0x800 바이트
+        self.assertIsNone(measure.pe_image_end(b"not a pe file" * 50))
+        self.assertIsNone(measure.pe_image_end(b""))
+        self.assertIsNone(measure.pe_image_end(build_pe([])[:0x100]))
+
+    def test_korean_text_inside_the_sections_and_in_the_appended_chunk_are_counted_apart(self):
+        inside = measure.hangul_regions(self.pe(put_at=0xA00))
+        self.assertTrue(inside["split"])
+        self.assertGreaterEqual(inside["image"]["utf8"], 1)
+        self.assertEqual(inside["overlay"], {"utf8": 0, "utf16": 0})
+        appended = measure.hangul_regions(self.pe(extra=b"\x00\x01" + self.KOREAN * 40))
+        self.assertTrue(appended["split"])
+        self.assertEqual(appended["image"], {"utf8": 0, "utf16": 0})
+        self.assertGreaterEqual(appended["overlay"]["utf8"], 1)
+        self.assertEqual(appended["utf8"], appended["image"]["utf8"] + appended["overlay"]["utf8"])        # 전체 값은 두 구간의 합과 같다
+
+    def test_a_file_that_is_not_a_pe_gets_only_the_whole_value_and_says_it_could_not_split(self):
+        found = measure.hangul_regions(b"\x01" + self.KOREAN * 3)
+        self.assertFalse(found["split"])
+        self.assertIsNone(found["image"])
+        self.assertIsNone(found["overlay"])
+        self.assertGreaterEqual(found["utf8"], 1)
+        self.assertEqual(measure.hangul_regions(b"plain ascii only " * 50)["utf8"], 0)
+
+    def test_the_old_whole_file_function_still_counts_the_same(self):
+        data = self.pe(put_at=0xA00, extra=self.KOREAN * 5)
+        whole = measure.hangul_samples(data)
+        split = measure.hangul_regions(data)
+        self.assertEqual((split["utf8"], split["utf16"]), (whole["utf8"], whole["utf16"]))
+
+
+class LongPathTest(unittest.TestCase):
+    """결정 D-810 — M19: 1차 측정의 설치 경로는 75자였다(설계서는 한글·공백이 든 100자 경로)."""
+
+    def test_the_path_is_at_least_a_hundred_characters_with_korean_and_spaces_for_any_work_folder(self):
+        for work in ("D:\\a\\_temp\\spike", "C:\\x", "C:\\Users\\Someone\\AppData\\Local\\Temp\\spike-work-folder-with-a-long-name"):
+            with tempfile.TemporaryDirectory() as tmp:
+                ctx = make_context(tmp)
+                ctx.work = Path(work)
+                for arm in "ABC":
+                    base = measure.long_path_base(ctx, arm)
+                    for leaf in ("tiny", "real"):
+                        self.assertGreaterEqual(len(str(base / leaf)), measure.LONG_PATH_CHARS, (work, arm, leaf))
+                    self.assertTrue(any("가" <= char <= "힣" for char in base.name))
+                    self.assertIn(" ", base.name)
+                    self.assertEqual(base.parent, Path(work) / "run" / arm)
+
+    def test_the_length_is_the_design_value_and_not_something_a_run_could_lower(self):
+        self.assertEqual(measure.LONG_PATH_CHARS, 100)                                                  # 설계서 3-1(f) M19: 한글·공백이 든 100자 경로
+
+    def test_an_already_long_work_folder_is_not_padded_further_than_needed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp)
+            ctx.work = Path("C:\\" + "w" * 120)
+            self.assertEqual(measure.long_path_base(ctx, "A").name, "한글 공백")
+
+
+WINDOWS_ENV = {"IMAGEOS": "win25", "IMAGEVERSION": "20261116.335.1", "RUNNER_OS": "Windows", "GITHUB_SHA": "0123456789abcdef", "USERNAME": "runneradmin"}            # 윈도에서 `dict(os.environ)` 이 만드는 모양(이름이 모두 대문자)
+ALL_TOOLS = {"python": {"version": "3.12.10"}, "dotnet": {"version": "11.0.100"}, "vpk": {"status": "ok", "version": "1.2.161", "version_source": "vpk --version"},
+             "iscc": {"status": "ok", "version": "6.7.1", "version_source": "레지스트리", "version_ok": True, "design_line": True}}
+
+
+class BlockShapeTest(unittest.TestCase):
+    """결정 D-810 — 1차 측정 결과 상자의 모양: 머리 줄의 빈 칸, 한 줄에 '/' 로 이어 붙인 두 결과, 중간에 잘린 M20 줄, 통과로 보이지만 단서가 있는 관문."""
+
+    def block(self, results=None, state=None, environ=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp, environ=environ, results=results, state=state)
+            block, md, data = run.build_report(ctx)
+        return block.splitlines(), md, data
+
+    def test_the_header_names_the_runner_and_the_image_even_when_the_environment_names_are_upper_case(self):
+        lines, _md, _data = self.block(environ=WINDOWS_ENV, state={"tools": ALL_TOOLS})
+        self.assertEqual(lines[1], "러너: Windows win25 20261116.335.1 · 파이썬 3.12.10 · dotnet 11.0.100 · vpk 1.2.161 · Inno 6.7.1(레지스트리) · 커밋 0123456")
+        self.assertNotIn("?", lines[1])
+
+    def test_a_header_field_that_cannot_be_read_gives_the_reason_not_a_question_mark(self):
+        lines, _md, _data = self.block(environ={}, state={"tools": {}})
+        header = lines[1]
+        for word in ("OS 못 읽음(RUNNER_OS 없음)", "이미지 이름 못 읽음(ImageOS 없음)", "이미지 판 못 읽음(ImageVersion 없음)", "파이썬 못 읽음", "dotnet 못 읽음", "vpk 없음", "Inno 없음", "커밋 못 읽음(GITHUB_SHA 없음)"):
+            self.assertIn(word, header, word)
+        self.assertNotIn("?", header)
+
+    def test_the_commit_is_cut_to_seven_characters_only_when_it_was_read(self):
+        lines, _md, _data = self.block(environ=dict(WINDOWS_ENV, GITHUB_SHA="d2ab446abcdef"), state={"tools": ALL_TOOLS})
+        self.assertTrue(lines[1].endswith("커밋 d2ab446"), lines[1])
+
+    def test_the_vpk_label_says_where_the_version_came_from_unless_it_came_from_the_tool_itself(self):
+        self.assertEqual(run.vpk_label({"status": "ok", "version": "1.2.161", "version_source": "vpk --version"}), "vpk 1.2.161")
+        self.assertEqual(run.vpk_label({"version": "1.2.161"}), "vpk 1.2.161")
+        self.assertEqual(run.vpk_label({"status": "ok", "version": "1.2.161", "version_source": "dotnet tool list"}), "vpk 1.2.161(dotnet tool list)")
+        self.assertIn("잠금 파일", run.vpk_label({"status": "ok", "version": "1.2.161", "version_source": "잠금 파일 값 — vpk 출력에서 판을 읽지 못함"}))
+        self.assertEqual(run.vpk_label({"status": "ok", "version": ""}), "vpk 판 못 읽음")
+        self.assertEqual(run.vpk_label({"status": "failed", "reason": "dotnet tool install 실패"}), "vpk 없음(dotnet tool install 실패)")
+        self.assertEqual(run.vpk_label(None), "vpk 없음")
+
+    def test_the_inno_label_covers_found_low_off_the_design_line_unknown_and_missing(self):
+        self.assertEqual(run.inno_label({"status": "ok", "version": "6.7.1", "version_source": "레지스트리", "version_ok": True, "design_line": True}), "Inno 6.7.1(레지스트리)")
+        self.assertEqual(run.inno_label({"version": "6.7.1"}), "Inno 6.7.1")
+        self.assertIn("설계서의 6.7 줄이 아님", run.inno_label({"status": "ok", "version": "6.8.0", "version_source": "파일 판", "version_ok": True, "design_line": False}))
+        self.assertIn("6.5.0 보다 낮아 쓰지 않음", run.inno_label({"status": "ok", "version": "6.4.3", "version_source": "파일 판", "version_ok": False, "design_line": False}))
+        unknown = run.inno_label({"status": "ok", "version": "", "version_ok": None, "version_reason": "파일 판 빈 값 0.0.0.0 · 레지스트리 읽히지 않음"})
+        self.assertIn("Inno 판 미확인(파일 판 빈 값 0.0.0.0", unknown)
+        self.assertIn("계속 진행", unknown)
+        self.assertEqual(run.inno_label({"status": "unavailable", "reason": "ISCC.exe 를 찾지 못했다"}), "Inno 없음(ISCC.exe 를 찾지 못했다)")
+        self.assertEqual(run.inno_label(None), "Inno 없음")
+
+    def test_a_measurement_with_two_targets_is_two_lines_one_per_target_with_the_small_app_first(self):
+        results = [rec("M05", "B", "pass", brief="종료 0 30.6초", target="real"), rec("M05", "A", "pass", brief="종료 0 0.4초", target="tiny"), rec("M05", "B", "pass", brief="종료 0 0.4초", target="tiny"),
+                   rec("M05", "C", "unavailable", brief="설치 파일 없음", target="tiny"), rec("M05", "C", "unavailable", brief="설치 파일 없음", target="real")]
+        lines = run.measurement_lines(results, "M05")
+        self.assertEqual(lines, ["M05 무음 설치(작은 앱) | A 통과 종료 0 0.4초 | B 통과 종료 0 0.4초 | C 시도 불가 설치 파일 없음", "M05 무음 설치(실제 묶음) | B 통과 종료 0 30.6초 | C 시도 불가 설치 파일 없음"])
+        for line in lines:
+            self.assertNotIn(" / ", line)                                                      # 두 결과를 '/' 로 잇지 않는다
+
+    def test_a_measurement_with_one_target_or_none_stays_one_line_without_a_suffix(self):
+        self.assertEqual(run.measurement_lines([rec("M08", "A", "pass", brief="x", target="tiny"), rec("M08", "B", "pass", brief="y", target="tiny")], "M08"), ["M08 업데이트 | A 통과 x | B 통과 y"])
+        self.assertEqual(run.measurement_lines([rec("M14", "A", "pass", brief="x")], "M14"), ["M14 접속 차단 | A 통과 x"])
+        self.assertEqual(run.measurement_lines([], "M14"), ["M14 접속 차단 | 기록 없음"])
+
+    def test_a_record_without_a_target_joins_the_first_line_and_a_common_record_joins_its_own_targets_line(self):
+        results = [rec("M07", "A", "pass", brief="훅 4/4", target="tiny"), rec("M07", "B", "pass", brief="훅 4/4"), rec("M07", "-", "info", brief="실제 묶음 훅: 종료 코드 2/2/2/2", target="real")]
+        self.assertEqual(run.measurement_lines(results, "M07"), ["M07 훅(작은 앱) | A 통과 훅 4/4 | B 통과 훅 4/4", "M07 훅(실제 묶음) | 기록 실제 묶음 훅: 종료 코드 2/2/2/2"])
+
+    def test_three_or_more_targets_and_an_unknown_target_name_each_get_a_line(self):
+        results = [rec("M15", "A", "info", brief="휠 2.8 MB", target="wheel"), rec("M15", "A", "info", brief="더 큼", target="bundle-delta"), rec("M15", "A", "info", brief="가져오기 14개", target="setup"), rec("M15", "B", "info", brief="가져오기 14개", target="setup"),
+                   rec("M15", "A", "info", brief="새 대상", target="brand-new")]
+        lines = run.measurement_lines(results, "M15")
+        self.assertEqual([line.split(" | ")[0] for line in lines], ["M15 네이티브 부품(휠)", "M15 네이티브 부품(묶음 크기 차이)", "M15 네이티브 부품(설치 파일)", "M15 네이티브 부품(brand-new)"])
+        self.assertIn("B 기록 가져오기 14개", lines[2])
+
+    def test_the_sizes_line_is_not_cut_in_the_middle_but_an_ordinary_long_brief_is(self):
+        steps = ",".join("step%d %ds" % (number, number * 11) for number in range(1, 15))
+        results = [rec("M20", "-", "info", brief="실제 묶음 95.8 MB zip 39.0 MB, 단계 시간 " + steps), rec("M05", "A", "pass", brief="x" * 300, target="tiny")]
+        sizes = run.measurement_lines(results, "M20")[0]
+        self.assertIn("step14 154s", sizes)                                                    # 1차 측정은 '단계 시간 install-tools 28.4s,build-bundles 73…' 에서 잘렸다
+        self.assertFalse(sizes.endswith("…"))
+        ordinary = run.measurement_lines(results, "M05")[0]
+        self.assertTrue(ordinary.endswith("…"))
+        self.assertLessEqual(len(ordinary), len("M05 무음 설치 | A 통과 ") + run.CELL_LIMIT)
+
+    def test_no_line_of_the_block_is_longer_than_the_limit_even_for_absurd_briefs(self):
+        results = passing_results() + [rec("M%02d" % number, arm, "info", brief="가" * 5000, target="tiny") for number in range(1, 23) for arm in "ABC"] + [rec("M20", "-", "info", brief="나" * 9000)]
+        lines, _md, _data = self.block(results=results)
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertLessEqual(len(line), run.LINE_LIMIT, line[:40])
+        self.assertEqual((lines[0], lines[-1]), (run.RESULT_HEADER, run.RESULT_FOOTER))
+
+    def test_a_gate_that_passed_only_because_the_standard_user_check_was_handed_over_says_so(self):
+        items = [item for item in passing_results() if not (item["id"] == "M18" and item["arm"] in "AB")] + [rec("M18", "A", "unavailable", brief="시도 불가"), rec("M18", "B", "unavailable", brief="시도 불가")]
+        gates = run.judge(items)
+        for arm in "AB":
+            self.assertEqual(gates[arm]["G1"]["status"], "pass")
+            self.assertIn("운영자 실기", gates[arm]["G1"]["open"])
+        self.assertNotIn("open", gates["C"]["G1"])                                               # 표준 사용자 시험이 통과인 갈래에는 단서가 없다
+        lines, _md, data = self.block(results=items)
+        g1 = next(line for line in lines if line.startswith("G1 "))
+        self.assertIn("A 통과(표준 사용자는 운영자 실기)", g1)
+        self.assertIn("B 통과(표준 사용자는 운영자 실기)", g1)
+        self.assertIn("C 통과 ", g1 + " ")
+        self.assertNotIn("(", g1.split("C 통과")[-1])
+        self.assertIn("open", data["gates"]["A"]["G1"])
+
+    def test_a_failed_or_unknown_gate_gets_no_hand_over_note(self):
+        items = [item for item in passing_results() if not (item["id"] == "M18" and item["arm"] == "A")] + [rec("M18", "A", "fail", brief="설치 도구가 관리자 권한을 요구했다")]
+        self.assertEqual(run.judge(items)["A"]["G1"]["status"], "fail")
+        self.assertNotIn("open", run.judge(items)["A"]["G1"])
+        for arm in "ABC":
+            self.assertNotIn("open", run.judge([])[arm]["G1"])
+
+    def test_the_eighth_gate_no_longer_names_a_count_of_twelve(self):
+        self.assertEqual(dict(run.GATES)["G8"], "설치본 selftest 앱 점검 전부")
+        lines, _md, _data = self.block()
+        self.assertNotIn("열두", "\n".join(lines))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@
 파일 시스템은 진짜(임시 폴더)이고 프로그램 실행만 가짜다 — 그래서 단계 실행기와 측정 흐름의 순서·분기·기록을 설치 도구 없이 끝까지 돌려 볼 수 있다. 이 흉내가 진짜 도구와 같다는 보장은 없다
 (진짜 동작은 병합 뒤 운영자의 수동 실행이 알려 준다) — 시험이 지키는 것은 흐름이 어긋나지 않고 기록이 쓰이며 실패가 갇히는지이다.
 스위치(속성)로 실패를 만든다: dotnet_fail·delta_ok·sdk_needs_skip·iscc_version·build_fail·mixed_on_running·hook_rc·autostart·keep_shortcut·std_user_ok 등.
+환경 변수 이름은 윈도의 `dict(os.environ)` 처럼 **모두 대문자**로 담는다(`ImageOS` 가 `IMAGEOS` — 1차 측정이 '러너: ? ?' 로 나온 원인을 흉내 낸다). `selftest_names` 는 설치본·휴대용 `--selftest` 가 찍는 점검 이름 목록(기본은 앱의 목록),
+`iscc_*`·`vpk_version_text`·`std_*` 스위치는 판 읽기와 표준 사용자 시험의 여러 모양을 만든다.
 `users_root` 는 임시 사용자 프로필이 생기는 폴더(기본은 `SPIKE_USERS_DIR` 환경 변수가 가리키는 같은 자리)이고 `present_files` 는 `is_file` 이 '있다' 고 답할 경로 집합(기본은 비어 있어 늘 '없다' — 러너 이미지에 실제로 깔린 도구가 끼어들지 않게), `echo_layout` 은 임시 사용자 설치가 실패할 때 PowerShell 이 비밀번호를 되울리는 모양(글을 돌려주는 함수)이다.
 """
 import itertools
@@ -17,7 +19,7 @@ from pathlib import Path
 import installer_spike_support as support
 
 measure = support.load("measure")
-SELFTEST_NAMES = ("utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "uac_manifest", "qt_plugins", "qt_screens", "gui_only_entry", "data_dir_untouched")
+SELFTEST_NAMES = support.app_selftest_names()                                            # 앱이 찍는 점검 이름 — 개수를 이 도우미에 못박지 않고 앱의 목록에서 읽는다(앱이 점검을 늘리면 가짜 세계도 따라간다)
 REAL_VERSION = (support.ROOT / "VERSION").read_text(encoding="utf-8").strip()          # 진짜 저장소 VERSION — run_spike.build_real 이 읽는 값과 같다
 
 
@@ -57,7 +59,7 @@ class FakeProc:
 class FakeWorld(measure.Host):
     def __init__(self, tmp, **switches):
         tmp = Path(tmp)
-        environ = {"ImageOS": "win25", "ImageVersion": "20261116.335.1", "GITHUB_SHA": "0123456789abcdef", "USERNAME": "runneradmin", "RUNNER_TEMP": str(tmp / "temp"),
+        environ = {"IMAGEOS": "win25", "IMAGEVERSION": "20261116.335.1", "GITHUB_SHA": "0123456789abcdef", "USERNAME": "runneradmin", "RUNNER_TEMP": str(tmp / "temp"),
                    "GITHUB_ACTIONS": "true", "RUNNER_OS": "Windows", "APPDATA": str(tmp / "appdata"), "LOCALAPPDATA": str(tmp / "local"), "USERPROFILE": str(tmp / "profile"), "PUBLIC": str(tmp / "public"), "SPIKE_USERS_DIR": str(tmp / "users"),
                    "PATH": ""}
         super().__init__(environ)
@@ -78,8 +80,14 @@ class FakeWorld(measure.Host):
         self.dotnet_fail = False
         self.delta_ok = True
         self.sdk_needs_skip = False
-        self.iscc_version = "6.7.1.0"
+        self.iscc_version = "6.7.1.0"                    # 파일 버전 자원(PowerShell 이 읽는 FileVersion) — 러너 이미지에서는 0.0.0.0 이 나왔다
+        self.iscc_product_version = None                # 제품 버전 자원(None 이면 파일 버전과 같다)
+        self.iscc_registry = []                         # 레지스트리 제거 항목이 돌려줄 줄들('이름|판|설치 위치')
+        self.iscc_usage_text = "Inno Setup 6 Command-Line Compiler\nCopyright (C) 1997-2025 Jordan Russell. All rights reserved.\n"     # ISCC /? 출력(머리글에는 큰 판 번호만 있다)
+        self.iscc_compile_banner = ""                   # 컴파일 출력에 더할 '판 줄'(예: Compiler engine version: Inno Setup 6.7.1)
         self.iscc_missing = False
+        self.vpk_version_text = "1.2.161+abcdef\n"      # vpk --version 이 찍는 글(1차 측정에서는 판을 못 읽는 글이었다)
+        self.vpk_tool_list = True                       # dotnet tool list 가 vpk 줄을 보여 주는가
         self.build_fail = False
         self.pyinstaller_fail = False
         self.mixed_on_running = False
@@ -88,10 +96,22 @@ class FakeWorld(measure.Host):
         self.keep_shortcut = False
         self.delete_data_on_uninstall = False
         self.std_user_ok = False
+        self.std_launch_ok = True                       # 임시 사용자로 프로그램을 띄울 수 있는가(탐침과 설치 모두)
+        self.std_exit_readable = True                   # -Credential 로 띄운 프로세스의 종료 코드를 읽을 수 있는가
+        self.std_exit_code = 0                          # 설치 도구가 끝날 때의 종료 코드(std_user_ok 가 거짓이고 std_silent 가 참일 때)
+        self.std_silent = False                         # 거짓이면 예전처럼 실패하며 비밀번호를 되울린다 / 참이면 1차 측정의 증상 — 종료 코드만 내고 설치 흔적은 없다
+        self.std_layout = "fake"                        # 흔적을 두는 모양: fake(예전) · velopack · inno
+        self.ps_calls = []                              # PowerShell 호출(글, 환경)을 적어 둔다
+        self.compile_calls = 0
         self.net_user_ok = True
         self.firewall_effective = True
         self.selftest_fail = set()
+        self.selftest_names = None                      # None 이면 앱의 점검 목록(SELFTEST_NAMES) 전부
+        self.std_trace_delay = 0                        # 0 보다 크면 설치 흔적이 그 초 뒤에 생긴다(설치 도구가 일을 다른 프로세스에 넘기고 먼저 끝나는 모양)
+        self.pending_traces = []
+        self.std_log_text = ""                          # 표준 사용자 설치가 남기는 설치 도구 로그 글(비면 로그 없음)
         self.defender_status = "clean"
+        self.defender_realtime = True                   # 실시간 보호 상태(None 이면 읽지 못함) — 러너 이미지에서는 꺼져 있었다
         self.fail_calls = set()
         self.raise_on = None
         self.hold_apps_closed_by_inno = True
@@ -108,6 +128,15 @@ class FakeWorld(measure.Host):
 
     def sleep(self, seconds):
         self.clock += seconds
+        self.flush_pending()
+
+    def flush_pending(self):
+        """늦게 생기는 설치 흔적(std_trace_delay) — 시계가 그 시각을 지나면 파일이 생긴다."""
+        for ready_at, root in list(self.pending_traces):
+            if self.clock >= ready_at:
+                self.pending_traces.remove((ready_at, root))
+                root.mkdir(parents=True, exist_ok=True)
+                (root / "VERSION").write_text("0.0.1\n", encoding="utf-8")
 
     def which(self, name):
         if name.lower() == "iscc.exe" and not self.iscc_missing:
@@ -238,24 +267,53 @@ class FakeWorld(measure.Host):
     def do_powershell(self, args, env):
         script = args[-1]
         if "Get-MpComputerStatus" in script:
-            return self.ok('{"AMServiceEnabled":true,"AntivirusEnabled":true,"RealTimeProtectionEnabled":true}')
+            if self.defender_realtime is None:
+                return measure.HostResult(1, 0.5, "", "Get-MpComputerStatus : 이 컴퓨터에서는 쓸 수 없다")
+            return self.ok('{"AMServiceEnabled":true,"AntivirusEnabled":true,"RealTimeProtectionEnabled":%s}' % ("true" if self.defender_realtime else "false"))
+        if "DisplayVersion" in script:
+            return self.ok("".join(line + "\r\n" for line in self.iscc_registry))
         if "FileVersion" in script:
-            return self.ok(self.iscc_version + "\n")
+            return self.ok("FILE=%s\r\nPRODUCT=%s\r\n" % (self.iscc_version, self.iscc_version if self.iscc_product_version is None else self.iscc_product_version))
         if "Get-AuthenticodeSignature" in script:
             return self.ok("CN=Fake Signer B.V., O=Fake\n")
         if "PSCredential" in script:
-            if self.std_user_ok:
-                root = self.users_root / measure.STD_USER / "AppData" / "Local" / "Fake"                 # 윈도가 프로필을 만드는 자리 — 시험용 환경 변수와 상관없다
-                root.mkdir(parents=True, exist_ok=True)
-                (root / "VERSION").write_text("0.0.1\n", encoding="utf-8")
-                return self.ok()
-            layout = self.echo_layout or (lambda password: "access denied for " + password)
-            return measure.HostResult(1, 0.5, "", layout((env or {}).get("SPIKE_PW", "")))
+            self.ps_calls.append((script, dict(env or {})))
+            if not self.std_launch_ok:
+                return measure.HostResult(1, 0.5, "SPIKE_START_ERROR=InvalidOperationException\r\n", "")
+            if Path((env or {}).get("SPIKE_SETUP", "")).name.lower() == "cmd.exe":                       # 탐침 — 종료 코드 42 를 읽을 수 있는가
+                return self.ok("SPIKE_EXIT=42\r\n" if self.std_exit_readable else "SPIKE_EXIT=none\r\n")
+            return self.standard_install(env or {})
         return self.ok()
+
+    def std_trace_root(self, user=measure.STD_USER):
+        base = self.users_root / user / "AppData" / "Local"                                   # 윈도가 프로필을 만드는 자리 — 시험용 환경 변수와 상관없다
+        return {"velopack": base / "ChanceBlogSpikeA" / "current", "inno": base / "Programs" / "ChanceBlogSpikeC"}.get(self.std_layout, base / "Fake")
+
+    def standard_install(self, env):
+        def mark(code):
+            return ("SPIKE_EXIT=%s\r\n" % code) if self.std_exit_readable else "SPIKE_EXIT=none\r\n"
+
+        match = re.search(r'(?i)(?:--log\s+|/LOG=)"([^"]+)"', env.get("SPIKE_ARGS", ""))
+        if self.std_log_text and match:                                                                   # 글 하나이거나 비밀번호를 받아 글을 돌려주는 함수(로그가 비밀번호를 되울리는 모양)
+            Path(match.group(1)).write_text(self.std_log_text(env.get("SPIKE_PW", "")) if callable(self.std_log_text) else self.std_log_text, encoding="utf-8")
+        if self.std_user_ok:
+            root = self.std_trace_root(env.get("SPIKE_USER", measure.STD_USER))
+            if self.std_trace_delay > 0:
+                self.pending_traces.append((self.clock + self.std_trace_delay, root))
+                return self.ok(mark(0))
+            root.mkdir(parents=True, exist_ok=True)
+            (root / "VERSION").write_text("0.0.1\n", encoding="utf-8")
+            return self.ok(mark(0))
+        if self.std_silent:                                                                               # 1차 측정의 증상 — 종료 코드는 나오는데 설치 흔적은 없다
+            return measure.HostResult(self.std_exit_code if self.std_exit_readable else 0, 0.5, mark(self.std_exit_code), "")
+        layout = self.echo_layout or (lambda password: "access denied for " + password)
+        return measure.HostResult(1, 0.5, "", layout(env.get("SPIKE_PW", "")))
 
     def do_dotnet(self, args, env):
         if args[1:2] == ["--version"]:
             return self.ok("8.0.404\n")
+        if args[1:3] == ["tool", "list"]:
+            return self.ok("Package Id      Version      Commands\n-----------------------------------------\nvpk             1.2.161      vpk\n" if self.vpk_tool_list else "Package Id      Version      Commands\n")
         if self.dotnet_fail:
             return measure.HostResult(1, 0.5, "", "error NU1101: Unable to find package vpk")
         target = Path(arg_after(args, "--tool-path"))
@@ -265,7 +323,7 @@ class FakeWorld(measure.Host):
 
     def do_vpk_exe(self, args, env):
         if args[1:2] == ["--version"]:
-            return self.ok("1.2.161+abcdef\n")
+            return self.ok(self.vpk_version_text)
         if args[1:2] == ["--help"] or args[1:3] == ["pack", "--help"]:
             return self.ok("usage: vpk pack --delta <BestSize|BestSpeed|None>\n")
         if args[1] != "pack":
@@ -286,13 +344,16 @@ class FakeWorld(measure.Host):
         return self.ok("packed")
 
     def do_iscc_exe(self, args, env):
+        if args[1:] == ["/?"]:
+            return self.ok(self.iscc_usage_text)
+        self.compile_calls += 1
         defines = {item[2:].split("=", 1)[0]: item[2:].split("=", 1)[1] for item in args if item.startswith("/D")}
         out = Path(next(item[2:] for item in args if item.startswith("/O")))
         base = next(item[2:] for item in args if item.startswith("/F"))
         out.mkdir(parents=True, exist_ok=True)
         setup = out / (base + ".exe")
         self.new_setup(setup, {"kind": "inno", "bundle": Path(defines["SourceDir"]), "exe": defines["AppExe"], "id": defines["AppIdText"], "version": defines["AppVersion"], "dir_name": defines["AppDirName"]})
-        return self.ok("compiled")
+        return self.ok("Inno Setup 6 Command-Line Compiler\n" + (self.iscc_compile_banner + "\n" if self.iscc_compile_banner else "") + "compiled")
 
     def do_python_exe(self, args, env):
         joined = " ".join(args)
@@ -424,7 +485,10 @@ class FakeWorld(measure.Host):
     def run_app(self, args, env):
         exe = Path(args[0])
         if "--selftest" in args:
-            lines = ["[%s] %s: ok" % ("실패" if name in self.selftest_fail else "통과", name) for name in SELFTEST_NAMES]
+            names = SELFTEST_NAMES if self.selftest_names is None else tuple(self.selftest_names)
+            lines = ["[%s] %s: ok" % ("실패" if name in self.selftest_fail else "통과", name) for name in names]
+            failed = sum(1 for name in names if name in self.selftest_fail)
+            lines.append("결과: 통과 %d · 실패 %d · 건너뜀 0 — %s" % (len(names) - failed, failed, "점검 실패" if failed else "모두 정상"))          # 앱이 마지막에 찍는 요약 줄
             return measure.HostResult(1 if self.selftest_fail else 0, 0.5, "\n".join(lines) + "\n", "")
         if (exe.parent / "BROKEN").exists():
             return measure.HostResult(3, 0.2, "", "")

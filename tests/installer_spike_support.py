@@ -47,6 +47,12 @@ def read(rel):
     return (ROOT / rel).read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
+def app_selftest_names():
+    """앱이 `--selftest` 로 찍는 점검 이름들 — 앱 쪽 `scripts/release_check.py` 의 `SELFTEST_KEYS` 를 정규식으로 읽는다(측정 도구의 읽개 `measure.app_selftest_keys` 와 방법이 달라 서로 견줄 수 있다)."""
+    found = re.search(r"(?ms)^SELFTEST_KEYS\s*=\s*\((.*?)\)", read("scripts/release_check.py"))
+    return tuple(re.findall(r'"([a-z_0-9]+)"', found.group(1))) if found else ()
+
+
 SHA_REF = re.compile(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}")
 
 # ---- 수동 워크플로 `installer-spike.yml` 의 규칙 검사기 ------------------------------------------------------------------------------------

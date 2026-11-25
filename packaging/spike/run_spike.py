@@ -40,7 +40,7 @@ ISCC_CANDIDATES = ("C:/Program Files (x86)/Inno Setup 6/ISCC.exe", "C:/Program F
 JOB_LIMIT_SECONDS = 52 * 60
 HELP_LIMIT = 5000
 GATES = (("G1", "관리자 권한 0·표준 사용자"), ("G2", "무음 설치·제거·데이터 유지"), ("G3", "훅 5초·창 0·종료 0"), ("G4", "업데이트·반쯤 바뀜 0"), ("G5", "바깥 접속 막아도 됨"), ("G6", "Defender 위협 0"),
-         ("G7", "설치 파일 80MB·만들기 5분"), ("G8", "설치본 selftest 열두 항목"))
+         ("G7", "설치 파일 80MB·만들기 5분"), ("G8", "설치본 selftest 앱 점검 전부"))
 TITLES = {"M01": "도구 준비", "M02": "묶음 만들기", "M03": "설치 파일 만들기", "M04": "관리자 요구", "M05": "무음 설치", "M06": "설치 결과", "M07": "훅", "M08": "업데이트", "M09": "실행 중 업데이트", "M10": "되돌리기",
           "M11": "깨진 새 판", "M12": "제거", "M13": "ID 충돌 대조", "M14": "접속 차단", "M15": "네이티브 부품", "M16": "Defender", "M17": "한국어", "M18": "표준 사용자", "M19": "긴·한글 경로", "M20": "크기·시간",
           "M21": "이름 바꾼 Setup", "M22": "휴대용 공존"}
@@ -140,6 +140,12 @@ def version_text(text):
 
 # ---- install-tools ------------------------------------------------------------------------------------------------------------------------
 
+def vpk_listed_version(text):
+    """`dotnet tool list --tool-path 폴더` 출력의 vpk 줄에서 판(없으면 빈 글)."""
+    found = re.search(r"(?im)^vpk\s+(\d+\.\d+\.\d+(?:\.\d+)?)", text or "")
+    return found.group(1) if found else ""
+
+
 def install_vpk(ctx, tool, tools_dir):
     nupkg = tools_dir / tool["file"]
     reason = fetch_tools.check_file(nupkg, tool)
@@ -153,8 +159,13 @@ def install_vpk(ctx, tool, tools_dir):
     if not done.ok or not exe.is_file():
         return {"status": "failed", "reason": "dotnet tool install 실패 rc %s(로컬 원본만 허용): %s" % (done.rc, tail(done.text(), 300)), "nupkg_ok": True}
     shown = ctx.host.run([str(exe), "--version"], timeout=60)
-    found = version_text(shown.text())
-    return {"status": "ok", "path": str(exe), "version": found, "version_ok": found == tool["version"], "version_text": tail(shown.text(), 120), "nupkg_ok": True, "install_seconds": done.seconds}
+    found, source = version_text(shown.text()), "vpk --version"
+    if not found:                                                    # 1차 측정은 이 출력에서 판을 못 읽어 상자 머리의 vpk 칸이 비었다 — 도구 목록으로 다시 읽고, 그래도 안 되면 설치를 요구한 잠금 파일의 값으로 채우고 출처를 적는다
+        listed = ctx.host.run(["dotnet", "tool", "list", "--tool-path", str(target)], timeout=60)
+        found, source = vpk_listed_version(listed.text()), "dotnet tool list"
+    if not found:
+        found, source = tool["version"], "잠금 파일 값 — vpk 출력에서 판을 읽지 못함"
+    return {"status": "ok", "path": str(exe), "version": found, "version_ok": found == tool["version"], "version_source": source, "version_text": tail(shown.text(), 120), "nupkg_ok": True, "install_seconds": done.seconds}
 
 
 def install_sdk(ctx, tool, tools_dir, build_text):
@@ -195,11 +206,12 @@ def find_iscc(ctx):
     if not found:
         return {"status": "unavailable", "reason": "ISCC.exe 를 찾지 못했다(러너 이미지에 Inno Setup 이 없다)"}
     env = {"SPIKE_P": str(found)}
-    shown = ctx.host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "(Get-Item -LiteralPath $env:SPIKE_P).VersionInfo.FileVersion"], timeout=60, env=env)
     signer = ctx.host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "(Get-AuthenticodeSignature -LiteralPath $env:SPIKE_P).SignerCertificate.Subject"], timeout=60, env=env)
-    numbers = measure.version_numbers(shown.out)
+    read = measure.read_inno_version(ctx.host, found)                  # 여러 방법으로 읽는다 — 1차 측정은 파일 버전 자원 하나만 읽어 0.0.0.0 을 받고 갈래 C 를 통째로 멈췄다(결정 D-810)
+    numbers = read["numbers"]
     common = re.search(r"CN=([^,]+)", signer.out or "")
-    return {"status": "ok", "path": str(found), "version": ".".join(str(item) for item in numbers) if numbers else "", "version_ok": measure.inno_version_ok(numbers), "sha256": sha256_file(found),
+    return {"status": "ok", "path": str(found), "version": ".".join(str(item) for item in numbers) if numbers else "", "version_ok": measure.inno_version_ok(numbers), "version_source": read["source"],
+            "version_reads": read["reads"], "version_reason": read["reason"], "design_line": measure.inno_on_design_line(numbers), "sha256": sha256_file(found),
             "signer": common.group(1).strip() if common else "", "korean_isl": (Path(found).parent / "Languages" / "Korean.isl").is_file()}
 
 
@@ -332,7 +344,16 @@ def pack_inno(ctx, iscc, *, version, source_dir, app_exe, kind, out_dir, out_bas
     setup = out_dir / (out_base + ".exe")
     if not result.ok or not setup.is_file():
         return None, "ISCC 실패 rc %s: %s" % (result.rc, tail(result.text(), 300))
-    return {"setup": str(setup), "bytes": setup.stat().st_size, "seconds": result.seconds, "name": setup.name}, ""
+    engine = measure.inno_text_version(result.text())                  # 컴파일러가 스스로 밝히는 판('Compiler engine version')
+    return {"setup": str(setup), "bytes": setup.stat().st_size, "seconds": result.seconds, "name": setup.name, "engine": ".".join(str(item) for item in engine) if engine else ""}, ""
+
+
+def adopt_engine_version(iscc, engine):
+    """컴파일 출력이 밝힌 판을 기록한다. 미리 읽지 못했으면(미확인) 이것으로 채우고 판정도 다시 한다 — 이미 컴파일은 했으므로 낮은 판이면 상자에 그렇게 적힐 뿐 되돌리지 않는다."""
+    iscc["compile_version"] = engine
+    if iscc.get("version_ok") is None:
+        numbers = measure.version_numbers(engine)
+        iscc.update(version=engine, version_ok=measure.inno_version_ok(numbers), version_source="컴파일 출력", design_line=measure.inno_on_design_line(numbers))
 
 
 def cmd_pack(ctx):
@@ -385,6 +406,9 @@ def cmd_pack(ctx):
             entry["feed"] = None
             tiny[version] = entry
         installers["C"]["tiny"] = tiny
+        engine = next((entry["engine"] for entry in tiny.values() if entry.get("engine")), "")
+        if engine:
+            adopt_engine_version(iscc, engine)
         real = bundles.get("real", {})
         if real.get("dir"):
             entry, why = pack_inno(ctx, iscc["path"], version=real["version"], source_dir=real["dir"], app_exe="ChanceBlogDesktop.exe", kind="real", out_dir=ctx.work / "out" / "C-real", out_base="ChanceBlogDesktop-%s-Setup" % real["version"])
@@ -393,7 +417,7 @@ def cmd_pack(ctx):
             else:
                 problems["C-real"] = why
     else:
-        problems["C"] = "Inno Setup 을 쓸 수 없다: " + tail(iscc.get("reason", "판이 6.7 이 아니다(%s)" % iscc.get("version", "?")), 200)
+        problems["C"] = "Inno Setup 을 쓸 수 없다: " + tail(iscc.get("reason") or "판이 6.5.0 보다 낮다(%s, 읽은 곳: %s)" % (iscc.get("version", "?"), iscc.get("version_source", "?")), 200)
     ctx.state["pack_problems"] = {key: value for key, value in problems.items() if value}
     good = [arm for arm in ARMS if installers[arm].get("tiny") and len(installers[arm]["tiny"]) == 3]
     ctx.note_step("pack", "ok" if len(good) == 3 and not ctx.state["pack_problems"] else "partial", round(ctx.host.now() - began, 1), arms_ok=good, flags=flags)
@@ -440,6 +464,8 @@ def judge(results):
         m04, m18 = rollup(pick(results, "M04", arm)), rollup(pick(results, "M18", arm))
         status = "fail" if "fail" in (m04, m18) else ("pass" if m04 == "pass" and m18 in ("pass", "unknown") else "unknown")
         row["G1"] = {"status": status, "why": "매니페스트 %s·표준 사용자 %s" % (WORD[m04], WORD[m18])}
+        if status == "pass" and m18 != "pass":
+            row["G1"]["open"] = "표준 사용자는 운영자 실기"                  # 설계서 G1: 표준 사용자 설치가 '시도 불가' 면 운영자 PC 시험지(T-INST-04)로 넘기고 통과로 센다 — 상자에서 그 단서가 보이게 한다
         row["G2"] = {"status": both(rollup(pick(results, "M05", arm)), rollup(pick(results, "M12", arm))), "why": "무음 설치 %s·제거 %s" % (WORD[rollup(pick(results, "M05", arm))], WORD[rollup(pick(results, "M12", arm))])}
         row["G3"] = {"status": "n/a", "why": "훅이 없는 갈래"} if arm == "C" else {"status": rollup(pick(results, "M07", arm)), "why": "작은 앱 네 훅"}
         row["G4"] = {"status": both(rollup(pick(results, "M08", arm)), rollup(pick(results, "M09", arm))), "why": "업데이트 %s·실행 중 %s" % (WORD[rollup(pick(results, "M08", arm))], WORD[rollup(pick(results, "M09", arm))])}
@@ -452,44 +478,100 @@ def judge(results):
     return gates
 
 
-def short(item, limit=70):
+TARGET_LABELS = {"tiny": "작은 앱", "real": "실제 묶음", "wheel": "휠", "bundle-delta": "묶음 크기 차이", "setup": "설치 파일", "status": "러너 상태"}
+TARGET_ORDER = ("tiny", "real")
+CELL_LIMIT = 110
+CELL_LIMITS = {"M20": 320}                                                                      # 단계 시간까지 한 줄에 다 실어야 하는 줄(1차 측정에서 중간에 잘렸다)
+LINE_LIMIT = 480
+
+
+def short(item, limit=CELL_LIMIT):
     text = str(item["values"].get("brief", "") or item.get("note", ""))
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def cell(items):
+def cell(items, limit=CELL_LIMIT):
     if not items:
         return "-"
-    return " / ".join("%s %s" % (WORD[item["status"]], short(item)) for item in items)
+    return " / ".join("%s %s" % (WORD[item["status"]], short(item, limit)) for item in items)
+
+
+def measurement_lines(results, mid):
+    """한 측정을 상자의 줄로 만든다. 같은 측정에 대상(작은 앱·실제 묶음 …)이 둘 이상이면 대상마다 한 줄로 가른다 — 1차 측정은 한 줄에 '/' 로 이어 붙여 어느 결과가 어느 대상인지 알기 어려웠다(결정 D-810).
+    대상이 적히지 않은 기록은 첫 줄에 들어간다. 대상이 하나뿐이면 한 줄이다."""
+    items = [item for item in results if item["id"] == mid]
+    limit = CELL_LIMITS.get(mid, CELL_LIMIT)
+    targets = []
+    for item in items:
+        target = item["values"].get("target") or ""
+        if target and target not in targets:
+            targets.append(target)
+    targets.sort(key=lambda target: TARGET_ORDER.index(target) if target in TARGET_ORDER else len(TARGET_ORDER))
+    groups = targets if len(targets) > 1 else [None]
+    lines = []
+    for group in groups:
+        chosen = [item for item in items if group is None or (item["values"].get("target") or targets[0]) == group]
+        parts = ["%s %s" % (arm, cell([item for item in chosen if item["arm"] == arm], limit)) for arm in ARMS if any(item["arm"] == arm for item in chosen)]
+        common = [item for item in chosen if item["arm"] == "-"]
+        if common:
+            parts.append(cell(common, limit))
+        suffix = "(%s)" % TARGET_LABELS.get(group, group) if group else ""
+        lines.append("%s %s%s | %s" % (mid, TITLES[mid], suffix, " | ".join(parts) if parts else "기록 없음"))
+    return lines
+
+
+def vpk_label(info):
+    version = (info or {}).get("version")
+    if version:
+        source = info.get("version_source", "")
+        return "vpk " + version + ("" if not source or source == "vpk --version" else "(%s)" % source)
+    if (info or {}).get("status") == "ok":
+        return "vpk 판 못 읽음"
+    return "vpk 없음" + ("(%s)" % tail(info["reason"], 60) if (info or {}).get("reason") else "")
+
+
+def inno_label(info):
+    version = (info or {}).get("version")
+    if version:
+        label = "Inno " + version + ("(%s)" % info["version_source"] if info.get("version_source") else "")
+        if info.get("version_ok") is False:
+            label += " — 6.5.0 보다 낮아 쓰지 않음"
+        elif info.get("design_line") is False:
+            label += " — 설계서의 6.7 줄이 아님(기록)"
+        return label
+    if (info or {}).get("status") == "ok":
+        return "Inno 판 미확인(%s) — 계속 진행" % tail(info.get("version_reason") or "읽지 못함", 110)
+    return "Inno 없음" + ("(%s)" % tail(info["reason"], 60) if (info or {}).get("reason") else "")
+
+
+def header_line(ctx):
+    """결과 상자 둘째 줄 — 러너·도구 판. 못 읽은 칸은 물음표 대신 이유를 적는다(1차 측정은 '러너: ? ?' 와 빈 vpk 칸이었다)."""
+    environ = ctx.host.environ
+    tools = ctx.state.get("tools", {})
+    runner = "%s %s %s" % (measure.env_value(environ, "RUNNER_OS") or "OS 못 읽음(RUNNER_OS 없음)", measure.env_value(environ, "ImageOS") or "이미지 이름 못 읽음(ImageOS 없음)",
+                           measure.env_value(environ, "ImageVersion") or "이미지 판 못 읽음(ImageVersion 없음)")
+    return "러너: %s · 파이썬 %s · dotnet %s · %s · %s · 커밋 %s" % (runner, tools.get("python", {}).get("version") or "못 읽음", tools.get("dotnet", {}).get("version") or "못 읽음", vpk_label(tools.get("vpk")),
+                                                                  inno_label(tools.get("iscc")), measure.env_value(environ, "GITHUB_SHA")[:7] or "못 읽음(GITHUB_SHA 없음)")
 
 
 def result_block(ctx, results, gates, scrub):
-    state, environ = ctx.state, ctx.host.environ
-    tools = state.get("tools", {})
-    steps = state.get("steps", {})
-    lines = [RESULT_HEADER,
-             "러너: %s %s · 파이썬 %s · dotnet %s · vpk %s · Inno %s · 커밋 %s" % (environ.get("ImageOS", "?"), environ.get("ImageVersion", "?"), tools.get("python", {}).get("version", "?"), tools.get("dotnet", {}).get("version", "?"),
-                                                                              tools.get("vpk", {}).get("version", "없음"), tools.get("iscc", {}).get("version", "없음"), environ.get("GITHUB_SHA", "?")[:7]),
-             "단계: " + " | ".join("%s %s %s초" % (name, steps.get(name, {}).get("status", "안 돎"), steps.get(name, {}).get("seconds", "-")) for name in COMMANDS[:4])]
-    problems = state.get("pack_problems", {})
+    steps = ctx.state.get("steps", {})
+    lines = [RESULT_HEADER, header_line(ctx), "단계: " + " | ".join("%s %s %s초" % (name, steps.get(name, {}).get("status", "안 돎"), steps.get(name, {}).get("seconds", "-")) for name in COMMANDS[:4])]
+    problems = ctx.state.get("pack_problems", {})
     if problems:
         lines.append("만들기 문제: " + "; ".join("%s=%s" % (key, tail(str(value), 60)) for key, value in sorted(problems.items())))
     lines.append("--- 측정(갈래 A %s · B %s · C %s)" % (ARM_NAMES["A"], ARM_NAMES["B"], ARM_NAMES["C"]))
     for mid in sorted(TITLES):
-        per_arm = {arm: pick(results, mid, arm) for arm in ARMS}
-        common = pick(results, mid, "-")
-        parts = ["%s %s" % (arm, cell(items)) for arm, items in per_arm.items() if items]
-        if common:
-            parts.append(cell(common))
-        lines.append("%s %s | %s" % (mid, TITLES[mid], " | ".join(parts) if parts else "기록 없음"))
+        lines += measurement_lines(results, mid)
     lines.append("--- 관문(하나라도 실패하면 그 갈래는 탈락, 미정은 실패가 아니다)")
     for gate, title in GATES:
-        lines.append("%s %s | %s" % (gate, title, " | ".join("%s %s" % (arm, WORD[gates[arm][gate]["status"]]) for arm in ARMS)))
+        cells = ["%s %s%s" % (arm, WORD[gates[arm][gate]["status"]], "(%s)" % gates[arm][gate]["open"] if gates[arm][gate].get("open") else "") for arm in ARMS]
+        lines.append("%s %s | %s" % (gate, title, " | ".join(cells)))
     counts = {arm: sum(1 for gate, _t in GATES if gates[arm][gate]["status"] == "pass") for arm in ARMS}
     fails = {arm: [gate for gate, _t in GATES if gates[arm][gate]["status"] == "fail"] for arm in ARMS}
     lines.append("요약: 통과한 관문 A %d·B %d·C %d / 실패 관문 A %s·B %s·C %s" % (counts["A"], counts["B"], counts["C"], ",".join(fails["A"]) or "없음", ",".join(fails["B"]) or "없음", ",".join(fails["C"]) or "없음"))
     lines.append(RESULT_FOOTER)
-    return scrub("\n".join(lines))
+    return scrub("\n".join(line if len(line) <= LINE_LIMIT else line[:LINE_LIMIT - 1] + "…" for line in lines))
 
 
 def detail_table(results, scrub):
