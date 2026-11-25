@@ -1010,6 +1010,36 @@ class StandardUserNameTest(unittest.TestCase):
             self.assertEqual(measure.std_user_folders(ctx)[1], Path("D:/Users") / measure.STD_USER / "AppData" / "Local")        # 이름을 안 주면 예전 그대로
 
 
+class HookLogLinesTest(unittest.TestCase):
+    """결정 D-810 — 설치 도구 로그의 훅 줄(설치가 훅 한도 30초를 기다렸는지 로그에서 직접 보려는 것 — 1차 측정은 이 로그를 읽지 않았다)."""
+
+    def lines(self, text, **kwargs):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "setup.log"
+            path.write_bytes(text if isinstance(text, bytes) else text.encode("utf-8"))
+            return measure.hook_log_lines(path, **kwargs)
+
+    def test_only_the_lines_that_talk_about_hooks_are_picked_in_order_and_counted(self):
+        found, count = self.lines("start\nRunning post-install HOOK now\nunrelated\nargs --veloapp-install 0.1.0\nHook timed out after 30s\nend\n")
+        self.assertEqual(found, ["Running post-install HOOK now", "args --veloapp-install 0.1.0", "Hook timed out after 30s"])
+        self.assertEqual(count, 3)
+
+    def test_the_list_is_cut_at_the_limit_but_the_count_is_not(self):
+        found, count = self.lines("\n".join("hook line %d" % number for number in range(10)), limit=4)
+        self.assertEqual((len(found), count), (4, 10))
+        self.assertEqual(found[0], "hook line 0")
+
+    def test_a_missing_empty_or_hookless_log_gives_nothing(self):
+        self.assertEqual(measure.hook_log_lines(Path("no/such/file.log")), ([], 0))
+        self.assertEqual(measure.hook_log_lines(None), ([], 0))
+        self.assertEqual(self.lines(""), ([], 0))
+        self.assertEqual(self.lines("only ordinary lines\nhere\n"), ([], 0))
+
+    def test_utf16_and_cp949_logs_are_read_too(self):
+        self.assertEqual(self.lines("설치 시작\nhook 실행\n".encode("utf-16"))[1], 1)
+        self.assertEqual(self.lines("설치 시작\nhook 실행\n".encode("cp949"))[1], 1)
+
+
 class PeRegionsTest(unittest.TestCase):
     """결정 D-810 — M17: 1차 측정의 '한글 글 UTF-8 479' 는 실행 파일 전체를 한 번에 세어, 설치 도구가 안에 붙인 앱 묶음의 글자와 설치 도구 자신의 화면 글자를 가르지 못했다."""
     KOREAN = "설치마법사".encode("utf-8")

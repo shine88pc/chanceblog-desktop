@@ -1015,6 +1015,13 @@ def state_of(ctx, arm, root, old_version, new_version):
     return tree_state(tree_hashes(app_dir(arm, root), skip=skip), bundle_tree(ctx, arm, old_version), bundle_tree(ctx, arm, new_version))
 
 
+def hook_log_lines(path, limit=6):
+    """설치 도구(Velopack)가 남긴 로그에서 훅을 말하는 줄(hook·veloapp)을 몇 줄 뽑는다 → (줄 목록, 전체 줄 수). 설치가 훅 한도(30초)를 기다렸는지 로그에서 직접 보려는 것이다(설계서 F1 — 1차 측정은 이 로그를 읽지 않았다).\n    로그가 없거나 훅 줄이 없으면 빈 목록."""
+    text = read_text_guess(path) if path and Path(path).is_file() else ""
+    found = [line.strip() for line in text.splitlines() if re.search(r"(?i)hook|veloapp", line)]
+    return found[:limit], len(found)
+
+
 def hook_wait_note(arm, seconds):
     """Velopack 이 설치 훅에 주는 30초 한도 가까이 걸렸으면 한 마디 — 앱이 훅 인자를 거절하며 메시지 상자를 띄우고 기다렸을 수 있다(설계서 F1, 추정). 훅이 없는 갈래(Inno)는 늘 빈 글."""
     return " (훅 한도 30초 가까이 걸림 — 훅을 기다린 것으로 의심, 추정)" if velopack_arm(arm) and seconds >= HOOK_NEAR_SECONDS else ""
@@ -1295,11 +1302,13 @@ def flow_real(ctx, arm, defender_state):
     data = prepare_data(ctx, arm + "real")
     before_links, before_keys = shortcut_snapshot(ctx), uninstall_keys(ctx)
     try:
-        result, ready, _log = do_install(ctx, arm, entry["setup"], root, "real-install", korean=(arm == "C"), wait_for=REAL_EXE)
+        result, ready, install_log = do_install(ctx, arm, entry["setup"], root, "real-install", korean=(arm == "C"), wait_for=REAL_EXE)
         running = [name for name in process_names(ctx) if name == REAL_EXE.lower()]
         ok = result.ok and ready and result.seconds <= SETUP_SECONDS_LIMIT and not running
-        ctx.add(record("M05", arm, "pass" if ok else "fail", brief="종료 %s %s초 %s%s" % (result.rc, result.seconds, "앱 저절로 뜸" if running else "앱 안 뜸", hook_wait_note(arm, result.seconds)), target="real", rc=result.rc, seconds=result.seconds, ready=ready, autostart=bool(running), near_hook_limit=bool(hook_wait_note(arm, result.seconds)),
-                       installed_mb=mb(dir_size(root)) if root.exists() else 0, note=tail(result.text(), 200) if not ok else ""))
+        hook_lines, hook_count = hook_log_lines(install_log) if velopack_arm(arm) else ([], 0)
+        hook_lines = [tail(ctx.mask(line), 160) for line in hook_lines]
+        ctx.add(record("M05", arm, "pass" if ok else "fail", brief="종료 %s %s초 %s%s" % (result.rc, result.seconds, "앱 저절로 뜸" if running else "앱 안 뜸", hook_wait_note(arm, result.seconds)) + (" · 설치 로그에 훅 줄 %d개" % hook_count if hook_count else ""), target="real", rc=result.rc, seconds=result.seconds, ready=ready, autostart=bool(running), near_hook_limit=bool(hook_wait_note(arm, result.seconds)),
+                       hook_log=hook_lines, hook_log_count=hook_count, installed_mb=mb(dir_size(root)) if root.exists() else 0, note=(tail(result.text(), 200) if not ok else "") + ((" 설치 로그의 훅 줄: " + " // ".join(hook_lines)) if hook_lines else "")))
         exe = app_dir(arm, root) / REAL_EXE
         if exe.is_file():
             counts = real_selftest(ctx, exe)

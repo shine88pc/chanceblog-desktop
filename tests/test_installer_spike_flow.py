@@ -801,6 +801,36 @@ class FirstRunDefectsTest(unittest.TestCase):
         self.assertEqual(status["values"]["brief"], "실시간 보호 켜짐")
         self.assertIn("M16 Defender(러너 상태) | 기록 실시간 보호 켜짐", self.report["block"])
 
+class VelopackHookLogFlowTest(unittest.TestCase):
+    """결정 D-810 — Velopack 설치 로그의 훅 줄을 M05 실제 묶음 기록에 인용한다(설계서 F1 을 직접 확인하려고 — 1차 측정은 이 로그를 읽지 않았다)."""
+    LOG = "Setup start\nRunning post-install hook: ChanceBlogDesktop.exe --veloapp-install 0.1.0\nhook timed out after 30 seconds, killing process\nSetup done\n"
+
+    def full(self, **switches):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        world, work, codes = pipeline(tmp.name, **switches)
+        return read(work, "results.json"), read(work / "report", "INSTALLER_SPIKE_REPORT.json")
+
+    def test_the_hook_lines_are_quoted_for_the_velopack_real_install_and_the_brief_counts_them(self):
+        results, report = self.full(velopack_log_text=self.LOG)
+        item = find(results, "M05", "B", "real")[0]
+        self.assertEqual(item["status"], "pass")
+        self.assertEqual(item["values"]["hook_log_count"], 2)
+        self.assertEqual(len(item["values"]["hook_log"]), 2)
+        self.assertIn("timed out after 30 seconds", item["values"]["hook_log"][1])
+        self.assertIn("설치 로그에 훅 줄 2개", item["values"]["brief"])
+        self.assertIn("설치 로그의 훅 줄:", item["note"])
+        self.assertIn("M05 무음 설치(실제 묶음) | B 통과 종료 0 0.5초 앱 안 뜸 · 설치 로그에 훅 줄 2개", report["block"])
+        self.assertEqual(find(results, "M05", "C", "real")[0]["values"]["hook_log_count"], 0)              # Inno 는 훅이 없다 — 로그를 읽지 않는다
+
+    def test_without_a_log_text_nothing_is_added(self):
+        results, report = self.full()
+        item = find(results, "M05", "B", "real")[0]
+        self.assertEqual((item["values"]["hook_log"], item["values"]["hook_log_count"]), ([], 0))
+        self.assertNotIn("설치 로그에 훅", item["values"]["brief"])
+        self.assertNotIn("설치 로그의 훅 줄", item["note"])
+
+
 class RealBundleHookProbeWordsTest(unittest.TestCase):
     """결정 D-810 — M07 실제 묶음 훅 줄은 탐침이 표준 입출력을 NUL 로 쥐여 줘 앱의 메시지 상자 길을 보지 못한다는 한계를 줄에 적는다(1차 측정은 종료 코드 2·창 0·멈춤 0 만 적어 문제가 없는 것처럼 읽혔다)."""
 

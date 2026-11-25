@@ -107,6 +107,7 @@ class FakeWorld(measure.Host):
         self.firewall_effective = True
         self.selftest_fail = set()
         self.selftest_names = None                      # None 이면 앱의 점검 목록(SELFTEST_NAMES) 전부
+        self.velopack_log_text = ""                     # Velopack Setup 이 --log 파일에 남기는 글(비면 로그 없음)
         self.std_trace_delay = 0                        # 0 보다 크면 설치 흔적이 그 초 뒤에 생긴다(설치 도구가 일을 다른 프로세스에 넘기고 먼저 끝나는 모양)
         self.pending_traces = []
         self.std_log_text = ""                          # 표준 사용자 설치가 남기는 설치 도구 로그 글(비면 로그 없음)
@@ -406,6 +407,8 @@ class FakeWorld(measure.Host):
     def run_setup(self, args, info):
         if info["kind"] == "velopack":
             root = Path(arg_after(args, "--installto") or (Path(self.environ["LOCALAPPDATA"]) / info["id"]))
+            if self.velopack_log_text and arg_after(args, "--log"):
+                Path(arg_after(args, "--log")).write_text(self.velopack_log_text, encoding="utf-8")
             current = root / "current"
             if current.exists() and not "--installto" in args:
                 shutil.rmtree(current)
