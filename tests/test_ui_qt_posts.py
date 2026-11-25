@@ -65,9 +65,13 @@ class Base(unittest.TestCase):
     def settle(self, times=6):
         ui_offscreen.settle(self.app, times)
 
+    def wait_for(self, condition, seconds=10):
+        """`ui_offscreen.wait_until` 의 반환값을 단언으로 받는다(독립 검증 Q 권고-7) — 시간이 다 되면 예외 없이 False 만 돌려주므로 버리면 대기가 실패해도 이 줄은 지나가고 뒤 단언에서 엉뚱한 메시지로 빨개져, 바쁜 PC 에서 진단이 어렵다."""
+        self.assertTrue(ui_offscreen.wait_until(self.app, condition, seconds), f"{seconds}초 안에 기다린 상태가 되지 않았다")
+
     def activate(self, window):
         window.activateWindow()
-        ui_offscreen.wait_until(self.app, window.isActiveWindow, 2)
+        ui_offscreen.wait_until(self.app, window.isActiveWindow, 2)           # 일부러 반환값을 단언하지 않는다 — 오프스크린은 창이 활성이 되지 않을 수 있어 잠깐 기다리기만 한다(나머지 기다림은 `wait_for` 가 단언한다)
 
     def make(self, provider=None, size=(1366, 768), picker=None, go=True, wait=True):
         provider = provider or post_fake.FakePostsProvider()
@@ -80,7 +84,7 @@ class Base(unittest.TestCase):
         if go:
             window.go("posts")
             if wait:
-                ui_offscreen.wait_until(self.app, lambda: window.state.posts.state != "loading" and not window.state.posts.loading, 10)
+                self.wait_for(lambda: window.state.posts.state != "loading" and not window.state.posts.loading, 10)
             self.settle()
         return window
 
@@ -113,11 +117,11 @@ class Base(unittest.TestCase):
 
     def open_post(self, window, project_id):
         QTest.mouseClick(self.rows(window)[project_id], Qt.LeftButton)
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.detail_state == "normal", 10)
+        self.wait_for(lambda: window.state.posts.detail_state == "normal", 10)
         self.settle(8)
 
     def wait_write(self, window):
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.busy and window.state.posts.pending is None, 10)
+        self.wait_for(lambda: not window.state.posts.busy and window.state.posts.pending is None, 10)
         self.settle(8)
 
     def add_long(self, provider, title="긴 글"):
@@ -155,7 +159,7 @@ class PostsQtMenuTest(Base):
         self.assertEqual(window.nav_buttons["posts"].accessibleName(), "글 검토 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
         window.nav_buttons["posts"].click()
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.state != "loading", 10)
+        self.wait_for(lambda: window.state.posts.state != "loading", 10)
         self.settle()
         self.assertEqual((window.state.page, window.nav_buttons["posts"].isChecked(), window.nav_buttons["home"].isChecked()), ("posts", True, False))
         self.assertEqual(len(self.rows(window)), 4)
@@ -174,7 +178,7 @@ class PostsQtMenuTest(Base):
         self.assertEqual(set(provider.calls), {"load_posts"})
         window.go("home")
         window.go("posts")
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.loading, 10)
+        self.wait_for(lambda: not window.state.posts.loading, 10)
         self.assertNotIn("import_post", provider.calls)
         self.assertNotIn("review_post", provider.calls)
 
@@ -194,7 +198,7 @@ class PostsQtStatesTest(Base):
         self.assertIn(T["post_loading"], self.labels(window.screen_widget))
         self.assertTrue([widget for widget in window.screen_widget.findChildren(QWidget) if widget.accessibleName() == T["post_loading_a11y"]])
         self.assertFalse(self.ui(window).import_button is None)
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.state == "normal", 10)
+        self.wait_for(lambda: window.state.posts.state == "normal", 10)
         self.settle()
         self.assertEqual(len(self.rows(window)), 4)
 
@@ -220,7 +224,7 @@ class PostsQtStatesTest(Base):
         self.assertFalse(disclosure.body.isVisible(), "진단 정보는 접혀 있다")
         window.state.posts.provider.scenario = "normal"
         self.buttons(window.screen_widget)[T["post_retry"]].click()
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.state in ("normal", "empty"), 10)
+        self.wait_for(lambda: window.state.posts.state in ("normal", "empty"), 10)
         self.assertNotEqual(window.state.posts.state, "error")
 
     def test_the_partial_state_shows_a_band_and_the_unreadable_row_cannot_be_opened(self):
@@ -252,6 +256,19 @@ class PostsQtStatesTest(Base):
         window = self.make(provider)
         names = self.labels(window.screen_widget) + [widget.accessibleName() for widget in window.screen_widget.findChildren(QWidget)]
         self.assertFalse([item for item in names if KEY[:12] in item])
+
+    def test_a_key_shaped_title_of_the_open_post_never_reaches_a_label_a_tooltip_or_an_accessible_name(self):
+        """글 상세 머리의 제목(독립 검증 Q 권고-4) — 목록의 제목만 지키던 시험의 상세판: 글을 열어 머리·미리보기·검토 카드의 모든 글·접근 이름·말풍선에 키 글이 없다."""
+        provider = post_fake.FakePostsProvider("empty")
+        project_id = provider.add_post("제목 " + KEY, post_fake.sample_text())
+        window = self.make(provider)
+        self.open_post(window, project_id)
+        self.assertEqual(window.state.posts.open_id, project_id)
+        root = window.screen_widget
+        names = self.labels(root) + [widget.accessibleName() for widget in root.findChildren(QWidget)] + [widget.toolTip() for widget in root.findChildren(QWidget)]
+        self.assertTrue([item for item in names if "가림" in item], "머리 제목은 가려졌다는 표지와 함께 보인다")
+        for piece in (KEY, KEY[:12], KEY[-12:]):
+            self.assertFalse([item for item in names if piece in item], "상세 화면의 어느 글에도 키 글이 없다")
 
 
 class PostsQtImportTest(Base):
@@ -352,7 +369,7 @@ class PostsQtImportTest(Base):
         window = self.make(post_fake.FakePostsProvider("empty"))
         form = self.open_import(window)
         form.pick_button.click()
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.reading_file, 10)
+        self.wait_for(lambda: not window.state.posts.reading_file, 10)
         self.settle(6)
         self.assertEqual(form.title_text(), "내 글")
         self.assertIn("에너지 절약", form.body_text())
@@ -364,14 +381,14 @@ class PostsQtImportTest(Base):
         window = self.make(post_fake.FakePostsProvider("empty"), picker=lambda parent, title, filters: "C:/폴더/cp949 글.md")
         form = self.open_import(window)
         form.pick_button.click()
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.reading_file, 10)
+        self.wait_for(lambda: not window.state.posts.reading_file, 10)
         self.settle(6)
         self.assertIn(T["post_im_cp949"], form.note.plain_text())
         window2 = self.make(post_fake.FakePostsProvider("empty"), picker=lambda parent, title, filters: "C:/폴더/나쁜.bad")
         form2 = self.open_import(window2)
         form2.title_input.setText("그대로")
         form2.pick_button.click()
-        ui_offscreen.wait_until(self.app, lambda: not window2.state.posts.reading_file, 10)
+        self.wait_for(lambda: not window2.state.posts.reading_file, 10)
         self.settle(6)
         self.assertIn("글 파일이 아닌 것 같아요", form2.message.plain_text())
         self.assertEqual(form2.title_text(), "그대로")
@@ -451,7 +468,7 @@ class PostsQtImportTest(Base):
         form.title_input.setText("제목")
         form.body_input.setPlainText("본문 글이에요")
         form.start_button.click()
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.busy, 5)
+        self.wait_for(lambda: window.state.posts.busy, 5)
         self.assertFalse(window.close(), "가져오는 중에는 닫히지 않는다")
         self.assertFalse(window.state.posts.import_quit or window.state.posts.import_ask)
         gate.set()
@@ -467,7 +484,7 @@ class PostsQtImportTest(Base):
         window = self.make(post_fake.FakePostsProvider("empty"), picker=lambda parent, title, filters: "C:/폴더/2026.11.24 후기.md")
         form = self.open_import(window)
         form.pick_button.click()
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.reading_file, 10)
+        self.wait_for(lambda: not window.state.posts.reading_file, 10)
         self.settle(6)
         self.assertEqual(form.title_text(), "2026.11.24 후기")
 
@@ -476,7 +493,7 @@ class PostsQtImportTest(Base):
         form = self.open_import(window)
         form.body_input.setPlainText("직접 쓴 본문")
         form.pick_button.click()
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.reading_file, 10)
+        self.wait_for(lambda: not window.state.posts.reading_file, 10)
         self.settle(6)
         self.assertIn("에너지 절약", form.body_text())
         self.assertIn(T["post_im_replaced"], form.note.plain_text())
@@ -487,7 +504,7 @@ class PostsQtImportTest(Base):
         window = self.make(post_fake.FakePostsProvider())
         self.open_import(window)
         window.state.posts.start_load(**window.posts_bridge.callbacks())
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.loading, 10)
+        self.wait_for(lambda: not window.state.posts.loading, 10)
         self.settle(6)
         outside = [widget for widget in window.screen_widget.findChildren(QWidget) if widget.focusPolicy() != Qt.NoFocus]
         self.assertEqual(outside, [], "다시 그린 화면에도 대화 밖 Tab 정거장이 없다")
@@ -527,7 +544,7 @@ class PostsQtImportTest(Base):
 
         provider = Slow("empty")
         window = self.make(provider, wait=False)
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.loading, 5)
+        self.wait_for(lambda: window.state.posts.loading, 5)
         form = self.open_import(window)
         form.title_input.setText("방금 가져온 글")
         form.body_input.setPlainText(post_fake.sample_text())
@@ -535,7 +552,7 @@ class PostsQtImportTest(Base):
         self.wait_write(window)
         self.assertEqual(len(provider.projects), 1)
         gate.set()                                                              # 늦게 온 쓰기 전 목록이 이제 도착한다
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.data is not None and not window.state.posts.loading, 10)
+        self.wait_for(lambda: window.state.posts.data is not None and not window.state.posts.loading, 10)
         self.settle(8)
         self.assertEqual(len(window.state.posts.data.rows), 1, "쓰기 전 목록은 버리고 다시 읽어 방금 가져온 글이 목록에 있다")
 
@@ -596,7 +613,7 @@ class PostsQtPreviewTest(Base):
         row = self.rows(window)[project_id]
         row.setFocus(Qt.TabFocusReason)
         QTest.keyClick(row, Qt.Key_Return)
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.detail_state == "normal", 10)
+        self.wait_for(lambda: window.state.posts.detail_state == "normal", 10)
         self.settle(8)
         self.assertEqual(window.state.posts.open_id, project_id)
         back = self.ui(window).back_button
@@ -648,30 +665,34 @@ class PostsQtReviewTest(Base):
         self.assertEqual((form.inputs["category"].text(), form.inputs["image_url"].text()), ("", ""), "닫으면 칸이 비워진다")
 
     def test_values_typed_and_cancelled_come_back_next_time_but_a_key_shaped_set_is_not_remembered(self):
-        window, _provider, _project_id = self.with_post()
-        review = T["post_review_start"]
-        self.buttons(window.screen_widget)[review].click()
-        self.settle()
-        form = window.post_pages_form
-        form.inputs["category"].setText("생활")
-        form.inputs["tags"].setText("에너지, 습관")
-        form.cancel_button.click()
-        self.settle(4)
-        self.assertFalse(window.dialog.is_open)
-        self.buttons(window.screen_widget)[review].click()
-        self.settle()
-        again = window.post_pages_form
-        self.assertEqual((again.inputs["category"].text(), again.inputs["tags"].text()), ("생활", "에너지, 습관"), "취소해도 쓰던 값은 이 앱을 연 동안 남는다")
-        again.inputs["description"].setText("설명 " + KEY)
-        window.escape()
-        self.settle(4)
-        self.assertFalse(window.dialog.is_open)
-        self.buttons(window.screen_widget)[review].click()
-        self.settle()
-        third = window.post_pages_form
-        self.assertEqual(third.inputs["description"].text(), "", "키 모양이 든 값은 기억하지 않아 다시 채워지지 않는다")
-        self.assertEqual(third.inputs["category"].text(), "생활", "그 전에 기억한 값은 그대로다")
-        self.assertNotIn(KEY[:12], repr(window.state.posts.pages_raw))
+        # 의도적 강화(독립 검증 Q 권고-2): 키 모양을 한 줄 설명 칸에만 넣던 것을 기억에 쓰는 네 칸(분야·대표 이미지 주소·태그·한 줄 설명) 모두로 — 어느 칸을 검사에서 빼도 빨개진다
+        before = {"category": "생활", "image_url": "", "tags": "에너지, 습관", "description": ""}
+        for field, keyed in (("category", "생활 " + KEY), ("image_url", "https://img.example.invalid/a.jpg?k=" + KEY), ("tags", "에너지, " + KEY), ("description", "설명 " + KEY)):
+            with self.subTest(field=field):
+                window, _provider, _project_id = self.with_post()
+                review = T["post_review_start"]
+                self.buttons(window.screen_widget)[review].click()
+                self.settle()
+                form = window.post_pages_form
+                form.inputs["category"].setText("생활")
+                form.inputs["tags"].setText("에너지, 습관")
+                form.cancel_button.click()
+                self.settle(4)
+                self.assertFalse(window.dialog.is_open)
+                self.buttons(window.screen_widget)[review].click()
+                self.settle()
+                again = window.post_pages_form
+                self.assertEqual((again.inputs["category"].text(), again.inputs["tags"].text()), ("생활", "에너지, 습관"), "취소해도 쓰던 값은 이 앱을 연 동안 남는다")
+                again.inputs[field].setText(keyed)
+                window.escape()
+                self.settle(4)
+                self.assertFalse(window.dialog.is_open)
+                self.buttons(window.screen_widget)[review].click()
+                self.settle()
+                third = window.post_pages_form
+                self.assertEqual(third.inputs[field].text(), before[field], "키 모양이 든 값은 기억하지 않아 다시 채워지지 않는다(그 전에 기억한 값이 그대로다)")
+                self.assertEqual({name: third.inputs[name].text() for name in before}, before, "다른 칸도 그 전에 기억한 값 그대로다")
+                self.assertNotIn(KEY[:12], repr(window.state.posts.pages_raw))
 
     def test_a_key_shaped_description_is_refused_and_the_dialog_stays_open_with_the_place_and_kind(self):
         refused = posts.PostFailure(T["post_fail_secret"].format(where="한 줄 설명", kinds="Google API 키"), code="SECRET_SHAPE_FOUND", kind="secret")
@@ -727,6 +748,43 @@ class PostsQtReviewTest(Base):
         self.assertNotIn(KEY[:12], everything)
         self.assertIn("Google API 키", everything)
         self.assertFalse(review.buttons["approve"].isEnabled())
+
+    def test_closing_the_app_while_a_review_is_running_waits_for_the_write_to_finish_instead_of_cutting_it(self):
+        """독립 검증 Q 참고-9: 검토·승인이 도는 중 앱 닫기 길(`_posts_close_wait`)이 시험 밖이었다 — 쓰기는 한 트랜잭션이라 중간에 끊지 않고 끝나기를 기다린다. 닫기가 1초 안에 끝나는 길(`join_all(1.0)`)과 구별하려고 문을 1.6초 뒤에 연다."""
+        import threading
+        gate = threading.Event()
+
+        class Held(post_fake.FakePostsProvider):
+            def review_post(self, request, progress, cancelled):
+                gate.wait(10)
+                return super().review_post(request, progress, cancelled)
+
+        provider = Held("empty")
+        project_id = provider.add_post("검토할 글", post_fake.sample_text())
+        window = self.make(provider)
+        self.open_post(window, project_id)
+        self.buttons(window.screen_widget)[T["post_review_start"]].click()
+        self.settle()
+        form = window.post_pages_form
+        for name, value in RAW_FIELDS.items():
+            form.inputs[name].setText(value)
+        form.start_button.click()
+        self.wait_for(lambda: window.state.posts.busy, 5)
+        self.assertNotEqual(provider.projects[project_id].variants[posts.PAGES].status, "REVIEW_REQUIRED", "문이 닫혀 있는 동안은 검토가 끝나지 않았다")
+        timer = threading.Timer(1.6, gate.set)
+        timer.start()
+        self.addCleanup(timer.cancel)
+        self.addCleanup(gate.set)
+        window.close()
+        self.assertEqual(provider.projects[project_id].variants[posts.PAGES].status, "REVIEW_REQUIRED", "닫는 동안 쓰기가 끝났다 — 중간에 끊지 않았다")
+        self.assertFalse(window.isVisible())
+
+    def test_wait_for_fails_on_its_own_line_when_the_state_never_comes(self):
+        """`wait_for` 가 시간이 다 되면 그 줄에서 실패한다(독립 검증 Q 권고-7) — 반환값을 버리던 때는 대기가 실패해도 지나갔다."""
+        window = self.make(post_fake.FakePostsProvider("empty"))
+        with self.assertRaises(AssertionError):
+            self.wait_for(lambda: window.state.posts.open_id == "없는글", 0.1)
+        self.wait_for(lambda: window.state.posts.open_id is None, 1)
 
     def test_naver_without_a_profile_says_so_and_with_profiles_reviews_and_blocks_the_same_text_twice(self):
         window, provider, _project_id = self.with_post(profiles=())
@@ -840,7 +898,7 @@ class PostsQtApproveTest(Base):
         provider.edit(project_id, source_content="## 그 사이 고침" + NL + NL + post_fake.sample_text())
         self.dialog_button(window, T["post_confirm_ok"]).click()
         self.wait_write(window)
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.detail_state == "normal" and not window.state.posts.loading, 10)
+        self.wait_for(lambda: window.state.posts.detail_state == "normal" and not window.state.posts.loading, 10)
         self.settle(8)
         self.assertNotEqual(provider.projects[project_id].variants[posts.PAGES].status, "APPROVED")
         self.assertIn(T["post_fail_stale"], [bar.text.plain_text() for bar in window.screen_widget.findChildren(blog_parts.NoticeBar)])
@@ -850,7 +908,7 @@ class PostsQtApproveTest(Base):
         window, provider, project_id = self.reviewed()
         window.go("home")
         window.go("posts")
-        ui_offscreen.wait_until(self.app, lambda: window.state.posts.detail_state == "normal" and not window.state.posts.loading, 10)
+        self.wait_for(lambda: window.state.posts.detail_state == "normal" and not window.state.posts.loading, 10)
         self.settle(8)
         self.assertEqual(window.state.posts.review.project_id, project_id, "이 앱을 연 동안 받은 결과는 그대로 있다")
         self.assertTrue(self.ui(window).review.buttons["approve"].isEnabled())
@@ -998,7 +1056,7 @@ class PostsQtRealServiceTest(Base):
         window.post_platform(posts.PAGES)
         window.go("home")
         window.go("posts")
-        ui_offscreen.wait_until(self.app, lambda: not window.state.posts.loading, 10)
+        self.wait_for(lambda: not window.state.posts.loading, 10)
         self.settle(6)
         self.assertEqual(self.stats(self.ctx.workspace.root), before)
 

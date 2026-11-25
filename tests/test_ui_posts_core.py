@@ -378,6 +378,21 @@ class PostsKeyBlockPreviewTest(unittest.TestCase):
         self.assertEqual([block.kind for block in found.blocks], ["heading", "paragraph"], "묶은 덩어리의 종류는 머리가 든 블록의 종류다")
         self.assertEqual((shown[1], found.total), ("뒤 글", 2))
 
+    def test_one_blank_line_several_lines_with_several_blank_lines_and_a_head_without_a_tail_are_each_hidden(self):
+        """지시서가 든 세 모양을 따로 못박는다(독립 검증 S 권고-3): 머리 줄 뒤에 빈 줄 하나 · 본문이 여러 줄이고 빈 줄이 여럿 · 머리만 있고 꼬리가 없다."""
+        head, tail = self.PGP
+        shapes = (("빈 줄 하나", f"{head}\n\n{self.ONE}\n{tail}"),
+                  ("여러 줄·여러 빈 줄", f"{head}\n\n\n{self.ONE}\n{self.TWO}\n\n{self.ONE}\n\n\n{self.TWO}\n{tail}"),
+                  ("머리만(꼬리 없음)", f"{head}\n\n{self.ONE}\n\n{self.TWO}"))
+        for name, key in shapes:
+            with self.subTest(shape=name):
+                markdown = f"앞 글\n\n{key}"
+                found, shown = self.blocks(markdown)
+                self.assert_hidden(markdown, shown)
+                self.assertEqual(shown[0], "앞 글")
+                self.assertIn("가림", shown[1])
+                self.assertEqual((len(shown), found.total), (2, 2))
+
     def test_text_between_two_keys_and_before_the_head_and_after_the_tail_stays_visible(self):
         pgp_head, pgp_tail = self.PGP
         rsa_head, rsa_tail = self.RSA
