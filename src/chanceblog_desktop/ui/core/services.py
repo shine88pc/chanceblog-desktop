@@ -380,7 +380,7 @@ _CONN_TABLE = (           # (열쇠, 이름, 호출 코드, 키를 받나, 항�
     ("naver_searchad", "네이버 검색광고 API", False, True, 3, "limited", False),
     ("image_provider", "이미지 공급자", True, True, 3, "never", False),
     ("ai_assist", "AI 보조(선택)", False, True, 3, "limited", False),
-    ("blogger", "Blogger", False, True, 3, "limited", False),
+    ("blogger", "Blogger", False, True, 3, "never", False),
     ("github_repo", "GitHub 저장소", False, False, 3, "never", False),
     ("naver_openapi", "옛 항목 — 네이버 오픈 API(검색·데이터랩)", False, True, 3, "limited", True),
 )
@@ -397,7 +397,7 @@ _FIELD_TABLE = {          # 용도 → ((칸 이름, 화면 이름, 최소 글�
     "naver_searchad": (("customer_id", "고객 ID", 3), ("access_license", "액세스 라이선스", 16), ("secret_key", "비밀 키", 16)),
     "image_provider": (("access_key", "Access Key", 16),),
     "ai_assist": (("key", "API 키", 16),),
-    "blogger": (("client_id", "클라이언트 ID", 20), ("client_secret", "클라이언트 시크릿", 8), ("refresh_token", "갱신용 인증 값", 20)),
+    "blogger": (("client_id", "클라이언트 ID", 20), ("client_secret", "클라이언트 시크릿", 8)),                        # 갱신용 값은 입력 칸이 아니다 — 로그인이 받아 보관한다(D-775)
 }
 _CONN_BASE = {            # 열쇠 → (연결 상태, 항목들, 한도 줄) — 'normal' 시나리오(다섯 가지 상태가 한 화면에 섞여 보인다)
     "naver_apihub": ("needs_check", (EntryInfo("예시 키 1", "active", True),), UsageInfo((("오늘", 12, 100), ("이번 달", 340, 27000)), True, 30000, fail_closed=True)),

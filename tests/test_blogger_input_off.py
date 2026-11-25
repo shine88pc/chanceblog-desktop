@@ -1,11 +1,12 @@
 """Blogger OAuth 입력 칸 숨김·거절과 시험용 보관소 안내(PCSEC1 — 운영자 결정 2026-11-11 6항, 보안 조사 M2).
 
 지키는 것:
-  1) **소스 상수** `capabilities.BLOGGER_OAUTH_INPUT` 는 False 다(호출 코드가 없는 이 빌드는 Blogger 로그인 정보를 받지 않는다 — 켜는 길이 없고 시험만 임시로 켠다).
-  2) **서비스**: `connections.add_entry` 가 blogger 용도를 **보관소에 쓰기 전에** 거절한다(KEY_INVALID_SHAPE + 쉬운 이유). 다른 용도는 그대로다. 저장 구조는 그대로라서 상수를 켜면(시험) 예전처럼 저장된다 —
+  1) **소스 상수** `capabilities.BLOGGER_OAUTH_INPUT` 는 **출하 표의 값과 같다**(NET NT-01 의 일반화, D-722) — 이 빌드의 출하 표는 비어 있어 False 다(Blogger 로그인 정보를 받지 않는다 — 켜는 길이 없고 시험만 임시로 켠다).
+     아래 닫힌 모양 시험(서비스·명령줄·화면 데이터)은 **상수를 시험이 직접 False 로 고정**한다(`Base.setUp`) — 출하 값이 True 가 된 뒤에도 닫힌 모양이 계속 시험된다(D-775, BT-60 — `test_blogger_input_open` 이 상수를 True 로 둔 채 이 시험들을 돌려 확인한다).
+  2) **서비스**: `connections.add_entry` 가 blogger 용도를 **보관소에 쓰기 전에** 거절한다(KEY_INVALID_SHAPE + 쉬운 이유). 다른 용도는 그대로다. 저장 구조는 세 칸 그대로이고(입력 칸은 둘 — 갱신용 값은 로그인이 더한다, D-775)
      이미 저장된 항목은 꺼져 있어도 목록·지우기가 된다.
   3) **명령줄**: `keys add blogger` 는 **키를 묻기 전에** 같은 안내로 거절한다(`--stdin` 입력도 읽지 않는다). `keys purposes` 는 입력 칸 대신 안내를 보이고 JSON 의 `takes_keys` 는 거짓·`fields` 는 빈 목록이다.
-  4) **화면 데이터**: 실제·예시 공급자 모두 blogger 카드에 입력 칸·제공자·키 등록 단추가 없다(카드 글은 '받지 않아요' 안내). 상수를 켜면(시험) 기존 3칸 카드 그대로다.
+  4) **화면 데이터**: 실제·예시 공급자 모두 blogger 카드에 입력 칸·제공자·키 등록 단추가 없다(카드 글은 '받지 않아요' 안내). 상수를 켜면(시험) 입력 칸 둘의 카드가 된다(갱신용 값 칸은 없다).
   5) **시험용 가짜 보관소 안내(M2)**: 시험 전용 가짜 보관소(`is_fake`)를 쓰는 중이면 키 카드의 보관소 안내와 등록 대화상자 머리말이 '시험용 보관소 — 실제 키를 넣지 마세요' 를 알린다(진짜 보관소·시험용 메모리 보관소는 아니다).
 네트워크 없이 돈다.
 """
@@ -32,8 +33,11 @@ from chanceblog_desktop.ui import adapters  # noqa: E402
 from chanceblog_desktop.ui.core import app_state, jobs, keys, services, settings_view  # noqa: E402
 from chanceblog_desktop.ui.core.text import T  # noqa: E402
 
-FIELDS = {"client_id": "BloggerClient0001.apps.example", "client_secret": "S3cretValue" + "ForTheTest0001", "refresh_token": "RefreshValue" + "ForTheTest00000001"}      # 조립한 가짜 값(저장소 비밀 스캐너 오탐을 없앤다)
-FIELD_LABELS = ("클라이언트 ID", "클라이언트 시크릿", "갱신용 인증 값")
+FIELDS = {"client_id": "BloggerClient0001.apps.example", "client_secret": "S3cretValue" + "ForTheTest0001"}                                    # 사용자가 넣는 입력 칸 둘(조립한 가짜 값 — 저장소 비밀 스캐너 오탐을 없앤다)
+REFRESH = "RefreshValue" + "ForTheTest00000001"                                                                                                  # 로그인이 보관소에 더하는 셋째 칸의 가짜 값
+STORED_FIELDS = {**FIELDS, "refresh_token": REFRESH}                                                                                           # 보관소 값 묶음의 저장 구조는 세 칸 그대로
+FIELD_LABELS = ("클라이언트 ID", "클라이언트 시크릿")
+REFRESH_LABEL = "갱신용 인증 값"
 
 
 def flat_texts(value):
@@ -53,6 +57,9 @@ def flat_texts(value):
 
 class Base(unittest.TestCase):
     def setUp(self):
+        closed = mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", False)                 # 닫힌 모양은 출하 값이 무엇이든 시험이 직접 고정한다(D-775)
+        closed.start()
+        self.addCleanup(closed.stop)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
@@ -62,23 +69,26 @@ class Base(unittest.TestCase):
 
 
 class ConstantTest(unittest.TestCase):
-    def test_the_blogger_input_constant_is_off_in_the_shipped_source(self):
+    def test_the_blogger_input_constant_is_the_shipped_table_value_and_off_in_this_build(self):
+        import pkgcommon
+        self.assertEqual(capabilities.BLOGGER_OAUTH_INPUT is True, "BLOGGER_OAUTH_INPUT" in pkgcommon.SHIPPED_OPEN_SWITCHES)
+        self.assertEqual(capabilities.blogger_oauth_input_enabled(), capabilities.BLOGGER_OAUTH_INPUT is True)
+        self.assertEqual(pkgcommon.SHIPPED_OPEN_SWITCHES, (), "이 빌드의 출하 표는 비어 있다 — 켜는 것은 별도 번호의 승인(D-722)")
         self.assertIs(capabilities.BLOGGER_OAUTH_INPUT, False)
-        self.assertFalse(capabilities.blogger_oauth_input_enabled())
         for value in (1, "yes", object()):
             with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", value):
                 self.assertFalse(capabilities.blogger_oauth_input_enabled(), "글자 그대로 True 일 때만 열린다")
 
     def test_only_blogger_changes_what_a_purpose_accepts(self):
-        for key, spec in cn.PURPOSES.items():
-            self.assertEqual(cn.accepts_input(spec), spec.takes_keys and key != "blogger", key)
-        with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):
-            self.assertTrue(cn.accepts_input(cn.PURPOSES["blogger"]))
+        for value, opened in ((False, False), (True, True)):                                  # 두 모양 모두 상수를 명시적으로 고정해 확인한다
+            with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", value):
+                for key, spec in cn.PURPOSES.items():
+                    self.assertEqual(cn.accepts_input(spec), spec.takes_keys and (key != "blogger" or opened), (value, key))
 
 
 class ServiceTest(Base):
     def add(self, purpose="blogger", fields=FIELDS, **kwargs):
-        return cn.add_entry(self.ctx, purpose, name="기본", fields=fields, keystore=self.store, **kwargs)
+        return cn.add_entry(self.ctx, purpose, name="영문" if purpose == "blogger" else "기본", fields=fields, keystore=self.store, **kwargs)
 
     def test_adding_a_blogger_entry_is_refused_before_anything_is_written(self):
         with self.assertRaises(AppError) as caught:
@@ -100,19 +110,23 @@ class ServiceTest(Base):
         self.assertEqual(len(self.store.list_refs()), 1)
 
     def test_with_the_constant_opened_by_a_test_the_stored_structure_is_the_same_as_before(self):
+        """입력은 두 칸이고 로그인이 갱신용 값을 더하면 보관소 값 묶음은 **여전히 세 칸**이다(저장 구조 그대로 — 입력과 저장을 가른다, D-775)."""
         with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):
             result = self.add()
+            self.assertEqual(sorted(self.store.get(self.store.list_refs()[0]).names()), sorted(FIELDS), "처음에는 입력 칸 둘뿐이다")
+            cn.attach_refresh_token(self.ctx, result.entry, REFRESH, keystore=self.store)
         self.assertEqual(result.entry.purpose, "blogger")
         fields = self.store.get(self.store.list_refs()[0])
-        self.assertEqual(sorted(fields.names()) if hasattr(fields, "names") else sorted(FIELDS), sorted(FIELDS))
+        self.assertEqual(sorted(fields.names()), sorted(STORED_FIELDS))
         self.assertEqual(fields.reveal("client_secret"), FIELDS["client_secret"], "값은 자격 증명 관리자(여기서는 가짜 보관소)에만 있다")
+        sec.assert_no_secret(self, REFRESH, self.ctx.workspace.connections_path.read_text(encoding="utf-8"), "연결 설정 파일")
         sec.assert_no_secret(self, FIELDS["client_secret"], self.ctx.workspace.connections_path.read_text(encoding="utf-8"), "연결 설정 파일")
 
     def test_an_entry_saved_earlier_can_still_be_listed_and_removed_while_the_input_is_off(self):
         with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):
             self.add()
         views = cn.list_entries(self.ctx, keystore=self.store)
-        self.assertEqual([(view.entry.purpose, view.entry.name) for view in views], [("blogger", "기본")])
+        self.assertEqual([(view.entry.purpose, view.entry.name) for view in views], [("blogger", "영문")])
         removed = cn.remove_entry(self.ctx, cn.short_id(views[0].entry.entry_id) if hasattr(cn, "short_id") else views[0].entry.entry_id, confirmed=True, keystore=self.store)
         self.assertEqual(removed.entry.purpose, "blogger")
         self.assertEqual(self.store.list_refs(), [])
@@ -153,7 +167,7 @@ class CliTest(Base):
         block = out.split("[blogger]", 1)[1].split("[github_repo]", 1)[0]
         self.assertIn("안내: 이 시험 버전에서는 Blogger 로그인 정보를 받지 않습니다", block)
         self.assertNotIn("받는 칸", block)
-        for label in FIELD_LABELS:
+        for label in FIELD_LABELS + (REFRESH_LABEL,):
             self.assertNotIn(label, block)
         code, out, err = self.run_cli("--json", "keys", "purposes")
         blogger = next(item for item in json.loads(out)["data"]["purposes"] if item["purpose"] == "blogger")
@@ -192,13 +206,15 @@ class ScreenDataTest(Base):
         info = next(item for item in services.sample_connections() if item.key == "blogger")
         self.assertEqual((info.takes_keys, info.providers, info.fields), (False, (), ()))
 
-    def test_with_the_constant_opened_by_a_test_the_three_field_card_is_back(self):
+    def test_with_the_constant_opened_by_a_test_the_two_field_card_is_back(self):
+        """입력 칸은 둘이고 갱신용 값 칸은 없다(그 값은 로그인이 받아 보관한다) — 예시·실제 공급자가 같다."""
         with mock.patch.object(capabilities, "BLOGGER_OAUTH_INPUT", True):
             sample = next(item for item in services.sample_connections() if item.key == "blogger")
             data, info = self.real_blogger()
         self.assertEqual([item.label for item in sample.fields], list(FIELD_LABELS))
         self.assertTrue(info.takes_keys)
         self.assertEqual([item.label for item in info.fields], list(FIELD_LABELS))
+        self.assertNotIn(REFRESH_LABEL, " ".join(flat_texts(settings_view.card_vm(info, False))))
 
     def test_the_two_sample_tables_still_agree_with_the_service_table_for_blogger(self):
         """예시 표(`_CONN_TABLE`)와 서비스 표는 구조가 같다 — 입력을 막는 것은 만들 때의 상수 확인 하나다."""

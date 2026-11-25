@@ -268,7 +268,8 @@ class FakeGoogle:
                 return oauth_error(400, "invalid_grant")
             if set(form) != {"client_id", "client_secret", "code", "code_verifier", "grant_type", "redirect_uri"}:
                 return self.violation(request, "교환 본문의 칸이 다르다")
-            refresh = self.grant(client_id)
+            self.refresh_count = getattr(self, "refresh_count", 0) + 1
+            refresh = self.grant(client_id, refresh=token("1//0", f"REFRESH{self.refresh_count}", 26))                       # 로그인마다 새 갱신 토큰(같은 값이 되풀이되지 않는다)
             body = {"access_token": self.mint(refresh), "expires_in": 3599, "refresh_token": refresh, "scope": SCOPE, "token_type": "Bearer"}
             return Reply(200, self.damaged(body, mode))
         if grant == "refresh_token":

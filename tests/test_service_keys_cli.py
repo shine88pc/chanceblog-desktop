@@ -423,10 +423,10 @@ class NoLeakTest(CliCase):
         for number, (label, shape) in enumerate(key_shapes().items()):
             purpose = ("naver_apihub", "naver_searchad", "image_provider", "ai_assist", "blogger")[number % 5]
             spec_fields = {"naver_apihub": {"client_id": "id" + shape[:14], "client_secret": shape[:30]}, "naver_searchad": {"customer_id": "1234567", "access_license": shape, "secret_key": shape[::-1]},
-                           "image_provider": {"access_key": shape}, "ai_assist": {"key": shape}, "blogger": {"client_id": "cid" + shape[:20], "client_secret": shape[:24], "refresh_token": shape}}[purpose]
+                           "image_provider": {"access_key": shape}, "ai_assist": {"key": shape}, "blogger": {"client_id": "cid" + shape[:20], "client_secret": shape[:24]}}[purpose]
             if number >= 5:
                 continue
-            code, out, err = self.add(purpose, f"항목{number}", spec_fields)
+            code, out, err = self.add(purpose, "영문" if purpose == "blogger" else f"항목{number}", spec_fields)
             self.assertEqual(code, 0, (label, err))
             values[label] = list(spec_fields.values())
         every = [value for items in values.values() for value in items if len(value) >= 8]

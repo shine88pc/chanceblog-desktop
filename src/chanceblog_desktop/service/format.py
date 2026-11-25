@@ -519,7 +519,7 @@ def _stage_lines(provider):
 def keys_purpose_dict(spec):
     accepts = connections.accepts_input(spec)                                  # 이 빌드가 새 키 입력을 받는 용도인가(Blogger 는 꺼져 있다 — 입력 칸을 알리지 않는다)
     found = {"purpose": spec.key, "label": spec.label, "summary": spec.summary, "takes_keys": accepts, "implemented": spec.implemented, "works_without_key": spec.works_without_key,
-             "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.fields] if accepts else [],
+             "client_scope": spec.client_scope, "fields": [{"name": item.name, "label": item.label, "masked": item.secret, "min_len": item.min_len, "max_len": item.max_len, "example": item.example} for item in spec.entered_fields()] if accepts else [],
              "providers": [{"provider": item.key, "label": item.label, "rotation": item.rotation, "limits": _limit_text(item), "default_tier": item.default_tier, "tiers": list(item.tier_names())} for item in spec.providers],
              "fallback_providers": list(spec.fallback_providers), "note": connections.purpose_note(spec) if spec.takes_keys is False or accepts else connections.BLOGGER_INPUT_OFF}
     if spec.max_entries != connections.MAX_ENTRIES_PER_PURPOSE:           # 키를 하나만 두는 용도만 이 칸이 더해진다(다른 용도의 출력은 그대로)
@@ -539,7 +539,7 @@ def keys_purposes_lines(registry):
         if not connections.accepts_input(spec):
             lines.append(f"  안내: {connections.purpose_note(spec) if not spec.takes_keys else connections.BLOGGER_INPUT_OFF}")
             continue
-        lines.append("  받는 칸: " + ", ".join(f"{item.name}({item.label}{' — 화면에 보이지 않음' if item.secret else ''}, {item.min_len}~{item.max_len}자, 예: {item.example})" for item in spec.fields))
+        lines.append("  받는 칸: " + ", ".join(f"{item.name}({item.label}{' — 화면에 보이지 않음' if item.secret else ''}, {item.min_len}~{item.max_len}자, 예: {item.example})" for item in spec.entered_fields()))
         for provider in spec.providers:
             title = f"제공자 {provider.key}({provider.label})" if provider.key else f"제공자 {provider.label}"
             auto = "어떤 오류에도 다른 키로 자동 전환하지 않음" if provider.rotation == connections.ROTATION_NEVER else "한도·일시 오류일 때만 허용된 다음 키로 전환"

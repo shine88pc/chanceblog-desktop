@@ -483,7 +483,7 @@ class RegistrationScopeTest(unittest.TestCase):
                 if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "NetClient":
                     function = next((outer.name for outer in ast.walk(tree) if isinstance(outer, ast.FunctionDef) and node in ast.walk(outer)), "")
                     found.append((path.relative_to(SRC).as_posix(), function))
-        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher")], "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다")
+        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher"), ("service/blogger_flow.py", "make_blogger_adapter")], "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다(BLOGGER 갈래가 `make_blogger_adapter` 를 더했다, D-774)")
         callers = [path.relative_to(SRC).as_posix() for path in files() if "site_fetcher(" in path.read_text(encoding="utf-8") and path.name != "site.py"]
         self.assertEqual(callers, ["publish/deploy.py"], "site_fetcher 를 부르는 곳은 두 관문을 지난 공개 주소 확인뿐이다")
 

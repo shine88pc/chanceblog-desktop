@@ -75,6 +75,7 @@ class Field:
     max_len: int
     example: str               # 모양 안내(실제 값이 아니다)
     charset: str = ""          # '' 는 기본 글자(영문·숫자와 `_ - + / = . ~ :`) · 'alnum' 은 영문·숫자와 `_ -` 만 — 공식 문서에 모양이 없는 값(NAVER API HUB)을 느슨하게 검사한다
+    entered: bool = True       # 사용자가 입력 칸에 넣는 값인가 — 거짓이면 입력 칸이 없고 로그인이 보관소에 직접 쓴다(Blogger 의 갱신용 값 — 저장 구조는 세 칸 그대로, D-775)
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,10 @@ class Purpose:
     def field(self, name):
         return next((item for item in self.fields if item.name == name), None)
 
+    def entered_fields(self):
+        """사용자가 입력 칸에 넣는 칸들(보관소에 저장되는 칸 가운데 `entered` 가 참인 것 — Blogger 는 둘, 나머지 용도는 모든 칸)."""
+        return tuple(item for item in self.fields if item.entered)
+
     def provider(self, key=""):
         wanted = key or self.providers[0].key
         return next((item for item in self.providers if item.key == wanted), None)
@@ -164,6 +169,7 @@ class Purpose:
         return next((item.name for item in self.fields if item.secret), "")
 
 
+BLOGGER_DAY_LIMIT, BLOGGER_MINUTE_LIMIT = 30, 6          # Blogger 항목마다 앱이 스스로 두는 한도(보수적 — 서버 쪽 숫자는 공개 문서에서 확인하지 못했다, 설계 3.12)
 APIHUB_STOP_TEXT = "NAVER API HUB의 새로운 데이터 조회를 사용할 수 없습니다. 저장된 정보와 기본 주제 선정 규칙으로 후보 생성을 계속합니다."     # 고정 문구 — 사유(기술 오류 코드 없이 쉬운 한국어)는 따로 덧붙인다
 APIHUB_INTERNAL_DAY, APIHUB_INTERNAL_MONTH, APIHUB_CONSOLE_MONTH = 100, 27000, 30000      # 프로그램 안 기준(하루·월)과 콘솔 월 한도 — 안 기준 월 27,000 은 콘솔 30,000 의 90%
 APIHUB_NEW_CALL_CAP = 5                # 80% 를 넘은 뒤 직접 시작한 분석이 한 번에 부를 수 있는 횟수(기본값 — 운영자가 바꿀 수 있는 정책 값)
@@ -201,10 +207,13 @@ def _purposes():
         Purpose("ai_assist", "AI 보조(선택)", "요약·설명 같은 보조 기능에 씁니다. 기본은 꺼짐이고 키가 없어도 모든 핵심 기능이 그대로 됩니다.",
                 (Field("key", "API 키", True, 16, 256, "영문·숫자·기호 40자 안팎"),),
                 (Provider("gemini", "Gemini", ROTATION_LIMITED, (("default", ()),), "default", "한도는 모델·계정마다 달라 확인하지 못했습니다 — 한도 오류 응답으로만 감지합니다", max_entries=3),)),
-        Purpose("blogger", "Blogger", "Blogger 초안 저장에 씁니다(준비 중 — 로그인 방식이 정해지면 이 칸들을 맞춥니다).",
+        Purpose("blogger", "Blogger", "Blogger 초안 저장에 씁니다 — 구글에서 로그인을 허용하면 앱이 받은 값을 자격 증명 관리자에만 보관해요(초안만 저장하고 공개는 사람이 Blogger 에서 해요).",
                 (Field("client_id", "클라이언트 ID", False, 20, 128, "영문·숫자·점·하이픈 70자 안팎"), Field("client_secret", "클라이언트 시크릿", True, 8, 128, "영문·숫자·하이픈 35자 안팎"),
-                 Field("refresh_token", "갱신용 인증 값", True, 20, 512, "영문·숫자·기호 100자 안팎")),
-                (Provider("", "Google", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다", max_entries=2, second_key_needs_terms=False),), identity_field="client_id"),
+                 Field("refresh_token", "갱신용 인증 값", True, 20, 512, "로그인 때 앱이 받아 보관하는 값 — 직접 넣지 않아요", entered=False)),
+                (Provider("", "Google", ROTATION_NEVER, (("default", (Window("day", "day", BLOGGER_DAY_LIMIT), Window("minute", "sliding", BLOGGER_MINUTE_LIMIT, 1))),), "default",
+                          f"항목마다 하루 {BLOGGER_DAY_LIMIT}회·1분 {BLOGGER_MINUTE_LIMIT}회로 앱이 스스로 제한해요(구글의 실제 한도는 구글 클라우드에서 확인해요). 영문·한글 항목은 서로 다른 블로그라서 한쪽이 막혀도 다른 쪽으로 넘기지 않아요",
+                          max_entries=2, second_key_needs_terms=False),), identity_field="client_id",
+                note="항목 이름은 영문 또는 한글이에요(블로그 하나에 하나). 구글 클라우드에서 만든 데스크톱 앱용 클라이언트 ID·시크릿을 넣은 뒤 로그인해요 — 갱신용 값은 앱이 받아 자격 증명 관리자에만 보관해요."),
         Purpose("github_repo", "GitHub 저장소", "글을 올릴 때 쓰는 저장소 권한입니다.", (), (Provider("", "GitHub", ROTATION_NEVER, (("default", ()),), "default"),), takes_keys=False,
                 note="이 앱은 키를 받지 않습니다 — 컴퓨터의 Git 로그인(Git 자격 증명 관리자)을 씁니다. 터미널에서 `git push` 를 한 번 해 로그인을 마칩니다."),
         Purpose("naver_openapi", "옛 항목 — 네이버 오픈 API(검색·데이터랩)", "예전 버전이 만든 용도입니다. 이 용도의 항목은 읽기만 하고(새 항목은 더하지 못합니다) 키는 지우지 않았습니다. "
@@ -445,7 +454,7 @@ def entry_status(entry, spec, *, now, secret_present=True, valid_hours=CHECK_VAL
         return AUTH_ERROR
     if not secret_present:
         return NEEDS_CHECK
-    if spec.implemented and entry.check_result == CHECK_OK and entry.last_ok_at:
+    if is_implemented(spec) and entry.check_result == CHECK_OK and entry.last_ok_at:
         if now - _parse_stamp(entry.last_ok_at) <= timedelta(hours=valid_hours):
             return CONNECTED
     return NEEDS_CHECK
@@ -574,12 +583,13 @@ def check_fields(spec, fields):
     """칸 이름·모양 검사. 어떤 오류에도 입력한 값은 담지 않는다(칸 이름은 레지스트리의 것만 적는다)."""
     if not isinstance(fields, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in fields.items()):
         raise AppError("KEY_INVALID_SHAPE", {"항목": "입력", "이유": "칸 이름과 값이 모두 글이어야 합니다"})
-    expected = [item.name for item in spec.fields]
+    entered = spec.entered_fields()                            # 입력 칸만 — Blogger 의 갱신용 값은 로그인이 따로 쓴다(사용자가 넣을 수 없다)
+    expected = [item.name for item in entered]
     if set(fields) != set(expected):
         missing = [name for name in expected if name not in fields]
         why = ("빠진 칸이 있습니다: " + ", ".join(missing)) if missing else "이 용도에 없는 칸이 있습니다"
         raise AppError("KEY_INVALID_SHAPE", {"항목": "입력 칸", "이유": f"{why}(이 용도의 칸: {', '.join(expected)})"})
-    for item in spec.fields:
+    for item in entered:
         problem = shape.value_problem(fields[item.name], min_len=item.min_len, max_len=item.max_len, charset=item.charset)
         if problem:
             raise AppError("KEY_INVALID_SHAPE", {"항목": item.label, "이유": problem})
@@ -595,6 +605,21 @@ def refuse_legacy(spec, registry=PURPOSES):
 
 BLOGGER_PURPOSE = "blogger"
 BLOGGER_INPUT_OFF = "이 시험 버전에서는 Blogger 로그인 정보를 받지 않습니다 — Blogger 초안 기능을 만들 때 따로 검증한 뒤에 열립니다(저장된 항목은 `keys remove` 로 지웁니다)"      # 오류 문구 칸(160자)에 다 들어가게 짧게
+
+
+BLOGGER_SLOT_NAMES = ("영문", "한글")                       # Blogger 항목의 이름 — 슬롯(`blogger_en`·`blogger_ko`)을 찾는 결정적인 길(겹치면 `KEY_DUPLICATE`)
+BLOGGER_NAME_RULE = "Blogger 항목의 이름은 영문 또는 한글 중에서 고릅니다(블로그 하나에 하나씩이에요)"
+
+
+def check_slot_name(spec, name):
+    """Blogger 용도의 항목 이름은 `영문`·`한글` 둘 중 하나여야 한다 — 영문 글이 한글 블로그로 가지 않게 슬롯을 이름으로 찾는다. 다른 용도는 아무것도 하지 않는다."""
+    if spec.key == BLOGGER_PURPOSE and name not in BLOGGER_SLOT_NAMES:
+        raise AppError("KEY_INVALID_SHAPE", {"항목": "이름", "이유": BLOGGER_NAME_RULE})
+
+
+def is_implemented(spec):
+    """이 용도에 실제 호출 코드가 열려 있는가 — 표의 `implemented`, 또는 Blogger 는 로그인·읽기 스위치가 켜져 있을 때(스위치는 관문 함수로만 읽는다). 이 빌드는 스위치가 꺼져 있어 늘 표의 값이다."""
+    return spec.implemented or (spec.key == BLOGGER_PURPOSE and capabilities.net_blogger_oauth_enabled())
 
 
 def accepts_input(spec):
@@ -653,7 +678,7 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
     _check_label("이름", name, max_len=MAX_NAME_CHARS, required=True)
     _check_label("소속 프로젝트", project, max_len=MAX_PROJECT_CHARS, required=False)
     check_fields(spec, fields)
-    for item in spec.fields:                                  # 이름·프로젝트에 키 값이 그대로 들어 있으면(칸을 잘못 넣음) 파일에 남기 전에 거절한다
+    for item in spec.entered_fields():                         # 이름·프로젝트에 키 값이 그대로 들어 있으면(칸을 잘못 넣음) 파일에 남기 전에 거절한다
         value = fields[item.name]
         if len(value) >= 6 and (value in name or value in project):
             raise AppError("KEY_INVALID_SHAPE", {"항목": "이름", "이유": "키 값이 이름이나 소속 프로젝트에 들어 있습니다"})
@@ -662,6 +687,7 @@ def add_entry(ctx, purpose, *, name, fields, project="", provider="", state=ACTI
         data = load(ctx, registry)
         mine = data.of_purpose(purpose)
         check_room(spec, chosen, mine)
+        check_slot_name(spec, name)                                                 # Blogger 항목의 이름은 영문 또는 한글(블로그 하나에 하나 — 슬롯을 찾는 길)
         same = [item for item in mine if item.provider == provider]                 # 둘째 키 약관 확인은 같은 서비스(제공자)의 둘째 키에만이다
         asks_terms = bool(same) and chosen.second_key_needs_terms
         if asks_terms and not terms_ack:
@@ -710,6 +736,63 @@ def _same_value(keystore, entry, fields):
     return found.to_dict() == dict(fields)
 
 
+# ---- Blogger 갱신용 값(로그인이 쓴다 — 입력 칸이 없다) ---------------------------------------------------------------------------------------
+def _refresh_field(entry, registry):
+    spec = registry.get(entry.purpose)
+    found = spec.field("refresh_token") if spec is not None else None
+    if found is None or found.entered:
+        raise AppError("KEY_INVALID_SHAPE", {"항목": "용도", "이유": "이 용도에는 로그인이 쓰는 갱신용 값이 없습니다"})
+    return found
+
+
+def attach_refresh_token(ctx, entry, token, *, keystore=None, registry=PURPOSES):
+    """로그인이 받은 갱신용 값을 그 항목의 **같은 보관소 값 묶음**에 한 칸으로 더한다(저장 구조는 세 칸 그대로 — 파일·화면·로그에는 어디에도 쓰지 않는다). 연결 설정 잠금 안에서 항목이 아직 있는지 보고,
+    묶음을 덮어쓴 뒤 **다시 읽어** 칸이 들어갔는지 확인한다 — 확인하기 전에는 아무것도 '연결됨' 으로 바꾸지 않는다. 보관소를 못 쓰면 `KEY_STORE_UNAVAILABLE`(파일로 대신하지 않는다)."""
+    field = _refresh_field(entry, registry)
+    problem = shape.value_problem(token, min_len=field.min_len, max_len=field.max_len)
+    if problem:
+        raise AppError("KEY_INVALID_SHAPE", {"항목": field.label, "이유": problem})
+    keystore = ctx.get_keystore() if keystore is None else keystore
+    with locked(ctx):
+        data = load(ctx, registry)
+        if not any(item.entry_id == entry.entry_id for item in data.entries):
+            raise _not_found("항목")
+        found = keystore.get(entry.ref)
+        if found is None:
+            raise AppError("KEY_STORE_UNAVAILABLE", detail="보관소에 이 항목의 값이 없다")
+        values = found.to_dict()
+        values[field.name] = token
+        keystore.put(entry.ref, values)
+        stored = keystore.get(entry.ref)
+        if stored is None or field.name not in stored:
+            raise AppError("KEY_STORE_UNAVAILABLE", detail="갱신용 값을 보관소에 쓴 뒤 다시 읽어 확인하지 못했다")
+
+
+def detach_refresh_token(ctx, entry, *, keystore=None, registry=PURPOSES):
+    """보관소 값 묶음에서 갱신용 값 한 칸만 지운다(클라이언트 정보 두 칸은 남는다 — 항목은 '로그인 필요' 가 된다). 있었으면 True, 원래 없었으면 False. 지운 뒤 다시 읽어 확인한다."""
+    field = _refresh_field(entry, registry)
+    keystore = ctx.get_keystore() if keystore is None else keystore
+    with locked(ctx):
+        found = keystore.get(entry.ref)
+        if found is None or field.name not in found:
+            return False
+        values = found.to_dict()
+        values.pop(field.name)
+        keystore.put(entry.ref, values)
+        stored = keystore.get(entry.ref)
+        if stored is None or field.name in stored:
+            raise AppError("KEY_STORE_UNAVAILABLE", detail="갱신용 값을 지운 뒤 다시 읽어 확인하지 못했다")
+        return True
+
+
+def has_refresh_token(ctx, entry, *, keystore=None, registry=PURPOSES):
+    """그 항목의 보관소 값 묶음에 갱신용 값이 있는가 — 칸 이름만 본다(값은 꺼내 쓰지 않는다). 항목의 값이 아예 없으면 None."""
+    field = _refresh_field(entry, registry)
+    keystore = ctx.get_keystore() if keystore is None else keystore
+    found = keystore.get(entry.ref)
+    return None if found is None else field.name in found
+
+
 # ---- 바꾸기 ----------------------------------------------------------------------------------------------------------------------------
 def _update_entry(data, entry_id, **changes):
     items = tuple(Entry(**{**item.to_dict(), **changes}) if item.entry_id == entry_id else item for item in data.entries)
@@ -731,6 +814,7 @@ def rename_entry(ctx, text, name, *, keystore=None, registry=PURPOSES):
         data = load(ctx, registry)
         entry = resolve(numbered(data.entries, registry), text).entry
         before = entry.name
+        check_slot_name(registry[entry.purpose], name)
         if before == name:
             return entry, before
         if any(item.name == name and item.entry_id != entry.entry_id for item in data.of_purpose(entry.purpose)):

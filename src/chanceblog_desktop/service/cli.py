@@ -761,7 +761,7 @@ def _secret_input(spec, args):
     if ask is None:
         import getpass
         ask = getpass.getpass
-    return {field.name: ask(f"{field.label}(입력은 화면에 보이지 않습니다): ") for field in spec.fields}
+    return {field.name: ask(f"{field.label}(입력은 화면에 보이지 않습니다): ") for field in spec.entered_fields()}
 
 
 def cmd_keys_add(ctx, args):
@@ -1089,6 +1089,103 @@ def _add_topics_parser(add, common):
 
 
 # ---- 사용법(argparse) -------------------------------------------------------------------------------------------------------------
+# ---- Blogger(blogger) — 초안 저장의 로그인·확인·저장·해제(스위치가 모두 꺼진 이 빌드에서는 어느 명령도 접속하지 않는다) -------------------------------------------------
+BLOGGER_SLOT_CHOICES = ("영문", "한글", "en", "ko")
+
+
+def _blogger_flow():
+    from . import blogger_flow                               # 늦게 가져온다 — 이 흐름을 쓰지 않는 명령이 로그인·접속 부품을 불러오지 않게
+    return blogger_flow
+
+
+def cmd_blogger_status(ctx, args):
+    flow = _blogger_flow()
+    slots = (flow.slot_key(args.slot),) if getattr(args, "slot", None) else flow.SLOTS
+    items = [flow.status(ctx, slot) for slot in slots]                                              # 보관소를 못 열어도 상태 보기는 끝난다('연결 확인 필요' 로 보인다)
+    lines = ["Blogger 연결 상태(읽기만 합니다 — 접속하지 않습니다)"]
+    for item in items:
+        lines.append(f"  {item.name}: {item.state_text}" + ("" if item.blog_id_ok else " — 블로그 관리에서 '블로그 번호'(숫자)를 정해 주세요") + ("" if item.store_ok else " — 키 보관소를 열지 못했어요"))
+    lines.append("  로그인하려면: blogger login 영문 (또는 한글)")
+    return Output(lines, {"slots": [item.to_dict() for item in items]})
+
+
+def cmd_blogger_login(ctx, args):
+    capabilities.require_net("blogger_oauth", "Blogger 로그인(blogger login)")
+    flow = _blogger_flow()
+    notify = getattr(args, "notify", None)
+
+    def show(url):
+        # 로그인 주소는 비밀이 아니다(클라이언트 번호·한 번만 쓰는 값·돌아올 주소뿐) — 그대로 보여야 브라우저에 붙여 넣을 수 있어 가리지 않는다. 시스템 브라우저를 앱이 직접 열 수 없는 터미널에서는 사용자가 연다.
+        if notify is not None:
+            notify("아래 주소를 브라우저에서 열어 로그인해 주세요(3분 안에 끝내야 해요). 주소가 accounts.google.com 으로 시작하는지 꼭 확인해 주세요:")
+            notify(url)
+
+    result = flow.login(ctx, args.slot, open_url=show, keystore=ctx.get_keystore())
+    lines = ["Blogger 로그인을 마쳤어요(갱신용 값은 자격 증명 관리자에만 보관했어요).", *[f"  참고: {note}" for note in result.notes], f"  다음: blogger check {args.slot} — 이름·주소를 보고 맞는 블로그인지 확인해 주세요"]
+    return Output(lines, result.to_dict())
+
+
+def cmd_blogger_check(ctx, args):
+    capabilities.require_net("blogger_read", "Blogger 연결 확인(blogger check)")
+    flow = _blogger_flow()
+    result = flow.check(ctx, args.slot, confirmed=args.yes, keystore=ctx.get_keystore())
+    lines = [f"블로그 이름: {result.name}", f"블로그 주소: {result.url or '(알려 주지 않았어요)'}", f"블로그 번호: {result.blog_id}"]
+    lines.append("맞다고 확인해 '연결됨' 으로 적었어요." if result.confirmed else f"이 블로그가 맞나요? 맞으면 같은 명령에 --yes 를 붙여 주세요: blogger check {args.slot} --yes")
+    return Output(lines, result.to_dict())
+
+
+def cmd_blogger_save_draft(ctx, args):
+    capabilities.require_external_write("Blogger 초안 저장(blogger save-draft)")
+    capabilities.require_net("blogger_draft", "Blogger 초안 저장(blogger save-draft)")        # 둘째 문장: 좁은 스위치도 함께(BLOGGER 설계서 3.3)
+    flow = _blogger_flow()
+    result = flow.save_draft(ctx, args.id, args.slot, confirmed=args.yes, tags=split_list(getattr(args, "tags", "")), keystore=ctx.get_keystore())
+    lines = [("Blogger 에 이미 있던 같은 제목의 초안을 이어받았어요." if result.adopted else "Blogger 에 초안으로 저장했어요(공개는 하지 않았어요)."), f"  글 번호(Blogger): {result.post_id}"]
+    lines += [f"  주소: {result.url}"] if result.url else []
+    lines += [f"  참고: {note}" for note in result.notes]
+    lines.append("  공개는 Blogger 의 초안 목록에서 직접 해 주세요. 앱은 공개된 글을 고치거나 지우지 않아요.")
+    return Output(lines, result.to_dict())
+
+
+def cmd_blogger_disconnect(ctx, args):
+    capabilities.require_net("blogger_oauth", "Blogger 연결 해제(blogger disconnect)")
+    flow = _blogger_flow()
+    result = flow.disconnect(ctx, args.slot, confirmed=args.yes, this_pc_only=args.this_pc_only, understood=args.understand_not_revoked, keystore=ctx.get_keystore())
+    head = ("구글에 로그인 값을 취소하고 이 PC 의 갱신용 값을 지웠어요." if result.revoked else "이 PC 의 갱신용 값을 지웠어요(구글 쪽 취소는 하지 않았어요)." if result.was_logged_in else "로그인돼 있지 않아서 지울 것이 없었어요.")
+    return Output([head, *[f"  참고: {note}" for note in result.notes], "  클라이언트 ID·시크릿은 남겨 두었어요 — 다시 쓰려면 blogger login 으로 새로 로그인해요."], result.to_dict())
+
+
+def _add_blogger_parser(add, common):
+    """`blogger` 와 그 하위 명령들 — 초안 전용이다(공개·수정·삭제 명령은 없다). 로그인 값(갱신용 인증 값)은 앱이 받아 자격 증명 관리자에만 보관하고 화면·파일·기록에 쓰지 않는다."""
+    group = add("blogger", None, "Blogger 초안 저장 — 로그인·상태·연결 확인·초안 저장·연결 해제(공개는 사람이 Blogger 에서 합니다)")
+    group.epilog = ("처음이라면: keys add blogger --name 영문 --stdin → blogger login 영문 → blogger check 영문 → blogger check 영문 --yes → blogger save-draft 글번호 영문 --yes. "
+                    "이 빌드(시험 버전)는 Blogger 접속 스위치가 모두 꺼져 있어 login·check·save-draft·disconnect 는 아무것도 보내지 않고 거절합니다. status 는 읽기만 합니다.")
+    inner = group.add_subparsers(dest="blogger_command", metavar="하위명령", parser_class=KoreanParser)
+    inner.required = True
+
+    def leaf(name, handler, help_text):
+        found = inner.add_parser(name, parents=[common], help=help_text, description=help_text)
+        found.set_defaults(handler=handler, command_path=f"blogger {name}")
+        return found
+
+    found = leaf("status", cmd_blogger_status, "영문·한글 Blogger 의 연결 상태를 보여 줍니다(읽기만 합니다 — 접속하지 않습니다)")
+    found.add_argument("slot", nargs="?", choices=BLOGGER_SLOT_CHOICES, metavar="영문|한글", help="이쪽만 보여 줍니다(안 적으면 둘 다)")
+    found = leaf("login", cmd_blogger_login, "구글 로그인(브라우저 + 이 PC 안에서만 듣는 한 번짜리 창구) — 받은 갱신용 값을 자격 증명 관리자에만 보관합니다")
+    found.add_argument("slot", choices=BLOGGER_SLOT_CHOICES, metavar="영문|한글")
+    found = leaf("check", cmd_blogger_check, "블로그 번호로 이름·주소를 읽어 보여 줍니다 — 맞는 블로그면 --yes 로 '연결됨' 을 적습니다")
+    found.add_argument("slot", choices=BLOGGER_SLOT_CHOICES, metavar="영문|한글")
+    found.add_argument("--yes", action="store_true", help="보인 이름·주소가 맞는 블로그입니다")
+    found = leaf("save-draft", cmd_blogger_save_draft, "승인한 글 하나를 Blogger 에 초안으로 저장합니다(공개하지 않습니다 — --yes 필요)")
+    found.add_argument("id", metavar="글번호")
+    found.add_argument("slot", choices=BLOGGER_SLOT_CHOICES, metavar="영문|한글")
+    found.add_argument("--tags", metavar="a,b,c", help="Blogger 라벨(쉼표로 나눔 — 10개·40자까지)")
+    found.add_argument("--yes", action="store_true", help="글 한 편을 Blogger 에 초안으로 보냅니다")
+    found = leaf("disconnect", cmd_blogger_disconnect, "연결 해제 — 구글에 로그인 값을 먼저 취소하고 이 PC 의 갱신용 값을 지웁니다(되돌릴 수 없습니다 — --yes 필요)")
+    found.add_argument("slot", choices=BLOGGER_SLOT_CHOICES, metavar="영문|한글")
+    found.add_argument("--yes", action="store_true", help="정말 연결을 해제합니다")
+    found.add_argument("--this-pc-only", action="store_true", help="구글에 취소 요청을 하지 않고 이 PC 의 값만 지웁니다(구글 쪽 로그인 값은 남습니다 — 오프라인일 때)")
+    found.add_argument("--understand-not-revoked", action="store_true", help="--this-pc-only 를 쓸 때 한 번 더: 구글에 로그인 값이 남는다는 것을 알고 있습니다")
+
+
 def _common():
     common = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
     common.add_argument("--json", action="store_true", help="사람이 아니라 프로그램이 읽기 쉬운 JSON 으로 출력합니다")
@@ -1224,6 +1321,7 @@ def build_parser():
     _add_keys_parser(add, common)
     _add_draft_parser(add, common)
     _add_topics_parser(add, common)
+    _add_blogger_parser(add, common)
     return parser
 
 
@@ -1317,6 +1415,7 @@ def main(argv=None, *, out=None, err=None, ctx=None, env=None, stdin=None, promp
             context.backend.progress = lambda text: print(mask_block(text), file=err, flush=True)
         args.input_stream = sys.stdin if stdin is None else stdin         # 키를 받는 명령(keys add)이 쓴다 — 시험은 가짜 입력·가짜 숨김 입력을 넣는다
         args.secret_prompt = prompt
+        args.notify = lambda text: print(text, file=err, flush=True)         # 오래 걸리는 로그인이 사용자에게 보여 줄 말(로그인 주소 — 비밀이 아니라 가리지 않는다)을 표준 오류로(--json 출력을 어지럽히지 않는다)
         output = args.handler(context, args)
     except UsageError as problem:
         say(err, f"사용법 오류: {redact_usage(str(problem), argv)}")

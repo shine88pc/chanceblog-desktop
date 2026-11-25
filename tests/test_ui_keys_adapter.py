@@ -141,7 +141,7 @@ class ReadTest(Base):
                 continue
             info = by_key[key]
             self.assertEqual([(item.key, item.label, item.cap, item.needs_terms) for item in info.providers], [(item.key, item.label, spec.entry_cap(item.key), item.second_key_needs_terms) for item in spec.providers] if spec.takes_keys else [], key)
-            self.assertEqual([(item.name, item.label, item.min_len) for item in info.fields], [(item.name, item.label, item.min_len) for item in spec.fields], key)
+            self.assertEqual([(item.name, item.label, item.min_len) for item in info.fields], [(item.name, item.label, item.min_len) for item in spec.entered_fields()], key)
         entry = by_key["ai_assist"].entries[0]
         self.assertEqual((entry.name, entry.state, entry.key_found, entry.provider, entry.check, entry.last_ok, entry.order), ("가", "active", True, "gemini", "", "", 1))
         self.assertRegex(entry.ref, "^[0-9a-f]{32}$")
