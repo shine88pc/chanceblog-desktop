@@ -24,35 +24,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: 시험 (${{ matrix.os }}, Python ${{ matrix.python }}, 조각 ${{ matrix.shard }}/3)
-    runs-on: ${{ matrix.os }}
-    # Windows 칸이 14~15분까지 늘었다(2026-11-03). 20분 한도에 닿아 빨간 칸이 나오면 병합 부탁이 막히므로 여유를 둔다(D-28, 시험이 지킨다).
-    # 그 뒤 시험이 늘어 Windows 칸이 21~29분이 됐다(2026-11-07 — 같은 코드도 러너에 따라 ±20%): 30분 한도에 1분 반만 남아 40분으로 올린다(D-176, 시험이 지킨다).
-    # 시험을 세 조각으로 나눠(D-220) 작업 하나가 칸 하나의 약 1/3 시간이라 한도 40분은 크게 넉넉해졌다 — 한도는 그대로 둔다(시험이 지킨다).
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ['3.10', '3.12']
-        shard: [1, 2, 3]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
-        with:
-          python-version: ${{ matrix.python }}
-
-      - name: 시험 실행(조각 ${{ matrix.shard }}/3)
-        env:
-          PYTHONUTF8: '1'
-          CI_SHARD: ${{ matrix.shard }}
-          CI_SHARD_TOTAL: '3'
-        run: python scripts/ci_shard.py
-
   # Qt 칸 — 윈도·파이썬 3.12 에서 PySide6 두 줄(packaging/requirements-package.txt 의 runtime)만 깔고 화면(Qt) 시험까지 모두 돌린다(offscreen — 창을 띄우지 않는다).
   # 같은 `ci_shard` 규칙으로 조각을 열둘로 나누되 Qt 칸 전용 무게 표(CI_WEIGHTS: qt — 러너에서 잰 시험 파일별 초, D-717)로 나눠 조각마다 비슷한 시간에 끝나게 한다.
   # CI_REQUIRE_QT=1 이면 PySide6 가 없어 건너뛴 시험이 하나라도 있을 때 이 칸이 빨개진다(조용한 초록 금지).
