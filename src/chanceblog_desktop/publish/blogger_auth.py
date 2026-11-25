@@ -81,6 +81,10 @@ class Secret:
     def reveal(self):
         return self._value
 
+    def into(self, values, name):
+        """값을 사전 `values` 의 `name` 칸에 넣는다 — 서비스 층이 `reveal` 을 부르지 않고 보관소 값 묶음에 한 칸을 더하는 길(값은 쓰는 순간에만 사전으로 가고 이 객체는 계속 가려져 있다)."""
+        values[name] = self._value
+
     def __repr__(self):
         return f"<{type(self).__name__} — 값은 가려져 있음>"
 

@@ -1115,9 +1115,11 @@ def cmd_blogger_login(ctx, args):
     notify = getattr(args, "notify", None)
 
     def show(url):
-        # 로그인 주소는 비밀이 아니다(클라이언트 번호·한 번만 쓰는 값·돌아올 주소뿐) — 그대로 보여야 브라우저에 붙여 넣을 수 있어 가리지 않는다. 시스템 브라우저를 앱이 직접 열 수 없는 터미널에서는 사용자가 연다.
+        # 시스템 브라우저를 앱이 직접 열 수 없는 터미널에서는 사용자가 주소를 열어 로그인한다. 안내 글은 모두 공통 경계(`mask_block`)를 거쳐서 주소의 `client_id=` 값은 가려진 채 보인다 —
+        # 그 자리에 구글 클라우드에서 만든 클라이언트 ID(`keys add` 로 넣은 값)를 붙여 넣어 연다(화면의 로그인 단추는 앱이 직접 열어서 이 과정이 없다).
         if notify is not None:
-            notify("아래 주소를 브라우저에서 열어 로그인해 주세요(3분 안에 끝내야 해요). 주소가 accounts.google.com 으로 시작하는지 꼭 확인해 주세요:")
+            notify("아래 주소를 브라우저에서 열어 로그인해 주세요(3분 안에 끝내야 해요). 주소가 accounts.google.com 으로 시작하는지 꼭 확인해 주세요.")
+            notify("주소의 client_id= 뒤에 가려져 보이는 자리에는 구글 클라우드에서 만든 클라이언트 ID(keys add 로 넣은 값)를 붙여 넣어 주세요(안전을 위해 이 화면은 그 값을 가려서 보여 줘요):")
             notify(url)
 
     result = flow.login(ctx, args.slot, open_url=show, keystore=ctx.get_keystore())
@@ -1415,7 +1417,7 @@ def main(argv=None, *, out=None, err=None, ctx=None, env=None, stdin=None, promp
             context.backend.progress = lambda text: print(mask_block(text), file=err, flush=True)
         args.input_stream = sys.stdin if stdin is None else stdin         # 키를 받는 명령(keys add)이 쓴다 — 시험은 가짜 입력·가짜 숨김 입력을 넣는다
         args.secret_prompt = prompt
-        args.notify = lambda text: print(text, file=err, flush=True)         # 오래 걸리는 로그인이 사용자에게 보여 줄 말(로그인 주소 — 비밀이 아니라 가리지 않는다)을 표준 오류로(--json 출력을 어지럽히지 않는다)
+        args.notify = lambda text: print(mask_block(text), file=err, flush=True)         # 오래 걸리는 로그인이 사용자에게 보여 줄 안내 글을 표준 오류로(경계를 거친다 — --json 출력을 어지럽히지 않는다)
         output = args.handler(context, args)
     except UsageError as problem:
         say(err, f"사용법 오류: {redact_usage(str(problem), argv)}")

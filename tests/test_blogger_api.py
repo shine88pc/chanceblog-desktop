@@ -382,7 +382,7 @@ class SixShapesTest(World):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and not node.value.startswith(("\n", " ")) and len(node.value) < 80:
                     for word in ("/publish", "/revert", "DELETE", "PATCH", "PUT"):
                         self.assertNotIn(word, node.value, f"{name}: {node.value[:40]}")
-        self.assertEqual({item for item in dir(api.BloggerAdapter) if not item.startswith("_")}, {"exchange", "refresh", "revoke", "get_blog", "insert_draft", "find_drafts", "get_post"})
+        self.assertEqual({item for item in dir(api.BloggerAdapter) if not item.startswith("_")}, {"begin_login", "exchange", "refresh", "revoke", "get_blog", "insert_draft", "find_drafts", "get_post"})
 
 
 class IsDraftSourceTest(unittest.TestCase):

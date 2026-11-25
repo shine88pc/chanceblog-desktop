@@ -240,8 +240,11 @@ class OpenUrlTest(unittest.TestCase):
         self.assertEqual(qt, [], "화면(Qt) 쪽 열기 함수에 이 표를 잇는 일은 화면 갈래의 몫이다(이 갈래는 Qt 코드를 건드리지 않는다)")
 
 
+MASKED = "[가림: 주소 인자]"                  # 공통 경계가 주소의 `client_id=` 값을 가린 자리 — 사람은 그 자리에 자기 클라이언트 ID 를 붙여 넣어 연다
+
+
 class TriggerStream(io.StringIO):
-    """명령줄의 표준 오류 — 로그인 주소가 찍히면 가짜 브라우저를 움직인다(시스템 브라우저가 주소를 여는 일을 흉내 낸다)."""
+    """명령줄의 표준 오류 — 로그인 주소가 찍히면 가짜 브라우저를 움직인다(사람이 가려진 자리에 클라이언트 ID 를 붙여 넣어 주소를 여는 일을 흉내 낸다)."""
 
     def __init__(self, browser):
         super().__init__()
@@ -251,7 +254,7 @@ class TriggerStream(io.StringIO):
         found = super().write(text)
         for line in str(text).splitlines():
             if line.startswith("https://accounts.google.com/"):
-                self.browser(line.strip())
+                self.browser(line.strip().replace(MASKED, bs.CLIENT_ID))
         return found
 
 
@@ -312,6 +315,8 @@ class BloggerCommandsTest(fs.FlowCase):
         self.assertEqual(len(browser.urls), 1)
         self.assertEqual(open_url.check_open_url(browser.urls[0]), open_url.KIND_LOGIN)
         self.assertIn("accounts.google.com 으로 시작하는지", err)
+        self.assertIn(MASKED, err, "주소의 client_id 값은 공통 경계가 가린다(출력 규칙) — 사람이 그 자리에 자기 클라이언트 ID 를 붙여 연다")
+        self.assertNotIn(bs.CLIENT_ID, err)
         self.assertIn("로그인을 마쳤어요", out)
         for secret in (bs.CLIENT_SECRET, self.store.get(self.entry("blogger_en").ref).reveal("refresh_token")):
             sec.assert_no_secret(self, secret, out + err, "명령줄 출력")

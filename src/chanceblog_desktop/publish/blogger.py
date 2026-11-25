@@ -296,14 +296,19 @@ class BloggerAdapter:
     def __init__(self, client):
         self.client = client
 
-    def exchange(self, client_id, client_secret, code, verifier, redirect_uri, *, now):
-        return auth.exchange_code(self.client, client_id, client_secret, code, verifier, redirect_uri, now=now)
+    # 로그인·갱신·취소는 보관소의 값 묶음(`SecretFields`)을 **그대로** 받는다 — 값은 이 층에서만 꺼낸다(서비스·화면 층은 값을 꺼내는 호출이 없어야 한다: `test_source_rules_key_display`).
+    def begin_login(self, secrets, port):
+        return auth.begin_login(secrets.reveal("client_id"), port)
 
-    def refresh(self, client_id, client_secret, refresh_token, *, now):
-        return auth.refresh_access_token(self.client, client_id, client_secret, refresh_token, now=now)
+    def exchange(self, secrets, code, verifier, redirect_uri, *, now):
+        return auth.exchange_code(self.client, secrets.reveal("client_id"), secrets.reveal("client_secret"), code, verifier.reveal(), redirect_uri, now=now)
 
-    def revoke(self, token):
-        return auth.revoke_token(self.client, token)
+    def refresh(self, secrets, *, now):
+        return auth.refresh_access_token(self.client, secrets.reveal("client_id"), secrets.reveal("client_secret"), secrets.reveal("refresh_token"), now=now)
+
+    def revoke(self, secrets):
+        """값 묶음의 갱신용 값을 구글에서 취소한다(이미 무효여도 성공)."""
+        return auth.revoke_token(self.client, secrets.reveal("refresh_token"))
 
     def get_blog(self, token, blog_id):
         return get_blog(self.client, token, blog_id)

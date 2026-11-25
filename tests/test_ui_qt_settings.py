@@ -599,12 +599,12 @@ class CardTextFitTest(Base):
         grid = self.accordions(window)["data"].body
         first, second = grid._widgets[:2]
         self.assertEqual(first.y(), second.y())                                                                                     # 두 열이다
-        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]])
+        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]] * 2)                                                 # 같은 문장이 이미지 공급자 카드와 Blogger 카드(제공자 전환 없음 — D-775) 둘에 보인다
 
     def test_nothing_wraps_in_the_wider_two_column_cards_except_the_same_one_and_the_single_column_window_shows_all_on_one_line(self):
         window = self.make(size=(1366, 768))
         self.open_all(window)
-        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]])
+        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]] * 2)                                                 # 이미지 공급자 카드와 Blogger 카드(D-775)
         window.resize(*SIZES[-1])                                                                                                   # 최소 창(900×560) — 한 열이라 카드가 더 넓다
         self.settle()
         ui_offscreen.wait_until(self.app, lambda: self.wrapped_lines(window) == [], 3)

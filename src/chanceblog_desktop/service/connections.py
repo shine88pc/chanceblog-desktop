@@ -749,9 +749,6 @@ def attach_refresh_token(ctx, entry, token, *, keystore=None, registry=PURPOSES)
     """로그인이 받은 갱신용 값을 그 항목의 **같은 보관소 값 묶음**에 한 칸으로 더한다(저장 구조는 세 칸 그대로 — 파일·화면·로그에는 어디에도 쓰지 않는다). 연결 설정 잠금 안에서 항목이 아직 있는지 보고,
     묶음을 덮어쓴 뒤 **다시 읽어** 칸이 들어갔는지 확인한다 — 확인하기 전에는 아무것도 '연결됨' 으로 바꾸지 않는다. 보관소를 못 쓰면 `KEY_STORE_UNAVAILABLE`(파일로 대신하지 않는다)."""
     field = _refresh_field(entry, registry)
-    problem = shape.value_problem(token, min_len=field.min_len, max_len=field.max_len)
-    if problem:
-        raise AppError("KEY_INVALID_SHAPE", {"항목": field.label, "이유": problem})
     keystore = ctx.get_keystore() if keystore is None else keystore
     with locked(ctx):
         data = load(ctx, registry)
@@ -761,7 +758,15 @@ def attach_refresh_token(ctx, entry, token, *, keystore=None, registry=PURPOSES)
         if found is None:
             raise AppError("KEY_STORE_UNAVAILABLE", detail="보관소에 이 항목의 값이 없다")
         values = found.to_dict()
-        values[field.name] = token
+        if isinstance(token, str):
+            values[field.name] = token
+        elif hasattr(token, "into"):
+            token.into(values, field.name)                                      # 값 객체(`Secret`) — 이 층은 값을 꺼내는 호출을 하지 않는다
+        else:
+            values[field.name] = ""                                             # 글도 값 객체도 아니면 아래 모양 검사가 거절한다
+        problem = shape.value_problem(values[field.name], min_len=field.min_len, max_len=field.max_len)
+        if problem:
+            raise AppError("KEY_INVALID_SHAPE", {"항목": field.label, "이유": problem})
         keystore.put(entry.ref, values)
         stored = keystore.get(entry.ref)
         if stored is None or field.name not in stored:

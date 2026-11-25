@@ -47,6 +47,7 @@ ENTRY_POINTS = (
     ("service/backend.py", "GitPagesBackend.check_push_access"), ("service/backend.py", "GitPagesBackend.commit"), ("service/backend.py", "GitPagesBackend.push"),
     ("service/backend.py", "GitPagesBackend.discard"), ("service/backend.py", "GitPagesBackend.check_deployed"),
     ("service/cli.py", "cmd_publish_pages"), ("service/cli.py", "cmd_check_deploy"),
+    ("service/blogger_flow.py", "save_draft"), ("publish/blogger.py", "insert_draft"), ("service/cli.py", "cmd_blogger_save_draft"),            # BLOGGER 갈래(D-777) — 초안 저장 한 길(셋)
 )
 # 첫 문장이 `if 온라인:` 이고 그 안 첫 문장이 관문인 곳
 CONDITIONAL_ENTRY_POINTS = (("service/cli.py", "cmd_doctor"), ("service/doctor.py", "_check_push_access"))

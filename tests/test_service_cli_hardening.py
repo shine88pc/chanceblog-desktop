@@ -380,6 +380,7 @@ class NoSurpriseWritesTest(Base):
             "naver-package": ["naver-package", fresh, "--blog", "naver_a"], "naver-done": ["naver-done", fresh, "--blog", "naver_a", "--url", "https://blog.naver.com/x/1"], "naver-profile": ["naver-profile", "show"],
             "backup": ["backup"], "restore": ["restore", "--latest"], "delete": ["delete", fresh], "candidates": ["candidates", "list"], "keys": ["keys", "list"], "draft": ["draft", "plan", "1"],
             "topics": ["topics", "generate"],                    # P3 의도적 갱신: 새 명령 `topics` 도 확인(`--yes`) 없이 아무것도 올리거나 저장하지 않는다(저장은 `generate --yes` 뿐)
+            "blogger": ["blogger", "save-draft", approved, "영문"],   # BLOGGER 갈래(D-776): 새 명령 `blogger` 도 확인 없이 아무것도 올리지 않는다(가장 위험한 `save-draft` 로 본다 — 스위치가 꺼진 이 빌드는 관문에서 거절한다)
         }
 
     def test_no_command_commits_pushes_or_undoes_anything_without_the_confirmation(self):

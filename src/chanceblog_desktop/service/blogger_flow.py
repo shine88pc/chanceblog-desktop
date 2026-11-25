@@ -175,7 +175,7 @@ def _access(ctx, entry, secrets, adapter, meter, *, force=False):
     if cached is not None and not force and cached.usable(now):
         return cached
     forget(entry.entry_id)
-    token = meter.call("blogger_refresh", lambda: adapter.refresh(secrets.reveal("client_id"), secrets.reveal("client_secret"), secrets.reveal("refresh_token"), now=now))
+    token = meter.call("blogger_refresh", lambda: adapter.refresh(secrets, now=now))
     _ACCESS[entry.entry_id] = token
     return token
 
@@ -269,7 +269,7 @@ def _login(ctx, slot, entry, secrets, keystore, adapter, open_url, cancelled, se
     except loopback.LoginWindowError as error:
         raise auth.login_failed(auth.LISTENER_REASON[error.reason]) from None
     with listener:
-        request = auth.begin_login(secrets.reveal("client_id"), listener.port)
+        request = adapter.begin_login(secrets, listener.port)
         if shapes.check_open_url(request.url) != shapes.KIND_LOGIN:                # 만든 주소가 열기 함수가 받는 모양과 다르면 열지 않는다
             raise auth.login_failed(auth.REASON_NO_WINDOW)
         try:
@@ -284,15 +284,15 @@ def _login(ctx, slot, entry, secrets, keystore, adapter, open_url, cancelled, se
         raise auth.login_failed(auth.REASON_DENIED if callback.error == "access_denied" else auth.REASON_NO_VALUE)
     meter = _Meter(ctx, entry)
     now = ctx.now().timestamp()
-    tokens = meter.call("blogger_login", lambda: adapter.exchange(secrets.reveal("client_id"), secrets.reveal("client_secret"), callback.code, request.verifier.reveal(), request.redirect_uri, now=now))
+    tokens = meter.call("blogger_login", lambda: adapter.exchange(secrets, callback.code, request.verifier, request.redirect_uri, now=now))
     notes = list(meter.notes)
-    previous = secrets.reveal("refresh_token") if "refresh_token" in secrets else None
+    previous = "refresh_token" in secrets
     if previous:                                                                   # 새 갱신 값을 받았으니 이전 것을 먼저 취소해 본다(계정·클라이언트당 100개 한도에서 오래된 것이 조용히 무효가 되는 일을 줄인다)
         try:
-            meter.call("blogger_revoke_old", lambda: adapter.revoke(previous))
+            meter.call("blogger_revoke_old", lambda: adapter.revoke(secrets))
         except AppError:
             notes.append("이전 로그인 값을 구글에서 취소하지 못했어요 — 구글 계정의 보안 설정에서 앱 접근을 확인할 수 있어요")
-    cn.attach_refresh_token(ctx, entry, tokens.refresh.reveal(), keystore=keystore)
+    cn.attach_refresh_token(ctx, entry, tokens.refresh, keystore=keystore)
     forget(entry.entry_id)
     _ACCESS[entry.entry_id] = tokens.access
     return LoginResult(slot, bool(previous), tuple(notes + meter.notes))
@@ -369,8 +369,7 @@ def disconnect(ctx, slot, *, confirmed, this_pc_only=False, understood=False, ke
     if not this_pc_only:
         adapter = external.blogger_adapter() if adapter is None else adapter
         meter = _Meter(ctx, entry)
-        token = secrets.reveal("refresh_token")
-        revoked = bool(meter.call("blogger_revoke", lambda: adapter.revoke(token)))
+        revoked = bool(meter.call("blogger_revoke", lambda: adapter.revoke(secrets)))
         notes += meter.notes
     else:
         notes.append("구글 쪽 취소는 하지 않았어요 — 구글 계정의 보안 설정에서 앱 접근을 직접 지워 주세요")
