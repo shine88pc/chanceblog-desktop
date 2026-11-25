@@ -164,10 +164,10 @@ class ShellTest(Base):
     def test_the_screen_table_has_one_builder_per_real_menu_and_the_old_placeholder_screens_cannot_be_opened(self):
         """의도적 갱신(UI-C1a, D-172): 옛 시험은 '나머지 넷이 같은 자리표시를 그린다' 를 보았다. 이제 표는 완성된 화면(홈·설정)뿐이고 옛 자리표시 화면 이름을 불러도 열리지 않는다."""
         self.assertEqual(list(S.SCREEN_BUILDERS), [key for key, _label, _icon in app_state.NAV])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])     # 의도적 갱신(글 흐름 1a, D-633): 글 검토 줄이 더해졌다 / 의도적 갱신(P4e, D-282): 초안 작성 줄이 더해졌다 / 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])     # 의도적 갱신(글 흐름 1a, D-633): 글 검토 줄이 더해졌다 / 의도적 갱신(P4e, D-282): 초안 작성 줄이 더해졌다 / 의도적 갱신(P4b, D-210): 블로그 관리 줄이 더해졌다 / 의도적 갱신(Seed 관리, D-230): Seed 관리 줄이 더해졌다 / 의도적 갱신(P4d, D-270): 주제 후보 줄이 더해졌다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         self.assertIsNot(S.SCREEN_BUILDERS["settings"], S.SCREEN_BUILDERS["home"])
         window = self.make(settings=False)
-        for key in ("draft", "history"):                                                              # 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열린다 / 의도적 갱신(P4d, D-270): 'topics' 도 이제 완성된 화면이라 열린다(`test_ui_qt_candidates` 가 확인)
+        for key in ("draft", "nope"):                                                              # 의도적 갱신(P4b, D-210): 'blogs' 는 이제 완성된 화면이라 열린다 / 의도적 갱신(P4d, D-270): 'topics' 도 이제 완성된 화면이라 열린다(`test_ui_qt_candidates` 가 확인) / 의도적 갱신(글 흐름 1b, D-651): 발행 기록(`history`)이 실제 메뉴가 되어 '아직 안 만든 화면' 목록에서 뺐다 — 다음 단계 목록이 비었다. 나머지 이름은 그대로 열리지 않는다(`history` 자리에 모르는 이름 `nope` 를 넣어 같은 개수의 닫힌 이름을 본다)
             window.go(key)
             self.settle()
             self.assertEqual(window.state.page, "home", key)
@@ -381,7 +381,7 @@ class AccessibilityTest(Base):
         self.assertIn(text.T["conn_refresh"], names)
         self.assertIn(text.T["diag_show"], names)
         self.assertIn("예시 데이터", names)
-        self.assertEqual(sum(1 for w in seen if w.property("nav")), 7)                                    # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토가 더해져 일곱 / 의도적 갱신(P4e, D-282): 초안 작성이 더해져 여섯 / 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯
+        self.assertEqual(sum(1 for w in seen if w.property("nav")), 8)                                    # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토가 더해져 일곱 / 의도적 갱신(P4e, D-282): 초안 작성이 더해져 여섯 / 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 메뉴가 일곱에서 여덟(옛 값 7)
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
         """의도적 갱신(UI-C1b → L3 D-539): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 와 '진단 정보 복사' 단추 둘이 는다(보기는 옛 '고급' 영역의 단추가 옮겨 온 것이고 복사는 L3 에서 더했다)."""

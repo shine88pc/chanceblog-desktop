@@ -32,12 +32,14 @@ if HAVE:
     from chanceblog_desktop.ui.qt import board as board_module
     from chanceblog_desktop.ui.qt import components as UI
     from chanceblog_desktop.ui.qt import shell as shell_module
+    from chanceblog_desktop.ui.qt import sidebar as sidebar_module
     from chanceblog_desktop.ui.qt import theme
     from chanceblog_desktop.ui.qt.sidebar import SoonItem
     from chanceblog_desktop.ui.qt.topbar import TopBar
 
 COLORS = tokens.palette()
 FRIDAY = datetime.datetime(2026, 11, 6, 20, 10, 0)
+SAMPLE_NEXT_STEPS = (("later", "nav_history", "calendar_check"),)                                       # 의도적 갱신(글 흐름 1b, D-651): 실제 '다음 단계' 목록은 비었다(발행 기록이 실제 메뉴가 됐다) — 상자의 모양 규칙은 이 시험용 사본으로 계속 지킨다
 
 
 @unittest.skipUnless(HAVE, "PySide6 가 설치되어 있지 않다")
@@ -69,6 +71,11 @@ class QtBase(unittest.TestCase):
         self.assertTrue(ui_offscreen.wait_until(self.app, lambda: window.state.list_state != "loading", 10))
         self.settle()
         return window
+
+    def make_with_soon(self, **kwargs):
+        """의도적 갱신(글 흐름 1b, D-651): 실제 앱의 '다음 단계' 목록은 비었다 — 그 상자(누를 수 없음·Tab 제외·준비 중 배지·55% 섞은 색)의 모양 규칙은 지우지 않고 **목록을 시험이 채운 사본**(`SAMPLE_NEXT_STEPS`)으로 계속 지킨다."""
+        with mock.patch.object(sidebar_module, "NEXT_STEPS", SAMPLE_NEXT_STEPS):
+            return self.make(**kwargs)
 
     def bar(self, clock=None, width=1200):
         bar = TopBar(clock or clock_rules.FixedClock(FRIDAY))
@@ -252,7 +259,7 @@ class TopBarNarrowTest(QtBase):
 
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-REAL = {"home", "topics", "drafts", "posts", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다 / 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
+REAL = {"home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다 / 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
 
 
 def hexed(image, x, y):
@@ -297,8 +304,8 @@ class SidebarTest(QtBase):
 
     def test_the_real_menu_is_home_and_settings_and_the_current_one_gets_the_new_colors(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])   # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
-        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "초안 작성 메뉴로 이동", "글 검토 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])   # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])   # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
+        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "초안 작성 메뉴로 이동", "글 검토 메뉴로 이동", "발행 기록 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])   # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         for button in window.nav_buttons.values():
             self.assertTrue(42 <= button.height() <= 46, button.height())                          # 문서의 메뉴 높이 42~46
             self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)
@@ -315,8 +322,17 @@ class SidebarTest(QtBase):
         self.settle()
         self.assertTrue(window.nav_buttons["settings"].isChecked() and not window.nav_buttons["home"].isChecked())
 
-    def test_the_next_steps_list_has_the_five_unfinished_names_with_a_soon_badge_each(self):
+    def test_the_real_next_steps_list_is_empty_and_the_box_is_not_drawn_and_history_is_a_real_menu(self):
+        """글 흐름 1b(D-651): 발행 기록이 실제 메뉴가 되어 다음 단계 목록이 비었다 — 사이드바는 목록이 비면 상자를 만들지 않고, 메뉴는 여덟이며 발행 기록이 글 검토 다음에 있다."""
+        self.assertEqual(app_state.NEXT_STEPS, ())
         window = self.make()
+        self.assertIsNone(window.sidebar.soon_list)
+        self.assertEqual(list(window.nav_buttons)[3:5], ["posts", "history"])
+        self.assertEqual(window.nav_buttons["history"].accessibleName(), "발행 기록 메뉴로 이동")
+        self.assertEqual([label.plain_text() for label in window.sidebar.findChildren(UI.Label) if label.plain_text() in ("다음 단계", "준비 중")], [], "다음 단계 제목도 준비 중 배지도 없다")
+
+    def test_the_next_steps_list_has_the_five_unfinished_names_with_a_soon_badge_each(self):
+        window = self.make_with_soon()
         box = window.sidebar.soon_list
         self.assertEqual(box.accessibleName(), "준비 중 — 아직 열 수 없는 화면")
         self.assertEqual(box.title.plain_text(), "다음 단계")
@@ -334,7 +350,7 @@ class SidebarTest(QtBase):
         self.assertGreater(box.geometry().top(), window.nav_buttons["settings"].geometry().bottom() - 1)  # 실제 메뉴 아래에 따로
 
     def test_the_next_steps_list_cannot_be_clicked_focused_or_tabbed_to_and_nothing_happens(self):
-        window = self.make()
+        window = self.make_with_soon()
         box = window.sidebar.soon_list
         for widget in [box, *box.findChildren(QWidget)]:
             self.assertEqual(widget.focusPolicy(), Qt.NoFocus, widget)                            # Tab 정거장이 아니다
@@ -368,7 +384,7 @@ class SidebarTest(QtBase):
         self.assertIn(window.nav_buttons["settings"], seen, "실제 메뉴(설정)에는 Tab 이 간다")
 
     def test_hovering_the_next_steps_changes_nothing_and_the_cursor_stays_an_arrow(self):
-        window = self.make()
+        window = self.make_with_soon()
         item = window.sidebar.soon_list.items[0]
         before = item.grab().toImage()
         QTest.mouseMove(item, QPoint(item.width() // 2, item.height() // 2))
@@ -384,7 +400,7 @@ class SidebarTest(QtBase):
         mixed = tokens.mix(COLORS["bg_sidebar"], COLORS["text_secondary"], 0.55)
         self.assertEqual(COLORS["soon_text"], mixed)                                              # 토큰 값이 55% 섞은 값과 같다(입력 색이나 비율이 바뀌면 이 시험이 알린다)
         self.assertTrue(0.50 <= tokens.SOON_OPACITY <= 0.60)
-        window = self.make()
+        window = self.make_with_soon()
         for item in window.sidebar.soon_list.items:
             self.assertEqual(item.name.palette().color(item.name.foregroundRole()).name().upper(), mixed.upper(), "이름 글자 색 = 55% 섞은 토큰 색")
             for widget in (item, item.name, item.icon):
@@ -418,6 +434,12 @@ class SidebarTest(QtBase):
         self.assertEqual((window.minimumSize().width(), window.minimumSize().height()), (900, 560))
         side = window.sidebar
         self.assertLessEqual(side.minimumSizeHint().height(), 560 - tokens.FRAME["app_bar"])
+        self.assertIsNone(side.soon_list, "의도적 갱신(글 흐름 1b, D-651): 실제 앱에는 다음 단계 상자가 없어 메뉴 여덟이 최소 창 안에 들어간다 — 상자의 배치 규칙은 아래 채운 사본(더 큰 창)이 계속 본다")
+        brand = side.findChild(QWidget, "brandcard")
+        self.assertLess(window.nav_buttons["settings"].geometry().bottom(), brand.geometry().top())
+        self.assertLessEqual(brand.geometry().bottom(), side.height())
+        window = self.make_with_soon(size=(1366, 768))
+        side = window.sidebar
         box, brand = side.soon_list, side.findChild(QWidget, "brandcard")
         self.assertLess(window.nav_buttons["settings"].geometry().bottom(), box.geometry().top())
         previous = -1
@@ -515,7 +537,7 @@ class NoRouteToUnfinishedScreensTest(QtBase):
     def test_asking_for_any_unfinished_screen_by_name_is_refused_by_the_shell_and_the_state(self):
         window = self.make()
         before = window.screen_widget
-        for key, _label, _icon in app_state.NEXT_STEPS:
+        for key in [key for key, _label, _icon in app_state.NEXT_STEPS] + ["draft", "nope", ""]:                  # 의도적 갱신(글 흐름 1b, D-651): 다음 단계 목록이 비어 빈 반복이 되지 않게 아직 없는 화면 이름을 직접 더했다(강화)
             self.assertFalse(window.state.nav(key), key)
             window.go(key)
         self.assertEqual((window.state.page, window.screen_widget is before), ("home", True))
@@ -665,7 +687,7 @@ bar, side = window.topbar, window.sidebar
 bad = []
 for label in (bar.name, bar.tagline, bar.date_label):
     if label.isVisible() and label.width() < label.fontMetrics().horizontalAdvance(label.text()) - 1: bad.append(label.text())
-for item in side.soon_list.items:
+for item in (side.soon_list.items if side.soon_list is not None else ()):  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 다음 단계 목록이 비었다 — 실제 목록은 비어 있고 아래 시험이 목록을 채운 사본으로 상자의 모양 규칙을 계속 지킨다
     if item.name.width() < item.name.fontMetrics().horizontalAdvance(item.name.text()) - 1: bad.append(item.name.text())
     if item.badge.width() < item.badge.fontMetrics().horizontalAdvance(item.badge.text()) - 1: bad.append(item.badge.text())
 for button in window.nav_buttons.values():

@@ -180,6 +180,8 @@ POST_T = {
     "post_pkg_copy_body": "본문 복사", "post_pkg_copy_body_a11y": "{name} 본문을 클립보드에 복사", "post_pkg_copied_body": "본문을 복사했어요. 네이버 글쓰기 화면에 붙여 넣어 주세요.",
     "post_pkg_copy_tags": "태그 복사", "post_pkg_copy_tags_a11y": "{name} 태그를 클립보드에 복사", "post_pkg_copied_tags": "태그를 복사했어요. 네이버 글쓰기 화면에 붙여 넣어 주세요.",
     "post_pkg_copy_all": "전체 복사", "post_pkg_copy_all_a11y": "{name} 제목·본문·태그·체크리스트 전체를 클립보드에 복사", "post_pkg_copied_all": "전체를 복사했어요. 네이버 글쓰기 화면에 붙여 넣어 주세요.",
+    "post_pkg_copy_failed": "복사하지 못했어요. 다른 프로그램이 클립보드를 쓰고 있는지 확인한 뒤 다시 눌러 주세요.",
+    "post_pkg_warnings": "주의", "post_pkg_checklist": "발행 전에 확인할 것", "post_published_copied": "발행 주소를 복사했어요.",
     "post_pkg_copy_blocked": "키·토큰처럼 보이는 글이 있어서 복사하지 않았어요. 글을 고친 뒤 다시 검토해 주세요.",
     "post_pkg_copy_none": "복사할 패키지가 없어요. 글을 다시 읽은 뒤 눌러 주세요.",
     "post_published_title": "직접 발행한 글", "post_published_url": "발행 주소: {url}", "post_published_when": "기록한 때: {when}",

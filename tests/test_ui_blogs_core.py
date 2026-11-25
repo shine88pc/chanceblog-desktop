@@ -870,15 +870,15 @@ class MenuTest(unittest.TestCase):
         # 의도적 갱신(Seed 관리, D-230): Seed 관리 화면이 완성돼 데이터·관리 묶음의 블로그 관리 앞에 올랐고 '다음 단계' 목록에서 빠졌다. 블로그 관리가 실제 메뉴이고 '다음 단계' 에 없다는 이 시험의 뜻은 그대로다.
         # 의도적 갱신(P4d, D-270): 주제 후보 화면이 완성돼 핵심 작업 묶음의 홈 다음에 올랐고 '다음 단계' 목록에서 빠졌다 — 블로그 관리가 실제 메뉴이고 '다음 단계' 에 없다는 이 시험의 뜻은 그대로다.
         # 의도적 갱신(P4e, D-282): 초안 작성 화면이 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐고 '다음 단계' 목록에는 발행 기록만 남았다 — 블로그 관리가 실제 메뉴이고 '다음 단계' 에 없다는 이 시험의 뜻은 그대로다.
-        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])                  # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 핵심 작업 묶음 끝(초안 작성 다음)에 올랐다
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "글 검토", "Seed 관리", "블로그 관리", "설정"])
+        self.assertEqual([key for key, _label, _icon in app_state.NAV], ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])                  # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 핵심 작업 묶음 끝(초안 작성 다음)에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "글 검토", "발행 기록", "Seed 관리", "블로그 관리", "설정"])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         self.assertEqual([(key, label, [item[0] for item in items]) for key, label, items in app_state.nav_groups()],
-                         [("core", "nav_group_core", ["home", "topics", "drafts", "posts"]), ("data", "nav_group_data", ["seed", "blogs"]), ("system", "nav_group_system", ["settings"])])
-        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], ["history"])
+                         [("core", "nav_group_core", ["home", "topics", "drafts", "posts", "history"]), ("data", "nav_group_data", ["seed", "blogs"]), ("system", "nav_group_system", ["settings"])])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
+        self.assertEqual([key for key, _label, _icon in app_state.NEXT_STEPS], [])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 다음 단계 목록이 비었다
         state = app_state.AppState(services.FakeHomeProvider())
         self.assertTrue(state.nav("blogs"))
         self.assertEqual(state.page, "blogs")
-        for unfinished in ("draft", "history", "nope"):
+        for unfinished in ("draft", "nope"):  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록(`history`)이 실제 메뉴가 되어 '아직 안 만든 화면' 목록에서 뺐다 — 다음 단계 목록이 비었다. 나머지 이름은 그대로 열리지 않는다
             self.assertFalse(state.nav(unfinished), unfinished)
 
 

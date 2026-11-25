@@ -135,7 +135,7 @@ class FakePostsProvider(PostsProvider):
 
     def _package(self, project, platform):
         """복사 준비됨·복사함인 네이버 블로그의 복사용 패키지 — 실제 서비스(`naver_flow`)와 같은 모양(제목·본문·태그·전체 글)이고 **그 블로그의 것만** 담는다. 키 모양이 든 글이면 그 복사 열쇠가 `blocked` 에 든다."""
-        title, body, tags = project.title, project.source_content, "#예시 #글"
+        title, body, tags = project.title, project.source_content, "#예시 #" + ("에이" if platform == NAVER_PLATFORMS[0] else "비")          # 블로그마다 태그가 달라 A 와 B 의 패키지가 섞이면 시험이 알아본다
         every = f"[제목]\n{title}\n\n[본문]\n{body}\n\n[태그]\n{tags}\n\n[발행 전 체크리스트]\n- [ ] 미리보기에서 제목과 본문을 처음부터 끝까지 읽습니다\n"
         blocked = tuple(kind for kind, text in (("title", title), ("body", body), ("tags", tags), ("all", every)) if rules.copy_blocked(text))
         return NaverPackageInfo(platform, title, body, tags, every, len("".join(body.split())), body.count("\n\n") + 1, len(project.assets), "", (), ("- [ ] 미리보기에서 제목과 본문을 처음부터 끝까지 읽습니다",), blocked, True)

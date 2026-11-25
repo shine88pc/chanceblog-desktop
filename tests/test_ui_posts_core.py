@@ -1628,11 +1628,12 @@ class PostsConcurrencyCoreTest(unittest.TestCase):
 
     def test_the_menu_has_the_posts_entry_in_the_core_group_after_drafts(self):
         keys = [key for key, _label, _icon in app_state.NAV]
-        self.assertEqual(keys, ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])
-        self.assertEqual(app_state.NAV_GROUPS[0][2], ("home", "topics", "drafts", "posts"))
+        self.assertEqual(keys, ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
+        self.assertEqual(app_state.NAV_GROUPS[0][2], ("home", "topics", "drafts", "posts", "history"))  # 의도적 갱신(글 흐름 1b, D-651): 핵심 작업 묶음 끝에 발행 기록이 글 검토 다음으로 올랐다
         self.assertEqual(T["nav_posts"], "글 검토")
         self.assertEqual(dict((key, icon) for key, _label, icon in app_state.NAV)["posts"], "check_circle")
         self.assertNotIn("posts", [key for key, _label, _icon in app_state.NEXT_STEPS])
+        self.assertEqual(app_state.NEXT_STEPS, ())  # 의도적 강화(글 흐름 1b, D-651): 다음 단계 목록이 비었음을 못박는다 — 발행 기록이 실제 메뉴가 되었다
 
 
 class PostsStaleReadsCoreTest(unittest.TestCase):

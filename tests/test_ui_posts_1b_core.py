@@ -149,7 +149,7 @@ class PostsPackageCoreTest(unittest.TestCase):
         card = panel(controller)["package"]
         self.assertEqual(card["lines"][0], T["post_pkg_line_title"].format(title="에너지 절약 습관"))
         self.assertTrue(card["lines"][1].startswith("본문 ") and "문단" in card["lines"][1] and "이미지 자리" in card["lines"][1])
-        self.assertEqual(card["lines"][2], T["post_pkg_line_tags"].format(tags="#예시 #글"))
+        self.assertEqual(card["lines"][2], T["post_pkg_line_tags"].format(tags="#예시 #에이"))
 
     def test_the_copy_texts_are_exactly_the_package_and_copying_never_changes_the_state(self):
         controller, project_id = with_post()

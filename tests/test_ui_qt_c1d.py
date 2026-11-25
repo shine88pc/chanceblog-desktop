@@ -565,7 +565,7 @@ class AccessibilityTest(QtBase):
             for group in (rows[:5], rows[5:]):
                 tops = [row.mapTo(window.scroll.widget(), row.rect().topLeft()).y() for row in group]
                 self.assertEqual(tops, sorted(tops), size)                                                  # 구역 안에서는 아래로 간다
-            self.assertEqual(len(stops), 18, size)                                                          # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토 메뉴가 더해져 메뉴 일곱(옛 값 17) / 메뉴 여섯(홈·주제 후보·초안 작성·Seed 관리·블로그 관리·설정 — UI-C1d 때는 둘, P4b 와 Seed 관리가 하나씩 더했고 의도적 갱신(P4d, D-270)으로 주제 후보가, 의도적 갱신(P4e, D-282)으로 초안 작성이 하나씩 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉 — 다른 정거장이 끼지 않는다
+            self.assertEqual(len(stops), 19, size)                                                          # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토 메뉴가 더해져 메뉴 일곱(옛 값 17) / 메뉴 여섯(홈·주제 후보·초안 작성·Seed 관리·블로그 관리·설정 — UI-C1d 때는 둘, P4b 와 Seed 관리가 하나씩 더했고 의도적 갱신(P4d, D-270)으로 주제 후보가, 의도적 갱신(P4e, D-282)으로 초안 작성이 하나씩 더했다)·예시 데이터·다시 불러오기·추천 줄 아홉 — 다른 정거장이 끼지 않는다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록 메뉴가 더해져 Tab 한 바퀴가 18 에서 19(옛 값 18)
             window.close()
 
     def test_shift_tab_walks_the_same_ring_backwards_and_every_stop_has_a_name(self):

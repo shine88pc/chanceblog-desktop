@@ -12,6 +12,7 @@ HIST_T = {
     "hist_order_a11y_oldest": "발행 기록 순서. 지금은 오래된 순서예요. 누르면 최신 순서로 바뀌어요", "hist_order_a11y_newest": "발행 기록 순서. 지금은 최신 순서예요. 누르면 오래된 순서로 바뀌어요",
     "hist_order_now_oldest": "오래된 순서", "hist_order_now_newest": "최신 순서",
     "hist_sample_tip": "화면에 보이는 글과 주소는 모두 예시예요. 실제 기록이 아니에요.",
+    "hist_sample_dialog_body": "지금 보이는 글, 상태, 주소, 작업 로그는 화면을 확인하려고 넣어 둔 예시예요. 실제 데이터를 읽으면 이 표시가 사라져요.",
     # 목록의 여섯 상태
     "hist_loading": "발행 기록을 읽고 있어요…", "hist_loading_a11y": "발행 기록을 읽는 중",
     "hist_empty_title": "아직 발행 기록이 없어요", "hist_empty_desc": "글을 승인하고 복사하거나 올리면 여기에 모여요.",
@@ -25,6 +26,7 @@ HIST_T = {
     "hist_row_meta": "{platform} · {status} · {when}", "hist_when_unknown": "때 모름", "hist_row_url": "발행 주소: {url}", "hist_row_a11y": "{title}. {meta}",
     "hist_platform_blogger_en": "Blogger 영문", "hist_platform_blogger_ko": "Blogger 한글", "hist_platform_unknown": "알 수 없는 플랫폼",
     "hist_copy_url": "주소 복사", "hist_copy_url_a11y": "{title} 발행 주소를 클립보드에 복사",
+    "hist_copied": "발행 주소를 복사했어요.", "hist_copy_failed": "복사하지 못했어요. 다른 프로그램이 클립보드를 쓰고 있는지 확인한 뒤 다시 눌러 주세요.",
     "hist_copy_blocked": "키·토큰처럼 보이는 글이 있어서 복사하지 않았어요.", "hist_copy_none": "복사할 주소가 없어요.",
     # 작업 로그 카드
     "hist_log_title": "작업 로그",
