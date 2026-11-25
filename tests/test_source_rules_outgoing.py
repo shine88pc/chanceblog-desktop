@@ -10,8 +10,8 @@
 (`probe_scanner.py` 의 목록)이 모두 잡히고 지금 소스는 위반이 0 이다.
 
 덧붙임(NET 갈래, D-735 — 운영자 확인 038 ①): 허용 목록을 **범주 표**로 쪼갰다(`ALLOWED_GIT_WRITE`·`ALLOWED_LOCAL_WORKER`·`ALLOWED_BROWSER`·`ALLOWED_NET_CLIENT`·`ALLOWED_LOOPBACK`) — 뒤 갈래가 같은 줄을 고쳐 병합 충돌을 내지 않고 **자기 범주 표에 한 줄**만 더하게 하려는 것이다.
-`ALLOWED` 는 다섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 6곳: 1 + 1 + 2 + 2 + 0). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
-`http`·`ssl` 은 `net/client.py` 한 파일에만, `socket` 은 `net/loopback.py` 한 파일에만(지금은 0곳) 허용되며 `urllib`(`parse` 말고) 항목과 그 밖의 하위 프로세스 항목은 여전히 허용 표에 없다.
+`ALLOWED` 는 다섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 7곳: 1 + 1 + 2 + 2 + 1 — BLOGGER 갈래가 루프백 한 줄을 더했다, D-771). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
+`http`·`ssl` 은 `net/client.py` 한 파일에만, `socket` 은 `net/loopback.py` 한 파일에만(지금 1곳) 허용되며 `urllib`(`parse` 말고) 항목과 그 밖의 하위 프로세스 항목은 여전히 허용 표에 없다.
 """
 import ast
 import sys
@@ -56,7 +56,9 @@ ALLOWED_NET_CLIENT = {                      # 정확히 2곳 — 새 인터넷 �
     ("net/client.py", "http"): "보안 접속 클라이언트가 `http.client` 로 요청 한 건을 보내는 유일한 곳(`NetClient`) — 공개 함수의 첫 문장이 `capabilities.require_net` 관문이고 호스트·길·머리글·크기·시간·이동은 `net/endpoints.py` 의 소스 표가 정하며 스위치가 모두 꺼진 이 빌드에서는 만들어지지도 않는다",
     ("net/client.py", "ssl"): "같은 클라이언트의 TLS 환경(`_make_context`) — 인증서 검증 필수·호스트 이름 확인·최소 TLS 1.2 이고 `capabilities.require_net` 관문 뒤에서만 쓰인다(검증을 끄거나 낮추는 이름은 소스 어디에도 없다)",
 }
-ALLOWED_LOOPBACK = {}                       # 정확히 0곳 — BLOGGER 갈래가 `net/loopback.py` · `socket` 한 줄을 더해 정확히 1곳이 된다(로그인 코드를 받으려 이 PC 안에서만 듣는다 — 관문 `require_net("blogger_oauth", …)`)
+ALLOWED_LOOPBACK = {                        # 정확히 1곳 — BLOGGER 갈래(D-771)가 더했다
+    ("net/loopback.py", "socket"): '로그인 코드를 받으려고 이 PC 안(127.0.0.1)에서 **한 번만** 듣는 유일한 곳 — `capabilities.require_net("blogger_oauth", …)` 가 공개 함수의 첫 문장이고 바깥 주소로 나가는 연결은 만들지 않으며 주소는 글자 `127.0.0.1` 하나뿐이다',
+}
 ALLOWED_CATEGORIES = {"git_write": ALLOWED_GIT_WRITE, "local_worker": ALLOWED_LOCAL_WORKER, "browser": ALLOWED_BROWSER, "net_client": ALLOWED_NET_CLIENT, "loopback": ALLOWED_LOOPBACK}
 ALLOWED = {**ALLOWED_GIT_WRITE, **ALLOWED_LOCAL_WORKER, **ALLOWED_BROWSER, **ALLOWED_NET_CLIENT, **ALLOWED_LOOPBACK}
 
