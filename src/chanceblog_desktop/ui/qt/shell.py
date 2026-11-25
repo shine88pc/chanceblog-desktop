@@ -39,6 +39,7 @@ from .references_dialog import ReferencesDialog
 from .ocr_runner import OcrRunner
 from .photo_screen import DIALOG_WIDTH as PHOTO_DIALOG_WIDTH
 from .photo_screen import PhotoSheet
+from .post_flow import PostFlowMixin
 from .style_dialog import DIALOG_WIDTH as STYLE_DIALOG_WIDTH
 from .style_dialog import StyleDialog
 from .topbar import TopBar
@@ -91,15 +92,15 @@ def qt_files_picker(parent, title, filter_text):
     return list(paths)
 
 
-class AppShell(QMainWindow):
-    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None, environment=None, ocr=None, ocr_options=None):
+class AppShell(PostFlowMixin, QMainWindow):
+    def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None, environment=None, ocr=None, ocr_options=None, posts=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
         self.clock = clock or SystemClock()                                              # 시계는 주입한다(시험·사진은 가짜 시계) — 위젯이 `datetime.now()` 를 직접 부르지 않는다
         self._relayout_timer = QTimer(self)                                              # 다시 그린 뒤·창 크기를 바꾼 뒤 한 번, 화면의 배치를 처음부터 다시 계산한다(굳어 버린 행 높이를 푼다 — `screens.relayout_screen`)
         self._relayout_timer.setSingleShot(True)
         self._relayout_timer.timeout.connect(self._relayout)
-        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups, photos=photos, ocr=ocr)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
+        self.state = AppState(provider, runner=runner, connections=connections, version=self.version_info, blogs=blogs, seeds=seeds, candidates=candidates, drafts=drafts, backups=backups, photos=photos, ocr=ocr, posts=posts)           # 설정 화면의 '정보' 묶음이 사이드바와 같은 버전을 보인다
         self.ocr_runner = OcrRunner(self.state.ocr_panel, parent=self, **(ocr_options or {})) if self.state.ocr_panel is not None else None      # 글자 읽기(선택 기능, D-513) — 도구가 없거나 `LOCAL_OCR` 가 꺼져 있으면 없다(사진 정리 창은 지금과 같다)
         self._clipboard = clipboard or qt_clipboard_set
         self._environment = environment or self._read_environment                        # 진단 정보 복사에 넣을 이 PC 의 값(윈도 빌드 번호·화면 배율 — `{"windows_build": 정수, "scale_percent": 정수}`)을 읽는 함수(시험은 가짜를 주입한다)
@@ -215,6 +216,7 @@ class AppShell(QMainWindow):
         paired_references = getattr(self.state.provider, "references_provider", None)      # 참고 글 보관함(결정 D-490) — 홈 공급자의 짝(같은 데이터 폴더)이 있으면 그것을, 예시 화면 같은 짝이 없으면 메모리 예시를 쓴다
         self.references = ReferenceLibrary(references or (paired_references() if paired_references else FakeReferencesProvider()))
         self.references_form = None                                                      # 열려 있는 보관함 대화상자의 안쪽 부품(없으면 None)
+        self._init_posts()                                                               # 글 검토 화면(글 흐름 1a, 결정 D-620)의 작업 다리와 대화상자 자리 — 동작은 `post_flow.py` 의 `PostFlowMixin` 이 한다
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -483,10 +485,16 @@ class AppShell(QMainWindow):
 
     def show_sample_info(self, screen="home"):
         """'예시 데이터' 설명 — 화면마다 보이는 것이 달라 설명도 그 화면 것이다(홈은 주제·숫자, 설정은 키 이름·사용량 숫자)."""
-        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"], "drafts": T["drf_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
+        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"], "posts": T["post_sample_dialog_body"], "drafts": T["drf_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
 
     def escape(self):
         if self.dialog.is_open:
+            if self.post_pages_form is not None:                                  # 글 검토의 Pages 값 대화는 Esc 가 `취소` 와 같다
+                self.post_pages_cancel()
+                return
+            if self.post_import_form is not None:                                 # 글 가져오기 대화는 Esc 도 `취소` 단추와 같은 확인을 거친다(입력한 글을 조용히 버리지 않는다)
+                self.post_import_escape()
+                return
             if self.references_form is not None:                                  # 참고 글 보관함은 Esc 도 닫기 단추와 같은 확인을 거친다(저장 안 한 변경을 조용히 버리지 않는다)
                 self.references_escape()
                 return
@@ -553,6 +561,8 @@ class AppShell(QMainWindow):
                 self.state.seeds.start_load(**self.seeds_bridge.callbacks())
             elif key == "topics":                                                     # 주제 후보 화면도 열 때마다 읽는다(읽기만 — 열기만으로는 아무것도 만들지 않는다). 만드는 중이면 읽지 않는다
                 self.state.candidates.start_load(**self.cand_bridge.callbacks())
+            elif key == "posts":                                                      # 글 검토 화면도 열 때마다 목록(과 열어 둔 글)을 읽는다(읽기만 — 파일도 폴더도 만들지 않는다). 쓰는 중이면 읽지 않는다
+                self._posts_opened()
             elif key == "drafts" and self.state.drafts.state == "empty":              # 초안 작성 화면을 후보 없이 열면 저장한 초안 목록을 읽는다(읽기만 — 저장 기능이 있는 공급자만)
                 self._start_saved_list(render=False)
             self.render()
@@ -2697,6 +2707,9 @@ class AppShell(QMainWindow):
         # 이 `closeEvent` 는 종료 때 아예 불리지 않는다 — 확인창이 종료를 붙잡지 않는 결과는 같고, 아래 분기는 세션 종료 중에 창 닫기가 오는 다른 길(플랫폼·Qt 판 차이)을 위한 보험이다. 동작은 그대로다.
         if not self._close_confirmed:
             self._photos_flush()                                                  # 사진 정리 창에서 치는 중인 글을 먼저 넘긴다 — 아래 질문(참고 글 보관함·초안)이 창을 치우므로 취소해도 글이 남게(검증 S U-10)
+        if not self._close_confirmed and not QGuiApplication.instance().isSavingSession() and self.posts_guard_quit():
+            event.ignore()                                                        # 글 가져오기 대화에 입력이 있다 — 창 닫기(X·Alt+F4)도 같은 확인(그래도 닫기·계속 쓰기)이 먼저다
+            return
         if not self._close_confirmed and not QGuiApplication.instance().isSavingSession() and self.references_guard_quit():
             event.ignore()                                                        # 참고 글 보관함에 저장 안 한 변경이 있다 — 창 닫기(X·Alt+F4)도 같은 확인(버리고 닫기·계속 고치기)이 먼저다
             return
@@ -2729,6 +2742,7 @@ class AppShell(QMainWindow):
             job = self.state.runner.job(SEEDS_WRITE_KEY)
             if job is not None:
                 job.join(WRITE_CLOSE_WAIT)
+        self._posts_close_wait()                                                  # 글 쓰기(가져오기·검토·승인)도 중간에 끊을 수 없다(한 트랜잭션) — 끝나기를 기다린다
         if self.state.candidates.busy:                                            # 후보 만들기도 중간에 끊을 수 없다(한 트랜잭션) — 끝나기를 기다린다
             job = self.state.runner.job(CANDIDATES_WRITE_KEY)
             if job is not None:

@@ -357,7 +357,7 @@ class FactTableTest(Base):
 
     def test_the_sidebar_shows_the_version_on_every_screen_and_the_other_screens_have_no_copy_button(self):
         window = self.make(settings=False)
-        for page in ("home", "topics", "drafts", "seed", "blogs", "settings"):
+        for page in ("home", "topics", "drafts", "posts", "seed", "blogs", "settings"):    # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
             window.go(page)
             ui_offscreen.wait_until(self.app, lambda: not window.state.conn_loading, 10)
             self.settle()

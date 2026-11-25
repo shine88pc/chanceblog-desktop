@@ -609,7 +609,7 @@ class ServicesAndStateTest(unittest.TestCase):
         의도적 갱신(Seed 관리, D-230): **Seed 관리 화면이 완성돼 메뉴에 올랐다**(데이터·관리 묶음, 블로그 관리 앞 — C-Type §14.2 의 순서) — 메뉴는 홈·Seed 관리·블로그 관리·설정 넷이고 '다음 단계' 목록에서는 빠졌다."""
         # 의도적 갱신(P4d, D-270): **주제 후보 화면이 완성돼 메뉴에 올랐다**(핵심 작업 묶음, 홈 다음 — C-Type §14.2 의 순서) — 메뉴는 홈·주제 후보·Seed 관리·블로그 관리·설정 다섯이고 '다음 단계' 목록에서는 빠졌다. '완성된 화면만 연다' 는 규칙은 그대로다.
         # 의도적 갱신(P4e, D-282): **초안 작성 화면이 완성돼 메뉴에 올랐다**(핵심 작업 묶음, 주제 후보 다음 — C-Type §14.2 의 순서) — 메뉴는 홈·주제 후보·초안 작성·Seed 관리·블로그 관리·설정 여섯이고 '다음 단계' 목록에는 발행 기록만 남았다. '완성된 화면만 연다' 는 규칙은 그대로다.
-        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "Seed 관리", "블로그 관리", "설정"])
+        self.assertEqual([text.T[label] for _key, label, _icon in app_state.NAV], ["홈", "주제 후보", "초안 작성", "글 검토", "Seed 관리", "블로그 관리", "설정"])        # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 핵심 작업 묶음 끝(초안 작성 다음)에 올랐다
         self.assertFalse(hasattr(app_state, "MAX_NAV"))
         state = load()
         self.assertFalse(state.nav("home"))                                           # 지금 화면은 다시 안 간다

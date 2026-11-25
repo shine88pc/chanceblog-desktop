@@ -29,16 +29,18 @@ from .notify import ToastPolicy
 from .photo_ocr_panel import OcrPanel
 from .photo_ocr_view import OcrBoard
 from .photo_view import FakePhotoProvider
+from .post_fake import FakePostsProvider
+from .posts_view import PostsController
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
 from .text import NO_DATA, T, display_text, fmt_demand, fmt_docs
 
 # 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
 # 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
-NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("drafts", "nav_draft", "draft"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
+NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("drafts", "nav_draft", "draft"), ("posts", "nav_posts", "check_circle"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
 # 묶음(핵심 작업 / 데이터·관리 / 시스템) — (묶음 열쇠, 이름 문구 열쇠, 그 묶음의 실제 메뉴 열쇠들). **묶음 이름은 그 묶음에 실제 메뉴가 있을 때만 보인다**(`nav_groups`).
-NAV_GROUPS = (("core", "nav_group_core", ("home", "topics", "drafts")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
+NAV_GROUPS = (("core", "nav_group_core", ("home", "topics", "drafts", "posts")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
 # '다음 단계' 목록 — 아직 만들지 않은 화면의 **이름만**(열 수 없다: 메뉴·화면 이동·단추가 없다). 화면이 완성되면 여기서 빼고 NAV 에 더한다. (열쇠, 이름 문구 열쇠, 아이콘)
-# 의도적 갱신(P4e, D-282): 초안 작성이 실제 메뉴가 되어 발행 기록만 남는다.
+# 의도적 갱신(P4e, D-282): 초안 작성이 실제 메뉴가 되어 발행 기록만 남는다. 글 검토(글 흐름 1a, D-620)도 실제 메뉴가 됐고 발행 기록은 1b 에서 승격한다.
 NEXT_STEPS = (("history", "nav_history", "calendar_check"),)
 LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
 
@@ -133,7 +135,7 @@ def trend_vm(topic):
 
 
 class AppState:
-    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None, photos=None, ocr=None):
+    def __init__(self, provider=None, *, runner=None, connections=None, version=None, blogs=None, seeds=None, candidates=None, drafts=None, backups=None, photos=None, ocr=None, posts=None):
         self.provider = provider or FakeHomeProvider()
         self.runner = runner or JobRunner()
         self.version = version                                       # 앱이 이미 읽어 둔 버전(`VersionInfo`) — 설정 화면의 '정보' 묶음이 보인다. 이 순수 상태는 파일을 읽지 않는다(못 받으면 '개발 버전')
@@ -178,11 +180,15 @@ class AppState:
         paired_drafts = getattr(self.provider, "drafts_provider", None)
         self.drafts_provider = drafts if drafts is not None else (paired_drafts() if paired_drafts else FakeDraftsProvider(lambda: tuple(getattr(self.candidates_provider, "candidates", ()))))
         self.drafts = DraftsController(self.drafts_provider, self.runner)
+        # 글 검토(글 흐름 1a, D-620) — 가져온 글을 안전하게 미리 보고 검토·승인하는 화면. 읽기와 쓰기를 가르는 상태는 `PostsController`(순수)가 들고 있고 쓰는 일은 가져오기·검토 시작·승인·승인 취소를 눌렀을 때뿐이다(글 저장소 한 곳 — 외부로는 쓰지 않는다)
+        paired_posts = getattr(self.provider, "posts_provider", None)
+        self.posts_provider = posts if posts is not None else (paired_posts() if paired_posts else FakePostsProvider())
+        self.posts = PostsController(self.posts_provider, self.runner)
         # 사진 정리(사진 연동 2단계, D-499) — 사진 파일을 읽기만 하는 짝 공급자(`ui/photo_adapter.py`). 사진 목록은 초안 컨트롤러(`self.drafts.photos`)가 들고 있고 저장한 초안을 저장·열기·지우기할 때 초안 공급자가 함께 다룬다(3단계). 짝이 없으면(예시 화면·시험) 파일을 읽지 않는 가짜다
         paired_photos = getattr(self.provider, "photos_provider", None)
         self.drafts.photos.provider = photos if photos is not None else (paired_photos() if paired_photos else FakePhotoProvider())
         # 복원 중 저장 겹침 막기(F030, D-534) — 복원이 도는 동안은 저장 길을, 저장 길이 도는 동안은 복원을 시작하지 않는다(`save_gate.py`). 지금 백업(만들기)은 읽기만 해서 막지 않는다
-        for controller in (self.blogs, self.seeds, self.candidates, self.drafts):
+        for controller in (self.blogs, self.seeds, self.candidates, self.drafts, self.posts):
             controller.save_gate = self.save_blocked
         if self.backups is not None:
             self.backups.restore_gate = self.writers_busy
@@ -214,7 +220,7 @@ class AppState:
 
     def writers_busy(self):
         """복원이 바꾸는 파일(글 보관함·주제 보관함·채널 프로필·Seed)에 쓰는 일이 도는 중인가 — 그런 일이 도는 동안은 복원을 시작하지 않는다(`BackupController.restore_gate`). 저장한 초안은 목록·열기도 같은 작업 이름이라 함께 센다(잠깐이라 조심하는 쪽이다)."""
-        return bool(self.blogs.busy or self.seeds.busy or self.candidates.busy or self.drafts.store_busy)
+        return bool(self.blogs.busy or self.seeds.busy or self.candidates.busy or self.drafts.store_busy or self.posts.busy)
 
     def nav(self, key, force=False):
         """화면을 옮긴다. 초안 작성 화면을 떠날 때 고친 내용이 있으면 `force`(확인창에서 `그래도 이동` 을 눌렀다)가 아니면 옮기지 않는다 — 그리고 떠나면 초안은 메모리에서 지운다(저장하지 않는다)."""
@@ -448,6 +454,12 @@ class AppState:
         failure = self.drafts.failure
         return self.drafts.view(diagnostic_text(failure, self.drafts.failed_at) if failure else "")
 
+    def posts_view(self):
+        """글 검토 화면 뷰모델 — 만드는 일은 `PostsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        failure = self.posts.detail_failure if self.posts.detail_state == "error" else self.posts.failure
+        failed_at = self.posts.detail_failed_at if self.posts.detail_state == "error" else self.posts.failed_at
+        return self.posts.view(diagnostic_text(failure, failed_at) if failure else "")
+
     def blogs_view(self):
         """블로그 관리 화면 뷰모델 — 만드는 일은 `BlogsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         failure = self.blogs.failure
@@ -472,9 +484,10 @@ class AppState:
         홈 새 구역 중 따로 읽지 못한 구역의 실패 가운데 남아 있는 것들에서 시각(`failed_at`)이 가장 늦은 것(목록·구역 실패는 시각이 없어 시각이 있는 실패가 있으면 그쪽이 먼저다). 남은 실패가 하나도 없으면 None(나아져서 지워진 실패는 없다).
         **저장·복원·키 등록·삭제처럼 단추를 눌러 하는 일의 실패와 대화상자(참고 글·문체 참고값)의 실패는 코드를 상태로 들고 있지 않아(화면에 안내 줄·고정 문장만 남는다) 여기에 없다** — 그 일이 막힌 뒤에도 None 일 수 있다(한계는 D-541). 코드만 쓰고 실패의 안내 문장(`user_message`)은 읽지 않는다."""
         slots = [(self.failure, self.failed_at), (self.conn_failure, self.conn_failed_at)]
-        for controller in (self.candidates, self.drafts, self.seeds, self.blogs, self.backups):
+        for controller in (self.candidates, self.drafts, self.seeds, self.blogs, self.backups, self.posts):
             if controller is not None:                                                       # 백업은 짝 공급자가 없으면 없다
                 slots.append((getattr(controller, "failure", None), getattr(controller, "failed_at", None)))
+        slots.append((self.posts.detail_failure, self.posts.detail_failed_at))                # 글 검토에서 글 하나를 읽지 못한 실패(목록의 실패와 따로 쥔다)
         if getattr(self.drafts, "list_state", "") == "error":                                  # 저장한 초안 목록을 못 읽은 것 — 초안 작성이 따로 들고 있는 읽기 실패(목록 자리의 오류·`다시 시도`)이고 시각은 없다
             slots.append((getattr(self.drafts, "list_failure", None) or object(), None))        # 실패 값이 비었으면 코드를 모르는 실패(빈 값)로 센다
         slots.extend((failure, None) for failure in self._board_failures())

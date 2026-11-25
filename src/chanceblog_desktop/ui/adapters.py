@@ -188,6 +188,11 @@ class ServiceHomeProvider(HomeProvider):
         from .drafts_adapter import ServiceDraftsProvider
         return ServiceDraftsProvider(self._data_dir, context_factory=self._factory)
 
+    def posts_provider(self):
+        """글 검토 화면(글 흐름 1a, 결정 D-620)의 짝 공급자 — 같은 데이터 폴더를 쓴다. 읽기(목록·글·파일)는 읽기뿐이고, 가져오기·검토 시작·승인·승인 취소는 사용자가 단추를 눌렀을 때만 불린다(`ui/posts_adapter.py` — 글 저장소 한 곳에만 쓰고 외부로는 쓰지 않는다)."""
+        from .posts_adapter import ServicePostsProvider
+        return ServicePostsProvider(self._data_dir, context_factory=self._factory)
+
     def _projects(self, ctx):
         """(작성 완료 수, 발행 완료 수) — 집계할 수 없으면 (None, None). 글 저장소가 없으면 0 이다. 읽은 글 목록(`rows`)과 오류(`error`)도 들고 있다(`Counts`)."""
         try:

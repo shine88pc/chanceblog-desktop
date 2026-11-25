@@ -314,9 +314,9 @@ class Base(unittest.TestCase):
 class MenuTest(Base):
     def test_the_draft_menu_is_in_the_core_group_after_the_topics_and_the_next_steps_keep_only_the_history(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])    # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual(window.nav_buttons["drafts"].accessibleName(), "초안 작성 메뉴로 이동")
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "seed", "blogs", "settings"])
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])    # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["발행 기록"])
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
 
@@ -1055,8 +1055,8 @@ class LayoutTest(Base):
         window = self.make(size=tuple(tokens.LAYOUT["window_min"]))
         height = window.sidebar.minimumSizeHint().height()
         self.assertLessEqual(height, tokens.LAYOUT["window_min"][1] - tokens.FRAME["app_bar"], "사이드바가 최소 창(900×560)의 높이 안에 들어간다")
-        self.assertLessEqual(height, 492, "의도적 갱신(P4e, D-282): 메뉴 하나가 늘어 516 이 되는 것을 여백 24px 로 줄여 492 — 늘어나면 이 시험이 알린다")
-        self.assertEqual(len(window.nav_buttons), 6)
+        self.assertLessEqual(height, 492, "의도적 갱신(P4e, D-282): 메뉴 하나가 늘어 516 이 되는 것을 여백 24px 로 줄여 492 — 늘어나면 이 시험이 알린다 / 글 흐름 1a(D-638): 한도는 그대로 두고 사이드바를 줄여 지킨다(메뉴 일곱, 이 시험 이름의 '여섯' 은 옛 이름이다)")
+        self.assertEqual(len(window.nav_buttons), 7)                                                      # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토가 더해져 일곱(옛 값 6) — 엄격한 같음 비교 그대로
         self.assertEqual(len(window.sidebar.soon_list.items), 1)
         self.assertLessEqual(window.sidebar.height(), window.height() - tokens.FRAME["app_bar"])
 
