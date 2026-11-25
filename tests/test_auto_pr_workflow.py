@@ -43,7 +43,7 @@ EXPECTED_HEAD = [
     "  create-pr:",
     "    name: 검사가 초록이면 PR 만들기",
     "    runs-on: ubuntu-latest",
-    "    timeout-minutes: 45",
+    "    timeout-minutes: 65",
     "    steps:",
     "      - name: 병합 부탁 PR 만들기(병합은 하지 않음)",
     "        env:",
@@ -54,7 +54,7 @@ EXPECTED_HEAD = [
     "          BASE: ${{ github.event.repository.default_branch }}",
     "          CI_WORKFLOW: ci.yml",
     "          AUTOPR_POLL_SECONDS: '30'",
-    "          AUTOPR_MAX_WAIT_SECONDS: '2400'",
+    "          AUTOPR_MAX_WAIT_SECONDS: '3600'",
     "        run: |",
 ]
 RUN_MARKER = "        run: |\n"
@@ -145,11 +145,11 @@ def script_problems(run):
     # 검사 결론: 성공(`completed:success`)만 통과, 그 밖의 `completed:*` 는 모두 거절, 아직 안 끝난 것은 기다림 — case 패턴이 정확히 이 셋
     if re.findall(r"^\s+(completed:[^)\s]*|\*)\)\s*$", run, re.M) != ["completed:success", "completed:*", "*"]:
         problems.append("검사 결론 case 패턴이 completed:success · completed:* · * 셋이 아님")
-    # 기다림: 반복마다 poll 초 쉰다(반복문 맨 끝 한 번), 값이 숫자가 아니면 기본값 30초·2400초
+    # 기다림: 반복마다 poll 초 쉰다(반복문 맨 끝 한 번), 값이 숫자가 아니면 기본값 30초·3600초
     if run.count('sleep "$poll"') != 1 or '\n  sleep "$poll"\ndone\n' not in run or len(re.findall(r"\bsleep\b", code_text(run))) != 1:
         problems.append('반복문 끝의 `sleep "$poll"` 한 줄이 없거나 다른 sleep 이 있음')
-    for wanted in ('poll="${AUTOPR_POLL_SECONDS:-30}"', 'limit="${AUTOPR_MAX_WAIT_SECONDS:-2400}"',
-                   '[[ "$poll" =~ ^[0-9]{1,4}$ ]] || poll=30', '[[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit=2400'):
+    for wanted in ('poll="${AUTOPR_POLL_SECONDS:-30}"', 'limit="${AUTOPR_MAX_WAIT_SECONDS:-3600}"',
+                   '[[ "$poll" =~ ^[0-9]{1,4}$ ]] || poll=30', '[[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit=3600'):
         if wanted not in lines:
             problems.append(f"기다림 간격·한도의 기본값 줄이 정해진 것과 다름: {wanted}")
     # 제목·본문 한도: 제목은 접두사만이면 거절·200자(글자) 초과 거절·제어 문자 거절, 본문은 6만 바이트(`wc -c`) 초과면 비움
@@ -225,7 +225,7 @@ class WorkflowShapeTest(unittest.TestCase):
         self.assertEqual(block(self.text, "permissions"), ["  contents: read", "  pull-requests: write", "  actions: read"])
         self.assertEqual(block(self.text, "concurrency"), ["  group: auto-pr-${{ github.ref }}", "  cancel-in-progress: true"])
         self.assertEqual(len(re.findall(r"^\s*permissions:", code_text(self.text), re.M)), 1)      # 잡이 더 넓은 권한을 달라고 하지 않는다
-        self.assertIn("    timeout-minutes: 45", self.text)
+        self.assertIn("    timeout-minutes: 65", self.text)          # D-719: 기다림 최대 60분 + 마지막 걸음 몫 5분
 
     def test_names_are_korean_and_the_workflow_has_no_run_name(self):
         self.assertIn(f'name: "{NAME}"', self.text)
@@ -284,7 +284,7 @@ class MutationTest(unittest.TestCase):
         yield "contents 쓰기 권한", text.replace("  contents: read\n", "  contents: write\n", 1)
         yield "issues 쓰기 권한 추가", text.replace("  actions: read\n", "  actions: read\n  issues: write\n", 1)
         yield "동시 실행 취소 끔", text.replace("cancel-in-progress: true", "cancel-in-progress: false", 1)
-        yield "시간 제한 삭제", text.replace("    timeout-minutes: 45\n", "", 1)
+        yield "시간 제한 삭제", text.replace("    timeout-minutes: 65\n", "", 1)
         yield "외부 액션 단계 추가", text.replace("    steps:\n", "    steps:\n      - uses: actions/checkout@v6\n", 1)
         yield "시크릿 사용", text.replace("GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", 1)
         yield "run 안에 이벤트 값 보간", text.replace("          set -euo pipefail\n", "          set -euo pipefail\n          echo \"${{ github.event.head_commit.message }}\"\n", 1)
@@ -322,7 +322,7 @@ class MutationTest(unittest.TestCase):
         yield "기다림 반복문의 sleep 삭제", text.replace('            sleep "$poll"\n', "", 1)
         yield "sleep 간격을 1초로 고정", text.replace('sleep "$poll"', "sleep 1", 1)
         yield "기본 간격 30 → 0", text.replace("|| poll=30", "|| poll=0", 1)
-        yield "기본 한도 2400 → 240000", text.replace("|| limit=2400", "|| limit=240000", 1)
+        yield "기본 한도 3600 → 360000", text.replace("|| limit=3600", "|| limit=360000", 1)
         yield "가지 정규식 앞 ^ 삭제", text.replace("re_branch='^ai/claude/", "re_branch='ai/claude/", 1)
         yield "가지 정규식 끝 $ 삭제", text.replace("{1,80}$'", "{1,80}'", 1)
         yield "SHA 정규식 앞 ^ 삭제", text.replace("re_sha='^[0-9a-f]{40}$'", "re_sha='[0-9a-f]{40}$'", 1)
@@ -835,7 +835,7 @@ class BehaviorTest(unittest.TestCase):
                 self.assertEqual((r.code, r.count("post"), r.count("compare")), (0, 0, 0), r.out)
                 self.assertEqual((r.count("runs"), r.sleeps), (4, ["100", "100", "100"]))
                 self.assertEqual(len(r.warnings()), 1)
-                self.assertIn("40분", r.warnings()[0])
+                self.assertIn("60분", r.warnings()[0])
 
     def test_the_wait_loop_rests_the_poll_interval_between_checks(self):
         r = self.run_case("rest_seven", runs=["none:none", "in_progress:none", "completed:success"], poll="7", wait="600")
@@ -844,12 +844,13 @@ class BehaviorTest(unittest.TestCase):
         self.assertEqual(r.count("runs"), 3)
 
     def test_the_defaults_are_thirty_seconds_and_forty_minutes_when_the_timing_values_are_not_numbers(self):
+        # 이름의 forty_minutes 는 옛 값이다 — D-719 가 기본 기다림을 60분(3600초)으로 올렸다. 이름을 바꾸면 시험 id 가 사라지므로 그대로 두고 값만 고쳤다.
         r = self.run_case("default_timing", runs=["in_progress:none"], extra={"AUTOPR_POLL_SECONDS": "abc", "AUTOPR_MAX_WAIT_SECONDS": "-5"})
         self.assertEqual((r.code, r.count("post")), (0, 0), r.out)
-        self.assertEqual(r.sleeps, ["30"] * 80)                                  # 30초 간격으로 2400초(40분)
-        self.assertEqual(r.count("runs"), 81)
+        self.assertEqual(r.sleeps, ["30"] * 120)                                 # 30초 간격으로 3600초(60분)
+        self.assertEqual(r.count("runs"), 121)
         self.assertEqual(len(r.warnings()), 1)
-        self.assertIn("40분", r.warnings()[0])
+        self.assertIn("60분", r.warnings()[0])
 
     def test_an_answer_for_main_distance_that_is_not_a_number_counts_as_unreadable_and_is_never_printed(self):
         for key, value in (("ahead_abc", "abc"), ("ahead_empty", ""), ("ahead_two_words", "1 2"), ("ahead_minus", "-1")):
@@ -886,7 +887,7 @@ class BehaviorTest(unittest.TestCase):
         r = self.run_case("timeout", runs=["in_progress:none"], wait="0")
         self.assertEqual((r.code, r.kinds), (0, ["commits", "pr_list", "ref", "runs"]), r.out)
         self.assertEqual(len(r.warnings()), 1)
-        self.assertIn("40분", r.warnings()[0])
+        self.assertIn("60분", r.warnings()[0])
         r2 = self.run_case("timeout_ahead", ahead=["2"], wait="0")
         self.assertEqual((r2.code, r2.count("post")), (0, 0), r2.out)
         self.assertEqual((len(r2.warnings()), r2.count("compare")), (1, 1))
@@ -903,7 +904,7 @@ class BehaviorTest(unittest.TestCase):
 
     def test_the_timing_values_that_are_not_numbers_fall_back_to_the_defaults_without_failing(self):
         r = self.run_case("bad_timing", extra={"AUTOPR_POLL_SECONDS": "abc", "AUTOPR_MAX_WAIT_SECONDS": "-5"})
-        self.assertEqual((r.code, r.count("post")), (0, 1), r.out)               # 기본값(30초·2400초)이어도 첫 확인에서 바로 만들 수 있으면 기다리지 않는다
+        self.assertEqual((r.code, r.count("post")), (0, 1), r.out)               # 기본값(30초·3600초)이어도 첫 확인에서 바로 만들 수 있으면 기다리지 않는다
 
     # ---- PR 만들기 응답 ----------------------------------------------------------
     def test_a_permission_error_becomes_a_warning_with_the_setting_path_and_a_successful_run(self):
@@ -943,7 +944,7 @@ def doc(rel):
 class DocumentedBehaviorTest(unittest.TestCase):
     def test_the_header_comment_states_the_rules_and_the_limits(self):
         header = workflow_text().split("\non:\n")[0]
-        for needle in ("병합하지 않는다", "D-175", "pull_request_target", "workflow_run", "issue_comment", "schedule", "contents 쓰기", "uses:", "env", "최대 40분",
+        for needle in ("병합하지 않는다", "D-175", "pull_request_target", "workflow_run", "issue_comment", "schedule", "contents 쓰기", "uses:", "env", "최대 60분",
                        "Allow GitHub Actions to create and approve pull requests", "노란 `Compare & pull request` 배너", "T3", "ci.yml", "네 칸",
                        "AGENTS.md 3 표에서는 T2",                                          # 워크플로는 표의 T2 인데 이 변경은 보안 영역이라 T3 로 다룬다(인용을 표와 맞게)
                        "그대로 공개된다", "`@이름` 멘션", "처음 push 때의 커밋 제목·본문", "포크에서 올라오는 PR 에서는 돌지 않는다", "일시 오류에 다시 시도하지 않고"):

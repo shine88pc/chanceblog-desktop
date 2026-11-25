@@ -16,7 +16,7 @@ name: "[공통] 병합 부탁 PR 자동 만들기"
 #  - PR 을 만드는 조건은 여섯 가지가 모두 맞을 때다: ① 가지 이름이 `ai/claude/M번호-이름` ② 커밋 제목이 `[M번호] ` 로 시작 ③ 이 가지의 PR 이 아직 없음(닫힌 것·병합된 것 포함 — 기다린 뒤 PR 을 만들기 바로 앞에서 한 번 더 본다)
 #    ④ 가지 끝이 아직 이 커밋 ⑤ 그 커밋의 `ci.yml` 이 성공(네 칸 모두 초록) ⑥ main 위에 이 커밋 한 개뿐(앞선 병합 전의 커밋이 끼어 있으면 앞 병합을 기다린다). 검사가 실패·취소되거나 가지에
 #    새 커밋이 올라오면 PR 을 만들지 않고 끝낸다. PR 을 만들지 않고 끝나는 모든 경우도 실패(빨강)가 아니라 성공이고, 이유는 실행 요약과 경고 줄에 남는다.
-#  - 기다리는 시간은 최대 40분이다(그 뒤에는 경고를 남기고 끝). `ci.yml` 은 한 칸이 최대 40분(`timeout-minutes`, D-176)이라 보통 그 안에 결과가 나온다(가장 느린 칸이 한도까지 걸리면 검사도 빨강이라 PR 이 필요 없다). 앞선 병합이 40분 안에 끝나지 않으면
+#  - 기다리는 시간은 최대 60분이다(그 뒤에는 경고를 남기고 끝). `ci.yml` 은 한 칸이 최대 40분(`timeout-minutes`, D-176)이고, 병합 가지에서는 Qt 칸 열두 조각이 더해져 동시 작업 20개 한도 때문에 일부 조각이 줄을 서서 최대 20분 늦게 시작할 수 있어(D-717·D-719) 합쳐 60분이다(가장 느린 칸이 한도까지 걸리면 검사도 빨강이라 PR 이 필요 없다). 앞선 병합이 60분 안에 끝나지 않으면
 #    이 실행은 PR 을 만들지 않으니 그때는 노란 배너로 만든다.
 #  - 저장소 설정 'Allow GitHub Actions to create and approve pull requests' 가 꺼져 있으면 PR 을 만들 수 없다. 이때도 실패로 만들지 않고 경고로 켜는 곳을 알린 뒤 성공으로 끝낸다 —
 #    그동안은 지금처럼 저장소 첫 화면의 노란 `Compare & pull request` 배너로 PR 을 만들면 된다.
@@ -53,7 +53,7 @@ jobs:
   create-pr:
     name: 검사가 초록이면 PR 만들기
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 65
     steps:
       - name: 병합 부탁 PR 만들기(병합은 하지 않음)
         env:
@@ -64,7 +64,7 @@ jobs:
           BASE: ${{ github.event.repository.default_branch }}
           CI_WORKFLOW: ci.yml
           AUTOPR_POLL_SECONDS: '30'
-          AUTOPR_MAX_WAIT_SECONDS: '2400'
+          AUTOPR_MAX_WAIT_SECONDS: '3600'
         run: |
           set -euo pipefail
           # 글자 수 세기(`${#title}`)와 제어 문자 검사는 실행 환경의 로캘에 따라 글자 단위·바이트 단위로 달라진다(바이트로 세면 긴 한국어 제목이 '200자 초과'로 거절된다). 여기서 UTF-8 로 고정한다.
@@ -99,9 +99,9 @@ jobs:
           num="${BASH_REMATCH[1]}"
 
           poll="${AUTOPR_POLL_SECONDS:-30}"
-          limit="${AUTOPR_MAX_WAIT_SECONDS:-2400}"
+          limit="${AUTOPR_MAX_WAIT_SECONDS:-3600}"
           [[ "$poll" =~ ^[0-9]{1,4}$ ]] || poll=30
-          [[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit=2400
+          [[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit=3600
 
           # 2) 커밋 메시지 읽기: 첫 줄 = PR 제목(반드시 `[M번호] ` 로 시작), 나머지 = PR 본문. 글은 파일·변수로만 다루고 명령으로 실행하지 않는다.
           msg="${RUNNER_TEMP}/autopr-message.txt"
@@ -190,7 +190,7 @@ jobs:
               finish "GitHub 응답을 읽지 못해 그만둠"
             fi
             if [ $((SECONDS - started)) -ge "$limit" ]; then
-              warn "기다리는 시간(최대 40분)이 지나 PR 을 만들지 않고 끝냅니다. 노란 배너로 만들어 주세요."
+              warn "기다리는 시간(최대 60분)이 지나 PR 을 만들지 않고 끝냅니다. 노란 배너로 만들어 주세요."
               finish "기다리는 시간이 지나 그만둠"
             fi
             sleep "$poll"

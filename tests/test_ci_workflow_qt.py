@@ -21,9 +21,12 @@ QT_SHARDS = 12                      # D-717: 표(`scripts/ci_shard.py` 의 QT_WE
 QT_IF = "github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')"           # D-718: 병합 가지와 main 에서만 돈다 — `NO-MERGE-…`·`desktop/…` 같은 작업 중 가지에서는 건너뛴다
 QT_IF_LINE = "    if: " + QT_IF + "\n"
 FORBIDDEN_WORDS = ("continue-on-error", "include:", "exclude:", "pull_request")        # `if:` 는 아래 qt_problems 가 따로 — 파일 전체에서 qt 잡 수준의 정해진 한 줄뿐
-# 시간 한도(분): 하한은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한은 `auto-pr.yml` 의 최대 대기 40분(AUTOPR_MAX_WAIT_SECONDS 2400 초)이다 —
-# 한도가 그보다 길면 병합 문턱이 칸의 시간 한도보다 먼저 포기한다. 둘이 같아 값은 정확히 40 하나다(독립 검증 R1; 같다는 사실은 RealWorkflowTest 가 auto-pr.yml 을 읽어 지킨다).
+# 시간 한도(분): 하한은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한은 `auto-pr.yml` 의 최대 대기(60분 — AUTOPR_MAX_WAIT_SECONDS 3600 초)에서 줄 서는 시간(QUEUE_MINUTES)을 뺀 값이다 —
+# 병합 가지에서는 열두 칸에 Qt 칸 열두 조각이 더해져 동시 작업 20개 한도 때문에 일부 조각이 줄을 서서 최대 20분 늦게 시작할 수 있다. 한도가 40분보다 길면 늦게 시작한 조각이 끝나기 전에 병합 문턱이 먼저 포기한다. 그래서 값은 정확히 40 하나다
+# (독립 검증 R1 은 최대 대기가 한도와 같던 때 이 상한을 지켰다 — D-719 가 대기를 60분으로 올렸다. 관계는 RealWorkflowTest 가 auto-pr.yml 을 읽어 지킨다).
 TIMEOUT_MINUTES = 40
+QUEUE_MINUTES = 20                  # D-719: 줄 서서 늦게 시작하는 시간의 여유 — 자동 PR 의 최대 대기 = 작업 시간 한도 + 이 값
+MAX_WAIT_MINUTES = TIMEOUT_MINUTES + QUEUE_MINUTES
 # 단계마다 맨 위 키 집합(정렬한 목록) — `shell`·`working-directory`·단계 수준 `timeout-minutes`·`id` 같은 낯선 키가 붙어도 통과하던 틈(독립 검증 R3)을 닫는다.
 STEP_KEYS = {"가져오기": ["uses", "with"], "파이썬": ["uses", "with"], "설치": ["name", "run"], "시험": ["env", "name", "run"]}
 STEP_KINDS = {"test": ("가져오기", "파이썬", "시험"), "qt": ("가져오기", "파이썬", "설치", "시험")}
@@ -164,7 +167,7 @@ def qt_problems(text):
         if not (minutes or "").isdigit() or int(minutes) < TIMEOUT_MINUTES:
             problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분 이상이어야 한다({minutes})")
         elif int(minutes) > TIMEOUT_MINUTES:
-            problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분을 넘으면 안 된다 — auto-pr.yml 의 최대 대기 {TIMEOUT_MINUTES}분보다 길면 병합 문턱이 먼저 포기한다({minutes})")
+            problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분을 넘으면 안 된다 — auto-pr.yml 의 최대 대기 {MAX_WAIT_MINUTES}분에서 줄 서는 시간 {QUEUE_MINUTES}분을 뺀 값보다 길면 늦게 시작한 조각이 끝나기 전에 병합 문턱이 먼저 포기한다({minutes})")
         if "      fail-fast: false" not in job:
             problems.append(f"{name}: fail-fast: false 가 없다")
     test, qt = jobs["test"], jobs["qt"]
@@ -267,11 +270,15 @@ class RealWorkflowTest(unittest.TestCase):
             self.assertNotIn(word, "\n".join(code_lines(self.text)), word)
 
     def test_the_job_time_limit_is_exactly_the_max_wait_of_the_auto_pr_workflow(self):
-        """값 40 은 auto-pr.yml 의 최대 대기 40분(AUTOPR_MAX_WAIT_SECONDS 2400 초)과 같다 — 위 설명이 낡아 가지 않도록 그 파일을 읽어 같은지 지킨다(독립 검증 R1)."""
+        """자동 PR 의 최대 대기(AUTOPR_MAX_WAIT_SECONDS)는 작업 시간 한도 40분에 줄 서는 시간 20분을 더한 60분(3600 초)이고, 그 작업의 시간 한도는 대기에 마지막 걸음 몫 5분을 더한 65분이다(D-719). 위 설명이 낡아 가지 않도록 그 파일을 읽어 지킨다.
+        이름의 'exactly_the_max_wait' 는 옛 관계(둘이 같다 — 독립 검증 R1)의 흔적이다 — 이름을 바꾸면 시험 id 가 사라지므로 그대로 두고, 같다는 단언은 '더 길고 정확히 20분 차이'(더 엄격)로 바꿨다."""
         auto_pr = (ROOT / ".github" / "workflows" / "auto-pr.yml").read_text(encoding="utf-8")
         found = re.findall(r"^\s*AUTOPR_MAX_WAIT_SECONDS:\s*'(\d+)'\s*$", auto_pr, re.M)
         self.assertEqual(len(found), 1, "auto-pr.yml 에 최대 대기 시간 줄이 정확히 하나여야 한다")
-        self.assertEqual(int(found[0]), TIMEOUT_MINUTES * 60)
+        self.assertEqual(int(found[0]), MAX_WAIT_MINUTES * 60)
+        self.assertEqual(int(found[0]) - TIMEOUT_MINUTES * 60, QUEUE_MINUTES * 60, "대기는 작업 시간 한도보다 정확히 줄 서는 시간만큼 길다")
+        job_limit = re.findall(r"^    timeout-minutes:\s*(\d+)\s*$", auto_pr, re.M)
+        self.assertEqual(job_limit, [str(MAX_WAIT_MINUTES + 5)], "자동 PR 작업의 시간 한도는 최대 대기에 마지막 걸음 몫 5분을 더한 값")
         for name, job in jobs_of(code_lines(self.text)).items():
             self.assertEqual(job_value(job, "timeout-minutes"), str(TIMEOUT_MINUTES), name)
 
