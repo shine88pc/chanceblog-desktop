@@ -320,7 +320,7 @@ D-18 은 14항목이고 아래는 이를 하위 기능까지 풀어 25줄로 적
 ### 8-7. 1a 에서 넘어온 것
 
 - **건강 효과 단정 판정을 Pages 한 줄 설명·태그에도 건다**(1a 보고서 ⑤-4, D-652): 검토 때 한 줄 설명과 태그를 제목·본문과 같은 판정기에 문장(태그는 하나씩)마다 걸어 가장 높은 단계를 합친다. 막힘 단계면 승인 단추가 꺼진다. 승인 직전 재검사(어댑터)도 같은 값을 건다 — 검토 결과가 쓴 값을 승인 요청이 함께 들고 간다.
-- **사이드바**(1a 보고서 ⑤-2, D-651): 1a 는 높이 488(경보 492·한도 500)에서 끝났다. 1b 는 메뉴 하나(44)를 더하고 다음 단계 상자(간격 8 + 제목 + 줄 24)를 없애므로 높이는 줄거나 같다 — 1a 가 줄인 간격(항목 사이 0·묶음 이름 아래 0)은 그대로 두고, 측정한 값을 D-651 에 적는다(구현 뒤).
+- **사이드바**(1a 보고서 ⑤-2, D-651): 1a 는 높이 488(경보 492·한도 500)에서 끝났다. 1b 는 메뉴 하나(44)를 더하고 다음 단계 상자(제목 + 줄 24)를 없앴는데 **잰 값은 줄지 않고 493 이었다**(처음 문서의 '줄거나 같다' 는 틀린 예상이다 — 상자는 간격이 0 으로 줄어든 최소 높이에서 제목과 줄 하나뿐이라 메뉴 하나보다 작았다). 시험의 경보 492 는 올리지 않고 아래 브랜드 카드의 위아래 여백만 8 에서 4 로 줄여 485 로 맞췄다 — 1a 가 줄인 간격(항목 사이 0·묶음 이름 아래 0)과 메뉴 줄 높이·글자·아이콘은 그대로다(D-651).
 - 알 수 없는 새 상태: PUBPR 갈래가 곧 `MERGE_PENDING` 같은 상태를 더한다. 이 갈래는 상태 목록을 닫힌 집합으로 못박는 시험을 더하지 않고, 모르는 상태는 `알 수 없음` 으로 보인다(D-653).
 
 ### 8-8. 미루는 것 (1b-2·1c)
@@ -340,10 +340,41 @@ D-18 은 14항목이고 아래는 이를 하위 기능까지 풀어 25줄로 적
 - **D-648 네이버 프로필 합쳐 읽기** — 8-6절. 설정 파일이 먼저, 없으면 블로그 관리 등록분에서 만든다. 읽기만, 이관 0. 설정 파일이 깨져 있으면(SETTINGS_INVALID) 합치지 않고 그대로 멈춘다.
 - **D-649 발행 기록 화면과 읽기 함수** — 8-4절. `history.list_history` 는 글 저장소를 한 번 열어 모든 글의 (플랫폼, 상태, 주소, 때)를 읽는다(읽기 전용 컨텍스트). 승인 이후 단계는 닫힌 목록이 아니라 '검토 전이 아닌 모든 것' 이다. 정렬은 오래된 순서가 기본이다.
 - **D-650 작업 로그 보기** — 8-5절. 읽기 전용·칸으로 쪼갠 것만·최근 200줄·펼칠 때 읽음·복사 단추 없음. 새 쓰기·내보내기 없음.
-- **D-651 사이드바와 메뉴 개수** — 메뉴 여덟·다음 단계 상자 없음. 1a 가 줄인 간격은 그대로. 측정한 높이는 구현 뒤 이 행에 적는다.
+- **D-651 사이드바와 메뉴 개수** — 메뉴 여덟·다음 단계 상자 없음. 최소 창의 사이드바 높이는 잰 값 493(경보 492 초과)이어서 시험의 경보는 올리지 않고 브랜드 카드 위아래 여백만 8 에서 4 로 줄여 485 로 맞췄다. 1a 가 줄인 간격은 그대로. 보이는 변화 하나(브랜드 카드가 8px 낮아진다) — 운영자 PC 에서 확인한다.
 - **D-652 건강 효과 단정 판정을 Pages 한 줄 설명·태그에도** — 8-7절.
 - **D-653 모르는 새 상태는 죽지 않는다** — 상태 이름 표에 없는 상태는 `알 수 없음`, 발행 기록은 검토 전 상태만 빼고 모두 보인다. 상태 목록을 닫힌 집합으로 못박는 시험을 더하지 않는다.
 - **D-654 의도적으로 갱신한 기존 시험** — 메뉴 목록·다음 단계 목록·사이드바 높이를 못박은 기존 시험의 기대값만 새 사실(여덟 메뉴, 비어 있는 다음 단계 목록)로 바꿨다(엄격한 같음은 그대로, 줄마다 이유 주석). 다음 단계 상자의 모양을 보는 시험은 목록을 시험이 직접 채운 사본으로 계속 돈다. 어댑터 소스 규칙 시험은 허용 목록을 새 열다섯으로 바꿨다. 전체 목록은 보고서에 있다.
 - **D-655 하지 않은 것·이월** — 8-8절.
 - **D-656 시험·변이·한계** — 순수·어댑터·Qt 시험과 변이 스무 개 이상(전이를 관문 없이 통과·복사만 눌러도 복사함·유사도 경고 무시·주소 칸에 키 모양 허용·로그 화면에 키 모양 그대로·A 와 B 패키지가 섞임 …). 실제 윈도 125·150% 렌더·한글 입력기·화면 읽기 프로그램은 오프스크린만 봤고 운영자 PC 확인으로 남는다.
+
+### 8-10. 시험 매트릭스 (1b)
+
+1b 의 기능마다 어디서 만들었고 어느 시험이 지키는지 적는다(4절의 1a 매트릭스와 따로 둔다 — 그 표는 1a 의 시험 이름을 지킨다). 단계 칸이 `1b` 인 줄의 시험 이름(백틱)은 실제로 있는 시험 클래스여야 하고 `tests/test_ui_posts_1b_matrix.py` 가 이 표를 읽어서 확인한다. 1b-2·1c 줄은 이 묶음이 만들지 않은 일이라 시험 이름이 없다.
+
+| 번호 | 기능 | 어디서 | 단계 | 시험 |
+|---|---|---|---|---|
+| B01 | 저장된 복사 패키지 읽기 — 그 블로그 것만, 검토 중인 글은 읽지 않고 승인도 하지 않음 | 서비스 `read_naver_package` · 어댑터 · 패키지 카드 | 1b | `NaverPackageReadTest` `PostsAdapterPackageTest` `PostsPackageCoreTest` `PostsQtPackageTest` |
+| B02 | 복사 단추 넷(제목·본문·태그·전체) — 클립보드뿐·상태 불변·키 모양은 복사하지 않음 | 패키지 카드 · 셸의 복사 길 | 1b | `PostsPackageCoreTest` `PostsQtPackageTest` `PostsQtRealServiceTest` |
+| B03 | 네이버 A·B 독립 — 패키지가 섞이지 않음 | 서비스 · 컨트롤러 · 카드 | 1b | `PostsAdapterPackageTest` `PostsPackageCoreTest` `PostsQtPackageTest` |
+| B04 | `복사했어요` · `복사 표시 취소` — 한 칸만 옮김 | 서비스 `mark_naver_copied` · 어댑터 · 카드 | 1b | `NaverCopiedTest` `PostsAdapterCopiedAndRecordTest` `PostsCopiedCoreTest` `PostsQtPackageTest` |
+| B05 | 발행 주소 기록 — 복사함에서만, 주소 모양·비밀 모양을 화면과 서비스가 둘 다 거름 | 대화 · 컨트롤러 · 어댑터 | 1b | `PostsRecordCoreTest` `PostsAdapterCopiedAndRecordTest` `PostsQtPackageTest` `PostsQtRealServiceTest` |
+| B06 | 주소 칸의 글은 대화가 어느 길로 닫혀도 비우고 어디에도 기억하지 않음 | 대화 | 1b | `PostsRecordCoreTest` `PostsQtPackageTest` |
+| B07 | 유사도 경고와 `그래도 승인하기` — 센 확인창, 확인창 없이 시작하는 길 없음 | 컨트롤러 · 셸 · 어댑터 | 1b | `PostsSimilarityAckCoreTest` `PostsAdapterSimilarityTest` `PostsQtSimilarityAckTest` |
+| B08 | `발행 기록` 메뉴 — 여덟째 메뉴, 다음 단계 상자 없음 | 메뉴 · 셸 | 1b | `PostsQtHistoryTest` `PostsQtSidebarTest` |
+| B09 | 발행 기록 목록 — 오래된 순서가 기본, 순서 바꾸기, 더 보기, 주소 복사 | 서비스 `list_history` · 컨트롤러 · 화면 | 1b | `HistoryServiceTest` `PostsHistoryCoreTest` `PostsQtHistoryTest` `PostsQtHistoryStatesTest` |
+| B10 | 발행 기록의 여섯 상태 | 컨트롤러 · 화면 | 1b | `PostsHistoryCoreTest` `PostsQtHistoryStatesTest` |
+| B11 | 발행 기록은 읽기뿐 — 쓰는 단추도 쓰는 호출도 없음 | 화면 · 어댑터 | 1b | `PostsAdapterReadsTest` `PostsQtHistoryTest` `PostsQtRealServiceTest` |
+| B12 | 모르는 새 상태는 죽지 않고 `알 수 없음` 으로 보임 | 컨트롤러 · 화면 | 1b | `PostsHistoryCoreTest` `PostsQtWorkLogTest` |
+| B13 | 작업 로그 보기 — 칸으로 쪼갠 줄만, 키 모양이 보이지 않음, 읽기 전용 | 서비스 `read_work_log` · 컨트롤러 · 카드 | 1b | `WorkLogServiceTest` `PostsWorkLogCoreTest` `PostsQtWorkLogTest` |
+| B14 | 네이버 프로필 틈 — 합쳐 읽기, 깨진 설정 파일은 숨기지 않음 | 서비스 `naver_profiles` | 1b | `NaverProfilesMergeTest` `PostsAdapterReadsTest` |
+| B15 | 1a 에서 넘어온 것 — Pages 한 줄 설명·태그의 건강 효과 단정 판정 | 규칙 · 어댑터 · 검토 카드 | 1b | `PostsHealthExtraCoreTest` `PostsAdapterHealthExtraTest` `PostsQtPackageTest` |
+| B16 | 1a 에서 넘어온 것 — 사이드바 높이 | 사이드바 | 1b | `PostsQtSidebarTest` |
+| B17 | 어댑터가 부르는 서비스 함수 열다섯 · 소스 규칙 | 어댑터 · 소스 | 1b | `PostsAdapterShapeTest` `PostsTextAndSourceRules1bTest` |
+| B18 | 밖에 아무것도 쓰지 않음 — 데이터 폴더 밖 0·소켓·하위 프로세스 0 | 어댑터 · 화면 | 1b | `PostsAdapterOutsideZeroTest` `PostsQtRealServiceTest` |
+| B19 | 가짜 공급자와 실제 서비스가 같은 일을 한다 | 가짜 공급자 | 1b | `PostsFakeMatchesRealFor1bTest` |
+| B20 | 창 크기 여섯 · 접근 이름 · 키보드 | 화면 | 1b | `PostsQtLayoutTest` `PostsQtPackageTest` `PostsQtHistoryTest` |
+| B21 | 글 고치기·지우기(M04·M05) | 없음 | 1b-2 | 이 묶음이 만들지 않는다 |
+| B22 | Pages 올리기·공개 확인·올리는 중 기록 읽기 | 없음 | 1c | 이 묶음이 만들지 않는다 |
+| B23 | Blogger 초안·연결 카드·`꺼져 있어요` 안내 | 없음 | 1c | 이 묶음이 만들지 않는다 |
+| B24 | 글쓰기 페이지 열기를 글 흐름에도 두기(M17) | 없음 | 1b-2 | 이 묶음이 만들지 않는다 |
 

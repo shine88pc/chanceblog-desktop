@@ -115,7 +115,7 @@ class DocumentFactsTest(unittest.TestCase):
             if number == 620 + len(own):
                 own.append(number)
         self.assertEqual(own, list(range(620, 620 + len(own))))
-        self.assertGreaterEqual(len(own), 22, "이 갈래의 결정 D-620–D-641 이 모두 있다(독립 검증 Q 2차 권고-4: 하한이 19 일 때는 D-639–D-641 정의 줄을 지워도 초록이었다 — 이번 라운드에 D-642 이상을 더하면 그만큼 올린다)")
+        self.assertGreaterEqual(len(own), 37, "이 갈래의 결정 D-620–D-656 이 모두 있다(독립 검증 Q 2차 권고-4: 하한이 19 일 때는 D-639–D-641 정의 줄을 지워도 초록이었다 — 이번 라운드에 D-642 이상을 더하면 그만큼 올린다) / 의도적 강화(글 흐름 1b, D-654): 하한을 22 에서 37 로 올렸다 — 1b 가 D-642–D-656 열다섯을 더했다")
         self.assertLessEqual(own[-1], 659, "이 갈래의 번호가 자기 구간(620–659)을 넘었다")
         log = (ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
         for number in own:

@@ -33,6 +33,7 @@ if HAVE:
     import ui_offscreen
     ui_offscreen.prepare_environment()
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QInputMethodEvent
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractButton, QApplication, QPushButton, QWidget
     from chanceblog_desktop.ui.qt import app as qapp
@@ -412,6 +413,23 @@ class PostsQtPackageTest(Base):
         self.assertIn(T["post_published_url"].format(url=GOOD_URL), self.labels(self.card()))
         self.assertEqual(self.window.state.posts.notice, ("ok", T["post_done_recorded"]))
         self.assertEqual(form.input.text(), "", "성공해서 닫혀도 칸은 비워진다")
+        self.assertEqual(self.window.state.posts.open_id, project_id)
+
+    def test_korean_text_from_the_input_method_turns_the_start_button_on_and_the_dialog_is_not_redrawn_while_typing(self):
+        project_id, form = self.copied_post()
+        form.input.setText("https://blog.naver.com/exampleaaa/")
+        form.input.setFocus(Qt.OtherFocusReason)
+        event = QInputMethodEvent()
+        event.setCommitString("글번호")
+        QApplication.sendEvent(form.input, event)
+        self.settle(2)
+        self.assertEqual(form.input.text(), "https://blog.naver.com/exampleaaa/글번호")
+        self.assertTrue(form.start_button.isEnabled())
+        self.assertIs(self.window.post_record_form, form, "입력하는 동안 대화를 다시 그리지 않는다(입력기 조합이 끊기지 않는다)")
+        form.start_button.click()
+        self.wait_write(self.window)
+        self.assertEqual(self.window.state.posts.detail.platform(A).status, st.PUBLISHED_MANUAL)
+        self.assertIn(T["post_published_url"].format(url="https://blog.naver.com/exampleaaa/글번호"), self.labels(self.card()))
         self.assertEqual(self.window.state.posts.open_id, project_id)
 
     def test_a_refusal_from_the_service_keeps_the_dialog_open_with_one_easy_sentence_and_the_address_in_the_field(self):
