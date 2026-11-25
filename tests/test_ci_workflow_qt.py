@@ -3,7 +3,7 @@
 
 지키는 것(`qt_problems` 가 문제 글을 모으고, 진짜 파일은 빈 목록이어야 하며, 일부러 틀리게 만든 사본은 모두 걸려야 한다):
   1) 잡은 `test`(오늘 그대로) 다음에 `qt` 하나 — 최상위 키·권한(`contents: read` 한 줄, 잡 권한 없음)·비밀 0.
-  2) `qt` 잡: 윈도(`windows-latest`)·파이썬 `'3.12'` 고정(행렬은 조각 하나뿐이고 정확히 열둘 — D-717), 작업 수준 `if:` 한 줄(글자 그대로 `QT_IF` — 병합 가지 `ai/claude/M…` 와 main 에서만 돈다, D-718), `fail-fast: false`, 시간 한도 **정확히 40분**(`test` 잡도 — 하한 40분은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한 40분은 `auto-pr.yml` 의 최대 대기 40분(`AUTOPR_MAX_WAIT_SECONDS` 2400 초)이라 그보다 길면 병합 문턱이 시간 한도보다 먼저 포기한다 — 독립 검증 R1), 이름이 `Qt 시험 (` 으로 시작해 기존 이름 시험과 안 부딪히고 조각 총수가 환경 변수와 같다.
+  2) `qt` 잡: 윈도(`windows-latest`)·파이썬 `'3.12'` 고정(행렬은 조각 하나뿐이고 정확히 열둘 — D-717), 작업 수준 `if:` 한 줄(글자 그대로 `QT_IF` — 병합 가지 `ai/claude/M…` 와 main 에서만 돈다, D-718), `fail-fast: false`, 시간 한도 **정확히 40분**(`test` 잡도 — 하한 40분은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한 40분은 `auto-pr.yml` 의 최대 대기 60분(`AUTOPR_MAX_WAIT_SECONDS` 3600 초)에서 줄 서는 시간 20분을 뺀 값이라 그보다 길면 늦게 시작한 조각이 끝나기 전에 병합 문턱이 먼저 포기한다 — 독립 검증 R1 은 대기가 40분이던 때 이 상한을 지켰고 D-719 가 대기를 60분으로 올렸다), 이름이 `Qt 시험 (` 으로 시작해 기존 이름 시험과 안 부딪히고 조각 총수가 환경 변수와 같다.
   3) 단계 넷: 가져오기·파이썬(둘 다 `test` 잡과 **같은 SHA**, 이 파일의 액션은 그 둘뿐)·`python scripts/ci_qt_setup.py`(환경·옵션 없음)·`python scripts/ci_shard.py`(환경 변수 정확히 여섯: PYTHONUTF8·CI_SHARD·CI_SHARD_TOTAL·CI_WEIGHTS=qt·CI_REQUIRE_QT=1·QT_QPA_PLATFORM=offscreen). 단계마다 맨 위 키 집합도 글자 그대로 못박는다(가져오기·파이썬은 `uses`·`with`, 설치는 `name`·`run`, 시험은 `name`·`env`·`run` — `shell`·`working-directory`·단계 수준 `timeout-minutes`·`id` 같은 낯선 키가 붙으면 빨개진다 — 독립 검증 R3, `test` 잡의 세 단계도 같다).
   4) `test` 잡의 시험 단계에는 `CI_REQUIRE_QT`·`CI_WEIGHTS`·`QT_QPA_PLATFORM` 이 없다(열두 칸은 Qt 건너뜀이 정상이고 기본 무게 표를 쓴다) — 그리고 `continue-on-error`·`include:`·`exclude:`·잡·파일 수준 `env:` 가 어디에도 없고,
      `if:` 는 파일 전체에서 `qt` 잡 수준의 정해진 한 줄뿐이다(`test` 잡·단계에는 없다 — 열두 칸은 모든 가지에서 돈다). D-718 앞에서는 `if:` 가 어디에도 없어야 했다 — 그 금지를 '정해진 한 줄만' 으로 좁힌 것이지 푼 것이 아니다.
@@ -418,6 +418,8 @@ class MutationTest(unittest.TestCase):
         yield "qt if 에 진단 가지 이름을 더함", mutated(text, QT_IF_LINE, QT_IF_LINE[:-1] + " || github.ref == 'refs/heads/ai/claude/NO-MERGE-diag-qtt3'\n"), ifs
         yield "qt if 를 test 잡으로 옮김", mutated(mutated(text, QT_IF_LINE, ""), "    timeout-minutes: 40\n", "    timeout-minutes: 40\n" + QT_IF_LINE, within="test"), "test 잡이 아니라 qt 잡에"
         yield "test 잡(열두 칸)에 if 를 더함", mutated(text, "    timeout-minutes: 40\n", "    timeout-minutes: 40\n    if: github.ref == 'refs/heads/main'\n", within="test"), ifs
+        # 첫 줄은 승인된 그대로라 `qt` 잡의 `if` 값 견주기(job_value 는 첫 줄만 읽는다)는 통과한다 — 파일 전체의 `if:` 가 정확히 한 줄이라는 규칙만 이 사본을 거른다(규칙 하나를 끄면 살아남던 변이)
+        yield "qt 잡에 if 줄을 하나 더(같은 키 두 번 — 첫 줄은 승인된 그대로)", mutated(text, QT_IF_LINE, QT_IF_LINE + "    if: always()\n"), ifs
         yield "qt 조각 수를 열하나로", mutated(mutated(mutated(text, "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]", "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]"),
                                                        "CI_SHARD_TOTAL: '12'", "CI_SHARD_TOTAL: '11'"), "조각 ${{ matrix.shard }}/12)\n    if:", "조각 ${{ matrix.shard }}/11)\n    if:"), twelve
         yield "qt 시간 한도 400분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 400"), limit
@@ -434,7 +436,7 @@ class MutationTest(unittest.TestCase):
                 if reason:
                     self.assertTrue(any(reason in problem for problem in problems), f"엉뚱한 이유로 걸렸다(이유 글 {reason!r}): {label} → {problems}")
                 count += 1
-        self.assertGreaterEqual(count, 57)                  # 37 에서 올렸다(D-717·D-718 의 새 변이 열여덟 + 이유를 보는 열 — 모두 걸린다)
+        self.assertGreaterEqual(count, 58)                  # 37 에서 올렸다(D-717·D-718 의 새 변이 열아홉 + 이유를 보는 열 — 모두 걸린다)
 
 
 if __name__ == "__main__":
