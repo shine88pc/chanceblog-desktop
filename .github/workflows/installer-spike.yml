@@ -1,0 +1,71 @@
+name: "Installer spike — 설치 도구 시험(수동, 병합 뒤 운영자 실행)"
+
+# 설치 도구(Velopack 과 Inno Setup)를 같은 PyInstaller 묶음에 적용해 무음 설치·제거·업데이트·훅 인자·한국어·Defender·크기·시간을 재는 시험 흐름이다(운영자 확인 037 ①, 설계서 INSTALLER 3-1, 결정 D-700에서 D-708, 실행 안내 docs/INSTALLER_SPIKE_RUN.md).
+# 수동 실행(workflow_dispatch)만이다 — 푸시·PR·예약 실행으로는 돌지 않고 입력칸도 없다(글을 받아 명령에 넣는 길이 없다).
+# 읽기 권한만 쓰고(permissions: contents: read) 비밀 값(secrets.*)·토큰을 쓰지 않으며 서명·릴리스 게시·태그 단계가 없다. 액션은 package.yml 과 같은 전체 커밋 SHA 셋뿐이다(새 액션 0).
+# 밖으로 나가는 곳은 셋이다: ① 액션 내려받기와 올리기(GitHub) ② 파이썬 패키지 저장소(PyPI) — 빌드 도구 잠금 파일, 그리고 Velopack 파이썬 휠(해시 검사, 크기와 SHA-256 재대조) ③ vpk 패키지를 받는 GitHub 릴리스 호스트 — 고정 주소·크기·SHA-256 대조(packaging/spike/fetch_tools.py).
+# 측정 단계는 윈도 방화벽에 프로그램별 바깥 접속 차단 규칙을 넣은 채 돈다(러너는 일회용 가상 머신이라 규칙은 끝나면 사라진다). 규칙이 듣는지 보는 대조용 접속 시도가 한 번 있다 — 막혀야 정상이고, 막히지 않으면 접속 차단 시험의 결과는 믿지 않는다.
+# 올리는 것은 보고서 INSTALLER_SPIKE_REPORT.md·INSTALLER_SPIKE_REPORT.json 둘뿐이다(보존 14일) — 설치 파일·로그·시험 폴더는 올리지 않는다. 같은 내용을 작업 요약(Job summary) 맨 아래 결과 블록으로도 쓴다.
+# 단계마다 명령은 하나다(PowerShell 은 중간 명령이 실패해도 마지막 명령의 종료 코드만 본다). 도구를 받을 때 크기나 SHA-256 이 다르면 그 자리에서 실패한다. 측정은 항목마다 오류를 가둬 기록하므로 설치 도구 하나가 실패해도 보고서는 만들어진다.
+# 이 파일이 main 에 있어야 Run workflow 단추가 보인다(수동 실행의 규칙) — 병합 뒤 운영자가 한 번 실행한다. 이 흐름이 GitHub 러너에서 끝까지 도는지는 병합 전에 확인하지 못했다.
+# T3(.github 변경) — 운영자 확인 037 ① 승인 범위 안에서 NO-MERGE 가지에 준비만 해 둔 것이다. 병합·실행은 운영자만 한다.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-spike-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  installer-spike:
+    name: 설치 도구 시험 (Windows, Python 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      # checkout·setup-python·upload-artifact 의 SHA 와 버전 주석은 package.yml 의 같은 줄과 같은 값이다(새 액션을 더하지 않는다 — 시험이 지킨다).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: 빌드 도구를 잠금 파일의 정확한 버전으로 설치
+        run: python -m pip install -r packaging/requirements-package.txt
+
+      - name: 도구 받기(vpk 패키지 — 고정 주소·크기·SHA-256 대조, 다르면 실패)
+        run: python packaging/spike/fetch_tools.py --dest "$env:RUNNER_TEMP/spike/tools"
+
+      - name: 도구 설치(vpk 와 Velopack 휠 — 휠은 별도 가상환경에만)
+        run: python packaging/spike/run_spike.py install-tools --work "$env:RUNNER_TEMP/spike"
+
+      - name: 묶음 만들기(실제 묶음과 작은 앱 묶음)
+        run: python packaging/spike/run_spike.py build-bundles --work "$env:RUNNER_TEMP/spike"
+
+      - name: 설치 파일 만들기(갈래 A·B 는 vpk, 갈래 C 는 Inno Setup)
+        run: python packaging/spike/run_spike.py pack --work "$env:RUNNER_TEMP/spike"
+
+      - name: 측정(M01에서 M22, 바깥 접속 차단 규칙을 넣은 채)
+        run: python packaging/spike/run_spike.py measure --work "$env:RUNNER_TEMP/spike"
+
+      - name: 보고서와 작업 요약 결과 블록 만들기
+        run: python packaging/spike/run_spike.py report --work "$env:RUNNER_TEMP/spike"
+
+      - name: 올리기(보고서 둘뿐, 14일)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: InstallerSpike-report
+          path: |
+            ${{ runner.temp }}/spike/report/INSTALLER_SPIKE_REPORT.md
+            ${{ runner.temp }}/spike/report/INSTALLER_SPIKE_REPORT.json
+          retention-days: 14
+          if-no-files-found: error

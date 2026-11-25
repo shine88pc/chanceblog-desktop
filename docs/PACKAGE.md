@@ -156,3 +156,9 @@ python -m venv ..\chanceblog-package-venv
 ## 자가 점검 `vendor_core` 가 더 엄격해졌다(D-692)
 
 `vendor_core` 항목은 이제 ① 목록(`VENDOR.json`)의 파일 해시 ② **소스에 고정한 총 요약값**(`src/chanceblog_desktop/vendor_pin.py` — 파일과 목록을 같이 고친 사본을 거절한다) ③ **목록에 없는 파일이 `vendor/` 에 하나도 없음**(`json.py` 같은 파일이 표준 모듈을 가리는 것을 막는다 — 링크 포함, `desktop.ini` 같은 운영체제 파일만 뺀다) ④ 모듈이 불러와짐 ⑤ 그 파일들이 쓰는 표준 모듈이 묶음에 있음을 본다. 앱도 열 때 같은 확인(설치본은 ③ 까지, 소스 실행은 ① ② 만)을 한 번 하고, 어긋나면 화면을 열지 않고 '검사 규칙 파일(vendor 폴더)이 원래와 달라서 열지 않았어요 — 압축을 다시 풀어 새로 설치해 주세요' 라고 알린다. 새 설치 파일을 만든 뒤 `--selftest` 가 열두 항목 모두 통과하는지 운영자가 확인한다(이 PC 에서는 빌드하지 않았다).
+
+## 설치 도구 시험(수동, 병합 뒤 운영자 실행) (D-700 에서 D-708)
+
+설치 파일(Setup)을 만드는 도구를 문서가 아니라 **측정**으로 고르려고 수동 워크플로 한 개와 스크립트를 더했다(운영자 확인 037 ①, 변경 등급 T3 예외 — 설계서 INSTALLER 3-1). 구성: `.github/workflows/installer-spike.yml`(수동 실행만·입력칸 0·읽기 권한만·비밀 0·`package.yml` 과 같은 SHA 고정 액션만·보고서 둘만 올림)과 `packaging/spike/` — `tools.lock.json`(고정 도구 둘의 크기·SHA-256)·`fetch_tools.py`(고정 호스트 하나에서만, 크기·시간 상한, 받은 직후 크기와 SHA-256 이 다르면 지우고 실패)·`run_spike.py`(`install-tools`·`build-bundles`·`pack`·`measure`·`report` 다섯 단계)·`measure.py`(측정 M01에서 M22 와 판정 부품)·`spike_app.py`·`spike_app_sdk.py`(훅 인자·버전·종료 코드를 흉내 내는 작은 앱)·`ChanceBlogSpike.iss`(Inno 스크립트). 세 갈래(A Velopack 과 파이썬 SDK, B Velopack SDK 없이, C Inno Setup)를 같은 PyInstaller 묶음에 적용해 무음 설치·제거·업데이트·훅·한국어·Defender·크기·시간을 재고 관문 G1에서 G8 을 판정한다. 시험 쪽은 이 워크플로의 업로드 모양 둘(`INSTALLER_SPIKE_REPORT.md`·`.json`)을 '올려도 되는 파일 모양' 에 더했다(허용 모양은 정확히 여섯 — 결정 D-344·D-700).
+
+**이 가지는 준비만 한다.** 이 워크플로는 이 PC 에서 실행하지 않았고 병합과 실행은 운영자만 한다(수동 실행은 파일이 main 에 있어야 Run workflow 단추가 보인다). 운영자 안내는 [`INSTALLER_SPIKE_RUN.md`](INSTALLER_SPIKE_RUN.md). 결과로 설치 도구를 정하는 일(점수 다시 매기기)과 `packaging/` 변경 목록은 설계서 I-A 이후 갈래의 몫이다.
