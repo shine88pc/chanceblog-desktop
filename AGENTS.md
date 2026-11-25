@@ -13,6 +13,7 @@
 - 이 저장소에는 **텔레그램 알림 워크플로·시크릿이 없다**(시크릿 중복 금지). 운영자에게 알리거나 승인을 구할 일은 **`chanceblog` 의 요청 채널**로 보낸다: `chanceblog` 에서 `인수인계/요청함/R-nnn_*.md` 요청 파일을 `ai/claude/**` 브랜치로 push → 운영자 텔레그램. 운영자는 **텔레그램 요청(R-번호)에 적힌 일만** 한다(GitHub 알림·배너·빨간 표시는 보지 않는다).
 - **결정과 변경 내용**(왜·무엇을·어떤 시험으로)은 이 저장소의 `docs/DECISIONS.md` 와 PR 본문에 적는다. **두 저장소를 통틀어 지금 무엇이 진행 중이고 다음 행동이 무엇인지**는 `chanceblog` 의 `인수인계/작업내용.md` 한 곳이 알려 준다(새 현황 문서를 만들지 않는다).
 - **지금 상태를 읽는 곳(순서대로)**: ① `chanceblog` 의 `인수인계/작업내용.md` §0-3 '진행 중인 일과 다음 행동' ② 이 저장소의 최근 커밋 15개 — `git log --oneline -15` ③ 결정 기록의 마지막 10행(한 행이 아주 길어 앞 160자만) — PowerShell 에서 `Select-String -Encoding utf8 -Path docs/DECISIONS.md -Pattern '^\| D-\d+ \|' | Select-Object -Last 10 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(160, $_.Line.Length)) }`. 한 결정의 전문이 필요하면 그 번호의 행만 찾아 읽는다. **`docs/DECISIONS.md` 는 행이 수백 개이고 한 행이 1천 자를 넘는 것도 많아(가장 긴 행은 만 자가 넘는다) 처음부터 끝까지 읽지 않는다.**
+- **결정 색인**: 번호를 모르고 주제로 찾을 때는 [`docs/DECISIONS_INDEX.md`](docs/DECISIONS_INDEX.md)(번호·날짜·변경 등급·한 줄 요약)를 낱말로 검색한다. `python scripts/gen_decision_index.py` 가 만든 자동 생성 파일이라 직접 고치지 않고, **정본은 `docs/DECISIONS.md`** 이며 다르면 거기가 이긴다. 결정 행을 더하거나 고친 사람은 같은 명령으로 색인을 다시 만들어 함께 올린다(시험이 낡았는지 본다). 병합 충돌이 나면 색인 파일을 손으로 합치지 말고 한쪽을 고른 뒤 같은 명령으로 다시 만든다.
 
 ## 1. 시작 전 (순서 고정)
 

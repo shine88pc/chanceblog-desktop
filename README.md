@@ -154,7 +154,30 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`CHANGELOG.md`](CHANGELOG.md) · `VERSION` | 변경 이력과 현재 버전 |
 | [`docs/TOPIC_ENGINE_PLAN.md`](docs/TOPIC_ENGINE_PLAN.md) | 주제 엔진(5채널 주제 선정 전략)을 코드에 얹는 순서와 결정 A–H(계획 문서 — 만든 것과 날짜는 `DECISIONS.md`) |
 | [`docs/P4_REVIEW_ITEMS.md`](docs/P4_REVIEW_ITEMS.md) | 화면(P4) 작업 전에 다시 보고하기로 한 7가지 검토 항목의 기록 |
+| [`docs/DECISIONS_INDEX.md`](docs/DECISIONS_INDEX.md) | 결정 색인 — 번호·날짜·변경 등급·한 줄 요약(`scripts/gen_decision_index.py` 가 `DECISIONS.md` 에서 자동으로 만든다 — 직접 고치지 않는다) |
+| [`docs/V1_RELEASE_CHECKLIST.md`](docs/V1_RELEASE_CHECKLIST.md) | v1.0 을 올리기 전에 고쳐야 할 낡은 문장 표(파일·줄·현재 문장·바꿀 문장 초안)와 릴리스 직전 점검 목록 — 초안 |
+| [`docs/PERSONAL_PC_TEST_V1_DRAFT.md`](docs/PERSONAL_PC_TEST_V1_DRAFT.md) | v1.0 용 운영자 시험지 초안(설치·제거·업데이트·되돌리기·휴대용·Pages 시험 글·Blogger 초안) — 지금의 시험지는 그대로 |
+| [`docs/MIGRATION_NOTES_TEMPLATE.md`](docs/MIGRATION_NOTES_TEMPLATE.md) | 버전을 올릴 때 사용자 데이터 이관 안내(이관 노트)를 쓰는 틀 — 초안 |
 
 ## 개발 방식
 
 사람(운영자)은 비개발자이고, 코드는 AI 도구가 작성하고 다른 주체가 검증합니다. 모든 변경은 브랜치 `ai/<도구>/<주제>` → PR → **운영자 병합** 순서이고, 시험(`python -m unittest discover -s tests`)과 CI 가 통과해야 합니다. 승인이 필요한 일(시크릿·계정·서명 키·새 플랫폼·삭제·정책)은 번호 있는 요청으로 묻습니다. 키는 저장소에 두지 않습니다(`.env.example` 에는 변수 이름만 있습니다).
+
+## 새 PC 에서 처음부터 — 개발자 시작 순서
+
+새 PC 에서 이 저장소를 처음 받는 개발자(와 AI 코딩 도구)를 위한 순서입니다. 설명·확인한 방법·한계는 [`docs/MIGRATION.md`](docs/MIGRATION.md) §6 에 있습니다. **설치 파일은 아직 없습니다** — 지금은 소스로 실행하거나 시험용 Package(압축 폴더)를 만듭니다. 아래는 PowerShell 에서 저장소 맨 위 폴더(받으면 생기는 `chanceblog-desktop`)에서 치는 순서입니다.
+
+```text
+git clone <저장소 주소>                                                     # 저장소 첫 화면의 Code 단추에서 주소를 복사합니다
+cd chanceblog-desktop
+python -m venv ..\chanceblog-venv                                          # 가상환경은 저장소 밖에 만듭니다
+..\chanceblog-venv\Scripts\python -m pip install -r packaging/requirements-package.txt   # 잠금 파일 — 정확한 버전만
+$env:PYTHONUTF8 = "1"; $env:PYTHONPATH = "src"                             # 이 PowerShell 창에서만 쓰는 설정
+..\chanceblog-venv\Scripts\python -m chanceblog_desktop --help             # 명령줄 확인(읽기만)
+..\chanceblog-venv\Scripts\python scripts/ci_shard.py 1 3                  # 시험 — 조각 1·2·3 (CI 와 같은 방식)
+..\chanceblog-venv\Scripts\python -m chanceblog_desktop gui --sample       # 예시 데이터로 화면 열기
+..\chanceblog-venv\Scripts\python packaging/build_package.py               # 시험용 Package — 위 두 설정을 치지 않은 새 창에서, 변경이 없는 깨끗한 작업 트리로
+```
+
+- 앱 코드가 쓰는 바깥 패키지는 화면 도구 PySide6 하나뿐이고 나머지는 표준 라이브러리입니다. PySide6 가 없어도 명령줄과 대부분의 시험은 돕니다(화면 시험은 건너뜁니다).
+- 도구 표(`scripts/`·`packaging/`)와 막혔을 때 보는 표는 [`docs/MIGRATION.md`](docs/MIGRATION.md) §6-4·§6-5 에 있습니다. **새 PC 에서 처음부터 끝까지 따라 해 본 기록은 아직 없습니다**(확인 못 한 곳은 그 문서에 '확인 못 함' 으로 적었습니다).
