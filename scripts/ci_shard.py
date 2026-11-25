@@ -160,7 +160,44 @@ def main(argv=None, env=None):
     everything = sum(len(items) for items in found.values())
     print(f"조각 {shard}/{total}: 시험 파일 {len(mine)}개·시험 {len(tests):,}개 (전체 {len(found)}개 파일·{everything:,}개 시험)", flush=True)
     result = make_runner().run(unittest.TestSuite(tests))
+    _annotate_failures(result)
     return 0 if result.wasSuccessful() else 1
+
+
+def _annotate_failures(result):
+    """(진단 전용 가지) 실패·오류를 시험 방법(하위 시험은 묶어서)마다 GitHub 주석 한 줄로 낸다 — 종류·시험 이름·되풀이 횟수·예외 종류·마지막 틀 위치만(예외 메시지·값은 싣지 않는다). 오류 9개·경고 9개·알림 10개까지."""
+    import re
+    _SHOW = ('WireCapTest',)
+    seen = {}
+    for kind, items in (("FAIL", result.failures), ("ERROR", result.errors)):
+        for test, trace in items:
+            case = getattr(test, "test_case", test)
+            try:
+                key = case.id()
+            except Exception:
+                key = str(case)
+            trace = str(trace)
+            lines = [line for line in trace.splitlines() if line.strip()]
+            exception = (lines[-1].split(":", 1)[0] if lines else "")[:80]
+            if _SHOW and lines and any(word in key for word in _SHOW):
+                exception = lines[-1][:400]
+            where = ""
+            for file_name, number in reversed(re.findall(r'File "([^"]+)", line (\d+)', trace)):
+                normal = file_name.replace(chr(92), "/")
+                if "/tests/" in normal or "/src/" in normal:
+                    where = normal.rsplit("/", 1)[-1] + ":" + number
+                    break
+            entry = seen.setdefault((kind, key), [0, exception, where])
+            entry[0] += 1
+    total = len(result.failures) + len(result.errors)
+    shown = 0
+    for (kind, key), (count, exception, where) in seen.items():
+        if shown >= 28:
+            break
+        level = "error" if shown < 9 else ("warning" if shown < 18 else "notice")
+        print(f"::{level} title={kind} {shown + 1}/{len(seen)}::{key} x{count} | {exception} | {where}".replace(chr(10), " "), flush=True)
+        shown += 1
+    print(f"진단: 실패·오류 합계 {total}개, 시험 방법 {len(seen)}개", flush=True)
 
 
 if __name__ == "__main__":
