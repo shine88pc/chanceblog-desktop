@@ -234,8 +234,9 @@ def check_licenses(root, frozen):
     return Result("licenses", "ok", f"라이선스 파일 {len(pc.LICENSE_FILES)}개가 있어요")
 
 
-def check_vendor(root, core, *, find_spec=importlib.util.find_spec):
-    """`vendor/` 가 앱이 찾는 자리(실행 파일 옆)에 있고, VENDOR.json 의 해시와 같고, 불러와지고, 그 파일들이 쓰는 표준 모듈이 묶음에 있다."""
+def check_vendor(root, core, *, find_spec=importlib.util.find_spec, pin=None):
+    """`vendor/` 가 앱이 찾는 자리(실행 파일 옆)에 있고, VENDOR.json 의 해시와 같고, 소스에 고정한 총 요약값(`vendor_pin.py`)과 같고, 목록에 없는 파일이 하나도 없고, 불러와지고, 그 파일들이 쓰는 표준 모듈이 묶음에 있다.
+    총 요약값·목록 밖 파일 확인(AS-S2 권고-6, D-692): VENDOR.json 의 해시는 같은 폴더의 파일과만 견주는 자기 일관성이라 파일과 목록을 같이 고치면 통과했고, `vendor/json.py` 같은 파일은 알림도 없이 지나갔다. `pin` 은 시험이 다른 모듈을 줄 때만 쓴다."""
     wanted = Path(root) / "vendor"
     vendor = Path(core.vendor_dir())
     if vendor.resolve() != wanted.resolve() or not vendor.is_dir():
@@ -248,6 +249,10 @@ def check_vendor(root, core, *, find_spec=importlib.util.find_spec):
     wrong = [name for name, digest in sorted(files.items()) if not (vendor / name).is_file() or pc.sha256_file(vendor / name) != digest]
     if wrong:
         return Result("vendor_core", "fail", "vendor 파일이 VENDOR.json 의 해시와 달라요: " + ", ".join(wrong[:5]))
+    pinned = importlib.import_module("chanceblog_desktop.vendor_pin") if pin is None else pin
+    found = pinned.problems(vendor, strict=True)
+    if found:
+        return Result("vendor_core", "fail", "vendor 가 앱에 고정된 모양과 달라요: " + " / ".join(found[:3]))
     core.use_vendored_core()
     try:
         for module in VENDOR_MODULES:
