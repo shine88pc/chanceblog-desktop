@@ -777,7 +777,7 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 | U13 | 두 앱이 동시에 업데이트 | `locks/update.lock`(진행 중이면 `UPDATE_IN_PROGRESS`, 죽은 프로세스의 잠금은 넘겨받음) | `test_update_flow`(`ApplyTest`·`RecoveryTest`) |
 | U14 | 요청에 개인 정보·사진 | 고정 GET·머리글 다섯·카나리 | `test_update_privacy` |
 | U15 | 휴대용·소스 실행에서 적용 | 설치 종류 감지가 아니면 거절(`UPDATE_NOT_INSTALLED_KIND`) | `test_update_apply`(`InstallKindTest`) |
-| U16 | 앱이 몰래 자동 업데이트 | 스위치 둘 False·자동 확인 없음(확인은 사용자 단추뿐)·어댑터 첫 문장 관문·'접속 0' 시험 | `test_update_switch`·`test_net_zero` |
+| U16 | 앱이 몰래 자동 업데이트 | 스위치 둘 False·자동 확인 없음(확인은 사용자 단추뿐 — 설계 자리인 `AUTO_CHECK = False` 는 아무도 읽지 않는다)·어댑터 첫 문장 관문·'접속 0' 시험 | `test_update_switch`(`AutoCheckSlotTest`)·`test_net_zero` |
 | U17 | 고른 폴더(폴더에서 업데이트)가 링크·정션으로 다른 곳을 가리키거나 읽는 사이 바뀜 | 링크·폴더·보통 파일이 아닌 것은 따라가지 않음 + 크기를 먼저 보고 복사하며 해시(바뀐 내용은 서명된 값과 달라 거절) + 고른 폴더는 읽기만 + 이유에 경로·이름 없음. 서명·만료·버전 규칙은 온라인과 같다 | `test_update_folder` |
 
 ### 알려진 한계(사실대로)

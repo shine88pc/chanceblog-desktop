@@ -137,6 +137,26 @@ class IndependenceTest(unittest.TestCase):
             self.assertEqual(self.verdict_apply(), "UPDATE_DISABLED")
 
 
+class AutoCheckSlotTest(unittest.TestCase):
+    """설계서 3-7 '자동 확인의 설계 자리' — 소스 상수 `AUTO_CHECK = False` 만 있고 아무도 읽지 않는다(확인은 사용자가 단추를 누를 때만). 켜는 변경은 별도 번호 승인이다.
+    '기본 설정 0 호출' 은 `test_net_zero`(스위치를 모두 켠 채로도 사용자 동작 없이는 접속 0)가 지킨다."""
+
+    def test_the_slot_is_false_and_no_code_reads_it(self):
+        from chanceblog_desktop.service import update_flow
+        self.assertIs(update_flow.AUTO_CHECK, False)
+        loads = []
+        for path in sorted(SRC.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Name) and node.id == "AUTO_CHECK" and isinstance(node.ctx, ast.Load)) or (isinstance(node, ast.Attribute) and node.attr == "AUTO_CHECK"):
+                    loads.append(path.name)
+        self.assertEqual(loads, [], "자동 확인 상수를 읽는 코드가 생겼다 — 켜는 변경은 별도 번호 승인이다")
+        assigned = [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py")) if any(isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "AUTO_CHECK" for t in node.targets)
+                                                                                              for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))))]
+        self.assertEqual(assigned, ["service/update_flow.py"])
+        self.assertNotIn("AUTO_CHECK", [name for name in capabilities.SWITCH_NAMES], "스위치 표의 이름이 아니다")
+
+
 class HookTest(unittest.TestCase):
     def setUp(self):
         holder = tempfile.TemporaryDirectory()

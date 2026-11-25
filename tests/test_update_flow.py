@@ -32,6 +32,7 @@ import update_support as us  # noqa: E402
 
 from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.net import client as net_client  # noqa: E402
 from chanceblog_desktop.service import backup_flow, external, update_flow  # noqa: E402
 from chanceblog_desktop.update import apply, health, keys, machine, recovery, source, state  # noqa: E402
 from chanceblog_desktop.update import manifest as manifest_module  # noqa: E402
@@ -282,6 +283,20 @@ class DownloadTest(FlowCase):
         self.assertEqual(run.parent, health.staging_root(self.folder))
         self.assertNotIn(f"ChanceBlogDesktop-1.0.1-Setup.exe", [request[2] for request in self.server.requests])
         self.assertTrue(source.verify_staged(staged))
+
+    def test_each_file_is_requested_with_its_signed_size_as_the_byte_limit(self):
+        """서명된 크기가 그 파일의 읽기 한도다 — 서버가 더 많이 보내도 크기를 넘어서는 읽지 않고 끊는다(디스크·시간을 약속한 크기 안에 둔다, 위협 U6). 접속 틀에 넘기는 `max_bytes` 를 가로채 본다."""
+        result = self.check()
+        seen = []
+        original = net_client.NetClient.request_to_file
+
+        def spy(client_self, use, method, url, path, **kwargs):
+            seen.append((url.rsplit("/", 1)[-1], kwargs.get("max_bytes")))
+            return original(client_self, use, method, url, path, **kwargs)
+        with mock.patch.object(net_client.NetClient, "request_to_file", spy):
+            update_flow.download_update(self.ctx, result)
+        sizes = {entry["name"]: entry["size"] for entry in self.release.dict["files"]}
+        self.assertEqual(sorted(seen), sorted([("ChanceBlogDesktopApp-1.0.1-stable-full.nupkg", sizes["ChanceBlogDesktopApp-1.0.1-stable-full.nupkg"]), ("releases.stable.json", sizes["releases.stable.json"])]))
 
     def test_the_requests_for_files_are_the_tag_route_and_never_the_latest_pointer(self):
         self.downloaded()

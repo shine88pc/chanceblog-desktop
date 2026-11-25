@@ -31,6 +31,7 @@ from .lock import PublishLock
 from .projects import require_confirmation
 
 LOCK_NAME = "update"                                   # locks/update.lock
+AUTO_CHECK = False                                     # 자동 확인(창이 뜬 뒤 하루 한 번 이하·작업 스레드·조용히·자동으로 내려받거나 적용하지 않음)의 **설계 자리**일 뿐 아무도 읽지 않는다 — 켜는 변경은 별도 번호 승인(설계서 3-7)
 PASS_THROUGH = frozenset({"NET_COOLDOWN", "NET_TLS_FAILED", "DISK_FULL", "NETWORK_DISABLED", "EXTERNAL_WRITE_DISABLED"})   # 그대로 알리는 오류(시계·쉬는 중·디스크·꺼짐)
 STALE_STAGING_SECONDS = 24 * 3600                      # 이보다 오래된 임시 내려받기 폴더는 죽은 것으로 보고 치운다(정상이 되기를 기다리는 폴더는 아직 낡지 않았다)
 _STAMP = "%Y-%m-%dT%H:%M:%SZ"
@@ -487,5 +488,5 @@ class UpdateSession:
         return self.state
 
 
-__all__ = ["ApplyResult", "CheckResult", "LOCK_NAME", "PASS_THROUGH", "STALE_STAGING_SECONDS", "UpdateSession", "apply_update", "check_for_update", "check_from_folder", "download_update", "estimate_backup_bytes",
+__all__ = ["AUTO_CHECK", "ApplyResult", "CheckResult", "LOCK_NAME", "PASS_THROUGH", "STALE_STAGING_SECONDS", "UpdateSession", "apply_update", "check_for_update", "check_from_folder", "download_update", "estimate_backup_bytes",
            "recover_update", "stage_update_from_folder", "update_folder"]
