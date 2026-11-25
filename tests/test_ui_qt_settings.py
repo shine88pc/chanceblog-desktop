@@ -381,7 +381,7 @@ class AccessibilityTest(Base):
         self.assertIn(text.T["conn_refresh"], names)
         self.assertIn(text.T["diag_show"], names)
         self.assertIn("예시 데이터", names)
-        self.assertEqual(sum(1 for w in seen if w.property("nav")), 6)                                    # 의도적 갱신(P4e, D-282): 초안 작성이 더해져 여섯 / 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯
+        self.assertEqual(sum(1 for w in seen if w.property("nav")), 7)                                    # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토가 더해져 일곱 / 의도적 갱신(P4e, D-282): 초안 작성이 더해져 여섯 / 의도적 갱신(UI-C1a, D-172): 실제 메뉴만 정거장(옛 값 6) — '다음 단계' 항목은 정거장이 아니다 / P4b(D-210): 블로그 관리가 실제 메뉴로 올라 홈·블로그 관리·설정 셋(옛 값 2) / Seed 관리(D-230): Seed 관리가 더해져 넷 / 의도적 갱신(P4d, D-270): 주제 후보가 더해져 다섯
 
     def test_open_groups_add_no_tab_stops_because_the_cards_have_nothing_to_press(self):
         """의도적 갱신(UI-C1b → L3 D-539): 서비스 묶음 넷은 펼쳐도 눌리는 곳이 늘지 않는다(읽기만 하는 카드). '정보' 묶음은 펼치면 '진단 정보 보기' 와 '진단 정보 복사' 단추 둘이 는다(보기는 옛 '고급' 영역의 단추가 옮겨 온 것이고 복사는 L3 에서 더했다)."""

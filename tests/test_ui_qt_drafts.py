@@ -1055,8 +1055,8 @@ class LayoutTest(Base):
         window = self.make(size=tuple(tokens.LAYOUT["window_min"]))
         height = window.sidebar.minimumSizeHint().height()
         self.assertLessEqual(height, tokens.LAYOUT["window_min"][1] - tokens.FRAME["app_bar"], "사이드바가 최소 창(900×560)의 높이 안에 들어간다")
-        self.assertLessEqual(height, 492, "의도적 갱신(P4e, D-282): 메뉴 하나가 늘어 516 이 되는 것을 여백 24px 로 줄여 492 — 늘어나면 이 시험이 알린다")
-        self.assertEqual(len(window.nav_buttons), 6)
+        self.assertLessEqual(height, 492, "의도적 갱신(P4e, D-282): 메뉴 하나가 늘어 516 이 되는 것을 여백 24px 로 줄여 492 — 늘어나면 이 시험이 알린다 / 글 흐름 1a(D-638): 한도는 그대로 두고 사이드바를 줄여 지킨다(메뉴 일곱, 이 시험 이름의 '여섯' 은 옛 이름이다)")
+        self.assertEqual(len(window.nav_buttons), 7)                                                      # 의도적 갱신(글 흐름 1a, D-620·D-638): 글 검토가 더해져 일곱(옛 값 6) — 엄격한 같음 비교 그대로
         self.assertEqual(len(window.sidebar.soon_list.items), 1)
         self.assertLessEqual(window.sidebar.height(), window.height() - tokens.FRAME["app_bar"])
 
