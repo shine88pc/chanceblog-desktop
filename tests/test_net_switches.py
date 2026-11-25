@@ -275,11 +275,12 @@ class SwitchTablesTest(unittest.TestCase):
         UPDATE 갈래가 소유자·저장소를 상수 하나에서 만들어 길을 확정하고 이 목록에서 용도를 빼야 켤 수 있다 — 그 전에 표에 올리면 CI 가 빨개진다(켜기 전 조건이 말이 아니라 시험에 묶인다).
         용도를 목록에서 빼려면 길 글에 '자유로운 구간'(`endpoints.SEGMENT`)이 더는 없어야 한다."""
         from chanceblog_desktop.net import endpoints
-        self.assertEqual(endpoints.PLACEHOLDER_USES, ("update_check",), "자리표시자 목록이 바뀌었다 — 길을 확정했으면 이 시험의 기대도 함께 고친다")
+        self.assertEqual(endpoints.PLACEHOLDER_USES, (), "UPDATE 갈래가 `update_check` 의 길을 확정해 자리표시자 길의 용도가 없다(D-790) — 목록이 바뀌었다면 길 글에 자유로운 구간이 있는지 아래 규칙이 본다")
         opened = self.uses_opened_by(pkgcommon.SHIPPED_OPEN_SWITCHES)
         self.assertEqual([use for use in endpoints.PLACEHOLDER_USES if use in opened], [], "자리표시자 길의 용도를 여는 스위치가 출하 표에 올랐다 — 길을 먼저 확정한다")
         self.assertEqual(self.uses_opened_by(("NET_UPDATE_CHECK",)), ["update_check"], "대조 — 합성 출하 표(NET_UPDATE_CHECK)는 update_check 를 연다")
-        self.assertEqual([use for use in endpoints.PLACEHOLDER_USES if use in self.uses_opened_by(("NET_UPDATE_CHECK",))], ["update_check"], "대조 — 합성 출하 표는 위 규칙에 걸린다(빈 실험이 아니다)")
+        with mock.patch.object(endpoints, "PLACEHOLDER_USES", ("update_check",)):          # 대조 — 용도를 자리표시자로 올리면 합성 출하 표가 이 규칙에 실제로 걸린다(규칙이 빈 실험이 아니다)
+            self.assertEqual([use for use in endpoints.PLACEHOLDER_USES if use in self.uses_opened_by(("NET_UPDATE_CHECK",))], ["update_check"])
         self.assertEqual(self.uses_opened_by(("EXTERNAL_WRITE", "NET_PAGES_SITE")), ["pages_site"])
         for use, endpoint in endpoints.ENDPOINTS.items():
             has_free_segment = any(endpoints.SEGMENT in route.path_text() for route in endpoint.routes)

@@ -160,7 +160,7 @@ class ConfirmedActionTest(unittest.TestCase):
         """NT-55 — 사용자가 확인한 동작(여기서는 클라이언트 요청)은 가짜 전송기에만 닿고 `Tripwire` 는 0 이다. 쿨다운·기록도 그 한 건만 남는다."""
         env = ns.Harness(self, ns.http_response(200, headers=[("Content-Type", "application/json")], body=b"{}"), switches=ns.USE_SWITCHES["update_check"])
         with env, og.Tripwire() as wire:
-            response = env.client.request("update_check", "GET", "https://github.com/a/b/releases/latest/download/m.json")
+            response = env.client.request("update_check", "GET", "https://github.com/shine88pc/chanceblog-desktop/releases/latest/download/update-manifest.json")
         self.assertEqual((response.status, wire.calls, len(env.dials), len(env.usage.records())), (200, [], 1, 1))
         self.assertTrue(env.last_socket.closed, "끝나면 연결을 닫는다")
         self.assertEqual(env.usage._active, set())

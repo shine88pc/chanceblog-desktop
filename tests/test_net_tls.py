@@ -27,9 +27,10 @@ import net_tls_fixtures as fx  # noqa: E402
 import outgoing_support as og  # noqa: E402
 
 from chanceblog_desktop.net import client, endpoints, errors, usage as net_usage  # noqa: E402
+from chanceblog_desktop.publish import gitrepo  # noqa: E402
 
 SRC = HERE.parent / "src" / "chanceblog_desktop"
-URL = "https://github.com/own/app/releases/latest/download/update-manifest.json"
+URL = f"https://github.com/{gitrepo.EXPECTED_OWNER}/chanceblog-desktop/releases/latest/download/update-manifest.json"
 BODY = b'{"ok": true}'
 WATCH_SECONDS = 5                                  # 서버가 응답을 보낸 뒤 클라이언트가 연결을 닫기를 기다리는 시간(느린 PC 에서도 정상 요청이 거짓 실패하지 않게 넉넉히 — 새는 연결만 이만큼 걸려 빨개진다)
 SWITCHES = ns.USE_SWITCHES["update_check"]
@@ -246,7 +247,7 @@ class ValidCertificateTest(TlsBase):
         result, usage = self.call(server)
         self.assertEqual((result.status, result.json()), (200, {"ok": True}))
         self.assertIn(server.versions[0], ("TLSv1.2", "TLSv1.3"))
-        self.assertEqual(server.requests[0], (f"GET /own/app/releases/latest/download/update-manifest.json HTTP/1.1\r\nHost: github.com\r\nUser-Agent: ChanceBlogDesktop/{ns.VERSION}\r\nAccept: application/json\r\n"
+        self.assertEqual(server.requests[0], (f"GET /{gitrepo.EXPECTED_OWNER}/chanceblog-desktop/releases/latest/download/update-manifest.json HTTP/1.1\r\nHost: github.com\r\nUser-Agent: ChanceBlogDesktop\r\nAccept: */*\r\n"
                                               "Accept-Encoding: identity\r\nConnection: close\r\n\r\n").encode())
         self.assertEqual((usage.records()[0].status, usage.records()[0].error, usage.records()[0].host), (200, "", "github.com"))
 
