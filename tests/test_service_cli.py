@@ -22,6 +22,7 @@ import service_support as ss  # noqa: E402
 
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.publish.pages import MainCheck  # noqa: E402
 from chanceblog_desktop.service import cli, projects  # noqa: E402
 
 PAGES = ["--category", "경제·일", "--lang", "ko", "--image-url", "https://images.example.invalid/a.jpg", "--tags", "에너지,생활"]
@@ -434,21 +435,78 @@ class PagesCommandsTest(Base):
         out = self.ok("publish-pages", project_id)
         for needle in ("미리 보기 — 아직 아무것도 하지 않았습니다", ss.KO_PATH, "--yes", "할 일:"):
             self.assertIn(needle, out)
-        self.assertEqual(self.backend.count("commit") + self.backend.count("push") + self.backend.count("discard") + self.backend.count("check_deployed"), 0)
+        self.assertEqual(self.backend.count("build_branch_commit") + self.backend.count("push_branch") + self.backend.count("discard") + self.backend.count("check_deployed") + self.backend.count("post_on_main"), 0)
         self.assertEqual(self.status(project_id), st.APPROVED)
         self.assertEqual(self.data("publish-pages", project_id)["dry_run"], True)
+        self.assertIn("main 에는 올리지 않습니다", out)
 
-    def test_publish_pages_with_yes_commits_pushes_and_checks_the_address(self):
+    def test_publish_pages_with_yes_builds_pushes_a_new_branch_and_shows_the_compare_link_as_text(self):
         project_id = self.approved()
         out = self.ok("publish-pages", project_id, "--yes")
-        for needle in ("한 일:", "기록(commit)", "main 에 올렸습니다", "공개 주소가 열리는 것을 확인했습니다", "공개됨 (PUBLISHED)"):
+        for needle in ("한 일:", "기록(commit)", "새 가지 하나를 만들어 올렸습니다", "main 에는 올리지 않았습니다", "병합 기다리는 중 (MERGE_PENDING)", "비교 화면 주소(복사해 브라우저에서 열어 PR 을 만드세요 — 앱은 이 주소를 열지 않습니다): https://github.com/",
+                       "compare/main...desktop/post-", f"merge-check {project_id[:8]}", f"abandon {project_id[:8]} --yes"):
             self.assertIn(needle, out)
-        self.assertEqual([name for name in self.backend.names() if name in ("commit", "push", "check_deployed")], ["commit", "push", "check_deployed"])
+        self.assertEqual([name for name in self.backend.names() if name in ("build_branch_commit", "push_branch", "check_deployed", "post_on_main")], ["build_branch_commit", "push_branch"])
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING)
+        data = self.data("show", project_id)["project"]["variants"][0]
+        self.assertEqual((data["status"], data["published_url"]), (st.MERGE_PENDING, None))
+
+    def test_merge_check_then_check_deploy_finish_the_post(self):
+        project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        self.backend.merge_results = [MainCheck("not_yet")]
+        out = self.ok("merge-check", project_id)
+        self.assertIn("아직 병합되지 않았", out)
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING)
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        out = self.ok("merge-check", project_id)
+        for needle in ("병합)을 확인했습니다", "올림(공개 확인 전) (PUSHED)", f"check-deploy {project_id[:8]}"):
+            self.assertIn(needle, out)
+        self.assertEqual(self.status(project_id), st.PUSHED)
+        out = self.ok("check-deploy", project_id, "--wait", "90")
+        self.assertIn(("check_deployed", ss.KO_PATH, 90, 10), self.backend.calls)
+        self.assertIn("공개됨 (PUBLISHED)", out)
         self.assertEqual(self.status(project_id), st.PUBLISHED)
         self.assertEqual(self.data("show", project_id)["project"]["variants"][0]["published_url"], ss.KO_URL)
 
+    def test_merge_check_with_different_content_stops_with_its_own_code_and_exit_one(self):
+        project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        self.backend.merge_results = [MainCheck("different")]
+        _out, err = self.fails("merge-check", project_id)
+        self.assertIn("PAGES_MERGE_DIFFERENT", err)
+        self.assertIn(ss.KO_PATH, err)
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING)
+
+    def test_abandon_needs_yes_and_then_cleans_up_without_deleting_anything_remote(self):
+        project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        calls = len(self.backend.calls)
+        _out, err = self.fails("abandon", project_id)
+        self.assertIn("CONFIRMATION_REQUIRED", err)
+        self.assertEqual(len(self.backend.calls), calls)
+        out = self.ok("abandon", project_id, "--yes")
+        self.assertIn("병합하지 않기로 하고 글을 정리했습니다", out)
+        self.assertIn("GitHub 에 그대로 남아 있습니다", out)
+        self.assertEqual(len(self.backend.calls), calls, "원격은 한 번도 건드리지 않았다")
+        self.assertEqual(self.status(project_id), st.PUBLISH_FAILED)
+        self.assertIn("PAGES_MERGE_ABANDONED", self.ok("show", project_id))
+
+    def test_disconnect_clears_only_the_folder_setting_and_says_what_it_did_not_touch(self):
+        folder = self.ctx.settings.repo_path()
+        self.assertTrue(folder)
+        out = self.ok("disconnect")
+        self.assertIn("연결을 끊었습니다", out)
+        self.assertIn("올려 둔 가지·글은 그대로입니다", out)
+        self.assertIn("Git 로그인은 이 PC 의 것이라 앱이 지우지 못합니다", out)
+        self.assertEqual(self.ctx.settings.repo_path(), "")
+        self.assertIn("바꾼 것이 없습니다", self.ok("disconnect"), "다시 해도 같은 결과(멱등)")
+
     def test_no_wait_and_the_wait_time_reach_the_flow(self):
         project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        self.ok("merge-check", project_id)
         out = self.ok("publish-pages", project_id, "--yes", "--no-wait")
         self.assertIn("공개 확인은 하지 않았습니다", out)
         self.assertIn(f"check-deploy {project_id}", out)
@@ -457,8 +515,11 @@ class PagesCommandsTest(Base):
         self.assertIn(("check_deployed", ss.KO_PATH, 90, 10), self.backend.calls)
         self.assertEqual(self.status(project_id), st.PUBLISHED)
 
-    def test_the_wait_time_of_a_real_publish_reaches_the_deploy_check(self):
+    def test_the_wait_time_of_a_publish_of_a_merged_post_reaches_the_deploy_check(self):
         project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        self.ok("merge-check", project_id)
         self.ok("publish-pages", project_id, "--yes", "--wait", "45")
         self.assertIn(("check_deployed", ss.KO_PATH, 45, 10), self.backend.calls)
 
@@ -468,38 +529,43 @@ class PagesCommandsTest(Base):
         self.assertIn("STATUS_TRANSITION_INVALID", err)
         self.assertEqual(self.backend.calls, [])
 
-    def test_a_deploy_that_is_not_open_yet_is_reported_as_pushed_with_exit_zero_and_the_retry_command(self):
+    def test_a_deploy_that_is_not_open_yet_is_reported_as_merged_with_exit_zero_and_the_retry_command(self):
         project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        self.ok("merge-check", project_id)
         self.backend.deploy_errors = [AppError("PAGES_DEPLOY_NOT_VISIBLE")]
-        code, out, err = self.cli("publish-pages", project_id, "--yes")
+        code, out, err = self.cli("check-deploy", project_id)
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("올라갔지만 공개 확인은 아직 끝나지 않았습니다", out)
+        self.assertIn("병합은 확인했지만 공개 확인은 아직 끝나지 않았습니다", out)
         self.assertIn(f"check-deploy {project_id}", out)
         self.assertEqual(self.status(project_id), st.PUSHED)
         data = self.data("check-deploy", project_id)
         self.assertEqual((data["status"], data["verified"]), (st.PUBLISHED, True))
 
-    def test_a_push_that_failed_shows_the_next_steps_and_exit_one(self):
+    def test_a_branch_push_that_failed_shows_the_next_steps_and_exit_one(self):
         project_id = self.approved()
         self.backend.push_errors = [AppError("GIT_PUSH_AUTH", detail="could not read Username")]
         out, err = self.fails("publish-pages", project_id, "--yes")
-        for needle in ("코드: GIT_PUSH_AUTH", "저장소에 올릴 권한", "같은 명령을 다시 실행", "--cancel --yes"):
+        for needle in ("코드: GIT_PUSH_AUTH", "저장소에 올릴 권한", "같은 명령을 다시 실행", "원격 main 은 건드리지 않았다", "Git Bash"):
             self.assertIn(needle, err)
-        self.assertEqual(self.status(project_id), st.COMMITTED)
-        shown = self.ok("show", project_id)
-        self.assertIn("이 PC 에 기록함(아직 안 올림)", shown)
-        self.assertIn("--cancel --yes", shown)
+        self.assertNotIn("git push", err, "재인증 안내가 main 으로 가는 push 를 권하지 않는다")
+        self.assertEqual(self.status(project_id), st.APPROVED, "가지를 올리지 못했으면 승인됨 그대로다(만든 커밋은 기록에 남아 이어서 올린다)")
 
-    def test_cancelling_needs_yes_and_then_undoes_the_unpushed_record(self):
+    def test_cancelling_an_old_style_commit_needs_yes_and_then_undoes_the_unpushed_record(self):
         project_id = self.approved()
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        self.fails("publish-pages", project_id, "--yes")
+        with self.ctx.store() as store:                                         # 옛 버전이 남긴 '이 PC 에 기록함' 을 직접 만든다 — 새 흐름은 이 상태를 만들지 않는다
+            project = store.load(project_id)
+            project.transition("github_pages", st.COMMITTED, now=self.ctx.stamp())
+            store.save(project)
+        from chanceblog_desktop.service.journal import STAGE_COMMITTED, Journal, PublishRecord
+        Journal(self.ctx.workspace.journal_dir).write(PublishRecord(project_id, ss.KO_PATH, "c" * 40, "b" * 40, STAGE_COMMITTED))
         calls = len(self.backend.calls)
         _out, err = self.fails("publish-pages", project_id, "--cancel")
         self.assertIn("CONFIRMATION_REQUIRED", err)
         self.assertEqual(len(self.backend.calls), calls)
         out = self.ok("publish-pages", project_id, "--cancel", "--yes")
-        self.assertIn("올리지 않은 글 기록을 되돌렸습니다", out)
+        self.assertIn("옛 방식으로 이 PC 에 기록해 둔 글 기록을 되돌렸습니다", out)
         self.assertEqual(self.status(project_id), st.PUBLISH_FAILED)
         self.assertIn("PUBLISH_CANCELLED", self.ok("show", project_id))
 
@@ -510,7 +576,10 @@ class PagesCommandsTest(Base):
         self.assertIn("approve", self.ok("show", project_id))
         self.ok("approve", project_id, "--platform", "pages")
         self.assertIn("publish-pages", self.ok("show", project_id))
-        self.ok("publish-pages", project_id, "--yes", "--no-wait")
+        self.ok("publish-pages", project_id, "--yes")
+        self.assertIn("merge-check", self.ok("show", project_id))
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        self.ok("merge-check", project_id)
         self.assertIn("check-deploy", self.ok("show", project_id))
 
 
@@ -736,9 +805,15 @@ class JsonShapeTest(Base):
     def test_the_publish_report_json_has_the_fields_a_program_needs(self):
         project_id = self.approved()
         data = self.data("publish-pages", project_id, "--yes")
-        self.assertEqual((data["status"], data["verified"], data["pending_verification"], data["url"], data["dry_run"]), (st.PUBLISHED, True, False, ss.KO_URL, False))
+        self.assertEqual((data["status"], data["verified"], data["pending_verification"], data["dry_run"]), (st.MERGE_PENDING, False, True, False))
         self.assertEqual(data["plan"]["path"], ss.KO_PATH)
+        self.assertTrue(data["branch"].startswith("desktop/post-") and data["link"].startswith("https://github.com/"))
         self.assertNotIn("text", data["plan"])
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        merged = self.data("merge-check", project_id)
+        self.assertEqual((merged["status"], merged["pending_verification"]), (st.PUSHED, True))
+        checked = self.data("check-deploy", project_id)
+        self.assertEqual((checked["status"], checked["verified"], checked["pending_verification"], checked["url"]), (st.PUBLISHED, True, False, ss.KO_URL))
 
     def test_a_failed_doctor_is_not_ok_and_still_prints_its_checks(self):
         self.backend.inspect_error = AppError("PAGES_LOCAL_REPO_NOT_MAIN")

@@ -217,20 +217,35 @@ class DeleteTest(Base):
         self.assertEqual(len(list((self.ctx.workspace.backups_dir / "before-delete").iterdir())), 2, "같은 초에 지워도 앞의 백업을 덮어쓰지 않는다")
 
     def test_a_post_with_a_commit_that_was_never_pushed_is_not_deleted(self):
+        """옛 방식(main 에 곧바로 올리던 시절)이 남긴 'COMMITTED' — 새 흐름은 이 상태를 만들지 않으므로 옛 버전이 남긴 상태를 직접 만든다."""
         project_id = ss.make_approved(self.ctx)
-        self.ctx.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        from chanceblog_desktop.service import pages_flow
-        with self.assertRaises(AppError):
-            pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
-        self.assertEqual(ss.status_of(self.ctx, project_id), st.COMMITTED)
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+            project.transition("github_pages", st.COMMITTED, now=self.ctx.stamp())
+            store.save(project)
         error = ss.code_of(projects.delete_project, self.ctx, project_id, confirmed=True)
         self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.COMMITTED))
         self.assertEqual(len(projects.list_projects(self.ctx)), 1, "올리지 않은 글 기록이 주인 없이 남지 않게 지우지 않는다")
 
-    def test_a_post_that_is_already_published_can_be_deleted_from_the_app(self):
+    def test_a_post_waiting_for_a_merge_is_not_deleted_until_it_is_merged_or_abandoned(self):
         project_id = ss.make_approved(self.ctx)
         from chanceblog_desktop.service import pages_flow
         pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        self.assertEqual(ss.status_of(self.ctx, project_id), st.MERGE_PENDING)
+        error = ss.code_of(projects.delete_project, self.ctx, project_id, confirmed=True)
+        self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.MERGE_PENDING))
+        self.assertIn("merge-check", error.detail)
+        self.assertIn("abandon", error.detail)
+        self.assertEqual(len(projects.list_projects(self.ctx)), 1, "어느 가지에 올렸는지 잊지 않게 지우지 않는다")
+
+    def test_a_post_that_is_already_published_can_be_deleted_from_the_app(self):
+        project_id = ss.make_approved(self.ctx)
+        from chanceblog_desktop.publish.pages import MainCheck
+        from chanceblog_desktop.service import pages_flow
+        pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        self.ctx.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        pages_flow.merge_check_pages(self.ctx, project_id)
+        pages_flow.check_pages_deploy(self.ctx, project_id)
         self.assertEqual(projects.delete_project(self.ctx, project_id, confirmed=True)[0], project_id)
 
     def test_an_unreadable_post_can_still_be_deleted(self):

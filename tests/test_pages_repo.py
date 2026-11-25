@@ -258,15 +258,19 @@ class RealRepositoryTest(unittest.TestCase):
     # --- 올리기 점검 ---------------------------------------------------------------------------------------------------
     def test_the_push_check_does_not_change_the_remote(self):
         before = git(self.origin, "rev-parse", "main")
+        refs = git(self.origin, "for-each-ref", "--format=%(refname) %(objectname)")
         gitrepo.check_push_access(self.work, expected_origin=LOCAL_ORIGIN)
         commit_file(self.work, "later.md", "나중\n", "later")                # 올릴 것이 있어도 점검은 올리지 않는다
         gitrepo.check_push_access(self.work, expected_origin=LOCAL_ORIGIN)
         self.assertEqual(git(self.origin, "rev-parse", "main"), before)
+        self.assertEqual(git(self.origin, "for-each-ref", "--format=%(refname) %(objectname)"), refs, "점검용 가지(`desktop/check-…`)도 원격에 만들어지지 않는다 — 보내지 않는 시험 시도다")
 
-    def test_the_push_check_reports_a_remote_that_moved_on_as_rejected(self):
-        self.other_pushes()
-        error = code_of(gitrepo.check_push_access, self.work, expected_origin=LOCAL_ORIGIN)
-        self.assertEqual(error.code, "GIT_PUSH_REJECTED")
+    def test_the_push_check_is_not_confused_by_a_remote_main_that_moved_on(self):
+        """옛 `…reports_a_remote_that_moved_on_as_rejected` — 옛 점검은 HEAD 를 main 으로 시험 삼아 올려 봤으므로 main 이 앞서가면 '거절' 이 났다. 새 점검은 main 이 아니라 **새 점검용 가지**를 시험하므로 main 이 앞서가도 거절이 아니다(main 을 시도하지 않는다는 증거)."""
+        moved = self.other_pushes()
+        info = gitrepo.check_push_access(self.work, expected_origin=LOCAL_ORIGIN)
+        self.assertEqual(info.branch, "main")
+        self.assertEqual(git(self.origin, "rev-parse", "main"), moved, "원격 main 은 다른 사람이 올린 그대로다")
 
     # --- 독립 검토에서 나온 경우들: 실제 git 으로 확인 ---------------------------------------------------------------------
     def test_a_push_only_address_or_a_second_address_is_checked_like_the_first(self):
@@ -522,7 +526,7 @@ class RealRepositoryTest(unittest.TestCase):
         marker = self.work / "hook-ran.txt"
         hook.write_text(f'#!/bin/sh\necho ran > "{marker.as_posix()}"\nexit 0\n', encoding="utf-8", newline="\n")
         hook.chmod(0o755)
-        subprocess.run(["git", "-C", str(self.work), "push", "--dry-run", "origin", "HEAD:refs/heads/main"], capture_output=True)
+        subprocess.run(["git", "-C", str(self.work), "push", "--dry-run", "origin", "HEAD:refs/heads/desktop/check-control"], capture_output=True)
         if not marker.exists():
             self.skipTest("이 git 은 dry-run 에서 pre-push 훅을 돌리지 않는다(시험이 의미 없다)")
         marker.unlink()                                 # 통제 실험: 평범한 git 은 훅을 돌렸다 → 이제 이 앱의 점검이 돌리지 않는지 본다
@@ -817,25 +821,36 @@ class RunnerTest(unittest.TestCase):
             gitrepo.run_git("C:/repo", args)
         return calls
 
+    BRANCH = "desktop/post-20261102-103012-3bf91f62"
+    SHAPES = {"fetch": list(gitrepo.FETCH_MAIN_ARGS), "ls-remote": ["ls-remote", "--exit-code", "origin", f"refs/heads/{BRANCH}"],
+              "push": ["push", "--porcelain", "--no-verify", "origin", f"{'a' * 40}:refs/heads/{BRANCH}"]}
+
     def test_a_network_command_gets_batch_mode_ssh_only_when_the_user_chose_no_ssh_command(self):
-        for command in ("fetch", "push", "ls-remote", "pull", "clone"):
+        """PUBPR — 네트워크 명령은 정해진 모양만 지난다(받기·가지 확인·올리기). 그 모양들이 질문 없는 ssh 를 받고, `pull`·`clone` 은 하위 프로세스 전에 거절된다."""
+        for command, args in self.SHAPES.items():
             with self.subTest(command=command):
-                calls = self.run_through_a_spy([command, "origin"])
+                calls = self.run_through_a_spy(args)
                 self.assertEqual(calls[0][0], ["git", "-C", "C:/repo", "config", "--get", "core.sshCommand"])
                 self.assertEqual(calls[-1][1]["env"]["GIT_SSH_COMMAND"], "ssh -o BatchMode=yes", "질문을 입력 없이 기다리며 멈추지 않게")
-        calls = self.run_through_a_spy(["fetch"], config=GitResult(128, "", "fatal: bad config"))
+        for command in ("pull", "clone"):
+            with self.subTest(command=command):
+                calls = []
+                with self.assertRaises(AppError) as caught:
+                    calls = self.run_through_a_spy([command, "origin"])
+                self.assertEqual((caught.exception.code, calls), ("PAGES_PUSH_REFUSED", []), "하위 프로세스를 띄우기 전에 거절한다")
+        calls = self.run_through_a_spy(self.SHAPES["fetch"], config=GitResult(128, "", "fatal: bad config"))
         self.assertEqual(calls[-1][1]["env"]["GIT_SSH_COMMAND"], "ssh -o BatchMode=yes", "설정을 읽지 못하면 정한 것이 없는 것으로")
 
     def test_the_users_own_ssh_command_is_never_overridden_by_that_default(self):
-        calls = self.run_through_a_spy(["push"], config=GitResult(0, "plink.exe -ssh -batch\n", ""))
+        calls = self.run_through_a_spy(self.SHAPES["push"], config=GitResult(0, "plink.exe -ssh -batch\n", ""))
         self.assertNotIn("GIT_SSH_COMMAND", calls[-1][1]["env"], "core.sshCommand 가 있으면 그대로 쓴다")
         for env in ({"GIT_SSH_COMMAND": "ssh -i C:/keys/mine"}, {"GIT_SSH": "C:/tools/plink.exe"}):
             with self.subTest(env=env):
-                calls = self.run_through_a_spy(["fetch"], env=env)
+                calls = self.run_through_a_spy(self.SHAPES["fetch"], env=env)
                 self.assertEqual(len(calls), 1, "환경 변수로 정했으면 설정을 읽어 보지도 않는다")
                 for name, value in env.items():
                     self.assertEqual(calls[0][1]["env"][name], value)
-        self.assertNotIn("GIT_SSH_COMMAND", self.run_through_a_spy(["fetch"], env={"GIT_SSH": "C:/tools/plink.exe"})[0][1]["env"])
+        self.assertNotIn("GIT_SSH_COMMAND", self.run_through_a_spy(self.SHAPES["fetch"], env={"GIT_SSH": "C:/tools/plink.exe"})[0][1]["env"])
 
     def test_commands_that_do_not_talk_to_the_remote_get_no_ssh_setting_and_no_extra_call(self):
         for command in ("status", "merge", "rev-parse", "diff", "restore"):
@@ -1048,7 +1063,9 @@ class FailureDetailTest(unittest.TestCase):
         fake = FakeGit(self.replies(**{"push --dry-run": ok("")}))
         gitrepo.check_push_access(self.root, git=fake)
         push = next(call for call in fake.calls if call[0] == "push")
-        self.assertEqual(push, ["push", "--dry-run", "--porcelain", "--no-verify", "origin", "HEAD:refs/heads/main"])
+        self.assertEqual(push, ["push", "--dry-run", "--porcelain", "--no-verify", "origin", f"{'a' * 40}:refs/heads/desktop/check-{'a' * 8}"], "커밋 번호로, main 이 아니라 점검용 가지로 — 보내지 않는다")
+        self.assertEqual(gitrepo.network_shape(push), "push_check")
+        self.assertNotIn("main", push[-1])
 
     def test_a_very_long_git_output_is_cut_to_its_tail_in_the_detail(self):
         stderr = "x" * 5000 + "fatal: unable to access 'https://github.com/shine88pc/chanceblog.git/': Could not resolve host: github.com"
@@ -1673,15 +1690,13 @@ class SyncFailureTest(unittest.TestCase):
 
 
 def setUpModule():
-    from unittest import mock
-    from chanceblog_desktop import capabilities
-    global _EXTERNAL_WRITE
-    _EXTERNAL_WRITE = mock.patch.object(capabilities, "EXTERNAL_WRITE", True)          # 이 시험은 게시 모듈을 직접 부른다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
-    _EXTERNAL_WRITE.start()
+    import capability_support
+    capability_support.external_write_on()          # 이 시험은 게시 모듈을 직접 부른다 — 외부 Write 관문·좁은 스위치·`file` 전송(로컬 bare 저장소)을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
 
 
 def tearDownModule():
-    _EXTERNAL_WRITE.stop()
+    import capability_support
+    capability_support.external_write_off()
 
 
 if __name__ == "__main__":

@@ -94,6 +94,16 @@ def expected_url(root, path, text, *, now=None):
     return url
 
 
+def require_pages_host(url, host):
+    """공개 확인이 닿는 곳은 `<소유자>.github.io` 한 곳뿐이다(NET 의 `pages_site` 용도) — 이 저장소의 `_config.yml` 이 다른 주소(사용자 지정 도메인 등)를 가리키면 앱은 그곳에 접속하지 않으므로
+    끝내 안 열리는 확인을 최대 12분 기다리게 하지 않고 곧바로 이유를 알린다(글은 이미 올라가 있다 — 공개 확인만 사람이 브라우저에서 한다)."""
+    from urllib.parse import urlsplit
+    actual = (urlsplit(url).hostname or "").lower()
+    if actual != str(host).lower():
+        raise AppError("CONTENT_INVALID", {"항목": "_config.yml 의 url"},
+                       detail=f"공개 주소의 호스트({mask(actual)[:80] or '없음'})가 앱이 확인하는 {host} 가 아니라 앱은 접속하지 않았다 — 사용자 지정 도메인이면 공개 확인은 브라우저에서 직접 한다")
+
+
 def check_deployed(root, path, text, *, deadline=720, interval=10, fetcher=None, sleep=None, clock=None, now=None, token="app"):
     """올린 글의 공개 주소가 열릴 때까지 확인한다(기본 최대 12분, 대기 10초에서 시작해 2배씩). 열리면 DeployResult, 끝내 안 열리면 PAGES_DEPLOY_NOT_VISIBLE."""
     capabilities.require_external_write("올린 글의 공개 주소 확인(네트워크)")        # 외부 관문 — 이 시험 버전은 꺼져 있어 요청을 한 번도 보내지 않는다
@@ -101,7 +111,9 @@ def check_deployed(root, path, text, *, deadline=720, interval=10, fetcher=None,
     url = expected_url(root, path, text, now=now)                 # 검사·주소 계산을 먼저(여기서 막히면 기다리지 않는다)
     verifier = _verifier()
     if fetcher is None:
+        from ..net.endpoints import ENDPOINTS
         from ..net.site import site_fetcher                      # 접속 틀(`ssl`·`http.client`)은 여기서 처음 불러온다 — 기본 빌드는 시작 때 불러오지 않는다(독립 검증 S 참고-3, D-739)
+        require_pages_host(url, ENDPOINTS["pages_site"].host)     # 사이트 주소가 `<소유자>.github.io` 가 아니면 12분을 기다리지 않고 바로 알린다(PUBPR Q11)
         fetcher = site_fetcher(verifier.Resp)                     # vendor 도구의 `urlopen` 길(자동 이동·시스템 프록시)을 쓰지 않고 접속이 `net/` 틀을 지나게 한다(NET 설계서 F1·NT-16)
     base = site_base(root)
     log = io.StringIO()

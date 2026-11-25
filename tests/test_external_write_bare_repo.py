@@ -3,7 +3,8 @@
 같은 준비(연결 `connect` → 글 만들기·검토·`approve` → `publish-pages --yes`)를 두 번 한다:
   · **꺼진 채**(이 빌드의 기본): 앱이 쓰는 진짜 기본 부품(`make_context` — 파일만 읽는 backend·무엇이든 거절하는 git 실행기)으로 한 줄도 빠짐없이 갖춰도 **git 하위 프로세스 호출 0**,
     **원격 main 불변**, 작업 폴더 불변, 글 상태 APPROVED 그대로, 거절 코드 EXTERNAL_WRITE_DISABLED. 호출 수는 `Tripwire`(하위 프로세스 전부 차단·집계)로 센다.
-  · **대조**(시험이 관문을 임시로 열고 진짜 git 어댑터를 꽂은 채): 같은 준비로 `publish-pages --yes --no-wait` 가 원격 main 을 실제로 옮긴다 — 위 '0' 이 실험이 헛돌아서가 아님을 보인다.
+  · **대조**(시험이 관문을 임시로 열고 진짜 git 어댑터를 꽂은 채): 같은 준비로 `publish-pages --yes --no-wait` 가 **새 가지 하나만** 만든다 — 원격에 `desktop/post-…` 가지가 생기고 **원격 main 은 그대로**이며 작업 폴더도 그대로다
+    (PUBPR 이전에는 이 시험이 main 이 옮겨짐을 보였다 — 뒤집힌 짝이다). 위 '0' 이 실험이 헛돌아서가 아님을 보이고(가지는 실제로 올라간다) 앱이 main 을 움직이지 못함을 같은 저장소에서 함께 보인다.
 """
 import io
 import sys
@@ -19,7 +20,7 @@ import service_support as ss  # noqa: E402
 from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.publish import gitrepo  # noqa: E402
 from chanceblog_desktop.service import cli, external, projects, review  # noqa: E402
-from chanceblog_desktop.service.backend import GitPagesBackend  # noqa: E402
+from chanceblog_desktop.service.backend import GitBranchBackend  # noqa: E402
 from chanceblog_desktop.service.context import make_context  # noqa: E402
 
 
@@ -64,36 +65,44 @@ class BareRepoExperiment(unittest.TestCase):
         with og.Tripwire() as wire:                                                                                             # 하위 프로세스를 하나라도 띄우면 막고 센다
             project_id = self.prepare(ctx)
             results = [self.run_cli(ctx, "publish-pages", project_id), self.run_cli(ctx, "publish-pages", project_id, "--yes"), self.run_cli(ctx, "publish-pages", project_id, "--yes", "--no-wait"),
-                       self.run_cli(ctx, "publish-pages", project_id, "--cancel", "--yes"), self.run_cli(ctx, "check-deploy", project_id), self.run_cli(ctx, "doctor", "--online")]
-        for (code, out, err), label in zip(results, ("미리 보기", "--yes", "--yes --no-wait", "--cancel --yes", "check-deploy", "doctor --online")):
+                       self.run_cli(ctx, "publish-pages", project_id, "--cancel", "--yes"), self.run_cli(ctx, "check-deploy", project_id), self.run_cli(ctx, "doctor", "--online"),
+                       self.run_cli(ctx, "merge-check", project_id), self.run_cli(ctx, "abandon", project_id, "--yes")]
+        for (code, out, err), label in zip(results, ("미리 보기", "--yes", "--yes --no-wait", "--cancel --yes", "check-deploy", "doctor --online", "merge-check", "abandon --yes")):
             self.assertEqual(code, 1, label)
             self.assertIn("EXTERNAL_WRITE_DISABLED", err, label)
         self.assertEqual(wire.calls, [], "git 하위 프로세스(그 밖의 하위 프로세스·소켓·HTTP 도) 호출이 0 이어야 한다")
         self.assertEqual(self.snapshot(), before, "원격 main·작업 폴더 HEAD·작업 폴더 파일이 하나도 바뀌지 않았다")
         self.assertEqual(ss.status_of(ctx, project_id), "APPROVED", "승인된 글의 상태도 그대로다")
 
-    def test_with_the_gate_opened_by_a_test_the_same_steps_do_push_so_the_zero_above_is_not_an_empty_experiment(self):
+    def test_with_the_gate_opened_by_a_test_the_same_steps_push_only_a_branch_so_the_zero_above_is_not_an_empty_experiment(self):
         spy = ss.Spy()
         world = ss.FakeWorld()
 
         def adapter(**parts):
-            return GitPagesBackend(git=spy, expected_origin=parts["expected_origin"], fetcher=world.fetcher, sleep=world.sleep, monotonic=world.clock)
+            return GitBranchBackend(git=spy, expected_origin=parts["expected_origin"], fetcher=world.fetcher, sleep=world.sleep, monotonic=world.clock)
 
         ss.external_write_on()
         self.addCleanup(ss.external_write_off)
         with external.registered(external.KIND_PAGES_GIT, adapter):
             ctx = make_context(data_dir=str(self.base / "data"), env={}, expected_origin=ss.LOCAL_ORIGIN, git=gitrepo.run_git, clock=ss.Clock())
-            self.assertIsInstance(ctx.backend, GitPagesBackend)
+            self.assertIsInstance(ctx.backend, GitBranchBackend)
             before = self.snapshot()
             project_id = self.prepare(ctx)
             spy.calls.clear()
             code, out, err = self.run_cli(ctx, "publish-pages", project_id, "--yes", "--no-wait")
         self.assertEqual(code, 0, err)
-        self.assertIn("push", spy.commands(), "관문을 열고 어댑터를 꽂으면 같은 명령이 진짜로 올린다")
+        self.assertIn("push", spy.commands(), "관문을 열고 어댑터를 꽂으면 같은 명령이 진짜로 올린다 — 새 가지 하나를")
         after = self.snapshot()
-        self.assertNotEqual(after["origin_main"], before["origin_main"], "원격 main 이 옮겨졌다")
+        self.assertEqual(after["origin_main"], before["origin_main"], "원격 main 은 그대로다 — 앱은 main 을 움직이지 못한다")
+        new_branches = sorted(set(after["origin_branches"]) - set(before["origin_branches"]))
+        self.assertEqual(len(new_branches), 1, new_branches)
+        self.assertRegex(new_branches[0], r"\Adesktop/post-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}\Z")
+        self.assertEqual((after["work_head"], after["work_files"], after["work_status"]), (before["work_head"], before["work_files"], before["work_status"]), "작업 폴더는 그대로다")
+        pushes = [call for call in spy.calls if call[0] == "push"]
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(pushes[0][-1].split(":", 1)[1], f"refs/heads/{new_branches[0]}")
         self.assertGreater(len(spy.calls), 0)
-        self.assertEqual(ss.status_of(ctx, project_id), "PUSHED")
+        self.assertEqual(ss.status_of(ctx, project_id), "MERGE_PENDING")
 
 
 if __name__ == "__main__":

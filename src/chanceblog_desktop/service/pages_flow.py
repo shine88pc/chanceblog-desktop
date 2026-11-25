@@ -187,6 +187,13 @@ def _tidy_finished_record(journal, project_id):
     return journal.remove(project_id, only=leftover) or "공개된 글에 남아 있던 발행 기록(지우기 직전에 멈춘 흔적)을 정리했습니다."
 
 
+def _holds_name(variant, record):
+    """그 글이 파일 이름(날짜-언어-시각)을 쥐고 있는가 — 병합을 기다리거나(MERGE_PENDING)·병합을 확인했거나(PUSHED)·옛 방식으로 기록했거나(COMMITTED), 승인됨인데 가지를 올리다 멈춘 기록(`built`·`branch_pushed`)이 있다."""
+    if variant.status in (st.COMMITTED, st.MERGE_PENDING, st.PUSHED):
+        return True
+    return variant.status == st.APPROVED and record is not None and record.stage in (STAGE_BUILT, STAGE_BRANCH_PUSHED)
+
+
 def _check_claims(store, journal, stem, url, own_id):
     """다른 글이 같은 공개 주소를 이미 쓰고 있지 않은가 — 이미 공개된 글의 주소, 그리고 올리는 중인 글의 파일 이름(날짜-언어-시각).
     새로 올리려는 글 자신(own_id)은 승인됨(APPROVED) 상태라 발행 주소도 기록도 없으므로 여기에 걸리지 않는다."""
@@ -198,9 +205,12 @@ def _check_claims(store, journal, stem, url, own_id):
         variant = other.variant(PLATFORM_PAGES)
         if url and variant.published_url == url:
             raise AppError("DUPLICATE_SLUG", detail="다른 글이 같은 공개 주소로 이미 공개되어 있다")
-        if variant.status in (st.COMMITTED, st.MERGE_PENDING, st.PUSHED) and summary.project_id != own_id:
-            record = journal.read(summary.project_id)
-            if record is not None and Path(record.path).stem == stem:
+        if summary.project_id != own_id and variant.status in (st.COMMITTED, st.MERGE_PENDING, st.PUSHED, st.APPROVED):
+            try:
+                record = journal.read(summary.project_id)
+            except AppError:
+                continue                                                        # 읽을 수 없는 다른 글의 기록은 여기서 판단하지 않는다(그 글이 알린다)
+            if _holds_name(variant, record) and record is not None and Path(record.path).stem == stem:
                 raise AppError("DUPLICATE_SLUG", detail="올리는 중인 다른 글이 같은 주소(날짜-언어-시각)를 쓴다")
 
 
@@ -563,6 +573,8 @@ def merge_check_pages(ctx, text_id):
             with ctx.store() as store:
                 project = store.load(project_id)
                 variant = project.variant(PLATFORM_PAGES)
+            if variant.status == st.MERGE_PENDING and variant.rendered_revision != project.revision:
+                lead = lead + ("원고를 고쳤어요 — 병합되는 글은 승인했던 옛 내용이에요(병합 확인은 승인한 글과 견줍니다).",)
             if variant.status == st.MERGE_PENDING:
                 pass
             elif variant.status in (st.PUSHED, st.PUBLISHED):

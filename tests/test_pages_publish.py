@@ -4,8 +4,8 @@
   1) 글 검사: 경로 모양(경로 이탈·`..`·절대 경로·역슬래시)·머리말·키 모양 문자열이 있으면 아무것도 쓰지 않는다.
   2) commit_post: 글 파일 하나만 commit 하고(내 다른 파일은 그대로), 같은 주소(분야가 달라도 같은 날짜-언어-시각)의 글이 있으면 DUPLICATE_SLUG,
      실패하면 쓴 파일·스테이징·만든 폴더를 치운다. 내 훅·서명 설정에 걸리지 않는다. 한글·공백 분야 폴더, LF 줄바꿈(autocrlf=true 여도).
-  3) push_commit: 올리지 않은 것이 '이 글 하나'일 때만 올리고(강제 push 없음), 봇이 먼저 올려 막히면 최신 위로 옮겨 다시(최대 3번),
-     충돌(같은 이름)이면 되돌리고 DUPLICATE_SLUG, 이미 올라가 있으면 할 일 없이 성공(연결이 끊겼지만 실제로는 성공했던 경우 포함).
+  3) discard_commit: 옛 방식으로 이 PC 에 기록해 둔 글 커밋만 되돌린다(이 PC 안의 일 — 네트워크 없음). 원격 main 으로 올리던 `push_commit`·`publish_post` 는 없어졌고(새 가지에 올리는 시험은 `test_pages_branch_build.py`),
+     `commit_post` 는 옛 `COMMITTED` 글을 이해하려는 시험 준비·되돌리기 용도로만 남아 있다. 시험 준비의 '원격 main 에 올림'은 앱 밖에서 직접 부른 git 이다(앱에는 그런 길이 없다).
 """
 import errno
 import os
@@ -29,6 +29,7 @@ from chanceblog_desktop.publish.gitrepo import GitResult  # noqa: E402
 LOCAL_ORIGIN = re.compile(r".*origin\.git/?$")
 HAVE_GIT = bool(shutil.which("git"))
 Post = namedtuple("Post", "path text")
+Landed = namedtuple("Landed", "commit")
 KO_TEXT = (ROOT / "tests" / "fixtures" / "chance_post_ko.md").read_text(encoding="utf-8")
 EN_TEXT = (ROOT / "tests" / "fixtures" / "chance_post_en.md").read_text(encoding="utf-8")
 KO_PATH = "_posts/경제·일/2026-10-29-KR-101652.md"
@@ -147,7 +148,9 @@ class PublishBase(unittest.TestCase):
         return pages.commit_post(self.work, post or self.ko, expected_origin=LOCAL_ORIGIN, **kwargs)
 
     def push(self, post=None, **kwargs):
-        return pages.push_commit(self.work, post or self.ko, expected_origin=LOCAL_ORIGIN, **kwargs)
+        """(시험 준비 전용) 이 PC 에 기록한 글 커밋이 원격 main 에 올라간 상태를 만든다 — **앱의 길이 아니다**: 앱에는 main 으로 올리는 코드가 없어서 앱 밖의 git 을 직접 부른다."""
+        git(self.work, "push", "-q", "origin", "HEAD:main")
+        return Landed(self.head())
 
     def head(self, repo=None):
         return git(repo or self.work, "rev-parse", "HEAD")
@@ -436,9 +439,7 @@ class CommitPostTest(PublishBase):
             if marker.exists():
                 marker.unlink()
         self.commit()
-        self.push()
-        self.assertEqual([name for name, marker in markers.items() if marker.exists()], [], "앱이 사용자의 훅을 돌렸다")
-        self.assertEqual(self.remote_main(), self.head())
+        self.assertEqual([name for name, marker in markers.items() if marker.exists()], [], "앱이 사용자의 훅을 돌렸다")      # 올리기 쪽 훅은 `test_pages_branch_build` 의 같은 이름 시험이 본다(가지 올리기)
 
 
 class FailureHandlingTest(PublishBase):
@@ -797,25 +798,6 @@ class FailureHandlingTest(PublishBase):
         info = self.push()
         self.assertEqual(self.remote_main(), info.commit)
 
-    def test_the_rebase_is_aborted_and_the_lock_cleared_when_it_is_cut_off(self):
-        calls = []
-
-        def fake(cwd, args):
-            calls.append(list(args))
-            if args[0] == "rebase" and "--abort" not in args:
-                raise AppError("NETWORK_TIMEOUT", detail="git rebase 가 끝나지 않았다")
-            if args[0] == "symbolic-ref":
-                return GitResult(0, "refs/heads/main\n", "")                      # rebase 직전의 main 확인
-            if args[0] == "rev-parse":
-                return GitResult(0, str(self.work / ".git"), "")
-            return GitResult(0, "", "")
-
-        with self.assertRaises(AppError) as caught:
-            pages._rebase(fake, self.work)
-        self.assertEqual(caught.exception.code, "NETWORK_TIMEOUT")
-        self.assertIn(["rebase", "--abort"], calls)
-        self.assertIn(["rev-parse", "--absolute-git-dir"], calls, "끈 git 이 남긴 잠금을 치우려고 git 폴더를 찾는다")
-
     def test_the_branch_must_still_be_main_when_the_loop_starts(self):
         git(self.work, "checkout", "-q", "-b", "other")
         error = code_of(pages._require_main, gitrepo.run_git, self.work)
@@ -824,369 +806,13 @@ class FailureHandlingTest(PublishBase):
         pages._require_main(gitrepo.run_git, self.work)
 
 
-class PushCommitTest(PublishBase):
-    def test_a_plain_push_puts_exactly_the_post_commit_on_the_remote_main_without_force(self):
-        before = self.remote_main()
-        self.commit(title="글")
-        spy = Spy()
-        info = self.push(git=spy)
-        self.assertEqual((info.attempts, info.already), (1, False))
-        self.assertEqual(info.commit, self.head())
-        self.assertEqual(self.remote_main(), self.head())
-        self.assertEqual(git(self.origin, "rev-parse", "main~1"), before)
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT)
-        (push,) = spy.pushes()
-        self.assertEqual(push, ["push", "--porcelain", "--no-verify", "origin", f"{info.commit}:refs/heads/main"], "브랜치 이름이 아니라 검사한 커밋 번호로 올린다")
-        self.assertFalse(any(arg in ("--force", "-f", "--force-with-lease", "--mirror", "--delete") or arg.startswith("+") for call in spy.calls for arg in call if call[0] == "push"))
-
-    def test_when_the_bot_already_posted_the_commit_is_moved_on_top_before_pushing(self):
-        self.commit()
-        bot = self.bot_pushes()
-        info = self.push()
-        self.assertEqual(info.attempts, 1)
-        self.assertEqual(git(self.origin, "rev-parse", "main~1"), bot)
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT)
-        self.assertEqual(blob(self.origin, "main:_posts/Bot/2026-10-30-KR-090000.md"), "봇 글\n")
-
-    def test_when_the_bot_posts_right_before_the_push_the_push_is_retried_on_top_of_the_new_main(self):
-        self.commit()
-        spy = Spy(before_push=[self.bot_pushes])
-        info = self.push(git=spy)
-        self.assertEqual(info.attempts, 2)
-        self.assertEqual(len(spy.pushes()), 2)
-        self.assertEqual(self.remote_main(), self.head())
-        self.assertEqual(blob(self.origin, "main:_posts/Bot/2026-10-30-KR-090000.md"), "봇 글\n")
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT)
-        self.assertEqual(git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
-
-    def test_if_the_bot_wins_every_time_it_gives_up_after_three_pushes_and_the_commit_stays_for_later(self):
-        self.commit()
-        names = [f"_posts/Bot/2026-10-30-KR-09000{i}.md" for i in range(3)]
-        spy = Spy(before_push=[lambda name=name: self.bot_pushes(name) for name in names])
-        error = code_of(self.push, git=spy)
-        self.assertEqual(error.code, "GIT_PUSH_REJECTED")
-        self.assertEqual(len(spy.pushes()), 3)
-        self.assertEqual(blob(self.work, f"HEAD:{KO_PATH}"), KO_TEXT, "올리지 못한 커밋은 그대로 남는다")
-        info = self.push()                                   # 방해가 없어지면 이어서 올라간다
-        self.assertEqual(self.remote_main(), self.head())
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT)
-        for name in names:
-            self.assertIsNotNone(blob(self.origin, f"main:{name}"), "봇의 글은 하나도 잃지 않는다")
-        self.assertFalse(info.already)
-
-    def test_the_bot_posting_the_same_name_is_a_duplicate_and_the_rebase_is_undone(self):
-        self.commit()
-        mine = self.head()
-        self.bot_pushes(name=KO_PATH, text="---\nlayout: post\n---\n봇이 같은 이름으로 먼저 올린 글\n")
-        spy = Spy()
-        error = code_of(self.push, git=spy)
-        self.assertEqual(error.code, "DUPLICATE_SLUG")
-        self.assertFalse(any(call[0] in ("push", "rebase") for call in spy.calls), "받아 보고 같은 이름이 있으면 올리거나 옮겨 보지 않고 곧 멈춘다")
-        self.assertEqual(self.head(), mine, "내 커밋은 그대로다")
-        self.assertFalse((self.work / ".git" / "rebase-merge").exists() or (self.work / ".git" / "rebase-apply").exists())
-        self.assertEqual(git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}").count("봇이 같은 이름으로"), 1, "남의 글을 덮어쓰지 않았다")
-
-    def push_after_commit(self):
-        info = self.commit()
-        self.push()
-        return info
-
-    def test_pushing_again_after_it_already_went_through_is_a_success_that_does_nothing(self):
-        self.commit()
-        first = self.push()
-        spy = Spy()
-        again = self.push(git=spy)
-        self.assertEqual((again.attempts, again.already, again.commit), (0, True, first.commit))
-        self.assertEqual(spy.pushes(), [], "이미 올라간 글은 다시 올리지 않는다")
-
-    def test_a_push_that_reached_the_server_but_lost_its_answer_is_not_repeated(self):
-        """올리다가 연결이 끊겨 실패로 보였지만 서버에는 들어간 경우 — 다시 부르면 중복 없이 성공으로 마무리된다."""
-        self.commit()
-        spy = Spy(lose_answer_after_push=1)
-        error = code_of(self.push, git=spy)
-        self.assertEqual(error.code, "GIT_PUSH_NETWORK")
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT, "서버에는 들어가 있다")
-        spy2 = Spy()
-        info = self.push(git=spy2)
-        self.assertTrue(info.already)
-        self.assertEqual(spy2.pushes(), [])
-        self.assertEqual(git(self.origin, "log", "--format=%s", "--", KO_PATH).count("글 올리기"), 1)
-
-    def test_anything_other_than_exactly_this_post_waiting_is_refused_and_nothing_is_pushed(self):
-        before = self.remote_main()
-        spy = Spy()
-        # 내 커밋이 먼저, 그 위에 이 글 커밋 — 올리지 않은 커밋이 둘이다(맨 위는 이 글이라 내용 검사만으로는 거를 수 없다)
-        commit_file(self.work, "mine.md", "내 커밋\n", "내 커밋")
-        commit_file(self.work, KO_PATH, KO_TEXT, "글")
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertEqual((spy.pushes(), self.remote_main()), ([], before))
-        self.assertTrue((self.work / "mine.md").is_file(), "내 커밋은 건드리지 않는다")
-        # 이 글 커밋이 다른 파일도 함께 바꾸는 경우(글 내용은 같다)
-        git(self.work, "reset", "-q", "--hard", before)
-        (self.work / "README.md").write_text("같이 고침\n", encoding="utf-8", newline="\n")
-        (self.work / KO_PATH).parent.mkdir(parents=True, exist_ok=True)
-        (self.work / KO_PATH).write_text(KO_TEXT, encoding="utf-8", newline="\n")
-        git(self.work, "add", "--", "README.md", KO_PATH)
-        git(self.work, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "글과 다른 파일")
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertEqual((spy.pushes(), self.remote_main()), ([], before))
-        # 올릴 커밋이 이 글이 아닌 경우
-        git(self.work, "reset", "-q", "--hard", before)
-        commit_file(self.work, KO_PATH, "---\nlayout: post\n---\n다른 내용\n", "다른 내용의 같은 이름")
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertEqual((spy.pushes(), self.remote_main()), ([], before))
-        # 올릴 커밋이 아예 없고 원격에도 없는 경우
-        git(self.work, "reset", "-q", "--hard", before)
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertEqual(spy.pushes(), [])
-
-    def test_the_same_name_with_different_content_on_the_remote_is_a_duplicate_not_a_success(self):
-        self.bot_pushes(name=KO_PATH, text="---\nlayout: post\n---\n다른 글\n")
-        git(self.work, "pull", "-q", "--ff-only", "origin", "main")
-        self.assertEqual(code_of(self.push).code, "DUPLICATE_SLUG")
-
-    def test_a_server_that_declines_the_push_for_its_rules_is_a_permission_problem_and_is_not_retried(self):
-        hook = self.origin / "hooks" / "pre-receive"
-        hook.write_text('#!/bin/sh\necho "remote: error: GH006: Protected branch update failed for refs/heads/main." >&2\nexit 1\n', encoding="utf-8", newline="\n")
-        hook.chmod(0o755)
-        self.commit()
-        spy = Spy()
-        error = code_of(self.push, git=spy)
-        if not spy.pushes() or error.code == "UNEXPECTED_ERROR":
-            self.skipTest("이 환경의 git 이 서버 훅을 쓰지 않는다")
-        self.assertEqual(error.code, "GIT_PUSH_AUTH")
-        self.assertEqual(len(spy.pushes()), 1, "권한 문제는 다시 해도 같으니 반복하지 않는다")
-
-    def test_a_bad_post_is_refused_before_any_git_call(self):
-        spy = Spy()
-        error = code_of(pages.push_commit, self.work, Post("_posts/../x.md", KO_TEXT), git=spy, expected_origin=LOCAL_ORIGIN)
-        self.assertEqual(error.code, "CONTENT_INVALID")
-        self.assertEqual(spy.calls, [])
-
-    def test_a_push_that_claims_success_but_left_the_commit_off_the_remote_is_reported(self):
-        self.commit()
-
-        def pretend_git(cwd, args):
-            if args[0] == "push":
-                return GitResult(0, "", "")
-            return gitrepo.run_git(cwd, args)
-
-        self.assertEqual(code_of(self.push, git=pretend_git).code, "UNEXPECTED_ERROR")
-
-    def test_the_bot_posting_the_same_name_right_before_the_push_is_caught_while_moving_the_commit(self):
-        self.commit()
-        mine = self.head()
-        spy = Spy(before_push=[lambda: self.bot_pushes(name=KO_PATH, text="---\nlayout: post\n---\n봇의 같은 이름 글\n")])
-        error = code_of(self.push, git=spy)
-        self.assertEqual(error.code, "DUPLICATE_SLUG")
-        self.assertEqual(len(spy.pushes()), 1)
-        self.assertEqual(self.head(), mine, "되돌려서 내 커밋이 그대로다")
-        self.assertFalse((self.work / ".git" / "rebase-merge").exists() or (self.work / ".git" / "rebase-apply").exists())
-        self.assertEqual(git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
-        self.assertIn("봇의 같은 이름 글", blob(self.origin, f"main:{KO_PATH}"), "남의 글을 덮어쓰지 않았다")
-
-    def test_the_users_signing_setting_and_blocking_hooks_do_not_get_in_the_way_of_moving_the_commit(self):
-        git(self.work, "config", "commit.gpgsign", "true")
-        git(self.work, "config", "gpg.program", str(self.tmp / "no-such-gpg"))                  # 서명을 켜 둔 PC: 서명 도구가 없으면 rebase 가 실패한다
-        self.commit()
-        for name in ("pre-rebase", "post-rewrite", "post-checkout", "reference-transaction", "post-merge"):
-            hook = self.work / ".git" / "hooks" / name
-            hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")             # 막는 훅: 돌았다면 받기·옮기기가 막힌다
-            hook.chmod(0o755)
-        bot = self.bot_pushes()
-        info = self.push()
-        self.assertEqual(info.attempts, 1)
-        self.assertEqual(git(self.origin, "rev-parse", "main~1"), bot)
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT)
-
-    def test_pushing_checks_the_connection_first_like_committing_does(self):
-        self.commit()
-        spy = Spy()
-        git(self.work, "checkout", "-q", "-b", "other")
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_NOT_MAIN")
-        git(self.work, "checkout", "-q", "main")
-        git(self.work, "remote", "set-url", "origin", "https://github.com/someone/else.git")
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_INVALID")
-        git(self.work, "remote", "set-url", "origin", str(self.origin))
-        (self.work / "README.md").write_text("내가 고치는 중\n", encoding="utf-8", newline="\n")
-        self.assertEqual(code_of(self.push, git=spy).code, "PAGES_LOCAL_REPO_DIRTY")
-        self.assertEqual(spy.pushes(), [], "어느 경우에도 올리지 않았다")
-
-    def test_a_post_with_the_same_address_in_another_category_arriving_before_the_push_is_a_duplicate(self):
-        self.commit()
-        self.bot_pushes(name="_posts/Other/2026-10-29-KR-101652.md", text="---\nlayout: post\n---\n같은 주소의 다른 글\n")
-        spy = Spy()
-        self.assertEqual(code_of(self.push, git=spy).code, "DUPLICATE_SLUG")
-        self.assertEqual(spy.pushes(), [], "같은 주소가 원격에 있으면 올리지 않는다")
-        self.assertIsNone(blob(self.origin, f"main:{KO_PATH}"))
-
-    def test_the_same_address_with_another_extension_on_the_remote_is_a_duplicate_too(self):
-        self.commit()
-        self.bot_pushes(name="_posts/Other/2026-10-29-KR-101652.markdown", text="---\nlayout: post\n---\n확장자만 다른 글\n")
-        self.assertEqual(code_of(self.push).code, "DUPLICATE_SLUG")
-
-    def test_a_branch_switch_after_a_rejected_push_stops_before_the_rebase_touches_the_other_branch(self):
-        info = self.commit()
-        state = {"pushes": 0, "bot": None}
-
-        def bot_first_then_switch_after_the_rejection(cwd, args):
-            if args[0] == "push" and state["pushes"] == 0:
-                state["bot"] = self.bot_pushes()                                      # 봇이 먼저 올려 이 push 는 거절된다
-            result = gitrepo.run_git(cwd, args)
-            if args[0] == "push":
-                state["pushes"] += 1
-                if result.returncode != 0:
-                    git(self.work, "checkout", "-q", "-b", "other")                  # 거절된 뒤 사용자가 같은 커밋에서 다른 브랜치로 바꿨다
-            return result
-
-        error = code_of(self.push, git=bot_first_then_switch_after_the_rejection)
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_NOT_MAIN")
-        self.assertEqual(state["pushes"], 1, "다시 올리지 않는다")
-        self.assertEqual(git(self.work, "rev-parse", "other"), info.commit, "다른 브랜치를 최신 위로 옮기지 않는다")
-        self.assertEqual(self.remote_main(), state["bot"], "원격 main 은 봇이 올린 그대로")
-
-    def test_a_branch_switch_right_after_the_connection_check_stops_the_push_before_anything_is_pushed(self):
-        self.commit()
-        base = self.remote_main()
-        state = {"checks": 0}
-
-        def switch_before_the_loop_check(cwd, args):
-            if args[:2] == ["symbolic-ref", "-q"]:
-                state["checks"] += 1
-                if state["checks"] == 2:                                                       # 첫째는 연결 확인, 둘째가 올리기 반복문 앞의 확인
-                    git(self.work, "checkout", "-q", "-b", "other")
-            return gitrepo.run_git(cwd, args)
-
-        self.assertEqual(code_of(self.push, git=switch_before_the_loop_check).code, "PAGES_LOCAL_REPO_NOT_MAIN")
-        self.assertEqual(self.remote_main(), base, "아무것도 올리지 않는다")
-
-    def test_a_post_that_is_already_published_is_not_moved_even_when_the_bot_posted_after_it(self):
-        info = self.push_after_commit()
-        self.bot_pushes(name="_posts/Bot/2026-10-31-KR-090000.md", text="봇의 새 글\n")            # 우리 글이 올라간 뒤 봇이 또 올려 로컬 main 이 뒤처졌다
-        spy = Spy()
-        again = self.push(git=spy)
-        self.assertEqual((again.already, again.attempts), (True, 0))
-        self.assertFalse(any(call[0] in ("rebase", "push") for call in spy.calls), "이미 올라간 글은 옮기지도 올리지도 않는다")
-        self.assertEqual(self.head(), info.commit)
-
-    def test_a_same_address_post_in_another_category_that_arrives_with_the_rejection_is_caught_before_the_commit_is_moved(self):
-        info = self.commit()
-
-        def bot_posts_twice():
-            self.bot_pushes()
-            self.bot_pushes(name="_posts/Other/2026-10-29-KR-101652.md", text="---\nlayout: post\n---\n같은 주소의 다른 글\n")
-
-        self.assertEqual(code_of(self.push, git=Spy(before_push=[bot_posts_twice])).code, "DUPLICATE_SLUG")
-        self.assertEqual(self.head(), info.commit, "옮기기 전에 알아봐서 커밋이 그대로다(되돌릴 수 있다)")
-        pages.discard_commit(self.work, info, expected_origin=LOCAL_ORIGIN)
-
-    def test_a_rebase_conflict_that_is_not_the_same_file_is_reported_as_a_duplicate_and_the_rebase_is_undone(self):
-        info = self.commit()
-        self.bot_pushes(name="_posts/경제·일", text="폴더가 아니라 파일\n")                           # 봇이 우리 분야 폴더 자리에 같은 이름의 '파일' 을 올렸다 — 옮기면 충돌한다
-        error = code_of(self.push)
-        self.assertEqual(error.code, "DUPLICATE_SLUG")
-        self.assertFalse((self.work / ".git" / "rebase-merge").exists() or (self.work / ".git" / "rebase-apply").exists(), "진행 중인 rebase 를 남기지 않는다")
-        self.assertEqual(self.head(), info.commit)
-        self.assertEqual(git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
-
-    def test_a_commit_the_user_adds_to_main_right_after_the_check_is_not_pushed_along(self):
-        info = self.commit()
-
-        def user_commits():
-            commit_file(self.work, "mine.md", "내 글\n", "mine")                                   # 검사를 마친 뒤 사용자가 main 에 커밋을 더했다
-
-        result = self.push(git=Spy(before_push=[user_commits]))
-        self.assertEqual(self.remote_main(), info.commit, "검사한 바로 그 커밋까지만 올라간다")
-        self.assertIsNone(blob(self.origin, "main:mine.md"))
-        self.assertEqual(result.commit, info.commit)
-        self.assertEqual(git(self.work, "rev-parse", "main~1"), info.commit, "내 커밋은 내 저장소에 그대로 있다")
-
-    def test_a_commit_the_user_adds_to_main_before_the_final_check_stops_the_push(self):
-        self.commit()
-        base = self.remote_main()
-        state = {"done": False}
-
-        def user_commits_when_the_tip_is_read(cwd, args):
-            if args == ["rev-parse", "refs/heads/main"] and not state["done"]:
-                state["done"] = True
-                commit_file(self.work, "mine.md", "내 글\n", "mine")
-            return gitrepo.run_git(cwd, args)
-
-        self.assertEqual(code_of(self.push, git=user_commits_when_the_tip_is_read).code, "PAGES_LOCAL_REPO_DIVERGED")
-        self.assertEqual(self.remote_main(), base, "아무것도 올리지 않는다")
-
-    def test_the_rebase_itself_checks_that_the_branch_is_main_first(self):
-        git(self.work, "checkout", "-q", "-b", "other")
-        spy = Spy()
-        self.assertEqual(code_of(pages._rebase, spy, self.work).code, "PAGES_LOCAL_REPO_NOT_MAIN")
-        self.assertFalse(any(call[0] == "rebase" for call in spy.calls), "다른 브랜치를 옮기지 않는다")
-
-    def test_a_rebase_failure_that_is_not_a_conflict_is_not_reported_as_a_duplicate(self):
-        self.commit()
-        self.bot_pushes()                                                                        # 봇이 먼저 올려서 rebase 가 필요하다
-        calls = []
-
-        def rebase_breaks(cwd, args):
-            calls.append(list(args))
-            if args[0] == "rebase" and args[1] != "--abort":
-                return GitResult(1, "", "fatal: could not read orig-head")
-            return gitrepo.run_git(cwd, args)
-
-        error = code_of(self.push, git=rebase_breaks)
-        self.assertNotEqual(error.code, "DUPLICATE_SLUG")
-        self.assertIn(["rebase", "--abort"], calls, "진행 중인 rebase 를 남기지 않는다")
-
-    def test_a_key_in_the_rebase_conflict_text_or_in_a_file_error_is_masked(self):
-        key = "AI" + "za" + "A" * 35
-        self.commit()
-        self.bot_pushes()
-
-        def rebase_conflicts_with_a_key(cwd, args):
-            if args[0] == "rebase" and args[1] != "--abort":
-                return GitResult(1, f"CONFLICT (add/add): Merge conflict in {key}.md", "error: could not apply abc123")
-            return gitrepo.run_git(cwd, args)
-
-        error = code_of(self.push, git=rebase_conflicts_with_a_key)
-        self.assertEqual(error.code, "DUPLICATE_SLUG")
-        self.assertNotIn(key, error.detail + str(error) + error.log_line())
-        failure = pages._file_error(OSError(errno.EACCES, f"Permission denied {key}"), Path("x.md"))
-        self.assertNotIn(key, failure.detail + failure.log_line())
-
-    def test_switching_branches_right_before_the_push_does_not_publish_the_other_branch(self):
-        info = self.commit()
-
-        def switch():
-            git(self.work, "checkout", "-q", "-b", "other")
-            commit_file(self.work, "다른 브랜치 글.md", "공개하면 안 되는 글\n", "other")
-
-        result = self.push(git=Spy(before_push=[switch]))
-        self.assertEqual(self.remote_main(), info.commit, "main 브랜치의 그 글 커밋만 올라간다")
-        self.assertIsNone(blob(self.origin, "main:다른 브랜치 글.md"))
-        self.assertEqual(result.commit, info.commit)
-
-    def test_a_server_ref_lock_race_is_retried_not_reported_as_a_permission_problem(self):
-        self.commit()
-
-        class Racy(Spy):
-            raced = False
-
-            def __call__(self, cwd, args):
-                if args[0] == "push" and not self.raced:
-                    self.raced = True
-                    self.calls.append(list(args))
-                    return GitResult(1, "", "remote: error: cannot lock ref 'refs/heads/main': is at 1 but expected 2\nTo https://github.com/x/y.git\n"
-                                            " ! [remote rejected] HEAD -> main (failed to update ref)\nerror: failed to push some refs to 'https://github.com/x/y.git'")
-                return super().__call__(cwd, args)
-
-        info = self.push(git=Racy())
-        self.assertEqual((info.attempts, info.already), (2, False))
-        self.assertEqual(self.remote_main(), self.head())
+class DiscardCommitTest(PublishBase):
+    """옛 방식(main 에 곧바로 commit)으로 이 PC 에 기록해 둔 글 커밋을 되돌리는 길(`discard_commit`) — 새 흐름(가지 올리기)은 이 상태를 만들지 않지만 옛 `COMMITTED` 글을 되돌릴 수 있어야 한다.
+    이 PC 안의 일뿐이다(네트워크 명령 없음). 옛 `PushCommitTest` 의 되돌리기 시험이 여기로 옮겨 왔다(올리는 시험은 `test_pages_branch_build.py` 로 옮겼다)."""
 
     def test_discard_commit_puts_the_repository_back_so_the_next_post_can_be_committed(self):
         info = self.commit()
         self.bot_pushes(name="_posts/Other/2026-10-29-KR-101652.md", text="---\nlayout: post\n---\n같은 주소의 다른 글\n")
-        self.assertEqual(code_of(self.push).code, "DUPLICATE_SLUG")
         pages.discard_commit(self.work, info, expected_origin=LOCAL_ORIGIN)
         self.assertEqual(self.head(), info.base)
         self.assertEqual(git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
@@ -1210,23 +836,14 @@ class PushCommitTest(PublishBase):
         self.assertEqual(self.head(), head)
         self.assertTrue((self.work / KO_PATH).exists())
 
-    def test_discard_commit_fetches_first_so_a_commit_that_reached_the_remote_is_refused_even_when_the_local_record_is_old(self):
+    def test_discard_commit_never_touches_the_network(self):
+        """옛 `discard_commit_fetches_first…` 시험이 새 흐름으로 — 되돌리기는 이 PC 안의 일이다: 받기·가지 확인·올리기 같은 네트워크 명령을 한 번도 부르지 않는다(원격에 올라갔는지는 마지막으로 받아 둔 기록으로만 본다)."""
         info = self.commit()
-
-        def push_lands_but_the_answer_is_lost(cwd, args):
-            result = gitrepo.run_git(cwd, args)
-            if args[0] == "push" and result.returncode == 0:
-                git(self.work, "update-ref", "refs/remotes/origin/main", info.base)           # 응답이 끊겨 이 컴퓨터는 올라간 것을 모른다(원격 기록이 옛것)
-                return GitResult(128, "", "fatal: unable to access 'https://github.com/shine88pc/chanceblog.git/': Connection reset by peer")
-            return result
-
-        code_of(self.push, git=push_lands_but_the_answer_is_lost)
-        self.assertEqual(self.remote_main(), info.commit)
-        self.assertEqual(git(self.work, "rev-parse", "origin/main"), info.base)
-        error = code_of(pages.discard_commit, self.work, info, expected_origin=LOCAL_ORIGIN)
-        self.assertEqual(error.code, "UNEXPECTED_ERROR")
-        self.assertEqual(self.head(), info.commit)
-        self.assertTrue((self.work / KO_PATH).exists())
+        spy = Spy()
+        pages.discard_commit(self.work, info, git=spy, expected_origin=LOCAL_ORIGIN)
+        self.assertEqual([call for call in spy.calls if call[0] in ("fetch", "push", "ls-remote", "pull", "clone")], [])
+        self.assertEqual(self.head(), info.base)
+        self.assertFalse((self.work / KO_PATH).exists())
 
     def test_discard_commit_does_not_trust_a_path_or_a_commit_that_is_not_the_apps_post_commit(self):
         base = self.head()
@@ -1293,22 +910,29 @@ class PushCommitTest(PublishBase):
         pages.discard_commit(self.work, info, expected_origin=LOCAL_ORIGIN)
         self.assertEqual(self.head(), info.base)
 
-    def test_publish_post_does_both_steps(self):
-        info = pages.publish_post(self.work, self.ko, title="한 번에", expected_origin=LOCAL_ORIGIN)
-        self.assertEqual(self.remote_main(), info.commit)
-        self.assertEqual(blob(self.origin, f"main:{KO_PATH}"), KO_TEXT)
+
+class OldMainPathIsGoneTest(unittest.TestCase):
+    """옛 `push_commit`·`publish_post`·`_rebase`(원격 main 으로 올리던 길)는 없어졌다 — 앱 소스에 main 으로 가는 올리기 인자를 만드는 코드가 없다(`test_pages_branch_policy` 가 소스를 훑는다)."""
+
+    def test_the_functions_that_pushed_to_remote_main_no_longer_exist(self):
+        for name in ("push_commit", "publish_post", "_rebase", "_pending_state", "_counts", "_fetch_main", "_stem_clash", "PushInfo", "MAX_PUSH_ATTEMPTS"):
+            self.assertFalse(hasattr(pages, name), f"pages.{name} 이 아직 있다")
+        for name in ("push_commit", "publish_post"):
+            self.assertFalse(hasattr(gitrepo, name), f"gitrepo.{name} 이 아직 있다")
+
+    def test_the_new_path_has_the_replacement_functions(self):
+        for name in ("build_branch_commit", "push_branch", "branch_on_remote", "post_on_main", "compare_link", "branch_name"):
+            self.assertTrue(callable(getattr(pages, name)), name)
 
 
 def setUpModule():
-    from unittest import mock
-    from chanceblog_desktop import capabilities
-    global _EXTERNAL_WRITE
-    _EXTERNAL_WRITE = mock.patch.object(capabilities, "EXTERNAL_WRITE", True)          # 이 시험은 게시 모듈을 직접 부른다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
-    _EXTERNAL_WRITE.start()
+    import capability_support
+    capability_support.external_write_on()          # 이 시험은 게시 모듈을 직접 부른다 — 외부 Write 관문·좁은 스위치·`file` 전송(로컬 bare 저장소)을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
 
 
 def tearDownModule():
-    _EXTERNAL_WRITE.stop()
+    import capability_support
+    capability_support.external_write_off()
 
 
 if __name__ == "__main__":

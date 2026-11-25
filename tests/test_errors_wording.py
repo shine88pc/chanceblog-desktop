@@ -134,7 +134,7 @@ OLD_COMMANDS = {
     "FULL_BACKUP_INVALID": ["backups"],
     "GIT_IDENTITY_MISSING": ["git config --global user.name \"표시할 이름\"", "git config --global user.email \"GitHub 에 등록한 이메일 또는 noreply 주소\""],
     "GIT_NOT_INSTALLED": ["MIGRATION.md"],
-    "GIT_PUSH_AUTH": ["git push"],
+    "GIT_PUSH_AUTH": ["Git Bash"],            # PUBPR: 꼬리가 '터미널에서 git push 를 한 번 실행' 에서 'Git 을 쓰는 프로그램에서 한 번 로그인' 으로 바뀌었다(main 으로 가는 push 를 권하는 말이 없다)
     "KEY_AUTH_FAILED": ["keys remove", "keys add"],
     "KEY_DUPLICATE": ["keys list"],
     "KEY_ENTRY_LIMIT": ["keys remove 번호 --yes"],

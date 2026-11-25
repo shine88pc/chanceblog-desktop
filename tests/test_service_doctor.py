@@ -111,12 +111,15 @@ class ReadOnlyTest(Base):
         online = self.find("올리기 권한", online=True)
         self.assertEqual((online.status, self.backend.count("check_push_access")), ("ok", 1))
         self.assertIn("실제로는 올리지 않았습니다", online.message)
+        self.assertIn("새 가지를 올릴 수 있습니다", online.message)
+        self.assertIn("main 은 시도하지 않았습니다", online.message)
 
     def test_a_push_access_problem_is_a_failure_with_its_code_and_what_to_do(self):
         self.backend.inspect_error = AppError("GIT_PUSH_AUTH")
         item = self.find("올리기 권한", online=True)
         self.assertEqual((item.status, item.code), ("fail", "GIT_PUSH_AUTH"))
-        self.assertIn("git push", item.action)
+        self.assertIn("Git 을 쓰는 프로그램(Git Bash·GitHub Desktop 등)", item.action, "새 안내: 이 저장소에 한 번 로그인해 두면 앱이 그 로그인을 그대로 쓴다")
+        self.assertNotIn("git push", item.action, "main 으로 가는 push 를 권하는 문장은 없다(PUBPR PT-44)")
 
     def test_without_a_connected_folder_the_push_check_is_skipped(self):
         ctx = ss.make_ctx(self.tmp / "x", backend=self.backend, repo=None)
@@ -369,23 +372,33 @@ class RepoTest(Base):
 
 
 class PendingAndProfilesTest(Base):
-    def test_posts_waiting_to_be_pushed_or_verified_are_named_with_their_commands(self):
-        stuck = ss.make_approved(self.ctx, title="올리다 멈춘 글")
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        with self.assertRaises(AppError):
-            pages_flow.run_pages_publish(self.ctx, stuck, confirmed=True)
+    def test_posts_waiting_for_a_merge_or_for_the_address_or_left_from_the_old_way_are_named_with_their_commands(self):
+        from chanceblog_desktop.publish.pages import MainCheck
+        old_way = ss.make_approved(self.ctx, title="옛 방식으로 기록해 둔 글")
+        with self.ctx.store() as store:                                         # 옛 버전이 남긴 '이 PC 에 기록함' — 새 흐름은 이 상태를 만들지 않는다
+            project = store.load(old_way)
+            project.transition("github_pages", "COMMITTED", now=self.ctx.stamp())
+            store.save(project)
+        self.ctx.clock.advance(seconds=5)
+        merging = ss.make_approved(self.ctx, title="병합을 기다리는 글")
+        pages_flow.run_pages_publish(self.ctx, merging, confirmed=True)
         self.ctx.clock.advance(seconds=5)
         waiting = ss.make_approved(self.ctx, title="공개 확인이 남은 글")
-        pages_flow.run_pages_publish(self.ctx, waiting, confirmed=True, wait=False)
+        pages_flow.run_pages_publish(self.ctx, waiting, confirmed=True)
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        pages_flow.merge_check_pages(self.ctx, waiting)
         items = [item for item in self.results() if item.name == "이어서 처리할 글"]
-        self.assertEqual(sorted(item.status for item in items), ["warn", "warn"])
+        self.assertEqual(sorted(item.status for item in items), ["warn", "warn", "warn"])
         text = " ".join(item.message for item in items)
-        self.assertIn(f"publish-pages {stuck[:8]} --yes", text)
+        self.assertIn(f"publish-pages {old_way[:8]} --cancel --yes", text)
+        self.assertNotIn(f"publish-pages {old_way[:8]} --yes", text, "이어서 올리는 길은 없어졌다 — 되돌리는 길만 알린다")
+        self.assertIn(f"merge-check {merging[:8]}", text)
+        self.assertIn(f"abandon {merging[:8]} --yes", text)
         self.assertIn(f"check-deploy {waiting[:8]}", text)
-        self.assertEqual({item.code for item in items}, {"PAGES_LOCAL_REPO_DIVERGED", "PAGES_DEPLOY_NOT_VISIBLE"})
+        self.assertEqual({item.code for item in items}, {"PAGES_LOCAL_REPO_DIVERGED", "", "PAGES_DEPLOY_NOT_VISIBLE"})
 
-    def test_an_approved_post_whose_commit_was_left_without_a_record_is_named_with_both_ways_out(self):
-        """commit 직후에 멈춘 흔적 — 승인됨 + 기록 없는 commit. doctor 가 이어받기와 되돌리기 두 길을 실제 명령으로 알려 준다."""
+    def test_an_approved_post_whose_commit_was_left_without_a_record_is_named_with_the_way_out(self):
+        """옛 방식으로 올리다 commit 직후에 멈춘 흔적 — 승인됨 + 기록 없는 commit. doctor 가 되돌리는 길을 실제 명령으로 알려 준다(이어받는 길은 없어졌다 — PUBPR)."""
         from chanceblog_desktop.publish.pages import CommitInfo
         project_id = ss.make_approved(self.ctx, title="기록 직후 멈춘 글")
         self.assertEqual([item for item in self.results() if item.name == "이어서 처리할 글"], [], "그런 commit 이 없으면 아무 말도 하지 않는다")
@@ -395,9 +408,9 @@ class PendingAndProfilesTest(Base):
         self.assertEqual(len(items), 1)
         self.assertEqual((items[0].status, items[0].code), ("warn", "PAGES_LOCAL_REPO_DIVERGED"))
         self.assertIn("기록(commit) 직후에 멈춘 흔적", items[0].message)
-        self.assertIn(f"publish-pages {project_id[:8]} --yes", items[0].message)
         self.assertIn(f"publish-pages {project_id[:8]} --cancel --yes", items[0].message)
-        self.assertIn("이어받아", items[0].message)
+        self.assertNotIn(f"publish-pages {project_id[:8]} --yes", items[0].message)
+        self.assertIn("이어서 올리는 길은 없어졌습니다", items[0].message)
 
     def test_an_unreadable_post_is_a_failure_that_names_it(self):
         import sqlite3

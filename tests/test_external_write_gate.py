@@ -32,7 +32,7 @@ from chanceblog_desktop.errors import CATALOG, AppError  # noqa: E402
 from chanceblog_desktop.publish import deploy, gitrepo, pages  # noqa: E402
 from chanceblog_desktop.render.pages import PagesPost  # noqa: E402
 from chanceblog_desktop.service import cli, connections, doctor, external, pages_flow, projects  # noqa: E402
-from chanceblog_desktop.service.backend import GitPagesBackend  # noqa: E402
+from chanceblog_desktop.service.backend import GitBranchBackend  # noqa: E402
 from chanceblog_desktop.service.context import Context, Settings, make_context  # noqa: E402
 
 SRC = ss.ROOT / "src" / "chanceblog_desktop"
@@ -41,12 +41,21 @@ GATE_NAMES = ("capabilities.require_external_write", "require_external_write")
 ENTRY_POINTS = (
     ("service/pages_flow.py", "plan_pages_publish"), ("service/pages_flow.py", "preview_publish"), ("service/pages_flow.py", "run_pages_publish"),
     ("service/pages_flow.py", "check_pages_deploy"), ("service/pages_flow.py", "cancel_pages_publish"),
-    ("publish/pages.py", "commit_post"), ("publish/pages.py", "push_commit"), ("publish/pages.py", "discard_commit"), ("publish/pages.py", "publish_post"),
+    ("publish/pages.py", "commit_post"), ("publish/pages.py", "discard_commit"),
     ("publish/gitrepo.py", "run_command"), ("publish/gitrepo.py", "run_git"), ("publish/gitrepo.py", "sync_latest"), ("publish/gitrepo.py", "check_push_access"),
     ("publish/deploy.py", "check_deployed"),
-    ("service/backend.py", "GitPagesBackend.check_push_access"), ("service/backend.py", "GitPagesBackend.commit"), ("service/backend.py", "GitPagesBackend.push"),
-    ("service/backend.py", "GitPagesBackend.discard"), ("service/backend.py", "GitPagesBackend.check_deployed"),
+    ("service/backend.py", "GitBranchBackend.check_push_access"), ("service/backend.py", "GitBranchBackend.discard"), ("service/backend.py", "GitBranchBackend.check_deployed"),
     ("service/cli.py", "cmd_publish_pages"), ("service/cli.py", "cmd_check_deploy"),
+)
+# PUBPR(D-740 이후)가 더한 진입점 — 새 가지에만 올리는 어댑터와 흐름. 첫 문장은 옛 관문(`require_external_write`), **둘째 문장은 좁은 관문**(`require_net("pages_branch", …)`)이다(NET 설계서 D-736).
+# 옛 `push_commit`·`publish_post`(main 으로 올리던 것)는 없앴다 — 그 이름은 어디에도 없다(`test_pages_branch_policy`).
+PUBPR_ENTRY_POINTS = (
+    ("publish/pages.py", "build_branch_commit"), ("publish/pages.py", "push_branch"), ("publish/pages.py", "post_on_main"), ("publish/pages.py", "branch_on_remote"),
+    ("publish/gitrepo.py", "fetch_main"), ("publish/gitrepo.py", "remote_branch_tip"),
+    ("service/pages_flow.py", "merge_check_pages"), ("service/pages_flow.py", "abandon_pages_publish"),
+    ("service/backend.py", "GitBranchBackend.build_branch_commit"), ("service/backend.py", "GitBranchBackend.push_branch"), ("service/backend.py", "GitBranchBackend.branch_on_remote"),
+    ("service/backend.py", "GitBranchBackend.post_on_main"),
+    ("service/cli.py", "cmd_merge_check"), ("service/cli.py", "cmd_abandon"),
 )
 # 첫 문장이 `if 온라인:` 이고 그 안 첫 문장이 관문인 곳
 CONDITIONAL_ENTRY_POINTS = (("service/cli.py", "cmd_doctor"), ("service/doctor.py", "_check_push_access"))
@@ -69,6 +78,11 @@ def statements(function):
 
 def is_gate_call(node):
     return isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and ast.unparse(node.value.func) in GATE_NAMES
+
+
+def is_branch_gate_call(node):
+    """둘째 문장 — `capabilities.require_net('pages_branch', …)`."""
+    return isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == "capabilities.require_net" and bool(node.value.args) and ast.unparse(node.value.args[0]) == "'pages_branch'"
 
 
 def src_files():
@@ -227,10 +241,30 @@ class NoWayToTurnItOnTest(unittest.TestCase):
 
 class EntryPointGateTest(unittest.TestCase):
     def test_every_entry_point_passes_the_gate_as_its_first_statement(self):
-        for rel, name in ENTRY_POINTS:
+        for rel, name in ENTRY_POINTS + PUBPR_ENTRY_POINTS:
             with self.subTest(entry=f"{rel}:{name}"):
                 body = statements(function_node(parse(rel), name))
                 self.assertTrue(body and is_gate_call(body[0]), f"{rel}:{name} 의 첫 문장이 관문이 아니다 — {ast.unparse(body[0])[:70] if body else '(비었다)'}")
+
+    def test_every_pubpr_entry_point_passes_the_narrow_gate_as_its_second_statement(self):
+        """PUBPR 이 더한 진입점은 첫 문장이 옛 관문, 둘째 문장이 `require_net("pages_branch", …)` 다(`run_pages_publish` 만 확인(`require_confirmation`) 다음인 셋째 문장). 그래서 `EXTERNAL_WRITE` 만 켠 채로는 아무것도 하지 않는다."""
+        for rel, name in PUBPR_ENTRY_POINTS:
+            with self.subTest(entry=f"{rel}:{name}"):
+                body = statements(function_node(parse(rel), name))
+                self.assertTrue(len(body) > 1 and is_branch_gate_call(body[1]), f"{rel}:{name} 의 둘째 문장이 좁은 관문이 아니다 — {ast.unparse(body[1])[:80] if len(body) > 1 else '(없다)'}")
+        body = statements(function_node(parse("service/pages_flow.py"), "run_pages_publish"))
+        self.assertTrue(is_gate_call(body[0]) and ast.unparse(body[1].value.func) == "require_confirmation" and is_branch_gate_call(body[2]), "올리기: 관문 → 확인 → 좁은 관문")
+
+    def test_the_git_runner_asks_for_the_narrow_gate_before_any_network_command_and_the_old_main_pushing_names_are_gone(self):
+        """네트워크 명령은 `run_git` 한 곳에서 인자 표(`network_shape`)를 지난 뒤 좁은 관문을 한 번 더 지난다. main 으로 올리던 `push_commit`·`publish_post` 는 어디에도 없다."""
+        run_git = function_node(parse("publish/gitrepo.py"), "run_git")
+        text = ast.unparse(run_git)
+        self.assertLess(text.index("network_shape(args)"), text.index("require_net('pages_branch'"), "인자 표가 먼저, 좁은 관문이 그다음")
+        self.assertLess(text.index("require_net('pages_branch'"), text.index("run_command("), "하위 프로세스를 띄우기 전에")
+        for path in src_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            names = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
+            self.assertFalse(names & {"push_commit", "publish_post", "_rebase", "PushInfo"}, path.name)
 
     def test_the_two_online_entry_points_pass_the_gate_first_inside_their_online_branch(self):
         for rel, name in CONDITIONAL_ENTRY_POINTS:
@@ -308,10 +342,15 @@ class RefusalWithoutOutgoingCallsTest(unittest.TestCase):
             "sync_latest": lambda: gitrepo.sync_latest(repo, self.spy_git),
             "check_push_access": lambda: gitrepo.check_push_access(repo, self.spy_git),
             "commit_post": lambda: pages.commit_post(repo, self.post, git=self.spy_git),
-            "push_commit": lambda: pages.push_commit(repo, self.post, git=self.spy_git),
             "discard_commit": lambda: pages.discard_commit(repo, info, git=self.spy_git),
-            "publish_post": lambda: pages.publish_post(repo, self.post, git=self.spy_git),
             "check_deployed": lambda: deploy.check_deployed(repo, self.post.path, self.post.text),
+            # PUBPR — 새 가지에 올리는 길의 저수준 함수도 꺼진 채에는 하위 프로세스를 한 번도 띄우지 않는다
+            "fetch_main": lambda: gitrepo.fetch_main(repo, self.spy_git),
+            "remote_branch_tip": lambda: gitrepo.remote_branch_tip(repo, "desktop/post-20261102-103012-3bf91f62", self.spy_git),
+            "build_branch_commit": lambda: pages.build_branch_commit(repo, self.post, git=self.spy_git),
+            "push_branch": lambda: pages.push_branch(repo, pages.BranchCommit(self.post.path, "desktop/post-20261102-103012-3bf91f62", "c" * 40, "b" * 40), self.post, git=self.spy_git),
+            "post_on_main": lambda: pages.post_on_main(repo, self.post, git=self.spy_git),
+            "branch_on_remote": lambda: pages.branch_on_remote(repo, "desktop/post-20261102-103012-3bf91f62", git=self.spy_git),
         }
         for label, call in cases.items():
             with self.subTest(label=label):
@@ -326,6 +365,8 @@ class RefusalWithoutOutgoingCallsTest(unittest.TestCase):
             "run_pages_publish(no wait)": lambda: pages_flow.run_pages_publish(self.ctx, self.project_id, confirmed=True, wait=False),
             "check_pages_deploy": lambda: pages_flow.check_pages_deploy(self.ctx, self.project_id),
             "cancel_pages_publish": lambda: pages_flow.cancel_pages_publish(self.ctx, self.project_id, confirmed=True),
+            "merge_check_pages": lambda: pages_flow.merge_check_pages(self.ctx, self.project_id),
+            "abandon_pages_publish": lambda: pages_flow.abandon_pages_publish(self.ctx, self.project_id, confirmed=True),
         }
         for label, call in cases.items():
             with self.subTest(label=label):
@@ -334,11 +375,13 @@ class RefusalWithoutOutgoingCallsTest(unittest.TestCase):
         self.assertEqual(ss.status_of(self.ctx, self.project_id), "APPROVED", "글의 상태도 그대로다")
 
     def test_a_git_backend_refuses_its_write_and_network_methods_before_calling_git(self):
-        backend = GitPagesBackend(git=self.spy_git, expected_origin=ss.LOCAL_ORIGIN)
+        backend = GitBranchBackend(git=self.spy_git, expected_origin=ss.LOCAL_ORIGIN)
         info = pages.CommitInfo(ss.KO_PATH, "c" * 40, "b" * 40)
+        built = pages.BranchCommit(ss.KO_PATH, "desktop/post-20261102-103012-3bf91f62", "c" * 40, "b" * 40)
         repo = self.tmp / "chanceblog"
-        cases = {"check_push_access": lambda: backend.check_push_access(repo), "commit": lambda: backend.commit(repo, self.post, "제목"), "push": lambda: backend.push(repo, self.post),
-                 "discard": lambda: backend.discard(repo, info), "check_deployed": lambda: backend.check_deployed(repo, self.post, ss.NOW, 1, 1)}
+        cases = {"check_push_access": lambda: backend.check_push_access(repo), "build_branch_commit": lambda: backend.build_branch_commit(repo, self.post, "제목"),
+                 "push_branch": lambda: backend.push_branch(repo, built, self.post), "branch_on_remote": lambda: backend.branch_on_remote(repo, built.branch),
+                 "post_on_main": lambda: backend.post_on_main(repo, self.post), "discard": lambda: backend.discard(repo, info), "check_deployed": lambda: backend.check_deployed(repo, self.post, ss.NOW, 1, 1)}
         for label, call in cases.items():
             with self.subTest(label=label):
                 self.refused(label, call)
@@ -346,7 +389,7 @@ class RefusalWithoutOutgoingCallsTest(unittest.TestCase):
 
     def test_the_command_line_commands_refuse_whatever_the_flags_say(self):
         argvs = (["publish-pages", self.project_id], ["publish-pages", self.project_id, "--yes"], ["publish-pages", self.project_id, "--yes", "--no-wait"],
-                 ["publish-pages", self.project_id, "--cancel", "--yes"], ["check-deploy", self.project_id], ["doctor", "--online"])
+                 ["publish-pages", self.project_id, "--cancel", "--yes"], ["check-deploy", self.project_id], ["doctor", "--online"], ["merge-check", self.project_id], ["abandon", self.project_id, "--yes"])
         for argv in argvs:
             with self.subTest(argv=" ".join(argv[:1] + argv[2:])), og.Tripwire() as wire:
                 out, err = io.StringIO(), io.StringIO()
@@ -387,8 +430,9 @@ class DefaultsTest(unittest.TestCase):
         self.assertIsNone(backend.orphan_commit(repo, "x", "경제·일", "ko"))
         self.assertIsNone(backend.progress)
         for label, call in {"head_commit": lambda: backend.head_commit(repo), "current_commit": lambda: backend.current_commit(repo, ss.KO_PATH), "check_push_access": lambda: backend.check_push_access(repo),
-                            "commit": lambda: backend.commit(repo, post, "제목"), "push": lambda: backend.push(repo, post), "discard": lambda: backend.discard(repo, None),
-                            "check_deployed": lambda: backend.check_deployed(repo, post, ss.NOW, 1, 1)}.items():
+                            "build_branch_commit": lambda: backend.build_branch_commit(repo, post, "제목"), "push_branch": lambda: backend.push_branch(repo, None, post),
+                            "branch_on_remote": lambda: backend.branch_on_remote(repo, "desktop/post-20261102-103012-3bf91f62"), "post_on_main": lambda: backend.post_on_main(repo, post),
+                            "discard": lambda: backend.discard(repo, None), "check_deployed": lambda: backend.check_deployed(repo, post, ss.NOW, 1, 1)}.items():
             with self.subTest(label=label), self.assertRaises(AppError) as caught:
                 call()
             self.assertEqual(caught.exception.code, "EXTERNAL_WRITE_DISABLED")

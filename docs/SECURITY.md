@@ -622,9 +622,9 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 | `update_check` 길이 자리표시자다(소유자·저장소 구간이 자유롭다) — 이 용도를 여는 `NET_UPDATE_CHECK` 는 길이 확정되기 전에는 출하 표에 오를 수 없다 | 묶였다: `endpoints.PLACEHOLDER_USES` 와 `test_net_switches` 의 `test_a_use_whose_route_is_still_a_placeholder_cannot_ship_open`(어기면 CI 가 빨개진다) | UPDATE 가 소유자·저장소를 상수 하나에서 만들어 길을 확정하고 목록에서 뺀다 |
 | 출하 표에 스위치가 오르면 `--selftest` 의 `tls` 점검이 실패 조건이고 빌드는 `tls` 줄이 없는 묶음을 거절한다 | 묶였다: `gui_entry.check_tls`·`build_package.judge_selftest`·`TlsCheckTest` | (이미 묶임) |
 | `PACKAGE_INFO`·정보 카드에 '열린 스위치 이름' 칸이 아직 없다(설계서 3.3) — 켜는 순간 몰래 열린 채가 아님을 카드로 보이려면 필요하다 | 안 묶임 | GUI·RELEASE |
-| `pages_branch` 용도는 호출하는 곳이 0(죽은 관문)이다 — git 하위 프로세스 함수마다 둘째 관문이 없다 | 안 묶임 | PUBPR 가 함수마다 `require_net("pages_branch", …)` 를 더한다 |
-| git 하위 프로세스(`pages_branch` 길)의 환경이 정리되지 않는다 — `_git_env()` 는 `GIT_DIR` 같은 몇 개만 지우고 나머지 환경 변수를 그대로 물려주므로, 인증서 검증을 끄거나(`GIT_SSL_NO_VERIFY`) 믿는 곳을 바꾸거나(`GIT_SSL_CAINFO`·`GIT_SSL_CAPATH`) 설정을 덮어쓰거나(`GIT_CONFIG_*`) 통신 내용·세션 비밀을 기록하게 하는(`GIT_TRACE_CURL`·`GIT_CURL_VERBOSE`·`SSLKEYLOGFILE`) 변수가 올리기 길에 그대로 닿는다. 접속 틀(`net/client.py`)에 있는 방어(`SSL_CERT_FILE`·`SSL_CERT_DIR` 가 있으면 접속하지 않고 세션 비밀 로그 환경 변수는 읽지도 않는다)가 이쪽에는 없다 | 안 묶임(지금은 `EXTERNAL_WRITE` 가 꺼져 있어 git 하위 프로세스가 한 번도 뜨지 않는다. 시험 `GitSubprocessEnvironmentDocTest` 는 이 행과 코드가 어긋나는 것만 잡는다) | PUBPR 가 `pages_branch` 를 켜기 전에 `_git_env()` 에서 위 변수를 지우거나(있으면 올리기를 거절하고) 시험을 더하고, 그때 이 행을 '묶였다' 로 바꾸며 위 시험을 뒤집는다 |
-| 사이트 호스트 표(소유자의 `github.io`)가 연결한 저장소 설정의 주소 호스트와 다르면(맞춤 도메인) 접속 전에 `UNEXPECTED_ERROR` 로 보인다 | 안 묶임 | PUBPR 가 쉬운 안내 문구와 시험을 더한다 |
+| `pages_branch` 용도를 호출하는 곳이 0(죽은 관문)이었다 — git 하위 프로세스 함수마다 둘째 관문이 없었다 | 묶였다(PUBPR): git 을 돌리는 함수(`run_git` 의 네트워크 모양·`build_branch_commit`·`push_branch`·`branch_on_remote`·`post_on_main`·어댑터 메서드·`merge_check_pages`·`abandon_pages_publish` 와 명령줄 `merge-check`·`abandon`)가 첫 문장 `require_external_write`, 둘째 문장 `require_net("pages_branch", …)` 이다 — `test_external_write_gate` 의 둘째 관문 시험과 낡은 이름 금지 시험이 지킨다 | PUBPR(끝남) |
+| git 하위 프로세스(`pages_branch` 길)의 환경에서 인증서 검증을 끄거나(`GIT_SSL_NO_VERIFY`) 믿는 곳을 바꾸거나(`GIT_SSL_CAINFO`·`GIT_SSL_CAPATH`) 설정을 덮어쓰거나(`GIT_CONFIG_*`) 통신 내용·세션 비밀을 기록하게 하는(`GIT_TRACE_CURL`·`GIT_CURL_VERBOSE`·`SSLKEYLOGFILE`) 변수는 올리기 길에 닿기 전에 지워진다 — `_git_env()` 가 그 이름과 `GIT_CONFIG`·`GIT_TRACE` 로 시작하는 모든 변수·`GIT_ALLOW_PROTOCOL` 을 지우고, 모든 git 호출에 항상 붙는 `-c` 설정(`http.sslVerify=true`·`push.followTags=false`·`push.default=nothing`·`protocol.allow=never` + https·ssh 만 always …)이 사용자 설정 위에서 한 번 더 덮어쓴다 | 묶였다(PUBPR): `test_pages_branch_policy.EnvironmentTest`·`ConfigOverridesTest` 와 `test_net_switches.GitSubprocessEnvironmentDocTest`(이 행과 코드가 어긋나면 빨개진다) | PUBPR(끝남 — 위 시험이 어긋남을 잡는다) |
+| 사이트 호스트 표(소유자의 `github.io`)가 연결한 저장소 설정의 주소 호스트와 다르면(맞춤 도메인) 접속 전에 `UNEXPECTED_ERROR` 로 보였다 | 묶였다(PUBPR): 기본 길(접속 틀)로 공개 확인을 하기 전에 `deploy.require_pages_host` 가 호스트를 견주어 12분을 기다리지 않고 쉬운 안내(`CONTENT_INVALID` — 이 주소의 호스트는 앱이 확인하는 곳이 아니다)로 알린다 — `test_pages_deploy_via_net` | PUBPR(끝남) |
 | 접속 호출은 화면이 아닌 작업 스레드에서 해야 한다(이름 풀이는 끊을 수 없고 주소가 여럿이면 연결이 주소마다 최대 10초라 총 30초를 넘길 수 있다) | 문서 | GUI·UPDATE·BLOGGER |
 | 첫 실제 접속(운영자 실기)에서 `Accept-Encoding: identity` 수용·`Connection: close` 응답·릴리스 이동 호스트를 확인한다 | 안 묶임 | UPDATE·PUBPR·BLOGGER |
 
@@ -717,3 +717,39 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 | T-26 | 내려받기 목적지 속임 | 목적지는 호출하는 쪽이 정한 새 파일 한 곳, 응답이 정한 이름은 쓰지 않음 | `FileDownloadTest` |
 
 > **정직한 한계**: 소스 훑기 탐지기는 정직한 코드의 회귀 그물이지 일부러 숨기는 코드를 막는 방어가 아니다(위 '허용 목록' 절의 `HONEST_LIMITS` 와 같은 이야기). 이 틀의 안전은 탐지기 하나에 기대지 않고 **관문 · 어댑터 등록 · 스위치 · 접속 0 시험** 네 겹이 함께 막는다. 알려진 한계 둘: 이름 풀이 시간은 끊을 수 없다 · 중복 요청 거절은 `NET_COOLDOWN` 코드를 재사용해 문구가 완벽히 맞지는 않는다(GUI 가 단추를 막는 것이 1차 방어).
+
+## Pages 가지 올리기(PUBPR 갈래 — D-740에서 D-748, 운영자 확인 038 ②: 설계와 구현 준비까지, 스위치는 모두 꺼진 채)
+
+글을 연결한 `chanceblog` 의 **원격 main 에 곧바로 올리던 길을 없애고** 새 가지 하나(`desktop/post-<날짜>-<시각>-<8자 16진수>`)에만 올린다. 병합은 사람이 GitHub 에서 하고(앱은 PR 을 만들지도 병합하지도 않고 비교 화면 주소를 **글자로만** 보여 준다) 앱은 사용자가 '병합 확인' 을 누를 때만 원격 main 에 같은 글이 들어갔는지 읽는다. 켜는 일(`EXTERNAL_WRITE`·`PAGES_BRANCH_PUSH` 를 `True` 로 바꾸는 소스 변경)은 구현·독립 검증 뒤 새 번호로 다시 승인받는다 — 이 절의 스위치는 모두 False 이고, 아래 시험은 시험 안에서만 '임시로 켠 것처럼' 패치해 로컬 bare 저장소·루프백에서 돈다.
+
+### 설계서 불변 — 원격 main 은 한 번도 앱 때문에 움직이지 않는다
+
+- 앱은 main 으로 가는 올리기 인자를 만드는 코드가 `src/` 어디에도 없다(`refs/heads/main` 이 든 글은 원격 main 을 **받는** 상수 한 곳뿐 — `test_pages_branch_policy.SourceHasNoMainRefspecTest` 가 소스를 훑는다).
+- 전 과정 시험(`test_pages_branch_flow`)이 승인 → 가지 → 병합 확인 → 공개 확인의 단계마다 원격 main 의 커밋 번호를 `git rev-parse` 로 적어, 시험 자신이 병합을 흉내 내는 한 곳에서만 바뀌고 앱의 어떤 단계에서도 안 바뀜을 보인다. 대조 시험(`test_pages_branch_build.PushTest.test_control_experiment_a_direct_push_to_main_would_move_it_without_the_policy`)은 같은 저장소에서 앱 밖의 git 이 main 을 **실제로 움직임**을 보여 '0' 이 빈 실험이 아님을 확인한다.
+- 앱은 원격 가지·글을 지우지 않는다(`abandon` 도 상태만 바꾼다)·PR 을 만들지 않는다·병합하지 않는다·Git 로그인(비밀번호·토큰)을 읽거나 저장하거나 출력하지 않는다·`git credential` 계열을 부르지 않는다.
+
+### 네 겹(어느 한 겹이 뚫려도 나머지가 막는다)
+
+| 겹 | 내용 | 시험 |
+|---|---|---|
+| 1. git 인자 표 | `gitrepo.run_git` 이 하위 프로세스를 띄우기 **전에** 네트워크 명령(`fetch`·`push`·`ls-remote`·`pull`·`clone`)이 정해진 **네 모양**(원격 main 받기·가지 확인·새 가지 하나 올리기·올리기 점검 `--dry-run`)인지 본다. 그 밖(main·`+`·강제·삭제·태그·`--mirror`·`--all`·`--prune`·두 refspec·`origin` 대신 주소·앞에 끼운 전역 옵션 `-c alias…`·`remote update`·`config` 쓰기·`credential` 등)은 `PAGES_PUSH_REFUSED` | `test_pages_branch_policy`(PT-01·02·08) |
+| 2. 가지 이름 | 상수 접두사 + 숫자 + 16진수뿐(제목·분야·태그에서 온 글자 0)이고 정규식 전체 일치만 받는다. `ai/claude/**` 가 아니라 `desktop/` 아래라 블로그 저장소의 요청·자동 병합 부탁 흐름을 깨우지 않는다 | PT-03·04 |
+| 3. 고정 설정과 환경 | 모든 git 호출에 항상 붙는 `-c`(`http.sslVerify=true`·`push.followTags=false`·`push.default=nothing`·`protocol.allow=never` + https·ssh 만 always·훅 끔·서명 끔 …)가 사용자 설정을 덮어쓰고, 환경에서 인증서 검증·설정 덮어쓰기·통신 기록 변수가 지워진다 | PT-05·EnvironmentTest |
+| 4. 소스 훑기 | `src/` 에 main 으로 가는 올리기 인자를 만드는 곳이 없다(AST) | PT-06 |
+
+시험 접합부 한 가지: `gitrepo._EXTRA_TRANSPORTS`(기본 비어 있음 — https·ssh 만 허용)는 진짜 git·로컬 bare 저장소 시험이 `file` 전송을 **시험 안에서만** 더하는 곳이다. 생산 코드는 이 값을 바꾸지 않는다(시험이 `src/` 를 훑어 확인한다).
+
+### 새 가지는 객체로만 만든다(B1)
+
+`pages.build_branch_commit` 은 받은 원격 main 위에 글 파일 하나를 더한 커밋을 `hash-object -w --no-filters`·`mktree`(세 단계: 분야 폴더·`_posts`·루트)·`commit-tree` 로 **객체로만** 만든다 — 작업 폴더의 파일·색인·로컬 가지·HEAD 는 한 바이트도 바뀌지 않는다(시험이 색인 파일 바이트까지 견준다). 올라간 글은 승인한 글과 한 글자도 다르지 않다(줄바꿈 변환·`.gitattributes` 의 `eol=crlf` 가 있어도). 만든 커밋은 올리기 직전에 한 번 더 '부모 하나·글 파일 하나 추가(`A`)·내용 같음' 을 확인한다. 같은 일을 두 번 해도 같은 결과다: 발행 기록에 `built` 를 push 전에 적고, 원격에 같은 가지가 같은 끝으로 있으면 보내지 않고 이어 가며, 끝이 다르면 덮어쓰지 않고 `PAGES_PUSH_REFUSED`(이름 충돌).
+
+### 상태·저장
+
+`APPROVED → MERGE_PENDING(새 가지에 올림) → PUSHED(병합 확인) → PUBLISHED(공개 확인)`. 병합 기다리는 글은 한 저장소에 최대 3개(`PAGES_MERGE_LIMIT`). 병합 확인은 **사용자가 누를 때만**이고 원격 main 의 그 경로 내용을 **내용으로** 견주므로(일반 병합·squash·rebase 가리지 않는다) 같은 경로에 다른 글이면 `PAGES_MERGE_DIFFERENT` 로 멈추고 공개 확인을 하지 않는다. 보관함 식별자(`가지@40자 커밋`)는 PUSHED 까지 남아 발행 기록 파일이 없어도(백업 복원) 가지 이름의 시각·글 머리말로 글 경로를 다시 만든다. 보관함 판 2→3(표 모양은 같고 `.v2.bak` 사본을 남긴다 — 옛 프로그램은 판 3 을 `STORE_VERSION_UNSUPPORTED` 로 거절한다)·발행 기록 판 1→2(`branch` 칸 추가, 판 1 기록은 계속 읽는다)다.
+
+### 사실대로 적는 한계
+
+- **옛 `COMMITTED` 글**(옛 방식으로 main 에 곧바로 commit 해 둔 글)은 읽기만 하고 `--cancel` 로 이 PC 의 기록만 되돌릴 수 있다. 되돌리기(`discard_commit`)의 **네트워크 받기 확인을 뺐다** — 원격에 이미 올라갔는데 이 PC 의 원격 기록이 옛것이면 되돌려 버릴 수 있다(새 흐름은 이 상태를 만들지 않아 옛 데이터에만 해당. 외부 쓰기는 2026-11-11 부터 꺼져 있어 있을 가능성이 낮다). `commit_post`·`sync_latest`(로컬 빨리감기)는 옛 글을 이해·되돌리는 시험 준비용으로 남아 있고 새 흐름은 부르지 못한다.
+- **서버 쪽 훅은 로컬 전송에서 못 돌린다**: 모든 git 호출에 `core.hooksPath` 를 비우는 `-c` 가 붙고 로컬 `file` 전송은 그 설정을 서버 쪽 프로세스에 물려주므로 bare 저장소의 `update` 훅이 돌지 않는다. 그래서 서버가 main 갱신을 거절하는 시험은 `receive.hideRefs` 로 한다(PT-17). 실제 GitHub 의 보호 규칙·관리자 우회는 운영자 실기에서 확인한다.
+- **PC 의 Git 로그인 범위는 앱이 줄이지 못한다**: 운영자 권고는 이 저장소 하나로 좁힌 세분화 토큰(Contents 읽기·쓰기만, 만료일 지정)이고 main 보호 규칙은 따로 결정한다(앱 쪽 방어가 주 방어다). 앱 연결 해제(`disconnect`)는 설정의 `repo_path` 한 칸만 비운다.
+- **실제 GitHub 에서 처음 올리는 일(운영자 실기)**: `push --dry-run`(올리기 점검)의 서버 응답·인증 창 동작·`Connection: close` 응답·맞춤 도메인 안내는 가짜 세계로만 확인했다.

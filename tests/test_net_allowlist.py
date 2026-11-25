@@ -409,7 +409,7 @@ class VendorFetchTest(unittest.TestCase):
 class NarrowGateTest(unittest.TestCase):
     """NT-13(쓰기·올리기 흐름 쪽)·NT-17 — 공개 주소 확인 네 곳은 첫 문장이 옛 관문(`require_external_write`), **둘째 문장이 좁은 관문**(`require_net('pages_site', …)`)이다. `EXTERNAL_WRITE` 만 켠 채로는 전송기·하위 프로세스·가짜 backend 를 한 번도 부르기 전에 `NETWORK_DISABLED` 로 거절한다."""
 
-    SITES = (("publish/deploy.py", "check_deployed"), ("service/backend.py", "GitPagesBackend.check_deployed"), ("service/pages_flow.py", "check_pages_deploy"), ("service/cli.py", "cmd_check_deploy"))
+    SITES = (("publish/deploy.py", "check_deployed"), ("service/backend.py", "GitBranchBackend.check_deployed"), ("service/pages_flow.py", "check_pages_deploy"), ("service/cli.py", "cmd_check_deploy"))
 
     def test_every_public_check_entry_point_passes_both_gates_as_its_first_two_statements(self):
         import test_external_write_gate as gate
