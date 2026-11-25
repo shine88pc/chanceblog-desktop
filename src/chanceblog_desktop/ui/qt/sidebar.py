@@ -16,7 +16,7 @@ from . import components as UI
 from . import theme
 
 
-TITLE_GAP = 2                                                                                  # 묶음 이름 아래 여백 — 옛 4(`K.SPACE["1"]`). 의도적 갱신(P4e, D-282): 사이드바 최소 높이를 한도 500 안에 두려고 줄였다(토큰에 2 가 없어 상수로 둔다)
+TITLE_GAP = 0                                                                                  # 묶음 이름 아래 여백 — 옛 4(`K.SPACE["1"]`)에서 2(의도적 갱신(P4e, D-282): 사이드바 최소 높이를 한도 500 안에 두려고 줄였다, 토큰에 2 가 없어 상수로 둔다), 다시 0(의도적 갱신(글 흐름 1a, D-638): 글 검토가 일곱째 메뉴가 되어 항목 간격을 없애고도 496 이라 '사이드바 높이 492 경보'를 넘었다 — 묶음 이름 넷 × 2 = 8 을 줄여 488)
 
 
 def gap(layout):
@@ -58,7 +58,7 @@ class Sidebar(QFrame):
         pad = K.FRAME["sidebar_pad"]
         layout = QVBoxLayout(self)
         layout.setContentsMargins(pad, K.SPACE["1"], pad, K.SPACE["1"])                  # 위아래 4 — 메뉴가 하나 늘어(블로그 관리, P4b D-210: 16→8) 또 하나 늘어(초안 작성, P4e D-282: 8→4) 최소 창(900×560)에서도 사이드바가 들어가게 세로 여백을 줄였다
-        layout.setSpacing(K.SPACE["1"])
+        layout.setSpacing(0)                                                               # 의도적 갱신(글 흐름 1a, D-637): 글 검토 메뉴가 하나 더 늘어 사이드바 최소 높이가 540(한도 500)이 되었다 — 줄 높이(44)·글자·아이콘은 그대로 두고 항목 사이 4 를 없애 496 이 되었고(처음 문서의 480 은 틀린 숫자), 시험의 경보 492 는 올리지 않고 묶음 이름 아래 여백(`TITLE_GAP`)을 0 으로 줄여 488 로 맞췄다(D-638; 묶음 사이는 `gap` 이 그대로 띄운다)
         self.nav_buttons = {}                                                              # 실제로 열 수 있는 화면(홈·설정)만
         self.group_titles = {}                                                             # 묶음 이름 — 실제 메뉴가 있는 묶음만 있다
         for index, (group_key, label_key, items) in enumerate(nav_groups()):
