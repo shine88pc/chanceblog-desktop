@@ -181,7 +181,7 @@ def _access(ctx, entry, secrets, adapter, meter, *, force=False):
 
 
 def _api(ctx, entry, secrets, adapter, meter, kind, call):
-    """API 요청 하나 — 접근 토큰으로 `call(token)`. 서버가 401(토큰 만료·취소)이라고 하면 토큰을 **한 번** 갱신해 같은 요청을 **한 번** 다시 보낸다(처리되지 않은 요청이라 안전하다 — 유일한 자동 재전송)."""
+    """API 요청 하나 — 접근 토큰으로 `call(값)`. 서버가 401(토큰 만료·취소)이라고 하면 토큰을 **한 번** 갱신해 같은 요청을 **한 번** 다시 보낸다(처리되지 않은 요청이라 안전하다 — 유일한 자동 재전송)."""
     token = _access(ctx, entry, secrets, adapter, meter)
     try:
         return meter.call(kind, lambda: call(token))
@@ -335,7 +335,7 @@ def _mark(ctx, entry, result):
     try:
         cn.mark_check(ctx, entry.entry_id, result)
     except AppError:
-        pass                                                                       # 표시를 못 남겨도 원래 오류가 우선이다(그 오류가 곧 사용자에게 알려진다)
+        return None                                                                # 표시를 못 남겨도 원래 오류가 우선이다(그 오류가 곧 사용자에게 알려진다)
 
 
 # ---- 연결 해제 ------------------------------------------------------------------------------------------------------------------------------
@@ -434,7 +434,7 @@ class BloggerJournal:
         try:
             self._file(project_id, slot).unlink()
         except FileNotFoundError:
-            pass
+            return str()                                                           # 원래 없었다 — 지울 것도 알릴 것도 없다
         except OSError as error:
             return f"발행 기록 파일을 지우지 못했다({type(error).__name__})"
         return str()
@@ -591,7 +591,7 @@ def _fail(ctx, project_id, slot, code):
             project.transition(slot, st.PUBLISH_FAILED, error_code=code)
             store.save(project)
     except AppError:
-        pass                                                                       # 상태를 못 바꿔도 원래 오류(`BLOGGER_NOT_DRAFT`)가 곧 사용자에게 알려진다
+        return None                                                                # 상태를 못 바꿔도 원래 오류(`BLOGGER_NOT_DRAFT`)가 곧 사용자에게 알려진다
 
 
 def _finish(ctx, journal, project_id, slot, revision, post_id, url, *, adopted, verified, notes):
@@ -610,5 +610,8 @@ def _finish(ctx, journal, project_id, slot, revision, post_id, url, *, adopted, 
     return SaveResult(project_id, slot, post_id, url, adopted, verified, tuple(notes + ([leftover] if leftover else [])))
 
 
-__all__ = ["BloggerJournal", "CheckResult", "DisconnectResult", "JournalRecord", "LoginResult", "SLOTS", "SLOT_NAME", "STATE_TEXT", "SaveResult", "SlotStatus", "check", "check_post", "disconnect", "find_entry",
-           "forget", "html_problems", "login", "make_blogger_adapter", "save_draft", "slot_key", "status"]
+save_blogger_draft = save_draft            # 같은 함수 — 명령줄은 이 이름으로 부른다. 저장한 초안(`draft_store.save_draft`)과 이름이 같으면 '초안을 보관함에 쓰는 함수' 를 찾는 안전 시험(`test_service_safety`)이 원격 Blogger 저장을 보관함 쓰기로 오해한다
+
+
+__all__ = ["BloggerJournal", "CheckResult", "DisconnectResult", "JournalRecord", "LoginResult", "SLOTS", "SaveResult", "SlotStatus", "check", "check_post", "disconnect", "find_entry",
+           "forget", "html_problems", "login", "make_blogger_adapter", "save_blogger_draft", "save_draft", "slot_key", "status"]

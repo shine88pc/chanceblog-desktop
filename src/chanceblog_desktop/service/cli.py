@@ -1140,7 +1140,7 @@ def cmd_blogger_save_draft(ctx, args):
     capabilities.require_external_write("Blogger 초안 저장(blogger save-draft)")
     capabilities.require_net("blogger_draft", "Blogger 초안 저장(blogger save-draft)")        # 둘째 문장: 좁은 스위치도 함께(BLOGGER 설계서 3.3)
     flow = _blogger_flow()
-    result = flow.save_draft(ctx, args.id, args.slot, confirmed=args.yes, tags=split_list(getattr(args, "tags", "")), keystore=ctx.get_keystore())
+    result = flow.save_blogger_draft(ctx, args.id, args.slot, confirmed=args.yes, tags=split_list(getattr(args, "tags", "")), keystore=ctx.get_keystore())
     lines = [("Blogger 에 이미 있던 같은 제목의 초안을 이어받았어요." if result.adopted else "Blogger 에 초안으로 저장했어요(공개는 하지 않았어요)."), f"  글 번호(Blogger): {result.post_id}"]
     lines += [f"  주소: {result.url}"] if result.url else []
     lines += [f"  참고: {note}" for note in result.notes]
