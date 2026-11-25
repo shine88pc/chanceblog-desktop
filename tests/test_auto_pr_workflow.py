@@ -588,7 +588,7 @@ class BehaviorTest(unittest.TestCase):
         cls.cache, cls.serial = {}, 0
 
     def run_case(self, key, message=MESSAGE, branch=BRANCH, sha=SHA, prlist="0", head=None, runs=("completed:success",), ahead=("1",), post="ok",
-                 poll="1", wait="60", message_fail=False, extra=None, drop=(), locale="C"):
+                 poll="1", wait="60", message_fail=False, extra=None, drop=(), locale="C", timeout=180):
         cache = type(self).cache
         if key in cache:
             return cache[key]
@@ -620,7 +620,7 @@ class BehaviorTest(unittest.TestCase):
             env[name] = value
         for name in drop:
             env.pop(name, None)
-        proc = subprocess.run([BASH, step.as_posix()], cwd=work, env=env, capture_output=True, timeout=180, stdin=subprocess.DEVNULL)
+        proc = subprocess.run([BASH, step.as_posix()], cwd=work, env=env, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
         out = proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
         result = Result(proc.returncode, out, folder)
         result.work = work
@@ -845,7 +845,8 @@ class BehaviorTest(unittest.TestCase):
 
     def test_the_defaults_are_thirty_seconds_and_forty_minutes_when_the_timing_values_are_not_numbers(self):
         # 이름의 forty_minutes 는 옛 값이다 — D-719 가 기본 기다림을 60분(3600초)으로 올렸다. 이름을 바꾸면 시험 id 가 사라지므로 그대로 두고 값만 고쳤다.
-        r = self.run_case("default_timing", runs=["in_progress:none"], extra={"AUTOPR_POLL_SECONDS": "abc", "AUTOPR_MAX_WAIT_SECONDS": "-5"})
+        # D-719: 기본 기다림이 3600초라 30초 간격으로 120번 돈다(전엔 80번) — 느린 PC·러너에서도 사례당 한도(기본 180초)에 걸려 오류가 나지 않게 이 사례만 한도를 480초로 늘렸다(시험의 조건은 그대로).
+        r = self.run_case("default_timing", runs=["in_progress:none"], extra={"AUTOPR_POLL_SECONDS": "abc", "AUTOPR_MAX_WAIT_SECONDS": "-5"}, timeout=480)
         self.assertEqual((r.code, r.count("post")), (0, 0), r.out)
         self.assertEqual(r.sleeps, ["30"] * 120)                                 # 30초 간격으로 3600초(60분)
         self.assertEqual(r.count("runs"), 121)
