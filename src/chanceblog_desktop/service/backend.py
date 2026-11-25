@@ -1,8 +1,8 @@
-"""연결한 chanceblog 저장소에 대한 실제 일 — 확인·commit·push·되돌리기·배포 확인을 기존 모듈(`publish/`)에 맡긴다.
+"""연결한 chanceblog 저장소에 대한 실제 일 — 확인·새 가지 만들기와 올리기·병합 확인·되돌리기·배포 확인을 기존 모듈(`publish/`)에 맡긴다(PUBPR — 어댑터는 `pages_git` 하나이고 main 으로 올리는 길은 없다).
 
 서비스 함수들은 이 객체의 메서드만 부른다(`Context.backend`). 시험은 이 객체를 가짜로 바꿔 끼워 git·네트워크 없이 상태 흐름을 확인하고,
 진짜 git 시험은 이 객체에 진짜 `git` 실행기와 로컬 bare 저장소를 쓴다. 여기서 직접 쓰는 git 명령은 읽기 전용뿐이다(`rev-parse`·`ls-tree`·`rev-list`·`cat-file`) —
-쓰기(commit·push·되돌리기)는 모두 `publish/pages.py` 의 함수가 한다(강제 push 없음·그 글 하나만·훅과 서명 끔).
+쓰기(글 커밋 객체 만들기·새 가지 올리기·옛 기록 되돌리기)는 모두 `publish/pages.py` 의 함수가 한다(강제 push 없음·새 가지 하나·그 글 하나만·훅과 서명 끔).
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _made_by_the_app(path, category, lang):
         return False
 
 
-class GitPagesBackend:
+class GitBranchBackend:
     def __init__(self, *, git=gitrepo.run_git, expected_origin=gitrepo.EXPECTED_ORIGIN, fetcher=None, sleep=None, monotonic=None):
         self.git = git
         self.expected_origin = expected_origin
@@ -47,8 +47,9 @@ class GitPagesBackend:
         return gitrepo.inspect_repo(repo, self.git, self.expected_origin)
 
     def check_push_access(self, repo):
-        """`git push --dry-run` — 실제로는 올리지 않는다(네트워크를 쓴다)."""
+        """`git push --dry-run` — 새 가지를 올릴 수 있는지만 본다(실제로는 올리지 않는다·main 은 시도하지 않는다 — 네트워크를 쓴다)."""
         capabilities.require_external_write("올리기 권한 점검")
+        capabilities.require_net("pages_branch", "올리기 권한 점검")                    # 둘째 문장: 좁은 스위치도 함께(D-736)
         return gitrepo.check_push_access(repo, self.git, self.expected_origin)
 
     def unpushed_count(self, repo):
@@ -151,16 +152,33 @@ class GitPagesBackend:
             return None
         return pages.CommitInfo(path, head.stdout.strip(), base.stdout.strip())
 
-    # ---- 쓰는 일(모두 publish/pages.py 가 한다) ----------------------------------------------------------------------------
-    def commit(self, repo, post, title):
-        capabilities.require_external_write("글 기록(commit)")
-        return pages.commit_post(repo, post, title=title, git=self.git, expected_origin=self.expected_origin)
+    # ---- 쓰는 일(모두 publish/pages.py 가 한다 — 새 가지에만 올리고 원격 main 은 읽기만 한다) ----------------------------------------
+    def build_branch_commit(self, repo, post, title):
+        """받은 원격 main 위에 글 파일 하나를 더한 커밋을 **객체로만** 만든다(작업 폴더·색인·가지·HEAD 불변) → `BranchCommit`."""
+        capabilities.require_external_write("새 가지에 올릴 글 커밋 만들기")
+        capabilities.require_net("pages_branch", "새 가지에 올릴 글 커밋 만들기")      # 둘째 문장: 좁은 스위치도 함께(D-736)
+        return pages.build_branch_commit(repo, post, title=title, git=self.git, expected_origin=self.expected_origin)
 
-    def push(self, repo, post):
-        capabilities.require_external_write("원격 main 에 올리기")
-        return pages.push_commit(repo, post, git=self.git, expected_origin=self.expected_origin)
+    def push_branch(self, repo, built, post):
+        """만든 커밋을 새 가지 하나에 올린다(같은 가지가 같은 끝으로 이미 있으면 보내지 않고 이어 간다) → `BranchPush`."""
+        capabilities.require_external_write("새 가지에 올리기")
+        capabilities.require_net("pages_branch", "새 가지에 올리기")
+        return pages.push_branch(repo, built, post, git=self.git, expected_origin=self.expected_origin)
+
+    def branch_on_remote(self, repo, branch):
+        """원격에 그 가지가 있으면 끝 커밋, 없으면 None(읽기만)."""
+        capabilities.require_external_write("올린 가지 확인")
+        capabilities.require_net("pages_branch", "올린 가지 확인")
+        return pages.branch_on_remote(repo, branch, git=self.git, expected_origin=self.expected_origin)
+
+    def post_on_main(self, repo, post):
+        """병합 확인 — 원격 main 에 같은 경로로 한 글자도 다르지 않은 글이 있는가(읽기만) → `MainCheck`."""
+        capabilities.require_external_write("병합 확인")
+        capabilities.require_net("pages_branch", "병합 확인")
+        return pages.post_on_main(repo, post, git=self.git, expected_origin=self.expected_origin)
 
     def discard(self, repo, info):
+        """옛 방식으로 이 PC 에 기록해 둔 글 커밋만 되돌린다(이 PC 안의 일 — 네트워크 없음)."""
         capabilities.require_external_write("올리지 않은 글 기록 되돌리기")
         return pages.discard_commit(repo, info, git=self.git, expected_origin=self.expected_origin)
 
@@ -182,3 +200,6 @@ class GitPagesBackend:
         capabilities.require_external_write("공개 주소 확인")
         capabilities.require_net("pages_site", "공개 주소 확인")                    # 둘째 문장: 좁은 스위치도 함께(NET 설계서 3.3)
         return deploy.check_deployed(repo, post.path, post.text, deadline=deadline, interval=interval, fetcher=self.fetcher, sleep=self._sleeper(deadline), clock=self.monotonic, now=now)
+
+
+GitPagesBackend = GitBranchBackend            # 옛 이름(기존 시험과 코드가 부르던 이름) — 어댑터는 이제 새 가지에만 올리는 `GitBranchBackend` 하나다(종류 이름 `pages_git` 은 그대로)

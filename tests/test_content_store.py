@@ -180,7 +180,7 @@ class OpenTest(StoreCase):
         self.assertEqual(digest(self.path), before)
 
     def test_the_defaults_are_the_documented_ones(self):
-        self.assertEqual((KEEP_REVISIONS, KEEP_BACKUPS, BUSY_SECONDS, SCHEMA_VERSION), (50, 10, 5.0, 2))
+        self.assertEqual((KEEP_REVISIONS, KEEP_BACKUPS, BUSY_SECONDS, SCHEMA_VERSION), (50, 10, 5.0, 3))
         real, calls = sqlite3.connect, []
 
         def spy(path, *args, **kwargs):

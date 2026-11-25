@@ -189,6 +189,8 @@ class ContentProject:
             raise _invalid("오류 코드")
         if variant.status in st.APPROVED_STATES and variant.rendered_revision != self.revision:
             raise _invalid("승인된 렌더링의 판 번호")
+        if variant.status == st.MERGE_PENDING and st.split_remote_id(variant.remote_id) is None:      # 병합 기다리는 글은 올린 가지와 그 끝 커밋을 식별자로 가진다(발행 기록이 없어도 병합 확인을 이어 가려고)
+            raise _invalid("플랫폼 식별자", detail="병합 기다리는 글의 식별자가 `가지@커밋` 모양이 아니다")
 
     # ---- 원고 고치기 -----------------------------------------------------------------------------------------------------
     def edit(self, *, title=None, source_content=None, references=None, assets=None, now=None):
@@ -236,6 +238,8 @@ class ContentProject:
             raise _invalid("오류 코드")
         if remote_id is not None and (not isinstance(remote_id, str) or not remote_id or len(remote_id) > 200 or any(ch.isspace() for ch in remote_id)):
             raise _invalid("플랫폼 식별자")
+        if requested == st.MERGE_PENDING and st.split_remote_id(remote_id) is None:                       # 병합 기다리기로 바꿀 때는 `가지@커밋` 식별자가 꼭 있어야 한다
+            raise _invalid("플랫폼 식별자", detail="병합 기다리는 글은 올린 가지와 커밋(`가지@커밋`)이 있어야 한다")
         # 여기까지 오면 바꿔도 된다(중간에 실패해서 절반만 바뀐 상태가 남지 않게 검사를 모두 끝낸 뒤에 쓴다)
         if url:
             variant.published_url, variant.published_at = url, now

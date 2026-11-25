@@ -19,6 +19,7 @@ HAND_WRITTEN_FIELDS = ("profile_fit", "priority", "keyword_opportunity")        
 HAND_WRITTEN = "(이전에 적어 둔 값 — 아래 계산값과 따로이고 계산에는 쓰이지 않습니다)"
 STATUS_KO = {
     st.NOT_STARTED: "시작 전", st.DRAFT_GENERATED: "글 만듦", st.REVIEW_REQUIRED: "검토 중", st.APPROVED: "승인됨", st.COMMITTED: "이 PC 에 기록함(아직 안 올림)",
+    st.MERGE_PENDING: "병합 기다리는 중",
     st.PUSHED: "올림(공개 확인 전)", st.PUBLISHED: "공개됨", st.DRAFT_SAVED: "초안 저장됨", st.READY_TO_COPY: "복사 준비됨", st.COPY_COMPLETED: "복사함",
     st.PUBLISHED_MANUAL: "직접 발행함", st.PUBLISH_FAILED: "실패",
 }
@@ -82,6 +83,7 @@ def next_step_lines(view):
                 st.REVIEW_REQUIRED: f"{base} approve {pid} --platform pages (읽어 보고 올려도 좋으면 승인합니다)",
                 st.APPROVED: f"{base} publish-pages {pid} (먼저 미리 보기 — 실제로 올리려면 --yes)",
                 st.COMMITTED: f"{base} publish-pages {pid} --yes (이어서 올림) — 올리지 않고 되돌리려면 --cancel --yes",
+                st.MERGE_PENDING: f"{base} merge-check {pid} (GitHub 에서 병합했으면 이 명령으로 확인합니다) — 병합하지 않기로 했으면 {base} abandon {pid} --yes",
                 st.PUSHED: f"{base} check-deploy {pid} (공개 주소가 열리는지 확인)",
                 st.PUBLISH_FAILED: f"{base} review {pid} --platform pages … (글을 다시 만들어 검토·승인합니다)",
             }.get(status)
@@ -211,8 +213,14 @@ def publish_report_lines(report):
     else:
         lines += ["한 일:"] + [f"  - {item}" for item in report.steps]
         lines.append(f"지금 상태: {status_text(report.status)}")
-    if report.pending_verification:
-        lines.append("올라갔지만 공개 확인은 아직 끝나지 않았습니다(글은 안전하게 올라가 있습니다).")
+    if report.branch:
+        lines.append(f"새 가지: {report.branch}   (main 에는 올리지 않았고 올리지 않습니다)")
+    if report.link:
+        lines.append(f"비교 화면 주소(복사해 브라우저에서 열어 PR 을 만드세요 — 앱은 이 주소를 열지 않습니다): {report.link}")
+    if report.status == st.MERGE_PENDING and report.pending_verification:
+        lines.append("새 가지에 올라가 병합을 기다리는 중입니다 — 아직 공개되지 않았습니다(원격 main 은 바뀌지 않았습니다). 병합은 GitHub 에서 사람이 합니다.")
+    elif report.pending_verification:
+        lines.append("병합은 확인했지만 공개 확인은 아직 끝나지 않았습니다(글은 안전하게 들어가 있습니다).")
     lines += [f"  참고: {item}" for item in report.notes]
     lines += [f"다음: {item}" for item in report.next_steps]
     return lines

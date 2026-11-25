@@ -217,6 +217,17 @@ class Settings:
         data["repo_path"] = str(path)
         write_json(self.path, data)
 
+    def clear_repo_path(self):
+        """연결 해제(PUBPR) — 설정의 `repo_path` **하나만** 비운다(네이버 프로필 같은 다른 칸은 그대로). 저장소 폴더·원격 가지·글은 건드리지 않는다. 연결한 적이 없으면 설정 파일을 만들지도 않는다 → 비웠는가."""
+        if not self.path.exists():
+            return False
+        data = self._read()
+        if not data["repo_path"]:
+            return False
+        data["repo_path"] = ""
+        write_json(self.path, data)
+        return True
+
     def naver_profile(self, key):
         """저장된 블로그 프로필. 없으면 NAVER_PROFILE_MISSING, 저장된 값이 올바르지 않으면 SETTINGS_INVALID."""
         raw = self._read()["naver_profiles"].get(key)
@@ -318,4 +329,6 @@ def make_context(*, data_dir=None, repo=None, env=None, git=None, expected_origi
     expected = expected_origin or gitrepo.EXPECTED_ORIGIN
     wiring.register_enabled()                                                                              # 켜진 스위치의 어댑터 종류만 꽂는다(모두 꺼진 이 빌드는 아무것도 꽂지 않는다 — `service/wiring.py`)
     backend = backend or external.pages_backend(git=git, expected_origin=expected, fetcher=fetcher, sleep=sleep, monotonic=monotonic)       # 꽂힌 외부 어댑터가 없으면(이 빌드는 늘 없다) 파일만 읽는 backend
+    if git is external.refusing_git:
+        git = getattr(backend, "git", None) or git          # 어댑터가 꽂힌 빌드(켜진 스위치)는 그 어댑터의 git 실행기를 점검(`doctor`)도 쓴다 — 꽂히지 않았으면(기본 빌드) 모든 호출을 거절하는 기본 실행기 그대로다
     return Context(workspace, Settings(workspace.settings_path), backend, git, expected, clock or utc_now, repo or "", env)

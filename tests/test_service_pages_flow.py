@@ -604,7 +604,7 @@ class ResumeAndRecordTest(Base):
         project_id = self.committed()
         raw = (self.ctx.workspace.journal_dir / f"{project_id}.json").read_text(encoding="utf-8")
         data = json.loads(raw)
-        self.assertEqual(sorted(data), ["base", "commit", "path", "project_id", "schema", "stage"])
+        self.assertEqual(sorted(data), ["base", "branch", "commit", "path", "project_id", "schema", "stage"])      # 판 2(PUBPR): 칸 branch 가 더해졌다(옛 방식 기록은 빈 글)
         self.assertNotIn(str(self.tmp), raw, "이 PC 의 절대경로를 적지 않는다")
         self.assertFalse(Path(data["path"]).is_absolute())
 

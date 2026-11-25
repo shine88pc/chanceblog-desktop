@@ -206,7 +206,7 @@ def _purposes():
                  Field("refresh_token", "갱신용 인증 값", True, 20, 512, "영문·숫자·기호 100자 안팎")),
                 (Provider("", "Google", ROTATION_LIMITED, (("default", ()),), "default", "한도를 아직 확인하지 못했습니다", max_entries=2, second_key_needs_terms=False),), identity_field="client_id"),
         Purpose("github_repo", "GitHub 저장소", "글을 올릴 때 쓰는 저장소 권한입니다.", (), (Provider("", "GitHub", ROTATION_NEVER, (("default", ()),), "default"),), takes_keys=False,
-                note="이 앱은 키를 받지 않습니다 — 컴퓨터의 Git 로그인(Git 자격 증명 관리자)을 씁니다. 터미널에서 `git push` 를 한 번 해 로그인을 마칩니다."),
+                note="이 앱은 키를 받지 않습니다 — 컴퓨터의 Git 로그인(Git 자격 증명 관리자)을 씁니다. 이 앱은 main 에 올리지 않고 새 가지에만 올려요. 로그인은 Git 을 쓰는 프로그램(Git Bash·GitHub Desktop 등)에서 이 저장소에 한 번 마쳐 두세요."),
         Purpose("naver_openapi", "옛 항목 — 네이버 오픈 API(검색·데이터랩)", "예전 버전이 만든 용도입니다. 이 용도의 항목은 읽기만 하고(새 항목은 더하지 못합니다) 키는 지우지 않았습니다. "
                 "NAVER API HUB 검색어 트렌드(naver_apihub)에 새로 넣은 뒤 이 항목은 `keys remove` 로 지웁니다.",
                 (Field("client_id", "클라이언트 ID", False, 8, 64, "영문·숫자 20자 안팎"), Field("client_secret", "클라이언트 시크릿", True, 8, 64, "영문·숫자 10자 안팎")),

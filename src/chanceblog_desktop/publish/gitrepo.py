@@ -28,13 +28,32 @@ _REMOTE_MAIN = f"refs/remotes/origin/{MAIN}"
 # 사용자의 다른 저장소·대화창 설정이 이 앱의 확인을 엉뚱한 곳으로 돌리거나 멈추지 않게 지우는 환경 변수
 _ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE",
              "GIT_ASKPASS", "SSH_ASKPASS")
+# 올리기 길(`pages_branch`)이 열리기 전에 정리한 환경 변수(PUBPR, NET 켜기 전 필수 조건): 인증서 검증을 끄거나(`GIT_SSL_NO_VERIFY`) 믿는 곳을 바꾸는(`GIT_SSL_CAINFO`·`GIT_SSL_CAPATH`) 변수, 통신 내용·세션 비밀을 기록하게 하는
+# (`GIT_CURL_VERBOSE`·`SSLKEYLOGFILE` 과 `GIT_TRACE` 로 시작하는 모든 변수) 변수, 설정을 덮어쓰는 `GIT_CONFIG` 로 시작하는 모든 변수(`GIT_CONFIG_COUNT`·`GIT_CONFIG_KEY_n`·`GIT_CONFIG_PARAMETERS`·`GIT_CONFIG_GLOBAL` …), 그리고 허용 프로토콜을 바꾸는 `GIT_ALLOW_PROTOCOL`.
+# 앱은 이런 값을 읽지도 넘기지도 않는다 — 올리기에 필요한 설정은 `run_git` 이 `-c` 로 직접 준다.
+_ENV_DROP_NAMES = ("GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_CURL_VERBOSE", "SSLKEYLOGFILE", "GIT_ALLOW_PROTOCOL")
+_ENV_DROP_PREFIXES = ("GIT_CONFIG", "GIT_TRACE")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote", "pull", "clone"})
+# 네트워크로 나갈 수 있는 그 밖의 git 하위 명령 — 앱은 쓰지 않으므로 어떤 모양으로든 거절한다(`remote update`·`remote show` 처럼 원격에 닿는 `remote` 의 다른 모양은 `network_shape` 가 따로 거른다)
+_OTHER_NETWORK_COMMANDS = frozenset({"fetch-pack", "send-pack", "upload-pack", "receive-pack", "upload-archive", "archive", "submodule", "http-fetch", "http-push", "request-pull", "daemon", "instaweb",
+                                     "imap-send", "send-email", "svn", "p4", "cvsimport", "cvsexportcommit", "cvsserver", "credential", "credential-store", "credential-cache", "credential-manager", "fast-import"})
 _SSH_DEFAULT = "ssh -o BatchMode=yes"          # 질문 대신 실패하는 ssh(입력을 기다리며 멈추지 않게) — 사용자가 ssh 명령을 따로 정하지 않았을 때만 쓴다
 _LOCK_MAX_AGE = DEFAULT_TIMEOUT + 120          # 방금 끈 git 이 남긴 index.lock 으로 볼 최대 나이(초) — 이보다 오래된 잠금은 다른 프로그램의 것일 수 있어 건드리지 않는다
 # 글 저장소의 소유자·저장소 이름 — 연결한 폴더의 origin 정규식과 공개 사이트 호스트(`net/endpoints.py` 의 `pages_site`)가 모두 이 두 상수 하나에서 나온다(NET 설계서 3.6, D-724 — 정규식 글은 예전과 한 글자도 다르지 않다)
 EXPECTED_OWNER = "shine88pc"
 EXPECTED_REPO = "chanceblog"
+# 앱이 새로 올리는 가지의 이름(PUBPR) — 소스 상수 접두사 + 숫자·16진수뿐이다(제목·분야·태그 같은 사용자 글에서 온 글자는 한 글자도 들어가지 않는다).
+# `ai/claude/` 로 시작하면 블로그 저장소의 요청·텔레그램·자동 병합 부탁 흐름이 깨어나므로 `desktop/` 아래에 둔다. 정규식 전체 일치(`fullmatch`)로만 쓴다.
+BRANCH_PREFIX = "desktop/post-"
+BRANCH_NAME = re.compile(r"desktop/post-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}", re.ASCII)
+CHECK_PREFIX = "desktop/check-"                                            # 올리기 권한 점검(`push --dry-run`)이 쓰는 가지 이름 — 실제로 보내지 않는다
+CHECK_BRANCH = re.compile(r"desktop/check-[0-9a-f]{8}", re.ASCII)
+_COMMIT_ID = re.compile(r"[0-9a-f]{40}", re.ASCII)
+# 원격 main 을 받는 인자 — 앱이 `refs/heads/main` 이라는 글자를 만드는 **유일한 곳**이다(받는 쪽 상수: 원격 main → 이 저장소의 원격 추적 참조). main 으로 가는 올리기 인자를 만드는 코드는 `src/` 어디에도 없다(시험이 소스를 훑는다).
+FETCH_MAIN_ARGS = ("fetch", "--quiet", "origin", f"+refs/heads/{MAIN}:{_REMOTE_MAIN}")
+# 시험 전용 접합부 — 진짜 git·로컬 bare 저장소 시험이 `file` 전송을 임시로 허용할 때만 시험이 바꾼다. 생산 코드는 이 값을 바꾸지 않는다(시험이 `src/` 에서 확인한다). 기본은 비어 있어 https·ssh 외에는 허용하지 않는다.
+_EXTRA_TRANSPORTS = ()
 # re.ASCII: 터키어 ı·긴 s(ſ) 같은 글자가 i·s 와 같게 읽혀 가짜 호스트가 통과하지 않게
 EXPECTED_ORIGIN = re.compile(
     r"^(?:https://(?:[^/\s]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)" + re.escape(EXPECTED_OWNER) + "/" + re.escape(EXPECTED_REPO) + r"(?:\.git)?/?$",
@@ -95,7 +114,8 @@ def _git_env():
     """대화창이 뜨지 않게(GIT_TERMINAL_PROMPT=0·GCM_INTERACTIVE=false) 하고 메시지를 영어로 받는다. 다른 저장소를 가리키는 환경 변수와 대화창 도우미는 지운다.
     사용자의 ssh 설정(core.sshCommand·GIT_SSH·GIT_SSH_COMMAND)은 건드리지 않는다 — 대화창은 입력 장치(stdin)를 막아 두는 것으로 피한다.
     경로 인자는 글자 그대로 읽는다(GIT_LITERAL_PATHSPECS) — `[x].md` 같은 이름이 다른 파일까지 가리키는 글롭 무늬로 읽히지 않게."""
-    env = {key: value for key, value in os.environ.items() if key not in _ENV_DROP}
+    env = {key: value for key, value in os.environ.items()
+           if key not in _ENV_DROP and key not in _ENV_DROP_NAMES and not key.upper().startswith(_ENV_DROP_PREFIXES) and key.upper() not in _ENV_DROP_NAMES}
     env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="false", LC_ALL="C", LANGUAGE="C", GIT_OPTIONAL_LOCKS="0", GIT_LITERAL_PATHSPECS="1",
                GIT_EDITOR="true", GIT_MERGE_AUTOEDIT="no")          # 편집기 창이 뜨지 않게(커밋·병합·rebase 가 메시지를 묻지 않는다)
     return env
@@ -186,16 +206,79 @@ def _with_ssh_default(cwd, env):
     return {**env, "GIT_SSH_COMMAND": _SSH_DEFAULT}
 
 
+def _refused(detail):
+    return AppError("PAGES_PUSH_REFUSED", detail=detail)
+
+
+def network_shape(args):
+    """git 인자 표(PUBPR 설계서 3.5) — 인자(하위 명령부터)가 **네트워크로 나가는 명령**이면 허용된 모양의 이름을, 네트워크 명령이 아니면 None 을 돌려준다.
+    허용하지 않는 모양이면 하위 프로세스를 띄우기 **전에** `PAGES_PUSH_REFUSED`. 허용되는 네트워크 모양은 정확히 넷뿐이다:
+      · `fetch_main`   받기 — `FETCH_MAIN_ARGS`(원격 main → 원격 추적 참조) 그대로
+      · `ls_remote`    가지 확인 — `ls-remote --exit-code origin refs/heads/<가지 이름>`
+      · `push_branch`  가지 올리기 — `push --porcelain --no-verify origin <40자 소문자 16진수>:refs/heads/<가지 이름>` (새 가지 하나 — main·강제(`+`·`--force…`)·삭제(`:이름`·`--delete`)·태그·`--mirror`·`--all`·`--prune`·여러 refspec·`origin` 대신 주소는 모두 거절)
+      · `push_check`   올리기 점검 — `push --dry-run --porcelain --no-verify origin <40자>:refs/heads/desktop/check-<8자 16진수>` (보내지 않는다)
+    `pull`·`clone`·`fetch-pack` 같은 그 밖의 네트워크 명령과, 하위 명령 앞에 끼워 넣은 전역 옵션(`-c alias.…`·`--exec-path` …)과, 원격에 닿거나 설정을 바꾸는 `remote`·`config` 의 모양도 거절한다.
+    가지 이름은 상수 접두사와 숫자·16진수로만 만들어지는 정해진 모양(`BRANCH_NAME`)이어야 하고 사용자 글에서 온 글자는 한 글자도 들어갈 수 없다."""
+    items = list(args)
+    if not items or any(not isinstance(item, str) for item in items):
+        return None                                               # 빈 인자·글이 아닌 인자는 git 이 알아서 실패한다 — 네트워크 명령이 아니다
+    first = items[0]
+    if first.startswith("-"):
+        if items == ["--version"]:
+            return None                                           # `doctor` 의 git 확인 — 읽기뿐이다
+        raise _refused(f"하위 명령 앞에 옵션을 둘 수 없다: {mask(first)[:40]}")
+    if first == "remote":
+        if items[1:2] != ["get-url"]:
+            raise _refused("remote 는 주소 읽기(get-url)만 허용한다")
+        return None
+    if first == "config":
+        if items[1:2] != ["--get"] or len(items) != 3:
+            raise _refused("config 는 읽기(--get 이름 하나)만 허용한다")
+        return None
+    if first in _OTHER_NETWORK_COMMANDS or first.startswith("remote-"):
+        raise _refused(f"허용하지 않는 git 명령: {mask(first)[:40]}")
+    if first not in _NETWORK_COMMANDS:
+        return None
+    if items == list(FETCH_MAIN_ARGS):
+        return "fetch_main"
+    if first == "ls-remote" and len(items) == 4 and items[1:3] == ["--exit-code", "origin"] and items[3].startswith("refs/heads/") and BRANCH_NAME.fullmatch(items[3][len("refs/heads/"):]):
+        return "ls_remote"
+    if first == "push" and len(items) == 5 and items[1:4] == ["--porcelain", "--no-verify", "origin"]:
+        commit, colon, target = items[4].partition(":")
+        if colon and _COMMIT_ID.fullmatch(commit) and target.startswith("refs/heads/") and BRANCH_NAME.fullmatch(target[len("refs/heads/"):]):
+            return "push_branch"
+    if first == "push" and len(items) == 6 and items[1:5] == ["--dry-run", "--porcelain", "--no-verify", "origin"]:
+        commit, colon, target = items[5].partition(":")
+        if colon and _COMMIT_ID.fullmatch(commit) and target.startswith("refs/heads/") and CHECK_BRANCH.fullmatch(target[len("refs/heads/"):]):
+            return "push_check"
+    raise _refused(f"허용하지 않는 올리기·받기 모양이다: {mask(' '.join(items))[:120]}")
+
+
+def _config_overrides():
+    """모든 git 호출에 **늘** 붙는 `-c` 설정 — 사용자 설정(전역·저장소·`GIT_CONFIG_*`)이 앱의 받기·올리기를 넓히거나 약하게 하지 못하게 덮어쓴다(명령줄 `-c` 는 설정 파일보다 앞선다).
+    gc.auto·maintenance.auto: 받기 뒤 git 이 정리(gc)를 시작해 제한 시간 안에 끝나지 않거나 남는 일을 막는다(정리는 사용자가 쓰는 git 이 한다)
+    user.useConfigOnly: 이름·이메일이 설정에 없으면 호스트 이름으로 짐작한 주소를 공개 commit 에 넣지 않고 GIT_IDENTITY_MISSING 으로 멈춘다.
+    core.hooksPath·commit.gpgsign·push.gpgSign: 사용자의 훅(post-merge·reference-transaction·pre-rebase·prepare-commit-msg …)과 서명(gpg 대화창)이 이 앱의 git 호출에 끼어들지 않게 —
+    훅이 늦거나 실패하면 받기·올리기가 막히거나 멈추고(시간 초과), 서명 설정은 rebase 를 실패시킨다(독립 검증이 훅 9종이 도는 것을 확인했다). 앱은 어떤 훅도 필요로 하지 않는다
+    http.sslVerify: 사용자 설정이 인증서 검증을 꺼 두었어도 켠다 · push.followTags·push.recurseSubmodules·push.autoSetupRemote·push.default: 사용자 설정이 push 에 태그·서브모듈·추적 설정을 끼워 넣거나 올릴 곳을 바꾸지 못하게(명시한 refspec 하나만 올라간다)
+    protocol.allow=never + https·ssh 만 always: 주소가 어떤 전송을 가리켜도 이 둘 밖에서는 접속하지 않는다(origin 은 정규식이 https·ssh 모양만 받는다). `_EXTRA_TRANSPORTS` 는 시험 접합부다."""
+    pairs = ["http.lowSpeedLimit=1000", "http.lowSpeedTime=30", "gc.auto=0", "maintenance.auto=false", f"core.hooksPath={os.devnull}", "commit.gpgsign=false", "push.gpgSign=false", "user.useConfigOnly=true",
+             "i18n.commitEncoding=UTF-8", "i18n.logOutputEncoding=UTF-8",       # 레거시 인코딩(cp949) 설정이 있어도 commit 기록과 git log 출력이 UTF-8 이다
+             "http.sslVerify=true", "push.followTags=false", "push.recurseSubmodules=no", "push.autoSetupRemote=false", "push.default=nothing",
+             "protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always", *(f"protocol.{name}.allow=always" for name in _EXTRA_TRANSPORTS)]
+    command = []
+    for pair in pairs:
+        command += ["-c", pair]
+    return command
+
+
 def run_git(cwd, args, timeout=DEFAULT_TIMEOUT, input_bytes=None):
-    """git 을 cwd 에서 실행한다(사용자의 훅·대화창·다른 저장소 설정에 휘둘리지 않게 환경을 고정한다)."""
+    """git 을 cwd 에서 실행한다(사용자의 훅·대화창·다른 저장소 설정에 휘둘리지 않게 환경을 고정하고, 네트워크 명령은 `network_shape` 의 정해진 모양만 하위 프로세스 전에 통과시킨다)."""
     capabilities.require_external_write(f"git {args[0] if args else ''}")
-    # gc.auto·maintenance.auto: 받기 뒤 git 이 정리(gc)를 시작해 제한 시간 안에 끝나지 않거나 남는 일을 막는다(정리는 사용자가 쓰는 git 이 한다)
-    # user.useConfigOnly: 이름·이메일이 설정에 없으면 호스트 이름으로 짐작한 주소를 공개 commit 에 넣지 않고 GIT_IDENTITY_MISSING 으로 멈춘다.
-    # core.hooksPath·commit.gpgsign·push.gpgSign: 사용자의 훅(post-merge·reference-transaction·pre-rebase·prepare-commit-msg …)과 서명(gpg 대화창)이 이 앱의 git 호출에 끼어들지 않게 —
-    # 훅이 늦거나 실패하면 받기·올리기가 막히거나 멈추고(시간 초과), 서명 설정은 rebase 를 실패시킨다(독립 검증이 훅 9종이 도는 것을 확인했다). 앱은 어떤 훅도 필요로 하지 않는다
-    command = ["git", "-C", str(cwd), "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
-               "-c", f"core.hooksPath={os.devnull}", "-c", "commit.gpgsign=false", "-c", "push.gpgSign=false", "-c", "user.useConfigOnly=true",
-               "-c", "i18n.commitEncoding=UTF-8", "-c", "i18n.logOutputEncoding=UTF-8", *args]            # 레거시 인코딩(cp949) 설정이 있어도 commit 기록과 git log 출력이 UTF-8 이다
+    shape = network_shape(args)                                                       # 허용하지 않는 올리기·받기 모양은 여기서 PAGES_PUSH_REFUSED — 하위 프로세스는 한 번도 뜨지 않는다
+    if shape is not None:
+        capabilities.require_net("pages_branch", f"git {args[0]}")                    # 둘째 문장: 좁은 스위치(PAGES_BRANCH_PUSH)도 켜져 있어야 받기·올리기가 나간다
+    command = ["git", "-C", str(cwd), *_config_overrides(), *args]
     env = _git_env()
     if args and args[0] in _NETWORK_COMMANDS:
         env = _with_ssh_default(cwd, env)
@@ -493,7 +576,7 @@ def sync_latest(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
     되돌린다. 맞춘 뒤 HEAD 가 원격 main 과 같은지 다시 확인한다."""
     capabilities.require_external_write("원격 main 받기(fetch)")
     info = inspect_repo(path, git, expected_origin)
-    _must(git, info.path, ["fetch", "--quiet", "origin", f"+refs/heads/{MAIN}:{_REMOTE_MAIN}"], "원격 main 받기")
+    _must(git, info.path, list(FETCH_MAIN_ARGS), "원격 main 받기")
     counts = _must(git, info.path, ["rev-list", "--left-right", "--count", f"HEAD...{_REMOTE_MAIN}"], "원격과 비교").split()
     ahead, behind = int(counts[0]), int(counts[1])
     if ahead:
@@ -530,9 +613,55 @@ def sync_latest(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
     return RepoInfo(info.path, info.origin, info.branch, head)
 
 
+def recheck_origin(git, root, expected_origin=EXPECTED_ORIGIN):
+    """네트워크 명령 **직전마다** origin(받는 주소·올리는 주소 모두 — `pushurl`·`insteadOf` 가 펼쳐진 것)을 다시 읽어 정규식과 견준다 — 점검을 마친 뒤에 설정이 바뀌어도 다른 저장소로 보내지 않는다(PUBPR P-03·PT-07).
+    정규식과 다르거나 origin 이 없으면 PAGES_LOCAL_REPO_INVALID. 읽기만 한다."""
+    urls = _remote_urls(git, root)
+    wrong = [url for url in urls if not expected_origin.match(url)]
+    if not urls or wrong:
+        raise AppError("PAGES_LOCAL_REPO_INVALID", detail=f"origin 이 chanceblog 가 아니다: {mask((wrong or ['(없음)'])[0])[:200]}")
+
+
+def fetch_main(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
+    """원격 main 을 받아 이 저장소의 원격 추적 참조(`refs/remotes/origin/main`)만 바꾼다 — 작업 폴더·색인·로컬 가지·HEAD 는 건드리지 않는다(`sync_latest` 와 달리 빨리감기 병합이 없다). 인자는 `FETCH_MAIN_ARGS` 그대로다."""
+    capabilities.require_external_write("원격 main 받기(fetch)")
+    capabilities.require_net("pages_branch", "원격 main 받기(fetch)")                    # 둘째 문장: 좁은 스위치도 함께(D-736)
+    root = Path(path)
+    recheck_origin(git, root, expected_origin)
+    _must(git, root, list(FETCH_MAIN_ARGS), "원격 main 받기")
+
+
+def remote_branch_tip(path, branch, git=run_git, expected_origin=EXPECTED_ORIGIN):
+    """원격에 그 가지가 있으면 끝 커밋(40자), 없으면 None(`git ls-remote --exit-code origin refs/heads/<가지>` — 읽기만 한다). 가지 이름은 `BRANCH_NAME` 모양이어야 한다.
+    `ls-remote` 의 무늬는 이름 끝에 맞으므로 돌아온 줄 가운데 **이름이 정확히 같은 줄**만 본다."""
+    capabilities.require_external_write("올린 가지 확인(ls-remote)")
+    capabilities.require_net("pages_branch", "올린 가지 확인(ls-remote)")
+    if not isinstance(branch, str) or BRANCH_NAME.fullmatch(branch) is None:
+        raise _refused("가지 이름이 정해진 모양이 아니다")
+    root = Path(path)
+    recheck_origin(git, root, expected_origin)
+    ref = f"refs/heads/{branch}"
+    result = git(root, ["ls-remote", "--exit-code", "origin", ref])
+    if result.returncode == 2:                                                       # --exit-code: 일치하는 참조가 없다
+        return None
+    if result.returncode != 0:
+        raise _failure(result, "올린 가지 확인", root)
+    for line in result.stdout.splitlines():
+        tip, _tab, name = line.partition(chr(9))
+        if name.strip() == ref and _COMMIT_ID.fullmatch(tip.strip()):
+            return tip.strip()
+    return None
+
+
 def check_push_access(path, git=run_git, expected_origin=EXPECTED_ORIGIN):
-    """실제로 올리지 않고 push 가 되는지만 본다(`git push --dry-run`, 사용자의 pre-push 훅은 돌리지 않는다). 인증·네트워크·거절은 각각의 오류 코드로."""
+    """실제로 올리지 않고 새 가지를 올릴 수 있는지만 본다(`git push --dry-run` — 올릴 곳은 점검용 가지 이름 `desktop/check-…` 이고 사용자의 pre-push 훅은 돌리지 않는다). main 은 시도조차 하지 않는다.
+    인증·네트워크·거절은 각각의 오류 코드로."""
     capabilities.require_external_write("올리기 점검(push --dry-run)")
+    capabilities.require_net("pages_branch", "올리기 점검(push --dry-run)")             # 둘째 문장: 좁은 스위치도 함께(D-736)
     info = inspect_repo(path, git, expected_origin)
-    _must(git, info.path, ["push", "--dry-run", "--porcelain", "--no-verify", "origin", f"HEAD:refs/heads/{MAIN}"], "올리기 점검")
+    head = info.head
+    if _COMMIT_ID.fullmatch(head) is None:
+        raise AppError(UNEXPECTED, detail="HEAD 커밋 번호를 읽지 못했다")
+    recheck_origin(git, info.path, expected_origin)
+    _must(git, info.path, ["push", "--dry-run", "--porcelain", "--no-verify", "origin", f"{head}:refs/heads/{CHECK_PREFIX}{head[:8]}"], "올리기 점검")
     return info

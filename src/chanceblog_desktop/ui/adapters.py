@@ -37,7 +37,7 @@ from .core.timed import call_within
 TREND = {"상승": "up", "보합": "flat", "하락": "down"}
 ICONS = (("t_spark", "blue"), ("t_bolt", "orange"), ("t_laptop", "purple"), ("t_calc", "green"), ("t_box", "blue"), ("t_droplet", "green"))
 BLOG_KEYS = {"naver_a": "A", "naver_b": "B"}
-DONE_STATES = frozenset({st.APPROVED, st.READY_TO_COPY, st.COPY_COMPLETED, st.DRAFT_SAVED, st.COMMITTED, st.PUSHED, st.PUBLISHED, st.PUBLISHED_MANUAL})
+DONE_STATES = frozenset({st.APPROVED, st.READY_TO_COPY, st.COPY_COMPLETED, st.DRAFT_SAVED, st.COMMITTED, st.MERGE_PENDING, st.PUSHED, st.PUBLISHED, st.PUBLISHED_MANUAL})
 STATUS = {cd.NEW: "new", cd.REVIEW: "new", cd.SELECTED: "selected", cd.HOLD: "hold"}
 NAME_LIMIT = 30                                                                       # 블로그 이름이 오른쪽 패널에 보이는 최대 글자 수(가린 뒤에 줄인다)
 WRITE_WORDED_CODES = frozenset({"FILE_WRITE_FAILED", "FILE_IN_USE"})                  # '저장하지 못했다·바꾸지 못했다' 로 말하는 오류 — 읽기만 하는 화면에서는 어색해 '읽지 못했다' 로 바꾼다(코드는 진단 정보에 그대로)

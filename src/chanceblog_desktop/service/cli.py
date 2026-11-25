@@ -290,7 +290,7 @@ def cmd_connect(ctx, args):
     info = ctx.backend.inspect(folder)                       # 올바른 chanceblog 저장소가 아니면 여기서 오류 코드로 멈춘다(설정을 바꾸지 않는다)
     ctx.settings.save_repo_path(folder)
     lines = [f"연결했습니다: {folder}", f"  origin: {info.origin}   브랜치: {info.branch}", "  이 폴더 위치는 사용자 데이터 폴더의 설정 파일에만 기억합니다(저장소에는 올라가지 않습니다).",
-             (f"  올리기 권한은 `{PROG} doctor --online` 으로 점검합니다." if capabilities.external_write_enabled()
+             (f"  새 가지를 올릴 권한은 `{PROG} doctor --online` 으로 점검합니다(앱은 main 에 올리지 않고 새 가지에만 올립니다)." if capabilities.external_write_enabled()
               else "  이 시험 버전은 글을 올리지 않습니다(외부 게시가 꺼져 있습니다) — 연결한 폴더는 글의 공개 주소를 계산하고 미리 보는 데에만 읽습니다.")]
     return Output(lines, {"repo": str(folder), "origin": info.origin, "branch": info.branch})
 
@@ -368,7 +368,7 @@ def cmd_publish_pages(ctx, args):
     capabilities.require_external_write("GitHub Pages 올리기(publish-pages)")           # 외부 Write 관문 — `--yes`·승인이 있어도 꺼져 있으면 아무것도 하지 않는다
     if args.cancel:
         report = pages_flow.cancel_pages_publish(ctx, args.id, confirmed=args.yes)
-        return Output(["올리지 않은 글 기록을 되돌렸습니다.", *[f"  - {step}" for step in report.steps]], report.to_dict())
+        return Output(["옛 방식으로 이 PC 에 기록해 둔 글 기록을 되돌렸습니다.", *[f"  - {step}" for step in report.steps]], report.to_dict())
     if args.yes:
         report = pages_flow.run_pages_publish(ctx, args.id, confirmed=True, wait=not args.no_wait, deadline=args.wait)
     else:
@@ -381,6 +381,32 @@ def cmd_check_deploy(ctx, args):
     capabilities.require_net("pages_site", "공개 주소 확인(check-deploy)")        # 둘째 문장: 좁은 스위치도 함께(NET 설계서 3.3)
     report = pages_flow.check_pages_deploy(ctx, args.id, deadline=args.wait)
     return Output(fmt.publish_report_lines(report), report.to_dict())
+
+
+def cmd_merge_check(ctx, args):
+    capabilities.require_external_write("병합 확인(merge-check)")
+    capabilities.require_net("pages_branch", "병합 확인(merge-check)")                # 둘째 문장: 좁은 스위치도 함께(D-736)
+    report = pages_flow.merge_check_pages(ctx, args.id)
+    return Output(fmt.publish_report_lines(report), report.to_dict())
+
+
+def cmd_abandon(ctx, args):
+    capabilities.require_external_write("병합하지 않기로 하고 정리하기(abandon)")
+    capabilities.require_net("pages_branch", "병합하지 않기로 하고 정리하기(abandon)")
+    report = pages_flow.abandon_pages_publish(ctx, args.id, confirmed=args.yes)
+    return Output(["병합하지 않기로 하고 글을 정리했습니다.", *[f"  - {step}" for step in report.steps]], report.to_dict())
+
+
+def cmd_disconnect(ctx, args):
+    """연결 해제 — 설정의 저장소 폴더 위치(`repo_path`) 하나만 비운다. 저장소·가지·글은 건드리지 않고 올려 둔 원격 가지도 지우지 않는다(Git 로그인은 이 PC 의 것이라 앱이 지우지 못한다)."""
+    cleared = ctx.settings.clear_repo_path()
+    lines = ["연결을 끊었습니다 — 설정에서 저장소 폴더 위치만 지웠습니다." if cleared else "연결해 둔 저장소가 없어 바꾼 것이 없습니다.",
+             "  저장소 폴더·올려 둔 가지·글은 그대로입니다(앱은 올라간 것을 지우지 않습니다). 병합을 기다리는 글은 목록에 남고, 다시 `connect` 로 연결해야 병합을 확인할 수 있습니다."]
+    env = os.environ if ctx.env is None else ctx.env
+    if str(env.get("CHANCEBLOG_LOCAL_REPO") or "").strip():
+        lines.append("  환경 변수 CHANCEBLOG_LOCAL_REPO 가 설정돼 있어 그 폴더는 계속 연결된 것으로 보입니다 — 변수를 지워야 완전히 끊깁니다.")
+    lines.append("  Git 로그인은 이 PC 의 것이라 앱이 지우지 못합니다 — 지우려면 Windows 자격 증명 관리자에서 `git:` 으로 시작하는 항목을 지웁니다.")
+    return Output(lines, {"disconnected": bool(cleared)})
 
 
 def cmd_naver_package(ctx, args):
@@ -1176,13 +1202,19 @@ def build_parser():
     found = add("revoke", cmd_revoke, "승인을 거둡니다(검토 중으로 되돌립니다)")
     found.add_argument("id", metavar="글번호")
     found.add_argument("--platform", required=True, choices=("pages", "github_pages", "naver_a", "naver_b"))
-    found = add("publish-pages", cmd_publish_pages, "승인한 글을 GitHub Pages(연결한 chanceblog 의 main)에 올립니다. 기본은 미리 보기 — 실제로 올리려면 --yes")
+    found = add("publish-pages", cmd_publish_pages, "승인한 글을 연결한 chanceblog 저장소의 새 가지에 올립니다(main 에는 올리지 않습니다 — 사람이 GitHub 에서 PR 로 병합합니다). 기본은 미리 보기 — 실제로 올리려면 --yes")
     found.add_argument("id", metavar="글번호")
-    found.add_argument("--yes", action="store_true", help="미리 본 내용대로 실제로 기록(commit)하고 올립니다(push)")
-    found.add_argument("--no-wait", action="store_true", help="올린 뒤 공개 주소가 열리는지 기다리지 않습니다(나중에 check-deploy)")
+    found.add_argument("--yes", action="store_true", help="미리 본 내용대로 새 가지에 올립니다(push — 새 가지 하나만, 강제로 올리지 않습니다)")
+    found.add_argument("--no-wait", action="store_true", help="병합을 확인한 글의 공개 주소가 열리는지 기다리지 않습니다(나중에 check-deploy)")
     found.add_argument("--wait", type=wait_seconds, default=pages_flow.DEFAULT_DEADLINE, metavar="초", help="공개 주소가 열리기를 기다리는 최대 시간(기본 720초, 최대 21600초)")
-    found.add_argument("--cancel", action="store_true", help="올리지 않은 글 기록(commit)을 되돌립니다(--yes 필요)")
-    found = add("check-deploy", cmd_check_deploy, "올린 글의 공개 주소가 열리는지 확인합니다(열리면 '공개됨' 으로 기록)")
+    found.add_argument("--cancel", action="store_true", help="옛 방식으로 이 PC 에 기록해 둔 글 기록(commit)을 되돌립니다(--yes 필요 — 이 PC 안의 일뿐입니다)")
+    found = add("merge-check", cmd_merge_check, "새 가지에 올려 둔 글이 GitHub 에서 병합됐는지 확인합니다(원격 main 에 같은 글이 들어갔는지 읽기만 합니다 — 누를 때만 확인하고 자동으로 하지 않습니다)")
+    found.add_argument("id", metavar="글번호")
+    found = add("abandon", cmd_abandon, "병합하지 않기로 한 글을 정리합니다(올려 둔 가지·글은 지우지 않습니다 — --yes 필요)")
+    found.add_argument("id", metavar="글번호")
+    found.add_argument("--yes", action="store_true", help="정말 병합하지 않기로 하고 정리합니다")
+    add("disconnect", cmd_disconnect, "연결한 chanceblog 저장소 폴더 위치를 지웁니다(저장소·올려 둔 가지·글은 건드리지 않습니다)")
+    found = add("check-deploy", cmd_check_deploy, "병합을 확인한 글의 공개 주소가 열리는지 확인합니다(열리면 '공개됨' 으로 기록)")
     found.add_argument("id", metavar="글번호")
     found.add_argument("--wait", type=wait_seconds, default=pages_flow.DEFAULT_DEADLINE, metavar="초", help="기다리는 최대 시간(0 이면 한 번만 확인, 최대 21600초)")
     found = add("naver-package", cmd_naver_package, "네이버 복사용 글(제목·본문·태그·이미지 자리)을 내어 줍니다 — 검토 중이면 이 명령이 승인입니다")

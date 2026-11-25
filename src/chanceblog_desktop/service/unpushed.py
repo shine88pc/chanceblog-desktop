@@ -1,8 +1,8 @@
 """연결한 저장소에 '올리지 않은 commit' 이 있을 때 그것이 무엇인지 알아보고 **정확한 안내 한 가지**를 만든다(읽기만 한다 — 아무것도 바꾸지 않는다).
 
 올리지 않은 commit 이 있으면 앱은 새 글을 올리지 않는다(PAGES_LOCAL_REPO_DIVERGED). 그런데 그 commit 의 정체에 따라 해야 할 일이 다르다:
-  · resume   앱이 올리다 멈춘 글 하나의 것(기록(commit) 직후에 멈췄거나 push 가 막혔다) → 그 글의 같은 명령이 이어받아 올리거나 `--cancel --yes` 로 되돌린다.
-  · overlap  앱이 올리다 멈춘 글이 둘 이상 겹쳐 있다(commit 이 쌓였다) → 앱은 맨 위(가장 나중에 기록한) 글부터만 되돌릴 수 있다. 나중 글부터 `--cancel --yes` 로 되돌린 뒤 앞 글을 올린다.
+  · resume   옛 방식(main 에 곧바로 올리던 시절)으로 올리다 멈춘 글 하나의 것(기록(commit) 직후에 멈췄거나 push 가 막혔다) → **이어서 올리는 길은 없어졌다**(PUBPR — 앱은 main 에 올리지 않는다). `--cancel --yes` 로 되돌린 뒤 글을 다시 만들어 승인하면 새 가지에 올린다.
+  · overlap  옛 방식으로 올리다 멈춘 글이 둘 이상 겹쳐 있다(commit 이 쌓였다) → 앱은 맨 위(가장 나중에 기록한) 글부터만 되돌릴 수 있다. 나중 글부터 `--cancel --yes` 로 되돌린다.
   · mixed    앱이 아는 글 기록과 앱이 아는 기록으로 설명되지 않는 commit 이 섞여 있다 → 앱은 직접 만든 commit 을 지우거나 되돌리지 않는다. 사람이 확인한다.
   · unknown  앱이 만든 글 기록이 하나도 아니다 → 사람이 확인한다.
 mixed·unknown 의 '설명되지 않는 commit' 은 두 가지일 수 있다 — 사람이 직접 만든 commit, 또는 **앱이 만든 모양(제목이 앱의 commit 제목)인데 이 데이터 폴더에는 기록이 없는 commit**(`foreign` —
@@ -128,8 +128,7 @@ def _names(entries):
 
 
 def resume_commands(entry):
-    how = "이어받아 올리거나" if entry.kind == KIND_ADOPT else "이어서 올리거나"
-    return f"`publish-pages {entry.short} --yes` 로 {how} 올리지 않고 되돌리려면 `publish-pages {entry.short} --cancel --yes`"
+    return f"이어서 올리는 길은 없어졌습니다(앱은 main 에 올리지 않습니다) — 이 PC 의 글 기록을 되돌리려면 `publish-pages {entry.short} --cancel --yes`(되돌린 글은 `review` 로 다시 만들어 승인한 뒤 새 가지에 올립니다)"
 
 
 def action_text(situation):
@@ -138,13 +137,13 @@ def action_text(situation):
     if kind == RESUME:
         entry = situation.entries[0]
         what = ("올리다 기록(commit) 직후에 멈춘" if entry.kind == KIND_ADOPT else "올리다 멈춘")
-        return f"앱이 {what} 글 「{entry.title}」(번호 {entry.short})의 기록입니다 — {resume_commands(entry)} 합니다."
+        return f"앱이 옛 방식으로 {what} 글 「{entry.title}」(번호 {entry.short})의 기록입니다 — {resume_commands(entry)}."
     if kind == OVERLAP:
         top = situation.top()
         first = f"가장 나중에 기록한 글 「{top.title}」(번호 {top.short})부터" if top else f"가장 나중에 기록한 글(`{GIT_LOG}` 맨 위)부터"
         command = f"`publish-pages {top.short} --cancel --yes`" if top else "`publish-pages 그 글번호 --cancel --yes`"
         return (f"올리지 않은 글 기록 {situation.ahead}개가 겹쳐 있습니다: {_names(situation.entries)}. 앱은 맨 위(가장 나중에 기록한) 글부터만 되돌릴 수 있습니다 — {first} {command} 로 되돌리고"
-                "(원격은 건드리지 않습니다), 남은 글을 `publish-pages 글번호 --yes` 로 올립니다. 되돌린 글은 `review` 로 다시 만들어 검토·승인한 뒤 올립니다.")
+                "(원격은 건드리지 않습니다), 남은 글도 같은 방식으로 되돌립니다. 되돌린 글은 `review` 로 다시 만들어 검토·승인한 뒤 새 가지에 올립니다.")
     if kind == MIXED and situation.foreign:
         top = situation.top()
         mine = (f"맨 위(가장 나중) commit 이 이 데이터 폴더의 글 「{top.title}」(번호 {top.short})이라 `publish-pages {top.short} --cancel --yes` 로 되돌릴 수 있습니다. " if top
@@ -185,15 +184,15 @@ def entry_text(situation, entry):
             return (f"이 글의 기록이 맨 위(가장 나중)이고 그 아래에 이 데이터 폴더의 기록으로 설명되지 않는 commit 이 있어 지금은 올릴 수 없습니다 — 올리지 않고 되돌리려면 `publish-pages {entry.short} --cancel --yes`"
                     f"(원격은 건드리지 않습니다 — 되돌린 글은 `review` 로 다시 만들어 승인합니다). 아래 commit: "
                     + (f"{situation.foreign}개는 {_other_app_text(situation)} {_rest_text(situation)}" if situation.foreign
-                       else f"앱이 만든 것이 아니라 앱이 지우거나 되돌리지 않습니다 — `{GIT_LOG}` 로 확인해 직접 정리한 뒤 `publish-pages {entry.short} --yes` 로 올립니다."))
+                       else f"앱이 만든 것이 아니라 앱이 지우거나 되돌리지 않습니다 — `{GIT_LOG}` 로 확인해 직접 정리합니다."))
         if situation.foreign:
             return (f"이 글의 기록 위에 다른 commit 이 있어 지금은 올리거나 되돌릴 수 없습니다(이 데이터 폴더의 기록으로 설명되지 않는 commit 이 있습니다) — 그중 {situation.foreign}개는 {_other_app_text(situation)} {_rest_text(situation)} "
-                    f"그 뒤 `publish-pages {entry.short} --yes` 로 이어서 올리거나 `publish-pages {entry.short} --cancel --yes` 로 되돌립니다.")
+                    f"그 뒤 `publish-pages {entry.short} --cancel --yes` 로 되돌립니다(이어서 올리는 길은 없어졌습니다).")
         return (f"이 글의 기록 위에 앱이 만든 것이 아닌 commit 이 있어 지금은 올리거나 되돌릴 수 없습니다 — 그 폴더에서 `{GIT_LOG}` 로 확인해 직접 정리한 뒤 "
-                f"`publish-pages {entry.short} --yes` 로 이어서 올리거나 `publish-pages {entry.short} --cancel --yes` 로 되돌립니다.")
+                f"`publish-pages {entry.short} --cancel --yes` 로 되돌립니다(이어서 올리는 길은 없어졌습니다).")
     top = situation.top()
     if entry.latest:
         return (f"올리지 않은 글 기록이 겹쳐 있고 이 글이 맨 위(가장 나중)입니다 — 지금은 올릴 수 없고, 되돌리려면 이 글부터 `publish-pages {entry.short} --cancel --yes` 입니다"
                 "(되돌린 글은 `review` 로 다시 만들어 승인해야 올릴 수 있습니다).")
     where = f"먼저 맨 위 글 「{top.title}」(번호 {top.short})을 `publish-pages {top.short} --cancel --yes` 로 되돌립니다. " if top else "먼저 맨 위(가장 나중) 글을 되돌립니다. "
-    return f"이 글 위에 다른 글의 기록이 쌓여 있어 지금은 올리거나 되돌릴 수 없습니다 — {where}그 뒤 `publish-pages {entry.short} --yes` 로 올립니다."
+    return f"이 글 위에 다른 글의 기록이 쌓여 있어 지금은 올리거나 되돌릴 수 없습니다 — {where}그 뒤 `publish-pages {entry.short} --cancel --yes` 로 이 글도 되돌립니다."

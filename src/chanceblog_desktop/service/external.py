@@ -21,7 +21,7 @@ from ..publish import deploy
 from ..publish.gitrepo import EXPECTED_ORIGIN, MAIN, RepoInfo
 from ..security.mask import mask
 
-KIND_PAGES_GIT = "pages_git"                  # 연결한 chanceblog 저장소에 git 으로 올리는 어댑터(`service/backend.py` 의 `GitPagesBackend`)
+KIND_PAGES_GIT = "pages_git"                  # 연결한 chanceblog 저장소에 git 으로 **새 가지에만** 올리는 어댑터(`service/backend.py` 의 `GitBranchBackend` — main 으로 올리는 길은 없다, PUBPR)
 KIND_BLOGGER = "blogger"                      # Blogger API 어댑터(없다 — 이 빌드에는 호출 코드가 없다)
 KIND_NAVER_PUBLISH = "naver_publish"          # 네이버 자동 로그인·게시 어댑터(만들지 않는다 — 네이버는 사람이 직접 글쓰기 페이지에서 올린다)
 KINDS = (KIND_PAGES_GIT, KIND_BLOGGER, KIND_NAVER_PUBLISH)
@@ -207,11 +207,17 @@ class LocalOnlyBackend:
     def check_push_access(self, repo):
         raise disabled("올리기 권한 점검")
 
-    def commit(self, repo, post, title):
-        raise disabled("글 기록(commit)")
+    def build_branch_commit(self, repo, post, title):
+        raise disabled("새 가지에 올릴 글 커밋 만들기")
 
-    def push(self, repo, post):
-        raise disabled("원격 main 에 올리기")
+    def push_branch(self, repo, built, post):
+        raise disabled("새 가지에 올리기")
+
+    def branch_on_remote(self, repo, branch):
+        raise disabled("올린 가지 확인")
+
+    def post_on_main(self, repo, post):
+        raise disabled("병합 확인")
 
     def discard(self, repo, info):
         raise disabled("올리지 않은 글 기록 되돌리기")

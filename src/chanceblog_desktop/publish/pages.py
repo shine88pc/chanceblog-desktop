@@ -1,22 +1,22 @@
-"""연결한 chanceblog 저장소에 글 한 편을 쓰고 commit·push 한다(docs/ARCHITECTURE.md §3 '발행').
+"""연결한 chanceblog 저장소에 글 한 편을 **새 가지에만** 올린다(docs/ARCHITECTURE.md §3 '발행', PUBPR — 원격 main 으로 가는 길은 이 모듈에도 `src/` 어디에도 없다).
 
-두 단계로 나눠 부른다 — 중간에 멈춰도 같은 글을 두 번 올리지 않고 이어서 올릴 수 있게:
+사람이 GitHub 에서 PR 로 검토·병합하고 앱은 병합을 '확인'만 한다. 세 단계로 나눠 부른다 — 중간에 멈춰도 같은 글을 두 번 올리지 않고 이어서 할 수 있게:
 
-  commit_post   글 검사(경로·머리말·제어 문자·키 모양 문자열) → 연결 확인·최신 받기 → 같은 글이 이미 있는지 → 파일 쓰기 → 그 파일만 commit.
-                여기까지는 내 PC 안에서만 일어난다. 실패하면 우리가 쓴 파일·스테이징·만든 폴더를 치우고 아무것도 남기지 않는다(치우지 못한 것은 오류 세부에 적는다).
-  push_commit   올리지 않은 커밋이 '그 글 하나뿐'인지 확인 → push. 막히면(봇이 먼저 올림) 최신을 받아 그 커밋만 옮기고 다시(최대 3번).
-                올리기 직전마다 현재 브랜치가 main 인지·올릴 것이 아직 '그 글 하나'인지 다시 확인하고, 올린 뒤 원격 main 에 들어갔는지 확인한다.
-                이미 올라가 있으면(올리다가 연결이 끊겼지만 사실은 성공했던 경우) 아무것도 하지 않고 성공으로 돌려준다 — 같은 글을 두 번 올리지 않는다.
-  discard_commit  끝내 못 올린 글 커밋(같은 주소의 글이 먼저 올라가 있어 멈춤 등)을 되돌려 저장소를 처음 상태로 돌린다 — 안 그러면 올리지 않은 커밋이 남아 다른 글이 막힌다.
+  build_branch_commit  글 검사(경로·머리말·제어 문자·키 모양 문자열) → 연결 확인 → 원격 main 받기(원격 추적 참조만 바뀐다) → 같은 글이 이미 있는지 → **객체만** 만든다
+                (`hash-object`·`mktree`·`commit-tree`). 작업 폴더의 파일·색인·로컬 가지·HEAD 는 한 바이트도 바뀌지 않는다. 만든 커밋은 받은 원격 main 위에 글 파일 하나를 더한 것이다.
+  push_branch          그 커밋을 `desktop/post-…` 모양의 **새 가지 하나**에 올린다. 같은 가지가 이미 원격에 있고 끝이 같으면 아무것도 보내지 않고 이어 간다(멱등), 끝이 다르면 덮어쓰지 않고 거절한다.
+  post_on_main         병합 확인 — 원격 main 에 그 경로로 **한 글자도 다르지 않은** 글이 있는지만 읽는다(병합 방식은 가리지 않는다).
+  compare_link         GitHub 비교 화면 주소(글자로만 보여 주고 앱은 열지 않는다).
 
-앱은 사용자의 다른 변경·커밋을 건드리지 않는다: 올리지 않은 다른 커밋이 있으면 PAGES_LOCAL_REPO_DIVERGED 로 멈추고, 강제 push(--force)를 하지 않으며,
-브랜치를 바꾸지 않고, 사용자의 훅과 서명(gpg) 대화창을 쓰지 않는다(모든 git 호출이 훅·서명을 끈다 — gitrepo.run_git). 이 모듈의 push 는 실제로 chanceblog 의 main 에
-올라가므로(T2) 독립 검증을 거치고, 시험은 진짜 git 으로 봇이 끼어드는 경우까지 만든다. 주소 확인(배포 뒤 글이 열리는지)은 deploy.py 다.
+옛 방식(main 에 곧바로 commit·push)의 `commit_post`·`discard_commit` 은 옛 `COMMITTED` 글을 읽고 되돌리기 위해서만 남아 있다 — 새 흐름은 부르지 못한다. `push_commit`·`publish_post` 는 없앴다.
+앱은 사용자의 다른 변경·커밋을 건드리지 않고 강제 push(--force)·삭제·태그 push 를 하지 않으며 브랜치를 바꾸지 않고 사용자의 훅과 서명(gpg) 대화창을 쓰지 않는다(모든 git 호출이 훅·서명을 끄고 네트워크 명령은
+`gitrepo.network_shape` 의 정해진 모양만 지난다 — gitrepo.run_git). 주소 확인(배포 뒤 글이 열리는지)은 deploy.py 다.
 """
 from __future__ import annotations
 
 import datetime
 import errno
+import hashlib
 import os
 import re
 import stat
@@ -25,15 +25,16 @@ import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from .. import capabilities
 from ..core import use_vendored_core
 from ..errors import UNEXPECTED, AppError
-from ..render.pages import front_matter_problems
+from ..render.pages import KST, front_matter_problems, post_path
 from ..security import scan
 from ..security.mask import _INVISIBLE, _strip_invisible, has_key_shape_anywhere, mask       # 비밀을 눈에 안 보이는 글자로 쪼갠 것도 찾으려고 같은 패키지의 정리 함수를 쓴다
 from . import gitrepo
-from .gitrepo import EXPECTED_ORIGIN, MAIN, inspect_repo, run_git, sync_latest
+from .gitrepo import BRANCH_NAME, BRANCH_PREFIX, EXPECTED_ORIGIN, EXPECTED_OWNER, EXPECTED_REPO, MAIN, inspect_repo, run_git, sync_latest
 
 use_vendored_core()
 from pipeline.secret_patterns import find_secrets  # noqa: E402  (vendor/ 경로를 먼저 올려야 한다)
@@ -44,7 +45,6 @@ _BAD_TEXT = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ufffe\uffff]")
 _RESERVED = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))})        # Windows 가 파일 이름으로 못 쓰는 이름
 _HIDDEN = frozenset({"Cc", "Cf", "Cs", "Co", "Zl", "Zp", "Zs"})                    # 폴더 이름에 넣지 않는 글자 범주(보통 공백 한 칸만 허용)
 MAX_POST_BYTES = 500_000
-MAX_PUSH_ATTEMPTS = 3
 _COMMIT_PREFIX = "글 올리기(데스크톱 앱):"
 _REMOTE_MAIN = f"refs/remotes/origin/{MAIN}"
 
@@ -57,10 +57,28 @@ class CommitInfo:
 
 
 @dataclass(frozen=True)
-class PushInfo:
-    commit: str       # 글을 담은 커밋(원격 main 에 들어가 있다)
-    attempts: int     # push 시도 횟수(이미 올라가 있었으면 0)
-    already: bool     # 이미 올라가 있어서 할 일이 없었다
+class BranchCommit:
+    """`build_branch_commit` 이 만든 커밋 — 아직 올리지 않았다(객체만 있다)."""
+    path: str         # 글 파일 경로
+    branch: str       # 올릴 가지 이름(`desktop/post-…` — 상수 접두사와 숫자·16진수뿐)
+    commit: str       # 만든 커밋(40자)
+    base: str         # 그 커밋의 부모 = 받은 원격 main
+
+
+@dataclass(frozen=True)
+class BranchPush:
+    """`push_branch` 의 결과."""
+    branch: str
+    commit: str       # 가지 끝 커밋(원격에서 확인했다)
+    already: bool     # 이미 같은 가지가 같은 끝으로 올라가 있어 아무것도 보내지 않았다
+
+
+@dataclass(frozen=True)
+class MainCheck:
+    """`post_on_main` 의 판정 — `merged`(같은 경로에 한 글자도 다르지 않은 글이 있다)·`different`(같은 경로에 다른 글이 있다)·`not_yet`(그 경로에 글이 없다)."""
+    state: str
+    commit: str = ""  # merged 일 때 글을 처음 담은 main 커밋(40자)
+    moved_to: str = ""  # not_yet 인데 같은 내용이 다른 경로에 있을 때 그 경로(자동으로 이어받지 않는다 — 알리기만)
 
 
 def _bad(item, detail=""):
@@ -309,51 +327,6 @@ def commit_post(repo_path, post, *, title="", git=run_git, expected_origin=EXPEC
     return CommitInfo(post.path, commit, info.head)
 
 
-def _fetch_main(git, root):
-    gitrepo._must(git, root, ["fetch", "--quiet", "origin", f"+refs/heads/{MAIN}:{_REMOTE_MAIN}"], "원격 main 받기")
-
-
-def _counts(git, root, tip="HEAD"):
-    ahead, behind = gitrepo._must(git, root, ["rev-list", "--left-right", "--count", f"{tip}...{_REMOTE_MAIN}"], "원격과 비교").split()
-    return int(ahead), int(behind)
-
-
-def _blob(git, root, spec):
-    """`rev:경로` 의 파일 내용(없으면 None)."""
-    result = git(root, ["cat-file", "blob", spec])
-    return result.stdout if result.returncode == 0 else None
-
-
-def _stem_clash(git, root, stem, own_path):
-    """원격 main 의 `_posts` 아래에 같은 주소(날짜-언어-시각)의 다른 글이 있는가 — 분야 폴더·확장자가 달라도 Jekyll 주소는 같아 한 글이 가려진다."""
-    listing = git(root, ["ls-tree", "-r", "--name-only", "-z", _REMOTE_MAIN, "--", "_posts"])
-    if listing.returncode != 0:
-        return False
-    return any(name != own_path and name.rsplit("/", 1)[-1].startswith(stem + ".") for name in listing.stdout.split("\0") if name)
-
-
-def _pending_state(git, root, post, tip="HEAD"):
-    """tip(기본 HEAD)까지 올릴 것이 정확히 '이 글 하나'인지 확인한다. 'pending'(올릴 커밋이 맞다) 또는 'published'(이미 원격 main 에 같은 내용으로 있다). 그 밖에는 AppError."""
-    ahead, _behind = _counts(git, root, tip)
-    remote = _blob(git, root, f"{_REMOTE_MAIN}:{post.path}")
-    if ahead == 0:
-        if remote is None:
-            raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail="올릴 글 커밋이 없고 원격 main 에도 그 글이 없다")
-        if remote != post.text:
-            raise AppError("DUPLICATE_SLUG", detail="원격 main 에 같은 이름의 다른 글이 있다")
-        return "published"
-    if ahead != 1:
-        raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail=f"올리지 않은 커밋이 {ahead}개다(이 글 하나여야 한다)")
-    changes = gitrepo._must(git, root, ["diff-tree", "-z", "--no-commit-id", "--name-status", "-r", tip], "올릴 커밋 확인").split("\0")
-    if [item for item in changes if item] != ["A", post.path] or _blob(git, root, f"{tip}:{post.path}") != post.text:
-        raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail="올리지 않은 커밋이 이 글이 아니다")
-    if remote is not None:
-        raise AppError("DUPLICATE_SLUG", detail="원격 main 에 같은 이름의 글이 이미 있다")
-    if _stem_clash(git, root, Path(post.path).stem, post.path):
-        raise AppError("DUPLICATE_SLUG", detail="원격 main 에 같은 주소(날짜-언어-시각)의 다른 글이 이미 있다")
-    return "pending"
-
-
 def _require_main(git, root):
     """검사 뒤 사용자가 다른 브랜치로 바꿨을 수 있다 — rebase 는 지금 HEAD 에 하므로 main 일 때만 한다."""
     branch = gitrepo._current_branch(git, root)
@@ -361,72 +334,16 @@ def _require_main(git, root):
         raise AppError("PAGES_LOCAL_REPO_NOT_MAIN", {"브랜치": branch})
 
 
-def _rebase(git, root):
-    """우리 커밋(글 하나)을 최신 원격 main 위로 옮긴다. 충돌(같은 이름의 글을 봇이 먼저 올림)이면 되돌리고 DUPLICATE_SLUG."""
-    _require_main(git, root)                          # rebase 는 지금 HEAD 에 하므로 바로 직전에 main 인지 본다(사용자의 다른 브랜치를 옮기지 않게)
-    try:
-        result = git(root, ["rebase", "--quiet", _REMOTE_MAIN])
-    except BaseException:                             # 시간 초과·중단: 진행 중인 rebase 를 남기지 않는다(저장소가 분리된 HEAD 로 남으면 이후 모든 일이 막힌다)
-        gitrepo._clear_stale_index_lock(git, root)
-        try:
-            git(root, ["rebase", "--abort"])
-        except Exception:
-            pass
-        raise
-    if result.returncode == 0:
-        return
-    git(root, ["rebase", "--abort"])                  # 진행 중인 rebase 를 남기지 않는다(없어서 실패해도 괜찮다)
-    raw = result.stderr + result.stdout
-    text = raw.lower()
-    if "conflict" in text or "could not apply" in text:
-        raise AppError("DUPLICATE_SLUG", detail=mask(raw.strip())[-400:])            # 소문자로 바꾼 글이 아니라 원문을 가린다(키 모양은 대소문자를 구분한다)
-    raise gitrepo._failure(result, "최신 위로 옮기기", root)
-
-
-def push_commit(repo_path, post, *, git=run_git, expected_origin=EXPECTED_ORIGIN, attempts=MAX_PUSH_ATTEMPTS):
-    """commit_post 가 만든 커밋을 원격 main 에 올린다. 올리지 않은 것이 '이 글 하나'가 아니면 올리지 않고 PAGES_LOCAL_REPO_DIVERGED.
-    봇이 먼저 올려 막히면 최신을 받아 그 커밋만 옮기고 다시 올린다(최대 attempts 번). 이미 올라가 있으면 할 일 없이 성공."""
-    capabilities.require_external_write("원격 main 에 올리기(push)")
-    check_post(post)
-    info = inspect_repo(repo_path, git, expected_origin)
-    root = info.path
-    _fetch_main(git, root)
-    if _pending_state(git, root, post) == "published":
-        return PushInfo(gitrepo._must(git, root, ["rev-parse", _REMOTE_MAIN], "원격 main 확인"), 0, True)
-    used = 0
-    while True:
-        _require_main(git, root)
-        if _counts(git, root)[1]:
-            _rebase(git, root)
-        tip = gitrepo._must(git, root, ["rev-parse", f"refs/heads/{MAIN}"], "올릴 커밋 확인")       # 올릴 것은 검사한 바로 이 커밋이다 — 브랜치 이름이 아니라 이 번호로 올려, 그 뒤에 사용자가 main 에 커밋을 더해도 같이 올라가지 않는다
-        if _pending_state(git, root, post, tip) == "published":        # 올리기 직전에(첫 시도도) 올릴 것이 지금도 '이 글 하나'인지·같은 주소가 원격에 없는지 다시 확인한다
-            return PushInfo(gitrepo._must(git, root, ["rev-parse", _REMOTE_MAIN], "원격 main 확인"), used, True)
-        used += 1
-        result = git(root, ["push", "--porcelain", "--no-verify", "origin", f"{tip}:refs/heads/{MAIN}"])
-        if result.returncode == 0:
-            break
-        error = gitrepo._failure(result, "글 올리기", root)
-        if error.code != "GIT_PUSH_REJECTED" or used >= attempts:
-            raise error
-        _fetch_main(git, root)
-        if _pending_state(git, root, post) == "published":        # 봇이 끼어드는 사이 사정이 달라졌을 수 있다 — 올릴 것이 아직 '이 글 하나'인지·같은 주소가 원격에 생기지 않았는지 다시 확인한다
-            return PushInfo(gitrepo._must(git, root, ["rev-parse", _REMOTE_MAIN], "원격 main 확인"), used, True)
-    _fetch_main(git, root)
-    if git(root, ["merge-base", "--is-ancestor", tip, _REMOTE_MAIN]).returncode != 0:
-        raise AppError(UNEXPECTED, detail="올렸는데 원격 main 에 그 커밋이 없다")
-    return PushInfo(tip, used, False)
-
-
 def discard_commit(repo_path, info, *, git=run_git, expected_origin=EXPECTED_ORIGIN):
     """끝내 올리지 못한 글 커밋(commit_post 가 돌려준 info)을 되돌린다: 커밋과 글 파일을 치워 저장소를 처음 상태로 돌린다 — 다른 변경은 건드리지 않는다.
-    HEAD 가 info.commit 이고 그 부모가 info.base 이며 글 파일 하나만 더한 커밋(제목도 앱이 만든 것)일 때만 하고, 먼저 원격 main 을 받아 이미 올라간 커밋이면 거절한다
-    (받지 못하면 낡은 기록으로 판단하지 않고 거절한다). 올리다 최신 위로 옮겨진 뒤에는 info.commit 이 낡아 거절된다 — 그때는 사람이 확인한다."""
+    HEAD 가 info.commit 이고 그 부모가 info.base 이며 글 파일 하나만 더한 커밋(제목도 앱이 만든 것)일 때만 하고, 마지막으로 받아 둔 원격 main 에 이미 들어 있는 커밋이면 거절한다.
+    **이 PC 안의 일뿐이다**(PUBPR — 옛 방식의 `COMMITTED` 글을 되돌리는 길만 남겼다. 원격 main 을 새로 받는 네트워크 확인은 뺐다 — 새 흐름은 이 상태를 만들지 않고 main 으로 올리는 코드는 없다).
+    올리다 최신 위로 옮겨진 뒤에는 info.commit 이 낡아 거절된다 — 그때는 사람이 확인한다."""
     capabilities.require_external_write("올리지 않은 글 기록 되돌리기")
     if not isinstance(info.path, str) or not POST_PATH.fullmatch(info.path):         # info 를 그대로 믿지 않는다: 글 경로 모양이 아니면 다른 파일을 지울 수 있다
         raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail="되돌릴 글 경로가 올바르지 않다")
     repo = inspect_repo(repo_path, git, expected_origin)
     root = repo.path
-    _fetch_main(git, root)
     if repo.head != info.commit or gitrepo._must(git, root, ["rev-parse", "HEAD^"], "부모 확인") != info.base:
         raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail="지금 HEAD 가 되돌릴 글 커밋이 아니다")
     changes = gitrepo._must(git, root, ["diff-tree", "-z", "--no-commit-id", "--name-status", "-r", "HEAD"], "올릴 커밋 확인").split("\0")
@@ -448,8 +365,248 @@ def discard_commit(repo_path, info, *, git=run_git, expected_origin=EXPECTED_ORI
         raise _note_left(AppError("FILE_WRITE_FAILED", {"경로": str(root / info.path)}, detail="커밋은 되돌렸지만 파일을 다 치우지 못했다"), left)
 
 
-def publish_post(repo_path, post, *, title="", git=run_git, expected_origin=EXPECTED_ORIGIN):
-    """commit_post 와 push_commit 을 이어서. 중간에 실패하면 CommitInfo 를 가진 채 이어 올릴 수 있도록 두 단계를 따로 부르는 쪽이 낫다."""
-    capabilities.require_external_write("글 기록(commit)과 원격 올리기(push)")
-    commit_post(repo_path, post, title=title, git=git, expected_origin=expected_origin)
-    return push_commit(repo_path, post, git=git, expected_origin=expected_origin)
+# ---- PUBPR: 새 가지에만 올린다(객체만 만들기 · 가지 올리기 · 병합 확인 · 비교 링크) ------------------------------------------------------------------------------
+COMPARE_MAX_CHARS = 1500       # 비교 링크의 길이 상한(문서에 414 한도가 있다고만 적혀 있어 보수적으로 잡았다)
+COMPARE_TITLE_CHARS = 120
+_COMMIT_ID = re.compile(r"[0-9a-f]{40}", re.ASCII)
+
+
+def branch_name(post):
+    """글 하나가 올라갈 가지 이름: `desktop/post-<YYYYMMDD>-<HHMMSS>-<8자 16진수>` — 앞 두 토막은 글 파일 이름과 같은 한국 시각이고 끝은 `sha256(글 경로 + 줄바꿈 + 승인한 글)` 의 앞 8자리다(이름 겹침 방지·멱등).
+    **제목·분야·태그 같은 사용자 글에서 온 글자는 한 글자도 들어가지 않는다**(가지 이름의 금지 글자가 들어갈 길이 없다)."""
+    found = POST_PATH.fullmatch(post.path) if isinstance(getattr(post, "path", None), str) else None
+    if not found or not isinstance(getattr(post, "text", None), str):
+        raise _bad("글 경로", detail="_posts/<분야>/YYYY-MM-DD-KR|EN-HHMMSS.md 모양이 아니다")
+    year, month, day, hour, minute, second = found.groups()
+    digest = hashlib.sha256((post.path + "\n" + post.text).encode("utf-8")).hexdigest()[:8]
+    name = f"{BRANCH_PREFIX}{year}{month}{day}-{hour}{minute}{second}-{digest}"
+    if BRANCH_NAME.fullmatch(name) is None:                                           # 닿을 수 없는 길 — 그래도 이름 규칙은 한 곳에서만 만든다
+        raise AppError(UNEXPECTED, detail="가지 이름이 정해진 모양이 아니다")
+    return name
+
+
+def post_path_for_branch(branch, category, lang):
+    """가지 이름의 시각과 글 머리말의 분야·언어로 글 파일 경로를 다시 만든다(`render.pages.post_path` 와 같은 함수) — 발행 기록 파일이 없어도(백업을 되돌린 뒤) 병합 확인을 이어 가려고 쓴다. 모양이 틀리면 None."""
+    found = re.fullmatch(r"desktop/post-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-[0-9a-f]{8}", branch, re.ASCII) if isinstance(branch, str) else None
+    if not found:
+        return None
+    try:
+        stamp = datetime.datetime(*(int(part) for part in found.groups()), tzinfo=KST)
+        path = post_path(category, lang, stamp)
+    except (ValueError, KeyError, AppError):
+        return None
+    return path if POST_PATH.fullmatch(path) else None
+
+
+def _read_tree(git, root, treeish):
+    """`git ls-tree -z <커밋 또는 트리>` → [(모드, 종류, 번호, 이름)]. 읽을 수 없는 글자가 든 이름이 있으면 거절한다(그대로 되쓰면 이름이 바뀐다)."""
+    done = git(root, ["ls-tree", "-z", treeish])
+    if done.returncode != 0:
+        raise gitrepo._failure(done, "저장소 목록 읽기", root)
+    entries = []
+    for item in done.stdout.split("\0"):
+        if not item:
+            continue
+        meta, tab, name = item.partition(chr(9))
+        parts = meta.split(" ")
+        if not tab or len(parts) != 3 or not name or "�" in name:
+            raise AppError(UNEXPECTED, detail="저장소 목록의 모양이 이상하거나 읽을 수 없는 이름이 있어 올리지 않았다")
+        entries.append((parts[0], parts[1], parts[2], name))
+    return entries
+
+
+def _make_tree(git, root, entries):
+    """항목들로 트리 객체를 만든다(`git mktree -z --missing` — 항목 순서는 git 이 가다듬는다. 이미 있던 항목을 그대로 다시 쓰는 것이라 `--missing` 으로 내려받지 않은 파일이 있는 저장소도 된다) → 트리 번호."""
+    data = b"".join(f"{mode} {kind} {number}\t{name}\0".encode("utf-8") for mode, kind, number, name in entries)
+    made = git(root, ["mktree", "-z", "--missing"], input_bytes=data)
+    if made.returncode != 0:
+        raise gitrepo._failure(made, "글을 담을 목록 만들기", root)
+    number = made.stdout.strip()
+    if _COMMIT_ID.fullmatch(number) is None:
+        raise AppError(UNEXPECTED, detail="만든 목록의 번호를 읽지 못했다")
+    return number
+
+
+def _blob_number(git, root, text, *, write):
+    """승인한 글의 UTF-8 바이트를 **변환 없이**(`--no-filters`: 줄바꿈 변환(autocrlf)·필터가 없다) 내용 번호(blob)로 만든다. `write=False` 면 저장하지 않고 번호만 계산한다."""
+    args = ["hash-object", "--no-filters", "--stdin"] + (["-w"] if write else [])
+    done = git(root, args, input_bytes=text.encode("utf-8"))
+    if done.returncode != 0:
+        raise gitrepo._failure(done, "글 내용 번호 만들기", root)
+    number = done.stdout.strip()
+    if _COMMIT_ID.fullmatch(number) is None:
+        raise AppError(UNEXPECTED, detail="글 내용 번호를 읽지 못했다")
+    return number
+
+
+def _main_tip(git, root):
+    done = git(root, ["rev-parse", "--verify", "--quiet", _REMOTE_MAIN + "^{commit}"])
+    number = done.stdout.strip()
+    if done.returncode != 0 or _COMMIT_ID.fullmatch(number) is None:
+        raise AppError("PAGES_LOCAL_REPO_DIVERGED", detail="받아 둔 원격 main 을 읽을 수 없다")
+    return number
+
+
+def _check_not_on_main(git, root, base, post, blob):
+    """받은 원격 main 의 `_posts` 아래에 같은 주소(날짜-언어-시각)의 글이나 내용이 한 글자도 다르지 않은 글이 있는지 — 있으면 DUPLICATE_SLUG·DUPLICATE_CONTENT."""
+    listing = git(root, ["ls-tree", "-r", "-z", base, "--", "_posts"])
+    if listing.returncode != 0:
+        raise gitrepo._failure(listing, "원격 main 의 글 목록 읽기", root)
+    stem = Path(post.path).stem
+    for item in listing.stdout.split("\0"):
+        meta, tab, name = item.partition(chr(9))
+        parts = meta.split()
+        if not tab or len(parts) != 3 or parts[1] != "blob":
+            continue
+        if name.rsplit("/", 1)[-1].startswith(stem + "."):
+            raise AppError("DUPLICATE_SLUG", detail=f"원격 main 에 같은 주소(날짜-언어-시각)의 글이 이미 있다: {mask(name)[:120]}")
+        if parts[2] == blob:
+            raise AppError("DUPLICATE_CONTENT", {"파일": name}, detail="내용이 똑같은 글이 원격 main 에 이미 있다: " + mask(name)[:120])
+
+
+def build_branch_commit(repo_path, post, *, title="", git=run_git, expected_origin=EXPECTED_ORIGIN):
+    """받은 원격 main 위에 글 파일 하나를 더한 **커밋 한 개를 객체로만** 만든다(작업 폴더·색인·로컬 가지·HEAD 는 그대로 — 올리지도 않는다). 같은 글(주소·내용)이 원격 main 에 이미 있으면 DUPLICATE_SLUG·DUPLICATE_CONTENT.
+    순서: 글 검사 → 연결 확인(깨끗한 main 요구는 그대로) → 원격 main 받기(읽기) → 중복 점검 → `hash-object -w --no-filters` → 트리 세 단계(`mktree`) → `commit-tree` → 만든 커밋이 정확히 글 하나만 더했는지 확인."""
+    capabilities.require_external_write("새 가지에 올릴 글 커밋 만들기")
+    capabilities.require_net("pages_branch", "새 가지에 올릴 글 커밋 만들기")           # 둘째 문장: 좁은 스위치도 함께(D-736)
+    check_post(post)
+    if secret_labels(str(title or "")):
+        raise AppError("SECRET_IN_TEXT_BLOCKED", detail="commit 제목에 키 모양 문자열이 있다")           # 제목은 공개 저장소의 commit 기록에 그대로 남는다
+    branch = branch_name(post)
+    info = inspect_repo(repo_path, git, expected_origin)
+    root = info.path
+    gitrepo.fetch_main(root, git, expected_origin)                                      # 받기가 성공해야 시작한다 — 낡은 기준으로 커밋을 만들지 않는다
+    base = _main_tip(git, root)
+    blob = _blob_number(git, root, post.text, write=False)
+    _check_not_on_main(git, root, base, post, blob)
+    blob = _blob_number(git, root, post.text, write=True)
+    category, filename = post.path.split("/")[1], post.path.rsplit("/", 1)[-1]
+    root_entries = _read_tree(git, root, base)
+    posts_entry = next((item for item in root_entries if item[3] == "_posts"), None)
+    if posts_entry is not None and posts_entry[1] != "tree":
+        raise _bad("글 경로", detail="원격 main 의 `_posts` 가 폴더가 아니다")
+    posts_entries = _read_tree(git, root, posts_entry[2]) if posts_entry is not None else []
+    clash = sorted(item[3] for item in posts_entries if item[3] != category and item[3].casefold() == category.casefold())
+    if clash:                                                                           # 대소문자를 구분하지 않는 곳에서는 git 이 기존 이름으로 기록해 우리 경로와 어긋난다
+        raise _bad("글 경로", detail=f"분야 폴더가 이미 있는 폴더와 대소문자만 다르다: {clash[0]}")
+    category_entry = next((item for item in posts_entries if item[3] == category), None)
+    if category_entry is not None and category_entry[1] != "tree":
+        raise _bad("글 경로", detail="분야 폴더 이름이 폴더가 아닌 파일과 같다")
+    category_entries = _read_tree(git, root, category_entry[2]) if category_entry is not None else []
+    if any(item[3] == filename for item in category_entries):
+        raise AppError("DUPLICATE_SLUG", detail=f"같은 이름의 글이 이미 있다: {Path(post.path).stem}")
+    category_tree = _make_tree(git, root, category_entries + [("100644", "blob", blob, filename)])
+    posts_tree = _make_tree(git, root, [item for item in posts_entries if item[3] != category] + [("040000", "tree", category_tree, category)])
+    root_tree = _make_tree(git, root, [item for item in root_entries if item[3] != "_posts"] + [("040000", "tree", posts_tree, "_posts")])
+    made = git(root, ["commit-tree", root_tree, "-p", base, "-F", "-"], input_bytes=_commit_message(post.path, title).encode("utf-8"))
+    if made.returncode != 0:
+        raise gitrepo._failure(made, "글 커밋 만들기", root)
+    commit = made.stdout.strip()
+    if _COMMIT_ID.fullmatch(commit) is None:
+        raise AppError(UNEXPECTED, detail="만든 커밋 번호를 읽지 못했다")
+    built = BranchCommit(post.path, branch, commit, base)
+    _verify_commit(git, root, built, post, blob)
+    return built
+
+
+def _verify_commit(git, root, built, post, blob=None):
+    """그 커밋이 이 저장소에 있고, 부모 하나 위에 **글 파일 하나만 더한 것**이며(`A` + 경로), 그 파일의 내용이 승인한 글과 한 글자도 다르지 않은가."""
+    present = git(root, ["cat-file", "-e", f"{built.commit}^{{commit}}"])
+    if present.returncode != 0:
+        raise AppError(UNEXPECTED, detail="만들어 둔 글 커밋이 이 저장소에 없다 — 다시 만든다")
+    changes = gitrepo._must(git, root, ["diff-tree", "-z", "--no-commit-id", "--name-status", "-r", built.commit], "만든 커밋 내용 확인").split("\0")
+    if [item for item in changes if item] != ["A", post.path]:
+        raise AppError(UNEXPECTED, detail="만든 커밋에 글 파일 하나 말고 다른 변경이 있다")
+    parent = gitrepo._must(git, root, ["rev-parse", f"{built.commit}^"], "부모 확인")
+    if parent != built.base:
+        raise AppError(UNEXPECTED, detail="만든 커밋의 부모가 받은 원격 main 이 아니다")
+    expected = blob if blob is not None else _blob_number(git, root, post.text, write=False)
+    if gitrepo._must(git, root, ["rev-parse", f"{built.commit}:{post.path}"], "글 내용 확인") != expected:
+        raise AppError(UNEXPECTED, detail="만든 커밋 속 글이 승인한 글과 다르다")
+
+
+def branch_on_remote(repo_path, branch, *, git=run_git, expected_origin=EXPECTED_ORIGIN):
+    """원격에 그 가지가 있으면 끝 커밋(40자), 없으면 None — `ls-remote` 로 읽기만 한다."""
+    capabilities.require_external_write("올린 가지 확인")
+    capabilities.require_net("pages_branch", "올린 가지 확인")
+    return gitrepo.remote_branch_tip(repo_path, branch, git, expected_origin)
+
+
+def push_branch(repo_path, built, post, *, git=run_git, expected_origin=EXPECTED_ORIGIN):
+    """`build_branch_commit` 이 만든 커밋을 **새 가지 하나**에 올린다(강제 push 없음 — 인자는 정해진 한 모양뿐이고 main 은 시도하지 않는다). 같은 일을 두 번 해도 같은 결과다:
+    원격에 그 가지가 이미 있고 끝이 이 커밋이면 아무것도 보내지 않고 이어 가며(`already`), 끝이 다르면 덮어쓰지 않고 PAGES_PUSH_REFUSED(이름 충돌). 올린 뒤 다시 `ls-remote` 로 확인한 뒤에만 성공이다.
+    올렸는데 응답이 끊겼으면(시간 초과·연결 실패) 가지를 한 번 더 읽어 보고, 이미 올라갔으면 두 번째 push 를 하지 않는다."""
+    capabilities.require_external_write("새 가지에 올리기(push)")
+    capabilities.require_net("pages_branch", "새 가지에 올리기(push)")                  # 둘째 문장: 좁은 스위치도 함께(D-736)
+    check_post(post)
+    if (not isinstance(built, BranchCommit) or built.path != post.path or BRANCH_NAME.fullmatch(str(built.branch)) is None or built.branch != branch_name(post)
+            or _COMMIT_ID.fullmatch(str(built.commit)) is None or _COMMIT_ID.fullmatch(str(built.base)) is None):
+        raise AppError("PAGES_PUSH_REFUSED", detail="올릴 가지·커밋 정보가 정해진 모양이 아니다")
+    info = inspect_repo(repo_path, git, expected_origin)
+    root = info.path
+    _verify_commit(git, root, built, post)                                              # 올리기 직전에도 '글 하나만 더한 커밋' 이 맞는지 다시 본다
+    tip = gitrepo.remote_branch_tip(root, built.branch, git, expected_origin)
+    if tip == built.commit:
+        return BranchPush(built.branch, built.commit, True)
+    if tip is not None:
+        raise AppError("PAGES_PUSH_REFUSED", detail="같은 이름의 가지가 다른 내용으로 이미 원격에 있어 덮어쓰지 않고 멈췄다")
+    gitrepo.recheck_origin(git, root, expected_origin)
+    try:
+        result = git(root, ["push", "--porcelain", "--no-verify", "origin", f"{built.commit}:refs/heads/{built.branch}"])
+        failure = None if result.returncode == 0 else gitrepo._failure(result, "새 가지에 올리기", root)
+    except AppError as error:
+        failure = error
+    if failure is not None:
+        if failure.code in ("NETWORK_TIMEOUT", "GIT_PUSH_NETWORK"):
+            try:
+                if gitrepo.remote_branch_tip(root, built.branch, git, expected_origin) == built.commit:      # 올라갔는데 응답만 끊겼다
+                    return BranchPush(built.branch, built.commit, False)
+            except AppError:
+                pass                                                                    # 확인도 못 했다 — 처음 오류를 그대로 알린다(다시 하면 위의 `ls-remote` 가 이어 준다)
+        raise failure
+    if gitrepo.remote_branch_tip(root, built.branch, git, expected_origin) != built.commit:
+        raise AppError(UNEXPECTED, detail="올렸는데 원격에 그 가지가 없다")
+    return BranchPush(built.branch, built.commit, False)
+
+
+def post_on_main(repo_path, post, *, git=run_git, expected_origin=EXPECTED_ORIGIN):
+    """병합 확인 — 원격 main 을 받아(읽기) 그 경로에 **한 글자도 다르지 않은** 글이 있는지만 본다(`merged`). 일반 병합·squash·rebase 가리지 않는다. 그 경로에 다른 글이 있으면 `different`, 글이 없으면 `not_yet`
+    (같은 내용이 다른 경로에 있으면 `moved_to` 에 그 경로만 알린다 — 자동으로 이어받지 않는다). 병합됐으면 그 글을 처음 담은 main 커밋을 함께 돌려준다. 아무것도 쓰지 않는다."""
+    capabilities.require_external_write("병합 확인(원격 main 읽기)")
+    capabilities.require_net("pages_branch", "병합 확인(원격 main 읽기)")                # 둘째 문장: 좁은 스위치도 함께(D-736)
+    check_post(post)
+    info = inspect_repo(repo_path, git, expected_origin)
+    root = info.path
+    gitrepo.fetch_main(root, git, expected_origin)
+    base = _main_tip(git, root)
+    wanted = _blob_number(git, root, post.text, write=False)
+    found = git(root, ["rev-parse", "--verify", "--quiet", f"{base}:{post.path}"])
+    there = found.stdout.strip()
+    if found.returncode == 0 and _COMMIT_ID.fullmatch(there):
+        if there != wanted:
+            return MainCheck("different")
+        added = git(root, ["log", "--diff-filter=A", "-1", "--format=%H", base, "--", post.path])
+        first = added.stdout.strip() if added.returncode == 0 else ""
+        return MainCheck("merged", commit=first if _COMMIT_ID.fullmatch(first) else base)
+    listing = git(root, ["ls-tree", "-r", "-z", base, "--", "_posts"])
+    if listing.returncode == 0:
+        for item in listing.stdout.split("\0"):
+            meta, tab, name = item.partition(chr(9))
+            parts = meta.split()
+            if tab and len(parts) == 3 and parts[1] == "blob" and parts[2] == wanted:
+                return MainCheck("not_yet", moved_to=name)
+    return MainCheck("not_yet")
+
+
+def compare_link(branch, title=""):
+    """GitHub 비교 화면 주소(PR 을 만드는 화면) — 기준은 `main`, 머리는 가지. **글자로만 보여 주고 앱은 열지 않는다.** 소유자·저장소는 `EXPECTED_OWNER`·`EXPECTED_REPO` 상수에서 만든다(연결한 폴더의 origin 글자에서 읽지 않는다).
+    제목은 모든 특수 문자를 퍼센트 부호로 바꿔(`quote(safe="")`) 120자로 줄이고(`&body=`·`#`·줄바꿈 주입 방지) 본문은 넣지 않으며(PR 본문은 공개된다) 전체가 1,500자를 넘으면 제목을 더 줄인다."""
+    if not isinstance(branch, str) or BRANCH_NAME.fullmatch(branch) is None:
+        raise AppError("PAGES_PUSH_REFUSED", detail="가지 이름이 정해진 모양이 아니다")
+    head = f"https://github.com/{EXPECTED_OWNER}/{EXPECTED_REPO}/compare/{MAIN}...{branch}?quick_pull=1&title="
+    text = " ".join(str(title or "").split())[:COMPARE_TITLE_CHARS]
+    link = head + quote(text, safe="")
+    while len(link) > COMPARE_MAX_CHARS and text:
+        text = text[:max(len(text) - 10, 0)]
+        link = head + quote(text, safe="")
+    return link

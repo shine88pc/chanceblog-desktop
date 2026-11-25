@@ -103,10 +103,11 @@ def _check_python():
 
 
 def _check_external_write():
-    """외부 게시(원격에 쓰는 일)의 상태 한 줄 — 이 시험 버전은 소스 상수로 꺼져 있다(켜는 길이 없다)."""
+    """외부 게시(원격에 쓰는 일)의 상태 한 줄 — 이 시험 버전은 소스 상수로 꺼져 있다(켜는 길이 없다). 켜진 빌드는 '가지 올리기' 상태를 함께 알린다(앱은 main 에 올리지 않고 새 가지에만 올린다 — PUBPR)."""
     if capabilities.external_write_enabled():
-        return check("외부 게시", "warn", "", "켜져 있습니다 — 개발·시험용 빌드입니다(소스 상수를 바꿨습니다). 개인 PC 제한 시험 버전에서는 꺼져 있어야 합니다.")
-    return check("외부 게시", "ok", "", "이 시험 버전에서는 꺼져 있어요 — GitHub 에 올리기·Blogger·네이버로 보내는 기능이 없습니다(글은 이 PC 에서 쓰고 검토한 뒤 복사해 직접 올립니다).")
+        branch = "가지 올리기: 켜져 있어요(main 에는 올리지 않아요)" if capabilities.pages_branch_push_enabled() else "가지 올리기: 꺼져 있어요"
+        return check("외부 게시", "warn", "", f"켜져 있습니다 — 개발·시험용 빌드입니다(소스 상수를 바꿨습니다). {branch}. 개인 PC 제한 시험 버전에서는 꺼져 있어야 합니다.")
+    return check("외부 게시", "ok", "", "이 시험 버전에서는 꺼져 있어요 — GitHub 에 올리기·Blogger·네이버로 보내는 기능이 없습니다(글은 이 PC 에서 쓰고 검토한 뒤 복사해 직접 올립니다). 가지 올리기: 꺼져 있어요.")
 
 
 def _check_net():
@@ -239,12 +240,12 @@ def _check_push_access(ctx, online):
     if not online:
         if not capabilities.external_write_enabled():                      # 이 빌드는 글을 올리지 않으므로 `doctor --online` 을 권하지 않는다(그 명령은 거절된다 — PCSEC1 D7)
             return check("올리기 권한", "skip", "", "점검하지 않았습니다 — 이 시험 버전은 글을 GitHub 에 올리지 않아요(외부 게시가 꺼져 있습니다).")
-        return check("올리기 권한", "skip", "", "점검하지 않았습니다 — 네트워크를 쓰므로 `doctor --online` 으로 합니다(실제로 올리지는 않습니다).")
+        return check("올리기 권한", "skip", "", "점검하지 않았습니다 — 네트워크를 쓰므로 `doctor --online` 으로 합니다(새 가지를 올릴 수 있는지만 보고 실제로 올리지는 않습니다).")
     repo = ctx.repo_path_or_none()
     if repo is None:
         return check("올리기 권한", "skip", "", "연결한 저장소가 없어 점검하지 않았습니다.")
     ctx.backend.check_push_access(repo)
-    return check("올리기 권한", "ok", "", "올릴 수 있습니다(`git push --dry-run` — 실제로는 올리지 않았습니다).")
+    return check("올리기 권한", "ok", "", "새 가지를 올릴 수 있습니다(`git push --dry-run` 으로 점검용 가지 이름만 시험했고 실제로는 올리지 않았습니다 — main 은 시도하지 않았습니다).")
 
 
 def _check_naver(ctx):
@@ -284,13 +285,15 @@ def _check_pending(ctx):
                 record = None
             if record is not None and repo is not None and ctx.backend.on_remote(repo, record.path):
                 notes.append(check("이어서 처리할 글", "warn", "PAGES_DEPLOY_NOT_VISIBLE",
-                                   f"{row.title} — 이미 원격 main 에 올라가 있는데 올림 기록을 마치기 전에 멈췄습니다(번호 {short}). `publish-pages {short} --yes` 로 기록을 마치고 공개 확인을 합니다(되돌리지 않습니다).", ""))
+                                   f"{row.title} — 옛 방식으로 올리다 멈춘 글이 이미 원격 main 에 올라가 있습니다(번호 {short}). 올라간 글은 되돌리지 않습니다 — 공개 주소는 사이트에서 직접 확인하고, 이 글의 기록이 필요 없으면 `delete {short} --yes` 로 지웁니다.", ""))
             elif entry is not None:
                 notes.append(check("이어서 처리할 글", "warn", "PAGES_LOCAL_REPO_DIVERGED", f"{row.title} — 글 기록은 있지만 아직 올리지 않았습니다(번호 {short}). {unpushed.entry_text(situation, entry)}", ""))
             else:
                 notes.append(check("이어서 처리할 글", "warn", "PAGES_LOCAL_REPO_DIVERGED",
-                                   f"{row.title} — 글 기록은 있지만 아직 올리지 않았습니다(번호 {short}). `publish-pages {short} --yes` 로 이어서 올리거나 올리지 않고 되돌리려면 `publish-pages {short} --cancel --yes` 합니다.", ""))
-        elif status == st.PUSHED and journal.missing(row.project_id):
+                                   f"{row.title} — 옛 방식으로 이 PC 에 기록해 둔 글이 아직 올라가지 않았습니다(번호 {short}). 이어서 올리는 길은 없어졌습니다(앱은 main 에 올리지 않습니다) — `publish-pages {short} --cancel --yes` 로 이 PC 의 기록을 되돌린 뒤 `review` 로 다시 만들어 승인합니다.", ""))
+        elif status == st.MERGE_PENDING:
+            notes.append(check("이어서 처리할 글", "warn", "", f"{row.title} — 새 가지에 올려 병합을 기다리는 중입니다(번호 {short}). GitHub 에서 병합했으면 `merge-check {short}` 로 확인하고, 병합하지 않기로 했으면 `abandon {short} --yes` 로 정리합니다."))
+        elif status == st.PUSHED and journal.missing(row.project_id) and not _rebuildable(ctx, row.project_id):
             notes.append(check("이어서 처리할 글", "warn", "SETTINGS_INVALID",
                                f"{row.title} — 올림 상태인데 발행 기록 파일이 없어 공개 확인을 이어갈 수 없습니다(번호 {short} — 글을 지웠다가 백업으로 되살렸거나 오래된 백업으로 되돌렸을 때 생깁니다). "
                                f"올라간 글은 저장소에 그대로 있으니 공개 주소는 사이트에서 직접 확인하고, 이 글의 기록이 필요 없으면 `delete {short} --yes` 로 지웁니다.", ""))
@@ -301,6 +304,15 @@ def _check_pending(ctx):
         elif row.error:
             notes.append(check("글 읽기", "fail", row.error, f"{row.title} — 이 글을 읽을 수 없습니다(번호 {short})."))
     return notes
+
+
+def _rebuildable(ctx, project_id):
+    """발행 기록 파일이 없어도 보관함의 식별자(`가지@커밋`)로 공개 확인을 이어 갈 수 있는가 — 새 방식으로 올린 글은 그렇다."""
+    try:
+        with ctx.store() as store:
+            return st.split_remote_id(store.load(project_id).variant("github_pages").remote_id) is not None
+    except AppError:
+        return False
 
 
 def _leftover_record(journal, project_id):

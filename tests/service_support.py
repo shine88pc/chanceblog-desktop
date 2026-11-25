@@ -21,7 +21,8 @@ from chanceblog_desktop.core import load_vendored_script  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.publish import gitrepo  # noqa: E402
 from chanceblog_desktop.publish.gitrepo import GitResult, RepoInfo  # noqa: E402
-from chanceblog_desktop.publish.pages import CommitInfo, PushInfo  # noqa: E402
+from chanceblog_desktop.publish import pages as publish_pages  # noqa: E402
+from chanceblog_desktop.publish.pages import BranchCommit, BranchPush, CommitInfo, MainCheck  # noqa: E402
 from chanceblog_desktop.publish.deploy import DeployResult  # noqa: E402
 from chanceblog_desktop.security.keystore import MemoryStore  # noqa: E402
 from chanceblog_desktop.service import cli, projects, review  # noqa: E402
@@ -115,8 +116,8 @@ class FakeBackend:
         self.calls = []
         self.inspect_error = None
         self.url_error = None
-        self.commit_error = None
-        self.push_errors = []              # 한 번 부를 때마다 하나씩 꺼내 쓴다(None 이면 성공)
+        self.commit_error = None           # 가지에 올릴 글 커밋을 만들 때(`build_branch_commit`) 일으킬 오류
+        self.push_errors = []              # 새 가지 올리기(`push_branch`)를 부를 때마다 하나씩 꺼내 쓴다(None 이면 성공)
         self.discard_error = None
         self.deploy_errors = []
         self.names_found = []
@@ -127,7 +128,10 @@ class FakeBackend:
         self.made_by_app = 0               # 올리지 않은 commit 중 앱이 만든 모양(제목이 앱의 commit 제목)인 것의 수 — 이 데이터 폴더에 기록이 없는 commit 이 다른 앱의 것인지 가르는 데 쓴다
         self.head_has_post = False
         self.push_already = False
-        self.push_commit_id = "d" * 40
+        self.built_commit_id = "c" * 40    # 만든 가지 끝 커밋
+        self.built_base_id = "b" * 40      # 그 부모(받은 원격 main)
+        self.branch_tip = None             # 원격에 그 가지가 있으면 그 끝 커밋(없으면 None) — branch_on_remote 의 답
+        self.merge_results = []            # 병합 확인(`post_on_main`)을 부를 때마다 하나씩 꺼내 쓴다(비면 `not_yet`) — MainCheck 이거나 일으킬 AppError
         self.orphan = None                 # commit 직후에 멈춰 기록 없이 남은 이 글의 commit(CommitInfo) — 있으면 orphan_commit 이 돌려준다
         self.same_content_found = []       # 내용이 똑같은 글이 이미 있는 파일 이름들(백업으로 되살린 글이 이미 올라간 경우)
         self.remote_has_post = False       # 받아 둔 원격 main 에 이 글 파일이 이미 있는가(올리고 나서 멈춘 글을 되돌리려 할 때)
@@ -200,18 +204,29 @@ class FakeBackend:
         self.calls.append(("same_content",))
         return list(self.same_content_found)
 
-    def commit(self, repo, post, title):
-        self._enter("commit", post.path, title, post.text)
+    def build_branch_commit(self, repo, post, title):
+        self._enter("build_branch_commit", post.path, title, post.text)
         if self.commit_error:
             raise self.commit_error
-        return CommitInfo(post.path, "c" * 40, "b" * 40)
+        return BranchCommit(post.path, publish_pages.branch_name(post), self.built_commit_id, self.built_base_id)
 
-    def push(self, repo, post):
-        self._enter("push", post.path)
+    def push_branch(self, repo, built, post):
+        self._enter("push_branch", post.path, built.branch)
         error = self.push_errors.pop(0) if self.push_errors else None
         if error:
             raise error
-        return PushInfo(self.push_commit_id, 0 if self.push_already else 1, self.push_already)
+        return BranchPush(built.branch, built.commit, self.push_already)
+
+    def branch_on_remote(self, repo, branch):
+        self.calls.append(("branch_on_remote", branch))
+        return self.branch_tip
+
+    def post_on_main(self, repo, post):
+        self._enter("post_on_main", post.path)
+        found = self.merge_results.pop(0) if self.merge_results else MainCheck("not_yet")
+        if isinstance(found, Exception):
+            raise found
+        return found
 
     def discard(self, repo, info):
         self._enter("discard", info.path, info.commit)

@@ -77,7 +77,7 @@ class StatusTableTest(unittest.TestCase):
         expected = {
             "pages": {
                 "NOT_STARTED": ("DRAFT_GENERATED",), "DRAFT_GENERATED": ("REVIEW_REQUIRED",), "REVIEW_REQUIRED": ("APPROVED", "DRAFT_GENERATED"),
-                "APPROVED": ("COMMITTED", "REVIEW_REQUIRED", "PUBLISH_FAILED"), "COMMITTED": ("PUSHED", "PUBLISH_FAILED"), "PUSHED": ("PUBLISHED", "PUBLISH_FAILED"),
+                "APPROVED": ("COMMITTED", "MERGE_PENDING", "REVIEW_REQUIRED", "PUBLISH_FAILED"), "COMMITTED": ("PUSHED", "PUBLISH_FAILED"), "MERGE_PENDING": ("PUSHED", "PUBLISH_FAILED"), "PUSHED": ("PUBLISHED", "PUBLISH_FAILED"),
                 "PUBLISHED": (), "PUBLISH_FAILED": ("REVIEW_REQUIRED", "DRAFT_GENERATED"),
             },
             "blogger": {

@@ -882,7 +882,7 @@ class MigrationTest(CandidateStoreCase):
         store = self.open()
         db = self.raw()
         self.assertEqual((db.execute("PRAGMA user_version").fetchone()[0], db.execute("PRAGMA application_id").fetchone()[0]), (SCHEMA_VERSION, APPLICATION_ID))
-        self.assertEqual(SCHEMA_VERSION, 2)
+        self.assertEqual(SCHEMA_VERSION, 3)           # 판 3(PUBPR)은 표 구조가 판 2 와 같다 — 후보 표를 더한 판 1 → 2 의 모양은 그대로다
         self.assertEqual({row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}, {"projects", "revisions", "drafts", "candidates"})
         self.assertEqual({row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'candidates_%'")}, {"candidates_status", "candidates_keyword"})
         self.assertEqual([item.project_id for item in store.list()], ["p1", "p2"])
@@ -912,7 +912,7 @@ class MigrationTest(CandidateStoreCase):
     def test_a_new_file_is_made_directly_in_the_new_shape(self):
         store = self.open()
         db = self.raw()
-        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         self.assertEqual({row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}, {"projects", "revisions", "drafts", "candidates"})
         self.assertEqual([entry.name for entry in self.path.parent.iterdir()], [self.path.name], "새 파일은 올릴 것이 없으니 사본도 없다")
         self.assertEqual(store.check(), [])
@@ -1004,7 +1004,7 @@ class MigrationTest(CandidateStoreCase):
         store.restore_from(backup)
         self.assertEqual([item.project_id for item in store.list()], ["p7"])
         self.assertEqual(store.list_candidates(), [], "백업 시점에는 후보 표가 없었으니 비어 있다")
-        self.assertEqual(self.raw().execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertEqual(self.raw().execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
         store.save_candidate(cand("c9", keyword="새 후보"))
         self.assertEqual(store.check(), [])
 

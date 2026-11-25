@@ -201,12 +201,16 @@ def edit_project(ctx, text_id, *, title=None, markdown=None, references=None, as
 def _must_finish_first(ctx, project_id, project):
     """지우면 안 되는 글(올리다 만 글)이면 그 이유를 AppError 로 돌려준다 — 아니면 None.
      · 올리지 않은 글 기록(COMMITTED): 연결한 저장소에 주인 없는 commit 이 남는다 — 먼저 올리거나 취소한다.
+     · 새 가지에 올려 병합을 기다리는 글(MERGE_PENDING): 지우면 어느 가지인지 잊어 병합 확인을 이어 갈 수 없다 — 먼저 병합을 확인하거나(`merge-check`) 병합하지 않기로 하고 정리한다(`abandon`).
      · 올렸지만 공개 확인이 끝나지 않은 글(PUSHED): 지우면 발행 기록 파일도 함께 지워져 `check-deploy` 로 이을 수 없게 되고(지웠다가 백업으로 되살려도 기록은 되살아나지 않는다 — 기록 없는 '올림' 글은
        `check-deploy`·`publish-pages`·`--cancel` 이 서로를 가리키며 막힌다), 그러면 지우기 전의 백업으로도 마칠 수 없다 — 먼저 `check-deploy` 로 마친다.
        단 이미 발행 기록이 없는 '올림' 글(백업으로 되돌리다 생긴 것)은 어떻게 해도 이을 수 없으므로 지울 수 있다(잃는 것이 없다). 읽을 수 없는 기록은 SETTINGS_INVALID 로 그대로 알린다."""
     status = project.variant("github_pages").status
     if status == st.COMMITTED:
         return AppError("STATUS_TRANSITION_INVALID", {"현재 상태": st.COMMITTED, "요청 상태": "삭제"}, detail="올리지 않은 글 기록이 남아 있다 — 먼저 올리거나 취소한다")
+    if status == st.MERGE_PENDING:                # 새 가지에 올려 두고 병합을 기다리는 글 — 지우면 어느 가지인지 잊어 병합 확인을 이어 갈 수 없다(가지와 PR 은 GitHub 에 그대로 남는다). 먼저 병합을 확인하거나 '병합하지 않기로 했어요' 로 정리한다
+        return AppError("STATUS_TRANSITION_INVALID", {"현재 상태": st.MERGE_PENDING, "요청 상태": "삭제"},
+                        detail=f"새 가지에 올려 병합을 기다리는 글이다 — 먼저 `merge-check {project_id[:8]}` 로 병합을 확인하거나 병합하지 않기로 했으면 `abandon {project_id[:8]} --yes` 로 정리한 뒤 지운다")
     if status == st.PUSHED and Journal(ctx.workspace.journal_dir).read(project_id) is not None:
         return AppError("STATUS_TRANSITION_INVALID", {"현재 상태": st.PUSHED, "요청 상태": "삭제"},
                         detail=f"원격 main 에는 올라갔지만 공개 확인이 끝나지 않은 글이다 — 지우면 발행 기록도 함께 지워져 공개 확인을 이어갈 수 없다. 먼저 `check-deploy {project_id[:8]}` 로 공개 확인을 마친 뒤 지운다")

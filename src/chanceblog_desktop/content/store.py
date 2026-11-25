@@ -43,7 +43,7 @@ from .profiles import MAX_REUSE_DAYS
 from .status import PLATFORMS
 
 APPLICATION_ID = 0x43424450          # 'CBDP' — 이 프로그램의 데이터 파일 표시
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3                   # 판 3(PUBPR): 표 구조는 판 2 와 같고 글 상태에 'MERGE_PENDING' 이 새로 생겼다 — 옛 프로그램이 새 상태의 글을 잘못 읽지 않게 판 번호만 올려 옛 프로그램은 안전하게 거절한다(`STORE_VERSION_UNSUPPORTED`)
 MIN_SCHEMA_VERSION = 1               # 이 프로그램이 만든 파일의 가장 낮은 판 — 0·음수는 이 프로그램이 만든 적이 없다(이름표만 맞춘 낯선 파일)
 KEEP_REVISIONS = 50                  # 프로젝트마다 남기는 판 기록 수(가장 새 판은 늘 남긴다)
 KEEP_BACKUPS = 10
@@ -68,7 +68,7 @@ _V2_CANDIDATES = (
     "CREATE INDEX IF NOT EXISTS candidates_keyword ON candidates (keyword_key, status)",
 )
 
-# 새 파일은 가장 새 모양으로 만든다(판 3 이 생기면 이 목록을 그 모양으로 고치고, 시험이 '새 파일 = 옛 파일을 올린 것' 을 확인한다)
+# 새 파일은 가장 새 모양으로 만든다(판 3 은 표 구조가 판 2 와 같아 이 목록이 그대로다 — 모양이 달라지는 판이 생기면 이 목록을 그 모양으로 고치고, 시험이 '새 파일 = 옛 파일을 올린 것' 을 확인한다)
 _SCHEMA = (
     "CREATE TABLE projects ("
     " project_id TEXT PRIMARY KEY, title TEXT NOT NULL, revision INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, data TEXT NOT NULL)",
@@ -87,6 +87,7 @@ _SHAPES = {1: {"projects": ("project_id", "title", "revision", "created_at", "up
                "revisions": ("project_id", "revision", "saved_at", "data"),
                "drafts": ("project_id", "text", "saved_at")}}
 _SHAPES[2] = {**_SHAPES[1], "candidates": ("candidate_id", "keyword_key", "status", "project_id", "revision", "created_at", "updated_at", "data")}
+_SHAPES[3] = dict(_SHAPES[2])                                      # 판 3 은 표 구조가 판 2 와 같다(표식만 올린다)
 _V2_INDEXES = {"candidates_status": ("status", "updated_at"), "candidates_keyword": ("keyword_key", "status")}
 
 
@@ -123,8 +124,15 @@ def _add_candidates(db):
         raise RuntimeError(problem)
 
 
+def _mark_merge_pending(db):
+    """판 2 → 3: 표 구조를 바꾸지 않는 표식 올림(`PRAGMA user_version = 3` 은 `_migrate` 가 같은 트랜잭션 안에서 적는다). 판 2 의 표·색인이 그대로인지만 확인한다 — 어긋났으면 실패해 트랜잭션이 되돌려진다."""
+    problem = _shape_problem(db, 2, indexes=True)
+    if problem:
+        raise RuntimeError(problem)
+
+
 # 구조를 바꾸는 단계: {지금 버전: 다음 버전으로 바꾸는 함수(연결)}. 한 번에 한 단계씩, 모두 한 트랜잭션 안에서 돈다.
-MIGRATIONS = {1: _add_candidates}
+MIGRATIONS = {1: _add_candidates, 2: _mark_merge_pending}
 
 # SQLite 의 오류 문구 → 오류 코드(위에서부터 처음 맞는 것)
 _ERROR_RULES = (

@@ -27,7 +27,7 @@ POST_T = {
     "post_untitled": "(제목 없음)",
     # 상태·플랫폼 이름(서비스 표와 같은 글자)
     "post_status_NOT_STARTED": "시작 전", "post_status_DRAFT_GENERATED": "글 만듦", "post_status_REVIEW_REQUIRED": "검토 중", "post_status_APPROVED": "승인됨",
-    "post_status_COMMITTED": "이 PC 에 기록함(아직 안 올림)", "post_status_PUSHED": "올림(공개 확인 전)", "post_status_PUBLISHED": "공개됨", "post_status_DRAFT_SAVED": "초안 저장됨",
+    "post_status_COMMITTED": "이 PC 에 기록함(아직 안 올림)", "post_status_MERGE_PENDING": "병합 기다리는 중", "post_status_PUSHED": "올림(공개 확인 전)", "post_status_PUBLISHED": "공개됨", "post_status_DRAFT_SAVED": "초안 저장됨",
     "post_status_READY_TO_COPY": "복사 준비됨", "post_status_COPY_COMPLETED": "복사함", "post_status_PUBLISHED_MANUAL": "직접 발행함", "post_status_PUBLISH_FAILED": "실패",
     "post_status_unknown": "알 수 없음",
     "post_platform_github_pages": "GitHub Pages", "post_platform_naver_a": "네이버 A", "post_platform_naver_b": "네이버 B",

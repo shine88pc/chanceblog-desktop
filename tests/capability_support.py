@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from chanceblog_desktop import capabilities  # noqa: E402
+from chanceblog_desktop.publish import gitrepo  # noqa: E402
 
 _PATCHERS = {"EXTERNAL_WRITE": [], "BLOGGER_OAUTH_INPUT": [], "LOCAL_OCR": [],
              # 인터넷 접속 스위치 다섯(NET, D-720) — 시험이 임시로만 켠다
@@ -36,15 +37,35 @@ def switch_off(name):
     _off(name)
 
 
+_TRANSPORT_PATCHERS = []
+
+
+def local_origin_transport_on():
+    """진짜 git·로컬 bare 저장소 시험이 `file` 전송을 임시로 허용한다(`gitrepo._EXTRA_TRANSPORTS` — 시험 접합부. 생산 코드는 https·ssh 만 허용한다)."""
+    patcher = mock.patch.object(gitrepo, "_EXTRA_TRANSPORTS", ("file",))
+    patcher.start()
+    _TRANSPORT_PATCHERS.append(patcher)
+
+
+def local_origin_transport_off():
+    while _TRANSPORT_PATCHERS:
+        _TRANSPORT_PATCHERS.pop().stop()
+
+
 def external_write_on():
-    """외부 Write 관문을 시험에서만 임시로 연다. NET(D-720)부터 올린 글의 공개 주소 확인은 좁은 스위치(`NET_PAGES_SITE`)도 함께 요구하므로, 예전에 `EXTERNAL_WRITE` 하나가 열던 같은 흐름을 이 시험들이 그대로 돌게 그 스위치도 함께 임시로 연다."""
+    """외부 Write 관문을 시험에서만 임시로 연다. NET(D-720)부터 올린 글의 공개 주소 확인은 좁은 스위치(`NET_PAGES_SITE`)도 함께 요구하므로, 예전에 `EXTERNAL_WRITE` 하나가 열던 같은 흐름을 이 시험들이 그대로 돌게 그 스위치도 함께 임시로 연다.
+    PUBPR(D-740)부터 git 받기·올리기도 좁은 스위치(`PAGES_BRANCH_PUSH`)를 함께 요구하므로 같은 까닭으로 그것도 함께 연다 — 그리고 로컬 bare 저장소(원격 대신 폴더 경로)를 쓰는 시험을 위해 `file` 전송을 임시로 허용한다."""
     _on("EXTERNAL_WRITE")
     _on("NET_PAGES_SITE")
+    _on("PAGES_BRANCH_PUSH")
+    local_origin_transport_on()
 
 
 def external_write_off():
     _off("EXTERNAL_WRITE")
     _off("NET_PAGES_SITE")
+    _off("PAGES_BRANCH_PUSH")
+    local_origin_transport_off()
 
 
 def blogger_input_on():

@@ -150,7 +150,7 @@ class ConcurrentOpenTest(MigrationCase):
                     thread.start()
                 for thread in threads:
                     thread.join(60)
-                self.assertEqual(outcomes, [("ok", 2, [])] * 3)
+                self.assertEqual(outcomes, [("ok", SCHEMA_VERSION, [])] * 3)
                 self.assert_upgraded_once(path, original, original_rows)
 
     def race(self, count, trial):
@@ -176,7 +176,7 @@ class ConcurrentOpenTest(MigrationCase):
             for child in children:
                 if child.poll() is None:
                     child.kill()
-        self.assertEqual(results, [{"ok": True, "version": 2, "check": []}] * count)
+        self.assertEqual(results, [{"ok": True, "version": SCHEMA_VERSION, "check": []}] * count)
         self.assert_upgraded_once(path, original, original_rows)
 
     def test_two_real_processes_opening_the_same_old_file_at_once_all_succeed(self):
@@ -267,7 +267,7 @@ class ConcurrentOpenTest(MigrationCase):
                     thread.start()
                 for thread in threads:
                     thread.join(60)
-                self.assertEqual(outcomes, [("ok", 2, [])] * 3)
+                self.assertEqual(outcomes, [("ok", SCHEMA_VERSION, [])] * 3)
                 self.assertEqual(self.names(path), ["chanceblog.db"], "새 파일은 올릴 것이 없으니 사본도 없다")
                 self.assertEqual(tables(path), {"projects", "revisions", "drafts", "candidates"})
 
@@ -310,12 +310,12 @@ class CopyTest(MigrationCase):
         self.assertEqual(digest(self.copy_of()), older_digest, "예전 사본은 한 바이트도 안 바뀌었다")
         self.assertEqual(dump(self.copy_of(2)), original, "지금 파일의 사본은 다음 이름으로 만들어졌다")
         self.assertEqual(self.names(), ["chanceblog.db", "chanceblog.db.v1.2.bak", "chanceblog.db.v1.bak"])
-        self.assertEqual(pragma(path, "user_version"), 2)
+        self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_a_copy_that_already_exists_with_the_same_content_is_reused_not_duplicated(self):
         path = self.old_file()
         original, original_rows = dump(path), rows(path)
-        with mock.patch.object(store_module, "MIGRATIONS", {1: lambda db: (_ for _ in ()).throw(RuntimeError("올리다 실패"))}):
+        with mock.patch.object(store_module, "MIGRATIONS", {**store_module.MIGRATIONS, 1: lambda db: (_ for _ in ()).throw(RuntimeError("올리다 실패"))}):
             self.refuses("MIGRATION_FAILED", Store.open, path)         # 사본은 만들었는데 올리지 못했다
         self.assertEqual(dump(self.copy_of()), original)
         self.assertEqual(pragma(path, "user_version"), 1)
@@ -348,7 +348,7 @@ class CopyTest(MigrationCase):
                 Store.open(path).close()
                 self.assertEqual(self.copy_of(path).read_bytes(), content, "있던 것은 그대로다")
                 self.assertEqual(dump(self.copy_of(path, 2)), original)
-                self.assertEqual(pragma(path, "user_version"), 2)
+                self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_a_folder_or_a_locked_file_in_the_copys_place_is_left_alone_too(self):
         path = self.old_file(self.dir / "folder" / "chanceblog.db")
@@ -500,7 +500,7 @@ class ErrorMessageTest(MigrationCase):
         holder.execute("ROLLBACK")
         self.untouched(path, before)
         self.open().close()
-        self.assertEqual(pragma(path, "user_version"), 2)
+        self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_a_reader_that_keeps_the_file_open_makes_the_upgrade_wait_then_say_locked_and_it_can_be_retried(self):
         path = self.old_file()
@@ -533,7 +533,7 @@ class ErrorMessageTest(MigrationCase):
         self.assertEqual(self.names(), ["chanceblog.db"], "반쯤 쓴 임시 파일이 남지 않았다")
         self.untouched(path, before)
         self.open().close()                                                  # 공간을 확보하면 같은 파일이 올라간다
-        self.assertEqual(pragma(path, "user_version"), 2)
+        self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_operating_system_errors_while_placing_the_copy_are_environment_problems_not_failures(self):
         for label, error_to_raise, reason in (("권한", PermissionError(errno.EACCES, "Permission denied"), "쓸 수 없습니다"),
@@ -574,7 +574,7 @@ class ErrorMessageTest(MigrationCase):
         self.untouched(path, before)
         with mock.patch.object(store_module, "_COPY_PATH_LIMIT", shortest):          # 딱 맞으면 된다
             self.open().close()
-        self.assertEqual(pragma(path, "user_version"), 2)
+        self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_the_windows_path_limit_is_set_only_on_windows(self):
         self.assertEqual(store_module._COPY_PATH_LIMIT, 259 if os.name == "nt" else None)
@@ -587,7 +587,7 @@ class ErrorMessageTest(MigrationCase):
             db.execute("CREATE TABLE half_done (id INTEGER)")
             raise RuntimeError("중간에 실패")
 
-        with mock.patch.object(store_module, "MIGRATIONS", {1: broken}):
+        with mock.patch.object(store_module, "MIGRATIONS", {**store_module.MIGRATIONS, 1: broken}):
             error = self.refuses("MIGRATION_FAILED", Store.open, path)
         self.assertIn("중간에 실패", error.detail)
         self.assertEqual(dump(path), original)
@@ -759,7 +759,7 @@ class OddFilesTest(MigrationCase):
     def test_the_helper_makes_a_good_version_1_file_that_opens(self):
         path = self.make("good", self.V1)
         Store.open(path).close()
-        self.assertEqual(pragma(path, "user_version"), 2)
+        self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_version_0_and_negative_versions_are_refused_without_leaving_a_copy_named_after_them(self):
         for version in (0, -1, -7):
@@ -830,7 +830,7 @@ class OddFilesTest(MigrationCase):
         store = self.open()
         self.assertEqual((store.schema_version, store.check()), (SCHEMA_VERSION, []))
         self.assertEqual(rows(path), original_rows)
-        self.assertEqual(pragma(path, "user_version"), 2)
+        self.assertEqual(pragma(path, "user_version"), SCHEMA_VERSION)
 
     def test_restoring_a_backup_with_missing_tables_is_refused_before_the_live_store_is_replaced(self):
         store = self.open()
@@ -858,8 +858,8 @@ class DdlFreezeTest(MigrationCase):
     PINNED = "2228c1f7b621678260e75af9a5ae058a3822d727bee02733b81ac0dbb406502a"
 
     def test_the_documented_numbers_are_these_literal_ones(self):
-        self.assertEqual((SCHEMA_VERSION, store_module.MIN_SCHEMA_VERSION, store_module.MAX_COPY_NAMES, store_module.COPY_SECONDS), (2, 1, 20, 30.0))
-        self.assertEqual(set(store_module.MIGRATIONS), {1})
+        self.assertEqual((SCHEMA_VERSION, store_module.MIN_SCHEMA_VERSION, store_module.MAX_COPY_NAMES, store_module.COPY_SECONDS), (3, 1, 20, 30.0))
+        self.assertEqual(set(store_module.MIGRATIONS), {1, 2})
         self.assertEqual(store_module.APPLICATION_ID, 0x43424450)
 
     def test_a_store_that_returned_early_from_the_upgrade_holds_no_transaction(self):
@@ -937,8 +937,8 @@ class CrashTest(MigrationCase):
                 # 죽은 직후의 파일(읽으면서 남은 저널을 되돌린다) — 순수 sqlite3 로만 본다
                 version, found = pragma(path, "user_version"), tables(path)
                 self.assertEqual(pragma(path, "integrity_check"), "ok", point)
-                self.assertIn(version, (1, 2), point)
-                self.assertEqual("candidates" in found, version == 2, f"{point}: 판 번호와 표가 어긋났다(판 {version}, 표 {sorted(found)})")
+                self.assertIn(version, (1, SCHEMA_VERSION), point)
+                self.assertEqual("candidates" in found, version == SCHEMA_VERSION, f"{point}: 판 번호와 표가 어긋났다(판 {version}, 표 {sorted(found)})")
                 self.assertEqual(rows(path), original_rows, point)
                 # 다시 열면 이어서 끝난다
                 with Store.open(path) as store:
@@ -969,7 +969,7 @@ class CrashTest(MigrationCase):
 
         with mock.patch.object(store_module.sqlite3, "connect", side_effect=spy):
             Store.open(path).close()
-        begin, version, commit = seen.index("BEGIN IMMEDIATE"), seen.index("PRAGMA USER_VERSION = 2"), seen.index("COMMIT")
+        begin, version, commit = seen.index("BEGIN IMMEDIATE"), seen.index(f"PRAGMA USER_VERSION = {SCHEMA_VERSION}"), seen.index("COMMIT")
         steps = [index for index, sql in enumerate(seen) if sql.startswith("CREATE ")]
         self.assertTrue(begin < min(steps) and max(steps) < version < commit, seen)
         self.assertEqual(seen.count("COMMIT"), 1)
