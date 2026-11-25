@@ -25,6 +25,7 @@ from ..content.schema_guard import describe as describe_foreign
 from ..content.schema_guard import foreign_kinds
 from ..content.store import WAL_TEXT, _read_only_uri, drop_wal_head, hold_in_memory, wal_header
 from ..errors import AppError
+from . import limits
 
 BUSY_SECONDS = 5.0                                       # 잠겨 있을 때 기다리는 시간 — 윈도에서는 타이머 간격 때문에 실제로 약 7초까지 걸릴 수 있다(D-73)
 _SQLITE_BUSY, _SQLITE_LOCKED = 5, 6                      # backup 진행 콜백이 받는 상태(파이썬 3.10 에는 이름이 없어 숫자로 둔다)
@@ -103,12 +104,15 @@ class EngineFile:
 
     # ---- 열기·닫기 ---------------------------------------------------------------------------------------------------------
     @classmethod
-    def open(cls, path, *, busy_seconds=BUSY_SECONDS, migrate=True):
+    def open(cls, path, *, busy_seconds=BUSY_SECONDS, migrate=True, guard=None):
         """파일이 없으면 만들고(폴더도), 있으면 이 프로그램의 주제 엔진 파일인지 검사한다. 걸리면 파일을 건드리지 않고 AppError.
-        `migrate=False` 는 **읽기 전용 열기**다 — 파일을 만들지도 구조를 올리지도 않고 한 바이트도 바꾸지 않으며 옛 판의 파일은 `needs_migration` 으로 알려 줄 뿐이다."""
+        `migrate=False` 는 **읽기 전용 열기**다 — 파일을 만들지도 구조를 올리지도 않고 한 바이트도 바꾸지 않으며 옛 판의 파일은 `needs_migration` 으로 알려 줄 뿐이다.
+        `guard`(`topicdb/limits.py::Guard`)는 **받은(믿을 수 없는) 파일을 읽기 전용으로 열 때만** 준다 — 그 연결에 시간 상한·길이 한도를 건다(AS-S2 권고-5, D-691). 쓰는 열기에는 줄 수 없다."""
         path = Path(os.fspath(path))
+        if guard is not None and migrate:
+            raise ValueError("한도(guard)는 읽기 전용 열기(migrate=False)에만 건다")
         if not migrate:
-            return cls._open_read_only(path, busy_seconds)
+            return cls._open_read_only(path, busy_seconds, guard)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             fresh = not path.exists() or path.stat().st_size == 0
@@ -127,7 +131,7 @@ class EngineFile:
         return opened
 
     @classmethod
-    def _open_read_only(cls, path, busy_seconds):
+    def _open_read_only(cls, path, busy_seconds, guard=None):
         try:
             missing = not path.exists() or (path.is_file() and path.stat().st_size == 0)
             uri = _read_only_uri(path)
@@ -141,6 +145,8 @@ class EngineFile:
             raise store_error(error, path) from None
         opened = cls(path, connection, busy_seconds=busy_seconds, read_only=True)
         try:
+            if guard is not None:
+                guard.attach(connection)                   # 첫 질의 전에 — 받은 파일의 점검이 한도를 넘지 못하게(붙이다 실패해도 연결은 닫는다)
             opened._prepare_read_only()
         except BaseException:
             connection.close()
@@ -422,9 +428,11 @@ class EngineFile:
                 source = sqlite3.connect(_read_only_uri(backup), uri=True)
             except (sqlite3.Error, OSError, ValueError) as error:
                 raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "백업 파일을 열 수 없습니다"}, detail=detail_of(error)) from None
+            guard = limits.Guard()                                    # 받은 백업을 읽는 연결의 시간 상한·길이 한도(AS-S2 권고-5, D-691). 덮어쓰는 연결(`self._db`)에는 걸지 않는다
             undo, overwritten = None, False
             try:
                 with closing(source):
+                    guard.attach(source)                              # 첫 질의 전에
                     try:
                         application = source.execute("PRAGMA application_id").fetchone()[0]
                         version = source.execute("PRAGMA user_version").fetchone()[0]
@@ -432,7 +440,7 @@ class EngineFile:
                         shape = self._shape_problem(source, version) if self.MIN_SCHEMA_VERSION <= version <= self.SCHEMA_VERSION else None
                         foreign = foreign_kinds(source, self.SCHEMA)                  # 앱이 만들지 않는 개체(트리거·뷰·모르는 표·색인 …) — 통째로 복사되기 전에 본다(L8, D-554)
                     except sqlite3.Error as error:
-                        raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "백업 파일이 깨졌습니다"}, detail=detail_of(error)) from None
+                        raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": limits.TIME_REASON if guard.tripped else "백업 파일이 깨졌습니다"}, detail=detail_of(error)) from None
                     if application != self.APPLICATION_ID or problem != "ok":
                         raise AppError("TOPIC_BACKUP_INVALID", {"파일": name, "이유": "이 프로그램의 온전한 주제 엔진 백업이 아닙니다"}, detail="이름표가 다르거나 점검에 실패했다")
                     if version > self.SCHEMA_VERSION or version < self.MIN_SCHEMA_VERSION:

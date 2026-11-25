@@ -26,7 +26,7 @@ SERVICE_TOPIC_FILES = [SRC / "service" / name for name in ("topics.py", "topic_f
 FORBIDDEN_IMPORTS = {"subprocess", "socket", "urllib", "http", "ssl", "webbrowser", "ctypes", "requests", "ftplib", "smtplib", "telnetlib", "xmlrpc", "asyncio", "shutil", "tempfile"}
 FORBIDDEN_LAYERS = {"service", "ui", "publish", "render", "jobs", "update", "assist", "check"}
 # 의도적 갱신(복원 훑기 정규화, D-683): 주제 엔진 백업이 새 모듈 `security/views.py`(바이트·글을 훑을 '보기'로 바꾸는 순수 함수뿐 — 파일·네트워크·하위 프로세스를 쓰지 않고 위쪽 계층을 가져오지 않는다)를 가져온다. 안쪽 모듈 하나를 더하는 것이고 서비스·화면 같은 위쪽 계층 금지는 그대로다.
-ALLOWED_INTERNAL = {"content.candidates", "content.schema_guard", "content.store", "echo", "errors", "security.backup_note", "security.mask", "security.refuse", "security.scan", "security.views"}        # `..` 로 가져오는 안쪽 모듈 — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
+ALLOWED_INTERNAL = {"content.candidates", "content.schema_guard", "content.store", "echo", "errors", "fslink", "security.backup_note", "security.mask", "security.refuse", "security.scan", "security.views"}        # `..` 로 가져오는 안쪽 모듈(의도적 갱신 — AS-S2 권고-2, D-690: 링크 판정 한 곳 `fslink.py` 는 표준 라이브러리만 쓰는 잎 모듈이라 거꾸로 가져오는 것이 아니다) — `topics` 와 같은 패키지(`.file` 등)는 따로 허용
 # 의도적 갱신(PCSEC1 M3, D-348): 백업 직전 검사(`backup.scan_key_shape`)가 본문 속 비밀 형태 검사기(`security/scan.py`)를 부르고 위치·유형 말을 `security/refuse.py` 에서 받는다 — 둘 다 표준 라이브러리와
 # `echo`·`errors` 만 가져오는 잎 모듈이라 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다(`security.mask` 와 같은 자리). 그 밖의 `security` 모듈·서비스 층은 여전히 허용하지 않는다.
 # 의도적 갱신(BACKUPUI D-467): 백업 목록의 자격 증명 문장(`CREDENTIAL_NOTE`)을 전체 백업의 목록과 **한 상수**로 쓰려고 `security/backup_note.py` 를 가져온다 — 글 상수만 있는 잎 모듈이라(`types` 말고는 아무것도 가져오지 않고 파일·네트워크·시계를 쓰지 않는다) 저장 계층이 위 층을 거꾸로 가져오는 것이 아니다.
@@ -100,7 +100,8 @@ def strings(tree):
 
 class PackageTest(unittest.TestCase):
     def test_the_package_has_exactly_the_expected_modules(self):
-        self.assertEqual([path.name for path in FILES], ["__init__.py", "backup.py", "file.py", "store.py"], "모듈을 더하거나 뺐다면 이 목록과 docs/ARCHITECTURE.md §5 의 topicdb 행을 의식적으로 함께 고친다")
+        # 의도적 갱신(AS-S2 권고-5, D-691): 받은 백업을 읽는 SQLite 연결의 시간 상한·길이 한도를 거는 잎 모듈 `limits.py`(표준 라이브러리만 — 다른 안쪽 모듈을 가져오지 않는다)를 더했다
+        self.assertEqual([path.name for path in FILES], ["__init__.py", "backup.py", "file.py", "limits.py", "store.py"], "모듈을 더하거나 뺐다면 이 목록과 docs/ARCHITECTURE.md §5 의 topicdb 행을 의식적으로 함께 고친다")
 
     def test_every_module_starts_with_an_explanation_and_the_init_is_only_that(self):
         for path in FILES:

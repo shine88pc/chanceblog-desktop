@@ -12,11 +12,15 @@
 """
 import importlib.util
 import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import workflow_golden as golden  # noqa: E402  (ci.yml·package.yml 을 구조로 읽는 허용 목록 규칙 — AS-S2 권고-7, D-693)
+
 DOCS = ("ARCHITECTURE", "DECISIONS", "MIGRATION", "PLATFORM_POLICY", "RELEASE", "SECURITY", "TROUBLESHOOTING")
 TOP = ("README.md", "AGENTS.md", "CLAUDE.md", "CHANGELOG.md", "VERSION", ".gitignore", ".env.example", ".github/workflows/ci.yml")
 KEY_SHAPES = (
@@ -151,6 +155,17 @@ class WorkflowPinningTest(unittest.TestCase):
         self.assertEqual(uses.findall("      - uses: actions/checkout@v4\n"), ["actions/checkout@v4"])
         self.assertIsNone(re.match(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$", "actions/checkout@v4"))
         self.assertIsNotNone(re.match(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$", "actions/checkout@" + "a" * 40))
+
+    def test_every_action_is_one_of_the_approved_owner_repo_and_commit_pairs(self):
+        """AS-S2 권고-7(D-693): 위 시험은 '40자리 16진수로 끝나는가' 만 본다 — 다른 소유자·저장소·SHA 도 모양만 맞으면 통과했다(감사의 살아남은 변이 셋). 승인된 세 쌍(`tests/workflow_golden.py`)과 글자 그대로 같아야 하고,
+        줄 맨 앞이 아닌 한 줄 흐름식 `- {uses: …}` 안의 것도 찾는다."""
+        found = 0
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(file=path.name):
+                self.assertEqual(golden.action_problems(text), [])
+            found += len(golden.all_action_refs(text))
+        self.assertGreaterEqual(found, 8, "액션을 찾지 못했다 — 이 시험의 찾기 규칙이 깨졌다")
 
 
 class VersionTest(unittest.TestCase):
@@ -371,6 +386,11 @@ class CiWorkflowTest(unittest.TestCase):
         found = re.search(r"^\s+timeout-minutes:\s*(\d+)", ci, re.M)
         self.assertIsNotNone(found)
         self.assertGreaterEqual(int(found.group(1)), 40)
+
+    def test_the_ci_workflow_is_exactly_the_approved_structure(self):
+        """AS-S2 권고-7(D-693): 위 시험들은 낱말·문자열 검사라 작업 단위 `permissions`(contents·id-token 쓰기)·`env`(PYTHONPATH)·matrix 의 `self-hosted`·액션의 소유자·SHA·`persist-credentials: true` 를 못 봤다(감사의 살아남은 변이 여섯).
+        글을 구조로 읽어 최상위·작업·단계 키와 `with`·`env`·`run` 값, matrix, 액션의 `소유자/저장소@커밋` 쌍을 승인된 허용 목록과 글자 그대로 견준다(`tests/workflow_golden.py`)."""
+        self.assertEqual(golden.ci_problems(read(".github/workflows/ci.yml")), [])
 
 
 if __name__ == "__main__":
