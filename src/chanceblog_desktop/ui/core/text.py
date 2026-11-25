@@ -175,6 +175,10 @@ from .diag_text import DIAG_T  # noqa: E402
 
 T.update(DIAG_T)                                                     # 진단 정보 복사(L3, 결정 D-539)의 문구도 새 파일(`diag_text.py`)에 따로 두고 합친다
 
+from .post_text import POST_T  # noqa: E402
+
+T.update(POST_T)                                                     # 글 검토 화면(글 흐름 1a, 결정 D-620)의 문구도 새 파일(`post_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 

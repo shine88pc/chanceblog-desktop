@@ -252,7 +252,7 @@ class TopBarNarrowTest(QtBase):
 
 
 QT_DIR = ROOT / "src" / "chanceblog_desktop" / "ui" / "qt"
-REAL = {"home", "topics", "drafts", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다 / 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐다
+REAL = {"home", "topics", "drafts", "posts", "seed", "blogs", "settings"}                               # 의도적 갱신(P4b, D-210): 블로그 관리가 완성돼 실제 메뉴에 올랐다(데이터·관리 묶음) / 의도적 갱신(Seed 관리, D-230): Seed 관리도 같은 묶음에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보도 완성돼 핵심 작업 묶음에 올랐다 / 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 핵심 작업 묶음의 주제 후보 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
 
 
 def hexed(image, x, y):
@@ -297,8 +297,8 @@ class SidebarTest(QtBase):
 
     def test_the_real_menu_is_home_and_settings_and_the_current_one_gets_the_new_colors(self):
         window = self.make()
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "seed", "blogs", "settings"])   # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다
-        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "초안 작성 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])   # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(P4b, D-210): 블로그 관리가 메뉴에 올랐다 / 의도적 갱신(Seed 관리, D-230): Seed 관리가 블로그 관리 앞에 올랐다 / 의도적 갱신(P4d, D-270): 주제 후보가 홈 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
+        self.assertEqual([button.accessibleName() for button in window.nav_buttons.values()], ["홈 메뉴로 이동", "주제 후보 메뉴로 이동", "초안 작성 메뉴로 이동", "글 검토 메뉴로 이동", "Seed 관리 메뉴로 이동", "블로그 관리 메뉴로 이동", "설정 메뉴로 이동"])   # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
         for button in window.nav_buttons.values():
             self.assertTrue(42 <= button.height() <= 46, button.height())                          # 문서의 메뉴 높이 42~46
             self.assertEqual(button.cursor().shape(), Qt.PointingHandCursor)

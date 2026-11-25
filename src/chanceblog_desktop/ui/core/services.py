@@ -170,6 +170,11 @@ class HomeProvider:
         from .candidates import FakeCandidatesProvider
         return FakeCandidatesProvider()
 
+    def posts_provider(self):
+        """이 공급자와 짝인 글 검토 화면 공급자(글 흐름 1a, 결정 D-620) — 홈 공급자를 고르면(`--sample`·`--data-dir`) 글 검토도 같은 쪽을 쓴다. 따로 정하지 않은 공급자는 **메모리에서만 일하는 예시**(`FakePostsProvider` — 가져오기·검토·승인을 해도 이 PC 에 아무것도 남지 않는다)를 돌려준다."""
+        from .post_fake import FakePostsProvider
+        return FakePostsProvider()
+
 
 def _wait(seconds, progress, cancelled):
     end = time.monotonic() + seconds

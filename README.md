@@ -159,6 +159,8 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`docs/PERSONAL_PC_TEST_V1_DRAFT.md`](docs/PERSONAL_PC_TEST_V1_DRAFT.md) | v1.0 용 운영자 시험지 초안(설치·제거·업데이트·되돌리기·휴대용·Pages 시험 글·Blogger 초안) — 지금의 시험지는 그대로 |
 | [`docs/MIGRATION_NOTES_TEMPLATE.md`](docs/MIGRATION_NOTES_TEMPLATE.md) | 버전을 올릴 때 사용자 데이터 이관 안내(이관 노트)를 쓰는 틀 — 초안 |
 
+| [`docs/UI_POST_FLOW.md`](docs/UI_POST_FLOW.md) | 글 흐름 화면(글 검토) 1a 의 설계와 D-18 기능 → 화면 → 시험 매트릭스 |
+
 ## 개발 방식
 
 사람(운영자)은 비개발자이고, 코드는 AI 도구가 작성하고 다른 주체가 검증합니다. 모든 변경은 브랜치 `ai/<도구>/<주제>` → PR → **운영자 병합** 순서이고, 시험(`python -m unittest discover -s tests`)과 CI 가 통과해야 합니다. 승인이 필요한 일(시크릿·계정·서명 키·새 플랫폼·삭제·정책)은 번호 있는 요청으로 묻습니다. 키는 저장소에 두지 않습니다(`.env.example` 에는 변수 이름만 있습니다).
