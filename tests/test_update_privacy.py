@@ -29,6 +29,10 @@ import update_flow_support as fs  # noqa: E402
 from chanceblog_desktop.service import projects, update_flow  # noqa: E402
 from chanceblog_desktop.update import state  # noqa: E402
 
+try:                                   # 컴퓨터 이름은 시험 맞이 전에(가로채기 전에) 한 번 읽는다 — 윈도 3.10 의 `platform.node()` 는 `ver` 하위 프로세스를 불러 가로채기에 걸린다
+    NODE_NAME = platform.node()
+except Exception:                      # noqa: BLE001 - 이름을 알 수 없는 환경에서도 시험이 돈다
+    NODE_NAME = ""
 CANARY_TITLE = "CANARY_" + "TITLE_" + "에너지절약글"
 CANARY_KEY = "CANARY_" + "KEY_" + "AIzaSyDEADBEEF0123456789"
 ALLOWED_HOSTS = {"github.com", fs.CDN_HOST}
@@ -104,7 +108,7 @@ class WholeFlowRequestsTest(flow.FlowCase):
             user = getpass.getuser()
         except Exception:                   # noqa: BLE001 - 사용자 이름을 알 수 없는 환경에서도 시험이 돈다
             user = ""
-        found = {user, os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), platform.node(), str(Path.home()), str(self.ctx.workspace.root), str(self.tmp), self.tmp.name,
+        found = {user, os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), NODE_NAME, str(Path.home()), str(self.ctx.workspace.root), str(self.tmp), self.tmp.name,
                  sys.executable, tempfile.gettempdir(), CANARY_TITLE, CANARY_KEY}
         return sorted(item for item in found if len(item) >= 4)
 
