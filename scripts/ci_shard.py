@@ -199,6 +199,24 @@ def timed(result_class):
         def startTestRun(self):
             super().startTestRun()
             self._mark = time.perf_counter()
+            self._t0 = self._mark
+            self._now = ""
+            import threading
+
+            def loop():
+                for count, wait in enumerate((180, 300, 300, 300, 300, 300, 420, 600, 900), 1):
+                    time.sleep(wait)
+                    ranked = sorted(self.module_seconds.items(), key=lambda item: -item[1])[:16]
+                    body = " ; ".join(f"{module.replace('test_', '')}={seconds:.0f}" for module, seconds in ranked)
+                    print(f"::notice title=QTT{count} t={time.perf_counter() - self._t0:.0f}s now={self._now}::{body}".replace(chr(10), " "), flush=True)
+            threading.Thread(target=loop, daemon=True).start()
+
+        def startTest(self, test):
+            try:
+                self._now = test.id()
+            except Exception:
+                self._now = "?"
+            super().startTest(test)
 
         def stopTest(self, test):
             super().stopTest(test)
@@ -277,6 +295,11 @@ def main(argv=None, env=None):
     if require_qt:
         runner.resultclass = timed(runner.resultclass)
     result = runner.run(unittest.TestSuite(tests))
+    try:
+        ranked = sorted(getattr(result, "module_seconds", {}).items(), key=lambda item: -item[1])[:30]
+        print("::notice title=QTT-FINAL::" + " ; ".join(f"{module.replace('test_', '')}={seconds:.0f}" for module, seconds in ranked), flush=True)
+    except Exception:
+        pass
     code = 0 if result.wasSuccessful() else 1
     if require_qt:
         code = max(code, qt_guard(result))
