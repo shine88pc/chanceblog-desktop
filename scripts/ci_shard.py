@@ -199,6 +199,33 @@ def timed(result_class):
         def startTestRun(self):
             super().startTestRun()
             self._mark = time.perf_counter()
+            self._t0 = self._mark
+            self._now = ""
+            import builtins
+            import os as _os
+            import threading
+            self._qtt_top = not (_os.environ.get("QTT_ACTIVE") or getattr(builtins, "_qtt_started", False))
+            if self._qtt_top:
+                builtins._qtt_started = True
+                _os.environ["QTT_ACTIVE"] = "1"
+
+                def loop():
+                    for count, wait in enumerate((180, 300, 300, 300, 300, 300, 420, 600, 900), 1):
+                        time.sleep(wait)
+                        try:
+                            ranked = sorted(list(self.module_seconds.items()), key=lambda item: -item[1])[:16]
+                            body = " ; ".join(f"{module.replace('test_', '')}={seconds:.0f}" for module, seconds in ranked)
+                            print(f"::notice title=QTT{count} t={time.perf_counter() - self._t0:.0f}s now={self._now}::{body}".replace(chr(10), " "), flush=True)
+                        except Exception:
+                            pass
+                threading.Thread(target=loop, daemon=True).start()
+
+        def startTest(self, test):
+            try:
+                self._now = test.id()
+            except Exception:
+                self._now = "?"
+            super().startTest(test)
 
         def stopTest(self, test):
             super().stopTest(test)
@@ -277,10 +304,56 @@ def main(argv=None, env=None):
     if require_qt:
         runner.resultclass = timed(runner.resultclass)
     result = runner.run(unittest.TestSuite(tests))
+    if getattr(result, "_qtt_top", False):
+        try:
+            _annotate_failures(result)
+        except Exception:
+            pass
+        try:
+            ranked = sorted(getattr(result, "module_seconds", {}).items(), key=lambda item: -item[1])[:30]
+            print("::notice title=QTT-FINAL::" + " ; ".join(f"{module.replace('test_', '')}={seconds:.0f}" for module, seconds in ranked), flush=True)
+        except Exception:
+            pass
     code = 0 if result.wasSuccessful() else 1
     if require_qt:
         code = max(code, qt_guard(result))
     return code
+
+
+def _annotate_failures(result):
+    """(진단 전용 가지) 실패·오류를 시험 클래스별로 묶어 GitHub 주석 한 줄씩 낸다 — 종류·클래스·실패 개수·첫 시험 방법 이름·예외 종류·마지막 틀 위치만(예외 메시지·값은 싣지 않는다). 오류 9개·경고 10개까지, 합계는 오류 한 줄."""
+    import re
+    groups = {}
+    total = 0
+    for kind, items in (("FAIL", result.failures), ("ERROR", result.errors)):
+        for test, trace in items:
+            total += 1
+            case = getattr(test, "test_case", test)
+            try:
+                key = case.id()
+            except Exception:
+                key = str(case)
+            owner, _, method = key.rpartition(".")
+            trace = str(trace)
+            lines = [line for line in trace.splitlines() if line.strip()]
+            exception = (lines[-1].split(":", 1)[0] if lines else "")[:80]
+            where = ""
+            for file_name, number in reversed(re.findall(r'File "([^"]+)", line (\d+)', trace)):
+                normal = file_name.replace(chr(92), "/")
+                if "/tests/" in normal or "/src/" in normal:
+                    where = normal.rsplit("/", 1)[-1] + ":" + number
+                    break
+            entry = groups.setdefault((kind, owner or key), [0, method, exception, where, set()])
+            entry[0] += 1
+            entry[4].add(method)
+    shown = 0
+    for (kind, owner), (count, method, exception, where, methods) in sorted(groups.items(), key=lambda item: -item[1][0]):
+        if shown >= 19:
+            break
+        level = "error" if shown < 9 else "warning"
+        print(f"::{level} title=QTF {kind} {shown + 1}/{len(groups)}::{owner} fails={count} methods={len(methods)} first={method} | {exception} | {where}".replace(chr(10), " "), flush=True)
+        shown += 1
+    print(f"::error title=QTF-SUM::실패·오류 합계 {total}개, 클래스 {len(groups)}개", flush=True)
 
 
 if __name__ == "__main__":
