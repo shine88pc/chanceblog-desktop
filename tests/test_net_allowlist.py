@@ -193,6 +193,19 @@ class KeyLogScopeTest(unittest.TestCase):
         guard = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_check_context")
         self.assertIn("raise NetError('NET_TLS_FAILED'", ast.unparse(guard), "켜진 환경은 접속하기 전에 거절한다")
 
+    def test_the_client_builds_its_context_directly_and_never_through_create_default_context(self):
+        """S 재검증 권고-2 — `ssl.create_default_context()` 는 환경 변수 `SSLKEYLOGFILE` 을 읽어 그 파일을 열다 `OSError` 를 올리므로(쓸 수 없는 경로면 접속이 막혔다) 접속 틀은 보안 환경을 직접 만든다:
+        `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` 에 시스템 기본 인증서(`load_default_certs()`)와 최소 TLS 1.2 를 더한다. 코드(독스트링 말고)에 그 이름이 다시 나오면 빨개진다."""
+        source = (SRC / "net" / "client.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names = [node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)] + [node.id for node in ast.walk(tree) if isinstance(node, ast.Name)]
+        self.assertEqual([name for name in names if name == "create_default_context"], [], "접속 틀 코드에 `create_default_context` 가 나온다")
+        make = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_make_context")
+        calls = sorted(ast.unparse(node) for node in ast.walk(make) if isinstance(node, ast.Call))
+        self.assertEqual(calls, ["context.load_default_certs()", "ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)"])
+        self.assertIn("ssl.PROTOCOL_TLS_CLIENT", ast.unparse(make))
+        self.assertNotIn("os.environ", ast.unparse(make), "보안 환경을 만드는 함수는 환경 변수를 읽지 않는다")
+
     def test_the_key_log_scan_is_not_blind_it_catches_synthetic_shapes(self):
         """대조 — 위 규칙이 합성 코드의 비밀 로그 모양(속성 대입·환경 변수 이름·키워드 인자·글자)을 실제로 잡는다(빈 실험이 아니다). 독스트링·주석의 낱말은 코드가 아니라 세지 않는다."""
         for source in ('ctx.keylog_filename = path', 'import os\nos.environ.get("SSLKEYLOGFILE")', 'make(keylog_filename=path)', 'KEYLOG = 1', 'x = "SSLKEYLOGFILE"', 'def f(keylog):\n    pass'):

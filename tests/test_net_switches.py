@@ -301,5 +301,47 @@ class SwitchTablesTest(unittest.TestCase):
             self.assertIn(f"`{use}`", text.split("### 용도 표", 1)[1].split("\n### ", 1)[0], use)
 
 
+class GitSubprocessEnvironmentDocTest(unittest.TestCase):
+    """S 재검증 권고-3 — SECURITY.md '켜기 전 필수 조건' 표의 'git 하위 프로세스 환경' 행이 코드와 어긋나지 않게 한다. `publish/gitrepo.py` 의 `_git_env()` 는 `GIT_DIR` 같은 몇 개만 지우고
+    나머지 환경 변수를 그대로 물려준다 — 인증서 검증을 끄거나(`GIT_SSL_NO_VERIFY`) 믿는 곳을 바꾸거나(`GIT_SSL_CAINFO`·`GIT_SSL_CAPATH`) 설정을 덮어쓰거나(`GIT_CONFIG_*`) 통신 내용·세션 비밀을 기록하게 하는
+    (`GIT_TRACE_CURL`·`GIT_CURL_VERBOSE`·`SSLKEYLOGFILE`) 변수가 올리기 길에 그대로 닿는다. 접속 틀(`net/client.py`)에 있는 방어가 이쪽에는 없으므로 PUBPR 가 `pages_branch` 를 켜기 전에 정리해야 한다.
+    이 시험은 행이 있고 변수 이름을 빠짐없이 말하며 '안 묶임' 이라고 하는 것과, 코드가 정말로 그 변수들을 넘기는 것을 함께 확인한다 — PUBPR 가 `_git_env()` 에서 지우면 이 시험이 빨개지고
+    그때 행을 '묶였다' 로 바꾸며 시험을 뒤집는다(문서가 코드보다 오래 거짓말하지 않는다)."""
+    DOC_NAMES = ("GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_CONFIG_*", "GIT_TRACE_CURL", "GIT_CURL_VERBOSE", "SSLKEYLOGFILE")
+    CONCRETE = ("GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
+                "GIT_CONFIG_PARAMETERS", "GIT_TRACE_CURL", "GIT_CURL_VERBOSE", "SSLKEYLOGFILE")
+
+    def environment_row(self):
+        text = (ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
+        section = text.split("### 켜기 전 필수 조건", 1)[1].split("\n## ", 1)[0]
+        rows = [line for line in section.splitlines() if line.startswith("| ") and "`_git_env()`" in line]
+        self.assertEqual(len(rows), 1, "켜기 전 필수 조건 표에 git 하위 프로세스 환경 행(`_git_env()` 를 말하는 줄)이 정확히 하나 있어야 한다")
+        return rows[0]
+
+    def test_the_row_names_every_passed_through_variable_and_says_it_is_not_bound_with_its_owner(self):
+        cells = [cell.strip() for cell in self.environment_row().strip().strip("|").split("|")]
+        self.assertEqual(len(cells), 3, "조건·코드·시험에 묶였나·맡는 갈래 세 칸")
+        condition, bound, owner = cells
+        self.assertIn("`pages_branch`", condition)
+        for name in self.DOC_NAMES:
+            self.assertIn(f"`{name}`", condition, f"행이 {name} 을 말하지 않는다")
+        self.assertTrue(bound.startswith("안 묶임"), "코드가 정리하기 전까지는 '안 묶임' 이다")
+        self.assertIn("PUBPR", owner)
+
+    def test_the_code_passes_those_variables_to_the_git_subprocess_until_someone_cleans_them(self):
+        import os
+        from chanceblog_desktop.publish import gitrepo
+        sentinel = "v1net-sentinel"
+        with mock.patch.dict(os.environ, {name: sentinel for name in self.CONCRETE}):
+            env = gitrepo._git_env()
+        self.assertEqual(sorted(name for name in self.CONCRETE if env.get(name) == sentinel), sorted(self.CONCRETE),
+                         "`_git_env()` 가 위 변수를 더는 그대로 넘기지 않는다 — 정리하는 변경이면 SECURITY.md 의 해당 행을 '묶였다' 로 바꾸고 이 시험을 뒤집는다")
+        self.assertEqual([name for name in self.CONCRETE if name in gitrepo._ENV_DROP], [])
+        with mock.patch.dict(os.environ, {"GIT_DIR": sentinel, "GIT_ASKPASS": sentinel}):
+            env = gitrepo._git_env()
+        self.assertNotIn("GIT_DIR", env, "대조 — 지우는 변수는 실제로 지운다(위 확인이 빈 실험이 아니다)")
+        self.assertNotIn("GIT_ASKPASS", env)
+
+
 if __name__ == "__main__":
     unittest.main()

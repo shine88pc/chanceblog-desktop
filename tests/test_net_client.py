@@ -541,6 +541,72 @@ class RedirectTest(unittest.TestCase):
         self.assertEqual((response.status, len(env.dials)), (200, 2), "대조 — 같은 표에서 GET 은 같은 호스트 이동을 따라간다(위 거절이 빈 실험이 아니다)")
 
 
+    UNPARSABLE_LOCATIONS = ("//[x", "https://[x]/p?cb=app", "https://exa]mple/", "https://[::1/blog/x", "//[", "//]", "https://[/", "https://]/", "https://[]/", "https://[::g]/", "//a]b", "https://a[b]c/", "//[x]",
+                            "https://[1:2:3:4:5:6:7:8:9]/x")
+
+    def test_a_location_that_urljoin_cannot_read_is_a_bad_answer_not_a_raw_value_error(self):
+        """S 재검증 권고-1 — 서버가 준 `Location` 이 `//[x`·`https://[x]/p` 꼴이면 `urljoin` 이 `ValueError` 를 올리는데(파이썬 3.10·3.12 둘 다, 3.12 는 서버가 보낸 글이 예외 문장에 실린다) 그것이 `try` 밖이라
+        `NetError` 가 아닌 원시 예외가 새어 나갔다(T-06·T-17 '서버 글은 오류 문장에 안 실린다' 위반). 이제 고정 문구의 `NET_RESPONSE_INVALID`(이유: 이동)이고 연결은 한 번뿐이며 어디에도 `Location` 글(카나리)이 없다."""
+        import traceback
+        canary = ns.CANARY
+        shapes = self.UNPARSABLE_LOCATIONS + (f"https://[{canary}]/p", f"//[{canary}", f"https://{canary}]/p")
+        for location in shapes:
+            with self.subTest(location=location.replace(canary, "CANARY")):
+                env, error = raised(self, self.redirect(location), "pages_site", "GET", SITE_URL, switches=ns.USE_SWITCHES["pages_site"])
+                self.assertEqual((error.code, len(env.dials)), ("NET_RESPONSE_INVALID", 1), "이동 주소를 못 읽었다 — 틀린 답이고 둘째 연결은 없다")
+                self.assertEqual(error.detail, "pages_site:redirect")
+                self.assertIn(errors.REASON_REDIRECT, error.rendered().message)
+                shown = [str(error), repr(error.args), error.detail, error.log_line(), error.rendered().message, error.rendered().action, repr(error.slots), "".join(traceback.format_exception(type(error), error, error.__traceback__))]
+                for text in shown:
+                    self.assertNotIn(canary, text, "서버가 보낸 글이 오류 문장에 실렸다")
+                self.assertIsNone(error.__context__)
+                self.assertEqual(env.usage.records()[0].error, "NET_RESPONSE_INVALID")
+
+    def test_the_conversion_of_a_urljoin_failure_carries_nothing_of_the_original_exception(self):
+        """권고-1 의 고정 문구 약속을 파이썬 버전과 상관없이 못박는다 — 합성: `urljoin` 이 서버 글이 든 문장으로 `ValueError` 를 올려도(3.12 가 실제로 그렇다) 판정 함수의 오류는 고정 문구뿐이고
+        원래 예외는 원인도 표시할 맥락도 아니다(`from None`). 요청 전체를 거치면 바깥 `_run` 이 `__context__` 를 한 번 더 지우므로 판정 함수를 직접 부른다."""
+        import traceback
+        endpoint = endpoints.ENDPOINTS["pages_site"]
+        canary = ns.CANARY
+        with mock.patch.object(client, "urljoin", side_effect=ValueError(f"{canary} does not appear to be an IPv4 or IPv6 address")):
+            with self.assertRaises(errors.NetError) as caught:
+                client._redirect_url(endpoint, SITE_URL, "/x?cb=app", 0)
+        error = caught.exception
+        self.assertEqual((error.code, error.detail, error.use, error.outcome_unknown), ("NET_RESPONSE_INVALID", "pages_site:redirect", "pages_site", False))
+        self.assertIn(errors.REASON_REDIRECT, error.rendered().message)
+        self.assertIsNone(error.__cause__)
+        self.assertTrue(error.__suppress_context__, "원래 예외를 표시할 맥락으로 남기지 않는다(`from None`)")
+        for text in (str(error), repr(error.args), error.detail, error.log_line(), error.rendered().message, error.rendered().action, repr(error.slots), "".join(traceback.format_exception(type(error), error, error.__traceback__))):
+            self.assertNotIn(canary, text)
+
+    def test_the_redirect_judgement_raises_nothing_but_net_error_for_any_ascii_location(self):
+        """같은 약속의 일반형 — `Location` 으로 올 수 있는 아무 ASCII 글(대괄호·콜론·`@`·`#`·`%` 를 섞은 짧은 글 3000개와 여러 스킴 머리)을 판정 함수에 넣어도 주소 글을 돌려주거나 `NetError` 를 올릴 뿐
+        다른 예외가 새지 않는다(`urljoin` 이 `ValueError` 를 내는 모양을 하나하나 적지 않아도 되게). 시험 입력은 고정된 씨앗으로 만든다."""
+        import random
+        import urllib.parse
+        endpoint = endpoints.ENDPOINTS["pages_site"]
+        current = f"https://{SITE}/blog/posts.json?cb=app"
+        rng = random.Random(20261125)
+        alphabet = "[]:/@?#%.a1x-_=&"
+        heads = ("", "//", "https://", "http://", "/", "./", "../", "file://", "https:", "//[", "https://[", "https://a]")
+        passed = refused = 0
+        for _ in range(3000):
+            location = rng.choice(heads) + "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 10)))
+            try:
+                target = client._redirect_url(endpoint, current, location, 0)
+            except errors.NetError as error:
+                self.assertEqual(error.code, "NET_RESPONSE_INVALID", location)
+                refused += 1
+                continue
+            except Exception as error:                                    # noqa: BLE001 - 어떤 모양에서든 다른 예외가 새면 그 입력을 알려 준다
+                self.fail(f"{location!r}: NetError 가 아닌 {type(error).__name__} 이 새어 나왔다")
+            passed += 1
+            self.assertEqual(urllib.parse.urlsplit(target).scheme, "https", location)
+        self.assertGreater(passed, 0, "표에 맞는 주소도 통과한다(대조 — 위 거절들이 모든 입력을 막는 빈 실험이 아니다)")
+        self.assertGreater(refused, 0)
+        self.assertEqual(client._redirect_url(endpoint, current, "/blog/other.json?cb=app", 0), f"https://{SITE}/blog/other.json?cb=app")
+
+
 class ResponseLimitsTest(unittest.TestCase):
     def test_response_size_limit_by_content_length_and_by_stream(self):
         """NT-25 — 선언 크기와 실제 크기 모두. 정확히 한도는 통과, 한 바이트 넘으면 거절."""
@@ -752,6 +818,50 @@ class WireCapTest(unittest.TestCase):
 
     def test_endless_trailer_lines_after_a_complete_chunked_body_are_cut(self):
         self.cut(self.flood(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n", b"X-Trailer: " + b"a" * 1000 + b"\r\n"))
+
+    @staticmethod
+    def trailer_response(total):
+        """받은 바이트가 **정확히 `total`** 인 chunked 응답 — 머리글 + 본문 5바이트(`hello`) + 끝 머리글(트레일러) 줄들 + 끝 빈 줄. 줄은 1000바이트씩(마지막 줄만 다르다)."""
+        head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n"
+        tail = b"\r\n"
+        remaining = total - len(head) - len(tail)
+        lines = []
+        while remaining > 1008:
+            lines.append(b"X-T: " + b"a" * 993 + b"\r\n")
+            remaining -= 1000
+        lines.append(b"X-T: " + b"a" * (remaining - 7) + b"\r\n")
+        data = head + b"".join(lines) + tail
+        assert len(data) == total, (len(data), total)
+        return data
+
+    def test_a_response_of_exactly_the_cap_is_read_to_the_end(self):
+        """S 재검증 참고-1(경계 ±1, 변이 S04 `>=`) — 받은 바이트가 정확히 상한이면 통과한다(`>` 이지 `>=` 가 아니다). 본문 5바이트는 그대로 돌아오고 접속 기록의 받은 바이트도 정확히 그 값이다."""
+        limit = 1000
+        cap = client._wire_cap(limit)
+        for total in (cap - 1, cap):
+            with self.subTest(total=total, cap=cap):
+                sock = ns.FakeSocket(self.trailer_response(total))
+                env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+                with env, og.Tripwire() as wire:
+                    response = env.client.request("update_check", "GET", UPDATE_URL, limit=limit)
+                self.assertEqual(wire.calls, [])
+                self.assertEqual((response.status, response.body), (200, b"hello"))
+                self.assertEqual((sock.served, env.usage.records()[0].received), (total, total))
+
+    def test_a_response_one_byte_over_the_cap_is_cut(self):
+        """S 재검증 참고-1(경계 ±1, 변이 S05 `> cap + 1`) — 상한보다 한 바이트라도 많으면 끊긴다: `NET_RESPONSE_INVALID`(너무 큼, 세부 `wire`, 보낸 뒤 실패)이고 연결은 닫힌다."""
+        limit = 1000
+        cap = client._wire_cap(limit)
+        for total in (cap + 1, cap + 2):
+            with self.subTest(total=total, cap=cap):
+                sock = ns.FakeSocket(self.trailer_response(total))
+                env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+                with env, og.Tripwire() as wire, self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL, limit=limit)
+                self.assertEqual(wire.calls, [])
+                self.assertEqual((caught.exception.code, caught.exception.outcome_unknown, caught.exception.detail), ("NET_RESPONSE_INVALID", True, "update_check:wire"))
+                self.assertIn(errors.REASON_TOO_LARGE, caught.exception.rendered().message)
+                self.assertTrue(sock.closed)
 
     def test_an_endless_run_of_100_continue_answers_is_cut(self):
         self.cut(self.flood(b"HTTP/1.1 100 Continue\r\n\r\n", b"HTTP/1.1 100 Continue\r\n\r\n"))

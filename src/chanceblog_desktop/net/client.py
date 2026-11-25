@@ -60,9 +60,12 @@ _clock = time.monotonic
 
 def _make_context():
     """보안 환경 — 인증서 검증 필수·호스트 이름 확인(기본값)에 최소 TLS 1.2 를 **명시**한다(기본값이 더 엄격해져도 낮추지 않는다). 윈도에서는 `CA`·`ROOT` 저장소를 읽는다.
-    **세션 비밀 로그를 끈다**(D-738, 위협 T-09): 파이썬의 `create_default_context()` 는 패킷 분석용 환경 변수(세션 비밀 로그 파일 이름)가 있으면 TLS 세션 비밀을 그 파일에 쓰는 환경을 만든다.
-    이 틀은 접근 토큰이 실리는 길이라 어떤 환경 변수로도 그 트래픽을 푸는 열쇠를 파일에 남기지 않는다."""
-    context = ssl.create_default_context()
+    **세션 비밀 로그를 끄고, 그 환경 변수는 읽지도 않는다**(D-738, 위협 T-09): 이 틀은 접근 토큰이 실리는 길이라 어떤 환경 변수로도 그 트래픽을 푸는 열쇠를 파일에 남기지 않는다.
+    파이썬의 `create_default_context()` 는 패킷 분석용 환경 변수(세션 비밀 로그 파일 이름)를 읽어 그 파일을 먼저 열기 때문에 쓰지 않는다 — 경로가 쓸 수 없는 곳이면 `OSError` 로 접속 자체가 막히고
+    쓸 수 있는 새 경로면 파일이 만들어져 머리글 줄이 쓰인다('환경 변수가 있어도 접속은 막지 않고 열쇠 파일만 끈다' 와 어긋난다 — 독립 검증 S 재검증 권고-2). 같은 환경을 직접 만들면
+    그 변수가 무엇이든 접속은 같고 어떤 파일도 열리지 않는다(`create_default_context()` 가 더하는 일은 기본 인증서 읽기와 그 환경 변수 읽기뿐 — 표준 환경과 같은지는 시험이 속성마다 견준다)."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_default_certs()
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.keylog_filename = None
     return context
@@ -340,7 +343,10 @@ def _redirect_url(endpoint, current_url, location, hops):
     use = endpoint.use
     if hops >= endpoint.max_redirects or not isinstance(location, str) or not location.isascii() or any(ch <= " " or ch == "\x7f" for ch in location):
         raise invalid(use, REASON_REDIRECT, phase="redirect")
-    target = urljoin(current_url, location)
+    try:
+        target = urljoin(current_url, location)
+    except ValueError:                                         # `//[x` 처럼 대괄호가 맞지 않는 주소 — 파이썬 3.12 는 서버가 보낸 글을 예외 문장에 싣는다(S 재검증 권고-1): 고정 문구로 바꾸고 원래 예외는 버린다
+        raise invalid(use, REASON_REDIRECT, phase="redirect") from None
     if len(target) > MAX_REDIRECT_URL_CHARS:
         raise invalid(use, REASON_REDIRECT, phase="redirect")
     try:

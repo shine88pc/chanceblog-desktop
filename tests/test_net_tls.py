@@ -588,6 +588,102 @@ class KeyLogTest(TlsBase):
             self.assertEqual(self.secrets_in(log), [])
             self.assertEqual(usage.records(), (), "접속하지 않았으니 기록도 없다")
 
+    @contextlib.contextmanager
+    def working_in(self, path):
+        """현재 폴더를 잠시 옮긴다(상대 경로 열쇠 파일이 어디에 생기는지 보려고 — 파이썬 3.10 에는 `contextlib.chdir` 가 없다)."""
+        here = os.getcwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(here)
+
+    @staticmethod
+    def listing(root):
+        """폴더 아래 모든 것의 (상대 경로, 종류, 크기, 내용 해시 앞 8자) — 시험 앞뒤가 같아야 한다(파일이 새로 생기거나 열쇠 파일 머리글 한 줄이 덧붙어도 달라진다)."""
+        found = []
+        for path in sorted(root.rglob("*")):
+            data = path.read_bytes() if path.is_file() else b""
+            found.append((path.relative_to(root).as_posix(), "file" if path.is_file() else "dir", len(data), hashlib.sha256(data).hexdigest()[:8]))
+        return found
+
+    def test_an_unusable_key_log_path_in_the_environment_neither_blocks_the_connection_nor_creates_a_file(self):
+        """S 재검증 권고-2 — 환경 변수 `SSLKEYLOGFILE` 이 쓸 수 없는 곳(없는 폴더·폴더·읽기 전용 파일·홈 줄임표)을 가리키면 `ssl.create_default_context()` 가 그 파일을 열다 `OSError` 를 올려
+        접속이 `NETWORK_OFFLINE` 으로 막혔다 — 'D-738: 환경 변수가 있어도 접속은 막지 않고 열쇠 파일만 끈다' 와 어긋났다. 쓸 수 있는 새 경로(상대·절대)는 파일이 만들어지고 머리글 한 줄이 쓰였다.
+        이제 접속 틀은 그 환경 변수를 읽지 않는다: 어느 경우에도 접속은 되고 폴더 안의 어떤 것도 만들어지거나 바뀌지 않는다. 마지막 칸(빈 값)은 옛 코드도 통과하던 대조다."""
+        import stat
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            (root / "a_folder").mkdir()
+            readonly = root / "readonly.log"
+            readonly.write_bytes(b"keep\n")
+            os.chmod(readonly, stat.S_IREAD)
+            try:
+                cases = (("없는 폴더", str(root / "no_such_folder" / "keys.log")), ("폴더", str(root / "a_folder")), ("읽기 전용 파일", str(readonly)), ("홈 줄임표", chr(0x7E) + "/keys.log"),
+                         ("새 절대 경로", str(root / "new_keys.log")), ("새 상대 경로", "relative_keys.log"), ("빈 값(대조)", ""))
+                for label, value in cases:
+                    with self.subTest(label=label), mock.patch.dict(os.environ, {"SSLKEYLOGFILE": value}), self.working_in(root):
+                        before = self.listing(root)
+                        context = ns.ORIGINAL_MAKE_CONTEXT()                        # 직접: 환경 변수가 쓸 수 없는 곳을 가리켜도 보안 환경은 만들어진다
+                        self.assertIsNone(context.keylog_filename)
+                        server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY)
+                        result, usage = self.call(server)                           # 진짜 핸드셰이크까지
+                        self.assertIsInstance(result, client.NetResponse, f"{label}: 쓸 수 없는 열쇠 파일 경로가 접속을 막았다({getattr(result, 'code', '')})")
+                        self.assertEqual((result.status, usage.records()[0].error), (200, ""))
+                        self.assertEqual(self.listing(root), before, f"{label}: 열쇠 파일이 만들어지거나 바뀌었다")
+            finally:
+                os.chmod(readonly, stat.S_IWRITE | stat.S_IREAD)
+
+    def test_the_production_context_never_reads_the_key_log_environment_variable(self):
+        """S 재검증 권고-2 — 환경 변수를 읽어 놓고 안 쓰는 것도, 읽다가 터지는 것도 막는다: 환경에 대한 모든 물음(`get`·`[]`·`in`)을 기록하는 환경 아래서 보안 환경을 만들면 열쇠 파일 변수를 한 번도 묻지 않는다.
+        (값은 없는 폴더 안의 경로 — 옛 코드는 이 값을 읽다 `OSError` 로 터지므로 시험이 어디에도 파일을 만들지 않는다.)"""
+        class Watching(dict):
+            def __init__(self, data):
+                super().__init__(data)
+                self.asked = []
+
+            def get(self, key, default=None):
+                self.asked.append(key)
+                return super().get(key, default)
+
+            def __getitem__(self, key):
+                self.asked.append(key)
+                return super().__getitem__(key)
+
+            def __contains__(self, key):
+                self.asked.append(key)
+                return super().__contains__(key)
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp, self.working_in(tmp):
+            watching = Watching({"SSLKEYLOGFILE": str(Path(tmp) / "no_such_folder" / "keys.log")})
+            with mock.patch.object(os, "environ", watching):
+                context = ns.ORIGINAL_MAKE_CONTEXT()
+            self.assertEqual([key for key in watching.asked if "keylog" in str(key).lower()], [], "보안 환경을 만들다 열쇠 파일 환경 변수를 물었다")
+            self.assertIsNone(context.keylog_filename)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_the_production_context_matches_the_standard_default_one_except_for_the_two_deliberate_lines(self):
+        """S 재검증 권고-2(고친 뒤의 짝) — 환경 변수를 읽는 `create_default_context()` 대신 `SSLContext(PROTOCOL_TLS_CLIENT)` 를 직접 만들어도 보안에 관한 속성이 표준 기본 환경과 한 칸도 다르지 않다
+        (프로토콜·검증 방식·호스트 이름 확인·검증 깃발·옵션·핸드셰이크 뒤 인증·최대 버전·공용 이름 확인·보안 수준·암호 목록·믿는 인증서 수). 다른 것은 두 가지뿐 — 최소 TLS 1.2 를 명시한 것과 열쇠 파일이 없는 것.
+        시스템 기본 인증서를 읽는 `load_default_certs()` 는 한 번 부른다(빼먹으면 믿는 곳이 비어 윈도·리눅스에서 정상 접속이 모두 막힌다).
+        파이썬 3.13 부터는 표준 기본 환경이 검증 깃발(부분 사슬·엄격 검사)을 더해 이 시험이 빨개진다 — 그때 `_make_context` 도 같은 깃발을 따라야 하는지 검토한다는 뜻이다."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp, self.working_in(tmp), mock.patch.dict(os.environ):
+            os.environ.pop("SSLKEYLOGFILE", None)
+            standard = ssl.create_default_context()
+            original = ssl.SSLContext.load_default_certs
+            with mock.patch.object(ssl.SSLContext, "load_default_certs", autospec=True, side_effect=original) as loader:
+                ours = ns.ORIGINAL_MAKE_CONTEXT()
+        self.assertEqual(loader.call_count, 1, "시스템 기본 인증서를 정확히 한 번 읽는다")
+        self.assertIn(loader.call_args.args[1:], ((), (ssl.Purpose.SERVER_AUTH,)), "서버를 확인하는 용도의 기본 인증서")
+        for name in ("protocol", "verify_mode", "check_hostname", "verify_flags", "options", "post_handshake_auth", "maximum_version", "hostname_checks_common_name", "security_level"):
+            self.assertEqual(getattr(ours, name, None), getattr(standard, name, None), f"{name}: 표준 기본 환경과 다르다(파이썬 3.13 이상이면 검증 깃발을 따라야 하는지 검토한다)")
+        self.assertEqual(ours.get_ciphers(), standard.get_ciphers())
+        self.assertEqual(ours.cert_store_stats(), standard.cert_store_stats(), "믿는 인증서 수가 표준 기본 환경과 다르다")
+        self.assertIs(ours.verify_mode, ssl.CERT_REQUIRED)
+        self.assertIs(ours.check_hostname, True)
+        self.assertGreaterEqual(ours.minimum_version, ssl.TLSVersion.TLSv1_2)
+        self.assertIsNone(ours.keylog_filename)
+
 
 class TrustEnvironmentTest(TlsBase):
     def test_trust_changing_environment_variables_do_not_add_trust(self):
