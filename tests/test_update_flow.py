@@ -336,7 +336,8 @@ class DownloadTest(FlowCase):
         result = self.check()
         sizes = [result.manifest.file(role).size for role in ("package", "feed")]
         backup = update_flow.estimate_backup_bytes(self.ctx)
-        needed = sum(sizes) * source.DISK_MULTIPLIER + backup
+        self.assertEqual(source.DISK_MULTIPLIER, 3, "설계서 U6 — 파일 합계의 세 배(받은 파일·복사본·여유) + 백업 예상 크기")
+        needed = sum(sizes) * 3 + backup                 # 상수를 되읽지 않고 손으로 적은 값으로 견준다(상수를 바꾸면 이 시험이 빨개진다)
         before = len(self.server.requests)
         self.assertEqual(code_of(update_flow.download_update, self.ctx, result, free_bytes=lambda folder: needed - 1), "DISK_FULL")
         self.assertEqual((len(self.server.requests), self.staging_runs()), (before, []), "받기 전에 거절 — 요청 0·폴더 0")

@@ -52,7 +52,7 @@ class PromptTest(unittest.TestCase):
 
     def test_the_prompt_has_no_commands_paths_options_or_diagnostic_words(self):
         text = recovery.prompt_for(PENDING).text
-        for word in ("python", "--", ".json", ".exe", "C:\\", "/", "터미널", "명령", "HKEY", "http", "~", "{", "}"):
+        for word in ("python", "--", ".json", ".exe", "C:\\", "/", "터미널", "명령", "HKEY", "http", chr(0x7E), "{", "}"):
             self.assertNotIn(word, text, word)
         self.assertIn("두 번 연속", text)
         self.assertIn("'복구'", text)

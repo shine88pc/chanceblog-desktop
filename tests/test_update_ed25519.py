@@ -19,6 +19,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -239,6 +240,32 @@ class SmallOrderTest(unittest.TestCase):
             self.assertFalse(ed25519.verify(pub, message, us.encode(point) + signature[32:]), "작은 위수 R")
             self.assertFalse(ed25519.verify(us.encode(point), message, signature), "작은 위수 A")
 
+    def test_a_valid_equation_with_a_torsion_r_is_refused_though_the_eightfold_equation_holds(self):
+        """진짜 비밀 스칼라로 만든 '식이 맞는' 서명 — 임의의 작은 위수 점을 R 로 쓰고 S = k·a(r = 0)이면 여덟 곱 식은 성립한다(방어 없는 여덟 곱 검증기는 참, RFC 8.8). 앱의 검증기는 R 이 작은 위수라서 거절한다
+        (R 쪽 검사를 지우는 변이를 잡는다 — 위 시험들은 식이 안 맞아 이 검사가 없어도 거짓이었다)."""
+        seed = us.seed_for("torsion-r")
+        scalar, _prefix = us._expand(seed)
+        pub = us.encode(us.point_mul(scalar, us.BASE))
+        message = b"torsion r with a satisfying scalar"
+        for point in self.points:
+            r_enc = us.encode(point)
+            k = int.from_bytes(hashlib.sha512(r_enc + pub + message).digest(), "little") % us.L
+            signature = r_enc + int.to_bytes(k * scalar % us.L, 32, "little")
+            self.assertTrue(us.naive_verify(pub, message, signature, cofactor=True), point)
+            self.assertFalse(us.naive_verify(pub, message, signature, reject_small_order=True), point)
+            self.assertFalse(ed25519.verify(pub, message, signature), point)
+
+    def test_a_torsion_public_key_with_an_ordinary_r_and_s_equal_to_its_nonce_is_refused(self):
+        """공개키가 작은 위수 점(A)이면 [8]A 가 항등원이라 R = r·B, S = r 인 서명이 **어떤 메시지에나** 여덟 곱 식을 만족한다 — 앱의 검증기는 A 가 작은 위수라서 거절한다
+        (A 쪽 검사를 지우는 변이를 잡는다 — R 이 평범한 점인 위조라 R 검사가 대신 막아 주지 못한다)."""
+        for index, a_point in enumerate(self.points):
+            pub = us.encode(a_point)
+            r = (index + 7) * 1234567
+            signature = us.encode(us.point_mul(r, us.BASE)) + int.to_bytes(r % us.L, 32, "little")
+            for message in (b"first", b"second message"):
+                self.assertTrue(us.naive_verify(pub, message, signature, cofactor=True), (index, message))
+                self.assertFalse(ed25519.verify(pub, message, signature), (index, message))
+
 
 class CofactorTest(unittest.TestCase):
     def test_a_signature_whose_r_carries_a_small_order_component_is_true_only_with_the_times_eight_equation(self):
@@ -312,6 +339,17 @@ class SourceShapeTest(unittest.TestCase):
         source = ast.unparse(next(node for node in self.tree().body if isinstance(node, ast.FunctionDef) and node.name == "verify"))
         self.assertIn("except Exception", source)
         self.assertIn("is True", source)
+
+    def test_an_exception_inside_the_check_is_a_false_and_a_non_bool_result_is_never_a_true(self):
+        """안쪽 계산이 어떤 예외를 내도 거짓(fail closed)이고, 안쪽이 참이 아닌 값(1·글·객체)을 돌려줘도 거짓이다 — `except` 의 반환값을 참으로 바꾸거나 `is True` 를 지우는 변이를 잡는다(위 시험은 소스 모양만 본다)."""
+        seed, pub, message, signature = pair("inner-failure")
+        self.assertTrue(ed25519.verify(pub, message, signature), "대조 — 아무것도 가로채지 않으면 참")
+        for error in (ValueError("x"), ZeroDivisionError(), RecursionError(), MemoryError(), OverflowError(), KeyError("k"), TypeError("t"), AssertionError("a"), OSError("o")):
+            with mock.patch.object(ed25519, "_verify", side_effect=error):
+                self.assertIs(ed25519.verify(pub, message, signature), False, repr(error))
+        for value in (1, "yes", object(), [1], b"x", 1.0, None):
+            with mock.patch.object(ed25519, "_verify", return_value=value):
+                self.assertIs(ed25519.verify(pub, message, signature), False, repr(value))
 
     def test_there_is_no_randomness_clock_environment_or_file_access(self):
         text = (SRC / "ed25519.py").read_text(encoding="utf-8")
