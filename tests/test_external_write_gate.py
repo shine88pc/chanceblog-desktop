@@ -210,11 +210,12 @@ class NoWayToTurnItOnTest(unittest.TestCase):
                             if isinstance(cursor, ast.If) and re.search(r"capabilities\.\w+_enabled\(\)", ast.unparse(cursor.test)):
                                 guarded = True
                         calls.append((path.relative_to(SRC).as_posix(), name, guarded))
-        self.assertEqual(calls, [("service/wiring.py", "external.register", True), ("service/wiring.py", "external.register", True)], "어댑터를 꽂는 코드는 wiring.py 의 스위치 `if` 안 두 줄뿐이다(시험은 `external.registered` 로 꽂는다)")
+        self.assertEqual(calls, [("service/wiring.py", "external.register", True)] * 3, "어댑터를 꽂는 코드는 wiring.py 의 스위치 `if` 안 세 줄뿐이다(UPDATE 갈래가 `update` 종류의 한 줄을 더했다)(시험은 `external.registered` 로 꽂는다)")
         self.assertEqual(external.registered_kinds(), (), "이 빌드(스위치 모두 꺼짐)는 어떤 어댑터도 꽂지 않는다")
 
     def test_the_registry_only_knows_three_kinds_and_a_test_can_plug_one_temporarily(self):
-        self.assertEqual(external.KINDS, ("pages_git", "blogger", "naver_publish"))
+        # 이름의 '셋' 은 옛 이름이다 — 시험 id 를 없애지 않으려고 그대로 두었다. UPDATE 갈래가 `update` 종류를 더해 지금은 넷이다(아래 단언이 계산이 아닌 손으로 적은 목록으로 견준다).
+        self.assertEqual(external.KINDS, ("pages_git", "blogger", "naver_publish", "update"))
         with self.assertRaises(ValueError):
             external.register("unknown_kind", lambda **parts: None)
         with self.assertRaises(ValueError):

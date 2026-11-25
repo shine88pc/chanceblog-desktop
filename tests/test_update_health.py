@@ -123,8 +123,10 @@ class MarkHealthyTest(unittest.TestCase):
     def test_the_mark_clears_the_pending_record_and_remembers_the_good_version(self):
         state.write_state(self.folder, state.State(last_seq=7, pending=PENDING, last_good="1.0.0", notice="not_applied"))
         done = health.mark_healthy(self.folder)
-        self.assertEqual((done.pending, done.last_good, done.notice, done.last_seq), (None, "1.0.1", "", 7))
+        self.assertEqual((done.pending, done.last_good, done.notice, done.last_seq), (None, "1.0.1", "", PENDING.seq), "시퀀스는 정상이 된 판의 것까지 올라간다")
         self.assertEqual(state.read_state(self.folder), done)
+        state.write_state(self.folder, state.State(last_seq=PENDING.seq + 5, pending=PENDING))
+        self.assertEqual(health.mark_healthy(self.folder).last_seq, PENDING.seq + 5, "이미 더 높으면 낮추지 않는다")
 
     def test_without_a_pending_record_nothing_is_written(self):
         self.assertEqual(health.mark_healthy(self.folder), state.State())
@@ -136,8 +138,8 @@ class MarkHealthyTest(unittest.TestCase):
 
     def test_a_passed_state_is_used_instead_of_reading_again(self):
         state.write_state(self.folder, state.State(pending=PENDING))
-        done = health.mark_healthy(self.folder, state.State(pending=PENDING, last_seq=11))
-        self.assertEqual(done.last_seq, 11)
+        done = health.mark_healthy(self.folder, state.State(pending=PENDING, last_seq=PENDING.seq + 11))
+        self.assertEqual(done.last_seq, PENDING.seq + 11)
 
 
 class FolderHelpersTest(unittest.TestCase):

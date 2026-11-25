@@ -90,11 +90,11 @@ class HealthMonitor:
 
 
 def mark_healthy(folder, state=None):
-    """정상 표식 — `pending` 을 지우고 정상 판을 기록하고 안내를 비운다 → 새 `State`. `pending` 이 없으면 그대로(이미 정상)."""
+    """정상 표식 — `pending` 을 지우고 정상 판을 기록하고 안내를 비우고 `last_seq` 를 그 판의 시퀀스까지 올린다(넘긴 직후 쓰기가 끊겼어도 여기서 확정) → 새 `State`. `pending` 이 없으면 그대로(이미 정상)."""
     current = state if state is not None else state_module.load_state(folder)
     if current.pending is None:
         return current
-    done = replace(current, pending=None, last_good=current.pending.to_version, notice="")
+    done = replace(current, pending=None, last_good=current.pending.to_version, notice="", last_seq=max(current.last_seq, current.pending.seq))        # 정상이 된 판의 시퀀스를 다시 확정한다(넘긴 직후 상태 쓰기가 끊겼어도 이때 올라간다)
     state_module.write_state(folder, done)
     return done
 
@@ -150,6 +150,33 @@ def prune_keep(folder, keep_versions=(), *, limit=MAX_KEEP):
     return tuple(sorted(removed))
 
 
+def sweep_stale_staging(folder, *, max_age_seconds, now):
+    """임시 내려받기 폴더 가운데 **낡은 것**(마지막 고친 때가 `max_age_seconds` 보다 오래됨)만 치운다 → 치운 폴더 수. 정상이 되기를 기다리는(방금 넘긴) 폴더는 낡지 않았으므로 남는다.
+    `now` 는 시간대가 있는 시각이다. 파일 오류(권한·사라짐)는 정리를 멈출 뿐 예외로 번지지 않는다 — 정리는 확인을 막지 않는다."""
+    root = staging_root(folder)
+    removed = 0
+    try:
+        if not root.is_dir() or _is_link(root):
+            return 0
+        limit = now.timestamp() - max_age_seconds
+        for entry in list(root.iterdir()):
+            if _is_link(entry):
+                continue
+            try:
+                old = entry.stat().st_mtime < limit
+            except OSError:
+                continue
+            if old:
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink(missing_ok=True)
+                removed += 1
+    except OSError:
+        return removed
+    return removed
+
+
 def clear_staging(folder):
     """임시 내려받기 폴더를 모두 치운다(정상이 된 뒤·낡은 내려받기 정리). 치운 폴더 수."""
     root = staging_root(folder)
@@ -168,4 +195,4 @@ def clear_staging(folder):
 
 
 __all__ = ["HEALTHY", "HealthMonitor", "HealthResult", "KEEP", "MAX_KEEP", "PROBE_NAMES", "STAGING", "UNHEALTHY", "WAITING", "clear_staging", "keep_dir", "keep_root", "mark_healthy", "promote_to_keep",
-           "prune_keep", "staging_root", "startup_checks"]
+           "prune_keep", "staging_root", "startup_checks", "sweep_stale_staging"]

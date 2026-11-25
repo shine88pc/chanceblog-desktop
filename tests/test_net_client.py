@@ -419,8 +419,8 @@ class ShapeRefusalTest(unittest.TestCase):
                 self.assertIn(b"Content-Length: 4096\r\n", sent)
                 self.assertEqual(sent.count(b"Content-Type:"), 1)
 
-    def test_the_update_check_routes_are_the_two_fixed_release_shapes_and_nothing_else(self):
-        """G-2 가 자리표시자 길에 걸었던 점 구간·숨은 이름 거절은 **더 엄격하게** 이어진다(D-790) — 소유자·저장소가 상수 하나에서 오는 고정 길이 됐으므로 다른 소유자·저장소·자산 이름·태그 모양·점 구간·숨은 이름은 연결 전에 거절한다.
+    def test_the_update_check_route_takes_no_dot_segments_and_no_hidden_names(self):
+        """(옛 시험 이름을 그대로 둔다 — 시험 id 를 없애지 않으려고. 아래가 더 엄격해진 내용이다: 고정 길 둘 말고는 모두 거절.) G-2 가 자리표시자 길에 걸었던 점 구간·숨은 이름 거절은 **더 엄격하게** 이어진다(D-790) — 소유자·저장소가 상수 하나에서 오는 고정 길이 됐으므로 다른 소유자·저장소·자산 이름·태그 모양·점 구간·숨은 이름은 연결 전에 거절한다.
         통과하는 모양은 최신 릴리스의 매니페스트·서명 파일 둘과 태그가 정해진 릴리스의 자산 하나(이름 규칙은 매니페스트의 파일 이름 규칙)뿐이다."""
         owner = gitrepo.EXPECTED_OWNER
         base = f"https://{HOST_UPDATE}/{owner}/chanceblog-desktop/releases"

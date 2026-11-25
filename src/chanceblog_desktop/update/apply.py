@@ -12,6 +12,8 @@ from ..errors import AppError
 
 INSTALLED_KINDS = ("velopack", "inno")
 UNSUPPORTED_KINDS = ("portable", "source", "")
+# 설치 종류마다 내려받아야 하는 파일의 역할(잠정 — 설치 도구 결정 뒤 U-4 가 확정한다): Velopack 은 전체 패키지와 피드, Inno 는 설치 파일 하나. 휴대용 압축 파일은 앱이 받지 않는다.
+REQUIRED_ROLES = {"velopack": ("package", "feed"), "inno": ("setup",)}
 
 
 class ApplyAdapter:

@@ -33,6 +33,12 @@ NEW = ("NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_O
 EVERYTHING = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT") + NEW
 
 
+def unregister_all():
+    """꽂힌 어댑터를 모두 뺀다(시험 뒷정리 — 종류가 늘어도 빠뜨리지 않게 `KINDS` 전체)."""
+    for kind in external.KINDS:
+        external.unregister(kind)
+
+
 @contextlib.contextmanager
 def switches(*names):
     with contextlib.ExitStack() as stack:
@@ -63,8 +69,7 @@ def sweep_commands(test, ctx, with_yes=False):
 
 class EverySwitchAloneTest(unittest.TestCase):
     def tearDown(self):
-        external.unregister("pages_git")
-        external.unregister("blogger")
+        unregister_all()
 
     def fresh_ctx(self, tmp, keystore=None):
         ctx = make_context(data_dir=str(Path(tmp) / "data"), env={}, expected_origin=ss.LOCAL_ORIGIN, clock=ss.Clock())
@@ -90,9 +95,8 @@ class EverySwitchAloneTest(unittest.TestCase):
                     kinds = external.registered_kinds()
                 self.assertEqual((wire.calls, problems), ([], []), f"스위치 {names} 를 켠 채 바깥 호출이 있었다")
                 self.assertGreaterEqual(ran, 50)
-                self.assertEqual(kinds, ("blogger", "pages_git") if names == EVERYTHING else ("blogger",) if names == ("NET_BLOGGER_OAUTH",) else (), names)
-                external.unregister("pages_git")
-                external.unregister("blogger")
+                self.assertEqual(kinds, ("blogger", "pages_git", "update") if names == EVERYTHING else {"NET_BLOGGER_OAUTH": ("blogger",), "NET_UPDATE_CHECK": ("update",)}.get(names[0], ()), names)
+                unregister_all()
 
     def test_each_switch_with_credentials_but_without_confirmation_makes_zero_calls(self):
         """NT-52 — 키·토큰이 보관소에 있어도 `--yes`·확인이 없으면 0(`--yes` 를 줘도 이 빌드에는 어댑터가 없어 0 이다)."""
@@ -108,8 +112,7 @@ class EverySwitchAloneTest(unittest.TestCase):
                 with switches(*names), og.Tripwire() as wire:
                     ran, problems = sweep_commands(self, self.fresh_ctx(tmp, keystore=store), with_yes=with_yes)
                 self.assertEqual((wire.calls, problems), ([], []))
-                external.unregister("pages_git")
-                external.unregister("blogger")
+                unregister_all()
 
     def test_start_up_and_loading_every_screen_makes_zero_calls_even_with_all_switches_on(self):
         """NT-53 — 시작(맥락 만들기)과 화면이 서비스를 읽는 모든 어댑터 동작은 스위치를 모두 켠 채로도 바깥 호출 0 이다."""
@@ -127,8 +130,7 @@ class EverySwitchAloneTest(unittest.TestCase):
                          lambda: home.backups_provider().load_backups(progress, cancelled)):
                 with contextlib.suppress(Exception):
                     call()
-            external.unregister("pages_git")
-            external.unregister("blogger")
+            unregister_all()
         self.assertEqual(wire.calls, [])
 
     def test_doctor_without_online_makes_zero_calls_and_lists_open_switches(self):
@@ -168,24 +170,21 @@ class ConfirmedActionTest(unittest.TestCase):
 
 class RegistrationFollowsSwitchesTest(unittest.TestCase):
     def tearDown(self):
-        external.unregister("pages_git")
-        external.unregister("blogger")
+        unregister_all()
 
     def test_registration_follows_the_switches_both_ways(self):
         """NT-18 — 켜진 스위치와 등록된 종류가 정확히 같다: 켜지지 않았는데 등록되지 않고, 켜졌으면 등록된다(`naver_publish` 는 스위치가 없어 늘 미등록)."""
-        names = ("EXTERNAL_WRITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH")
+        names = ("EXTERNAL_WRITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_UPDATE_CHECK")
         import itertools
-        for bits in itertools.product((False, True), repeat=3):
-            external.unregister("pages_git")
-            external.unregister("blogger")
+        for bits in itertools.product((False, True), repeat=4):
+            unregister_all()
             opened = {name for name, bit in zip(names, bits) if bit}
-            expected = tuple(sorted(kind for kind, wanted in (("pages_git", {"EXTERNAL_WRITE", "PAGES_BRANCH_PUSH"} <= opened), ("blogger", "NET_BLOGGER_OAUTH" in opened)) if wanted))
+            expected = tuple(sorted(kind for kind, wanted in (("pages_git", {"EXTERNAL_WRITE", "PAGES_BRANCH_PUSH"} <= opened), ("blogger", "NET_BLOGGER_OAUTH" in opened), ("update", "NET_UPDATE_CHECK" in opened)) if wanted))
             with self.subTest(open=sorted(opened)), switches(*opened):
                 self.assertEqual(wiring.register_enabled(), expected)
                 self.assertEqual(external.registered_kinds(), expected)
                 self.assertNotIn("naver_publish", external.registered_kinds())
-        external.unregister("pages_git")
-        external.unregister("blogger")
+        unregister_all()
         self.assertEqual(external.registered_kinds(), (), "스위치를 모두 끄면 등록도 없다(기본 빌드)")
         self.assertEqual(wiring.register_enabled(), ())
 
