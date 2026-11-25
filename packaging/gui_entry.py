@@ -274,7 +274,9 @@ def check_vendor(root, core, *, find_spec=importlib.util.find_spec, pin=None):
 
 
 def check_capabilities(*, import_module=importlib.import_module):
-    """외부 쓰기 관문 — 소스 상수 `EXTERNAL_WRITE` 와 `BLOGGER_OAUTH_INPUT` 이 둘 다 `False` 여야 한다(없어도 실패 — 관문 없는 소스로는 시험용도 내보내지 않는다).
+    """외부 쓰기·인터넷 접속 관문 — 켜진(글자 그대로 `True`) 소스 상수의 집합이 출하 표(`pkgcommon.SHIPPED_OPEN_SWITCHES`)와 **정확히 같아야** 통과한다(NET 설계서 3.3, D-722).
+    지금 표는 비어 있어서 '켜진 것 0' 이 곧 통과 조건이다(예전의 '`EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT` 둘 다 `False`' 와 같은 엄격함이고 대상이 일곱으로 늘었다).
+    표 밖이 켜졌거나 표의 것이 꺼졌거나, 상수가 없거나 True·False 가 아니면 실패다(관문 없는 소스로는 시험용도 내보내지 않는다). `LOCAL_OCR` 는 예전처럼 알림 줄일 뿐이다.
     '모듈 자체가 없음'과 '모듈은 있는데 안에서 가져오기가 실패함'은 다른 글로 알린다 — 빌드의 `--allow-missing-gate` 는 앞의 것만 넘긴다(D-419)."""
     try:
         module = import_module("chanceblog_desktop.capabilities")
@@ -284,14 +286,53 @@ def check_capabilities(*, import_module=importlib.import_module):
         return Result("capabilities", "fail", f"외부 쓰기 관문 모듈 안에서 필요한 다른 모듈을 불러오지 못했어요(오류 종류: {type(error).__name__})")
     except ImportError as error:
         return Result("capabilities", "fail", f"외부 쓰기 관문 모듈을 불러오지 못했어요(오류 종류: {type(error).__name__})")
-    for name in ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT"):
+    names = tuple(dict.fromkeys(tuple(getattr(module, "SWITCH_NAMES", ())) + tuple(pc.GATE_CONSTANTS)))      # 모듈이 알리는 표와 이 도구가 아는 표의 합집합 — 한쪽 표에서 이름이 빠져도 점검이 그 상수를 놓치지 않는다
+    opened = []
+    for name in names:
         if not hasattr(module, name):
+            if name in pc.INFORMATIONAL_SWITCHES:
+                continue                                      # 글자 읽기 관문이 없는 옛 모듈도 그대로 통과한다
             return Result("capabilities", "fail", f"관문 상수 {name} 이 없어요")
-        if getattr(module, name) is not False:
-            return Result("capabilities", "fail", f"관문 상수 {name} 이 False 가 아니에요 — 외부 쓰기가 열려 있어요")
+        value = getattr(module, name)
+        if value is not True and value is not False:
+            return Result("capabilities", "fail", f"관문 상수 {name} 이 True 나 False 가 아니에요")
+        if value is True and name not in pc.INFORMATIONAL_SWITCHES:
+            opened.append(name)
+    unexpected = [name for name in opened if name not in pc.SHIPPED_OPEN_SWITCHES]
+    if unexpected:
+        return Result("capabilities", "fail", f"출하 표에 없는 관문 상수가 켜져 있어요 — {', '.join(unexpected)}=True (외부 쓰기·접속이 열려 있어요)")
+    closed = [name for name in pc.SHIPPED_OPEN_SWITCHES if name not in opened]
+    if closed:
+        return Result("capabilities", "fail", f"출하 표에 켜 두기로 한 관문 상수가 꺼져 있어요 — {', '.join(closed)}")
     local = getattr(module, "LOCAL_OCR", None)              # 글자 읽기 작업자 관문(결정 D-512)은 알림 줄일 뿐이고 실패 조건이 아니다 — 이 PC 안 계산이라 바깥에 쓰지 않는다
     note = "" if local is None else (" · 글자 읽기 작업자 관문도 꺼져 있어요(LOCAL_OCR=False)" if local is False else " · 글자 읽기 작업자 관문이 켜져 있어요(LOCAL_OCR=True — 알림일 뿐 실패가 아니에요)")
-    return Result("capabilities", "ok", "외부 쓰기·Blogger 입력 관문이 모두 꺼져 있어요(EXTERNAL_WRITE=False · BLOGGER_OAUTH_INPUT=False)" + note)
+    if opened:
+        return Result("capabilities", "ok", f"켜진 관문 상수가 출하 표와 같아요: {', '.join(opened)}" + note)
+    return Result("capabilities", "ok", "외부 쓰기·Blogger 입력·인터넷 접속 관문이 모두 꺼져 있어요(켜진 것 0개, 출하 표와 같아요)" + note)
+
+
+def check_tls(*, import_module=importlib.import_module, platform=None, shipped=None):
+    """보안 접속(TLS) 부품 점검 — 접속은 하지 않는다(NET 설계서 C9, D-723). `ssl` 이 불러와지고 기본 보안 환경이 만들어지며 윈도 신뢰 저장소에서 루트를 읽는지 본다.
+    묶음에서 `_ssl`·`libssl` 이 빠진 것을 빨리 알리려는 것이다. 출하 표(`pkgcommon.SHIPPED_OPEN_SWITCHES`)가 **비어 있는 동안**(지금 — 인터넷에 접속하지 않는다)은 실패해도 알림일 뿐 빌드 거절 조건이 아니다
+    (늘 `ok` 로 돌려주고 글이 '알림' 으로 시작한다). 표에 스위치가 하나라도 오르면(접속이 열린 채 출하) 같은 점검이 **실패 조건**이 된다 — 부품이 빠진 묶음으로 접속이 열린 채 나가지 않게(D-738, 독립 검증 S 권고-3 (a)).
+    `shipped` 는 시험이 출하 표를 바꿔 끼우는 자리다."""
+    platform = sys.platform if platform is None else platform
+    strict = bool(pc.SHIPPED_OPEN_SWITCHES if shipped is None else shipped)
+    status = "fail" if strict else "ok"
+    try:
+        ssl = import_module("ssl")
+        version = str(ssl.OPENSSL_VERSION)
+        context = ssl.create_default_context()
+        roots = int(context.cert_store_stats().get("x509_ca", 0))
+    except Exception as error:      # noqa: BLE001 - 어떤 실패든 알림(접속이 열려 있으면 실패)으로 바꾼다
+        if strict:
+            return Result("tls", status, f"보안 접속 부품을 점검하지 못했어요(오류 종류: {type(error).__name__}) — 인터넷 접속이 열린 채 내보내는 묶음이라 실패예요")
+        return Result("tls", status, f"알림: 보안 접속 부품을 점검하지 못했어요(오류 종류: {type(error).__name__}) — 지금은 인터넷에 접속하지 않아서 실패가 아니에요")
+    if roots <= 0 and platform == "win32":
+        if strict:
+            return Result("tls", status, f"윈도 신뢰 저장소에서 인증서 루트를 읽지 못했어요(0개, {version}) — 인터넷 접속이 열린 채 내보내는 묶음이라 실패예요")
+        return Result("tls", status, f"알림: 윈도 신뢰 저장소에서 인증서 루트를 읽지 못했어요(0개, {version}) — 인터넷 접속이 열리면 안전한 연결이 실패할 수 있어요. 지금은 접속하지 않아요")
+    return Result("tls", "ok", f"보안 접속 부품이 있어요({version}) — 신뢰하는 인증서 루트 {roots}개, 접속은 하지 않았어요")
 
 
 def check_uac_manifest(exe_path, frozen):
@@ -435,6 +476,7 @@ def run_selftest(*, main_function=None):
         if core is not None:
             results.append(guarded(check_vendor, "vendor_core", root, core))
         results.append(guarded(check_capabilities, "capabilities"))
+        results.append(guarded(check_tls, "tls"))
         results.append(guarded(check_uac_manifest, "uac_manifest", sys.executable, frozen))
         if core is not None:
             results.extend(check_qt(frozen))

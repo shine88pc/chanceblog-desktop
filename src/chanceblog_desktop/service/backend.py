@@ -180,4 +180,5 @@ class GitPagesBackend:
 
     def check_deployed(self, repo, post, now, deadline, interval):
         capabilities.require_external_write("공개 주소 확인")
+        capabilities.require_net("pages_site", "공개 주소 확인")                    # 둘째 문장: 좁은 스위치도 함께(NET 설계서 3.3)
         return deploy.check_deployed(repo, post.path, post.text, deadline=deadline, interval=interval, fetcher=self.fetcher, sleep=self._sleeper(deadline), clock=self.monotonic, now=now)

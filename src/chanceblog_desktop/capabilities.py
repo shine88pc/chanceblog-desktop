@@ -13,6 +13,10 @@ Cookie·Session 사용·예약 게시·외부 초안 전송)을 **하지 않는�
 `LOCAL_OCR` 은 같은 모양의 세 번째 상수다(결정 D-512, 운영자 확인 026 ②·028 ②) — **이 PC 안에서만** 계산하는 글자 읽기 작업자(별도 프로세스)를 띄워도 되는가. 바깥에 쓰는 일이 아니라서 `EXTERNAL_WRITE` 와 따로 두고,
 같은 방식으로 지킨다: 기본은 False, 설정·환경 변수·명령줄·화면에 켜는 길이 없고, 시험만 `mock.patch.object` 로 임시로 켠다. 켜는 것은 소스 한 줄을 고치는 별도 변경(운영자 승인)이다.
 `require_local_ocr(작업)` 는 작업자를 띄우는 유일한 곳(`ui/ocr_adapter.py`)의 **첫 줄**에서 부른다 — 꺼져 있으면 하위 프로세스를 한 번도 부르기 전에 `OCR_UNAVAILABLE` 로 거절한다.
+
+인터넷 접속 스위치 다섯(`NET_UPDATE_CHECK`·`NET_PAGES_SITE`·`PAGES_BRANCH_PUSH`·`NET_BLOGGER_OAUTH`·`NET_BLOGGER_DRAFT`, D-720, 운영자 확인 038 ①)은 같은 방식의 상수다 — 새 접속마다 따로 두고 모두 False 다.
+`require_net(용도, 작업)` 은 `net/client.py` 와 접속 흐름의 관문이다(용도마다 필요한 스위치가 모두 True 여야 지나고, 모르는 용도는 거절한다). `SWITCH_NAMES` 가 모든 상수 이름의 표이고,
+출하 표(`packaging/pkgcommon.py` 의 `SHIPPED_OPEN_SWITCHES`)에 적힌 것만 켠 채 내보낼 수 있다 — 지금은 빈 표다(켜진 것 0).
 """
 from __future__ import annotations
 
@@ -21,6 +25,17 @@ from .errors import AppError
 EXTERNAL_WRITE = False            # 외부에 쓰는 모든 일의 스위치 — 이 빌드는 False 다(바꾸려면 소스를 고쳐야 한다)
 BLOGGER_OAUTH_INPUT = False       # Blogger OAuth 입력 칸 — 호출 코드가 없는 이 빌드에서는 받지 않는다(저장 구조는 그대로 둔다)
 LOCAL_OCR = False                 # 이 PC 안의 글자 읽기 작업자(별도 프로세스) 스위치 — 이 빌드는 False 다(켜려면 소스를 고쳐야 하고 별도 승인이 든다)
+# ---- 인터넷 접속 스위치 다섯(NET, 운영자 확인 038 ① — 구현 준비까지, 모두 False): 새 접속마다 별개의 소스 상수다. 켜는 변경은 상수 한 줄 + `packaging/pkgcommon.py` 의 출하 표 한 줄이고 갈래마다 새 번호를 받는다.
+NET_UPDATE_CHECK = False          # 업데이트 확인(읽기, 사용자가 단추를 누를 때만) — 함께 켜져 있어야 하는 것 없음
+NET_PAGES_SITE = False            # 올린 글의 공개 주소 확인(읽기) — EXTERNAL_WRITE 와 함께
+PAGES_BRANCH_PUSH = False         # git 으로 새 가지에 올리기·병합 확인용 받기 — EXTERNAL_WRITE 와 함께
+NET_BLOGGER_OAUTH = False         # Blogger 로그인·토큰 갱신·연결 해제와 읽기 요청 — 함께 켜져 있어야 하는 것 없음
+NET_BLOGGER_DRAFT = False         # Blogger 초안 저장(쓰기 한 가지) — EXTERNAL_WRITE·NET_BLOGGER_OAUTH 와 함께
+
+# 모든 스위치 상수 이름의 표(시험이 소스의 대문자 상수 대입·출하 표·문서 표와 같음을 확인한다 — 새 상수를 빼먹으면 빨개진다)
+SWITCH_NAMES = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT", "LOCAL_OCR", "NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")
+# `require_net` 이 아는 용도 이름(이 밖의 이름은 거절한다)
+NET_USES = ("update_check", "pages_site", "pages_branch", "blogger_oauth", "blogger_read", "blogger_draft")
 
 
 def external_write_enabled():
@@ -50,4 +65,58 @@ def require_local_ocr(operation):
         raise AppError("OCR_UNAVAILABLE", {"작업": operation})
 
 
-__all__ = ["BLOGGER_OAUTH_INPUT", "EXTERNAL_WRITE", "LOCAL_OCR", "blogger_oauth_input_enabled", "external_write_enabled", "local_ocr_enabled", "require_external_write", "require_local_ocr"]
+def net_update_check_enabled():
+    """업데이트 확인 접속이 열려 있는가(소스 상수가 글자 그대로 True 일 때만)."""
+    return NET_UPDATE_CHECK is True
+
+
+def net_pages_site_enabled():
+    """올린 글의 공개 주소 확인 접속이 열려 있는가(이 스위치만으로는 부족하다 — `require_net` 은 EXTERNAL_WRITE 도 함께 요구한다)."""
+    return NET_PAGES_SITE is True
+
+
+def pages_branch_push_enabled():
+    """git 으로 새 가지에 올리기·병합 확인용 받기가 열려 있는가(이 스위치만으로는 부족하다 — EXTERNAL_WRITE 도 함께 요구한다)."""
+    return PAGES_BRANCH_PUSH is True
+
+
+def net_blogger_oauth_enabled():
+    """Blogger 로그인·읽기 접속이 열려 있는가."""
+    return NET_BLOGGER_OAUTH is True
+
+
+def net_blogger_draft_enabled():
+    """Blogger 초안 저장이 열려 있는가(이 스위치만으로는 부족하다 — EXTERNAL_WRITE·NET_BLOGGER_OAUTH 도 함께 요구한다)."""
+    return NET_BLOGGER_DRAFT is True
+
+
+def open_switch_names():
+    """지금 열려 있는(글자 그대로 True) 스위치 이름들 — 읽기만 하는 점검(`doctor` 같은 곳)이 쓴다. 기본 빌드는 빈 튜플이다."""
+    return tuple(name for name in SWITCH_NAMES if globals().get(name) is True)
+
+
+def require_net(use, operation):
+    """인터넷 접속 진입점의 관문 — 용도 이름(`NET_USES`)마다 필요한 스위치가 **모두 글자 그대로 True** 일 때만 지난다(NET 설계서 3.3 진리표).
+    모르는 용도 이름은 거절한다(안전한 쪽). 윗 스위치(`EXTERNAL_WRITE`)가 필요한 용도에서 그것이 꺼져 있으면 옛 문구 그대로 `EXTERNAL_WRITE_DISABLED`,
+    그 밖의 거절은 `NETWORK_DISABLED` 다. 아무것도 하지 않은 채 끝낸다: 소켓·하위 프로세스·파일 쓰기 전."""
+    if use == "update_check":
+        needs_write, ready = False, NET_UPDATE_CHECK is True
+    elif use == "pages_site":
+        needs_write, ready = True, NET_PAGES_SITE is True
+    elif use == "pages_branch":
+        needs_write, ready = True, PAGES_BRANCH_PUSH is True
+    elif use == "blogger_oauth" or use == "blogger_read":
+        needs_write, ready = False, NET_BLOGGER_OAUTH is True
+    elif use == "blogger_draft":
+        needs_write, ready = True, NET_BLOGGER_OAUTH is True and NET_BLOGGER_DRAFT is True
+    else:
+        raise AppError("NETWORK_DISABLED", {"작업": operation})
+    if needs_write and EXTERNAL_WRITE is not True:
+        raise AppError("EXTERNAL_WRITE_DISABLED", {"작업": operation})
+    if not ready:
+        raise AppError("NETWORK_DISABLED", {"작업": operation})
+
+
+__all__ = ["BLOGGER_OAUTH_INPUT", "EXTERNAL_WRITE", "LOCAL_OCR", "NET_BLOGGER_DRAFT", "NET_BLOGGER_OAUTH", "NET_PAGES_SITE", "NET_UPDATE_CHECK", "NET_USES", "PAGES_BRANCH_PUSH", "SWITCH_NAMES",
+           "blogger_oauth_input_enabled", "external_write_enabled", "local_ocr_enabled", "net_blogger_draft_enabled", "net_blogger_oauth_enabled", "net_pages_site_enabled", "net_update_check_enabled",
+           "open_switch_names", "pages_branch_push_enabled", "require_external_write", "require_local_ocr", "require_net"]

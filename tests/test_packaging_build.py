@@ -808,11 +808,22 @@ class SelftestParsingTest(unittest.TestCase):
                 self.assertEqual("extra_check" in bad, label == "실패")
 
     def test_a_required_check_that_never_printed_fails_the_build(self):
+        """빠진 점검은 빌드를 거절한다. 예외 하나: `tls`(보안 접속 부품 점검)는 출하 표가 비어 있는 동안(접속이 닫힌 채 출하) 알림이라 줄이 없어도 거절 조건이 아니다(NET 설계서 C9·D-723).
+        출하 표가 비어 있지 않으면(접속이 열린 채 출하) `tls` 도 다른 점검처럼 필수다(D-738 — 독립 검증 S 권고-3 (a)). 첫 구현이 `tls` 를 점검 목록에 더하고 이 시험의 예외를 빠뜨려 CI 조각이 빨갰다."""
         for key in ps.SELFTEST_KEYS:
             with self.subTest(key=key):
                 ok, _gate, _override, bad = self.judge(drop=(key,))
+                if key == "tls":
+                    self.assertEqual((ok, bad), (True, []), "출하 표가 비어 있는 동안 tls 는 알림 점검이다")
+                    continue
                 self.assertFalse(ok)
                 self.assertIn(key, bad)
+        with mock.patch.object(pc, "SHIPPED_OPEN_SWITCHES", ("NET_UPDATE_CHECK",)):
+            for key in ps.SELFTEST_KEYS:
+                with self.subTest(key=key, shipped_open=True):
+                    ok, _gate, _override, bad = self.judge(drop=(key,))
+                    self.assertFalse(ok, "접속이 열린 채 출하하면 목록의 모든 줄이 필수다")
+                    self.assertIn(key, bad)
 
     def test_only_a_missing_gate_module_can_be_waved_through_and_it_is_recorded(self):
         missing = {"capabilities": ("fail", "외부 쓰기 관문(capabilities) 모듈이 없어요 — 이 소스에는 아직 없어요")}
