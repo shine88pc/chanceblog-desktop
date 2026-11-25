@@ -284,6 +284,14 @@ class PostsRecordCoreTest(unittest.TestCase):
         controller.save_gate = None
         self.assertTrue(controller.open_record())
 
+    def test_the_start_button_is_off_for_an_empty_field_and_on_once_something_is_typed(self):
+        controller, _ = self.at_copied()
+        controller.open_record()
+        self.assertFalse(controller.record_view(0)["start"]["enabled"], "칸이 비어 있으면 기록 단추가 꺼져 있다")
+        self.assertTrue(controller.record_view(1)["start"]["enabled"])
+        self.assertTrue(controller.record_view(0)["cancel"]["enabled"])
+        self.assertEqual(controller.record_view(0)["working"], "", "쓰는 중이 아니면 진행 줄이 없다")
+
     def test_a_good_address_is_recorded_and_the_dialog_closes_and_the_state_is_published_manual(self):
         controller, _ = self.at_copied()
         controller.open_record()
