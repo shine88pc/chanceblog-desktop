@@ -189,7 +189,7 @@ def find_iscc(ctx):
     found = ctx.host.which("ISCC.exe")
     if not found:
         for candidate in ISCC_CANDIDATES:
-            if Path(candidate).is_file():
+            if ctx.host.is_file(candidate):
                 found = candidate
                 break
     if not found:

@@ -466,6 +466,10 @@ class Host:
         import shutil
         return shutil.which(name, path=self.environ.get("PATH"))
 
+    def is_file(self, path):
+        """이 경로에 파일이 있는가 — 도구를 정해진 자리에서 찾을 때 쓴다. 시험은 이 메서드도 바꿔 끼운다: 윈도 러너 이미지에는 Inno Setup 이 실제로 깔려 있어, 실제 디스크를 직접 보면 '없다'는 가짜 세계에도 그것이 보인다."""
+        return Path(path).is_file()
+
     def _environment(self, env, drop):
         merged = dict(self.environ)
         for key in drop:

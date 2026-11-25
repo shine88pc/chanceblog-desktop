@@ -263,6 +263,19 @@ class ToolProblemsTest(unittest.TestCase):
         self.assertEqual(report["gates"]["C"]["G2"]["status"], "unknown")
         self.assertIn("C", state["pack_problems"])
 
+    def test_an_inno_really_installed_on_the_machine_does_not_leak_into_a_world_that_says_it_is_missing(self):
+        """윈도 러너 이미지에는 Inno Setup 이 실제로 깔려 있다 — 정해진 자리를 실제 디스크에서 직접 보면 '없다'는 가짜 세계에도 그것이 보여 위 시험이 러너에서만 빨개졌다(CI 진단 실행). 같은 조건을 어느 PC 에서나 만든다."""
+        real = tempfile.TemporaryDirectory()
+        self.addCleanup(real.cleanup)
+        really_there = Path(real.name) / "ISCC.exe"
+        really_there.write_bytes(b"MZ-an-inno-that-really-exists-on-this-machine")
+        with mock.patch.object(run, "ISCC_CANDIDATES", (str(really_there),)):
+            world, state, results, report = self.light_run(iscc_missing=True)
+        self.assertEqual(state["tools"]["iscc"]["status"], "unavailable")
+        self.assertEqual(find(results, "M01", "C")[0]["status"], "unavailable")
+        self.assertEqual(world.file_checks, [str(really_there)])                                       # 정해진 자리는 바깥 세계 객체를 거쳐 물었다
+        self.assertTrue(all(call[0] != str(really_there) for call in world.calls))                      # 실제 파일을 실행하려 들지 않았다
+
     def test_a_failed_real_build_leaves_the_real_bundle_items_unknown(self):
         world, state, results, report = self.light_run(build_fail=True)
         self.assertEqual(find(results, "M02")[0]["status"], "fail")

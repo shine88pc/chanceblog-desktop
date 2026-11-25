@@ -63,6 +63,7 @@ class FakeWorld(measure.Host):
         self.clock = 0.0
         self.pids = itertools.count(1000)
         self.calls = []
+        self.file_checks = []
         self.net_calls = []
         self.running = []
         self.setups, self.packages, self.feeds, self.installs = {}, {}, {}, {}
@@ -112,6 +113,11 @@ class FakeWorld(measure.Host):
             (path.parent / "Languages" / "Korean.isl").write_text("x", encoding="utf-8")
             return str(path)
         return None
+
+    def is_file(self, path):
+        """정해진 자리 찾기도 가짜 세계 안에서만 — 이 PC·러너에 실제로 깔린 도구(윈도 러너 이미지의 Inno Setup)가 흐름에 끼어들지 않게 늘 '없다'고 답한다(도구가 있는 경우는 which 가 돌려준다)."""
+        self.file_checks.append(str(path))
+        return False
 
     # ---- 실행 ---------------------------------------------------------------------------------------------------------------------------
     def run(self, args, *, timeout=120, env=None, cwd=None, drop_env=()):
