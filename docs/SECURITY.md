@@ -597,6 +597,7 @@ L8b 의 독립 검증(S·Q 모두 pass, 필수 0)이 남긴 권고 넷을 같은
 | `PAGES_BRANCH_PUSH` | False | `pages_branch_push_enabled()` | `pages_branch` | `EXTERNAL_WRITE` |
 | `NET_BLOGGER_OAUTH` | False | `net_blogger_oauth_enabled()` | `blogger_oauth`·`blogger_read` | 없음 |
 | `NET_BLOGGER_DRAFT` | False | `net_blogger_draft_enabled()` | `blogger_draft` | `EXTERNAL_WRITE`·`NET_BLOGGER_OAUTH` |
+| `UPDATE_APPLY` | False | `update_apply_enabled()` | (설치 도구 넘기기·시작 때 점검 표식 — 용도 없음, `require_update_apply`) | — |
 
 ### 용도 표
 

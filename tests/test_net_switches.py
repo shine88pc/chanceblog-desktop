@@ -32,9 +32,10 @@ from chanceblog_desktop.errors import AppError  # noqa: E402
 SRC = ROOT / "src" / "chanceblog_desktop"
 NEW_SWITCHES = ("NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")
 OLD_SWITCHES = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT", "LOCAL_OCR")
-ALL_SWITCHES = OLD_SWITCHES + NEW_SWITCHES
+APPLY_SWITCHES = ("UPDATE_APPLY",)                 # 접속이 아니라 설치 도구·시작 표식의 스위치(UPDATE 갈래) — 어떤 `require_net` 용도도 열지 않는다
+ALL_SWITCHES = OLD_SWITCHES + NEW_SWITCHES + APPLY_SWITCHES
 READERS = {"EXTERNAL_WRITE": "external_write_enabled", "BLOGGER_OAUTH_INPUT": "blogger_oauth_input_enabled", "LOCAL_OCR": "local_ocr_enabled", "NET_UPDATE_CHECK": "net_update_check_enabled",
-           "NET_PAGES_SITE": "net_pages_site_enabled", "PAGES_BRANCH_PUSH": "pages_branch_push_enabled", "NET_BLOGGER_OAUTH": "net_blogger_oauth_enabled", "NET_BLOGGER_DRAFT": "net_blogger_draft_enabled"}
+           "NET_PAGES_SITE": "net_pages_site_enabled", "PAGES_BRANCH_PUSH": "pages_branch_push_enabled", "NET_BLOGGER_OAUTH": "net_blogger_oauth_enabled", "NET_BLOGGER_DRAFT": "net_blogger_draft_enabled", "UPDATE_APPLY": "update_apply_enabled"}
 LOOK_ALIKES = (1, "yes", "True", [1], object(), 2, "1")
 
 # 설계서 3.3 의 진리표 — 코드(`require_net`)와 따로 적은 값이다. 용도 → (윗 스위치 `EXTERNAL_WRITE` 가 필요한가, 켜져 있어야 하는 새 상수들)

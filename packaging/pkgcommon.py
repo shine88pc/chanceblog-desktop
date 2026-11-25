@@ -20,7 +20,7 @@ TRIAL_TAG = "TESTBUILD"                           # 시험 빌드(관문 모듈�
 TRIAL_NOTICE = "시험 빌드 — 개인 PC 로 보내지 않는 빌드예요"      # 화면 '정보' 카드의 시험 빌드 표시 — `ui/core/version.py` 의 PACKAGE_TRIAL_NOTICE 와 같다(시험이 같음을 지킨다)
 GATE_MISSING_TEXT = "외부 쓰기 관문(capabilities) 모듈이 없어요"    # `--selftest` 의 capabilities 점검이 '모듈 자체가 없을 때' 쓰는 글의 앞부분 — `--allow-missing-gate` 는 이 글로 시작하는 실패만 넘긴다(D-419)
 # 소스 상수 스위치의 출하 표(NET 설계서 3.3, D-722). 점검 도구가 읽는 곳이라 이 파일에 둔다. 켜는 변경은 `capabilities.py` 의 상수 한 줄 + 이 표 한 줄이고, 켜는 확인(번호 있는 승인)을 받은 것만 더한다.
-GATE_CONSTANTS = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT", "LOCAL_OCR", "NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")   # `capabilities.SWITCH_NAMES` 와 같다(시험이 같음을 지킨다) — 점검이 소스의 표만 믿지 않게 한 벌 더 둔다
+GATE_CONSTANTS = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT", "LOCAL_OCR", "NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT", "UPDATE_APPLY")   # `capabilities.SWITCH_NAMES` 와 같다(시험이 같음을 지킨다) — 점검이 소스의 표만 믿지 않게 한 벌 더 둔다
 SHIPPED_OPEN_SWITCHES = ()                        # 켜진 채 내보내도 되는 스위치 이름 — 지금은 빈 표(모두 꺼진 채 출하한다). `--selftest` 는 켜진 상수의 집합이 이 표와 정확히 같을 때만 통과한다
 INFORMATIONAL_SWITCHES = ("LOCAL_OCR",)           # 켜져 있어도 알림 줄일 뿐 실패 조건이 아닌 스위치(이 PC 안 계산이라 바깥에 쓰지 않는다 — D-512). 옛 모듈에 없어도 통과한다
 SCHEMA = 1

@@ -82,7 +82,9 @@ class ConstantTest(unittest.TestCase):
         self.assertFalse(capabilities.external_write_enabled())
         self.assertFalse(capabilities.blogger_oauth_input_enabled())
         # NET 설계서 E5(D-720) — 대상이 `SWITCH_NAMES` 전체(여덟)로 늘었고 '모두 꺼짐' 이 '출하 표와 같음' 으로 일반화됐다(켜진 채 내보내도 되는 것은 출하 표의 이름뿐 — 지금은 빈 표)
-        self.assertEqual(len(capabilities.SWITCH_NAMES), 8)
+        bool_constants = [name for name in dir(capabilities) if name.isupper() and isinstance(getattr(capabilities, name), bool)]
+        self.assertEqual(sorted(capabilities.SWITCH_NAMES), sorted(bool_constants), "표가 소스의 참·거짓 대문자 상수와 정확히 같다(개수를 못박지 않고 이름으로 견준다 — 스위치가 늘어도 같은 규칙, UPDATE 갈래가 UPDATE_APPLY 를 더하며 8 → 계산으로 강화)")
+        self.assertGreaterEqual(len(capabilities.SWITCH_NAMES), 8)
         for name in capabilities.SWITCH_NAMES:
             self.assertIsInstance(getattr(capabilities, name), bool, name)
         self.assertEqual({name for name in capabilities.SWITCH_NAMES if getattr(capabilities, name) is True}, set(pkgcommon.SHIPPED_OPEN_SWITCHES))

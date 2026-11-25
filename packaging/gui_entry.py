@@ -522,6 +522,15 @@ def selftest_main(*, main_function=None):
 
 # ---- 화면 시작 ----------------------------------------------------------
 
+def note_update_boot():
+    """업데이트 점검 후크(UPDATE 설계서 3-5) — 화면을 열기 전에 한 번. **꺼진 채 출하한다**: 소스 상수 `UPDATE_APPLY` 가 꺼져 있으면 `note_boot` 가 아무것도 읽지도 쓰지도 않고, 켜져 있어도 어떤 실패도 앱을 못 켜게 하지 않는다."""
+    try:
+        from chanceblog_desktop.update import state as update_state
+        return update_state.note_boot()
+    except Exception:      # noqa: BLE001 - 후크의 어떤 실패도 화면 시작을 막지 않는다
+        return None
+
+
 def start_gui():
     """화면을 연다(`ui/launcher.py`) — 인자 없이. 시작하지 못하면 고정 문장(오류 종류 이름만)으로 안내한다.
     같은 데이터 폴더로 이미 열려 있으면 `launcher.main` 안의 단일 실행 장치(`ui/single_instance.py`)가 열린 창을 앞으로 가져오고 새 창 없이 0 으로 끝낸다 — 이 파일이 그 장치를 따로 부르지 않는 것은
@@ -530,6 +539,7 @@ def start_gui():
         src = Path(__file__).resolve().parents[1] / "src"
         if src.is_dir() and str(src) not in sys.path:
             sys.path.insert(0, str(src))
+    note_update_boot()
     buffer = io.StringIO()
     try:
         from chanceblog_desktop.ui.launcher import main as gui_main
