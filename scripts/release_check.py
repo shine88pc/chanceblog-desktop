@@ -5,11 +5,11 @@
     python -X utf8 scripts/release_check.py --scan-dir 폴더 [--scan-dir 폴더 ...]
                                                                  후보 산출물 폴더(설치 파일 푼 것·zip 푼 것·로그·백업·진단 복사본)의 키·토큰 모양 훑기를 10번 항목에 반영
     python -X utf8 scripts/release_check.py --json               같은 결과를 JSON 으로
-    python -X utf8 scripts/release_check.py --root 폴더           다른 저장소 사본을 점검(시험용 — 열두 점검을 부르느라 그 사본의 packaging/gui_entry.py 와 앱 코드가 실행되므로 믿는 사본에만 쓴다)
+    python -X utf8 scripts/release_check.py --root 폴더           다른 저장소 사본을 점검(시험용 — 자가 점검을 부르느라 그 사본의 packaging/gui_entry.py 와 앱 코드가 실행되므로 믿는 사본에만 쓴다)
 
 지키는 것:
   · **읽기 전용**이다. 파일을 만들거나 바꾸지 않고, 네트워크·하위 프로세스를 쓰지 않는다(표준 라이브러리와 앱의 `security/scan.py` 만 쓴다).
-    단 자가 점검(`--selftest` 열두 항목)은 함수로 불러 돌리는데, 그 함수가 원래 하는 대로 시스템 임시 폴더에 빈 폴더를 잠깐 만들었다 지운다.
+    단 자가 점검(`--selftest` 열세 항목)은 함수로 불러 돌리는데, 그 함수가 원래 하는 대로 시스템 임시 폴더에 빈 폴더를 잠깐 만들었다 지운다.
   · **'선언'을 하지 않는다.** 결과를 보여 줄 뿐이고 v1.0 을 선언하는 것은 운영자 몫이다.
   · 항목마다 상태 하나와 근거 한 줄을 낸다. 상태는 넷이다.
       PASS         자동으로 볼 수 있는 것이 모두 맞고, 운영자가 직접 해 봐야 할 것이 따로 없다
@@ -78,8 +78,8 @@ TITLES = {
 }
 
 APP = "src/chanceblog_desktop"
-SELFTEST_KEYS = ("utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "uac_manifest", "qt_plugins", "qt_screens",
-                 "gui_only_entry", "data_dir_untouched")        # `packaging/build_package.py` 의 judge_selftest 가 꼭 있어야 한다고 보는 열두 점검 이름(시험이 같음을 지킨다)
+SELFTEST_KEYS = ("utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "tls", "uac_manifest", "qt_plugins", "qt_screens",
+                 "gui_only_entry", "data_dir_untouched")        # 묶음의 자가 점검이 찍는 열세 줄의 이름 — `packaging/build_package.py` 의 judge_selftest 가 늘 꼭 있어야 한다고 보는 열두 개와, 출하 표가 비어 있지 않을 때만 꼭 있어야 하는 `tls`(시험이 `tests/packaging_support.py` 의 목록과 같음을 지킨다)
 # `tests/test_repo_layout.py` 의 NO_AI_FEATURES 와 같은 목록(시험이 같음을 지킨다) — 운영자가 'AI 없이 반드시 동작해야 한다'고 정한 열일곱 기능(ARCHITECTURE 절 8, D-18)
 NO_AI_FEATURES = (
     "콘텐츠 직접 작성·수정", "기존 원고 불러오기", "Markdown·HTML 변환", "플랫폼별 미리보기", "GitHub Pages 게시물 생성·배포", "Blogger 초안 생성·수정",

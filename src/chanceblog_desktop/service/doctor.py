@@ -20,6 +20,7 @@ from ..content import status as st
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..content.store import Store
 from ..errors import AppError, render
+from ..net import usage as net_usage
 from . import connections, unpushed
 from .context import outside_user_profile
 from .journal import Journal
@@ -106,6 +107,15 @@ def _check_external_write():
     if capabilities.external_write_enabled():
         return check("외부 게시", "warn", "", "켜져 있습니다 — 개발·시험용 빌드입니다(소스 상수를 바꿨습니다). 개인 PC 제한 시험 버전에서는 꺼져 있어야 합니다.")
     return check("외부 게시", "ok", "", "이 시험 버전에서는 꺼져 있어요 — GitHub 에 올리기·Blogger·네이버로 보내는 기능이 없습니다(글은 이 PC 에서 쓰고 검토한 뒤 복사해 직접 올립니다).")
+
+
+def _check_net():
+    """인터넷 접속 스위치의 상태 한 줄(NET 설계서 3.15, D-732) — 열려 있는 스위치의 이름과 이번 실행의 접속 기록 건수. **읽기만 한다**(접속하지 않는다 — 앱은 사용자가 누를 때만 접속하고 `doctor` 는 `--online` 이 없으면 접속하지 않는다)."""
+    opened = capabilities.open_switch_names()
+    count = net_usage.SESSION.count()
+    if opened:
+        return check("인터넷 접속", "warn", "", f"열려 있는 스위치가 있어요: {', '.join(opened)} — 개발·시험용 빌드입니다(소스 상수를 바꿨습니다). 접속은 사용자가 누를 때만 일어나고, 이번 실행의 접속 기록은 {count}건입니다.")
+    return check("인터넷 접속", "ok", "", f"열려 있는 스위치가 없어요 — 앱은 사용자가 누를 때만 접속하고 이 시험 버전에서는 접속이 모두 꺼져 있습니다. 이번 실행의 접속 기록은 {count}건입니다.")
 
 
 def _check_git(ctx):
@@ -306,7 +316,7 @@ def run_doctor(ctx, *, online=False):
     점검은 읽기만 한다 — 글 저장소도 읽기 전용으로 열어(`ctx.reading_only()`) 옛 구조의 파일을 올리거나 사본을 남기지 않고, 파일이 없으면 만들지 않는다."""
     ctx = ctx.reading_only()
     results = []
-    for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("외부 게시", _check_external_write), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
+    for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("외부 게시", _check_external_write), ("인터넷 접속", _check_net), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
                        ("설정 파일", lambda: _check_settings(ctx)), ("연결 설정(키 항목)", lambda: _check_connections(ctx)), ("글 저장소", lambda: _check_store(ctx)), ("백업", lambda: _check_backups(ctx)), ("핵심 코드(vendor/)", _check_core),
                        ("연결한 chanceblog 저장소", lambda: _check_repo(ctx)), ("올리기 권한", lambda: _check_push_access(ctx, online)), ("네이버 프로필", lambda: _check_naver(ctx)),
                        ("이어서 처리할 글", lambda: _check_pending(ctx))):

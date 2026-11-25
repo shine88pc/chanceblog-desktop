@@ -8,6 +8,10 @@
 덧붙임(AS-S1 권고-6, D-611): 위 표는 '바깥으로 나가는' 길이다. 그 길을 **돌아서** 갈 수 있는 네이티브·동적 호출(`ctypes`·`winreg`·`msvcrt`·`pty`·`runpy`·`__import__`·`importlib.import_module`·`exec`·`eval`·
 `import os as 별칭`·`from os import <위험 이름>`·`getattr(os, …)`)은 따로 `NATIVE_ALLOWED` 표(파일마다 이유)로 못박고, `vendor/` 안의 바깥 모듈도 `VENDOR_ALLOWED` 표로 못박는다. 감사가 합성 코드로 재현한 못 보는 모양
 (`probe_scanner.py` 의 목록)이 모두 잡히고 지금 소스는 위반이 0 이다.
+
+덧붙임(NET 갈래, D-735 — 운영자 확인 038 ①): 허용 목록을 **범주 표**로 쪼갰다(`ALLOWED_GIT_WRITE`·`ALLOWED_LOCAL_WORKER`·`ALLOWED_BROWSER`·`ALLOWED_NET_CLIENT`·`ALLOWED_LOOPBACK`) — 뒤 갈래가 같은 줄을 고쳐 병합 충돌을 내지 않고 **자기 범주 표에 한 줄**만 더하게 하려는 것이다.
+`ALLOWED` 는 다섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 6곳: 1 + 1 + 2 + 2 + 0). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
+`http`·`ssl` 은 `net/client.py` 한 파일에만, `socket` 은 `net/loopback.py` 한 파일에만(지금은 0곳) 허용되며 `urllib`(`parse` 말고) 항목과 그 밖의 하위 프로세스 항목은 여전히 허용 표에 없다.
 """
 import ast
 import sys
@@ -37,12 +41,24 @@ DYNAMIC_HOLDERS = {"os": "getattr(os)", "builtins": "getattr(builtins)", "__buil
 REEXPORT_HOLDERS = {"os", "_os"}                                                 # `glob.os.system`·`tempfile._os.system`·`os.path.os.system` 처럼 다른 모듈이 다시 내놓는 `os`
 
 # (파일, 쓰는 것) → 이유. 이 표가 정직한 코드가 바깥과 닿는 길의 전부다(회귀 그물 — 일부러 숨기는 코드를 막는 방어가 아니다, AS-S1 2차 권고-3·D-619).
-ALLOWED = {
+# NET 갈래(D-735)부터 범주 표 다섯의 합집합이다 — 새 접속 갈래는 **자기 범주 표에 한 줄**만 더한다. 접속·쓰기 범주(`ALLOWED_GIT_WRITE`·`ALLOWED_NET_CLIENT`·`ALLOWED_LOOPBACK`)의 이유에는 관문 이름(`require_…`)이 있어야 한다.
+ALLOWED_GIT_WRITE = {                       # 정확히 1곳 — git 이 접속한다(앱은 git 하위 프로세스를 띄울 뿐이다)
     ("publish/gitrepo.py", "subprocess"): "git 하위 프로세스를 띄우는 유일한 곳(`run_command`) — 외부 Write 관문(`capabilities.require_external_write`)이 첫 줄이라 이 빌드에서는 한 번도 띄우지 않는다",
+}
+ALLOWED_LOCAL_WORKER = {                    # 정확히 1곳 — 이 PC 안 계산(바깥에 쓰지 않는다)
     ("ui/ocr_adapter.py", "subprocess"): "이 PC 의 글자 읽기 작업자를 띄우는 유일한 곳(`_launch`) — `LOCAL_OCR` 관문이 첫 줄이고 인자는 고정, 셸 없음, 소켓·인터넷 코드 없음, 바깥에 쓰지 않는다(이 PC 안의 계산, 결정 D-512)",
+}
+ALLOWED_BROWSER = {                         # 정확히 2곳 — 앱은 접속하지 않고 OS 가 기본 브라우저로 연다
     ("ui/qt/shell.py", "QDesktopServices"): "`qt_open_url` — 네이버 글쓰기 주소를 기본 브라우저로 연다(주소만 연다 — 로그인·입력·발행은 사용자가 브라우저에서 직접, 앱은 연결하지 않는다)",
     ("ui/qt/components.py", "QDesktopServices"): "이미지 출처 링크 열기(`check_url` 로 주소 모양을 거른 뒤 기본 브라우저가 연다) — 앱은 연결하지 않는다",
 }
+ALLOWED_NET_CLIENT = {                      # 정확히 2곳 — 새 인터넷 접속이 나가는 유일한 문(NET 갈래가 더했다, D-735)
+    ("net/client.py", "http"): "보안 접속 클라이언트가 `http.client` 로 요청 한 건을 보내는 유일한 곳(`NetClient`) — 공개 함수의 첫 문장이 `capabilities.require_net` 관문이고 호스트·길·머리글·크기·시간·이동은 `net/endpoints.py` 의 소스 표가 정하며 스위치가 모두 꺼진 이 빌드에서는 만들어지지도 않는다",
+    ("net/client.py", "ssl"): "같은 클라이언트의 TLS 환경(`_make_context`) — 인증서 검증 필수·호스트 이름 확인·최소 TLS 1.2 이고 `capabilities.require_net` 관문 뒤에서만 쓰인다(검증을 끄거나 낮추는 이름은 소스 어디에도 없다)",
+}
+ALLOWED_LOOPBACK = {}                       # 정확히 0곳 — BLOGGER 갈래가 `net/loopback.py` · `socket` 한 줄을 더해 정확히 1곳이 된다(로그인 코드를 받으려 이 PC 안에서만 듣는다 — 관문 `require_net("blogger_oauth", …)`)
+ALLOWED_CATEGORIES = {"git_write": ALLOWED_GIT_WRITE, "local_worker": ALLOWED_LOCAL_WORKER, "browser": ALLOWED_BROWSER, "net_client": ALLOWED_NET_CLIENT, "loopback": ALLOWED_LOOPBACK}
+ALLOWED = {**ALLOWED_GIT_WRITE, **ALLOWED_LOCAL_WORKER, **ALLOWED_BROWSER, **ALLOWED_NET_CLIENT, **ALLOWED_LOOPBACK}
 
 # (파일, 쓰는 것) → 이유. 네이티브·동적 호출의 전부다(AS-S1 권고-6, D-611) — 새 파일이 `ctypes` 등을 가져오면 이 시험이 빨개지고, 이유 없이는 표에 더할 수 없다.
 NATIVE_ALLOWED = {
@@ -54,8 +70,8 @@ NATIVE_ALLOWED = {
 }
 # vendor/ 는 `chanceblog` 의 파일을 한 글자도 바꾸지 않고 가져온 것이라(해시는 `tests/test_vendor_core.py` 가 지킨다) 앱 소스 훑기에서 빠져 있었다 — 그 안에서 바깥과 닿는 곳도 이름과 이유로 못박는다.
 VENDOR_ALLOWED = {
-    ("scripts/verify_pages_deploy.py", "http"): "블로그 배포 확인 도구(`http.client`) — 앱은 `publish/deploy.py` 의 외부 쓰기 관문(`require_external_write`)을 지난 뒤에만 부르고 이 빌드에서는 부르지 않는다",
-    ("scripts/verify_pages_deploy.py", "urllib"): "같은 도구의 `urllib.request` — 같은 관문 뒤에서만 쓰인다",
+    ("scripts/verify_pages_deploy.py", "http"): "블로그 배포 확인 도구(`http.client`) — vendor 는 불변이라 가져오기가 남는다. 앱은 `fetcher` 를 주입해 이 길을 쓰지 않는다(`net/` 의 `pages_site` 용 클라이언트가 접속한다 — 시험 `test_net_allowlist` 가 못박는다) · 외부 쓰기 관문(`require_external_write`)을 지난 뒤에만 부르고 이 빌드에서는 부르지 않는다",
+    ("scripts/verify_pages_deploy.py", "urllib"): "같은 도구의 `urllib.request` — 앱은 `fetcher` 를 주입해 이 길(자동 이동·시스템 프록시)을 쓰지 않는다 · 같은 관문 뒤에서만 쓰인다",
 }
 
 
@@ -215,16 +231,27 @@ class OutgoingCallSitesTest(unittest.TestCase):
     def test_every_allowance_has_a_real_reason(self):
         for key, reason in ALLOWED.items():
             self.assertGreater(len(reason), 20, key)
+        for table in (ALLOWED_GIT_WRITE, ALLOWED_NET_CLIENT, ALLOWED_LOOPBACK):                 # NET 설계서 E3 — 접속·쓰기 범주는 이유에 관문 이름이 들어 있어야 한다(더 엄격)
+            for key, reason in table.items():
+                self.assertIn("require_", reason, f"{key}: 접속·쓰기 허용의 이유에는 관문 이름(`require_…`)이 있어야 한다")
+        self.assertIn("LOCAL_OCR", ALLOWED_LOCAL_WORKER[("ui/ocr_adapter.py", "subprocess")], "글자 읽기 작업자의 이유에는 자기 관문 이름이 있다")
 
     def test_one_place_writes_to_the_outside_and_one_place_starts_the_local_worker_each_behind_its_own_gate(self):
         """결정 D-512(설계 3-8 (2)) — '바깥에 쓰는 곳은 하나' 가 '바깥에 쓰는 곳 하나 + 이 PC 안 계산 작업자 하나' 가 됐다. 옛 단언보다 약하지 않다: 하위 프로세스·소켓·웹 모듈이 허용 목록에 이 둘 말고는 없고,
         글자 읽기 쪽은 네트워크 모듈을 하나도 가져오지 않는다(어댑터의 바깥 이름은 `subprocess` 하나)."""
         external_writers = [("publish/gitrepo.py", "subprocess")]
         local_workers = [("ui/ocr_adapter.py", "subprocess")]
-        process_like = sorted(key for key in ALLOWED if key[1] in ("subprocess", "socket", "http", "urllib", "ssl", "multiprocessing", "QProcess", "ProcessPoolExecutor") or key[1].startswith("os."))
-        self.assertEqual(process_like, sorted(external_writers + local_workers))
-        self.assertEqual([key for key in ALLOWED if key[1] in ("socket", "http", "urllib", "ssl")], [], "네트워크 모듈은 어느 허용에도 없다")
+        process_like = sorted(key for key in ALLOWED if key[1] in ("subprocess", "multiprocessing", "QProcess", "ProcessPoolExecutor") or key[1].startswith("os."))
+        self.assertEqual(process_like, sorted(external_writers + local_workers), "하위 프로세스를 띄우는 허용은 이 둘뿐이다")
+        # NET 설계서 E1 — 옛 단언 '소켓·http·urllib·ssl 이 든 허용이 0' 은 새 접속이 생길 수 없다는 뜻이었다. 이제는 '이 파일, 이 이름들만' 이고 다른 곳은 여전히 빨갛다(변이 M-NET-06·07 이 직접 깬다).
+        network_like = sorted(key for key in ALLOWED if key[1] in ("socket", "http", "urllib", "ssl"))
+        self.assertEqual(network_like, sorted(list(ALLOWED_NET_CLIENT) + list(ALLOWED_LOOPBACK)), "접속 모듈이 든 허용은 접속 범주 표의 것뿐이다")
+        self.assertEqual([key for key in ALLOWED if key[1] == "urllib"], [], "urllib 은 어느 허용에도 없다(parse 말고는 쓰지 않는다)")
+        self.assertEqual(sorted(key for key in ALLOWED if key[1] in ("http", "ssl")), [("net/client.py", "http"), ("net/client.py", "ssl")], "http·ssl 은 net/client.py 한 파일에만")
+        self.assertEqual([key for key in ALLOWED if key[1] == "socket"], [key for key in ALLOWED_LOOPBACK if key[1] == "socket"], "socket 은 루프백 범주 표의 것뿐이다")
+        self.assertTrue(all(key[0] == "net/loopback.py" for key in ALLOWED_LOOPBACK), "소켓은 net/loopback.py 한 파일에만(BLOGGER 갈래가 더한다)")
         self.assertEqual(sorted(key for key in found_outgoing() if key[0] == "ui/ocr_adapter.py"), local_workers, "어댑터가 바깥과 닿는 이름은 subprocess 하나뿐이다")
+        self.assertEqual(sorted(key for key in found_outgoing() if key[0].startswith("net/")), sorted(list(ALLOWED_NET_CLIENT) + list(ALLOWED_LOOPBACK)), "net 패키지가 바깥과 닿는 이름은 표의 것뿐이다")
 
     def test_urllib_parse_is_the_only_urllib_use_outside_the_allowed_list(self):
         for path in sorted(SRC.rglob("*.py")):

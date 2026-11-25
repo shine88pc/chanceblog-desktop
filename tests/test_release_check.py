@@ -793,8 +793,8 @@ class Item11Test(RepoCase):
         self.build()
         row = self.rows()[11]
         self.assertEqual(row.status, NOT_YET)
-        self.assertIn("통과 6", row.basis)
-        self.assertIn("건너뜀 6", row.basis)
+        self.assertIn(f"통과 {len(rc.SELFTEST_KEYS) - len(rs.SOURCE_ONLY_SKIPS)}", row.basis)        # 열세 점검 중 소스 실행에서 건너뛰는 여섯을 뺀 일곱(개수는 목록에서 나온다)
+        self.assertIn(f"건너뜀 {len(rs.SOURCE_ONLY_SKIPS)}", row.basis)
         self.assertIn("실패 0", row.basis)
 
     def test_installer_code_in_packaging_makes_it_manual(self):
@@ -870,7 +870,7 @@ class Item11Test(RepoCase):
         self.build()
         row = self.rows(selftest=lambda: self.results(**{key: "skip" for key in rc.SELFTEST_KEYS}))[11]
         self.assertEqual(row.status, NOT_YET)
-        self.assertIn("건너뜀 12", row.basis)
+        self.assertIn(f"건너뜀 {len(rc.SELFTEST_KEYS)}", row.basis)
 
     def test_the_selftest_is_not_run_by_other_rows_and_is_run_exactly_once(self):
         self.build()
@@ -880,9 +880,10 @@ class Item11Test(RepoCase):
 
     def test_selftest_summary(self):
         failed, absent, passed, skipped = rc.summarize_selftest(self.results(utf8_mode="fail", licenses="skip", file_hashes="gone"))
-        self.assertEqual((failed, absent, passed, skipped), (["utf8_mode"], ["file_hashes"], 9, 1))
+        self.assertEqual((failed, absent, passed, skipped), (["utf8_mode"], ["file_hashes"], len(rc.SELFTEST_KEYS) - 3, 1))        # 실패 하나·건너뜀 하나·빠진 하나를 뺀 나머지가 통과다
 
     def test_the_twelve_names_are_the_ones_the_build_requires(self):
+        """점검 목록은 묶음 시험 도우미의 목록과 **정확히** 같다(빼거나 더한 쪽이 있으면 빨갛다). 이름의 '열두' 는 처음 이름이다 — NET 갈래가 `tls` 를 더해 지금은 열세 점검이고, 시험 이름은 번호(id)가 바뀌지 않게 그대로 둔다."""
         import packaging_support as ps
         self.assertEqual(rc.SELFTEST_KEYS, ps.SELFTEST_KEYS)
 
@@ -1174,8 +1175,8 @@ class NoBytecodeTest(RepoCase):
 
 
 class EndToEndTest(unittest.TestCase):
-    """진짜 스크립트를 **새 프로세스**로 돌린다 — 열두 점검(`--selftest`)은 그 프로세스 안에서 함수로 불린다. 시험 프로세스에는 앱의 명령줄 모듈이 이미 불려 있을 수 있고
-    열두 점검의 '명령줄 모듈을 불러오지 않았다' 확인이 그것을 실패로 보므로, 진짜 자가 점검은 같은 프로세스에서 돌리지 않는다."""
+    """진짜 스크립트를 **새 프로세스**로 돌린다 — 열세 점검(`--selftest`)은 그 프로세스 안에서 함수로 불린다. 시험 프로세스에는 앱의 명령줄 모듈이 이미 불려 있을 수 있고
+    열세 점검의 '명령줄 모듈을 불러오지 않았다' 확인이 그것을 실패로 보므로, 진짜 자가 점검은 같은 프로세스에서 돌리지 않는다."""
 
     def run_script(self, *args, cwd=None):
         """스크립트를 새 프로세스로 돌린다. 사용자 데이터·캐시 폴더(`LOCALAPPDATA`·`HOME` 등)와 임시 폴더는 빈 폴더로 돌려 두고, 끝난 뒤에도 비어 있어야 한다(앱의 .pyc 캐시·자가 점검의 임시 폴더가 남지 않는다)."""

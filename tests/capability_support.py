@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from chanceblog_desktop import capabilities  # noqa: E402
 
-_PATCHERS = {"EXTERNAL_WRITE": [], "BLOGGER_OAUTH_INPUT": [], "LOCAL_OCR": []}
+_PATCHERS = {"EXTERNAL_WRITE": [], "BLOGGER_OAUTH_INPUT": [], "LOCAL_OCR": [],
+             # 인터넷 접속 스위치 다섯(NET, D-720) — 시험이 임시로만 켠다
+             "NET_UPDATE_CHECK": [], "NET_PAGES_SITE": [], "PAGES_BRANCH_PUSH": [], "NET_BLOGGER_OAUTH": [], "NET_BLOGGER_DRAFT": []}
 
 
 def _on(name):
@@ -25,12 +27,24 @@ def _off(name):
         _PATCHERS[name].pop().stop()
 
 
+def switch_on(name):
+    """이름으로 스위치 하나를 시험에서만 임시로 연다(`switch_off` 로 되돌린다 — 켠 채 다른 시험에 새지 않게)."""
+    _on(name)
+
+
+def switch_off(name):
+    _off(name)
+
+
 def external_write_on():
+    """외부 Write 관문을 시험에서만 임시로 연다. NET(D-720)부터 올린 글의 공개 주소 확인은 좁은 스위치(`NET_PAGES_SITE`)도 함께 요구하므로, 예전에 `EXTERNAL_WRITE` 하나가 열던 같은 흐름을 이 시험들이 그대로 돌게 그 스위치도 함께 임시로 연다."""
     _on("EXTERNAL_WRITE")
+    _on("NET_PAGES_SITE")
 
 
 def external_write_off():
     _off("EXTERNAL_WRITE")
+    _off("NET_PAGES_SITE")
 
 
 def blogger_input_on():

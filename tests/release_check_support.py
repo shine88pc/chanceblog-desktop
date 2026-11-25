@@ -42,7 +42,7 @@ EXPECTED_TITLES = {
 
 
 def selftest_ok():
-    """소스 실행 모양의 가짜 자가 점검 결과 — 열두 항목 중 여섯 통과·여섯 건너뜀·실패 0."""
+    """소스 실행 모양의 가짜 자가 점검 결과 — 열세 점검 중 일곱 통과·여섯 건너뜀·실패 0."""
     return [SelfResult(key, "skip" if key in SOURCE_ONLY_SKIPS else "ok", "가짜 결과") for key in rc.SELFTEST_KEYS]
 
 

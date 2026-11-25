@@ -24,7 +24,7 @@ from ..content.store import Store
 from ..core import vendor_dir
 from ..errors import AppError
 from ..publish import gitrepo
-from . import external
+from . import external, wiring
 
 SHARING_VIOLATIONS = (5, 32)                      # 윈도 `winerror` 5(접근 거부)·32(공유 위반) — 같은 파일을 다른 읽기가 잡고 있어 이름을 못 바꿀 때(`PermissionError`)
 REPLACE_RETRY_WAITS = (0.03, 0.06, 0.09, 0.12, 0.15)     # 이름 바꾸기가 위 오류로 막히면 첫 시도 뒤 다섯 번까지만 다시 한다(30ms 씩 늘려 합쳐 0.45초 — 시도는 모두 여섯 번). 다른 오류는 다시 하지 않는다
@@ -316,5 +316,6 @@ def make_context(*, data_dir=None, repo=None, env=None, git=None, expected_origi
     workspace = Workspace.resolve(data_dir, env=env)
     git = git or external.refusing_git
     expected = expected_origin or gitrepo.EXPECTED_ORIGIN
+    wiring.register_enabled()                                                                              # 켜진 스위치의 어댑터 종류만 꽂는다(모두 꺼진 이 빌드는 아무것도 꽂지 않는다 — `service/wiring.py`)
     backend = backend or external.pages_backend(git=git, expected_origin=expected, fetcher=fetcher, sleep=sleep, monotonic=monotonic)       # 꽂힌 외부 어댑터가 없으면(이 빌드는 늘 없다) 파일만 읽는 backend
     return Context(workspace, Settings(workspace.settings_path), backend, git, expected, clock or utc_now, repo or "", env)
