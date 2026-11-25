@@ -496,11 +496,11 @@ def save_draft(ctx, project_text, slot, *, confirmed, hero=None, tags=(), keysto
     """승인한 글 하나를 Blogger **초안으로만** 저장한다. 확인(`confirmed`)이 없으면 아무것도 하지 않는다. 같은 글·같은 슬롯의 두 번째 요청은 진행 중이면 거절한다(`PUBLISH_IN_PROGRESS`)."""
     capabilities.require_external_write("Blogger 초안 저장")
     capabilities.require_net("blogger_draft", "Blogger 초안 저장")
-    require_confirmation(confirmed, "Blogger 초안 저장 — 글 한 편이 Blogger 에 초안으로 올라가요(공개는 하지 않아요)")
-    slot = slot_key(slot)
-    keystore = ctx.get_keystore() if keystore is None else keystore
+    slot = slot_key(slot)                                                          # 틀린 구분·없는 글 번호는 확인을 묻기 전에 알린다(읽기뿐 — 다른 명령도 번호를 먼저 풀어 '찾을 수 없습니다' 를 말한다)
     with ctx.store() as store:
         project_id = resolve_id(store, project_text)
+    require_confirmation(confirmed, "Blogger 초안 저장 — 글 한 편이 Blogger 에 초안으로 올라가요(공개는 하지 않아요)")
+    keystore = ctx.get_keystore() if keystore is None else keystore
     with _slot_lock(ctx, project_id, slot):
         return _save(ctx, project_id, slot, hero, tags, keystore, external.blogger_adapter() if adapter is None else adapter)
 

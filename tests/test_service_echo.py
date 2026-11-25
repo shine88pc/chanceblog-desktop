@@ -357,7 +357,7 @@ class TableTest(unittest.TestCase):
                          "draft plan", "show", "edit", "approve", "revoke", "delete", "publish-pages", "check-deploy", "naver-package", "naver-done", "review", "preview", "restore",
                          "keys remove", "keys state", "keys order", "keys test"):
             self.assertIn(expected, names)
-        self.assertEqual(len([1 for _path, _parser, slots in NUMBER_COMMANDS for _slot in slots]), 30, "번호 자리의 수 — 새 번호 자리가 생기면 이 숫자를 고친다(표는 저절로 따라온다 — P3 가 `topics show`·`topics restore` 둘을 더해 27 → 29, DB 가 `draft body` 를 더해 29 → 30)")
+        self.assertEqual(len([1 for _path, _parser, slots in NUMBER_COMMANDS for _slot in slots]), 31, "번호 자리의 수(BLOGGER 갈래가 `blogger save-draft` 를 더해 30 → 31) — 새 번호 자리가 생기면 이 숫자를 고친다(표는 저절로 따라온다 — P3 가 `topics show`·`topics restore` 둘을 더해 27 → 29, DB 가 `draft body` 를 더해 29 → 30)")
         self.assertGreaterEqual(len({item["kind"] for item in CANARIES}), 28)
 
     def test_two_number_slots_of_one_command_are_both_swept(self):
@@ -674,7 +674,7 @@ class NormalPathTest(unittest.TestCase):
                     if "--json" not in extra:
                         self.assertIn("코드: ", text, where)
                         self.assertIn("하실 일: ", text, where)
-        self.assertEqual(seen, 96, "후보·글 번호 자리 24곳(P3 가 `topics show` 를, DB 가 `draft body` 를 더했다) × 번호 2가지 × 변형 2가지")
+        self.assertEqual(seen, 100, "후보·글 번호 자리 25곳(BLOGGER 갈래가 `blogger save-draft` 를 더했다 — 24 → 25, P3 가 `topics show` 를, DB 가 `draft body` 를 더했다) × 번호 2가지 × 변형 2가지")
 
     def test_a_key_gets_the_same_error_code_exit_code_and_advice_as_a_missing_number_only_the_typed_words_differ(self):
         canary = next(item for item in CANARIES if item["kind"] == "random40")["value"]
@@ -844,9 +844,15 @@ class ProcessTest(unittest.TestCase):
 
 def setUpModule():
     ss.external_write_on()                                   # 이 시험은 게시 흐름을 쓴다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
+    import capability_support
+    capability_support.switch_on("NET_BLOGGER_OAUTH")        # BLOGGER 갈래: 새 명령 `blogger save-draft` 의 좁은 관문 둘도 시험에서만 연다 — 안 열면 관문이 번호를 풀기 전에 막아 '없는 번호' 시험이 빈 실험이 된다
+    capability_support.switch_on("NET_BLOGGER_DRAFT")
 
 
 def tearDownModule():
+    import capability_support
+    capability_support.switch_off("NET_BLOGGER_DRAFT")
+    capability_support.switch_off("NET_BLOGGER_OAUTH")
     ss.external_write_off()
 
 
