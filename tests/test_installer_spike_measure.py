@@ -1222,6 +1222,33 @@ class BlockShapeTest(unittest.TestCase):
         for arm in "ABC":
             self.assertNotIn("open", run.judge([])[arm]["G1"])
 
+    def test_one_line_that_cannot_be_made_does_not_take_the_whole_box_with_it(self):
+        """첫 실행에서 최대한 많은 값을 얻는 도구의 원칙 — 한 줄을 못 만들어도 나머지 줄과 관문은 나온다(상자를 못 만들면 그 실행은 통째로 헛것이 된다)."""
+        original = run.measurement_lines
+
+        def broken(results, mid):
+            if mid == "M05":
+                raise KeyError("boom")
+            return original(results, mid)
+
+        with mock.patch.object(run, "measurement_lines", broken):
+            lines, md, data = self.block()
+        self.assertEqual(next(item for item in lines if item.startswith("M05 ")), "M05 무음 설치 | 줄을 만들지 못했다(KeyError)")
+        for number in (4, 6, 22):
+            self.assertTrue(any(item.startswith("M%02d " % number) for item in lines), number)
+        self.assertTrue(any(item.startswith("G8 ") for item in lines))
+        self.assertEqual((lines[0], lines[-1]), (run.RESULT_HEADER, run.RESULT_FOOTER))
+        self.assertIn("줄을 만들지 못했다(KeyError)", data["block"])
+        self.assertIn(data["block"], md)
+
+    def test_a_header_that_cannot_be_made_says_so_and_the_box_goes_on(self):
+        with mock.patch.object(run, "header_line", side_effect=ValueError("boom")):
+            lines, _md, _data = self.block()
+        self.assertEqual(lines[1], "러너: 머리 줄을 만들지 못했다(ValueError)")
+        self.assertTrue(lines[2].startswith("단계: "))
+        self.assertTrue(any(item.startswith("G1 ") for item in lines))
+        self.assertEqual(lines[-1], run.RESULT_FOOTER)
+
     def test_the_eighth_gate_no_longer_names_a_count_of_twelve(self):
         self.assertEqual(dict(run.GATES)["G8"], "설치본 selftest 앱 점검 전부")
         lines, _md, _data = self.block()

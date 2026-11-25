@@ -556,13 +556,20 @@ def header_line(ctx):
 
 def result_block(ctx, results, gates, scrub):
     steps = ctx.state.get("steps", {})
-    lines = [RESULT_HEADER, header_line(ctx), "단계: " + " | ".join("%s %s %s초" % (name, steps.get(name, {}).get("status", "안 돎"), steps.get(name, {}).get("seconds", "-")) for name in COMMANDS[:4])]
+    try:
+        header = header_line(ctx)
+    except Exception as error:                                         # 머리 줄을 못 만들어도 상자 전체는 나온다 — 첫 실행에서 최대한 많은 값을 얻는 도구의 원칙(항목마다 오류를 가둔다)
+        header = "러너: 머리 줄을 만들지 못했다(%s)" % type(error).__name__
+    lines = [RESULT_HEADER, header, "단계: " + " | ".join("%s %s %s초" % (name, steps.get(name, {}).get("status", "안 돎"), steps.get(name, {}).get("seconds", "-")) for name in COMMANDS[:4])]
     problems = ctx.state.get("pack_problems", {})
     if problems:
         lines.append("만들기 문제: " + "; ".join("%s=%s" % (key, tail(str(value), 60)) for key, value in sorted(problems.items())))
     lines.append("--- 측정(갈래 A %s · B %s · C %s)" % (ARM_NAMES["A"], ARM_NAMES["B"], ARM_NAMES["C"]))
     for mid in sorted(TITLES):
-        lines += measurement_lines(results, mid)
+        try:
+            lines += measurement_lines(results, mid)
+        except Exception as error:                                     # 한 줄을 못 만들어도 나머지 줄과 관문은 나온다
+            lines.append("%s %s | 줄을 만들지 못했다(%s)" % (mid, TITLES[mid], type(error).__name__))
     lines.append("--- 관문(하나라도 실패하면 그 갈래는 탈락, 미정은 실패가 아니다)")
     for gate, title in GATES:
         cells = ["%s %s%s" % (arm, WORD[gates[arm][gate]["status"]], "(%s)" % gates[arm][gate]["open"] if gates[arm][gate].get("open") else "") for arm in ARMS]
