@@ -296,6 +296,12 @@ class CiWorkflowShardTest(unittest.TestCase):
         for needle in ("ubuntu-latest", "'3.10'", "matrix.os", "matrix.python"):
             self.assertNotIn(needle, self.job_text["qt"], f"qt 잡은 윈도·3.12 하나뿐이다: {needle}")
 
+    def test_the_whole_workflow_is_exactly_the_approved_structure(self):
+        # AS-S2 권고-7(D-693): 위 시험들은 낱말·정규식이라 작업 단위 permissions·env·matrix 의 self-hosted·액션의 소유자·SHA·persist-credentials: true 를 못 봤다(감사의 살아남은 변이 여섯).
+        # 글을 구조로 읽어 최상위·작업·단계 키와 with·env·run 값과 matrix, 액션의 `소유자/저장소@커밋` 쌍을 승인된 목록과 글자 그대로 견준다(`tests/workflow_golden.py`).
+        # D-716: 작업이 둘(test·qt)이 된 뒤에도 같다 — 작업의 이름·순서·개수와 작업마다의 승인값을 견준다.
+        self.assertEqual(golden.ci_problems(self.ci), [])
+
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------
 # 정식 CI 의 Qt 칸(`ci.yml` 의 `qt` 잡, D-710–D-713): `CI_REQUIRE_QT=1` 이면 PySide6 가 없어 건너뛰어졌는데 초록이 되는 일이 없다 — 가드 시험.
@@ -641,11 +647,6 @@ class QtSkipWordRuleTest(unittest.TestCase):
         self.assertEqual(len(qt_skip_problems(aliased)[1]), 1)
         combined = "import unittest\nfrom x import HAVE\nimport os\n@unittest.skipUnless(HAVE and os.name == 'nt', '윈도 글꼴이 있어야 한다')\nclass A(unittest.TestCase):\n    pass\n"
         self.assertEqual(len(qt_skip_problems(combined)[1]), 1)
-
-    def test_the_whole_workflow_is_exactly_the_approved_structure(self):
-        # AS-S2 권고-7(D-693): 위 시험들은 낱말·정규식이라 작업 단위 permissions·env·matrix 의 self-hosted·액션의 소유자·SHA·persist-credentials: true 를 못 봤다(감사의 살아남은 변이 여섯).
-        # 글을 구조로 읽어 최상위·작업·단계 키와 with·env·run 값과 matrix, 액션의 `소유자/저장소@커밋` 쌍을 승인된 목록과 글자 그대로 견준다(`tests/workflow_golden.py`).
-        self.assertEqual(golden.ci_problems(self.ci), [])
 
 
 if __name__ == "__main__":
