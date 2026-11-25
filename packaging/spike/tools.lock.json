@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "note": "설치 도구 시험(수동 워크플로 installer-spike.yml)이 러너에서만 내려받는 고정 도구 둘의 잠금 — 이름·출처(호스트와 경로)·버전·바이트·SHA-256. 직접 받는 것은 fetch_tools.py 가 이 값과 대조하고(크기나 SHA-256 이 다르면 지우고 실패), 파이썬 휠은 run_spike.py 가 pip 의 해시 검사(--require-hashes)로 받은 뒤 같은 값으로 다시 대조한다. 앱 본체(src/)에는 내려받는 코드가 없다.",
+  "values_read_on": "2026-11-24",
+  "values_source": "GitHub 릴리스 자산이 공개하는 digest 값과 PyPI 가 파일마다 공개하는 SHA-256 — 총괄이 2026-11-24 에 공개 채널에서 읽었다(설계서 INSTALLER 3-1 (c)). 구현자는 바꾸지 않았고 독립 검증자가 원문에서 다시 대조한다.",
+  "tools": [
+    {
+      "key": "vpk-nupkg",
+      "kind": "direct",
+      "host": "github.com",
+      "path": "/velopack/velopack/releases/download/1.2.161/vpk.1.2.161.nupkg",
+      "file": "vpk.1.2.161.nupkg",
+      "version": "1.2.161",
+      "bytes": 146884263,
+      "sha256": "2b56ce117f803fc70c103cb423bd040e395e40370f6ff6e10818e9ff9c26a323",
+      "license": "MIT",
+      "uploaded_on": "2026-09-29"
+    },
+    {
+      "key": "velopack-wheel",
+      "kind": "pip",
+      "host": "pypi.org",
+      "file_host": "files.pythonhosted.org",
+      "project": "velopack",
+      "file": "velopack-1.2.161-cp38-abi3-win_amd64.whl",
+      "version": "1.2.161",
+      "bytes": 1363140,
+      "sha256": "3a85b4a39c7644d06dafa44bd197d1e88d429f3f05ead57031552cf17ffcf36e",
+      "license": "MIT",
+      "uploaded_on": "2026-09-29"
+    }
+  ]
+}
