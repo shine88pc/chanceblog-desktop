@@ -358,11 +358,13 @@ class PostsController:
         return True
 
     def remember_pages(self, raw):
-        """쓰던 Pages 값을 이 앱을 연 동안만 기억한다(파일에 쓰지 않는다) → 기억했으면 True. **키·토큰 모양이 든 값은 기억하지 않는다**(거절된 글이 다음에 열 때 칸에 다시 채워지지 않게). 열린 글이 없으면 기억하지 않는다."""
+        """쓰던 Pages 값을 이 앱을 연 동안만 기억한다(파일에 쓰지 않는다) → 기억했으면 True. **키·토큰 모양이 든 값은 기억하지 않는다**(거절된 글이 다음에 열 때 칸에 다시 채워지지 않게) —
+        저장 검사기가 아는 여섯 유형(`secret_spots`)뿐 아니라 가리기 엔진이 가리는 모든 모양(`would_be_masked`: Slack·Stripe·OpenAI·Anthropic 키·주소 속 사용자 정보 …)이면 기억하지 않는다. 열린 글이 없으면 기억하지 않는다."""
         if self.open_id is None or not isinstance(raw, dict):
             return False
         values = {name: str(raw.get(name) or "") for name in PAGES_FIELDS}
-        if rules.secret_spots("", "\n".join(values[name] for name in ("category", "image_url", "tags", "description"))):
+        joined = "\n".join(values[name] for name in ("category", "image_url", "tags", "description"))
+        if rules.secret_spots("", joined) or rules.would_be_masked(joined):
             return False
         self.pages_raw[self.open_id] = values
         return True

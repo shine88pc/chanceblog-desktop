@@ -30,6 +30,8 @@ KIND_LABEL = {"heading": "post_block_heading", "list": "post_block_list", "quote
 REVIEWABLE = frozenset({st.NOT_STARTED, st.DRAFT_GENERATED, st.REVIEW_REQUIRED, st.APPROVED, st.READY_TO_COPY, st.PUBLISH_FAILED})          # 이 화면이 '검토 시작·다시 검토' 를 켜는 상태 — 올라간·복사 마친·공개된 글은 1a 가 바꾸지 않는다
 APPROVED_NOW = frozenset({st.APPROVED, st.READY_TO_COPY})   # 승인 취소가 켜지는 상태
 _TAG = re.compile(r"^<([a-z0-9]+)")
+_KEY_HEAD = re.compile(r"-----BEGIN [A-Z ]{0,100}PRIVATE KEY(?: BLOCK)?-----")               # 개인 키 블록의 머리·꼬리 줄(엔진 `_PEM` 과 같은 모양 — PGP 는 `… PRIVATE KEY BLOCK-----`)
+_KEY_TAIL = re.compile(r"-----END [A-Z ]{0,100}PRIVATE KEY(?: BLOCK)?-----")
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,39}")
 _STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
 
@@ -37,6 +39,15 @@ _STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
 def shown(value, limit=300):
     """화면에 나가는 동적 글을 비밀 모양을 가린 한 줄로 줄인다(가리기가 먼저, 줄이기가 나중이다)."""
     return display_text(value, limit)
+
+
+def would_be_masked(value):
+    """가리기 엔진이 이 글에서 무언가를 가리는가 — 저장 검사기(`secret_spots`)가 아는 여섯 유형뿐 아니라 엔진이 아는 모든 모양(Slack·Stripe·OpenAI·Anthropic 키·주소 속 사용자 정보 …)을 본다.
+    이 앱을 연 동안 기억해 칸에 다시 채울 값처럼 '키 모양이 하나라도 있으면 내보내지 않을 글' 을 가릴 때 쓴다(독립 검증 S 참고-2). 글이 아니거나 비었으면 False."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    flat = " ".join(value.split())
+    return display_text(flat, len(flat) + 64) != flat
 
 
 def when_text(stamp):
@@ -74,16 +85,42 @@ def _safe_block(plain):
     return "\n".join(lines)
 
 
+def _key_open_after(plain, inside):
+    """이 글 조각을 읽고 난 뒤에도 개인 키 블록(PEM·PGP)이 **열려 있나** — 머리(`-----BEGIN … PRIVATE KEY-----`)를 만나면 가장 가까운 꼬리(`-----END … PRIVATE KEY-----`)까지, 꼬리가 없으면 글 끝까지가 한 덩어리다
+    (가리기 엔진 `security/mask.py` 의 개인 키 규칙과 같다 — 머리 줄만이 아니라 본문까지). `inside` 는 이 조각에 들어올 때 이미 열려 있었는가. 머리·꼬리의 라벨은 100자까지(되돌아가는 비용을 막는다)."""
+    pos = 0
+    while True:
+        found = (_KEY_TAIL if inside else _KEY_HEAD).search(plain, pos)
+        if found is None:
+            return inside
+        inside, pos = not inside, found.end()
+
+
+def _key_groups(entries):
+    """(종류, 글) 목록 → 개인 키 블록을 **한 덩어리로 묶은** (종류, 글) 목록. 블록은 빈 줄마다 나뉘는데 실제 PGP 키는 머리 줄 뒤에 빈 줄이 있어, 블록마다 따로 가리면 머리 줄만 가려지고 본문 줄이
+    그대로 나간다 — 머리가 열린 블록부터 꼬리가 든 블록까지(사이에 빈 줄·소제목·목록·인용이 끼어도, 꼬리가 없으면 글 끝까지)를 한 글로 이어 붙여 엔진이 머리부터 꼬리까지 한 번에 가리게 한다.
+    묶인 덩어리의 종류는 머리가 든 블록의 종류다. 꼬리 뒤에 이어지는 같은 블록의 글은 그대로 남는다."""
+    groups, inside = [], False
+    for kind, plain in entries:
+        if inside:
+            groups[-1][1].append(plain)
+        else:
+            groups.append((kind, [plain]))
+        inside = _key_open_after(plain, inside)
+    return [(kind, "\n\n".join(parts)) for kind, parts in groups]
+
+
 def build_preview(markdown, *, refs=0, assets=0):
     """원고(Markdown) → `PostPreview`. 서비스의 안전 변환이 만든 블록에서 글자만 뽑는다 — 글 속의 HTML 태그·스크립트는 변환기가 글자로 바꾸고, 여기서는 그 글자를 그대로(가려서) 내보낼 뿐 해석하지 않는다.
-    이미지·링크는 내보내지 않는다(이미지는 개수만). 변환이 거절하는 아주 큰 글은 빈 미리보기다."""
+    이미지·링크는 내보내지 않는다(이미지는 개수만). 개인 키 블록은 머리부터 꼬리까지 한 덩어리로 가린다(`_key_groups`). 변환이 거절하는 아주 큰 글(2,000,000자 초과)은 빈 미리보기다.
+    아주 병적인 글(인용 기호만 2MB 가까이 같은 글)은 글자 뽑기에서 예외가 날 수 있다 — 저장된 글에서는 화면의 10만 자 한도 안에서 만들어지지 않고, 나면 화면이 오류 상태로 안전하게 닫는다(빈 미리보기로 속이지 않는다)."""
     from ...render.markdown import html_to_text, markdown_blocks
     text = markdown if isinstance(markdown, str) else ""
     try:
         html_blocks, images = markdown_blocks(text)
-    except Exception:                                        # 변환이 받지 않는 글(2,000,000자 초과) — 저장된 글에는 없지만 어떤 값이 와도 예외를 내지 않는다
+    except Exception:                                        # 변환이 받지 않는 글(2,000,000자 초과) — 저장된 글에는 없지만 변환기가 받지 않는 값은 빈 미리보기다
         return PostPreview((), 0, 0, 0, int(refs), False)
-    kept, total, chars, used = [], 0, 0, 0
+    entries = []
     for block in html_blocks:
         tag = _TAG.match(block)
         plain = html_to_text(block).strip()
@@ -92,6 +129,9 @@ def build_preview(markdown, *, refs=0, assets=0):
         kind = KIND_OF_TAG.get(tag.group(1) if tag else "", "paragraph")
         if kind == "quote":
             plain = "\n".join(re.sub(r"^> ?", "", line) for line in plain.split("\n"))
+        entries.append((kind, plain))
+    kept, total, chars, used = [], 0, 0, 0
+    for kind, plain in _key_groups(entries):
         total += 1
         chars += len(re.sub(r"\s+", "", plain))
         if len(kept) < PREVIEW_BLOCKS and used < PREVIEW_CHARS:
@@ -245,4 +285,4 @@ def title_of(name):
 
 
 __all__ = ["APPROVED_NOW", "text_blocks", "BLOCK_LIMIT", "HealthReview", "PAGE", "PREVIEW_BLOCKS", "PREVIEW_CHARS", "REVIEWABLE", "approval_state", "build_preview", "code_of", "gate_sentence", "health_of", "pages_problems",
-           "pages_raw_of", "pages_values_of", "platform_text", "review_blocks", "secret_spots", "shown", "split_tags", "status_text", "title_of", "unique_codes", "when_text"]
+           "pages_raw_of", "pages_values_of", "platform_text", "review_blocks", "secret_spots", "shown", "split_tags", "status_text", "title_of", "unique_codes", "when_text", "would_be_masked"]

@@ -304,6 +304,20 @@ class PostsAdapterReviewTest(Base):
         self.assertEqual((failure.kind, failure.code, failure.user_message), ("gate", "REVIEW_BLOCKED", T["post_fail_blocked"]))
         self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED, "승인되지 않았다")
 
+    def test_a_stored_key_shape_in_a_reference_is_caught_by_the_review_and_by_the_last_check_at_approval(self):
+        """출처(references) 칸(독립 검증 Q 권고-3) — 이미지 칸 시험과 같은 방식: 옛 버전이 저장한 것처럼 보관함에 직접 넣는다(서비스의 쓰기 길은 이 칸도 거절한다)."""
+        project_id = self.do_import().detail.project_id
+        self.do_review(project_id)
+        with ctx_store(self.ctx, project_id) as (store, project):
+            project.references = (f"https://example.invalid/page?k={KEY}",)
+            store.save(project)
+        report = self.do_review(project_id).review
+        self.assertEqual((report.spots[0][0], report.spots[0][2]), (T["post_where_refs"], "Google API 키"))
+        self.assertNotIn(KEY[:10], repr(report))
+        failure = self.failure_of(self.do_approve, project_id, 1)
+        self.assertEqual((failure.kind, failure.code, failure.user_message), ("gate", "REVIEW_BLOCKED", T["post_fail_blocked"]))
+        self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED, "승인되지 않았다")
+
     def test_the_detail_preview_of_a_stored_key_shape_is_masked(self):
         project_id = self.do_import().detail.project_id
         ss.inject_text(self.ctx, project_id, text="앞 글 " + KEY + " 뒤 글" + NL + NL + ss.ko_text())
@@ -405,6 +419,38 @@ class PostsAdapterApproveTest(Base):
         failure = self.failure_of(self.do_approve, project_id, 1)
         self.assertEqual((failure.kind, failure.user_message), ("stale", T["post_fail_stale"]))
         self.assertEqual(self.status(project_id), st.DRAFT_GENERATED)
+
+    def test_a_saved_rendering_of_an_older_revision_is_refused_as_stale_even_when_the_screen_names_the_current_revision(self):
+        """승인 직전의 두 번째 낡음 검사(독립 검증 Q 권고-1): 요청한 판이 지금 판이어도 저장된 렌더링의 판이 다르면 '낡았다' 로 거절한다. 이 검사를 지워도 서비스가 막지만 '상태가 맞지 않는다' 로 다른 문장이 나온다."""
+        project_id = self.reviewed()
+        with ctx_store(self.ctx, project_id) as (store, project):
+            project.revision = 2                                                          # 판만 올리고 상태는 그대로 둔 모양 — 서비스의 고치기 길은 검토 중 상태를 되돌리므로 보관함에 직접 쓴다
+            store.save(project)
+        self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED)
+        failure = self.failure_of(self.do_approve, project_id, 2)
+        self.assertEqual((failure.kind, failure.code, failure.user_message), ("stale", "STALE", T["post_fail_stale"]))
+        self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED, "승인되지 않았다")
+
+    def test_a_health_claim_that_appeared_after_the_review_is_refused_by_the_last_check_at_approval(self):
+        """승인 직전 재검사의 건강 효과 단정(독립 검증 Q 권고-3) — 비밀 모양은 시험이 있었고 이 칸은 없었다. 판·상태는 그대로이고 본문만 바뀐 모양이라 낡음 검사는 지나간다."""
+        project_id = self.reviewed()
+        with ctx_store(self.ctx, project_id) as (store, project):
+            project.source_content = project.source_content + NL + NL + "이 영양제를 먹으면 통증이 완전히 사라집니다."
+            store.save(project)
+        self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED)
+        failure = self.failure_of(self.do_approve, project_id, 1)
+        self.assertEqual((failure.kind, failure.code, failure.user_message), ("gate", "REVIEW_BLOCKED", T["post_fail_blocked"]))
+        self.assertEqual(self.status(project_id), st.REVIEW_REQUIRED, "승인되지 않았다")
+
+    def test_the_lower_health_stages_are_approved_and_only_the_stop_stage_is_refused(self):
+        """건강 판정의 아래쪽 경계(독립 검증 Q 권고-5)를 진짜 서비스로도: 표시 권장·근거 필요 단계의 글은 검토 결과가 막지 않고 승인된다."""
+        for stage, sentence in (("mark", "피로 회복에 도움이 될 수 있어요."), ("evidence", "당뇨 환자에게 좋은 식단을 소개해요.")):
+            with self.subTest(stage=stage):
+                project_id = self.do_import(f"건강 {stage}", ss.ko_text() + NL + NL + sentence).detail.project_id
+                report = self.do_review(project_id).review
+                self.assertEqual(report.health.stage, stage)
+                self.assertEqual(self.do_approve(project_id, 1).kind, "approved")
+                self.assertEqual(self.status(project_id), st.APPROVED)
 
     def test_approving_a_post_that_was_never_reviewed_says_the_state_does_not_allow_it(self):
         project_id = self.do_import().detail.project_id

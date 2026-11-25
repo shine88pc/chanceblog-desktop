@@ -104,8 +104,23 @@ class DocumentFactsTest(unittest.TestCase):
                 self.assertRegex(log, rf"(?m)^\| {number} \|")
 
     def test_the_decision_numbers_stay_in_the_range_of_this_lane(self):
-        numbers = [int(value) for value in re.findall(r"\*\*D-(\d+)\b", self.doc)]
-        self.assertTrue(numbers and min(numbers) >= 620 and max(numbers) <= 659, (min(numbers), max(numbers)))
+        """이 갈래가 **정의한** 결정(문서 7절의 `- **D-6nn` 줄)이 자기 구간 620–659 에 있고 다른 갈래의 번호를 새로 정의하지 않았는지만 본다(독립 검증 Q 권고-6) — 문서 전체의 가장 큰 번호를 못박지 않아
+        병합 가지가 다른 갈래와 합쳐져도, 다음 단계(1b)가 이 문서에 자기 구간의 번호를 이어 적어도 빨개지지 않는다. 620 부터 빠짐없이 이어진 부분이 이 갈래 몫이고 그 뒤에 따로 붙은 번호는 보지 않는다."""
+        defined = [int(value) for value in re.findall(r"(?m)^- \*\*D-(\d+)\b", self.doc)]
+        self.assertTrue(defined, "이 문서가 정의하는 결정이 하나도 없다")
+        self.assertEqual(len(defined), len(set(defined)), "같은 번호를 두 번 정의했다")
+        self.assertEqual([number for number in defined if number < 620], [], "다른 갈래의 번호(620 미만)를 이 문서가 새로 정의했다")
+        own = []
+        for number in sorted(defined):
+            if number == 620 + len(own):
+                own.append(number)
+        self.assertEqual(own, list(range(620, 620 + len(own))))
+        self.assertGreaterEqual(len(own), 19, "이 갈래의 결정 D-620–D-638 이 모두 있다")
+        self.assertLessEqual(own[-1], 659, "이 갈래의 번호가 자기 구간(620–659)을 넘었다")
+        log = (ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
+        for number in own:
+            with self.subTest(decision=number):
+                self.assertEqual(len(re.findall(rf"(?m)^\| D-{number} \|", log)), 1, f"D-{number} 행이 결정 기록에 한 번만 있어야 한다")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@
 가짜 비밀은 조립한 문자열(`CANARY_` 또는 키 모양을 쪼개 이어 붙임)이고 실제 글·블로그 이름은 어디에도 없다.
 """
 import ast
+import dataclasses
 import re
 import sys
 import unittest
@@ -286,6 +287,128 @@ class PostsRulesTest(unittest.TestCase):
         for status in (st.COMMITTED, st.PUSHED, st.PUBLISHED, st.DRAFT_SAVED, st.COPY_COMPLETED, st.PUBLISHED_MANUAL):
             self.assertNotIn(status, rules.REVIEWABLE, f"{status} 는 1a 화면이 바꾸지 않는다")
 
+    def test_a_saved_rendering_of_another_revision_is_not_approvable_even_when_the_review_is_of_the_current_revision(self):
+        """승인 조건 ⑤ 의 두 번째 절(독립 검증 Q 권고-1): 검토 결과의 판이 지금 판이어도 **저장된 렌더링의 판**이 지금 판이 아니면 승인하지 않는다 — 앞의 시험은 검토 결과의 판만 바꿔 이 절을 지우고도 통과했다."""
+        provider = post_fake.FakePostsProvider()
+        project_id = long_post(provider)
+        out = provider.review_post(posts.ReviewRequest(project_id, posts.PAGES, rules.pages_values_of(RAW)), SAFE, NEVER)
+        detail, fresh = out.detail, out.review
+        self.assertEqual((fresh.revision, detail.revision), (detail.revision, detail.revision), "검토 결과의 판은 지금 판이다")
+        self.assertEqual(rules.approval_state(fresh, detail, posts.PAGES), (True, ""))
+        for other in (None, detail.revision + 1, 0):
+            changed = dataclasses.replace(detail, platforms=tuple(dataclasses.replace(item, rendered_revision=other) if item.platform == posts.PAGES else item for item in detail.platforms))
+            with self.subTest(rendered_revision=other):
+                self.assertEqual(rules.approval_state(fresh, changed, posts.PAGES), (False, "post_approve_why_stale"))
+
+    def test_secret_spots_also_look_at_the_references_and_say_only_place_and_kind(self):
+        """출처(references)의 키 모양(독립 검증 Q 권고-3): 검토 카드와 승인 직전 재검사가 출처 칸도 훑는다 — 앞의 시험은 키 없는 출처만 넘겨 이 칸을 지우고도 통과했다."""
+        keyed = (f"https://example.invalid/page?k={KEY}",)
+        found = rules.secret_spots("제목", "본문", keyed)
+        self.assertEqual(found, ((T["post_where_refs"], 1, "Google API 키"),))
+        self.assertNotIn(KEY, repr(found))
+        self.assertEqual(rules.text_blocks("제목", "본문", keyed), ("secret",), "승인 직전의 재검사도 출처 칸을 본다")
+        self.assertEqual(rules.secret_spots("제목", "본문", ("https://example.invalid/a", f"https://example.invalid/b?k={KEY}"))[0][1], 2, "줄 번호는 출처 줄 기준이다")
+        self.assertEqual(rules.secret_spots("제목", "본문", ("https://example.invalid/a",)), ())
+        self.assertEqual(rules.secret_spots("제목", "본문", None), ())
+
+    def test_only_the_stop_stage_blocks_and_the_lower_health_stages_never_do(self):
+        """건강 판정의 아래쪽 경계(독립 검증 Q 권고-5): `근거 필요`(evidence)·`표시 권장`(mark) 단계는 승인을 막지 않는다 — 막는 것은 중지(stop)뿐이다. 앞의 시험은 근거 필요 단계까지 막아도 통과했다."""
+        base = dict(project_id="x", platform=posts.PAGES, revision=1, status=st.REVIEW_REQUIRED)
+        for stage, blocked in (("general", False), ("mark", False), ("evidence", False), ("stop", True)):
+            with self.subTest(stage=stage):
+                self.assertEqual(rules.review_blocks(posts.ReviewReport(**base, health=rules.HealthReview(stage))), ("health",) if blocked else ())
+        for stage, sentence in (("general", "오늘은 산책을 했어요."), ("mark", "피로 회복에 도움이 될 수 있어요."), ("evidence", "당뇨 환자에게 좋은 식단을 소개해요."), ("stop", "이 영양제를 먹으면 통증이 완전히 사라집니다.")):
+            with self.subTest(sentence=sentence):
+                self.assertEqual(rules.health_of("제목", sentence).stage, stage, "시험 문장이 정말 그 단계다")
+                self.assertEqual(rules.text_blocks("제목", sentence), ("health",) if stage == "stop" else ())
+
+
+class PostsKeyBlockPreviewTest(unittest.TestCase):
+    """개인 키 블록(PEM·PGP)은 머리부터 꼬리까지 **한 덩어리로** 가려서 미리보기에 나간다(독립 검증 S 권고-3). 실제 PGP 개인 키는 머리 줄 뒤에 빈 줄이 있고 Markdown 은 빈 줄마다 블록을 나누므로,
+    블록마다 따로 가리면 머리 줄만 가려지고 본문 줄이 미리보기에 그대로 나갔다. 가짜 키 본문은 `CANARY_` 로 시작하는 조립 문자열이다."""
+    PGP = ("-----BEGIN " + "PGP PRIVATE KEY BLOCK-----", "-----END " + "PGP PRIVATE KEY BLOCK-----")
+    RSA = ("-----BEGIN " + "RSA PRIVATE KEY-----", "-----END " + "RSA PRIVATE KEY-----")
+    ONE, TWO = "CANARY_" + "KEYBODY_ONE_" + "A" * 24, "CANARY_" + "KEYBODY_TWO_" + "B" * 24
+
+    def blocks(self, markdown):
+        found = rules.build_preview(markdown)
+        return found, [block.text for block in found.blocks]
+
+    def assert_hidden(self, markdown, shown):
+        joined = "\n".join(shown)
+        for piece in (self.ONE, self.TWO, "Version: 가짜", self.ONE[:14]):
+            self.assertNotIn(piece, joined, f"키 본문이 미리보기에 그대로 나갔다: {piece[:14]}")
+
+    def test_a_pgp_key_split_by_blank_lines_is_hidden_from_head_to_tail_as_one_piece(self):
+        head, tail = self.PGP
+        markdown = f"앞 글\n\n{head}\nVersion: 가짜\n\n{self.ONE}\n\n{self.TWO}\n{tail}\n\n뒤 글"
+        found, shown = self.blocks(markdown)
+        self.assert_hidden(markdown, shown)
+        self.assertEqual([shown[0], shown[-1], len(shown)], ["앞 글", "뒤 글", 3], "앞 글·가려진 덩어리 하나·뒤 글")
+        self.assertIn("가림", shown[1])
+        self.assertEqual((found.total, found.chars), (3, len(re.sub(r"\s+", "", markdown))), "묶은 덩어리는 한 블록으로 세고 글자 수는 글 그대로다")
+        self.assertFalse(found.cut)
+
+    def test_every_private_key_label_is_hidden_the_same_way_with_blank_lines_inside(self):
+        for label in ("", "RSA ", "EC ", "DSA ", "OPENSSH ", "ENCRYPTED ", "PGP "):
+            head = "-----BEGIN " + label + "PRIVATE KEY" + (" BLOCK" if label == "PGP " else "") + "-----"
+            tail = "-----END " + label + "PRIVATE KEY" + (" BLOCK" if label == "PGP " else "") + "-----"
+            markdown = f"{head}\n\n{self.ONE}\n\n{self.TWO}\n\n{tail}"
+            with self.subTest(label=label):
+                found, shown = self.blocks(markdown)
+                self.assert_hidden(markdown, shown)
+                self.assertEqual((found.total, len(shown)), (1, 1))
+                self.assertIn("가림", shown[0])
+
+    def test_a_head_without_a_tail_hides_everything_after_it_but_keeps_what_comes_before(self):
+        head, _tail = self.RSA
+        markdown = f"앞 글\n\n{head}\n\n{self.ONE}\n\n뒤에 이어지는 글\n\n- 목록 항목\n\n> 인용 글"
+        found, shown = self.blocks(markdown)
+        self.assert_hidden(markdown, shown)
+        self.assertEqual(shown[0], "앞 글")
+        self.assertEqual((len(shown), found.total), (2, 2))
+        self.assertNotIn("뒤에 이어지는 글", "\n".join(shown), "꼬리가 없으면 머리 뒤 글 전부를 가린다(엔진의 규칙과 같다 — 의심스러우면 내보내지 않는다)")
+        self.assertGreater(found.chars, len(re.sub(r"\s+", "", "앞 글" + head + self.ONE)), "가려진 글자도 글자 수에는 센다(글 그대로의 크기를 알린다)")
+
+    def test_the_head_in_a_heading_and_the_body_in_a_list_and_a_quote_are_hidden_too(self):
+        head, tail = self.RSA
+        markdown = f"## {head}\n\n- {self.ONE}\n- {self.TWO}\n\n> 인용 {self.ONE}\n\n{tail}\n\n뒤 글"
+        found, shown = self.blocks(markdown)
+        self.assert_hidden(markdown, shown)
+        self.assertEqual([block.kind for block in found.blocks], ["heading", "paragraph"], "묶은 덩어리의 종류는 머리가 든 블록의 종류다")
+        self.assertEqual((shown[1], found.total), ("뒤 글", 2))
+
+    def test_text_between_two_keys_and_before_the_head_and_after_the_tail_stays_visible(self):
+        pgp_head, pgp_tail = self.PGP
+        rsa_head, rsa_tail = self.RSA
+        markdown = (f"설명 앞 {pgp_head}\n\n{self.ONE}\n\n{pgp_tail} 설명 뒤\n\n가운데 글이에요.\n\n{rsa_head}\n\n{self.TWO}\n\n{rsa_tail}\n\n마지막 글이에요.")
+        found, shown = self.blocks(markdown)
+        self.assert_hidden(markdown, shown)
+        self.assertEqual(len(shown), 4)
+        self.assertTrue(shown[0].startswith("설명 앞") and shown[0].endswith("설명 뒤"), shown[0])
+        self.assertIn("가림", shown[0])
+        self.assertEqual((shown[1], shown[3]), ("가운데 글이에요.", "마지막 글이에요."))
+        self.assertIn("가림", shown[2])
+
+    def test_a_tail_line_alone_is_just_text_and_hides_nothing(self):
+        _head, tail = self.PGP
+        found, shown = self.blocks(f"앞 글\n\n{tail}\n\n뒤 글")
+        self.assertEqual(shown, ["앞 글", tail, "뒤 글"])
+        self.assertEqual(found.total, 3)
+
+    def test_the_open_state_agrees_with_what_the_masking_engine_hides(self):
+        """머리·꼬리를 찾는 이 규칙이 가리기 엔진과 어긋나지 않는다 — 글 뒤에 표지를 붙여 엔진에 가려 보고 표지가 사라지면(머리부터 글 끝까지 가렸다) 아직 열려 있는 것이다."""
+        pgp_head, pgp_tail = self.PGP
+        rsa_head, rsa_tail = self.RSA
+        snippets = ("평범한 글이에요.", pgp_head, f"{pgp_head}\n{self.ONE}", f"{pgp_head}\n{self.ONE}\n{pgp_tail}", pgp_tail, f"{pgp_tail}\n{pgp_head}", f"{pgp_head} {pgp_tail} {pgp_head}",
+                    f"{rsa_head} x {pgp_head} y {rsa_tail} z", f"{pgp_head}\n{pgp_tail}\n{pgp_head}\n{pgp_tail}", f"{rsa_head} {rsa_tail} 뒤 글 {pgp_head}")
+        for snippet in snippets:
+            with self.subTest(snippet=snippet[:48]):
+                hidden_to_the_end = "ZZENDZZ" not in text.display_text(snippet + " ZZENDZZ", 10_000)
+                self.assertEqual(rules._key_open_after(snippet, False), hidden_to_the_end)
+        self.assertEqual(rules._key_open_after(f"{self.ONE}\n{pgp_tail}", True), False, "열린 채 들어와 꼬리를 만나면 닫힌다")
+        self.assertEqual(rules._key_open_after(self.ONE, True), True, "열린 채 들어와 꼬리가 없으면 계속 열려 있다")
+
 
 class PostsStatesCoreTest(unittest.TestCase):
     def test_the_six_list_states(self):
@@ -354,6 +477,19 @@ class PostsStatesCoreTest(unittest.TestCase):
         row = controller.view()["list"]["rows"][0]
         self.assertNotIn(KEY[:12], repr(row))
         self.assertTrue(row["title"])
+
+    def test_the_open_post_never_shows_a_key_shaped_title_in_its_header(self):
+        """글 상세 머리의 제목은 컨트롤러가 가리는 유일한 곳이다(독립 검증 Q 권고-4) — 목록의 제목만 시험이 지켜 이 줄의 가리기를 지워도 통과했다."""
+        controller = make("empty")
+        project_id = controller.provider.add_post("제목 " + KEY, post_fake.sample_text())
+        controller.apply_loaded(controller.provider.load_posts(SAFE, NEVER))
+        open_post(controller, project_id)
+        view = controller.view()
+        header = view["detail"]["title"]
+        self.assertIn("가림", header, "가려졌다는 표지가 보인다")
+        for piece in (KEY, KEY[:12], KEY[-12:]):
+            self.assertNotIn(piece, repr(view), "상세 화면 뷰모델 어디에도 키 글이 없다")
+        self.assertNotIn(KEY[:12], controller.notice[1] if controller.notice else "")
 
     def test_opening_a_post_reads_it_and_picks_the_platform_that_has_progress(self):
         controller = make()
@@ -744,6 +880,40 @@ class PostsReviewCoreTest(unittest.TestCase):
         self.assertTrue(health["lines"][1].startswith(T["post_health_places"]), "걸린 문장의 앞부분을 보인다")
         self.assertEqual(controller.approval(), (False, "post_approve_why_blocked"))
         self.assertIsNone(controller.approve_dialog(), "막힌 글은 확인창도 뜨지 않는다")
+        # 의도적 강화(독립 검증 Q 권고-5): 이름은 '가벼운 건강 주제는 막지 않는다' 인데 막지 않는 쪽 시험이 없었다 — 표시 권장(mark)·근거 필요(evidence) 단계는 승인을 막지 않는다(중지만 막는다)
+        for stage, sentence in (("mark", "피로 회복에 도움이 될 수 있어요."), ("evidence", "당뇨 환자에게 좋은 식단을 소개해요.")):
+            with self.subTest(stage=stage):
+                light = make("empty")
+                light_id = light.provider.add_post("가벼운 건강 글", post_fake.sample_text() + "\n\n" + sentence)
+                light.apply_loaded(light.provider.load_posts(SAFE, NEVER))
+                open_post(light, light_id)
+                review_pages(light)
+                self.assertEqual(light.review.health.stage, stage, "시험 글이 정말 그 단계다")
+                self.assertEqual(light.approval(), (True, ""), "이 단계는 승인을 막지 않는다")
+                self.assertIsNotNone(light.approve_dialog(), "확인창이 뜬다")
+                section = next(item for item in light.view()["detail"]["review"]["panel"]["result"]["sections"] if item["key"] == "health")
+                self.assertNotEqual(section["badge"]["text"], T["post_badge_block"])
+
+    def test_review_card_texts_are_masked_again_where_the_card_is_made_even_if_the_source_forgot(self):
+        """검토 카드의 모든 글은 카드를 만드는 곳(`_section`)에서도 한 번 더 가려진다(독립 검증 Q 권고-4) — 공급자가 가리지 않은 키 모양이 사유·경고·요약·건강 문장 어디에 있어도 화면에 나가지 않는다."""
+        controller = self.opened()
+        review_pages(controller)
+        detail = controller.detail
+        loud = f"문장 {KEY} 끝"
+        pages = posts.ReviewReport(detail.project_id, posts.PAGES, detail.revision, st.REVIEW_REQUIRED, False, ("LEN_BODY",), (f"[LEN_BODY] 본문 {KEY}",), (f"경고 {KEY}",), (f"요약 {KEY}",), None,
+                                   rules.HealthReview("stop", (f"본문: {loud}",)), ())
+        naver = posts.ReviewReport(detail.project_id, posts.NAVER_A, detail.revision, st.REVIEW_REQUIRED, True, (), (), (f"경고 {KEY}",), (f"요약 {KEY}",), posts.SimilarityInfo("warn", 0.5, (f"이유 {KEY}",)),
+                                   rules.HealthReview("general"), ())
+        for report in (pages, naver):
+            with self.subTest(platform=report.platform):
+                controller.review, controller.platform = report, report.platform
+                result = controller.view()["detail"]["review"]["panel"]["result"]
+                self.assertEqual(result["state"], "ready")
+                self.assertTrue(result["sections"])
+                shown = repr(result)
+                self.assertNotIn(KEY[:12], shown)
+                self.assertNotIn(KEY[-12:], shown)
+                self.assertIn("가림", shown)
 
     def test_a_key_shape_in_the_post_blocks_with_place_and_kind_only(self):
         controller = make("empty")
@@ -810,18 +980,40 @@ class PostsReviewCoreTest(unittest.TestCase):
 
     def test_a_key_shaped_pages_value_keeps_the_dialog_open_and_is_never_remembered(self):
         refused = posts.PostFailure(T["post_fail_secret"].format(where="한 줄 설명", kinds="Google API 키"), code="SECRET_SHAPE_FOUND", kind="secret")
-        controller = self.opened(fail={"review_post": refused})
-        controller.open_pages()
-        keyed = dict(RAW, description=f"설명 {KEY}")
-        status, end, todo = review_pages(controller, keyed)
-        self.assertEqual((status, end, todo), ("started", "failed", {}))
-        self.assertTrue(controller.pages_open, "키 모양 거절도 대화를 열어 둔 채 이유만 보인다")
-        self.assertIn("Google API 키", controller.pages_view()["message"])
-        self.assertNotIn(controller.open_id, controller.pages_raw, "거절된 키 모양 글이 든 값은 기억하지 않는다")
-        controller.close_pages(keyed)
-        self.assertNotIn(controller.open_id, controller.pages_raw, "닫을 때도 기억하지 않는다")
-        self.assertEqual(controller.open_pages()["description"], "", "다시 열어도 칸에 다시 채워지지 않는다")
-        self.assertNotIn(KEY[:12], repr(controller.pages_raw) + repr(controller.view()) + repr(controller.pages_view()))
+        # 의도적 강화(독립 검증 Q 권고-2): 키 모양을 한 줄 설명 칸에만 넣던 것을 기억에 쓰는 네 칸(분야·대표 이미지 주소·태그·한 줄 설명) 모두로 — 어느 칸을 검사에서 빼도 빨개진다
+        for field, value in (("category", f"생활 {KEY}"), ("image_url", f"https://img.example.invalid/a.jpg?k={KEY}"), ("tags", f"에너지, {KEY}"), ("description", f"설명 {KEY}")):
+            with self.subTest(field=field):
+                controller = self.opened(fail={"review_post": refused})
+                controller.open_pages()
+                keyed = dict(RAW, **{field: value})
+                self.assertEqual(rules.pages_problems(keyed), {}, "키 모양을 넣은 값도 칸 검사는 통과해야 이 시험이 기억 규칙을 본다")
+                status, end, todo = review_pages(controller, keyed)
+                self.assertEqual((status, end, todo), ("started", "failed", {}))
+                self.assertTrue(controller.pages_open, "키 모양 거절도 대화를 열어 둔 채 이유만 보인다")
+                self.assertIn("Google API 키", controller.pages_view()["message"])
+                self.assertNotIn(controller.open_id, controller.pages_raw, "거절된 키 모양 글이 든 값은 기억하지 않는다")
+                controller.close_pages(keyed)
+                self.assertNotIn(controller.open_id, controller.pages_raw, "닫을 때도 기억하지 않는다")
+                self.assertEqual(controller.open_pages()[field], "", "다시 열어도 칸에 다시 채워지지 않는다")
+                self.assertNotIn(KEY[:12], repr(controller.pages_raw) + repr(controller.view()) + repr(controller.pages_view()))
+                self.assertFalse(controller.remember_pages(keyed), "직접 기억을 시켜도 거절한다")
+
+    def test_a_value_with_any_shape_the_masking_engine_hides_is_not_remembered_either(self):
+        """저장 검사기(`secret_spots`)가 아는 여섯 유형 밖의 모양(독립 검증 S 참고-2: Slack·OpenAI·Stripe·주소 속 사용자 정보)도 기억하지 않는다 — 가리기 엔진이 가리는 글은 칸에 다시 채우지 않는다."""
+        samples = {"Slack 토큰": "xo" + "xb-" + "1234567890-" + "abcdefghijkl", "OpenAI 프로젝트 키": "sk-" + "proj-" + "A1b2C3d4E5f6G7h8I9j0K1", "주소 속 사용자 정보": "https://user:" + "pw@img.example.invalid/a.jpg",
+                   "Stripe 키": "sk_" + "live_" + "A1b2C3d4E5f6G7h8I9j0K1L2"}
+        for name, shape in samples.items():
+            self.assertTrue(rules.would_be_masked(shape), f"시험 값이 정말 엔진이 가리는 모양이다: {name}")
+            for field in ("category", "image_url", "tags", "description"):
+                with self.subTest(shape=name, field=field):
+                    controller = self.opened()
+                    self.assertFalse(controller.remember_pages(dict(RAW, **{field: shape})))
+                    self.assertNotIn(controller.open_id, controller.pages_raw)
+        self.assertFalse(rules.would_be_masked("평범한 한 줄 설명이에요."))
+        self.assertFalse(rules.would_be_masked(""))
+        self.assertFalse(rules.would_be_masked(None))
+        controller = self.opened()
+        self.assertTrue(controller.remember_pages(dict(RAW)), "평범한 값은 그대로 기억한다")
 
     def test_the_pages_values_are_remembered_when_the_dialog_is_closed_without_a_review(self):
         controller = self.opened()
@@ -1375,6 +1567,138 @@ class PostsSourceRulesTest(unittest.TestCase):
         imported = {alias.name if isinstance(node, ast.Import) else f"{node.module}.{alias.name}" for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
         for banned in ("pages_flow", "naver_flow", "external", "capabilities", "gitrepo", "gate", "backup_flow", "doctor"):
             self.assertFalse([name for name in imported if name.endswith(banned) or f".{banned}." in name], banned)
+        self.assertEqual(self.service_problems((UI_DIR / "posts_adapter.py").read_text(encoding="utf-8")), [], "아래 강화된 검사도 통과한다(가져오기·별칭·속성·컨텍스트 호출을 모두 따라간다)")
+
+    # ---- 강화(독립 검증 S 권고-1·2): 서비스를 부르는 길을 가져오기·별칭·속성까지 따라가고, Qt 의 파일 쓰기 도구도 막는다 ------------------------------------------------------------------
+    SERVICE_IMPORTS = {"own_posts": "chanceblog_desktop.service.own_posts", "project_service": "chanceblog_desktop.service.projects", "review_service": "chanceblog_desktop.service.review",
+                       "make_context": "chanceblog_desktop.service.context.make_context", "PagesParams": "chanceblog_desktop.service.previews.PagesParams"}
+    SERVICE_USES = {"own_posts.read_own_files", "own_posts.check_pasted_text", "own_posts.SUBJECT", "project_service.list_projects", "project_service.show_project", "project_service.new_project",
+                    "project_service.import_html", "review_service.request_review", "review_service.grant_approval", "review_service.revoke_approval"}      # 함수 아홉 + 상수 하나(`SUBJECT` — 붙여 넣은 글 거절 문장의 항목 이름)
+    CTX_USES = {"ctx.reading_only", "ctx.settings.naver_profile_dicts"}
+    DYNAMIC_NAMES = {"getattr", "setattr", "delattr", "vars", "globals", "locals", "__import__", "importlib", "import_module", "eval", "exec", "compile"}
+    QT_FILE_NAMES = {"QFile", "QSaveFile", "QTemporaryFile", "QTemporaryDir", "QTextStream", "QDataStream", "QDir", "QStandardPaths", "QIODevice", "QIODeviceBase", "QLockFile", "QSettings",
+                     "QFileSystemWatcher", "QFileDialog"}
+    QT_WRITE_WORDS = {"WriteOnly", "ReadWrite", "Append", "Truncate", "NewOnly", "mkpath", "rmpath", "getSaveFileName", "getExistingDirectory"}
+
+    @staticmethod
+    def absolute(node, package="chanceblog_desktop.ui"):
+        """`from … import` 가 가리키는 모듈의 전체 이름 — 점 하나는 이 파일이 있는 꾸러미, 둘은 그 위 꾸러미다."""
+        if node.level == 0:
+            return node.module or ""
+        parts = package.split(".")
+        parts = parts[: len(parts) - (node.level - 1)]
+        return ".".join(parts + ([node.module] if node.module else []))
+
+    def service_problems(self, source):
+        """어댑터 소스가 서비스 층과 맺는 모든 연결이 허용 목록과 **정확히 같은지** 본다 → 어긋난 곳의 설명 목록(없으면 비어 있다).
+        ① 서비스에서 가져오는 이름은 `SERVICE_IMPORTS` 다섯뿐(`from ..service.x import y`·`as` 별칭·`from .. import service`·`*` 도 가져온 이름으로 센다, 절대 가져오기는 금지)
+        ② 서비스 모듈 별칭의 속성 접근은 `SERVICE_USES`(함수 아홉 + 상수 하나)와 같고, 별칭을 속성 접근 없이 그냥 쓰는 곳(다른 이름에 담기·인자로 넘기기)이 없다
+        ③ 컨텍스트(`ctx`·`self._context(...)` 를 담은 이름)의 속성 사슬은 `CTX_USES` 와 같다 ④ `getattr` 같은 동적 접근 이름이 없다."""
+        tree, problems = ast.parse(source), []
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        pairs = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                problems += [f"절대 가져오기는 쓰지 않는다: {alias.name}" for alias in node.names if alias.name.split(".")[0] == "chanceblog_desktop"]
+            elif isinstance(node, ast.ImportFrom):
+                base = self.absolute(node)
+                for alias in node.names:
+                    target = f"{base}.{alias.name}"
+                    if base == "chanceblog_desktop.service" or base.startswith("chanceblog_desktop.service.") or target == "chanceblog_desktop.service":
+                        pairs.append((alias.asname or alias.name, target))
+        if sorted(pairs) != sorted(self.SERVICE_IMPORTS.items()):
+            problems.append(f"서비스에서 가져오는 이름이 허용 목록과 다르다: {sorted(set(pairs) ^ set(self.SERVICE_IMPORTS.items()))}")
+        module_names = {local for local, target in pairs if target in {self.SERVICE_IMPORTS[name] for name in ("own_posts", "project_service", "review_service")}}
+        used = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in module_names and isinstance(node.ctx, ast.Load):
+                parent = parents.get(node)
+                if isinstance(parent, ast.Attribute) and parent.value is node:
+                    used.add(f"{node.id}.{parent.attr}")
+                else:
+                    problems.append(f"서비스 모듈 별칭을 속성 접근 없이 쓴다: {node.id} (줄 {node.lineno})")
+        if used != self.SERVICE_USES:
+            problems.append(f"서비스 모듈의 속성 사용이 허용 목록과 다르다: {sorted(used ^ self.SERVICE_USES)}")
+        roots = {"ctx"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr in ("_context", "_factory"):
+                roots |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+        chains = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and not isinstance(parents.get(node), ast.Attribute):
+                names, current = [], node
+                while isinstance(current, ast.Attribute):
+                    names.append(current.attr)
+                    current = current.value
+                if isinstance(current, ast.Name) and current.id in roots:
+                    chains.add("ctx." + ".".join(reversed(names)))
+        if chains != self.CTX_USES:
+            problems.append(f"컨텍스트의 속성 사슬이 허용 목록과 다르다: {sorted(chains ^ self.CTX_USES)}")
+        for node in ast.walk(tree):
+            name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
+            if name in self.DYNAMIC_NAMES:
+                problems.append(f"동적 접근 이름: {name} (줄 {node.lineno})")
+        return problems
+
+    def qt_write_problems(self, source):
+        """화면 층 소스의 Qt 파일 쓰기·경로 도구(`QFile` 열기 모드 쓰기·`QSaveFile`·`QTextStream`·`mkpath` …)를 이름으로 찾는다 → 설명 목록(없으면 비어 있다). 가져오기·이름·속성(`QtCore.QFile`)을 모두 본다."""
+        problems = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                problems += [f"Qt 파일 도구 가져오기: {alias.name} (줄 {node.lineno})" for alias in node.names if alias.name.split(".")[-1] in self.QT_FILE_NAMES]
+            elif isinstance(node, ast.Name) and node.id in self.QT_FILE_NAMES:
+                problems.append(f"Qt 파일 도구 이름: {node.id} (줄 {node.lineno})")
+            elif isinstance(node, ast.Attribute) and (node.attr in self.QT_FILE_NAMES or node.attr in self.QT_WRITE_WORDS):
+                problems.append(f"Qt 파일 도구·쓰기 모드: {node.attr} (줄 {node.lineno})")
+        return problems
+
+    def test_the_adapters_whole_surface_towards_the_service_is_the_allow_list_by_imports_aliases_and_attributes(self):
+        self.assertEqual(self.service_problems((UI_DIR / "posts_adapter.py").read_text(encoding="utf-8")), [])
+
+    def test_the_surface_check_catches_every_way_around_the_nine_calls(self):
+        """이 검사 자체를 합성 소스로 시험한다 — 진짜 어댑터 소스 끝에 우회 모양을 덧붙이면 빠짐없이 걸린다(독립 검증 S 권고-1: `from ..service.projects import delete_project` 같은 모양은 앞의 시험을 통과했다)."""
+        source = (UI_DIR / "posts_adapter.py").read_text(encoding="utf-8")
+        self.assertEqual(self.service_problems(source), [])
+        bypasses = {
+            "함수 이름으로 가져오기": "\nfrom ..service.projects import delete_project\n\n\ndef _extra(ctx):\n    delete_project(ctx, 'x')\n",
+            "다른 별칭으로 가져오기": "\nfrom ..service import projects as other_name\n\n\ndef _extra(ctx):\n    other_name.delete_project(ctx, 'x')\n",
+            "별칭을 다른 이름에 담기": "\n\ndef _extra(ctx):\n    alias = project_service\n    alias.delete_project(ctx, 'x')\n",
+            "별칭을 인자로 넘기기": "\n\ndef _extra(ctx):\n    return list(map(project_service.list_projects, [ctx]))[0], dict(vars=project_service)\n",
+            "허용 모듈의 다른 속성": "\n\ndef _extra(ctx):\n    project_service.delete_project(ctx, 'x')\n",
+            "getattr 로 부르기": "\n\ndef _extra(ctx):\n    getattr(project_service, 'delete_project')(ctx, 'x')\n",
+            "서비스 모듈 하나 더": "\nfrom ..service import backup_flow\n",
+            "별표 가져오기": "\nfrom ..service.projects import *\n",
+            "꾸러미째 가져오기": "\nfrom .. import service\n\n\ndef _extra(ctx):\n    service.projects.delete_project(ctx, 'x')\n",
+            "절대 가져오기": "\nimport chanceblog_desktop.service.projects\n",
+            "컨텍스트의 다른 속성": "\n\ndef _extra(ctx):\n    ctx.git.push()\n",
+            "컨텍스트를 다른 이름에 담기": "\n\ndef _extra(self):\n    context = self._context('read')\n    context.git.push()\n",
+            "가져오기 이름 하나 빼기": source.replace("from ..service.previews import PagesParams\n", ""),
+        }
+        for name, change in bypasses.items():
+            with self.subTest(way=name):
+                changed = change if name == "가져오기 이름 하나 빼기" else source + change
+                self.assertNotEqual(changed, source)
+                self.assertTrue(self.service_problems(changed), f"우회가 걸리지 않았다: {name}")
+
+    def test_the_screen_files_have_no_qt_file_write_tool_and_the_check_sees_every_shape(self):
+        """화면 층(`post*.py`)과 어댑터에는 `QFile`(쓰기 열기 모드)·`QSaveFile`·`QTextStream`·`QDir.mkpath` 같은 Qt 파일 도구가 없다(독립 검증 S 권고-2: 파이썬 쓰기 이름만 보던 시험이 `QFile` 쓰기를 못 잡았다)."""
+        for path in self.CORE + self.QT + [UI_DIR / "posts_adapter.py"]:
+            with self.subTest(file=path.name):
+                self.assertEqual(self.qt_write_problems(path.read_text(encoding="utf-8")), [])
+        base = (UI_DIR / "qt" / "post_parts.py").read_text(encoding="utf-8")
+        shapes = {
+            "QFile 쓰기 열기": "\nfrom PySide6.QtCore import QFile, QIODevice\n\n\ndef _extra():\n    QFile('a.txt').open(QIODevice.WriteOnly)\n",
+            "QSaveFile": "\nfrom PySide6.QtCore import QSaveFile\n",
+            "QTextStream": "\n\ndef _extra(device):\n    return QTextStream(device)\n",
+            "꾸러미 속성으로": "\n\ndef _extra(QtCore):\n    return QtCore.QFile('a.txt').open(QtCore.QIODevice.OpenModeFlag.Append)\n",
+            "폴더 만들기": "\n\ndef _extra(folder):\n    folder.mkpath('x')\n",
+            "저장 대화": "\n\ndef _extra(dialog):\n    return dialog.getSaveFileName(None, 'x')\n",
+            "설정 파일": "\nfrom PySide6.QtCore import QSettings\n",
+        }
+        self.assertEqual(self.qt_write_problems(base), [])
+        for name, extra in shapes.items():
+            with self.subTest(shape=name):
+                self.assertTrue(self.qt_write_problems(base + extra), f"Qt 파일 도구가 걸리지 않았다: {name}")
 
 
 if __name__ == "__main__":
