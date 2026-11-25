@@ -203,7 +203,8 @@ class FirstRunFixDocsTest(unittest.TestCase):
     NOW = {"A": (5, 2, 3, 2, 2, 4, 4, 4, 3), "B": (4, 4, 3, 2, 2, 4, 4, 4, 3)}                                                 # 1차 측정값으로 다시 매긴 점수(C6 만 바뀜 — M10)
 
     def setUp(self):
-        self.rows = [line for line in read("docs/DECISIONS.md").splitlines() if re.match(r"^\| D-81\d \|", line)]
+        self.rows = [line for line in read("docs/DECISIONS.md").splitlines() if re.match(r"^\| D-81\d \|", line)]          # 이 갈래의 번호 구간(2차 측정 뒤 도구를 정하는 행이 D-811 로 더해져도 이 시험은 그대로 맞다)
+        self.row = next((line for line in self.rows if line.startswith("| D-810 |")), "")
         self.guide = read(GUIDE)
         self.section = self.guide[self.guide.index("## 두 번째로 돌릴 때"):]
         self.changelog = read("CHANGELOG.md")
@@ -213,18 +214,18 @@ class FirstRunFixDocsTest(unittest.TestCase):
         return sum(score * weight for score, weight in zip(scores, weights)) / 5
 
     def test_exactly_one_row_in_the_number_range_follows_another_row_of_the_big_table(self):
-        self.assertEqual([row.split(" | ")[0] for row in self.rows], ["| D-810"])
+        self.assertEqual([row.split(" | ")[0] for row in self.rows].count("| D-810"), 1)
         lines = read("docs/DECISIONS.md").splitlines()
-        at = lines.index(self.rows[0])
+        at = lines.index(self.row)
         self.assertTrue(lines[at - 1].startswith("| D-"), "앞 줄이 표의 행이라 표가 끊기지 않는다")
-        self.assertEqual(self.rows[0].count(" | "), 3, "번호 | 날짜 | 내용 | 상태")
-        self.assertTrue(self.rows[0].endswith(" |"))
-        self.assertIn("2026-11-25", self.rows[0].split(" | ")[1])
+        self.assertEqual(self.row.count(" | "), 3, "번호 | 날짜 | 내용 | 상태")
+        self.assertTrue(self.row.endswith(" |"))
+        self.assertIn("2026-11-25", self.row.split(" | ")[1])
         numbers = [int(re.match(r"^\| D-(\d+) ", row).group(1)) for row in self.rows]
         self.assertTrue(all(810 <= number <= 819 for number in numbers))
 
     def test_the_row_has_no_tilde_no_address_no_double_brace_and_nothing_unfinished(self):
-        row = self.rows[0]
+        row = self.row
         self.assertNotIn(TILDE, row)
         self.assertIsNone(URL.search(row))
         for word in UNFINISHED[:5]:
@@ -235,7 +236,7 @@ class FirstRunFixDocsTest(unittest.TestCase):
                      "사용자 폴더·임시 폴더 변수를 그 사용자 것으로 명시", "종료 코드 42", "시도 불가", "T-INST-04", "종료 740", "0.0.0.0", "6.5.0 이상이면 쓴다", "Korean.isl", "미확인", "컴파일 출력",
                      "ImageOS", "대문자", "vpk --version", "M20", "M17", "M19", "100자", "False", "실제 도구 결과", "M13", "대소문자까지 달라야 한다", "M15", "ws2_32", "M16", "M05", "30.6초", "30초",
                      "설치 로그에서 훅을 말하는 줄", "2차 측정 뒤에 정한다", "Run workflow 단추 한 번", "T2"):
-            self.assertIn(word, self.rows[0], word)
+            self.assertIn(word, self.row, word)
 
     def test_the_scores_in_the_row_are_what_the_design_table_adds_up_to(self):
         self.assertEqual(sum(self.WEIGHTS), 100)
@@ -243,7 +244,7 @@ class FirstRunFixDocsTest(unittest.TestCase):
         self.assertEqual({arm: self.total(self.NOW[arm], self.WEIGHTS) for arm in "AB"}, {"A": 63, "B": 68})
         changed = {arm: [index for index in range(9) if self.PRE[arm][index] != self.NOW[arm][index]] for arm in "AB"}
         self.assertEqual(changed, {"A": [5], "B": [5]})                                           # 측정이 바꾼 칸은 C6(롤백·복구 바탕) 하나뿐이다
-        row = self.rows[0]
+        row = self.row
         for word in ("A 63·B 68", "C6", "84", "81", "산수 정정", "약 16점"):
             self.assertIn(word, row, word)
         self.assertGreater(self.total(self.PRE["C"], self.WEIGHTS) - self.total(self.NOW["B"], self.WEIGHTS), 5)                  # 점수 차가 5점을 넘는다 — C 를 재야 결론이 난다
