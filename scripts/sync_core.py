@@ -5,11 +5,14 @@
 
 규칙(docs/ARCHITECTURE.md §4): vendor/ 안은 이 저장소에서 고치지 않는다. 고칠 일이 생기면 chanceblog 에서 고쳐 병합한 뒤 다시 가져온다.
 가져오는 파일은 아래 FILES 뿐이고(앱이 쓰는 것만), 목록을 바꾸는 것도 이 저장소의 PR 이다. 서브모듈·pip 설치는 쓰지 않는다.
+총 요약값(AS-S2 권고-6, D-692): 가져올 때 vendor/ 와 VENDOR.json 에 더해 `src/chanceblog_desktop/vendor_pin.py` 의 `PINNED_DIGEST`(파일 이름·해시·원본 커밋을 한 줄로 요약한 값)도 함께 다시 쓴다.
+`--check` 는 vendor/ 와 VENDOR.json 이 서로 맞는 것에 더해 그 요약값이 소스에 고정된 값과 같은지도 본다 — 파일과 목록만 같이 고친 변경은 이 값이 그대로라 걸린다. 소스 나무(`src/chanceblog_desktop`)가 없는 사본(시험용 임시 폴더)은 이 비교를 건너뛴다.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -34,6 +37,8 @@ SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 # --source 폴더의 origin 으로 인정하는 주소(chanceblog 의 https·ssh 주소). 아무 로컬 저장소나 chanceblog 로 기록되지 않게 한다.
 SOURCE_ORIGIN = re.compile(r"(?:https://(?:[^/\s]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)shine88pc/chanceblog(?:\.git)?/?", re.IGNORECASE | re.ASCII)
 PLAIN_FILE_MODES = ("100644", "100755")        # 링크(120000)·하위 모듈(160000)·폴더는 가져오지 않는다
+PIN_RELATIVE = "src/chanceblog_desktop/vendor_pin.py"      # vendor/ 의 총 요약값을 소스에 고정해 둔 파일(앱이 시작할 때 같은 값을 확인한다)
+PIN_LINE = re.compile(rb'^PINNED_DIGEST = "([0-9a-f]{64})"', re.MULTILINE)       # 그 파일에서 이 값을 담은 한 줄(꼭 한 줄이어야 한다) — 바이트로 바꿔 줄 끝(CRLF·LF)을 그대로 둔다
 _GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE")
 
 
@@ -52,6 +57,14 @@ def _is_link(path):
         return getattr(os.lstat(path), "st_reparse_tag", 0) in _REPARSE_TAGS
     except OSError:
         return False
+
+
+def _no_duplicates(pairs):
+    """같은 이름의 칸이 두 번 나오는 JSON 은 거절한다 — `json.loads` 는 마지막 값만 써서, 눈으로 보는 비교(앞 값)와 실제 값이 달라진다(AS-S2 참고, SC-13)."""
+    keys = [key for key, _value in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("같은 이름의 칸이 두 번 나온다")
+    return dict(pairs)
 
 
 def _walk(vendor):
@@ -104,7 +117,7 @@ def check(root=ROOT):
     if not manifest_path.is_file():
         return [f"vendor/{MANIFEST} 이 없다"]
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicates)
     except ValueError as error:
         return [f"vendor/{MANIFEST} 을 읽을 수 없다: {error}"]
     if not isinstance(manifest, dict):
@@ -141,7 +154,51 @@ def check(root=ROOT):
             else:
                 kind = "파일"
             problems.append(f"{rel}: VENDOR.json 에 없는 {kind}이 vendor/ 에 있다")
-    return problems
+    return problems + _pin_problems(root, vendor, manifest, files)
+
+
+def _load_pin(root):
+    """`root` 의 소스에 있는 `vendor_pin.py` 를 **파일 경로로** 불러온다(패키지 `chanceblog_desktop` 은 불러오지 않는다 — 그 안의 다른 모듈과 부수 효과가 없다) → 모듈. 소스 나무(`src/chanceblog_desktop`)가 없는 사본이면 None.
+    소스 나무가 있는데 이 파일이 없거나 링크이거나 읽을 수 없으면 RuntimeError."""
+    folder = Path(root) / "src" / "chanceblog_desktop"
+    if not folder.is_dir():
+        return None
+    path = folder / "vendor_pin.py"
+    if not path.is_file() or _is_link(path) or _is_shared(path):
+        raise RuntimeError(f"{PIN_RELATIVE} 가 없거나 링크다 — vendor/ 의 총 요약값을 소스에 고정해 둔 파일이라 이것 없이는 확인하거나 가져오지 않는다")
+    spec = importlib.util.spec_from_file_location("vendor_pin_under_sync", path)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as error:      # noqa: BLE001 - 어떤 오류든 이 파일을 믿을 수 없다는 뜻이다
+        raise RuntimeError(f"{PIN_RELATIVE} 를 불러올 수 없다({type(error).__name__})") from None
+    return module
+
+
+def _pin_problems(root, vendor, manifest, files):
+    """vendor/ 의 실제 파일·원본 커밋의 총 요약값이 소스에 고정된 값(`PINNED_DIGEST`)과 같은가 → 문제 글 목록. 다른 문제(파일 없음·링크 …)는 위에서 이미 알렸으므로 읽을 수 없으면 조용히 넘어간다."""
+    try:
+        pin = _load_pin(root)
+    except RuntimeError as error:
+        return [str(error)]
+    if pin is None:
+        return []
+    ref = manifest.get("ref")
+    actual = {}
+    for rel in files:
+        path = Path(vendor) / rel
+        if not isinstance(rel, str) or _is_link(path) or not path.is_file():
+            return []
+        actual[rel] = sha256(path.read_bytes())
+    if not (isinstance(ref, str) and FULL_SHA.fullmatch(ref)):
+        return []
+    pinned = PIN_LINE.findall((Path(root) / PIN_RELATIVE).read_bytes())
+    if len(pinned) != 1:
+        return [f"{PIN_RELATIVE} 에 PINNED_DIGEST 줄이 하나가 아니다({len(pinned)}개)"]
+    if pin.total_digest(ref, actual) != pinned[0].decode("ascii"):
+        return [f"vendor/ 의 파일 이름·해시·원본 커밋이 {PIN_RELATIVE} 에 고정된 총 요약값과 다르다 — vendor/ 와 {MANIFEST} 를 손으로 같이 고친 것이다(고정값이 그대로라 걸린다). "
+                "vendor/ 는 chanceblog 에서 고쳐 병합한 뒤 scripts/sync_core.py 로 다시 가져온다(그러면 이 고정값도 함께 바뀐다)"]
+    return []
 
 
 def _run_git(source, *args):
@@ -186,6 +243,7 @@ def sync(source, ref, root=ROOT):
     commit = _git(source, "rev-parse", "--verify", f"{ref}^{{commit}}").decode("ascii").strip()
     _verify_source(source, commit)
     contents = {rel: _read_file(source, commit, rel) for rel in FILES}
+    pin = _load_pin(root)                        # 소스 나무가 있는데 총 요약값 파일이 없거나 링크이면 아무것도 쓰기 전에 멈춘다(None 은 소스 나무가 없는 사본)
     vendor = Path(root) / "vendor"
     if vendor.exists() and _is_link(vendor):
         raise RuntimeError("vendor/ 자체가 링크(심볼릭 링크·정션)라 가져오지 않는다")
@@ -201,15 +259,21 @@ def sync(source, ref, root=ROOT):
         if not os.path.realpath(vendor / rel).startswith(real_vendor + os.sep):
             raise RuntimeError(f"{rel}: vendor/ 밖을 가리키는 경로라 지우지 않는다")
     manifest = {"source": SOURCE_REPO, "ref": commit, "files": {rel: sha256(data) for rel, data in contents.items()}}
-    planned = [(rel, data) for rel, data in contents.items()]
-    planned.append((MANIFEST, (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")))
-    locked = [rel for rel, _data in planned if os.path.lexists(vendor / rel) and not os.access(vendor / rel, os.W_OK)]
+    planned = [(rel, vendor / rel, data) for rel, data in contents.items()]                   # (보일 이름, 쓸 자리, 내용)
+    planned.append((MANIFEST, vendor / MANIFEST, (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")))
+    if pin is not None:                          # vendor/ 를 바꿀 때 소스에 고정한 총 요약값도 함께 바꾼다 — 같은 임시 파일 → 이름 바꾸기 길을 탄다
+        pin_path = Path(root) / PIN_RELATIVE
+        old_text = pin_path.read_bytes()
+        if len(PIN_LINE.findall(old_text)) != 1:
+            raise RuntimeError(f"{PIN_RELATIVE} 에 PINNED_DIGEST 줄이 하나가 아니라 값을 바꾸지 못한다")
+        digest = pin.total_digest(commit, manifest["files"]).encode("ascii")
+        planned.append((PIN_RELATIVE, pin_path, PIN_LINE.sub(lambda _match: b'PINNED_DIGEST = "' + digest + b'"', old_text, count=1)))
+    locked = [shown for shown, path, _data in planned if os.path.lexists(path) and not os.access(path, os.W_OK)]
     if locked:                                   # 읽기 전용이거나 바꿀 수 없는 파일이 있으면 아무것도 바꾸기 전에 멈춘다(일부만 갱신된 vendor/ 를 남기지 않는다)
         raise RuntimeError("vendor/ 의 파일을 바꿀 수 없다(읽기 전용이거나 다른 프로그램이 쓰는 중인지 본다): " + ", ".join(locked[:5]))
     staged = []
     try:
-        for rel, data in planned:                # 먼저 전부 같은 폴더의 임시 파일에 쓴다 — 여기서 실패하면(디스크 가득 등) vendor/ 는 아직 그대로다
-            path = vendor / rel
+        for _shown, path, data in planned:       # 먼저 전부 같은 폴더의 임시 파일에 쓴다 — 여기서 실패하면(디스크 가득 등) vendor/ 는 아직 그대로다
             path.parent.mkdir(parents=True, exist_ok=True)
             temp = path.with_name(path.name + ".sync-tmp")
             staged.append((temp, path))
@@ -245,7 +309,7 @@ def main(argv=None):
     except (RuntimeError, OSError) as error:        # 쓰다 실패한 파일 시스템 오류도 추적 기록(traceback) 대신 한 줄로 알린다
         print(error, file=sys.stderr)
         return 1
-    print(f"vendor/ 를 {SOURCE_REPO} 의 {commit[:12]} 로 다시 썼다({len(FILES)}개 파일). 이어서 시험을 돌리고 변경을 PR 로 올린다.")
+    print(f"vendor/ 를 {SOURCE_REPO} 의 {commit[:12]} 로 다시 썼다({len(FILES)}개 파일). 소스에 고정한 총 요약값({PIN_RELATIVE})도 함께 바뀌었다 — 이 파일의 변경도 같은 PR 에 포함한다. 이어서 시험을 돌리고 변경을 PR 로 올린다.")
     return 0
 
 
