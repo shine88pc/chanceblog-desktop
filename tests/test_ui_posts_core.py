@@ -525,6 +525,18 @@ class PostsKeyBlockPreviewTest(unittest.TestCase):
         self.assertTrue(rules._key_open_after(f"{everything}\n{head}\n{self.ONE}", False))
         self.assertTrue(rules._key_open_after(f"{everything} 평범한 글에 BEGIN 이라는 낱말만", False), "후보가 모두 글에 있으면 물을 수 없으니 열려 있다고 본다(더 많이 가리는 쪽)")
 
+    def test_the_probe_relies_on_two_facts_about_the_engine_and_they_are_pinned_here(self):
+        """① 사전 거름(보이는 ASCII 밖의 글자를 모두 지운다)이 엔진보다 느슨하다 — 엔진은 보이는 ASCII 를 하나도 안 지운다. ② 엔진에 붙여 묻는 세 글자 표지는 평범한 글 뒤는 물론 비밀 이름 뒤 줄에서도 가려지지 않는다
+        (가려지면 닫힌 키를 열린 것으로 읽어 더 많이 가릴 뿐 새지는 않지만, 가려지지 않는다는 것이 이 판정의 바탕이다). 엔진이 바뀌어 둘 중 하나가 깨지면 이 시험이 알린다."""
+        from chanceblog_desktop.security import mask as engine
+        printable = "".join(chr(code) for code in range(0x20, 0x7F))
+        self.assertEqual(engine._strip_invisible(printable), printable)
+        self.assertEqual(rules._NON_ASCII.sub("", "".join(chr(code) for code in range(0x80))), printable)
+        for lead in ("", "앞 글", "token:", "password=", "Bearer", "Authorization:", "key=", "api_key =", "Cookie:", "https://user:pw@host/path?token=", "sk-", "ghp_"):
+            for mark in rules._PROBE_MARKS:
+                with self.subTest(lead=lead, mark=mark):
+                    self.assertIn(mark, text.display_text(f"{lead}\n{mark}", 1000))
+
     def test_only_a_private_key_tail_closes_the_block_and_only_a_private_key_head_opens_it(self):
         """독립 검증 Q 2차 권고-3: 엔진은 개인 키 꼬리(`END … PRIVATE KEY`)만 꼬리로, 개인 키 머리만 머리로 본다 — 공개 키·인증서·서명 같은 다른 종류의 END 줄은 열린 블록을 닫지 않고, 다른 종류의 BEGIN 줄은 열지 않는다.
         (꼬리를 아무 END 줄로 읽도록 바뀌면 미리보기는 닫혔다고 보고 뒤 블록을 내보내는데 엔진은 글 끝까지 가린다.)"""
