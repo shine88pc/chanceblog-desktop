@@ -1412,6 +1412,10 @@ class AppShell(HistoryFlowMixin, PostFlowMixin, QMainWindow):
         """초안 화면의 `← 주제 후보`·`주제 후보로 가기` — 이미 있는 주제 후보 화면으로 간다(고친 내용이 있으면 `go` 가 확인창을 먼저 띄운다). 화면 부품은 화면 이동을 직접 부르지 않고 이 함수로 요청한다."""
         self.go("topics")
 
+    def history_go_posts(self, *_):
+        """발행 기록의 빈 화면 `글 검토로 가기`(글 흐름 1b) — 이미 있는 글 검토 화면(실제 메뉴)으로 간다. 화면 부품은 화면 이동을 직접 부르지 않고 이 셸 함수만 부른다(`go` 를 부르는 곳은 사이드바와 셸뿐이다)."""
+        self.go("posts")
+
     def _render_drafts(self):
         if self.state.page == "drafts":                                          # 다른 화면을 보는 중이면 값만 받아 둔다(떠난 뒤에 온 답은 컨트롤러가 버린다)
             self.render()

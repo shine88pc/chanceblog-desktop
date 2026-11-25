@@ -52,10 +52,6 @@ class HistoryFlowMixin:
         self.render()
         self._restore_focus("hist:more")
 
-    def history_go_posts(self, *_):
-        """빈 화면의 `글 검토로 가기` — 글 검토 화면으로 간다(메뉴와 같은 길 `go`)."""
-        self.go("posts")
-
     def history_toggle_log(self):
         """작업 로그 카드를 펴고 접는다 — 처음 펼칠 때(또는 지난 읽기가 실패했을 때)만 읽는다."""
         history = self.state.history
