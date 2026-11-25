@@ -21,6 +21,7 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "packaging"))                        # 출하 표(`pkgcommon`)를 읽는 시험이 이 파일 하나만 돌려도 되게(다른 시험 파일이 길을 열어 주는 데 기대지 않는다)
 import secret_support as sec  # noqa: E402
 import service_support as ss  # noqa: E402
 

@@ -4,8 +4,9 @@
 그래서 스위치가 꺼진 빌드에는 어떤 어댑터도 꽂히지 않고(`registered_kinds() == ()`), 접속 클라이언트 객체는 어댑터 공장 안에서만 만들어지므로 **기본 빌드에서는 한 번도 만들어지지 않는다**.
 종류와 스위치의 짝: `pages_git` ↔ 외부 쓰기 + git 가지 올리기(`pages_branch_push_enabled`) · `blogger` ↔ Blogger 로그인·읽기(`net_blogger_oauth_enabled`) · `naver_publish` ↔ 스위치 없음(늘 꽂지 않는다).
 
-`blogger` 의 공장은 BLOGGER 갈래(D-774)가 진짜로 바꿨다(`_blogger_factory` → `service/blogger_flow.py::make_blogger_adapter`). `pages_git` 의 자리표시자는 PUBPR 갈래가 자기 줄의 공장 이름만 바꾼다(예: `external.register(external.KIND_PAGES_GIT, make_branch_backend)`).
-`pages_git` 자리표시자는 스위치를 잘못 켜도 안전하게 아무것도 열지 않는다(파일만 읽는 `LocalOnlyBackend` 와 같은 일을 한다).
+지금(NET 갈래)은 진짜 어댑터 공장이 아직 없다. 아래 두 `_…_placeholder` 가 그 자리를 채운다 — **PUBPR·BLOGGER 갈래가 자기 줄의 공장 이름만 바꾼다**(예: `external.register(external.KIND_PAGES_GIT, make_branch_backend)`).
+자리표시자는 스위치를 잘못 켜도 안전하게 아무것도 열지 않는다(`pages_git` 은 파일만 읽는 `LocalOnlyBackend` 와 같은 일을 하고, `blogger` 는 부르는 곳이 아직 없다).
+덧붙임(BLOGGER 갈래, D-774): `blogger` 의 자리표시자는 진짜 공장 `_blogger_factory`(→ `service/blogger_flow.py::make_blogger_adapter`)로 바뀌었다 — 위 문장의 '`blogger` 는 부르는 곳이 아직 없다' 는 옛 상태다.
 """
 from __future__ import annotations
 
