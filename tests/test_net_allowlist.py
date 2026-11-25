@@ -173,6 +173,70 @@ class ImportTimeTest(unittest.TestCase):
     def test_the_default_app_modules_do_not_load_ssl_or_http_client_when_imported(self):
         self.assertEqual(self.loaded_after_importing(self.DEFAULT_MODULES), [], "기본 모듈이 가져오는 순간 접속 코드(ssl·http.client·net.client)를 불러왔다 — 접속 틀은 쓰는 함수 안에서 불러온다")
 
+    CONNECTION = ("chanceblog_desktop.net.client", "chanceblog_desktop.net.site")
+
+    @classmethod
+    def top_level_connection_imports(cls, source, package):
+        """모듈 맨 위(함수 몸통 안은 뺀다 — 클래스 몸통·`if`·`try` 안은 가져올 때 돌므로 센다)에서 접속 틀(`net.client`·`net.site`)을 가져오는 문장 → [문장 글]. `package` 는 이 파일이 든 패키지(상대 가져오기를 풀 때 쓴다)."""
+        found = []
+
+        def hits(name):
+            return any(name == target or name.startswith(target + ".") for target in cls.CONNECTION)
+
+        def visit(nodes):
+            for node in nodes:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if isinstance(node, ast.Import):
+                    if any(hits(alias.name) for alias in node.names):
+                        found.append(ast.unparse(node))
+                elif isinstance(node, ast.ImportFrom):
+                    parts = package.split(".")
+                    if node.level:
+                        parts = parts[:len(parts) - (node.level - 1)]
+                        base = ".".join(parts + ([node.module] if node.module else []))
+                    else:
+                        base = node.module or ""
+                    if hits(base) or (base == "chanceblog_desktop.net" and any(hits(base + "." + alias.name) for alias in node.names)):
+                        found.append(ast.unparse(node))
+                for field in ("body", "orelse", "finalbody", "handlers"):
+                    children = getattr(node, field, None)
+                    if children:
+                        visit(children)
+        visit(ast.parse(source).body)
+        return found
+
+    def test_no_app_module_imports_the_connection_frame_at_module_top_level(self):
+        """Q 재검증 권고-3(변이 Z43) — '접속 틀은 쓸 때만 불러온다' 를 위의 깨끗한 인터프리터 시험은 일곱 모듈에서만 확인해서, 목록에 없는 모듈(`ui/ocr_adapter.py` 같은)이 맨 위에서 `net.client`·`net.site`
+        를 가져와도 초록이었다. 이제 앱 소스 **모든 파일**을 구문 분석해 모듈 맨 위(함수 몸통 밖)의 접속 틀 가져오기가 0 개임을 본다(함수 안에서 가져오기는 허용 — 쓸 때 처음 불러온다).
+        예외는 접속 틀 자신뿐이다: `net/client.py`(`ssl`·`http.client` 를 가져오는 그 파일)와 `net/site.py`(그것을 쓰는 공개 확인 어댑터). `net/__init__.py` 는 아무것도 가져오지 않는다."""
+        offenders = []
+        for path in files():
+            rel = path.relative_to(SRC).as_posix()
+            if rel in ("net/client.py", "net/site.py"):
+                continue
+            package = ".".join(("chanceblog_desktop",) + path.relative_to(SRC).parts[:-1])
+            for statement in self.top_level_connection_imports(path.read_text(encoding="utf-8"), package):
+                offenders.append((rel, statement))
+        self.assertEqual(offenders, [], "맨 위에서 접속 틀을 가져오는 모듈이 있다 — 쓰는 함수 안에서 가져온다(기본 빌드가 시작 때 ssl·http.client 를 불러오지 않게)")
+        init = ast.parse((SRC / "net" / "__init__.py").read_text(encoding="utf-8"))
+        self.assertEqual([ast.unparse(node) for node in ast.walk(init) if isinstance(node, (ast.Import, ast.ImportFrom))], [], "`net/__init__.py` 는 아무것도 가져오지 않는다")
+
+    def test_the_top_level_connection_import_scan_is_not_blind_it_catches_synthetic_shapes(self):
+        """대조 — 위 훑기가 합성 소스의 맨 위 가져오기 모양(상대·절대·`from 패키지 import 모듈`·`if`·`try`·클래스 몸통)을 잡고, 함수 안·표나 오류만 가져오는 문장은 잡지 않는다(빈 실험이 아니다)."""
+        caught = ("from ..net import client", "from ..net.site import site_fetcher", "from ..net.client import NetClient", "import chanceblog_desktop.net.client", "import chanceblog_desktop.net.site as s",
+                  "from chanceblog_desktop.net import site", "from chanceblog_desktop.net.client import x", "if True:\n    from ..net import client", "try:\n    from ..net import client\nexcept ImportError:\n    client = None",
+                  "class K:\n    from ..net import site")
+        for source in caught:
+            with self.subTest(source=source):
+                self.assertTrue(self.top_level_connection_imports(source, "chanceblog_desktop.ui"), source)
+        let_pass = ("from ..net import errors", "from ..net import usage as net_usage", "from ..net.endpoints import ENDPOINTS", "import chanceblog_desktop.net.errors", "def f():\n    from ..net.site import site_fetcher\n    return site_fetcher",
+                    "def f():\n    import chanceblog_desktop.net.client\n", "import os")
+        for source in let_pass:
+            with self.subTest(source=source):
+                self.assertEqual(self.top_level_connection_imports(source, "chanceblog_desktop.ui"), [], source)
+        self.assertTrue(self.top_level_connection_imports("from . import client", "chanceblog_desktop.net"), "같은 패키지 안의 상대 가져오기도 푼다")
+
     def test_the_watch_is_not_blind_importing_the_client_does_load_them(self):
         """대조 — 접속 틀을 직접 가져오면 감시 대상이 모두 불려 온다(위 시험이 빈 실험이 아니다)."""
         loaded = self.loaded_after_importing(("chanceblog_desktop.net.site",))

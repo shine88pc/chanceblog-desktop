@@ -81,7 +81,7 @@ python -m venv ..\chanceblog-package-venv
 | `licenses` | `LICENSES/` 의 다섯 파일이 있고 LGPL·GPL 전문과 고지문의 핵심 문장이 있다 |
 | `vendor_core` | 앱이 찾는 `vendor/` 자리가 실제 자리와 같고 `VENDOR.json` 해시가 같고 모듈이 불러와지며 그 파일들이 쓰는 표준 모듈이 묶음에 있다 |
 | `capabilities` | 소스 상수 스위치(외부 쓰기 `EXTERNAL_WRITE`·`BLOGGER_OAUTH_INPUT`·인터넷 접속 다섯 — `LOCAL_OCR` 는 알림 줄)에서 **켜진 것의 집합이 출하 표(`packaging/pkgcommon.py` 의 `SHIPPED_OPEN_SWITCHES`)와 정확히 같다** — 표 밖이 켜졌거나 표의 것이 꺼졌거나 상수가 없으면 실패. 지금 표는 비어 있어 모두 `False` 여야 한다(D-722). 모듈이 없어도 실패 — '모듈이 없음'과 '모듈은 있는데 안에서 가져오기 실패'는 다른 글로 알리고 `--allow-missing-gate` 는 앞의 것만 넘긴다 |
-| `tls` | 보안 접속(TLS) 부품 — `ssl` 이 불러와지고 기본 보안 환경이 만들어지며 윈도 신뢰 저장소에서 루트를 읽는다. 접속은 하지 않고 **실패해도 알림일 뿐 빌드를 거절하지 않는다**(묶음에서 `_ssl`·`libssl` 이 빠진 것을 빨리 알리려는 점검 — D-415 의 쌍둥이, D-723) |
+| `tls` | 보안 접속(TLS) 부품 — `ssl` 이 불러와지고 기본 보안 환경이 만들어지며 윈도 신뢰 저장소에서 루트를 읽는다. 접속은 하지 않고 출하 표(`SHIPPED_OPEN_SWITCHES`)가 비어 있는 동안은 **실패해도 알림일 뿐 빌드를 거절하지 않는다** — 표에 스위치가 하나라도 오르면 실패 조건이 되고 빌드는 `tls` 줄이 없는 묶음도 거절한다(묶음에서 `_ssl`·`libssl` 이 빠진 것을 빨리 알리려는 점검 — D-415 의 쌍둥이, D-723·D-738) |
 | `uac_manifest` | 실행 파일 매니페스트가 `asInvoker`(관리자 권한 요구 0) |
 | `qt_plugins` | `platforms/qwindows.dll`·`imageformats/qjpeg·qwebp·qsvg` 가 있고 `QImageReader` 가 jpeg·png·webp·svg 를 읽는다 |
 | `qt_screens` | 창 없이(offscreen) 화면 여섯(홈·후보·초안·Seed·블로그·설정)이 열리고 처리 못 한 예외가 없다 |

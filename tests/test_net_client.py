@@ -14,6 +14,7 @@ import dataclasses
 import hashlib
 import http.client
 import io
+import os
 import re
 import sys
 import tempfile
@@ -518,7 +519,8 @@ class RedirectTest(unittest.TestCase):
         self.assertNotIn("SECRETTOKEN", second, "다른 호스트로는 토큰을 보내지 않는다")
         self.assertIn("Host: cdn.example.net\r\n", second)
         self.assertIn("SECRETTOKEN", bytes(sockets[0].sent).decode("ascii"))
-        for location in ("https://other.example.net/f", "https://cdn.example.net/f?x=<script>", "https://cdn.example.net:8443/f", "http://cdn.example.net/f"):
+        for location in ("https://other.example.net/f", "https://cdn.example.net/f?x=<script>", "https://cdn.example.net:8443/f", "http://cdn.example.net/f",
+                         "https://cdn.example.net/f/x<y"):          # 마지막: 길 끝에 나쁜 글자가 붙은 주소(Q 재검증 참고-2 — 길 검사가 앞부분 일치로 느슨해져도 초록이던 틈, 변이 Z15)
             with self.subTest(location=location), mock.patch.object(client, "ENDPOINTS", table):
                 env, error = raised(self, self.redirect(location), "blogger_read", "GET", BLOG, bearer="t", switches=ns.USE_SWITCHES["blogger_read"])
                 self.assertEqual((error.code, len(env.dials)), ("NET_RESPONSE_INVALID", 1))
@@ -628,6 +630,18 @@ class ResponseLimitsTest(unittest.TestCase):
                 self.assertEqual(error.code, "NET_RESPONSE_INVALID")
         env, response = run(self, ns.http_response(200, chunked=True, body=b"y" * 777), limit=limit)
         self.assertEqual(response.body, b"y" * 777)
+
+    def test_the_read_limit_a_caller_may_ask_for_is_exactly_the_table_maximum(self):
+        """Q 재검증 참고-1(변이 Z22 — `limit > cap` 이 `> cap + 1` 이 돼도 초록이던 틈) — 호출하는 쪽이 부탁하는 읽기 상한은 표의 최대 응답 크기까지다: 정확히 최대는 되고 한 바이트라도 넘으면 접속 전에 프로그램 오류로 거절한다."""
+        cap = endpoints.ENDPOINTS["update_check"].max_response
+        env, response = run(self, ns.http_response(200, body=b"ok"), limit=cap)
+        self.assertEqual(response.body, b"ok")
+        for limit in (cap + 1, cap + 2):
+            with self.subTest(limit=limit):
+                env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"])
+                with env, og.Tripwire() as wire, self.assertRaises(errors.NetError) as caught:
+                    env.client.request("update_check", "GET", UPDATE_URL, limit=limit)
+                self.assertEqual((caught.exception.code, caught.exception.detail, env.dials, wire.calls), ("UNEXPECTED_ERROR", "update_check:limit", [], []))
 
     def test_a_short_body_and_two_content_lengths_are_refused_and_status_only_reads_no_body(self):
         env, error = raised(self, b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
@@ -800,35 +814,55 @@ class WireCapTest(unittest.TestCase):
         return ns.FakeSocket(stream=stream())
 
     def cut(self, sock, *, limit=1000, reason=errors.REASON_TOO_LARGE):
+        """끝없는 응답이 상한 안에서 끊기는지 본다. `reason` 은 이유 낱말 하나이거나 (너무 큼, 모양) 둘의 묶음이다.
+
+        묶음을 받는 까닭(Q 재검증 필수-1): 이 홍수를 **누가 끊는지는 파이썬 패치 판에 따라 다르다** — 옛 패치(3.12.0·3.10.5)의 `http.client` 에는 100 Continue 연속 답·끝 머리글 줄 수의 한도가 없어 우리 상한이 끊고
+        (이유 '너무 큼', 세부 `wire`), 최신 패치에는 그 한도가 있어 `http.client` 가 상한에 닿기 전에 스스로 끊는다(이유 '답의 모양'). 두 경우 모두 '끊김'이므로 코드·보낸 뒤 실패·읽은 바이트 상한·연결 닫힘·기록은 그대로 단언하고,
+        느슨한 것은 이유 낱말 하나뿐이다 — 그 대신 **이유와 읽은 바이트가 서로 맞아야 한다**: '너무 큼' 이면 세부가 `wire` 이고 읽은 바이트가 상한을 넘었고, '모양' 이면 읽은 바이트가 상한 이하(우리 상한은 건드리지도 않았다)다."""
         env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
         with env, og.Tripwire() as wire, self.assertRaises(errors.NetError) as caught:
             env.client.request("update_check", "GET", UPDATE_URL, limit=limit)
         self.assertEqual(wire.calls, [])
         error = caught.exception
         self.assertEqual((error.code, error.outcome_unknown), ("NET_RESPONSE_INVALID", True), f"{error.code} {error.detail} — 읽은 바이트 {sock.served}")
-        self.assertIn(reason, error.rendered().message)
+        reasons = reason if isinstance(reason, tuple) else (reason,)
+        said = [item for item in reasons if item in error.rendered().message]
+        self.assertEqual(len(said), 1, f"허용한 이유 {reasons} 가운데 정확히 하나가 있어야 한다: {error.rendered().message}")
         cap = 2 * limit + 2 * endpoints.MAX_HEADER_BYTES
         self.assertLessEqual(sock.served, cap + 8192, f"상한 {cap} 바이트를 넘겨 {sock.served} 바이트나 읽었다")
         self.assertTrue(sock.closed)
         self.assertEqual(env.usage.records()[0].error, "NET_RESPONSE_INVALID")
+        if said[0] == errors.REASON_TOO_LARGE:
+            self.assertEqual(error.detail, "update_check:wire", "'너무 큼' 은 받는 바이트 상한이 끊었다는 뜻이다")
+            self.assertGreater(sock.served, cap, f"'너무 큼' 인데 읽은 바이트 {sock.served} 가 상한 {cap} 을 넘지 않았다")
+        else:
+            self.assertLessEqual(sock.served, cap, f"'모양' 은 표준 라이브러리 한도가 상한 안에서 먼저 끊었다는 뜻인데 읽은 바이트 {sock.served} 가 상한 {cap} 을 넘었다")
 
     def test_the_wire_cap_is_twice_the_body_limit_plus_two_header_allowances(self):
         for limit in (0, 1, 1000, 1024 * 1024, 20 * 1024 * 1024):
             self.assertEqual(client._wire_cap(limit), 2 * limit + 2 * endpoints.MAX_HEADER_BYTES, limit)
 
     def test_endless_trailer_lines_after_a_complete_chunked_body_are_cut(self):
-        self.cut(self.flood(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n", b"X-Trailer: " + b"a" * 1000 + b"\r\n"))
+        """끝없는 끝 머리글 줄 — 옛 패치에서는 우리 상한이, 줄 수에 한도를 둔 최신 패치에서는 `http.client` 가 먼저 끊는다(Q 재검증 필수-1). 어느 쪽이든 끊기고 이유와 읽은 바이트가 서로 맞는다(`cut` 설명).
+        파이썬 판과 상관없이 우리 상한이 끊는다는 것은 바로 아래 '몇 줄 안 되는 큰 줄' 시험이 지킨다."""
+        self.cut(self.flood(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n", b"X-Trailer: " + b"a" * 1000 + b"\r\n"), reason=(errors.REASON_TOO_LARGE, errors.REASON_SHAPE))
+
+    def test_a_few_huge_trailer_lines_are_cut_by_our_cap_on_every_python(self):
+        """상한이 `http.client` 의 줄 수 한도와 상관없이 일한다는 증거 — 줄 하나가 약 59 KB(표준 라이브러리의 줄 한도 64 KiB 안)라 상한(133,072바이트)에 닿는 데 세 줄이면 되어 줄 수 한도(100)에 닿지 않는다.
+        그래서 어느 파이썬 판에서도 우리 상한이 끊고 이유는 늘 '너무 큼'(세부 `wire`, 읽은 바이트 > 상한)이다 — 위 시험처럼 이유를 느슨하게 받지 않는다."""
+        self.cut(self.flood(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n", b"X-Trailer: " + b"a" * 59_000 + b"\r\n"))
 
     @staticmethod
     def trailer_response(total):
-        """받은 바이트가 **정확히 `total`** 인 chunked 응답 — 머리글 + 본문 5바이트(`hello`) + 끝 머리글(트레일러) 줄들 + 끝 빈 줄. 줄은 1000바이트씩(마지막 줄만 다르다)."""
+        """받은 바이트가 **정확히 `total`** 인 chunked 응답 — 머리글 + 본문 5바이트(`hello`) + 끝 머리글(트레일러) 줄들 + 끝 빈 줄. 줄은 6만 바이트씩(마지막 줄만 다르다) — **줄이 몇 개 안 돼야 한다**:
+        최신 패치 파이썬의 `http.client` 는 끝 머리글 줄 수가 100 을 넘으면 스스로 끊어서(Q 재검증 필수-1), 천 바이트 줄로 상한 크기를 채우면 상한에 닿기 전에 끊겨 경계를 볼 수 없다(3.13 에서 확인)."""
         head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n"
         tail = b"\r\n"
         remaining = total - len(head) - len(tail)
         lines = []
-        while remaining > 1008:
-            lines.append(b"X-T: " + b"a" * 993 + b"\r\n")
-            remaining -= 1000
+        while remaining > 60_008:
+            lines.append(b"X-T: " + b"a" * 59_993 + b"\r\n")
+            remaining -= 60_000
         lines.append(b"X-T: " + b"a" * (remaining - 7) + b"\r\n")
         data = head + b"".join(lines) + tail
         assert len(data) == total, (len(data), total)
@@ -864,7 +898,13 @@ class WireCapTest(unittest.TestCase):
                 self.assertTrue(sock.closed)
 
     def test_an_endless_run_of_100_continue_answers_is_cut(self):
-        self.cut(self.flood(b"HTTP/1.1 100 Continue\r\n\r\n", b"HTTP/1.1 100 Continue\r\n\r\n"))
+        """끝없는 `100 Continue` 연속 답 — 옛 패치에서는 우리 상한이, 연속 답 수에 한도를 둔 최신 패치에서는 `http.client` 가 8 KB 쯤에서 먼저 끊는다(Q 재검증 필수-1). 어느 쪽이든 끊기고 이유와 읽은 바이트가 서로 맞는다(`cut` 설명)."""
+        self.cut(self.flood(b"HTTP/1.1 100 Continue\r\n\r\n", b"HTTP/1.1 100 Continue\r\n\r\n"), reason=(errors.REASON_TOO_LARGE, errors.REASON_SHAPE))
+
+    def test_a_few_huge_100_continue_answers_are_cut_by_our_cap_on_every_python(self):
+        """위와 같은 약속 — 연속 답 하나가 약 59 KB(머리글 한 줄이 줄 한도 안)라 상한에 세 번이면 닿아 연속 답 수 한도(100)에 닿지 않는다. 어느 파이썬 판에서도 우리 상한이 끊고 이유는 늘 '너무 큼'(세부 `wire`)이다."""
+        huge = b"HTTP/1.1 100 Continue\r\nX-Pad: " + b"a" * 59_000 + b"\r\n\r\n"
+        self.cut(self.flood(huge, huge))
 
     def test_a_flood_of_one_byte_chunks_is_cut_by_the_wire_cap_before_the_body_limit_is_reached(self):
         """덩어리 하나가 1바이트면 본문 1바이트에 틀이 5바이트다 — 본문 상한만으로는 6배를 읽어야 끊겼다."""
@@ -1281,6 +1321,41 @@ class ErrorChainTest(unittest.TestCase):
         self.assertNotIn(canary, "".join(traceback.format_exception(type(error), error, error.__traceback__)))
 
 
+class TlsGuidanceWordingTest(unittest.TestCase):
+    def test_the_action_sends_the_user_to_the_security_team_and_never_tells_to_turn_security_off(self):
+        """Q 재검증 참고-3(변이 Z37) — `NET_TLS_FAILED` 의 하실 일은 보안을 끄거나 예외로 두라고 하지 않고 정보 보안 담당자에게 문의하라고 한다(S 참고-7). 카탈로그와 문서가 함께 다른 말로 바뀌어도
+        동기 시험이 초록이던 틈 — 문구의 핵심 낱말을 못박는다."""
+        action = AppError("NET_TLS_FAILED", {}).rendered().action
+        self.assertIn("정보 보안 담당자에게 문의", action)
+        self.assertIn("앱은 확인을 건너뛰는 선택지를 두지 않아요", action)
+        for banned in ("끄고", "끄세요", "꺼 주", "예외로", "예외 처리", "허용 목록", "무시하고", "해제"):
+            self.assertNotIn(banned, action, banned)
+
+
+class HelperEnvironmentTest(unittest.TestCase):
+    """Q 재검증 필수-2 — 신뢰 저장소를 바꾸는 환경 변수(`SSL_CERT_FILE`·`SSL_CERT_DIR`)가 PC·러너에 걸려 있으면 접속 틀이 접속을 거절하므로(설계 C5) 시험 도우미가 이 둘을 비우지 않던 때는
+    정상 연결을 기대하는 시험 80개가 한꺼번에 빨개졌다. 가짜 전송기 도우미(`net_support.Harness`)가 안에서 두 변수를 비우고 끝나면 되돌린다(NT-45 는 변수를 직접 설정한다)."""
+
+    def test_the_fake_transport_helper_clears_the_trust_changing_variables_and_puts_them_back(self):
+        poisoned = {"SSL_CERT_FILE": "poison_file", "SSL_CERT_DIR": "poison_dir"}
+        with mock.patch.dict(os.environ, poisoned):
+            self.assertTrue(client._trust_env_changed(), "대조 — 변수가 걸려 있으면 생산 코드는 접속하지 않는다(그래서 도우미가 비워야 한다)")
+            env = ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"])
+            with env:
+                self.assertEqual([name for name in poisoned if name in os.environ], [], "도우미가 변수를 비우지 않았다")
+                self.assertFalse(client._trust_env_changed())
+                response = env.client.request("update_check", "GET", UPDATE_URL)
+            self.assertEqual(response.status, 200)
+            self.assertEqual({name: os.environ.get(name) for name in poisoned}, poisoned, "끝나면 원래 값으로 되돌린다")
+
+    def test_a_request_through_the_helper_succeeds_with_either_variable_alone(self):
+        for name in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+            with self.subTest(name=name), mock.patch.dict(os.environ, {name: "poison"}):
+                env, response = run(self, OK_JSON)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(os.environ.get(name), "poison")
+
+
 class SiteFetcherTest(unittest.TestCase):
     """공개 확인 `fetcher`(D-736)는 vendor 확인 도구가 넘기는 `limit`(상태만 볼 때 0 = 본문을 읽지 않음)과 `Accept-Encoding` 을 그대로 지킨다(G-5(b) — 변이 Q46)."""
 
@@ -1391,6 +1466,15 @@ class FileDownloadTest(unittest.TestCase):
             self.assertEqual((result.status, result.file_size, result.file_sha256, result.body), (200, len(body), digest, b""))
             self.assertEqual(dest.read_bytes(), body)
             self.assertEqual(env.usage.records()[0].received > len(body), True)
+
+    def test_a_one_byte_download_is_a_success(self):
+        """Q 재검증 참고-1(변이 Z11 — 받을 크기의 최소를 2 로 해도 초록이던 틈) — 받을 크기가 1 바이트인 내려받기도 성공이다(0 은 거절한다 — 아래 시험)."""
+        digest = hashlib.sha256(b"x").hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "one.bin"
+            env, result = self.download(ns.http_response(200, body=b"x"), dest, max_bytes=1, expected_sha256=digest)
+            self.assertEqual((result.status, result.file_size, result.file_sha256), (200, 1, digest))
+            self.assertEqual(dest.read_bytes(), b"x")
 
     def test_every_bad_download_leaves_no_file_behind(self):
         """NT-36 — 해시가 틀리거나 너무 크거나 짧거나 압축됐거나 상태가 나쁘거나 중간에 끊겨도 목적지에 파일이 남지 않는다."""

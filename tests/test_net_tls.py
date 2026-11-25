@@ -203,6 +203,9 @@ class TlsBase(unittest.TestCase):
     def setUp(self):
         self.servers = []
         self.addCleanup(lambda: [server.close() for server in self.servers])
+        stack = contextlib.ExitStack()
+        ns.neutral_environment(stack)                              # 신뢰 저장소 환경 변수(`SSL_CERT_FILE`·`SSL_CERT_DIR`)가 걸린 PC·러너에서도 시험이 흔들리지 않게(Q 재검증 필수-2) — NT-45 는 시험 안에서 직접 설정한다
+        self.addCleanup(stack.close)
 
     def serve(self, *args, **kwargs):
         server = LoopbackTlsServer(*args, **kwargs)
@@ -492,6 +495,37 @@ class RefusedCertificateTest(TlsBase):
         self.assert_tls_failed(result, usage, server)
         self.assertEqual(server.versions, [], "TLS 1.1 로는 한 번도 연결되지 않았다")
 
+    def test_the_minimum_version_floor_itself_refuses_tls_1_1_even_when_the_security_level_would_allow_it(self):
+        """Q 재검증 권고-2(변이 Z41) — NT-44 는 파이썬 기본 보안 수준(2)이 TLS 1.1 을 막아 주는 덕에 초록이어서, 최소 TLS 1.2 약속(바닥)을 낮춰도(`_make_context` 와 마지막 방어를 둘 다 1.1 로) 못 가렸다
+        (바닥은 소스 글 고정 시험만 지켰다). 여기서는 클라이언트 쪽 보안 수준을 0 으로 낮춰 **바닥만** 남긴다: ① 대조 — 바닥을 1.1 로 낮추고(마지막 방어도 풀고) 보안 수준이 0 이면 이 서버와 실제로 TLS 1.1 로 연결된다
+        ② 생산 바닥(1.2)은 같은 조건에서도 거절한다 — 바닥을 낮춘 변이는 ② 가 연결돼 빨개진다."""
+        try:
+            server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY, minimum=ssl.TLSVersion.TLSv1_1, maximum=ssl.TLSVersion.TLSv1_1, ciphers="ALL:@SECLEVEL=0")
+        except (ssl.SSLError, ValueError) as error:
+            self.skipTest(f"이 파이썬의 OpenSSL 은 TLS 1.1 서버를 만들 수 없다({type(error).__name__}) — 변이 시험으로 대신한다")
+        if not self.lenient_client_reaches(server):
+            self.skipTest("이 파이썬의 OpenSSL 은 관대한 클라이언트로도 TLS 1.1 연결을 못 만든다 — '거절' 이 바닥의 일이라고 보일 수 없으니 변이 시험으로 대신한다")
+
+        def level_zero(lowered_floor):
+            def build():
+                context = ns.ORIGINAL_MAKE_CONTEXT()
+                if lowered_floor:
+                    context.minimum_version = ssl.TLSVersion.TLSv1_1
+                context.load_verify_locations(cadata=fx.GOOD_CERT)
+                context.set_ciphers("ALL:@SECLEVEL=0")
+                return context
+            return build
+        server.versions.clear()
+        result, usage = self.call(server, context=level_zero(True), _check_context=lambda context: None)           # ① 대조: 마지막 방어도 풀고 바닥을 1.1 로 낮춘 환경
+        if not isinstance(result, client.NetResponse):
+            self.skipTest(f"이 파이썬의 OpenSSL 은 바닥을 1.1 로 낮추고 보안 수준을 0 으로 해도 연결하지 못한다({getattr(result, 'code', '')}) — 대조가 없으면 아래 거절이 바닥의 일임이 보이지 않는다")
+        self.assertEqual(server.versions, ["TLSv1.1"], "대조: 바닥을 낮추면 실제로 TLS 1.1 로 연결된다")
+        server.versions.clear()
+        server.requests.clear()                                                                                       # 대조 연결의 기록을 지운다 — 아래 단언은 생산 바닥으로 낸 연결만 본다
+        result, usage = self.call(server, context=level_zero(False))                                                # ② 생산 바닥(1.2) + 보안 수준 0
+        self.assert_tls_failed(result, usage, server)
+        self.assertEqual(server.versions, [], "생산 바닥은 보안 수준이 0 이어도 TLS 1.1 로 한 번도 연결되지 않는다")
+
     @staticmethod
     def lenient_client_reaches(server):
         """양성 대조(독립 검증 G-3) — 최소 버전 1.1·보안 수준 0 인 **관대한** 클라이언트가 이 서버와 실제로 TLS 1.1 로 연결되는가. 그래야 접속 틀의 거절이 '서버가 1.1 을 못 말해서' 가 아니라 클라이언트의 일임이 보인다."""
@@ -666,7 +700,8 @@ class KeyLogTest(TlsBase):
         """S 재검증 권고-2(고친 뒤의 짝) — 환경 변수를 읽는 `create_default_context()` 대신 `SSLContext(PROTOCOL_TLS_CLIENT)` 를 직접 만들어도 보안에 관한 속성이 표준 기본 환경과 한 칸도 다르지 않다
         (프로토콜·검증 방식·호스트 이름 확인·검증 깃발·옵션·핸드셰이크 뒤 인증·최대 버전·공용 이름 확인·보안 수준·암호 목록·믿는 인증서 수). 다른 것은 두 가지뿐 — 최소 TLS 1.2 를 명시한 것과 열쇠 파일이 없는 것.
         시스템 기본 인증서를 읽는 `load_default_certs()` 는 한 번 부른다(빼먹으면 믿는 곳이 비어 윈도·리눅스에서 정상 접속이 모두 막힌다).
-        파이썬 3.13 부터는 표준 기본 환경이 검증 깃발(부분 사슬·엄격 검사)을 더해 이 시험이 빨개진다 — 그때 `_make_context` 도 같은 깃발을 따라야 하는지 검토한다는 뜻이다."""
+        검증 깃발은 하나만 예외다: 파이썬 3.13 부터 표준 기본 환경이 부분 사슬(`VERIFY_X509_PARTIAL_CHAIN`)·엄격 검사(`VERIFY_X509_STRICT`) 깃발을 더하는데 이 틀은 따르지 않는다(출하 파이썬 3.12 에는 없는 것이고
+        소스에서 `verify_flags` 이름을 막는 NT-12 규칙이 있다 — 따를지는 3.13 으로 올릴 때 정한다). 그래서 3.13 이상에서는 표준에만 있는 깃발이 정확히 그 둘이고 우리에게만 있는 깃발이 없다는 것까지만 본다(그 밖의 깃발 차이는 빨강)."""
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp, self.working_in(tmp), mock.patch.dict(os.environ):
             os.environ.pop("SSLKEYLOGFILE", None)
             standard = ssl.create_default_context()
@@ -675,14 +710,65 @@ class KeyLogTest(TlsBase):
                 ours = ns.ORIGINAL_MAKE_CONTEXT()
         self.assertEqual(loader.call_count, 1, "시스템 기본 인증서를 정확히 한 번 읽는다")
         self.assertIn(loader.call_args.args[1:], ((), (ssl.Purpose.SERVER_AUTH,)), "서버를 확인하는 용도의 기본 인증서")
-        for name in ("protocol", "verify_mode", "check_hostname", "verify_flags", "options", "post_handshake_auth", "maximum_version", "hostname_checks_common_name", "security_level"):
-            self.assertEqual(getattr(ours, name, None), getattr(standard, name, None), f"{name}: 표준 기본 환경과 다르다(파이썬 3.13 이상이면 검증 깃발을 따라야 하는지 검토한다)")
+        for name in ("protocol", "verify_mode", "check_hostname", "options", "post_handshake_auth", "maximum_version", "hostname_checks_common_name", "security_level"):
+            self.assertEqual(getattr(ours, name, None), getattr(standard, name, None), f"{name}: 표준 기본 환경과 다르다")
+        standard_flags, our_flags = int(standard.verify_flags), int(ours.verify_flags)
+        newer_only = int(ssl.VERIFY_X509_PARTIAL_CHAIN) | int(ssl.VERIFY_X509_STRICT)             # 3.13 부터 표준이 더하는 두 깃발(상수는 3.10 에도 있다)
+        only_standard = standard_flags - (standard_flags & our_flags)                              # 표준에만 있는 깃발의 비트
+        only_ours = our_flags - (standard_flags & our_flags)                                       # 우리에게만 있는 깃발의 비트
+        if sys.version_info >= (3, 13):
+            self.assertEqual((only_standard - (only_standard & newer_only), only_ours), (0, 0), "검증 깃발이 3.13 표준의 두 깃발 말고도 다르다")
+        else:
+            self.assertEqual(our_flags, standard_flags, "검증 깃발이 표준 기본 환경과 다르다")
         self.assertEqual(ours.get_ciphers(), standard.get_ciphers())
         self.assertEqual(ours.cert_store_stats(), standard.cert_store_stats(), "믿는 인증서 수가 표준 기본 환경과 다르다")
         self.assertIs(ours.verify_mode, ssl.CERT_REQUIRED)
         self.assertIs(ours.check_hostname, True)
         self.assertGreaterEqual(ours.minimum_version, ssl.TLSVersion.TLSv1_2)
         self.assertIsNone(ours.keylog_filename)
+
+
+class PoisonedEnvironmentTest(unittest.TestCase):
+    """Q 재검증 필수-2 — 신뢰 저장소를 바꾸는 환경 변수(`SSL_CERT_FILE`·`SSL_CERT_DIR`)가 걸린 PC·러너에서 이 모듈들의 접속 시험이 한꺼번에 빨개지지 않는다. 진짜 TLS 시험 도우미(`TlsBase.setUp`)가 두 변수를 비우는지
+    직접 보고, 새 인터프리터에서 두 변수를 일부러 설정한 채 접속 틀 시험 몇 묶음(가짜 전송기 둘·진짜 TLS 하나·접속 0 하나)이 통과하는지 본다 — 시험 도우미가 다시 변수에 기대면 빨개진다."""
+    ROOT = HERE.parent
+    CORE = ("test_net_client.ConnectionCloseTest", "test_net_client.RedirectTest", "test_net_tls.ValidCertificateTest", "test_net_zero.ConfirmedActionTest")
+
+    def test_the_real_tls_helper_clears_the_variables_in_setup_and_a_real_connection_still_works(self):
+        class Probe(TlsBase):
+            def runTest(self):
+                pass
+
+        poisoned = {"SSL_CERT_FILE": "poison_file", "SSL_CERT_DIR": "poison_dir"}
+        with mock.patch.dict(os.environ, poisoned):
+            self.assertTrue(client._trust_env_changed(), "대조 — 변수가 걸려 있으면 생산 코드는 접속하지 않는다(그래서 도우미가 비워야 한다)")
+            probe = Probe()
+            probe.setUp()
+            try:
+                self.assertEqual([name for name in poisoned if name in os.environ], [], "`TlsBase.setUp` 이 변수를 비우지 않았다")
+                server = probe.serve(fx.GOOD_CERT, fx.GOOD_KEY)
+                result, usage = probe.call(server)
+                self.assertIsInstance(result, client.NetResponse, f"변수가 걸려 있어도 진짜 연결 시험은 통과해야 한다({getattr(result, 'code', '')})")
+            finally:
+                probe.doCleanups()
+            self.assertEqual({name: os.environ.get(name) for name in poisoned}, poisoned, "끝나면 원래 값으로 되돌린다")
+
+    def test_core_tests_of_the_connection_modules_pass_in_a_process_that_sets_the_variables(self):
+        import subprocess
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            ca = Path(tmp) / "ca.pem"
+            ca.write_text(fx.GOOD_CERT, encoding="ascii")
+            code = ("import sys, unittest\nsys.path.insert(0, %r)\nsys.path.insert(0, %r)\n"
+                    "suite = unittest.defaultTestLoader.loadTestsFromNames(%r)\n"
+                    "result = unittest.TextTestRunner(stream=sys.stdout, verbosity=0).run(suite)\n"
+                    "print('RESULT', result.testsRun, len(result.failures), len(result.errors), len(result.skipped))\n"
+                    "sys.exit(0 if result.wasSuccessful() else 1)\n") % (str(self.ROOT / "src"), str(HERE), list(self.CORE))
+            env = dict(os.environ, PYTHONPATH="", PYTHONDONTWRITEBYTECODE="1", SSL_CERT_FILE=str(ca), SSL_CERT_DIR=tmp)
+            done = subprocess.run([sys.executable, "-X", "utf8", "-B", "-c", code], capture_output=True, text=True, encoding="utf-8", cwd=str(self.ROOT), env=env, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stdout[-1500:] + done.stderr[-600:])
+        result_line = [line for line in done.stdout.splitlines() if line.startswith("RESULT")][-1].split()
+        self.assertEqual(result_line[2:], ["0", "0", "0"], done.stdout[-1500:])
+        self.assertGreaterEqual(int(result_line[1]), 15, "돌린 시험이 너무 적다 — 이름이 바뀌었는지 본다")
 
 
 class TrustEnvironmentTest(TlsBase):

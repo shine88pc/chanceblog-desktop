@@ -5,6 +5,7 @@
 (진짜로 기다리지 않는다).
 """
 import contextlib
+import os
 import ssl
 import sys
 from pathlib import Path
@@ -20,6 +21,17 @@ ORIGINAL_MAKE_CONTEXT = client._make_context                   # 시험이 `_mak
 CANARY = "CANARY_" + "NET" + "_" + "KEY" + "0123456789"        # 조립한 가짜 비밀 — 저장소에는 키 모양 글이 없다
 VERSION = "1.2.3"
 _CONTEXT = []
+
+
+TRUST_ENV = client._TRUST_ENV                                   # 접속 틀이 있으면 접속하지 않는 환경 변수(설계 C5 — 지금은 `SSL_CERT_FILE`·`SSL_CERT_DIR`). 생산 목록을 그대로 써서 변수가 늘어도 도우미가 함께 비운다
+
+
+def neutral_environment(stack):
+    """신뢰 저장소를 바꾸는 환경 변수 둘을 비운 환경을 `stack` 에 더한다(독립 검증 Q 재검증 필수-2) — 사내 보안 프로그램·콘다·일부 러너·컨테이너가 이 변수를 걸어 두면 접속 틀이 접속을 거절해
+    정상 연결을 기대하는 시험이 한꺼번에 빨개진다. 시험 도우미(`Harness`·`test_net_tls.TlsBase`)가 쓰고 `stack` 이 닫히면 원래 값으로 되돌린다(변수를 직접 설정하는 NT-45 는 영향이 없다)."""
+    stack.enter_context(mock.patch.dict(os.environ))
+    for name in TRUST_ENV:
+        os.environ.pop(name, None)
 
 
 def shared_context():
@@ -169,6 +181,7 @@ class Harness:
 
     def __enter__(self):
         self.stack = contextlib.ExitStack()
+        neutral_environment(self.stack)                                                              # 신뢰 저장소 환경 변수가 걸린 PC·러너에서도 시험이 흔들리지 않게(Q 재검증 필수-2)
         for name in self.switches:
             self.stack.enter_context(mock.patch.object(capabilities, name, True))
         self.stack.enter_context(mock.patch.object(client, "_dial", self._dial))
