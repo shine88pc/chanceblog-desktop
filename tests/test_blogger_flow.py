@@ -382,7 +382,8 @@ class GateAndEntryPointTest(fs.FlowCase):
     switches = ()
 
     def test_every_blogger_entry_point_passes_its_gates_as_its_first_statements(self):
-        """BT-80 — 로그인·연결 확인·연결 해제는 첫 문장이 `require_net`, 초안 저장은 첫 두 문장이 `require_external_write` + `require_net("blogger_draft", …)` 이고 셋째가 확인이다."""
+        """BT-80 — 로그인·연결 확인·연결 해제는 첫 문장이 `require_net`, 초안 저장은 첫 두 문장이 `require_external_write` + `require_net("blogger_draft", …)` 이다.
+        그 뒤에는 구분 이름·글 번호를 **읽기만 하며** 풀고(없는 번호는 확인을 묻기 전에 알린다 — 기존 시험 `test_service_echo` 가 번호 자리 명령에 요구한다) 그다음이 확인이며, 확인은 저널·접속·쓰기가 시작되는 잠금 안으로 들어가기 전에 있다."""
         tree = ast.parse((SRC / "service" / "blogger_flow.py").read_text(encoding="utf-8"))
         functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
 
@@ -394,7 +395,10 @@ class GateAndEntryPointTest(fs.FlowCase):
         self.assertEqual(statements("disconnect")[0], "capabilities.require_net('blogger_oauth', 'Blogger 연결 해제')")
         save = statements("save_draft")
         self.assertEqual(save[:2], ["capabilities.require_external_write('Blogger 초안 저장')", "capabilities.require_net('blogger_draft', 'Blogger 초안 저장')"])
-        self.assertTrue(save[2].startswith("require_confirmation(confirmed,"))
+        confirm_at = next(index for index, text in enumerate(save) if text.startswith("require_confirmation(confirmed,"))
+        lock_at = next(index for index, text in enumerate(save) if text.startswith("with _slot_lock("))
+        self.assertLess(confirm_at, lock_at, "확인은 저널·접속·쓰기가 시작되는 잠금 안으로 들어가기 전에 있다")
+        self.assertEqual(save[2:confirm_at], ["slot = slot_key(slot)", "with ctx.store() as store:\n    project_id = resolve_id(store, project_text)"], "관문과 확인 사이에는 읽기뿐이다")
         for module, names in (("publish/blogger.py", {"get_blog": "USE_READ", "find_drafts": "USE_READ", "get_post": "USE_READ"}), ("publish/blogger_auth.py", {"exchange_code": "USE", "refresh_access_token": "USE", "revoke_token": "USE", "begin_login": "USE"})):
             inner = {node.name: node for node in ast.parse((SRC / module).read_text(encoding="utf-8")).body if isinstance(node, ast.FunctionDef)}
             for name, use in names.items():
