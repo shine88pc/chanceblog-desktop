@@ -196,5 +196,85 @@ class SectionsTest(unittest.TestCase):
         self.assertTrue(read("CHANGELOG.md").startswith("# 변경 이력"))
 
 
+class FirstRunFixDocsTest(unittest.TestCase):
+    """결정 D-810 — 설치 도구 시험 1차 측정 결과와 측정 도구 결함 정정을 적은 결정 행 하나·실행 안내의 '두 번째로 돌릴 때' 절·변경 이력 줄."""
+    WEIGHTS = (15, 20, 15, 10, 10, 10, 10, 5, 5)                    # 설계서 3-2 의 기준 아홉 개(C1에서 C9)의 가중
+    PRE = {"A": (5, 2, 3, 2, 2, 3, 4, 4, 3), "B": (4, 4, 3, 2, 2, 3, 4, 4, 3), "C": (3, 5, 5, 5, 5, 2, 4, 4, 4)}             # 문서만 읽고 매긴 사전 점수
+    NOW = {"A": (5, 2, 3, 2, 2, 4, 4, 4, 3), "B": (4, 4, 3, 2, 2, 4, 4, 4, 3)}                                                 # 1차 측정값으로 다시 매긴 점수(C6 만 바뀜 — M10)
+
+    def setUp(self):
+        self.rows = [line for line in read("docs/DECISIONS.md").splitlines() if re.match(r"^\| D-81\d \|", line)]
+        self.guide = read(GUIDE)
+        self.section = self.guide[self.guide.index("## 두 번째로 돌릴 때"):]
+        self.changelog = read("CHANGELOG.md")
+
+    @staticmethod
+    def total(scores, weights):
+        return sum(score * weight for score, weight in zip(scores, weights)) / 5
+
+    def test_exactly_one_row_in_the_number_range_follows_another_row_of_the_big_table(self):
+        self.assertEqual([row.split(" | ")[0] for row in self.rows], ["| D-810"])
+        lines = read("docs/DECISIONS.md").splitlines()
+        at = lines.index(self.rows[0])
+        self.assertTrue(lines[at - 1].startswith("| D-"), "앞 줄이 표의 행이라 표가 끊기지 않는다")
+        self.assertEqual(self.rows[0].count(" | "), 3, "번호 | 날짜 | 내용 | 상태")
+        self.assertTrue(self.rows[0].endswith(" |"))
+        self.assertIn("2026-11-25", self.rows[0].split(" | ")[1])
+        numbers = [int(re.match(r"^\| D-(\d+) ", row).group(1)) for row in self.rows]
+        self.assertTrue(all(810 <= number <= 819 for number in numbers))
+
+    def test_the_row_has_no_tilde_no_address_no_double_brace_and_nothing_unfinished(self):
+        row = self.rows[0]
+        self.assertNotIn(TILDE, row)
+        self.assertIsNone(URL.search(row))
+        for word in UNFINISHED[:5]:
+            self.assertNotIn(word, row)
+
+    def test_the_row_names_each_defect_what_was_done_and_what_stays_open(self):
+        for word in ("그 실패는 모두 측정 도구의 결함이었다", "통과 개수를 12 로 못박아", "열세 번째 점검", "SELFTEST_KEYS", "더 찍힌 점검은 막지 않는다", "원인 후보는 넷이다", "종료 코드가 비어", "환경을 물려받아", "기다리지 않고 바로 흔적을 봤", "컴퓨터 이름을 붙여", "spikeusera·spikeuserb·spikeuserc", "최대 45초 기다리며", "러너에서만 알 수 있다",
+                     "사용자 폴더·임시 폴더 변수를 그 사용자 것으로 명시", "종료 코드 42", "시도 불가", "T-INST-04", "종료 740", "0.0.0.0", "6.5.0 이상이면 쓴다", "Korean.isl", "미확인", "컴파일 출력",
+                     "ImageOS", "대문자", "vpk --version", "M20", "M17", "M19", "100자", "False", "실제 도구 결과", "M13", "대소문자까지 달라야 한다", "M15", "ws2_32", "M16", "M05", "30.6초", "30초",
+                     "2차 측정 뒤에 정한다", "Run workflow 단추 한 번", "T2"):
+            self.assertIn(word, self.rows[0], word)
+
+    def test_the_scores_in_the_row_are_what_the_design_table_adds_up_to(self):
+        self.assertEqual(sum(self.WEIGHTS), 100)
+        self.assertEqual({arm: self.total(self.PRE[arm], self.WEIGHTS) for arm in "ABC"}, {"A": 61, "B": 66, "C": 84})              # 설계서가 C 의 합계를 81 로 적은 것은 산수 오류다
+        self.assertEqual({arm: self.total(self.NOW[arm], self.WEIGHTS) for arm in "AB"}, {"A": 63, "B": 68})
+        changed = {arm: [index for index in range(9) if self.PRE[arm][index] != self.NOW[arm][index]] for arm in "AB"}
+        self.assertEqual(changed, {"A": [5], "B": [5]})                                           # 측정이 바꾼 칸은 C6(롤백·복구 바탕) 하나뿐이다
+        row = self.rows[0]
+        for word in ("A 63·B 68", "C6", "84", "81", "산수 정정", "약 16점"):
+            self.assertIn(word, row, word)
+        self.assertGreater(self.total(self.PRE["C"], self.WEIGHTS) - self.total(self.NOW["B"], self.WEIGHTS), 5)                  # 점수 차가 5점을 넘는다 — C 를 재야 결론이 난다
+
+    def test_the_guide_says_the_second_run_is_the_same_one_press_of_the_same_button(self):
+        for word in ("1차 결과에서 시험 도구 자체의 결함", "결정 D-810", "달라지지 않는다", "같은 단추로 한 번", "같은 곳", "입력칸도 새 절차도 없다", "물음표 대신 이유", "따로 한 줄씩", "시도 불가", "T-INST-04", "6.5.0 이상이면 쓴다", "미확인", "점검 목록 전부"):
+            self.assertIn(word, self.section, word)
+        self.assertNotIn(TILDE, self.section)
+        self.assertIsNone(URL.search(self.section))
+        self.assertNotIn("{{", self.section)
+        for word in ("비밀번호", "password", "토큰을 입력"):
+            self.assertNotIn(word, self.section)
+        self.assertEqual(re.findall(r"(?m)^(\d)\. ", self.guide), ["1", "2", "3", "4", "5", "6"])                                  # 하는 법의 번호 단계는 여섯 그대로다(절차를 늘리지 않았다)
+
+    def test_the_guide_adds_no_input_field_and_no_new_step_for_the_operator(self):
+        workflow = support.WORKFLOW.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertNotIn("inputs:", workflow)                                                      # 입력칸 0 — 워크플로는 이번에도 바뀌지 않았다
+        self.assertEqual(len(re.findall(r"(?m)^- ", self.section)), 5)                              # 새 절의 불릿은 '달라지는 것' 다섯 가지뿐이다
+
+    def test_the_changelog_line_names_the_decision_and_sits_in_the_preview_section(self):
+        line = next(item for item in self.changelog.splitlines() if "설치 도구 시험 1차 측정 결과를 읽고 측정 도구의 결함을 고쳤다" in item)
+        self.assertEqual(self.changelog.count("설치 도구 시험 1차 측정 결과를 읽고 측정 도구의 결함을 고쳤다"), 1)
+        for word in ("D-810", "변경 등급 T2", "12", "0.0.0.0", "러너: ? ?", "같은 Run workflow 단추 한 번"):
+            self.assertIn(word, line, word)
+        self.assertNotIn(TILDE, line)
+        self.assertIsNone(URL.search(line))
+        self.assertNotIn("{{", line)
+        self.assertLess(self.changelog.index(line), self.changelog.index("## [0.0.0]"))
+        self.assertGreater(self.changelog.index(line), self.changelog.index("## [0.1.0-preview.1]"))
+        self.assertEqual(self.changelog.count("설치 도구 시험(spike)을 NO-MERGE 가지에 준비했다"), 1)                          # 옛 줄은 그대로 한 번
+
+
 if __name__ == "__main__":
     unittest.main()
