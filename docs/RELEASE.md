@@ -139,7 +139,7 @@ Velopack 의 롤백·서명 검증은 '문서에 없음'일 뿐 코드는 미확
 | `version` | 글 | `stable` 은 `X.Y.Z`, `rc` 는 `X.Y.Z-rc.N`(N 은 1 이상, 앞자리 0 없음). 숫자는 ASCII 0–9 만·앞자리 0 없음 |
 | `tag` | 글 | `v` + `version` 과 정확히 같다 |
 | `seq` | 정수 | `issued_utc` 의 숫자 열네 자리(`YYYYMMDDhhmmss`)와 같은 수. 더 높은 판일 때 앱이 저장한 값보다 **커야** 한다 |
-| `issued_utc`·`expires_utc` | 글 | `YYYY-MM-DDThh:mm:ssZ`(UTC, 실제 있는 날짜). 발행 < 만료이고 만료 - 발행 은 200일 이하 |
+| `issued_utc`·`expires_utc` | 글 | `YYYY-MM-DDThh:mm:ssZ`(UTC, 실제 있는 날짜). 발행 < 만료이고 만료 - 발행 은 200일 이하(**추천은 발행 + 180일** — 앱은 20일의 여유를 두고 200일까지 받아들인다) |
 | `min_version` | 글 | 이 판으로 바로 올릴 수 있는 가장 낮은 버전(`version` 이하). 더 낮은 앱은 `UPDATE_NEEDS_MANUAL_INSTALL`(손으로 설치) |
 | `key_id` | 글 | 위 이름표 |
 | `commit` | 글 | 소스 커밋 40자리 소문자 16진수 |
