@@ -74,7 +74,7 @@
 
 | 데이터 | 위치 | 구조 번호가 있나 | 지금 판 | 판이 오를 때 앱이 하는 일 | 전체 백업에 담기나 |
 |---|---|---|---|---|---|
-| 글 보관함(프로젝트·판 기록·저장한 초안·주제 후보) | `chanceblog.db` | 있음(`user_version`) | 2 | 열 때 쓰기 잠금을 잡은 뒤 판을 올리고, 판 1 파일은 사본 `.v1.bak` 을 먼저 남긴다. 환경 문제로 못 하면 파일을 바꾸지 않고 `MIGRATION_BLOCKED`, 변환이 실패하면 되돌리고 `MIGRATION_FAILED` | 담는다 |
+| 글 보관함(프로젝트·판 기록·저장한 초안·주제 후보) | `chanceblog.db` | 있음(`user_version`) | 3 | 열 때 쓰기 잠금을 잡은 뒤 판을 올리고, 판 1 파일은 사본 `.v1.bak`·판 2 파일은 사본 `.v2.bak`(병합 기다리는 상태가 생긴 판 3 으로 오를 때) 을 먼저 남긴다. 환경 문제로 못 하면 파일을 바꾸지 않고 `MIGRATION_BLOCKED`, 변환이 실패하면 되돌리고 `MIGRATION_FAILED` | 담는다 |
 | 주제 엔진 보관함 | `topic_engine/topic_engine.db` | 있음(자체 `user_version`) | 2 | 판 1 파일은 사본 `.v1.bak` 을 남기고 한 트랜잭션으로 올린다 | 담는다 |
 | 블로그 프로필·Seed·캘린더 | `topic_engine/channel_profiles.json`·`seeds.json`·`calendar.json` | 있음(파일 안의 `schema` 숫자) | 파일마다 다름 | 저장할 때 직전 내용을 `.bak`(판 1 이면 `.v1.bak`)으로 먼저 남긴다 | 담는다 |
 | 설정(연결한 chanceblog 폴더·네이버 프로필) | `settings.json` | 소스를 확인한다 | — | — | 담는다(연결한 폴더의 전체 경로가 들어 있다) |
