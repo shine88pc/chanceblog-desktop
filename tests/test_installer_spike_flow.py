@@ -6,14 +6,17 @@ PyInstaller·실제 묶음 빌드) 그 갈래만 '없음' 이 되고 나머지�
 이 흉내가 진짜 도구와 같다는 보장은 없다 — 진짜 동작은 병합 뒤 운영자의 수동 실행이 알려 준다.
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
+import secrets
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import installer_spike_support as support  # noqa: E402
@@ -460,6 +463,208 @@ class StandardUserPasswordTest(unittest.TestCase):
         self.assertIn("사용자 만들기 실패", item["values"]["brief"])
         self.assertNotIn(password, json.dumps(ctx.results, ensure_ascii=False))
         self.assertEqual([call for call in calls if "/delete" in call], [])                         # 만들지 못한 사용자는 지울 것이 없다
+
+
+LIGHT_TOKEN = "Zq9xW3kLm2Vb7TnP"                                                                  # 시험이 고정한 '무작위' 부분 — 우연한 겹침으로 시험이 흔들리지 않게
+LIGHT_PASSWORD = "Sp1ke!" + LIGHT_TOKEN
+
+
+def light_m18(tmp, *, arm="A", environ=None, **switches):
+    """무거운 다섯 단계 없이 M18 하나만 가짜 세계에서 돌린다 → (가짜 세계, 문맥). 설치 파일은 가짜 세계가 만든 작은 가짜이고 비밀번호의 무작위 부분은 고정한다. environ 의 값이 None 이면 그 환경 변수를 뺀다."""
+    world = FakeWorld(tmp, **switches)
+    for key, value in (environ or {}).items():
+        if value is None:
+            world.environ.pop(key, None)
+        else:
+            world.environ[key] = value
+    setup = Path(tmp) / "fake-setup.exe"
+    world.new_setup(setup, {"kind": "velopack", "bundle": Path(tmp), "exe": "SpikeApp.exe", "id": "Fake", "version": "0.0.1"})
+    ctx = run.Context(Path(tmp) / "work", host=world)
+    ctx.results = []
+    ctx.state["installers"] = {key: {"tiny": {"0.0.1": {"setup": str(setup)}}} for key in "ABC"}
+    with mock.patch.object(secrets, "token_urlsafe", lambda size: LIGHT_TOKEN), contextlib.redirect_stdout(io.StringIO()):
+        run.measure.m18_standard_user(ctx, arm)
+    return world, ctx
+
+
+def everything_left(world, ctx):
+    """이 시도가 남긴 모든 글 — 기록·저장한 파일(결과·상태)·따로 도는 report 단계 모양(가릴 낱말을 모르는 새 문맥)이 만든 보고서(md·json·결과 블록)."""
+    ctx.save()
+    fresh = run.Context(ctx.work, host=world)
+    block, md, data = run.build_report(fresh)
+    text = "\n".join((json.dumps(ctx.results, ensure_ascii=False), (ctx.work / "results.json").read_text(encoding="utf-8"), (ctx.work / "state.json").read_text(encoding="utf-8"), block, md,
+                      json.dumps(data, ensure_ascii=False)))
+    folder = str(world.tmp)                                                                                  # 임시 폴더 이름은 무작위라 비밀번호 조각과 우연히 겹칠 수 있다 — 비교 전에 뺀다
+    for spelling in (folder, folder.replace("\\", "\\\\"), folder.replace("\\", "/")):
+        text = text.replace(spelling, "<폴더>")
+    return text
+
+
+def longest_piece(text, secret, floor=4):
+    """secret 의 연속 조각 가운데 text 에 (대소문자를 가리지 않고) 그대로 들어 있는 가장 긴 길이 — floor 글자 미만이면 0."""
+    lowered = text.lower()
+    for size in range(len(secret), floor - 1, -1):
+        for start in range(len(secret) - size + 1):
+            if secret[start:start + size].lower() in lowered:
+                return size
+    return 0
+
+
+class StandardUserEchoTest(unittest.TestCase):
+    """재작업 권고 2·3 — 임시 비밀번호가 어떤 모양으로 되울려도(잘리거나·대소문자가 바뀌거나·URL 인코딩되거나·줄이 나뉘거나·접두어가 빠져도) 기록·저장한 파일·보고서 어디에도 조각이 남지 않는다."""
+
+    def attempt(self, layout):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        world, ctx = light_m18(tmp.name, echo_layout=layout)
+        item = ctx.results[-1]
+        self.assertEqual((item["id"], item["status"]), ("M18", "unavailable"))
+        return item, everything_left(world, ctx)
+
+    def test_a_password_cut_in_the_middle_by_the_160_character_tail_leaves_no_piece(self):
+        layouts = {"뒤 150자": lambda pw: "access denied for " + pw + "y" * 150, "앞 5자": lambda pw: "x" * 5 + pw + "y" * 150, "대문자": lambda pw: "x" * 5 + pw.upper() + "y" * 150,
+                   "15글자 조각": lambda pw: "x" + pw + "y" * 145}
+        for label, layout in layouts.items():
+            with self.subTest(label):
+                item, text = self.attempt(layout)
+                self.assertIn("<가림>", item["note"])
+                self.assertEqual(longest_piece(text, LIGHT_PASSWORD), 0)
+
+    def test_upper_lower_and_swapped_case_echoes_are_hidden(self):
+        for label, convert in (("대문자", str.upper), ("소문자", str.lower), ("섞임", str.swapcase)):
+            with self.subTest(label):
+                item, text = self.attempt(lambda pw, convert=convert: "ACCESS denied for " + convert(pw) + " now")
+                self.assertTrue(item["note"].endswith("ACCESS denied for <가림> now"), item["note"])
+                self.assertEqual(longest_piece(text, LIGHT_PASSWORD), 0)
+
+    def test_a_url_encoded_echo_is_hidden_as_one_piece_including_the_prefix(self):
+        item, text = self.attempt(lambda pw: "GET /login?pw=" + quote(pw, safe="") + " 401")
+        self.assertTrue(item["note"].endswith("GET /login?pw=<가림> 401"), item["note"])                  # Sp1ke%21 접두어까지 한 덩어리로 — 인코딩한 모양도 가릴 낱말로 올렸다
+        self.assertEqual(longest_piece(text, LIGHT_PASSWORD), 0)
+
+    def test_an_echo_split_over_lines_or_spaced_out_is_hidden(self):
+        layouts = (lambda pw: "denied: " + pw[:9] + "\r\n" + pw[9:], lambda pw: "denied: " + pw[:5] + "\n    " + pw[5:], lambda pw: "denied: " + " ".join(pw))
+        for number, layout in enumerate(layouts):
+            with self.subTest(number):
+                item, text = self.attempt(layout)
+                self.assertIn("<가림>", item["note"])
+                self.assertEqual(longest_piece(text, LIGHT_PASSWORD), 0)
+
+    def test_an_echo_of_only_the_random_part_or_with_the_bang_dropped_or_escaped_is_hidden(self):
+        layouts = {"무작위 부분만": (lambda pw: "pw=" + pw[len("Sp1ke!"):], "pw=<가림>"), "느낌표 빠짐": (lambda pw: "pw=" + pw.replace("!", ""), "pw=Sp1ke<가림>"),
+                   "느낌표가 %21": (lambda pw: "pw=" + pw.replace("!", "%21"), "pw=<가림>")}
+        for label, (layout, expected) in layouts.items():
+            with self.subTest(label):
+                item, text = self.attempt(layout)
+                self.assertTrue(item["note"].endswith(expected), item["note"])                              # 무작위 부분은 한 글자도 남지 않는다(접두어 Sp1ke 는 비밀이 아니라 남는다)
+                self.assertEqual(longest_piece(text, LIGHT_TOKEN), 0)
+
+    def test_text_around_the_password_is_kept_so_the_note_still_says_what_happened(self):
+        item, text = self.attempt(lambda pw: "access denied for " + pw + " (code 5)")
+        self.assertTrue(item["note"].endswith("access denied for <가림> (code 5)"), item["note"])
+
+
+class StandardUserEnvironmentTest(unittest.TestCase):
+    """참고 2 — 환경 변수가 없으면 실제 폴더 이름(공용 사용자 폴더·사용자 폴더)을 짐작해 쓰지 않는다."""
+
+    def test_without_the_public_variable_no_user_is_made_and_nothing_is_run(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        world, ctx = light_m18(tmp.name, environ={"PUBLIC": None})
+        item = ctx.results[-1]
+        self.assertEqual((item["id"], item["status"]), ("M18", "unavailable"))
+        self.assertIn("환경 변수", item["values"]["brief"])
+        self.assertEqual(world.net_calls, [])                                                              # 사용자를 만들지 않았다
+        self.assertEqual(world.calls, [])                                                                  # 프로그램을 하나도 돌리지 않았다
+        self.assertEqual(ctx.secret_words, [])                                                             # 비밀번호도 만들지 않았다
+
+    def test_with_public_but_without_the_users_variable_the_profile_is_looked_for_above_public(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        public = str(Path(tmp.name) / "users" / "Public")                                                  # 가짜 세계의 사용자 폴더 뿌리 안
+        world, ctx = light_m18(tmp.name, environ={"SPIKE_USERS_DIR": None, "PUBLIC": public}, std_user_ok=True)
+        item = ctx.results[-1]
+        self.assertEqual(item["status"], "pass", item)                                                     # 가짜 PowerShell 이 위 폴더 아래에 남긴 흔적을 찾았다
+        self.assertEqual(len([call for call in world.net_calls if "/add" in call]), 1)
+
+    def test_the_users_variable_wins_over_the_folder_above_public(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        public = str(Path(tmp.name) / "somewhere" / "Public")                                              # 위 폴더에는 프로필이 없다 — 기본 SPIKE_USERS_DIR 가 가리키는 곳에 있다
+        world, ctx = light_m18(tmp.name, environ={"PUBLIC": public}, std_user_ok=True)
+        self.assertEqual(ctx.results[-1]["status"], "pass", ctx.results[-1])
+
+    def test_a_profile_folder_that_has_no_trace_is_not_called_a_pass(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        elsewhere = str(Path(tmp.name) / "elsewhere")
+        world, ctx = light_m18(tmp.name, environ={"SPIKE_USERS_DIR": elsewhere}, std_user_ok=True)
+        self.assertEqual(ctx.results[-1]["status"], "fail")                                                # 종료 0 인데 찾는 폴더에 설치 흔적이 없다
+
+
+class IsccLookupTest(unittest.TestCase):
+    """재작업 권고 4 — 정해진 자리에서 Inno 를 찾는 성공 길은 가짜 세계가 늘 '없다'고 답해 시험이 없었다. 가짜 세계의 present_files 로 '있다'를 만들되 후보는 임시 실제 파일이라 어느 PC·러너에서나 같다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name) / "candidates"
+        self.first, self.second = base / "one" / "ISCC.exe", base / "two" / "ISCC.exe"
+
+    def make(self, path, content, *, korean=False):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        if korean:
+            (path.parent / "Languages").mkdir(exist_ok=True)
+            (path.parent / "Languages" / "Korean.isl").write_text("x", encoding="utf-8")
+
+    def look(self, *, present=(), which=False):
+        world = FakeWorld(self.tmp.name, iscc_missing=not which, present_files={str(item) for item in present})
+        ctx = run.Context(Path(self.tmp.name) / "work", host=world)
+        with mock.patch.object(run, "ISCC_CANDIDATES", (str(self.first), str(self.second))):
+            return world, run.find_iscc(ctx)
+
+    def test_when_only_the_second_place_has_it_that_one_is_used_and_both_places_were_asked_in_order(self):
+        self.make(self.second, b"MZ-the-second-one", korean=True)
+        world, found = self.look(present=[self.second])
+        self.assertEqual(found["status"], "ok")
+        self.assertEqual(found["path"], str(self.second))
+        self.assertEqual(found["sha256"], hashlib.sha256(b"MZ-the-second-one").hexdigest())
+        self.assertIs(found["korean_isl"], True)
+        self.assertEqual((found["version"], found["version_ok"]), ("6.7.1.0", True))
+        self.assertEqual(world.file_checks, [str(self.first), str(self.second)])
+
+    def test_a_place_without_the_korean_language_file_says_so(self):
+        self.make(self.second, b"MZ-without-korean")
+        world, found = self.look(present=[self.second])
+        self.assertEqual(found["status"], "ok")
+        self.assertIs(found["korean_isl"], False)
+
+    def test_when_the_first_place_has_it_the_second_is_not_even_asked(self):
+        self.make(self.first, b"MZ-the-first-one", korean=True)
+        self.make(self.second, b"MZ-the-second-one", korean=True)
+        world, found = self.look(present=[self.first, self.second])
+        self.assertEqual(found["path"], str(self.first))
+        self.assertEqual(found["sha256"], hashlib.sha256(b"MZ-the-first-one").hexdigest())
+        self.assertEqual(world.file_checks, [str(self.first)])
+
+    def test_what_which_finds_comes_before_the_fixed_places(self):
+        self.make(self.first, b"MZ-the-first-one", korean=True)
+        self.make(self.second, b"MZ-the-second-one", korean=True)
+        world, found = self.look(present=[self.first, self.second], which=True)
+        self.assertEqual(found["path"], str(world.tmp / "inno" / "ISCC.exe"))
+        self.assertEqual(found["sha256"], hashlib.sha256(b"MZ-fake-iscc").hexdigest())
+        self.assertEqual(world.file_checks, [])                                                            # 찾았으니 정해진 자리는 묻지 않는다
+
+    def test_when_neither_which_nor_a_place_has_it_both_places_were_asked_and_it_is_unavailable(self):
+        world, found = self.look()
+        self.assertEqual(found["status"], "unavailable")
+        self.assertIn("ISCC.exe", found["reason"])
+        self.assertEqual(world.file_checks, [str(self.first), str(self.second)])
+        self.assertNotIn("path", found)
+
+    def test_the_fixed_places_are_the_two_program_files_folders_of_inno_setup_six(self):
+        self.assertEqual(run.ISCC_CANDIDATES, ("C:/Program Files (x86)/Inno Setup 6/ISCC.exe", "C:/Program Files/Inno Setup 6/ISCC.exe"))
 
 
 class BudgetTest(unittest.TestCase):

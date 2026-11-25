@@ -13,6 +13,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from urllib.parse import quote
 
 STATUSES = ("pass", "fail", "info", "skip", "unavailable", "error")
 ARMS = ("A", "B", "C")
@@ -86,17 +87,25 @@ def runner_problem(environ):
     return ""
 
 
-def hide_words(value, words):
-    """비밀 낱말(예: 임시 사용자의 임의 비밀번호)이 든 글을 가린다 — 사전·목록·글을 통째로, 긴 낱말부터. 네 글자보다 짧은 낱말은 글 속 우연한 겹침이 많아 무시한다."""
+def secret_pattern(words):
+    """가릴 낱말들을 한 번에 찾는 정규식(가릴 낱말이 없으면 None). 긴 낱말부터 고르고, 대소문자를 구분하지 않으며, 낱말의 글자 사이에 공백이나 줄바꿈이 끼어 있어도(되울림이 줄이 나뉘어 나올 때) 찾는다.
+    네 글자보다 짧은 낱말은 글 속 우연한 겹침이 많아 무시한다."""
     ordered = sorted({word for word in words if isinstance(word, str) and len(word) >= 4}, key=lambda item: (-len(item), item))
     if not ordered:
+        return None
+    return re.compile("|".join(r"\s*".join(re.escape(char) for char in word) for word in ordered), re.IGNORECASE)
+
+
+def hide_words(value, words):
+    """비밀 낱말(예: 임시 사용자의 임의 비밀번호)이 든 글을 가린다 — 사전·목록·글을 통째로, 긴 낱말부터. 대소문자가 달라도, 낱말 한가운데에 공백이나 줄바꿈이 끼어도 가린다(되울림의 변형).
+    다른 글자가 끼거나(예: 줄 이음표) 낱말의 일부만 되울리면 못 가린다 — 일회용 가상 머신의 임시 값이라 위험이 작다고 보고 문서(D-708)에 한계로 적었다."""
+    pattern = secret_pattern(words)
+    if pattern is None:
         return value
 
     def walk(item):
         if isinstance(item, str):
-            for word in ordered:
-                item = item.replace(word, "<가림>")
-            return item
+            return pattern.sub("<가림>", item)
         if isinstance(item, dict):
             return {(walk(key) if isinstance(key, str) else key): walk(inner) for key, inner in item.items()}
         if isinstance(item, (list, tuple)):
@@ -418,6 +427,7 @@ PACK_SECONDS_LIMIT = 300
 DEFENDER_BUDGET_SECONDS = 420
 BUDGET_SECONDS = 1500
 STD_USER = "spikeuser"
+PASSWORD_PREFIX = "Sp1ke!"
 RUNNER_REFUSAL = ("이 도구는 GitHub 의 일회용 윈도 러너 안에서만 돈다 — 방화벽 규칙·가짜 자격 증명·임시 사용자 만들기·프로그램 이름으로 끝내기를 하므로 개발 PC 에서는 돌리지 않는다"
                   "(환경 변수 GITHUB_ACTIONS 가 true, RUNNER_OS 가 Windows 이고 RUNNER_TEMP 가 있어야 한다).")
 
@@ -598,6 +608,10 @@ class Context:
         if isinstance(word, str) and len(word) >= 4 and word not in self.secret_words:
             self.secret_words.append(word)
 
+    def mask(self, text):
+        """글에서 가릴 낱말을 가려 돌려준다. 글을 자르기(tail) 전에 불러야 한다 — 자른 뒤에 가리면 낱말 한가운데가 잘려 낱말 전체가 안 맞아 조각이 그대로 남는다(독립 검증 재작업 권고 2)."""
+        return hide_words(text, self.secret_words)
+
     def add(self, rec):
         rec = hide_words(rec, self.secret_words)
         self.results.append(rec)
@@ -611,7 +625,7 @@ class Context:
         try:
             return function(*args)
         except Exception as error:                              # 측정 하나가 죽어도 보고서는 만들어져야 한다
-            self.add(record(mid, arm, "error", note="%s: %s" % (type(error).__name__, tail(str(error), 200)), brief="오류 " + type(error).__name__))
+            self.add(record(mid, arm, "error", note="%s: %s" % (type(error).__name__, tail(self.mask(str(error)), 200)), brief="오류 " + type(error).__name__))
             return None
 
     def note_step(self, name, status, seconds, **extra):
@@ -1272,6 +1286,16 @@ def std_user_script():
             "exit $p.ExitCode")
 
 
+def std_user_folders(ctx):
+    """표준 사용자 시험이 건드리는 폴더 둘 → (공용 폴더 안의 작업 자리, 사용자 프로필 폴더) 또는 None. 환경 변수 PUBLIC(윈도 표준 — 러너에서는 공용 사용자 폴더)이 없으면 None 이다 — 실제 폴더 이름을 짐작해 쓰지 않는다.
+    프로필이 생기는 뿌리는 SPIKE_USERS_DIR(시험이 지정)이 있으면 그것, 없으면 PUBLIC 의 위 폴더(러너에서는 사용자 폴더 전체)다."""
+    public_root = ctx.env("PUBLIC")
+    if not public_root:
+        return None
+    users_root = ctx.env("SPIKE_USERS_DIR") or str(Path(public_root).parent)
+    return Path(public_root) / "spike_std", Path(users_root) / STD_USER / "AppData" / "Local"
+
+
 def m18_standard_user(ctx, arm):
     """러너에 임시 표준 사용자를 만들어 그 계정으로 무음 설치를 시도한다. 안 되면 '시도 불가' 로 기록한다(운영자 실기로)."""
     import secrets
@@ -1280,13 +1304,21 @@ def m18_standard_user(ctx, arm):
     if not inst or "0.0.1" not in inst:
         ctx.add(record("M18", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
         return
-    password = "Sp1ke!" + secrets.token_urlsafe(12)
+    folders = std_user_folders(ctx)
+    if not folders:                                                 # 사용자를 만들기 전에 멈춘다
+        ctx.add(record("M18", arm, "unavailable", note="공용 폴더 환경 변수(PUBLIC)가 없어 임시 사용자를 만들지 않았다 — 실제 폴더 이름을 짐작해 쓰지 않는다", brief="시도 불가: 환경 변수 없음"))
+        return
+    public, profile = folders
+    password = PASSWORD_PREFIX + secrets.token_urlsafe(12)
     ctx.hide(password)                                              # net user 명령줄에 들어가는 값이다 — 어떤 도구가 되울려도 기록에서는 가린다
+    ctx.hide(password[len(PASSWORD_PREFIX):])                       # 무작위 부분만(접두어의 느낌표가 바뀌거나 빠져서 되울려도)
+    ctx.hide(password.upper())                                      # 대문자 되울림(가리개가 대소문자를 구분하지 않아도 새지 않게 변형을 한 줄씩 더 둔다)
+    ctx.hide(password.lower())                                      # 소문자 되울림
+    ctx.hide(quote(password, safe=""))                              # URL 인코딩 되울림(느낌표가 %21 로) — 접두어까지 한 덩어리로 가린다
     created = ctx.host.run(["net", "user", STD_USER, password, "/add", "/Y"], timeout=60)
     if not created.ok:
         ctx.add(record("M18", arm, "unavailable", note="임시 사용자를 만들지 못했다(rc %s)" % created.rc, brief="시도 불가: 사용자 만들기 실패"))
         return
-    public = Path(ctx.env("PUBLIC") or "C:/Users/Public") / "spike_std"
     try:
         public.mkdir(parents=True, exist_ok=True)
         setup = public / ("setup-%s.exe" % arm)
@@ -1295,12 +1327,11 @@ def m18_standard_user(ctx, arm):
         arguments = "--silent" if velopack_arm(arm) else "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
         result = ctx.host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", std_user_script()], timeout=180,
                               env={"SPIKE_PW": password, "SPIKE_USER": STD_USER, "SPIKE_SETUP": str(setup), "SPIKE_ARGS": arguments, "SPIKE_CWD": str(public)})
-        profile = Path(ctx.env("SPIKE_USERS_DIR") or "C:/Users") / STD_USER / "AppData" / "Local"
         installed = bool(profile.is_dir() and any(profile.rglob("VERSION")))
         if result.rc == 0 and installed:
             ctx.add(record("M18", arm, "pass", brief="표준 사용자 설치 성공 %s초" % result.seconds, rc=result.rc, seconds=result.seconds))
         elif result.timed_out or result.rc not in (0,):
-            ctx.add(record("M18", arm, "unavailable", brief="시도 불가 또는 실패(rc %s)" % result.rc, rc=result.rc, installed=installed, note="러너 안에서 다른 계정으로 설치를 못 돌렸다 — 운영자 실기(T-INST-04)로 넘긴다. " + tail(result.text(), 160)))
+            ctx.add(record("M18", arm, "unavailable", brief="시도 불가 또는 실패(rc %s)" % result.rc, rc=result.rc, installed=installed, note="러너 안에서 다른 계정으로 설치를 못 돌렸다 — 운영자 실기(T-INST-04)로 넘긴다. " + tail(ctx.mask(result.text()), 160)))
         else:
             ctx.add(record("M18", arm, "fail", brief="종료 0 인데 설치 흔적 없음", rc=result.rc, installed=installed))
     finally:

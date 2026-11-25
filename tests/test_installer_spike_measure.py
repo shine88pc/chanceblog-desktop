@@ -526,7 +526,7 @@ class RunnerGuardTest(unittest.TestCase):
     def test_runner_problem_names_the_first_wrong_variable_and_is_empty_only_on_a_runner(self):
         self.assertEqual(measure.runner_problem(dict(RUNNER_ENV)), "")
         self.assertEqual(measure.runner_problem({}), "GITHUB_ACTIONS")
-        for wrong in ("false", "TRUE", "1", "", " true"):
+        for wrong in ("false", "TRUE", "True", "1", "", " true"):
             self.assertEqual(measure.runner_problem(dict(RUNNER_ENV, GITHUB_ACTIONS=wrong)), "GITHUB_ACTIONS", wrong)
         for wrong in ("Linux", "macOS", "windows", ""):
             self.assertEqual(measure.runner_problem(dict(RUNNER_ENV, RUNNER_OS=wrong)), "RUNNER_OS", wrong)
@@ -579,6 +579,12 @@ class RunnerGuardTest(unittest.TestCase):
             measure.kill_images(measure.Context(Path(tmp) / "c", host=Recorder(dict(RUNNER_ENV))), names)
         self.assertEqual(calls, [["taskkill", "/F", "/T", "/IM", name] for name in names])
 
+    def test_the_guard_reads_exactly_three_variables_and_no_more(self):
+        """총괄 결정(재작업 권고 1) — 가드를 더 까다롭게 만들지 않는다: 첫 실제 러너 실행에서 잘못 거절될 위험을 시험으로 막을 수 없다. 읽는 변수가 늘면 문서(D-708)도 같이 고쳐야 하므로 이 시험이 먼저 빨개진다."""
+        spy = support.RecordingEnv(RUNNER_ENV)
+        self.assertEqual(measure.runner_problem(spy), "")
+        self.assertEqual(sorted(set(spy.read_keys)), ["GITHUB_ACTIONS", "RUNNER_OS", "RUNNER_TEMP"])
+
 
 class HiddenWordsTest(unittest.TestCase):
     """권고 R2 — 임시 사용자의 임의 비밀번호는 net user 명령줄에 들어간다. 어떤 도구가 그 줄을 되울려도 기록·보고서에는 남지 않아야 한다."""
@@ -623,6 +629,108 @@ class HiddenWordsTest(unittest.TestCase):
             block, md, data = run.build_report(ctx)
             self.assertNotIn(self.WORD, block + md + json.dumps(data, ensure_ascii=False))
             self.assertIn("<가림>", md)
+
+    def test_hide_words_ignores_upper_and_lower_case_in_both_directions(self):
+        """재작업 권고 3 — 되울림이 대문자나 소문자로 바뀌어도 가린다(등록한 낱말이 대문자여도 마찬가지)."""
+        for text in (self.WORD.upper(), self.WORD.lower(), self.WORD.swapcase()):
+            self.assertEqual(measure.hide_words("앞 " + text + " 뒤", [self.WORD]), "앞 <가림> 뒤", text)
+        self.assertEqual(measure.hide_words("앞 " + self.WORD.lower() + " 뒤", [self.WORD.upper()]), "앞 <가림> 뒤")
+
+    def test_hide_words_hides_a_word_that_a_line_break_or_spaces_split(self):
+        """재작업 권고 3 — 되울림이 줄이 나뉘어 나와 낱말 한가운데에 줄바꿈·들여쓰기·공백이 끼어도 가린다."""
+        for glue in ("\r\n", "\n", "\n    ", " ", "\t", "\r\n  \r\n"):
+            for cut in (1, 6, 9, len(self.WORD) - 1):
+                text = "앞 " + self.WORD[:cut] + glue + self.WORD[cut:] + " 뒤"
+                self.assertEqual(measure.hide_words(text, [self.WORD]), "앞 <가림> 뒤", (glue, cut))
+        self.assertEqual(measure.hide_words("앞 " + " ".join(self.WORD) + " 뒤", [self.WORD]), "앞 <가림> 뒤")
+        self.assertEqual(measure.hide_words({"a": "x\n" + self.WORD[:8] + "\n" + self.WORD[8:]}, [self.WORD]), {"a": "x\n<가림>"})
+
+    def test_hide_words_keeps_the_text_around_the_word_and_leaves_other_text_alone(self):
+        self.assertEqual(measure.hide_words("앞  " + self.WORD + "  뒤\n", [self.WORD]), "앞  <가림>  뒤\n")                      # 낱말 둘레의 공백·줄바꿈은 그대로
+        ordinary = "접근 거부 — 비밀번호가 틀렸다 access denied for user Sp1ke! 접두어만"
+        self.assertEqual(measure.hide_words(ordinary, [self.WORD]), ordinary)                                                # 접두어만 있는 글·평범한 글은 그대로
+        once = measure.hide_words("x " + self.WORD + "\n" + self.WORD.upper(), [self.WORD])
+        self.assertEqual(once, "x <가림>\n<가림>")
+        self.assertEqual(measure.hide_words(once, [self.WORD]), once)                                                       # 두 번 가려도 같다
+
+    def test_hide_words_takes_the_word_literally_even_when_it_has_characters_a_pattern_would_read(self):
+        """가릴 낱말은 글자 그대로 찾는다 — 점·더하기·괄호가 있어도 정규식으로 읽히지 않는다(임의 비밀번호에 올 수 있는 글자)."""
+        word = "a.b+c(d)e*f?"
+        self.assertEqual(measure.hide_words("앞 " + word + " 뒤", [word]), "앞 <가림> 뒤")
+        self.assertEqual(measure.hide_words("앞 aXb+c(d)e*f? 뒤", [word]), "앞 aXb+c(d)e*f? 뒤")                           # 점이 아무 글자나 뜻하지 않는다
+        self.assertEqual(measure.hide_words("앞 abbbbc 뒤", ["ab+c"]), "앞 abbbbc 뒤")                                       # 더하기가 되풀이를 뜻하지 않는다
+
+    def test_a_context_masks_before_the_caller_cuts_because_cutting_first_leaves_a_piece(self):
+        """재작업 권고 2 — 글을 자른 뒤에 가리면 낱말 전체가 안 맞아 조각이 남는다. Context.mask 는 자르기 전에 부르는 용도다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp, results=[])
+            long_text = "xxx" + self.WORD + "y" * 150
+            self.assertEqual(ctx.mask(long_text), long_text)                                                                 # 아직 모르는 낱말은 못 가린다
+            ctx.hide(self.WORD)
+            cut_first = measure.tail(long_text, 160)
+            self.assertIn(self.WORD[-10:], cut_first)                                                                        # 이 시험의 전제 — 자르고 나서 가리면 뒤 10글자가 남는다
+            self.assertNotIn(self.WORD, cut_first)
+            self.assertEqual(measure.hide_words(cut_first, ctx.secret_words), cut_first)
+            self.assertEqual(measure.tail(ctx.mask(long_text), 160), "xxx<가림>" + "y" * 150)                               # 먼저 가리고 자르면 남는 것이 없다
+            self.assertIsNone(ctx.mask(None))
+            self.assertEqual(ctx.mask("평범한 글"), "평범한 글")
+
+    def test_guard_hides_the_secret_before_it_cuts_the_error_text(self):
+        """재작업 권고 2 — 측정 하나가 비밀 낱말이 든 오류 글로 죽어도(글이 200자를 넘어 한가운데가 잘릴 길이) 기록에 조각이 남지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_context(tmp, results=[])
+            ctx.hide(self.WORD)
+
+            def boom():
+                raise RuntimeError("앞 " + self.WORD + "z" * 190)
+
+            ctx.guard("M18", "A", boom)
+            item = ctx.results[-1]
+            self.assertEqual(item["status"], "error")
+            self.assertEqual(item["note"], "RuntimeError: 앞 <가림>" + "z" * 190)
+            self.assertNotIn(self.WORD[-10:], json.dumps(ctx.results, ensure_ascii=False))
+
+
+class HostFileLookupTest(unittest.TestCase):
+    """재작업 권고 4 — 정해진 자리에서 도구를 찾는 진짜 Host.is_file 은 흐름 시험이 가짜로 바꿔 끼워 직접 불린 적이 없었다. 임시 실제 파일·없는 파일·폴더로 직접 본다."""
+
+    def test_a_real_file_is_found_by_text_and_by_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "ISCC.exe"
+            target.write_bytes(b"MZ-test")
+            host = measure.Host({})
+            self.assertIs(host.is_file(str(target)), True)
+            self.assertIs(host.is_file(target), True)
+
+    def test_a_missing_file_and_a_folder_are_not_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "Inno Setup 6"
+            folder.mkdir()
+            host = measure.Host({})
+            self.assertIs(host.is_file(str(Path(tmp) / "nothing.exe")), False)
+            self.assertIs(host.is_file(str(folder)), False)                                                                  # 폴더는 파일이 아니다
+            self.assertIs(host.is_file(str(Path(tmp) / "no-folder" / "ISCC.exe")), False)
+
+
+class StandardUserFoldersTest(unittest.TestCase):
+    """참고 2 — 표준 사용자 시험이 건드리는 폴더는 환경 변수에서만 나온다. 없으면 실제 폴더 이름을 짐작해 쓰지 않는다."""
+
+    def folders(self, environ):
+        with tempfile.TemporaryDirectory() as tmp:
+            return measure.std_user_folders(make_context(tmp, environ=environ))
+
+    def test_without_the_public_variable_there_are_no_folders_even_when_the_users_variable_is_set(self):
+        self.assertIsNone(self.folders({}))
+        self.assertIsNone(self.folders({"PUBLIC": ""}))
+        self.assertIsNone(self.folders({"SPIKE_USERS_DIR": "D:/profiles"}))
+
+    def test_the_profile_root_is_the_users_variable_or_the_folder_above_public(self):
+        public, profile = self.folders({"PUBLIC": "D:/Users/Public", "SPIKE_USERS_DIR": "E:/profiles"})
+        self.assertEqual(public, Path("D:/Users/Public") / "spike_std")
+        self.assertEqual(profile, Path("E:/profiles") / measure.STD_USER / "AppData" / "Local")
+        public, profile = self.folders({"PUBLIC": "D:/Users/Public"})
+        self.assertEqual(public, Path("D:/Users/Public") / "spike_std")
+        self.assertEqual(profile, Path("D:/Users") / measure.STD_USER / "AppData" / "Local")
 
 
 if __name__ == "__main__":

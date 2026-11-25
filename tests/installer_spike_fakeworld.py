@@ -4,9 +4,11 @@
 파일 시스템은 진짜(임시 폴더)이고 프로그램 실행만 가짜다 — 그래서 단계 실행기와 측정 흐름의 순서·분기·기록을 설치 도구 없이 끝까지 돌려 볼 수 있다. 이 흉내가 진짜 도구와 같다는 보장은 없다
 (진짜 동작은 병합 뒤 운영자의 수동 실행이 알려 준다) — 시험이 지키는 것은 흐름이 어긋나지 않고 기록이 쓰이며 실패가 갇히는지이다.
 스위치(속성)로 실패를 만든다: dotnet_fail·delta_ok·sdk_needs_skip·iscc_version·build_fail·mixed_on_running·hook_rc·autostart·keep_shortcut·std_user_ok 등.
+`users_root` 는 임시 사용자 프로필이 생기는 폴더(기본은 `SPIKE_USERS_DIR` 환경 변수가 가리키는 같은 자리)이고 `present_files` 는 `is_file` 이 '있다' 고 답할 경로 집합(기본은 비어 있어 늘 '없다' — 러너 이미지에 실제로 깔린 도구가 끼어들지 않게), `echo_layout` 은 임시 사용자 설치가 실패할 때 PowerShell 이 비밀번호를 되울리는 모양(글을 돌려주는 함수)이다.
 """
 import itertools
 import json
+import os
 import re
 import shutil
 import zipfile
@@ -65,6 +67,9 @@ class FakeWorld(measure.Host):
         self.calls = []
         self.file_checks = []
         self.net_calls = []
+        self.present_files = set()
+        self.echo_layout = None
+        self.users_root = tmp / "users"
         self.running = []
         self.setups, self.packages, self.feeds, self.installs = {}, {}, {}, {}
         self.tokens = itertools.count(1)
@@ -115,9 +120,14 @@ class FakeWorld(measure.Host):
         return None
 
     def is_file(self, path):
-        """정해진 자리 찾기도 가짜 세계 안에서만 — 이 PC·러너에 실제로 깔린 도구(윈도 러너 이미지의 Inno Setup)가 흐름에 끼어들지 않게 늘 '없다'고 답한다(도구가 있는 경우는 which 가 돌려준다)."""
+        """정해진 자리 찾기도 가짜 세계 안에서만 — 이 PC·러너에 실제로 깔린 도구(윈도 러너 이미지의 Inno Setup)가 흐름에 끼어들지 않게 기본은 늘 '없다'고 답한다(도구가 있는 경우는 which 가 돌려준다).
+        시험이 present_files 에 넣어 둔 경로만 '있다'고 답한다 — 그 경로가 가리키는 파일은 임시 실제 파일이어야 sha256_file·Korean.isl 확인 같은 디스크 읽기가 어느 PC·러너에서나 같다."""
         self.file_checks.append(str(path))
-        return False
+        return self.known(path) in {self.known(item) for item in self.present_files}
+
+    @staticmethod
+    def known(path):
+        return os.path.normcase(os.path.normpath(str(path)))
 
     # ---- 실행 ---------------------------------------------------------------------------------------------------------------------------
     def run(self, args, *, timeout=120, env=None, cwd=None, drop_env=()):
@@ -235,11 +245,12 @@ class FakeWorld(measure.Host):
             return self.ok("CN=Fake Signer B.V., O=Fake\n")
         if "PSCredential" in script:
             if self.std_user_ok:
-                root = Path(env["SPIKE_USERS_DIR"] if "SPIKE_USERS_DIR" in env else self.environ["SPIKE_USERS_DIR"]) / measure.STD_USER / "AppData" / "Local" / "Fake"
+                root = self.users_root / measure.STD_USER / "AppData" / "Local" / "Fake"                 # 윈도가 프로필을 만드는 자리 — 시험용 환경 변수와 상관없다
                 root.mkdir(parents=True, exist_ok=True)
                 (root / "VERSION").write_text("0.0.1\n", encoding="utf-8")
                 return self.ok()
-            return measure.HostResult(1, 0.5, "", "access denied for " + (env or {}).get("SPIKE_PW", ""))
+            layout = self.echo_layout or (lambda password: "access denied for " + password)
+            return measure.HostResult(1, 0.5, "", layout((env or {}).get("SPIKE_PW", "")))
         return self.ok()
 
     def do_dotnet(self, args, env):

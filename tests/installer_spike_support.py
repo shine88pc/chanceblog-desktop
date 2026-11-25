@@ -325,3 +325,25 @@ def build_pe(imports=(), delay=(), plus=True, manifest=None):
     if manifest:
         data[0xE00:0xE00 + len(manifest)] = manifest
     return bytes(data)
+
+
+# ---- 읽은 변수를 적어 두는 환경 사전(시험용) ------------------------------------------------------------------------------------------------
+
+class RecordingEnv(dict):
+    """읽힌 열쇠를 모아 두는 환경 사전 — 러너 가드가 실제로 어느 환경 변수를 읽는지 본다(문서가 말하는 변수 이름과 코드가 읽는 이름이 같은지 견주는 시험이 쓴다). `read_keys` 에 읽은 순서대로 쌓인다."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.read_keys = []
+
+    def get(self, key, default=None):
+        self.read_keys.append(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key):
+        self.read_keys.append(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        self.read_keys.append(key)
+        return super().__contains__(key)

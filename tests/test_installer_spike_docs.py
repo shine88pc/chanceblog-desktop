@@ -1,8 +1,11 @@
 """설치 도구 시험(spike) 문서 시험(결정 D-700에서 D-708) — 운영자 실행 안내(`docs/INSTALLER_SPIKE_RUN.md`)가 비개발자가 따라갈 수 있고 워크플로의 실제 이름과 맞으며, 결정 행 아홉 개가 번호 순서로 한 줄씩 있고,
 `PACKAGE.md`·`RELEASE.md`·`CHANGELOG.md` 의 단락이 서로 어긋나지 않는지 본다. 물결표·웹 주소·이중 중괄호·채우지 않은 자리표시자가 없고 상대 링크는 실제 파일을 가리킨다.
 """
+import contextlib
+import io
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -127,6 +130,44 @@ class DecisionRowsTest(unittest.TestCase):
     def test_the_security_and_ocr_docs_no_longer_say_four_shapes_for_the_allow_list(self):
         self.assertIn("여섯 모양(`ALLOWED_UPLOAD_FILES`", read("docs/SECURITY.md"))
         self.assertNotIn("네 모양과 결정 D-344", read("docs/PACKAGE_OCR.md"))
+
+
+class RunnerGuardDocsTest(unittest.TestCase):
+    """재작업 권고 1(총괄 결정) — 러너 가드를 더 까다롭게 만들지 않는 대신 그 존재·종료 코드·'보안 장치가 아니다' 한계를 문서에 적는다. 문서가 말하는 변수 이름과 종료 코드는 코드가 실제로 읽고 돌려주는 값과 같아야 한다."""
+
+    def setUp(self):
+        self.measure = support.load("measure")
+        self.run = support.load("run_spike")
+        self.row = next(line for line in read("docs/DECISIONS.md").splitlines() if line.startswith("| D-708 |"))
+        self.guide = read(GUIDE)
+
+    def exit_code_off_a_runner(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
+            return self.run.main(["measure", "--work", str(Path(tmp) / "w")], host=self.measure.Host({}))
+
+    def variables_the_guard_reads(self):
+        spy = support.RecordingEnv({"GITHUB_ACTIONS": "true", "RUNNER_OS": "Windows", "RUNNER_TEMP": "D:\\a\\_temp"})
+        self.assertEqual(self.measure.runner_problem(spy), "")
+        return sorted(set(spy.read_keys))
+
+    def test_d708_names_the_guard_the_variables_it_reads_the_exit_code_and_that_it_is_no_security_device(self):
+        names = self.variables_the_guard_reads()
+        self.assertEqual(names, ["GITHUB_ACTIONS", "RUNNER_OS", "RUNNER_TEMP"])
+        for word in names + ["measure.runner_problem", "종료 코드 %d" % self.exit_code_off_a_runner(), "작업 폴더도 만들지 않으며", "개발 PC", "보안 장치가 아니다", "환경 변수를 일부러 맞추면 통과한다"]:
+            self.assertIn(word, self.row, word)
+
+    def test_d708_says_what_the_password_hiding_covers_and_what_it_does_not(self):
+        for word in ("임시 비밀번호", "자르기 전에", "대소문자", "URL 인코딩", "줄바꿈", "다른 글자가 끼는 변형", "PUBLIC", "SPIKE_USERS_DIR"):
+            self.assertIn(word, self.row, word)
+
+    def test_the_guide_tells_the_operator_what_happens_off_a_runner_and_that_it_is_no_security_device(self):
+        for word in ("종료 코드 %d" % self.exit_code_off_a_runner(), "개발 PC", "일회용", "보안 장치가 아니다", "환경 변수를 일부러 맞추면 통과한다"):
+            self.assertIn(word, self.guide, word)
+
+    def test_the_exit_code_both_documents_name_is_the_one_the_guard_really_returns(self):
+        self.assertEqual(self.exit_code_off_a_runner(), 2)
+        self.assertIn("종료 코드 2", self.row)
+        self.assertIn("종료 코드 2", self.guide)
 
 
 class SectionsTest(unittest.TestCase):
