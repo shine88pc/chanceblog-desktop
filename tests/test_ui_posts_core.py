@@ -1288,6 +1288,17 @@ class PostsReviewCoreTest(unittest.TestCase):
                 self.assertFalse(controller.remember_pages(dict(RAW, description=value)))
                 self.assertNotIn(controller.open_id, controller.pages_raw)
 
+    def test_the_invisible_character_list_is_the_masking_engines_own_list(self):
+        """`would_be_masked` 가 지우는 눈에 안 보이는 글자(구간 목록과 범주)는 가리기 엔진의 것과 모든 코드 포인트에서 같다 — 엔진이 바뀌어 어긋나면 이 시험이 알린다(어긋나도 안전한 쪽이지만 평범한 값을 기억하는 정도가 달라진다)."""
+        from chanceblog_desktop.security import mask as engine
+        self.assertEqual(rules._HIDDEN_CATEGORIES, engine._HIDDEN)
+        listed = [code for code in range(0x110000) if (rules._INVISIBLE.match(chr(code)) is None) != (engine._INVISIBLE.match(chr(code)) is None)]
+        self.assertEqual(listed, [], "구간 목록이 엔진과 다른 코드 포인트")
+        for start in range(0, 0x110000, 0x1000):
+            chunk = "".join(chr(code) for code in range(start, start + 0x1000))
+            if rules._without_invisible(chunk) != engine._strip_invisible(chunk):
+                self.fail(f"엔진과 다르게 지운다: U+{start:04X} 부터 4096자")
+
     def test_the_pages_values_are_remembered_when_the_dialog_is_closed_without_a_review(self):
         controller = self.opened()
         controller.open_pages()
