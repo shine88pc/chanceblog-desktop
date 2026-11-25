@@ -26,10 +26,11 @@ import service_support as ss  # noqa: E402
 
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
+from chanceblog_desktop.publish.pages import CommitInfo, MainCheck  # noqa: E402
 from chanceblog_desktop.service import lock as lockmod  # noqa: E402
 from chanceblog_desktop.service import pages_flow, projects  # noqa: E402
 from chanceblog_desktop.service.backend import GitPagesBackend  # noqa: E402
-from chanceblog_desktop.service.journal import STAGE_BUILT, STAGE_COMMITTED, STAGE_PUSHED, Journal, PublishRecord  # noqa: E402
+from chanceblog_desktop.service.journal import STAGE_BRANCH_PUSHED, STAGE_BUILT, STAGE_COMMITTED, STAGE_PUSHED, Journal, PublishRecord  # noqa: E402
 
 PID = "proj-1"
 
@@ -341,6 +342,22 @@ class FlowBase(unittest.TestCase):
         kwargs.setdefault("confirmed", True)
         return pages_flow.run_pages_publish(self.ctx, project_id, **kwargs)
 
+    def to_pushed(self, project_id):
+        """사람이 GitHub 에서 병합한 것처럼 — 병합 확인으로 PUSHED 에 둔다(그다음이 공개 확인)."""
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        return pages_flow.merge_check_pages(self.ctx, project_id)
+
+    def legacy_committed(self, project_id):
+        """옛 방식(main 에 곧바로 올리던 시절)으로 올리다 commit 직후 멈춰 COMMITTED 로 남은 글 — 새 흐름은 이 상태를 만들지 않으므로 상태와 발행 기록을 직접 만든다."""
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+            project.transition("github_pages", st.COMMITTED, now=self.ctx.stamp())
+            store.save(project)
+        record = PublishRecord(project_id, ss.KO_PATH, "c" * 40, "b" * 40, STAGE_COMMITTED)
+        Journal(self.ctx.workspace.journal_dir).write(record)
+        self.backend.calls.clear()
+        return record
+
 
 class PublishLockedFlowTest(FlowBase):
     def test_a_second_publish_started_while_the_first_is_pushing_stops_and_the_first_ones_record_survives(self):
@@ -382,13 +399,14 @@ class PublishLockedFlowTest(FlowBase):
         self.assertIn("진행 중", shown.message)
         self.assertIn("30분", shown.action)
         held.release()
-        self.assertEqual(self.publish(project_id).status, st.PUBLISHED)
+        self.assertEqual(self.publish(project_id).status, st.MERGE_PENDING)
 
     def test_the_lock_is_released_after_success_failure_and_cancel(self):
         project_id = self.approved()
         self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
         self.assertEqual(ss.code_of(self.publish, project_id).code, "GIT_PUSH_NETWORK")
         self.assertFalse(self.lock_file(project_id).exists(), "실패해도 푼다")
+        self.backend.orphan = CommitInfo(ss.KO_PATH, "c" * 40, "b" * 40)                      # 옛 방식으로 commit 직후에 멈춘 글처럼(새 흐름은 만들지 않는다) — 옛 취소만 이 PC 의 commit 을 되돌린다
         pages_flow.cancel_pages_publish(self.ctx, project_id, confirmed=True)
         self.assertFalse(self.lock_file(project_id).exists(), "취소해도 푼다")
         second = self.approved(title="둘째")
@@ -397,7 +415,9 @@ class PublishLockedFlowTest(FlowBase):
         self.assertFalse(self.lock_file(second).exists(), "성공해도 푼다")
         self.ctx.clock.advance(seconds=5)
         third = self.approved(title="셋째")
-        self.publish(third, wait=False)
+        self.publish(third)
+        self.to_pushed(third)
+        self.assertFalse(self.lock_file(third).exists(), "병합 확인을 마쳐도 푼다")
         pages_flow.check_pages_deploy(self.ctx, third)
         self.assertFalse(self.lock_file(third).exists(), "공개 확인을 마쳐도 푼다")
 
@@ -423,32 +443,40 @@ class PublishLockedFlowTest(FlowBase):
         lockmod.PublishLock(self.ctx.workspace.journal_dir, project_id, now=self.ctx.now).acquire()          # 죽은 작업이 남긴 잠금
         self.ctx.clock.advance(minutes=31)
         report = self.publish(project_id)
-        self.assertEqual(report.status, st.PUBLISHED)
+        self.assertEqual(report.status, st.MERGE_PENDING)
         self.assertTrue(any("넘겨받았습니다" in note for note in report.notes), report.notes)
         self.assertFalse(self.lock_file(project_id).exists())
 
     def test_the_wait_time_the_user_asked_for_keeps_the_lock_alive_longer(self):
         project_id = self.approved()
         seen = {}
-        self.backend.hooks["check_deployed"] = lambda: seen.setdefault("lock", json.loads(self.lock_file(project_id).read_text(encoding="utf-8")))
+        self.backend.hooks["push_branch"] = lambda: seen.setdefault("lock", json.loads(self.lock_file(project_id).read_text(encoding="utf-8")))
         self.publish(project_id, deadline=7200)
         self.assertEqual(seen["lock"]["max_seconds"], 7200 + 900)
 
     def test_cancel_and_check_deploy_also_report_a_taken_over_lock(self):
         project_id = self.approved()
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        with self.assertRaises(AppError):
-            self.publish(project_id)
+        self.legacy_committed(project_id)                                                      # 옛 방식으로 올리다 멈춘 글(COMMITTED) — 옛 취소가 이 PC 안에서 되돌린다
         lockmod.PublishLock(self.ctx.workspace.journal_dir, project_id, now=self.ctx.now).acquire()
         self.ctx.clock.advance(minutes=40)
         report = pages_flow.cancel_pages_publish(self.ctx, project_id, confirmed=True)
         self.assertTrue(any("넘겨받았습니다" in step for step in report.steps))
         project = self.approved(title="다른 글")
         self.ctx.clock.advance(seconds=3)
-        self.publish(project, wait=False)
+        self.publish(project)
         lockmod.PublishLock(self.ctx.workspace.journal_dir, project, now=self.ctx.now).acquire()
         self.ctx.clock.advance(minutes=40)
-        self.assertTrue(any("넘겨받았습니다" in note for note in pages_flow.check_pages_deploy(self.ctx, project).notes))
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        self.assertTrue(any("넘겨받았습니다" in note for note in pages_flow.merge_check_pages(self.ctx, project).notes), "병합 확인도 넘겨받은 잠금을 알린다")
+        lockmod.PublishLock(self.ctx.workspace.journal_dir, project, now=self.ctx.now).acquire()
+        self.ctx.clock.advance(minutes=40)
+        self.assertTrue(any("넘겨받았습니다" in note for note in pages_flow.check_pages_deploy(self.ctx, project).notes), "공개 확인도 넘겨받은 잠금을 알린다")
+        third = self.approved(title="병합하지 않기로 한 글")
+        self.ctx.clock.advance(seconds=3)
+        self.publish(third)
+        lockmod.PublishLock(self.ctx.workspace.journal_dir, third, now=self.ctx.now).acquire()
+        self.ctx.clock.advance(minutes=40)
+        self.assertTrue(any("넘겨받았습니다" in step for step in pages_flow.abandon_pages_publish(self.ctx, third, confirmed=True).steps), "정리(abandon)도 넘겨받은 잠금을 알린다")
 
 
 class OwnRecordOnlyTest(FlowBase):
@@ -460,10 +488,9 @@ class OwnRecordOnlyTest(FlowBase):
         record = PublishRecord(project_id, self.OTHER.path, self.OTHER.commit, self.OTHER.base, self.OTHER.stage)
         return record, lambda: self.journal.write(record)
 
-    def test_the_undo_after_a_failed_state_save_leaves_a_record_another_run_wrote(self):
+    def test_a_failed_state_save_before_the_push_keeps_this_runs_built_record_and_undoes_nothing(self):
+        """옛 방식은 commit 뒤 상태 저장이 실패하면 commit 을 되돌렸다. 새 흐름은 만든 객체가 어떤 참조에도 묶이지 않아 되돌릴 것이 없고, 이 실행이 쓴 `built` 기록은 이어받을 수 있게 남는다."""
         project_id = self.approved()
-        record, write = self.other_run_writes_its_record(project_id)
-        self.backend.hooks["discard"] = write                                      # 되돌리는 사이 다른 실행이 올림 기록을 썼다
         real_store = self.ctx.store
 
         def failing():
@@ -475,34 +502,36 @@ class OwnRecordOnlyTest(FlowBase):
         error = ss.code_of(self.publish, project_id)
         self.ctx.store = real_store
         self.assertEqual(error.code, "STORE_LOCKED")
-        self.assertEqual(self.journal.read(project_id), record, "다른 실행이 쓴 기록은 지우지 않았다")
-        self.assertIn("지우지 않았다", error.detail)
+        self.assertEqual((self.backend.count("discard"), self.backend.count("push_branch")), (0, 0), "되돌릴 것도 올린 것도 없다")
+        record = self.journal.read(project_id)
+        self.assertEqual((record.stage, record.commit), (STAGE_BUILT, self.backend.built_commit_id))
+        self.assertEqual(self.status(project_id), st.APPROVED)
 
-    def test_giving_up_after_a_duplicate_leaves_a_record_another_run_wrote(self):
+    def test_giving_up_after_a_refusal_leaves_a_record_another_run_wrote(self):
         project_id = self.approved()
         record, write = self.other_run_writes_its_record(project_id)
-        self.backend.hooks["discard"] = write
-        self.backend.push_errors = [AppError("DUPLICATE_SLUG")]
+        self.backend.hooks["push_branch"] = write                                  # 올리는 사이 다른 실행이 올림 기록을 썼다
+        self.backend.push_errors = [AppError("PAGES_PUSH_REFUSED")]
         error = ss.code_of(self.publish, project_id)
-        self.assertEqual(error.code, "DUPLICATE_SLUG")
-        self.assertEqual(self.journal.read(project_id), record)
+        self.assertEqual(error.code, "PAGES_PUSH_REFUSED")
+        self.assertEqual(self.journal.read(project_id), record, "다른 실행이 쓴 기록은 지우지 않았다")
         self.assertIn("지우지 않았다", error.detail)
         self.assertEqual(self.status(project_id), st.PUBLISH_FAILED)
 
     def test_finishing_the_verification_leaves_a_record_another_run_wrote(self):
         project_id = self.approved()
+        self.publish(project_id)
+        self.to_pushed(project_id)
         record, write = self.other_run_writes_its_record(project_id)
         self.backend.hooks["check_deployed"] = write
-        report = self.publish(project_id)
+        report = pages_flow.check_pages_deploy(self.ctx, project_id)
         self.assertEqual(report.status, st.PUBLISHED)
         self.assertEqual(self.journal.read(project_id), record)
         self.assertTrue(any("지우지 않았다" in note for note in report.notes), report.notes)
 
     def test_cancelling_leaves_a_record_another_run_wrote(self):
         project_id = self.approved()
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        with self.assertRaises(AppError):
-            self.publish(project_id)
+        self.legacy_committed(project_id)
         record, write = self.other_run_writes_its_record(project_id)
         self.backend.hooks["discard"] = write
         report = pages_flow.cancel_pages_publish(self.ctx, project_id, confirmed=True)
@@ -512,13 +541,18 @@ class OwnRecordOnlyTest(FlowBase):
     def test_the_normal_paths_still_remove_the_record_they_wrote(self):
         project_id = self.approved()
         self.publish(project_id)
-        self.assertIsNone(self.journal.read(project_id))
+        self.assertEqual(self.journal.read(project_id).stage, STAGE_BRANCH_PUSHED, "병합을 기다리는 동안은 가지에 올린 기록이 남는다(병합 확인이 이어받는다)")
+        self.to_pushed(project_id)
+        self.assertEqual(self.journal.read(project_id).stage, STAGE_PUSHED)
+        pages_flow.check_pages_deploy(self.ctx, project_id)
+        self.assertIsNone(self.journal.read(project_id), "공개 확인을 마치면 이 실행이 쓴 기록을 지운다")
         second = self.approved(title="둘째")
         self.ctx.clock.advance(seconds=3)
-        self.backend.push_errors = [AppError("DUPLICATE_SLUG")]
+        self.backend.push_errors = [AppError("PAGES_PUSH_REFUSED")]
         with self.assertRaises(AppError):
             self.publish(second)
         self.assertIsNone(self.journal.read(second))
+        self.assertEqual(self.status(second), st.PUBLISH_FAILED)
 
 
 # ---- 진짜 프로세스 둘 -------------------------------------------------------------------------------------------------------------

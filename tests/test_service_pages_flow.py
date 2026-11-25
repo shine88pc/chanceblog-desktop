@@ -729,6 +729,27 @@ class VerificationTest(Base):
         self.assertTrue(any("check-deploy" in step for step in report.next_steps))
         self.assertEqual(self.status(project_id), st.PUSHED)
 
+    def test_a_published_post_with_a_leftover_record_is_tidied_by_the_next_check_and_the_next_publish_and_nothing_else_is_touched(self):
+        """옛 `test_a_crash_before_the_record_is_removed_leaves_a_harmless_record_that_the_next_check_cleans`(진짜 프로세스 충돌 시험)의 서비스 층 짝 — 공개된 뒤 기록을 지우기 직전에 멈춘 흔적을 다음 확인·다음 올리기 명령이 그 글의 것만 치운다."""
+        project_id = self.merged()
+        record = self.journal.read(project_id)
+        pages_flow.check_pages_deploy(self.ctx, project_id)
+        self.assertEqual(self.status(project_id), st.PUBLISHED)
+        self.assertIsNone(self.journal.read(project_id))
+        other = PublishRecord("x" * 32, record.path, record.commit, record.base, STAGE_PUSHED, record.branch)
+        self.journal.write(record)                                                       # 공개 직후 기록을 지우기 전에 멈춘 흔적을 흉내 낸다
+        report = pages_flow.check_pages_deploy(self.ctx, project_id)
+        self.assertEqual(report.status, st.PUBLISHED)
+        self.assertTrue(any("정리했습니다" in note for note in report.notes), report.notes)
+        self.assertIsNone(self.journal.read(project_id), "그 글의 기록만 지웠다")
+        self.journal.write(record)
+        self.journal.write(other)                                                        # 다른 글의 기록은 건드리지 않는다
+        again = self.run_publish(project_id)
+        self.assertTrue(any("정리했습니다" in note for note in again.notes), again.notes)
+        self.assertIsNone(self.journal.read(project_id))
+        self.assertEqual(self.journal.read("x" * 32), other)
+        self.assertEqual((self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (0, 0), "이미 공개된 글을 다시 올리지 않는다")
+
     def test_another_problem_with_the_check_is_raised_with_a_note_and_leaves_the_post_pushed(self):
         project_id = self.merged()
         self.backend.deploy_errors = [AppError("CONTENT_INVALID", {"항목": "배포 확인 설정"})]

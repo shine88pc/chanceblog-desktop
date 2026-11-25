@@ -34,7 +34,8 @@ from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.service import lock as lockmod  # noqa: E402
 from chanceblog_desktop.service import pages_flow  # noqa: E402
 from chanceblog_desktop.service.backend import GitPagesBackend  # noqa: E402
-from chanceblog_desktop.service.journal import STAGE_COMMITTED, STAGE_PUSHED, Journal  # noqa: E402
+from chanceblog_desktop.publish.pages import CommitInfo, MainCheck  # noqa: E402
+from chanceblog_desktop.service.journal import STAGE_COMMITTED, STAGE_PUSHED, Journal, PublishRecord  # noqa: E402
 
 REAL_CLOCK = lambda: datetime.now(timezone.utc)  # noqa: E731
 
@@ -348,6 +349,22 @@ class FlowBase(Base):
         kwargs.setdefault("confirmed", True)
         return pages_flow.run_pages_publish(self.ctx, project_id, **kwargs)
 
+    def to_pushed(self, project_id):
+        """사람이 GitHub 에서 병합한 것처럼 — 병합 확인으로 PUSHED 에 둔다(그다음이 공개 확인)."""
+        self.backend.merge_results = [MainCheck("merged", commit="d" * 40)]
+        return pages_flow.merge_check_pages(self.ctx, project_id)
+
+    def legacy_committed(self, project_id):
+        """옛 방식(main 에 곧바로 올리던 시절)으로 올리다 commit 직후 멈춰 COMMITTED 로 남은 글 — 새 흐름은 이 상태를 만들지 않으므로 상태와 발행 기록을 직접 만든다."""
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+            project.transition("github_pages", st.COMMITTED, now=self.ctx.stamp())
+            store.save(project)
+        record = PublishRecord(project_id, ss.KO_PATH, "c" * 40, "b" * 40, STAGE_COMMITTED)
+        Journal(self.ctx.workspace.journal_dir).write(record)
+        self.backend.calls.clear()
+        return record
+
     def hold_repo(self, **kwargs):
         """다른 작업이 이 저장소에 올리는 중인 것처럼 저장소 잠금을 쥔다(같은 프로세스라 '살아 있는' 잠금이다)."""
         held = lockmod.RepoLock(lockmod.git_dir_of(self.repo), now=self.ctx.now, **kwargs).acquire()
@@ -367,13 +384,16 @@ class RepoLockedFlowTest(FlowBase):
         def snapshot(name):
             return lambda: seen.__setitem__(name, {"repo": repo_file.exists(), "post": self.post_lock(project_id).exists(), "locks in the data folder": [item for item in self.files() if item.endswith(".lock")]})
 
-        for name in ("build_branch_commit", "push_branch", "check_deployed"):
+        for name in ("build_branch_commit", "push_branch", "post_on_main", "check_deployed"):
             self.backend.hooks[name] = snapshot(name)
-        self.assertEqual(self.publish(project_id).status, st.PUBLISHED)
+        self.assertEqual(self.publish(project_id).status, st.MERGE_PENDING)
+        self.to_pushed(project_id)                                                    # 병합 확인(원격 main 을 받는다)과 공개 확인은 올리기 다음의 별도 명령이다
+        self.assertEqual(pages_flow.check_pages_deploy(self.ctx, project_id).status, st.PUBLISHED)
         post_only = [f"{project_id}.lock"]
         self.assertEqual(seen["build_branch_commit"], {"repo": True, "post": True, "locks in the data folder": post_only}, "commit 하는 동안 두 잠금을 쥔다 — 저장소 잠금은 .git 안에 있다")
         self.assertEqual(seen["push_branch"], {"repo": True, "post": True, "locks in the data folder": post_only}, "push 하는 동안 두 잠금을 쥔다")
-        self.assertEqual(seen["check_deployed"], {"repo": False, "post": True, "locks in the data folder": post_only}, "공개 확인을 기다리는 동안에는 저장소 잠금을 풀고(다른 글이 올라갈 수 있다) 글 잠금만 쥔다")
+        self.assertEqual(seen["post_on_main"], {"repo": True, "post": True, "locks in the data folder": post_only}, "병합 확인은 원격 main 을 받아 저장소의 받은 참조를 앞으로 보내므로 두 잠금을 쥔다")
+        self.assertEqual(seen["check_deployed"], {"repo": False, "post": True, "locks in the data folder": post_only}, "공개 확인은 저장소를 쓰지 않으므로 저장소 잠금 없이(다른 글이 올라갈 수 있다) 글 잠금만 쥔다")
         self.assertEqual(self.files(), [], "끝나면 어느 잠금도 남지 않는다(발행 기록도 지웠다)")
         self.assertEqual(list(self.git_dir.iterdir()), [], ".git 에도 잠금 파일이 남지 않는다")
 
@@ -404,7 +424,7 @@ class RepoLockedFlowTest(FlowBase):
         self.assertIn("같은 저장소", shown.message)
         self.assertIn("같은 명령을 다시", shown.action)
         held.release()
-        self.assertEqual(self.publish(project_id).status, st.PUBLISHED, "끝난 뒤 같은 명령을 다시 하면 올라간다")
+        self.assertEqual(self.publish(project_id).status, st.MERGE_PENDING, "끝난 뒤 같은 명령을 다시 하면 올라간다(병합을 기다리는 상태까지)")
 
     def test_the_busy_error_comes_out_of_the_command_line_with_exit_code_1(self):
         project_id = self.approved()
@@ -427,11 +447,11 @@ class RepoLockedFlowTest(FlowBase):
         timer.start()
         self.addCleanup(timer.cancel)
         report = self.publish(project_id)
-        self.assertEqual(report.status, st.PUBLISHED)
+        self.assertEqual(report.status, st.MERGE_PENDING)
         self.assertTrue(any("기다린 뒤 올렸습니다" in note for note in report.notes), report.notes)
         self.assertEqual(len(told), 1)
         self.assertIn("기다립니다", told[0])
-        self.assertEqual(self.files(), [])
+        self.assertEqual(self.files(), [f"{project_id}.json"], "잠금 파일은 남지 않고 병합을 기다리는 글의 발행 기록 하나만 남는다")
 
     def test_a_waiting_publish_takes_over_the_moment_the_holder_is_found_dead_and_says_so(self):
         project_id = self.approved()
@@ -442,7 +462,7 @@ class RepoLockedFlowTest(FlowBase):
         with mock.patch.object(lockmod, "process_alive", side_effect=lambda pid, since: next(answers, False)):
             report = self.publish(project_id)
         self.assertLess(time.monotonic() - started, 30, "죽은 것을 알아보자마자 넘겨받았다(60초를 다 기다리지 않았다)")
-        self.assertEqual(report.status, st.PUBLISHED)
+        self.assertEqual(report.status, st.MERGE_PENDING)
         self.assertTrue(any("이 저장소에 글을 올리다 멈춘 흔적(그 프로세스는 이미 끝나 있음)을 넘겨받았습니다" in note for note in report.notes), report.notes)
 
     def test_ctrl_c_while_waiting_leaves_nothing_behind_and_does_not_touch_the_other_holders_lock(self):
@@ -475,10 +495,12 @@ class RepoLockedFlowTest(FlowBase):
         self.assertTrue(plan.expected_url.endswith("KR-103013/"), plan.expected_url)
         self.assertEqual(pages_flow.preview_publish(self.ctx, project_id).plan.path, plan.path, "미리 보기도 같은 이름을 보여 준다")
         report = self.publish(project_id)
-        self.assertEqual((report.status, report.plan.path), (st.PUBLISHED, plan.path))
+        self.assertEqual((report.status, report.plan.path), (st.MERGE_PENDING, plan.path))
         self.assertEqual([call[1] for call in self.backend.calls if call[0] == "build_branch_commit"], [plan.path])
         self.assertTrue(report.url.endswith("KR-103013/"), report.url)
-        self.assertEqual(self.backend.deployed_at, ss.NOW + timedelta(seconds=1), "공개 확인도 파일 이름과 같은 시각으로 한다")
+        self.to_pushed(project_id)
+        done = pages_flow.check_pages_deploy(self.ctx, project_id)
+        self.assertEqual((done.status, done.url), (st.PUBLISHED, report.url), "나중에 하는 공개 확인도 파일 이름의 시각으로 만든 같은 주소를 본다")
 
     def test_the_second_is_pushed_forward_up_to_five_times_and_then_the_duplicate_is_reported(self):
         project_id = self.approved()
@@ -491,12 +513,12 @@ class RepoLockedFlowTest(FlowBase):
 
     def test_a_name_taken_by_another_post_that_is_still_being_published_is_avoided_too(self):
         first = self.approved()
-        self.publish(first, wait=False)                                                    # 올라갔고 공개 확인만 남은 글 — 발행 기록이 있다
+        self.publish(first)                                                                 # 새 가지에 올라가 병합을 기다리는 글 — 발행 기록이 있다
         second = self.approved(title="다음 글")
         self.assertEqual(self.ctx.now(), ss.NOW)
         plan = pages_flow.plan_pages_publish(self.ctx, second)
         self.assertEqual(plan.path, "_posts/경제·일/" + self.stem(1) + ".md", "같은 시각이면 다른 글이 쓰는 이름을 피한다")
-        self.assertEqual(self.publish(second, wait=False).status, st.PUSHED)
+        self.assertEqual(self.publish(second).status, st.MERGE_PENDING)
 
     def test_a_name_that_was_already_fixed_is_never_moved(self):
         """이어서 올릴 글(COMMITTED)의 파일 이름은 이미 정해져 있다 — 시각을 밀지 않는다."""
@@ -510,10 +532,7 @@ class RepoLockedFlowTest(FlowBase):
 
     def test_a_cancel_is_also_stopped_by_a_busy_repository_and_changes_nothing(self):
         project_id = self.approved()
-        self.backend.push_errors = [AppError("GIT_PUSH_NETWORK")]
-        with self.assertRaises(AppError):
-            self.publish(project_id)
-        self.backend.calls.clear()
+        self.legacy_committed(project_id)                                               # 옛 방식으로 올리다 멈춘 글(COMMITTED) — 옛 취소는 이 PC 의 commit 을 되돌리므로 저장소 잠금이 필요하다
         held = self.hold_repo()
         self.ctx.lock_wait = 0
         self.assertEqual(ss.code_of(pages_flow.cancel_pages_publish, self.ctx, project_id, confirmed=True).code, "PUBLISH_REPO_BUSY")
@@ -527,7 +546,8 @@ class RepoLockedFlowTest(FlowBase):
         project_id = self.approved()
         other = self.approved(title="이미 올라간 글")
         self.ctx.clock.advance(seconds=3)
-        pages_flow.run_pages_publish(self.ctx, other, confirmed=True, wait=False)       # 저장소가 비어 있을 때 올려 둔다(공개 확인만 남았다)
+        pages_flow.run_pages_publish(self.ctx, other, confirmed=True)                   # 저장소가 비어 있을 때 올려 두고 병합까지 확인해 둔다(공개 확인만 남았다)
+        self.to_pushed(other)
         self.ctx.clock.advance(seconds=3)                                               # 다른 파일 이름(시각)이 되게
         self.hold_repo()
         self.ctx.lock_wait = 0
@@ -617,11 +637,11 @@ class RepoLockedFlowTest(FlowBase):
         lockmod.RepoLock(lockmod.git_dir_of(self.repo), now=self.ctx.now).acquire()
         with mock.patch.object(lockmod, "process_alive", return_value=False):
             report = self.publish(project_id)
-        self.assertEqual(report.status, st.PUBLISHED)
+        self.assertEqual(report.status, st.MERGE_PENDING)
         notes = [note for note in report.notes if "넘겨받았습니다" in note]
         self.assertEqual(len(notes), 1, report.notes)
         self.assertIn("같은 글을 올리다", notes[0])
-        self.assertEqual(self.files(), [])
+        self.assertEqual(self.files(), [f"{project_id}.json"], "잠금 파일은 남지 않고 병합을 기다리는 글의 발행 기록 하나만 남는다")
 
     def test_only_the_repository_lock_was_left_by_a_crash_and_the_notice_says_the_repository(self):
         """다른 글을 올리다 죽어 저장소 잠금만 남았다 — 이 글의 올리기는 바로 넘겨받고(기다리지 않는다) 저장소 이야기로 알린다."""
@@ -631,12 +651,14 @@ class RepoLockedFlowTest(FlowBase):
             started = time.monotonic()
             report = self.publish(project_id)
         self.assertLess(time.monotonic() - started, 10)
-        self.assertEqual(report.status, st.PUBLISHED)
+        self.assertEqual(report.status, st.MERGE_PENDING)
         self.assertTrue(any("이 저장소에 글을 올리다 멈춘 흔적" in note for note in report.notes), report.notes)
 
     def test_a_publish_that_finds_the_post_already_public_takes_the_repo_lock_only_briefly_and_does_nothing(self):
         project_id = self.approved()
         self.publish(project_id)
+        self.to_pushed(project_id)
+        pages_flow.check_pages_deploy(self.ctx, project_id)
         self.backend.calls.clear()
         report = self.publish(project_id)
         self.assertEqual(report.status, st.PUBLISHED)

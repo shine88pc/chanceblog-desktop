@@ -216,8 +216,8 @@ class AdoptFlowTest(unittest.TestCase):
 
 
 def projects_remote_id(ctx, project_id):
-    from chanceblog_desktop.service import projects
-    return projects.show_project(ctx, project_id).variant("github_pages").remote_id
+    with ctx.store() as store:
+        return store.load(project_id).variant("github_pages").remote_id
 
 
 def setUpModule():
