@@ -11,18 +11,32 @@
     무거운 파일부터 지금 가장 가벼운 조각에 넣는다. 새 시험 파일은 자동으로 어느 조각에 들어간다(표에 없어도 된다).
   · 조각이 비면(조각 수가 파일 수보다 큰 경우 등) 실패로 끝난다 — 아무것도 안 돌고 초록이 되는 일이 없게.
   · 시험이 하나라도 실패하면(불러오기 실패 포함) 종료 코드가 0 이 아니다.
+  · 환경 변수 CI_REQUIRE_QT=1(정식 CI 의 Qt 칸 — `ci.yml` 의 `qt` 잡, D-710·D-712)이면 'PySide6 가 안 깔려 화면(Qt) 시험이 모두 건너뛰어졌는데 초록' 이 되는 일을 막는다:
+    ① 시작 전에 PySide6 를 못 찾으면 종료 코드 3 ② 끝난 뒤 건너뛴 시험 중 이유에 PySide6(대소문자 무시)가 든 것이 하나라도 있으면 종료 코드 1 과 시험 파일별 개수
+    ③ 건너뜀 이유별 개수와 시험 파일별 걸린 시간을 정보로 찍는다(다른 이유의 건너뜀은 알림만 — 첫 실행 뒤 허용 목록으로 굳힌다. 걸린 시간은 `WEIGHTS` 를 고칠 때 쓴다).
+    5초 넘게 걸린 시험 파일은 끝나는 즉시 `[걸린 시간] 파일 초` 한 줄도 찍는다(칸이 시간 한도에 잘려도 로그에 남게).
+    값은 1(켬)이거나 0·없음(끔)뿐이고 그 밖의 값은 종료 코드 2 다 — 오타로 가드가 꺼진 채 초록이 되지 않게. 없으면 이 규칙들은 모두 오늘과 같다(정식 CI 의 열두 칸).
 """
 from __future__ import annotations
 
 import heapq
+import importlib.util
 import os
+import re
 import sys
+import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTS = ROOT / "tests"
 MAX_SHARDS = 99
+QT_FLAG = "CI_REQUIRE_QT"
+QT_WORD = "pyside6"           # 건너뜀 이유에 이 낱말이 있으면(대소문자 무시) 'PySide6 가 없어 건너뜀' 으로 본다 — 새 Qt 시험 파일은 건너뜀 문구에 PySide6 를 적는다(test_ci_shard 가 지킨다)
+REASON_LIMIT = 10             # 정보로 찍는 건너뜀 이유의 가짓수 상한
+TIME_LIMIT = 15               # 정보로 찍는 시험 파일별 걸린 시간의 줄 수 상한
+PROGRESS_SECONDS = 5          # 한 시험 파일이 이만큼 이상 걸렸으면 그 파일이 끝나는 즉시 한 줄 찍는다 — 칸이 시간 한도에 잘려도 어느 파일이 얼마나 걸렸는지 로그에 남는다
+FILE_LIMIT = 60               # 실패 때 찍는 시험 파일별 개수의 줄 수 상한
 DEFAULT_WEIGHT = 4            # 20초 미만인 파일 125개의 평균(약 4초)
 # 개발 PC(부하 있음)에서 파일마다 따로 돌려 잰 초(2026-11-07, 143개 파일 6,454개 시험 합계 약 60분). 20초 이상인 파일만 적는다 — 대략의 균형용일 뿐 정확할 필요는 없다.
 WEIGHTS = {
@@ -135,6 +149,98 @@ def make_runner():
     return MaskingTextTestRunner(verbosity=2)
 
 
+def qt_required(env):
+    """환경 변수 CI_REQUIRE_QT 를 읽는다 — 1 이면 켬(True), 없음·빈 값·0 이면 끔(False), 그 밖의 값은 ValueError(오타로 가드가 꺼진 채 초록이 되지 않게)."""
+    value = env.get(QT_FLAG)
+    if value in (None, "", "0"):
+        return False
+    if value == "1":
+        return True
+    raise ValueError(f"{QT_FLAG} 는 1(켬)이거나 없어야 한다(0 은 끔): {value!r}")
+
+
+def qt_installed():
+    """이 파이썬이 PySide6 를 찾을 수 있는가 — Qt 시험 파일이 건너뜀을 정할 때 쓰는 `find_spec("PySide6")` 와 같은 질문."""
+    return importlib.util.find_spec("PySide6") is not None
+
+
+def skipped_module(test):
+    """건너뛴 시험이 속한 시험 파일 이름. `module_of` 에 더해 `setUpClass`·`setUpModule` 에서 건너뛴 것(설명이 `setUpClass (파일.클래스)` 인 자리 표시)도 읽는다."""
+    description = getattr(test, "description", None)
+    if type(test).__name__ == "_ErrorHolder" and isinstance(description, str):
+        found = re.search(r"\(([^()\s]+)\)\s*$", description)
+        return found.group(1).split(".")[0] if found else description
+    return module_of(test)
+
+
+def qt_skip_report(skipped):
+    """(PySide6 이유로 건너뛴 시험의 {시험 파일: 개수}, 그 밖의 이유별 {이유: 개수}) — `result.skipped` 의 (시험, 이유) 목록에서."""
+    qt_skips, other = {}, {}
+    for test, reason in skipped:
+        text = " ".join(str(reason).split())
+        if QT_WORD in text.casefold():
+            name = skipped_module(test)
+            qt_skips[name] = qt_skips.get(name, 0) + 1
+        else:
+            other[text] = other.get(text, 0) + 1
+    return dict(sorted(qt_skips.items())), other
+
+
+def timed(result_class):
+    """결과 클래스에 '시험 파일마다 걸린 시간'을 세는 기능을 더한다(Qt 칸 첫 실행에서 `WEIGHTS` 를 고칠 값을 얻으려고). 시험의 실행·결과는 바꾸지 않는다.
+    시간은 앞 시험이 끝난 때부터 이 시험이 끝난 때까지를 이 시험의 파일에 더한다 — 그래서 합이 조각의 실행 시간과 같고 클래스 준비·정리 시간은 다음 시험에 붙는다."""
+    class Timed(result_class):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.module_seconds = {}
+            self._mark = time.perf_counter()
+            self._current = None
+
+        def startTestRun(self):
+            super().startTestRun()
+            self._mark = time.perf_counter()
+
+        def stopTest(self, test):
+            super().stopTest(test)
+            now = time.perf_counter()
+            name = module_of(test)
+            if self._current is not None and name != self._current and self.module_seconds.get(self._current, 0.0) >= PROGRESS_SECONDS:
+                print(f"[걸린 시간] {self._current} {self.module_seconds[self._current]:,.1f}초", flush=True)         # 앞 파일이 끝났다 — 마지막 파일은 끝의 표가 맡는다
+            self._current = name
+            self.module_seconds[name] = self.module_seconds.get(name, 0.0) + now - self._mark
+            self._mark = now
+    return Timed
+
+
+def print_qt_information(result, qt_skips, other):
+    """Qt 칸의 정보 출력 — 건너뜀 이유별 개수와 시험 파일별 걸린 시간(표준 출력)."""
+    print(f"건너뛴 시험 {len(result.skipped)}개 — PySide6 이유 {sum(qt_skips.values())}개(0 이어야 한다)·그 밖의 이유 {sum(other.values())}개(알림만, 첫 실행 뒤 허용 목록으로 굳힌다)", flush=True)
+    for reason, count in sorted(other.items(), key=lambda item: (-item[1], item[0]))[:REASON_LIMIT]:
+        print(f"  {count}개  {reason[:120]}", flush=True)
+    if len(other) > REASON_LIMIT:
+        print(f"  … 그 밖의 이유 {len(other) - REASON_LIMIT}가지", flush=True)
+    seconds = getattr(result, "module_seconds", {})
+    if seconds:
+        ranked = sorted(seconds.items(), key=lambda item: (-item[1], item[0]))
+        print(f"시험 파일별 걸린 시간(초, 이 조각 합계 {sum(seconds.values()):,.0f}초 — 오래 걸린 순 상위 {min(TIME_LIMIT, len(ranked))}개, `WEIGHTS` 를 고칠 때 쓴다):", flush=True)
+        for name, value in ranked[:TIME_LIMIT]:
+            print(f"  {name} {value:,.1f}", flush=True)
+
+
+def qt_guard(result):
+    """Qt 칸의 건너뜀 가드 — PySide6 이유로 건너뛴 시험이 하나라도 있으면 1(그 개수를 시험 파일별로 찍는다), 없으면 0. 정보도 함께 찍는다."""
+    qt_skips, other = qt_skip_report(result.skipped)
+    print_qt_information(result, qt_skips, other)
+    if not qt_skips:
+        return 0
+    print(f"Qt 칸: PySide6 가 없다는 이유로 건너뛴 시험이 {sum(qt_skips.values())}개 있다 — 화면(Qt) 시험이 돌지 않은 채 초록이 되는 것을 막으려고 이 칸을 빨갛게 한다. 시험 파일별 개수:", file=sys.stderr, flush=True)
+    for name, count in list(qt_skips.items())[:FILE_LIMIT]:
+        print(f"  {name}: {count}개", file=sys.stderr, flush=True)
+    if len(qt_skips) > FILE_LIMIT:
+        print(f"  … 그 밖의 시험 파일 {len(qt_skips) - FILE_LIMIT}개", file=sys.stderr, flush=True)
+    return 1
+
+
 def main(argv=None, env=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     env = os.environ if env is None else env
@@ -143,6 +249,14 @@ def main(argv=None, env=None):
     except ValueError as error:
         print(f"조각을 정하지 못했다: {error}", file=sys.stderr)
         return 2
+    try:
+        require_qt = qt_required(env)
+    except ValueError as error:
+        print(f"Qt 칸 표시를 읽지 못했다: {error}", file=sys.stderr)
+        return 2
+    if require_qt and "--list" not in options and not qt_installed():
+        print(f"{QT_FLAG}=1 인데 PySide6 를 찾지 못했다 — 이대로 돌면 화면(Qt) 시험이 모두 건너뛰어져 초록이 된다. 이 칸의 설치 단계(scripts/ci_qt_setup.py)를 확인하라", file=sys.stderr)
+        return 3
     tests_dir = Path(options["--tests-dir"]) if isinstance(options.get("--tests-dir"), str) else TESTS
     found = discover(tests_dir)
     table = assign(found, total)
@@ -159,8 +273,14 @@ def main(argv=None, env=None):
     tests = [test for name in mine for test in found[name]]
     everything = sum(len(items) for items in found.values())
     print(f"조각 {shard}/{total}: 시험 파일 {len(mine)}개·시험 {len(tests):,}개 (전체 {len(found)}개 파일·{everything:,}개 시험)", flush=True)
-    result = make_runner().run(unittest.TestSuite(tests))
-    return 0 if result.wasSuccessful() else 1
+    runner = make_runner()
+    if require_qt:
+        runner.resultclass = timed(runner.resultclass)
+    result = runner.run(unittest.TestSuite(tests))
+    code = 0 if result.wasSuccessful() else 1
+    if require_qt:
+        code = max(code, qt_guard(result))
+    return code
 
 
 if __name__ == "__main__":
