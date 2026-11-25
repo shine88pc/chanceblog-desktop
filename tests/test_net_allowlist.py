@@ -153,6 +153,32 @@ def keylog_uses(source):
     return uses
 
 
+class ImportTimeTest(unittest.TestCase):
+    """접속 틀은 쓸 때만 불러온다(D-739, 독립 검증 S 참고-3) — 기본 빌드가 앱을 시작할 때 `ssl`·`http.client`(접속 코드)를 불러오지 않는다: 스위치가 꺼진 동안은 접속 코드를 불러오지도 않고,
+    묶음에서 `_ssl` 이 빠져도 앱이 시작은 되며 그 기능만 실패한다. 깨끗한 인터프리터(하위 프로세스)에서 앱의 기본 모듈을 가져와 본다."""
+
+    DEFAULT_MODULES = ("chanceblog_desktop.publish.deploy", "chanceblog_desktop.service.cli", "chanceblog_desktop.service.doctor", "chanceblog_desktop.service.wiring", "chanceblog_desktop.service.context",
+                       "chanceblog_desktop.service.pages_flow", "chanceblog_desktop.service.backend")
+    WATCHED = ("ssl", "_ssl", "http.client", "chanceblog_desktop.net.client", "chanceblog_desktop.net.site")
+
+    def loaded_after_importing(self, modules):
+        import json
+        import os
+        import subprocess
+        code = ("import json, sys\nsys.path.insert(0, %r)\nfor name in %r:\n    __import__(name)\nprint(json.dumps([name for name in %r if name in sys.modules]))\n" % (str(SRC.parent), list(modules), list(self.WATCHED)))
+        done = subprocess.run([sys.executable, "-X", "utf8", "-B", "-c", code], capture_output=True, text=True, encoding="utf-8", cwd=str(ROOT), env=dict(os.environ, PYTHONPATH="", PYTHONDONTWRITEBYTECODE="1"), timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
+    def test_the_default_app_modules_do_not_load_ssl_or_http_client_when_imported(self):
+        self.assertEqual(self.loaded_after_importing(self.DEFAULT_MODULES), [], "기본 모듈이 가져오는 순간 접속 코드(ssl·http.client·net.client)를 불러왔다 — 접속 틀은 쓰는 함수 안에서 불러온다")
+
+    def test_the_watch_is_not_blind_importing_the_client_does_load_them(self):
+        """대조 — 접속 틀을 직접 가져오면 감시 대상이 모두 불려 온다(위 시험이 빈 실험이 아니다)."""
+        loaded = self.loaded_after_importing(("chanceblog_desktop.net.site",))
+        self.assertEqual(sorted(loaded), sorted(("ssl", "_ssl", "http.client", "chanceblog_desktop.net.client", "chanceblog_desktop.net.site")))
+
+
 class KeyLogScopeTest(unittest.TestCase):
     def test_session_key_logging_is_named_only_to_turn_it_off_in_the_one_client_file(self):
         """D-738(독립 검증 S 필수-1) — 세션 비밀 로그(`keylog`)는 `src/` 에서 `net/client.py` 한 파일에만 나오고, 거기서도 `_make_context` 의 끄기 한 줄(`context.keylog_filename = None`)과
