@@ -234,7 +234,7 @@ class FirstRunFixDocsTest(unittest.TestCase):
         for word in ("그 실패는 모두 측정 도구의 결함이었다", "통과 개수를 12 로 못박아", "열세 번째 점검", "SELFTEST_KEYS", "더 찍힌 점검은 막지 않는다", "원인 후보는 넷이다", "종료 코드가 비어", "환경을 물려받아", "기다리지 않고 바로 흔적을 봤", "컴퓨터 이름을 붙여", "spikeusera·spikeuserb·spikeuserc", "최대 45초 기다리며", "러너에서만 알 수 있다",
                      "사용자 폴더·임시 폴더 변수를 그 사용자 것으로 명시", "종료 코드 42", "시도 불가", "T-INST-04", "종료 740", "0.0.0.0", "6.5.0 이상이면 쓴다", "Korean.isl", "미확인", "컴파일 출력",
                      "ImageOS", "대문자", "vpk --version", "M20", "M17", "M19", "100자", "False", "실제 도구 결과", "M13", "대소문자까지 달라야 한다", "M15", "ws2_32", "M16", "M05", "30.6초", "30초",
-                     "2차 측정 뒤에 정한다", "Run workflow 단추 한 번", "T2"):
+                     "설치 로그에서 훅을 말하는 줄", "2차 측정 뒤에 정한다", "Run workflow 단추 한 번", "T2"):
             self.assertIn(word, self.rows[0], word)
 
     def test_the_scores_in_the_row_are_what_the_design_table_adds_up_to(self):
