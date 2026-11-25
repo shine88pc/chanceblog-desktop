@@ -60,7 +60,7 @@ jobs:
   # 위 test 잡은 한 글자도 바뀌지 않았다. 이 잡도 시험이 지킨다(tests/test_ci_workflow_qt.py·tests/workflow_golden.py): 액션은 test 잡과 같은 SHA 둘뿐·비밀 값 0·시간 한도 정확히 40분.
   qt:
     name: Qt 시험 (windows-latest, Python 3.12, 조각 ${{ matrix.shard }}/12)
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M') || github.ref == 'refs/heads/ai/claude/NO-MERGE-diag-qtt3'
     runs-on: windows-latest
     # 한 조각은 표 기준 약 23분에 설치 1–1.5분을 더해 25분 안팎으로 어림된다 — 한도 40분의 약 60%(러너 속도 ±20% 와 줄 서기를 넣어도 한도 안, 근거는 docs/CI_QT.md). 한도는 test 잡과 같은 40분이다(시험이 지킨다).
     timeout-minutes: 40
