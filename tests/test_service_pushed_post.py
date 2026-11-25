@@ -224,7 +224,7 @@ class RealFlowTest(unittest.TestCase):
         """새 가지에 올리고 병합을 흉내 낸(시험이 원격 main 을 가지의 끝으로 옮긴다) 뒤 병합을 확인한 글 — PUSHED."""
         project_id = ss.make_approved(self.ctx)
         self.assertEqual(pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True).status, st.MERGE_PENDING)
-        branch, commit = st.split_remote_id(projects.show_project(self.ctx, project_id).variant("github_pages").remote_id)
+        branch, commit = st.split_remote_id(_remote_id(self.ctx, project_id))
         ss.git(self.origin, "update-ref", "refs/heads/main", commit)
         self.assertEqual(pages_flow.merge_check_pages(self.ctx, project_id).status, st.PUSHED)
         return project_id
@@ -311,6 +311,12 @@ class RealFlowTest(unittest.TestCase):
         self.assertEqual(projects.list_projects(self.ctx), [])
         self.assertEqual(self.remote(), remote, "올라간 글은 그대로다 — 이 앱은 올라간 글을 지우지 않는다")
         self.assertEqual(ss.git(self.work, "status", "--porcelain", "--untracked-files=all"), "")
+
+
+def _remote_id(ctx, project_id):
+    """보관함에 적힌 올린 가지의 식별자(`가지@커밋`) — 보기 객체(`show_project`)에는 이 칸이 없으므로 보관함에서 바로 읽는다."""
+    with ctx.store() as store:
+        return store.load(project_id).variant("github_pages").remote_id
 
 
 def setUpModule():

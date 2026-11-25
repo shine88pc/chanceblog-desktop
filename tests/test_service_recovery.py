@@ -328,7 +328,7 @@ class RestoredPostTest(RealGit):
         again = pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
         self.assertEqual((again.status, again.plan.path), (st.MERGE_PENDING, ss.KO_PATH))
         self.assertEqual((self.branches(), self.remote()), (branches, remote), "두 번째 가지를 만들지 않았다")
-        _branch, commit = st.split_remote_id(projects.show_project(self.ctx, project_id).variant("github_pages").remote_id)
+        _branch, commit = st.split_remote_id(_remote_id(self.ctx, project_id))
         ss.git(self.origin, "update-ref", "refs/heads/main", commit)                                 # 병합을 흉내 낸 뒤 — 같은 내용이 main 에 있다
         ss.git(self.work, "fetch", "-q", "origin")                                                  # 사용자의 git 이 받아 둔 것처럼(점검은 받아 둔 원격 main 을 본다)
         projects.restore_store(self.ctx, backup, confirmed=True)
@@ -358,6 +358,12 @@ class RestoredPostTest(RealGit):
         ss.git(self.work, "reset", "-q", "--hard", "HEAD^")                       # 작업 폴더에서는 지우고 받아 둔 원격 main 에만 남긴다
         self.assertFalse((self.work / "_posts" / "원격에만").exists())
         self.assertEqual(self.backend.same_content(self.work, text), ["_posts/원격에만/2026-11-01-KR-090001.md"])
+
+
+def _remote_id(ctx, project_id):
+    """보관함에 적힌 올린 가지의 식별자(`가지@커밋`) — 보기 객체(`show_project`)에는 이 칸이 없으므로 보관함에서 바로 읽는다."""
+    with ctx.store() as store:
+        return store.load(project_id).variant("github_pages").remote_id
 
 
 def setUpModule():

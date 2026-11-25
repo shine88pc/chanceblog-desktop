@@ -66,6 +66,10 @@ def external_write_off():
     _off("NET_PAGES_SITE")
     _off("PAGES_BRANCH_PUSH")
     local_origin_transport_off()
+    # 스위치가 켜진 동안 `make_context` 가 꽂은 `pages_git` 어댑터 공장(`wiring.register_enabled` 는 더하기만 한다)이 다른 시험으로 새지 않게 거둔다 —
+    # PUBPR 이전에는 꽂히는 것이 아무 일도 안 하는 자리표시자라 새도 티가 나지 않았지만 지금은 진짜 어댑터라, 새면 기본 문맥의 `backend` 가 `LocalOnlyBackend` 가 아니게 된다.
+    from chanceblog_desktop.service import external
+    external.unregister(external.KIND_PAGES_GIT)
 
 
 def blogger_input_on():

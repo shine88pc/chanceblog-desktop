@@ -107,7 +107,8 @@ class GitBase(unittest.TestCase):
         return ss.status_of(self.ctx, project_id)
 
     def branch_of(self, project_id):
-        return st.split_remote_id(projects.show_project(self.ctx, project_id).variant("github_pages").remote_id)
+        with self.ctx.store() as store:
+            return st.split_remote_id(store.load(project_id).variant("github_pages").remote_id)
 
     def bot_pushes(self, name="_posts/Bot/2026-11-02-KR-103012.md", text="봇 글\n"):
         bot = self.tmp / "bot"
@@ -150,8 +151,9 @@ class PublishTest(GitBase):
         self.assertFalse({"--force", "-f", "--force-with-lease", "--mirror", "--delete"} & set(pushes[0]), pushes[0])
         self.assertEqual(pushes[0][-1], f"{commit}:refs/heads/{branch}")
         self.assertEqual(self.status(project_id), st.MERGE_PENDING)
-        view = projects.show_project(self.ctx, project_id).variant("github_pages")
-        self.assertEqual((view.published_url, view.remote_id), ("", f"{branch}@{commit}"))
+        with self.ctx.store() as store:
+            variant = store.load(project_id).variant("github_pages")
+        self.assertEqual((variant.published_url, variant.remote_id), (None, f"{branch}@{commit}"))
         record = Journal(self.ctx.workspace.journal_dir).read(project_id)
         self.assertEqual((record.stage, record.branch, record.commit, record.base), ("branch_pushed", branch, commit, self.main0))
         self.assertIn("compare/main...", report.link)
