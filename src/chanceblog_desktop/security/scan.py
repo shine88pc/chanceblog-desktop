@@ -8,8 +8,12 @@
   · 표준 라이브러리만 쓴다. 파일·네트워크·하위 프로세스·시계·무작위·전역에 남는 상태가 없다(같은 입력은 늘 같은 출력).
   · 모든 정규식은 선형 시간이다(큰 반복 안에 반복·대안을 두지 않고, 접두어로 시작하는 후보는 앞 글자 검사로 시작 자리를 제한한다). 10만 자 병적 입력도 0.5초 안에 끝난다.
   · 위치는 원문 기준이다. 글자 모양 맞추기(전각·수학 글자 같은 호환 글자 → 영문·숫자 하나)는 글자 하나를 글자 하나로만 바꿔 길이가 그대로이므로 위치가 밀리지 않는다.
+  · 줄 구분 글자(U+000B·U+000C·U+001C–U+001F·U+0085·U+2028·U+2029 — `_SPLIT_CODES`)는 눈에 안 보이는 글자처럼 지우고도 한 번 더 찾는다(SECSEP, 결정 D-760). 편집기·변환기는 이 글자에서 줄을 나눠 키 한가운데에 끼면
+    쪼개진 것처럼 보이는데, 가리기 엔진(`mask.py`)은 이 글자를 이미 지우고 찾으므로 저장 검사도 같은 눈을 갖는다. 두 눈으로 본다: 원문 그대로(키 앞뒤에 영숫자 이웃이 붙어 있어도 구분 글자가 경계가 되어 찾던 것은 계속 같은 자리로 찾는다)와
+    구분 글자를 지운 글(쪼개진 모양을 다시 잇는다). 지운 글에서만 찾은 것은 원문 눈이 짚은 자리와 겹치지 않을 때만 더하고 자리는 위치표로 원문 위치로 되돌린다 — 결과(`SecretFinding`)는 늘 원문 기준이다.
+    눈에 안 보이는 글자(U+200B·소프트 하이픈 …)·보통 공백·LF·CR 로 쪼갠 토큰은 예전처럼 못 찾는다(알려진 한계).
 
-위치의 뜻: 줄은 1부터이고 줄바꿈은 CRLF·LF·CR 이다(그 밖의 유니코드 줄 구분자는 보통 글자). 열은 그 줄 안에서 파이썬 글자(코드 포인트) 기준 1부터이고 `col_end` 는 마지막 글자의 열(포함)이다.
+위치의 뜻: 줄은 1부터이고 줄바꿈은 CRLF·LF·CR 이다(그 밖의 유니코드 줄 구분자는 줄을 세지 않는 보통 글자 — 키 한가운데에 끼어 있으면 그 글자까지가 발견한 글이다). 열은 그 줄 안에서 파이썬 글자(코드 포인트) 기준 1부터이고 `col_end` 는 마지막 글자의 열(포함)이다.
 그래서 `줄 글[col_start - 1:col_end]` 가 발견한 글이다(결합 글자도 한 글자로 센다).
 """
 import bisect
@@ -60,6 +64,10 @@ _RULES = (("google_api_key", _GOOGLE), ("github_token", _GITHUB), ("bearer_token
 
 _NEWLINE = re.compile(r"\r\n|\n|\r")
 
+# 줄 구분 글자 아홉(코드 포인트) — 공백(`str.isspace`)으로 읽히는 제어·줄 구분·문단 구분 글자 가운데 탭·LF·CR 을 뺀 것이다: 세로 탭(U+000B)·쪽 나눔(U+000C)·파일·그룹·레코드·단위 구분(U+001C–U+001F)·다음 줄(U+0085)·줄 구분(U+2028)·문단 구분(U+2029).
+# 가리기 엔진(`mask.py`)이 눈에 안 보이는 글자로 지우는 범주(제어·줄 구분·문단 구분)에 모두 든다(시험이 모든 코드 포인트에서 견준다). 정수로 적는다 — 소스에 이 글자를 그대로 두지 않는다.
+_SPLIT_CODES = (11, 12, 28, 29, 30, 31, 133, 8232, 8233)
+
 _NOT_TEXT = "검사할 수 있는 것은 글(str)뿐이에요"
 _BAD_WHERE = "칸 이름은 짧은 한 줄 이름이어야 해요(글 내용을 넣지 마세요)"
 _SECRET_WHERE = "칸 이름에 키·토큰처럼 보이는 글이 들어 있어요(글 내용을 칸 이름으로 쓰지 마세요)"
@@ -105,17 +113,49 @@ def _fold(text):
     return text.translate(table) if table else text
 
 
-def _find(text):
-    """겹침을 정리한 발견 자리 `(유형, 시작, 끝)` 목록(시작 순, 끝은 포함하지 않는 위치)."""
-    view = _fold(text)
+def _without_splitters(text):
+    """줄 구분 글자 아홉(`_SPLIT_CODES`)을 지운 글과 위치표 `(지운 글, 위치표)` — 지울 글자가 없으면 `(text, None)`. 위치표의 `n` 번째 값은 `n` 번째로 지운 글자 앞에 남은 글자 수이고,
+    `_original_index` 가 지운 글의 자리를 원문 자리로 되돌릴 때 쓴다. 글자 종류마다 한 번씩 훑어(글 길이에 선형) 지운 자리를 모은다."""
+    cuts = []
+    for code in _SPLIT_CODES:
+        char = chr(code)
+        at = text.find(char)
+        while at >= 0:
+            cuts.append(at)
+            at = text.find(char, at + 1)
+    if not cuts:
+        return text, None
+    cuts.sort()
+    pieces, last = [], 0
+    for at in cuts:
+        pieces.append(text[last:at])
+        last = at + 1
+    pieces.append(text[last:])
+    return "".join(pieces), [at - number for number, at in enumerate(cuts)]
+
+
+def _original_index(value, mapping):
+    """지운 글의 글자 자리 `value` → 원문의 자리 — 그 글자 앞에서 지운 글자 수만큼 뒤로 간다(`mapping` 은 `_without_splitters` 의 위치표)."""
+    return value + bisect.bisect_right(mapping, value)
+
+
+def _matches(text, mapping):
+    """한 눈(글)에서 규칙마다 찾은 `(순위, 시작, -끝, 유형)` 목록 — 지운 글이면(`mapping` 이 있으면) 자리를 원문 자리로 되돌린다(끝은 포함하지 않는 위치, 글 속 줄 구분 글자는 발견한 글에 든다)."""
     ranked = []
     for kind, rule in _RULES:
-        for match in rule.finditer(view):
+        for match in rule.finditer(text):
             start, end = match.span(match.lastindex)
+            if mapping is not None:
+                start, end = _original_index(start, mapping), _original_index(end - 1, mapping) + 1
             ranked.append((_RANK[kind], start, -end, kind))
-    ranked.sort()
+    return ranked
+
+
+def _resolve(findings):
+    """`_matches` 의 목록을 겹침 없이 정리한 발견 자리 `(유형, 시작, 끝)` 목록(시작 순) — 겹치면 더 구체적인 유형이, 같은 유형이면 먼저 시작한 긴 것이 이긴다."""
+    findings.sort()
     starts, kept = [], []
-    for _, start, negative_end, kind in ranked:
+    for _, start, negative_end, kind in findings:
         end = -negative_end
         at = bisect.bisect_left(starts, start)
         if at > 0 and kept[at - 1][2] > start:
@@ -124,6 +164,23 @@ def _find(text):
             continue
         starts.insert(at, start)
         kept.insert(at, (kind, start, end))
+    return kept
+
+
+def _find(text):
+    """겹침을 정리한 발견 자리 `(유형, 시작, 끝)` 목록(시작 순, 끝은 포함하지 않는 위치) — 늘 원문 자리다. 두 눈으로 본다: ① 원문 그대로(예전과 같다 — 키 앞뒤에 영숫자가 붙어도 줄 구분 글자가 경계가 되어 찾던 것은
+    그대로 찾는다) ② 줄 구분 글자를 지운 글(그 글자로 쪼개진 모양을 다시 잇는다). ②에서만 찾은 것은 ①이 짚은 자리와 겹치지 않을 때만 더한다 — ①의 결과(자리·유형)는 줄 구분 글자가 있어도 달라지지 않는다."""
+    view = _fold(text)
+    kept = _resolve(_matches(view, None))
+    clean, mapping = _without_splitters(view)
+    if mapping is not None:
+        starts = [item[1] for item in kept]
+        for found in _resolve(_matches(clean, mapping)):
+            at = bisect.bisect_left(starts, found[1])
+            if (at > 0 and kept[at - 1][2] > found[1]) or (at < len(kept) and kept[at][1] < found[2]):
+                continue
+            starts.insert(at, found[1])
+            kept.insert(at, found)
     return kept
 
 
@@ -182,10 +239,13 @@ def scan_fields(mapping):
 
 
 def has_secret(text):
-    """글에 Secret 형태가 하나라도 있으면 True(`bool(scan_secrets(text))` 와 같다)."""
+    """글에 Secret 형태가 하나라도 있으면 True(`bool(scan_secrets(text))` 와 같다) — 원문 그대로와 줄 구분 글자를 지운 글, 두 눈으로 본다(`_find`)."""
     _check_text(text)
     view = _fold(text)
-    return any(rule.search(view) for _, rule in _RULES)
+    if any(rule.search(view) for _, rule in _RULES):
+        return True
+    clean, mapping = _without_splitters(view)
+    return mapping is not None and any(rule.search(clean) for _, rule in _RULES)
 
 
 def describe(finding):
