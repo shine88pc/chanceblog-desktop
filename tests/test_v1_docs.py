@@ -219,7 +219,9 @@ class NewCloneGuideTest(unittest.TestCase):
         가상환경 경로가 한 이름으로 이어지고, `cd` 폴더 이름이 저장소 이름(`packaging/make_manifest.py` 의 REPOSITORY)과 같다. 다른 갈래가 CI 조각 수나 도구 이름을 바꾸면
         INSTALLER·RELEASE 갈래가 이 안내(MIGRATION §6·README 새 PC 절)도 함께 고친다 — 아래 실패 글이 어느 줄인지 알려 준다."""
         readme = part(read("README.md"), "## 새 PC 에서 처음부터 — 개발자 시작 순서", NEXT_SECTION)
-        shards = [int(number) for number in re.search(r"shard: \[([0-9, ]+)\]", read(".github/workflows/ci.yml")).group(1).split(",")]
+        # D-717: `ci.yml` 에는 조각 목록이 둘이다 — `test` 잡(정식 CI 열두 칸, 조각 셋)과 `qt` 잡(Qt 칸, 조각 열둘). 새 clone 안내의 시험 줄은 열두 칸이 쓰는 조각을 안내하므로 `test` 잡의 목록만 읽는다(파일의 첫 목록에 기대지 않는다).
+        test_job = read(".github/workflows/ci.yml").replace("\r\n", "\n").split("\n  qt:\n", 1)[0]
+        shards = [int(number) for number in re.search(r"shard: \[([0-9, ]+)\]", test_job).group(1).split(",")]
         repo_name = re.search(r'REPOSITORY = "[^/"]+/([^"]+)"', read("packaging/make_manifest.py")).group(1)
         by_name = {path.name: path for folder in ("scripts", "packaging") for path in (ROOT / folder).glob("*.py")}
         backslash = chr(92)

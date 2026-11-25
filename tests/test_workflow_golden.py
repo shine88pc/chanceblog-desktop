@@ -14,7 +14,12 @@ D-716(둘째 작업 `qt`): `ci.yml` 에 작업이 둘(`test`·`qt`)이 되자 �
 `change` 의 '옛 글은 파일에 한 번만 나와야 한다' 가 깨졌다. 그래서 (가) 명세를 두 작업(이름·순서·개수 포함)으로 넓혔고(`tests/workflow_golden.py`) (나) 위 열한 개와 같은 계열의 옛 변이는 글을 한 글자도 바꾸지 않고 `test` 작업 쪽에만 걸도록 감쌌다(`on_test_job` — 약화 0).
 (다) 두 작업에 같은 변이를 한 번씩 거는 쌍둥이 표(`TWIN_SPECS`: 작업 단위 키·matrix·액션·`with`·단계 키·`env`·단계 더하기/빼기), `qt` 만의 표(`QT_ONLY_SPECS`·`QT_ONLY_STEPS`: 실행기·시간 한도·작업 이름·`python-version`·설치 줄·`CI_REQUIRE_QT`·`QT_QPA_PLATFORM`·단계 순서),
 작업 목록 표(`JOB_LIST`: 세 번째 작업·이름 바꾸기·`test` 만 두기·`qt` 만 두기·순서)·이름 칸에 숨긴 액션 표기 표(`GLOBAL_SCAN_SPECS`)와 최상위 표(`TOP_LEVEL`)를 더했다 — 모두 걸리는 것만이 아니라 **어느 작업의 어떤 규칙이 잡았는지**까지 본다.
+
+D-717·D-718(Qt 칸 마무리): `qt` 작업의 승인값이 조각 열둘(`shard` 목록·`CI_SHARD_TOTAL`·이름의 `/12`)·`CI_WEIGHTS: qt`(Qt 칸 전용 무게 표)·작업 수준 `if`(병합 가지와 main 에서만 돈다)로 바뀌었다. 그래서 (가) 두 작업이 같은 줄을 되풀이하던
+앵커 중 조각 목록·조각 총수는 작업마다 다른 줄이 됐고(`shard_line`·`total_line` 이 작업 이름을 받는다) (나) `test` 작업만의 표(`TEST_ONLY_SPECS` — 열두 칸에 `if`·`CI_WEIGHTS`·Qt 환경 변수가 새면 안 된다)와 `qt` 만의 `if`·`CI_WEIGHTS`·옛 3조각 값 표를 더했다.
+`if` 줄은 글자 그대로 못박는다 — 진단 가지 이름을 더하거나 `true`·`always()` 로 바꾼 사본을 모두 거절한다(총괄이 진단 가지에서 임시로 바꾸는 그 한 줄이 이 시험에서 빨개지는 것은 의도다).
 """
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -123,27 +128,44 @@ CHECKOUT_REF = "actions/checkout@" + OLD_SHA
 SETUP_REF = "actions/setup-python@" + SETUP_SHA
 TIMEOUT_LINE = "    timeout-minutes: 40\n"
 FAIL_FAST_LINE = "      fail-fast: false\n"
-SHARD_LINE = "        shard: [1, 2, 3]\n"
+SHARDS = {"test": [1, 2, 3], "qt": list(range(1, 13))}                    # 두 작업의 조각 목록 — `qt` 는 열두 조각이다(D-717)
 CHECKOUT_HEAD = "      - uses: " + CHECKOUT_REF + "  # v4.4.0\n"
 SETUP_HEAD = "      - uses: " + SETUP_REF + "  # v5.6.0\n"
 CHECKOUT_WITH = "        with:\n          persist-credentials: false\n"
 PERSIST_LINE = "          persist-credentials: false\n"
 SHARD_RUN = "        run: python scripts/ci_shard.py\n"
 SHARD_ENV_LINE = "          CI_SHARD: ${{ matrix.shard }}\n"
-TOTAL_LINE = "          CI_SHARD_TOTAL: '3'\n"
 UTF8_LINE = "          PYTHONUTF8: '1'\n"
 QT_RUNS_ON = "    runs-on: windows-latest\n"
-QT_NAME_LINE = "    name: Qt 시험 (windows-latest, Python 3.12, 조각 ${{ matrix.shard }}/3)\n"
+QT_NAME_LINE = "    name: Qt 시험 (windows-latest, Python 3.12, 조각 ${{ matrix.shard }}/12)\n"
+QT_IF_LINE = "    if: " + golden.QT_IF + "\n"
+QT_WEIGHTS_LINE = "          CI_WEIGHTS: qt\n"
 QT_PYTHON_LINE = "          python-version: '3.12'\n"
 QT_SETUP_NAME = "      - name: PySide6 두 줄만 설치·점검\n"
 QT_SETUP_BLOCK = QT_SETUP_NAME + "        run: python scripts/ci_qt_setup.py\n"
-QT_SHARD_BLOCK = ("      - name: Qt 시험 실행(조각 ${{ matrix.shard }}/3)\n        env:\n" + UTF8_LINE + SHARD_ENV_LINE + TOTAL_LINE
+QT_SHARD_BLOCK = ("      - name: Qt 시험 실행(조각 ${{ matrix.shard }}/12)\n        env:\n" + UTF8_LINE + SHARD_ENV_LINE + "          CI_SHARD_TOTAL: '12'\n" + QT_WEIGHTS_LINE
                   + "          CI_REQUIRE_QT: '1'\n          QT_QPA_PLATFORM: offscreen\n" + SHARD_RUN)
 CANARY_STEP = "      - name: CANARY 추가 단계\n        run: Invoke-WebRequest -Uri 'CANARY.invalid/x' -OutFile x.exe\n\n"
 
 
+def render(numbers):
+    return "[" + ", ".join(str(number) for number in numbers) + "]"
+
+
+def shard_line(job, numbers=None):
+    """`job`(`test`·`qt`)의 조각 목록 줄 — `numbers` 를 주면 그 목록으로 쓴 줄(변이의 새 글)."""
+    return "        shard: " + render(SHARDS[job] if numbers is None else numbers) + "\n"
+
+
+def total_line(job, total=None):
+    """`job` 의 시험 단계 `CI_SHARD_TOTAL` 줄 — `total` 을 주면 그 값으로 쓴 줄."""
+    return "          CI_SHARD_TOTAL: '" + str(len(SHARDS[job]) if total is None else total) + "'\n"
+
+
 def after(anchor, extra):
-    """(옛 글, 새 글) — 앵커 줄 바로 뒤에 `extra` 를 끼운다."""
+    """(옛 글, 새 글) — 앵커 줄 바로 뒤에 `extra` 를 끼운다. 앵커가 작업 이름을 받는 함수면(작업마다 앵커 줄이 다를 때: 조각 목록·조각 총수) 새 글도 같은 작업 이름을 받는 함수다."""
+    if callable(anchor):
+        return anchor, (lambda job: anchor(job) + extra)
     return anchor, anchor + extra
 
 
@@ -153,7 +175,6 @@ TWIN_SPECS = (
     ("작업 단위 env 에 PYTHONPATH", *after(TIMEOUT_LINE, "    env:\n      PYTHONPATH: CANARY_ELSEWHERE\n"), "작업 키"),
     ("작업 단위 env 에 PIP_INDEX_URL", *after(TIMEOUT_LINE, "    env:\n      PIP_INDEX_URL: CANARY.invalid\n"), "작업 키"),
     ("작업 단위 env 에 프록시", *after(TIMEOUT_LINE, "    env:\n      HTTPS_PROXY: CANARY.invalid\n"), "작업 키"),
-    ("작업 단위 if", *after(TIMEOUT_LINE, "    if: github.ref == 'refs/heads/main'\n"), "작업 키"),
     ("작업 단위 needs", *after(TIMEOUT_LINE, "    needs: CANARY_other\n"), "작업 키"),
     ("작업 단위 container", *after(TIMEOUT_LINE, "    container:\n      image: CANARY.invalid/x\n"), "작업 키"),
     ("작업 단위 services", *after(TIMEOUT_LINE, "    services:\n      cache:\n        image: CANARY.invalid/y\n"), "작업 키"),
@@ -162,14 +183,14 @@ TWIN_SPECS = (
     ("작업 단위 environment", *after(TIMEOUT_LINE, "    environment: production\n"), "작업 키"),
     ("작업 단위 concurrency", *after(TIMEOUT_LINE, "    concurrency: CANARY-group\n"), "작업 키"),
     ("작업 단위 outputs", *after(TIMEOUT_LINE, "    outputs:\n      CANARY: x\n"), "작업 키"),
-    ("matrix 에 include", *after(SHARD_LINE, "        include:\n          - shard: 9\n"), "strategy"),
-    ("matrix 에 exclude", *after(SHARD_LINE, "        exclude:\n          - shard: 2\n"), "strategy"),
-    ("matrix 에 다른 키", *after(SHARD_LINE, "        runner: CANARY\n"), "strategy"),
+    ("matrix 에 include", *after(shard_line, "        include:\n          - shard: 9\n"), "strategy"),
+    ("matrix 에 exclude", *after(shard_line, "        exclude:\n          - shard: 2\n"), "strategy"),
+    ("matrix 에 다른 키", *after(shard_line, "        runner: CANARY\n"), "strategy"),
     ("strategy 에 max-parallel", *after(FAIL_FAST_LINE, "      max-parallel: 1\n"), "strategy"),
     ("fail-fast 를 true 로", FAIL_FAST_LINE, "      fail-fast: true\n", "strategy"),
-    ("조각 목록에서 하나를 뺌", SHARD_LINE, "        shard: [1, 2]\n", "strategy"),
-    ("조각 목록에 하나를 더함", SHARD_LINE, "        shard: [1, 2, 3, 4]\n", "strategy"),
-    ("조각 목록의 순서를 바꿈", SHARD_LINE, "        shard: [3, 2, 1]\n", "strategy"),
+    ("조각 목록에서 하나를 뺌", shard_line, lambda job: shard_line(job, SHARDS[job][:-1]), "strategy"),
+    ("조각 목록에 하나를 더함", shard_line, lambda job: shard_line(job, SHARDS[job] + [len(SHARDS[job]) + 1]), "strategy"),
+    ("조각 목록의 순서를 바꿈", shard_line, lambda job: shard_line(job, SHARDS[job][::-1]), "strategy"),
     ("가져오기 액션의 SHA", CHECKOUT_REF, "actions/checkout@" + "b" * 40, "액션"),
     ("가져오기 액션의 소유자·저장소", CHECKOUT_REF, "canary-org/checkout@" + "a" * 40, "액션"),
     ("가져오기 액션을 태그로", CHECKOUT_REF, "actions/checkout@v4", "액션"),
@@ -190,10 +211,10 @@ TWIN_SPECS = (
     ("시험 단계에 id", *after(SHARD_RUN, "        id: CANARY\n"), "허용되지 않은 키"),
     ("시험 단계 run 끝에 || true", SHARD_RUN, "        run: python scripts/ci_shard.py || true\n", "run 명령"),
     ("시험 단계 run 을 다른 명령으로", SHARD_RUN, "        run: python -m unittest discover -s tests\n", "run 명령"),
-    ("시험 단계 env 에 PIP_INDEX_URL", *after(TOTAL_LINE, "          PIP_INDEX_URL: CANARY.invalid\n"), "env"),
-    ("시험 단계 env 에 PYTHONPATH", *after(TOTAL_LINE, "          PYTHONPATH: CANARY_ELSEWHERE\n"), "env"),
-    ("시험 단계 env 에 프록시", *after(TOTAL_LINE, "          HTTPS_PROXY: CANARY.invalid\n"), "env"),
-    ("조각 총수를 2 로", TOTAL_LINE, "          CI_SHARD_TOTAL: '2'\n", "env"),
+    ("시험 단계 env 에 PIP_INDEX_URL", *after(total_line, "          PIP_INDEX_URL: CANARY.invalid\n"), "env"),
+    ("시험 단계 env 에 PYTHONPATH", *after(total_line, "          PYTHONPATH: CANARY_ELSEWHERE\n"), "env"),
+    ("시험 단계 env 에 프록시", *after(total_line, "          HTTPS_PROXY: CANARY.invalid\n"), "env"),
+    ("조각 총수를 2 로", total_line, lambda job: total_line(job, 2), "env"),
     ("조각 번호를 1 로 고정", SHARD_ENV_LINE, "          CI_SHARD: '1'\n", "env"),
     ("PYTHONUTF8 를 뺌", UTF8_LINE, "", "env"),
     ("PYTHONUTF8 를 0 으로", UTF8_LINE, "          PYTHONUTF8: '0'\n", "env"),
@@ -203,6 +224,44 @@ TWIN_SPECS = (
     ("한 줄 흐름식 단계로 태그 액션을 더함", SETUP_HEAD, "      - {uses: actions/cache@v4}\n\n" + SETUP_HEAD, "읽을 수 없는 표기"),
 )
 
+# `test` 작업(열두 칸)만 — 열두 칸은 모든 가지에서 돌고 Qt 칸의 것이 새면 안 된다(D-717·D-718): `if`·`CI_WEIGHTS`·Qt 환경 변수. 옛 쌍둥이 표의 '작업 단위 if' 가 여기로 옮겨 왔다(`qt` 에는 이미 `if` 가 있다)
+TEST_ONLY_SPECS = (
+    ("작업 단위 if(main 에서만)", *after(TIMEOUT_LINE, "    if: github.ref == 'refs/heads/main'\n"), "작업 키"),
+    ("작업 단위 if(qt 와 같은 조건)", *after(TIMEOUT_LINE, QT_IF_LINE), "작업 키"),
+    ("시험 단계 env 에 CI_WEIGHTS: qt", *after(total_line("test"), QT_WEIGHTS_LINE), "env"),
+    ("시험 단계 env 에 CI_REQUIRE_QT", *after(total_line("test"), "          CI_REQUIRE_QT: '1'\n"), "env"),
+    ("시험 단계 env 에 QT_QPA_PLATFORM", *after(total_line("test"), "          QT_QPA_PLATFORM: offscreen\n"), "env"),
+)
+# `qt` 작업의 `if` 줄(D-718) — 글자 하나도 다르면 거절한다: (이름, 옛 글, 새 글, 문제 글에 들어 있어야 할 낱말)
+QT_IF_SPECS = (
+    ("if 줄을 지움", QT_IF_LINE, "", "작업 키"),
+    ("if 를 true 로", QT_IF_LINE, "    if: true\n", "작업 if"),
+    ("if 를 always() 로", QT_IF_LINE, "    if: always()\n", "작업 if"),
+    ("if 를 main 만으로", QT_IF_LINE, "    if: github.ref == 'refs/heads/main'\n", "작업 if"),
+    ("if 를 병합 가지만으로", QT_IF_LINE, "    if: startsWith(github.ref, 'refs/heads/ai/claude/M')\n", "작업 if"),
+    ("if 의 접두어를 ai/claude/ 로 넓힘(NO-MERGE 가지에서도 돈다)", QT_IF_LINE, QT_IF_LINE.replace("ai/claude/M", "ai/claude/"), "작업 if"),
+    ("if 에 진단 가지 이름을 더함(총괄이 진단 가지에서만 임시로 바꾸는 줄)", QT_IF_LINE, QT_IF_LINE[:-1] + " || github.ref == 'refs/heads/ai/claude/NO-MERGE-diag-qtt3'\n", "작업 if"),
+    ("if 를 모든 가지로", QT_IF_LINE, "    if: github.ref != ''\n", "작업 if"),
+    ("if 를 표현식 표기 ${{ }} 로 감쌈", QT_IF_LINE, "    if: ${{ " + golden.QT_IF + " }}\n", "작업 if"),
+    ("if 의 || 를 && 로", QT_IF_LINE, QT_IF_LINE.replace(" || ", " && "), "작업 if"),
+    ("if 의 따옴표를 큰따옴표로", QT_IF_LINE, QT_IF_LINE.replace("'", '"'), "작업 if"),
+    ("if 의 main 을 master 로", QT_IF_LINE, QT_IF_LINE.replace("heads/main", "heads/master"), "작업 if"),
+    ("if 의 M 을 N 으로(NO-MERGE 가지로 바뀜)", QT_IF_LINE, QT_IF_LINE.replace("ai/claude/M'", "ai/claude/N'"), "작업 if"),
+    ("if 의 startsWith 를 contains 로", QT_IF_LINE, QT_IF_LINE.replace("startsWith", "contains"), "작업 if"),
+    ("if 를 빈 값으로", QT_IF_LINE, "    if:\n", "작업 if"),
+    ("if 줄을 두 번 씀(겹친 키)", QT_IF_LINE, QT_IF_LINE + QT_IF_LINE, "읽을 수 없는 표기"),
+)
+# `qt` 작업의 `CI_WEIGHTS` 와 옛 3조각 값(D-717) — 무게 표를 안 고르거나 다른 값을 고르면 조각이 쏠려 시간 한도에 걸린다
+QT_WEIGHTS_SPECS = (
+    ("CI_WEIGHTS 를 지움", QT_WEIGHTS_LINE, "", "env"),
+    ("CI_WEIGHTS 를 대문자 QT 로", QT_WEIGHTS_LINE, "          CI_WEIGHTS: QT\n", "env"),
+    ("CI_WEIGHTS 를 빈 값으로", QT_WEIGHTS_LINE, "          CI_WEIGHTS: ''\n", "env"),
+    ("CI_WEIGHTS 를 default 로", QT_WEIGHTS_LINE, "          CI_WEIGHTS: default\n", "env"),
+    ("CI_WEIGHTS 를 두 번 씀(겹친 키)", QT_WEIGHTS_LINE, QT_WEIGHTS_LINE + QT_WEIGHTS_LINE, "읽을 수 없는 표기"),
+    ("설치 단계 env 에 CI_WEIGHTS", *after(QT_SETUP_NAME, "        env:\n          CI_WEIGHTS: qt\n"), "env"),
+    ("조각 총수를 옛 값 3 으로(목록은 12 그대로)", total_line("qt"), total_line("qt", 3), "env"),
+    ("조각 목록을 옛 값 [1, 2, 3] 으로(총수는 12 그대로)", shard_line("qt"), shard_line("qt", [1, 2, 3]), "strategy"),
+)
 # `qt` 작업만의 값 — 실행기·시간 한도(정확히 40분)·작업 이름·파이썬 버전·설치 줄·`CI_REQUIRE_QT`·`QT_QPA_PLATFORM`
 QT_ONLY_SPECS = (
     ("runs-on 을 self-hosted 로", QT_RUNS_ON, "    runs-on: self-hosted\n", "runs-on"),
@@ -218,15 +277,16 @@ QT_ONLY_SPECS = (
     ("시간 한도를 빈 값으로", TIMEOUT_LINE, "    timeout-minutes:\n", "timeout-minutes"),
     ("시간 한도 줄을 지움", TIMEOUT_LINE, "", "작업 키"),
     ("작업 이름의 접두어를 바꿈", "    name: Qt 시험 (", "    name: Qt 검사 (", "name"),
-    ("작업 이름의 조각 총수를 /2 로", "조각 ${{ matrix.shard }}/3)\n    runs-on", "조각 ${{ matrix.shard }}/2)\n    runs-on", "name"),
+    ("작업 이름의 조각 총수를 /2 로", QT_NAME_LINE, QT_NAME_LINE.replace("/12)", "/2)"), "name"),
+    ("작업 이름의 조각 총수를 옛 값 /3 으로", QT_NAME_LINE, QT_NAME_LINE.replace("/12)", "/3)"), "name"),
     ("작업 이름의 러너 표기를 바꿈", "(windows-latest, Python 3.12,", "(ubuntu-latest, Python 3.12,", "name"),
     ("작업 이름을 test 작업의 이름 꼴로", QT_NAME_LINE, "    name: 시험 (${{ matrix.os }}, Python ${{ matrix.python }}, 조각 ${{ matrix.shard }}/3)\n", "name"),
     ("작업 이름 뒤에 글자를 더함", QT_NAME_LINE, QT_NAME_LINE[:-1] + " CANARY\n", "name"),
     ("작업 이름 앞에 글자를 더함", QT_NAME_LINE, "    name: CANARY " + QT_NAME_LINE[len("    name: "):], "name"),
     ("작업 이름 줄을 지움", QT_NAME_LINE, "", "작업 키"),
-    ("matrix 에 os 키", *after(SHARD_LINE, "        os: [ubuntu-latest]\n"), "strategy"),
-    ("matrix 에 python 키", *after(SHARD_LINE, "        python: ['3.10']\n"), "strategy"),
-    ("strategy 를 통째로 지움", "    strategy:\n      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n", "", "작업 키"),
+    ("matrix 에 os 키", *after(shard_line("qt"), "        os: [ubuntu-latest]\n"), "strategy"),
+    ("matrix 에 python 키", *after(shard_line("qt"), "        python: ['3.10']\n"), "strategy"),
+    ("strategy 를 통째로 지움", "    strategy:\n      fail-fast: false\n      matrix:\n" + shard_line("qt"), "", "작업 키"),
     ("파이썬 버전을 3.10 으로", QT_PYTHON_LINE, "          python-version: '3.10'\n", "with"),
     ("파이썬 버전을 3.13 으로", QT_PYTHON_LINE, "          python-version: '3.13'\n", "with"),
     ("파이썬 버전을 3.12.1 로", QT_PYTHON_LINE, "          python-version: '3.12.1'\n", "with"),
@@ -246,7 +306,7 @@ QT_ONLY_SPECS = (
     ("QT_QPA_PLATFORM 을 windows 로", "          QT_QPA_PLATFORM: offscreen\n", "          QT_QPA_PLATFORM: windows\n", "env"),
     ("QT_QPA_PLATFORM 을 minimal 로", "          QT_QPA_PLATFORM: offscreen\n", "          QT_QPA_PLATFORM: minimal\n", "env"),
     ("QT_QPA_PLATFORM 을 지움", "          QT_QPA_PLATFORM: offscreen\n", "", "env"),
-)
+) + QT_IF_SPECS + QT_WEIGHTS_SPECS
 # 이름 칸(작업·단계 이름은 값을 못박지 않는 곳)에 `uses:` 표기를 숨기면 구조 견주기는 못 보고 파일 전체의 액션 훑기만 잡는다 — (이름, 작업, 옛 글, 새 글)
 GLOBAL_SCAN_SPECS = (
     ("test 작업의 단계 이름 안에 다른 액션 표기", "test", "      - name: 시험 실행(", "      - name: 시험 실행 uses:canary-org/x@v1 ("),
@@ -261,7 +321,24 @@ QT_ONLY_STEPS = {
     "설치 단계를 두 번 둠": (lambda text: change_in(text, "qt", QT_SETUP_BLOCK, QT_SETUP_BLOCK + "\n" + QT_SETUP_BLOCK), "단계 목록"),
     "파이썬 단계를 뺌": (lambda text: change_in(text, "qt", SETUP_HEAD + "        with:\n" + QT_PYTHON_LINE + "\n", ""), "단계 목록"),
     "첫 단계 앞에 단계를 더함": (lambda text: change_in(text, "qt", "    steps:\n", "    steps:\n      - run: echo CANARY\n\n"), "단계 목록"),
+    "if 를 작업 수준에서 빼고 설치 단계로 옮김": (lambda text: change_in(change_in(text, "qt", QT_IF_LINE, ""), "qt", QT_SETUP_NAME, QT_SETUP_NAME + "        if: " + golden.QT_IF + "\n"), "작업 키"),
+    "if 를 qt 작업에서 빼고 test 작업으로 옮김": (lambda text: change_in(change_in(text, "qt", QT_IF_LINE, ""), "test", TIMEOUT_LINE, TIMEOUT_LINE + QT_IF_LINE), "작업 키"),
 }
+
+
+def runs_on(expression, ref):
+    """`if` 식(이 시험이 아는 두 꼴 — `github.ref == '글'` 과 `startsWith(github.ref, '글')` — 을 ` || ` 로 이은 것)이 `ref` 에서 참인가. 모르는 꼴이면 AssertionError(식을 추측해서 통과시키지 않는다)."""
+    result = False
+    for atom in expression.split(" || "):
+        equal = re.fullmatch(r"github\.ref == '([^']*)'", atom)
+        prefix = re.fullmatch(r"startsWith\(github\.ref, '([^']*)'\)", atom)
+        if equal:
+            result = result or ref == equal.group(1)
+        elif prefix:
+            result = result or ref.startswith(prefix.group(1))
+        else:
+            raise AssertionError("이 시험이 모르는 if 식의 꼴: " + repr(atom))
+    return result
 
 
 def jobs_start(text):
@@ -335,9 +412,14 @@ def _build_new_ci_mutations():
     def simple(job, old, new):
         return lambda text: change_in(text, job, old, new)
 
+    def resolve(value, job):
+        return value(job) if callable(value) else value             # 조각 목록·조각 총수 줄은 작업마다 다르다
+
     for label, old, new, word in TWIN_SPECS:
         for job in ("test", "qt"):
-            table[job + " 작업: " + label] = (simple(job, old, new), word, job)
+            table[job + " 작업: " + label] = (simple(job, resolve(old, job), resolve(new, job)), word, job)
+    for label, old, new, word in TEST_ONLY_SPECS:
+        table["test 작업만: " + label] = (simple("test", old, new), word, "test")
     for label, old, new, word in QT_ONLY_SPECS:
         table["qt 작업만: " + label] = (simple("qt", old, new), word, "qt")
     for label, (mutate, word) in QT_ONLY_STEPS.items():
@@ -453,19 +535,20 @@ class TwoJobsAreBothPinnedTest(unittest.TestCase):
 
     def test_the_qt_job_has_exactly_the_values_of_the_real_file(self):
         job = golden.CI["jobs"]["qt"]
-        self.assertEqual(job["name"], "Qt 시험 (windows-latest, Python 3.12, 조각 ${{ matrix.shard }}/3)")
-        self.assertEqual(job["job_keys"], {"name", "runs-on", "timeout-minutes", "strategy", "steps"})
+        self.assertEqual(job["name"], "Qt 시험 (windows-latest, Python 3.12, 조각 ${{ matrix.shard }}/12)")
+        self.assertEqual(job["if"], "github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')")
+        self.assertEqual(job["job_keys"], {"name", "if", "runs-on", "timeout-minutes", "strategy", "steps"})
         self.assertEqual(job["runs_on"], "windows-latest")
         self.assertEqual(job["timeout"].pattern, "40")
-        self.assertEqual(job["strategy"], {"fail-fast": "false", "matrix": {"shard": "[1, 2, 3]"}})
+        self.assertEqual(job["strategy"], {"fail-fast": "false", "matrix": {"shard": "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]"}})
         self.assertIsNone(job["env"])
         self.assertEqual(job["steps"], (
             ("uses", "actions/checkout", {"persist-credentials": "false"}, None),
             ("uses", "actions/setup-python", {"python-version": "3.12"}, None),
             ("run", "python scripts/ci_qt_setup.py", None, None),
-            ("run", "python scripts/ci_shard.py", None, {"PYTHONUTF8": "1", "CI_SHARD": "${{ matrix.shard }}", "CI_SHARD_TOTAL": "3", "CI_REQUIRE_QT": "1", "QT_QPA_PLATFORM": "offscreen"}),
+            ("run", "python scripts/ci_shard.py", None, {"PYTHONUTF8": "1", "CI_SHARD": "${{ matrix.shard }}", "CI_SHARD_TOTAL": "12", "CI_WEIGHTS": "qt", "CI_REQUIRE_QT": "1", "QT_QPA_PLATFORM": "offscreen"}),
         ))
-        self.assertEqual(set(job["steps"][3][3]), {"PYTHONUTF8", "CI_SHARD", "CI_SHARD_TOTAL", "CI_REQUIRE_QT", "QT_QPA_PLATFORM"}, "시험 단계의 환경 변수는 정확히 다섯")
+        self.assertEqual(set(job["steps"][3][3]), {"PYTHONUTF8", "CI_SHARD", "CI_SHARD_TOTAL", "CI_WEIGHTS", "CI_REQUIRE_QT", "QT_QPA_PLATFORM"}, "시험 단계의 환경 변수는 정확히 여섯")
 
     def test_the_time_limit_rules_accept_what_they_should_and_nothing_else(self):
         test_rule, qt_rule = golden.CI["jobs"]["test"]["timeout"], golden.CI["jobs"]["qt"]["timeout"]
@@ -492,17 +575,24 @@ class TwoJobsAreBothPinnedTest(unittest.TestCase):
                 self.assertTrue(named(problems, word, job), "엉뚱한 이유로 걸렸다(낱말 " + repr(word) + ", 작업 " + repr(job) + "): " + repr(problems))
 
     def test_the_new_tables_are_not_silently_emptied_and_treat_both_jobs_alike(self):
-        self.assertGreaterEqual(len(TWIN_SPECS), 52)
-        self.assertGreaterEqual(len(QT_ONLY_SPECS), 41)
-        self.assertGreaterEqual(len(QT_ONLY_STEPS), 6)
+        self.assertGreaterEqual(len(TWIN_SPECS), 51)                       # 52 에서 '작업 단위 if' 하나가 test 작업만의 표로 옮겨 갔다(아래 TEST_ONLY_SPECS)
+        self.assertGreaterEqual(len(TEST_ONLY_SPECS), 5)
+        self.assertGreaterEqual(len(QT_ONLY_SPECS), 66)                    # 41 에서 늘었다: 작업 이름의 옛 값 /3 하나·if 열여섯·CI_WEIGHTS 와 옛 3조각 값 여덟
+        self.assertGreaterEqual(len(QT_IF_SPECS), 16)
+        self.assertGreaterEqual(len(QT_WEIGHTS_SPECS), 8)
+        self.assertGreaterEqual(len(QT_ONLY_STEPS), 8)
         self.assertGreaterEqual(len(GLOBAL_SCAN_SPECS), 2)
         self.assertGreaterEqual(len(JOB_LIST), 9)
         self.assertGreaterEqual(len(TOP_LEVEL), 9)
-        self.assertGreaterEqual(len(NEW_CI_MUTATIONS), 171)
-        self.assertEqual(len(NEW_CI_MUTATIONS), 2 * len(TWIN_SPECS) + len(QT_ONLY_SPECS) + len(QT_ONLY_STEPS) + len(GLOBAL_SCAN_SPECS) + len(JOB_LIST) + len(TOP_LEVEL), "이름이 겹쳐 표가 줄었다")
+        self.assertGreaterEqual(len(NEW_CI_MUTATIONS), 201)                # 171 에서 늘었다
+        self.assertEqual(len(NEW_CI_MUTATIONS), 2 * len(TWIN_SPECS) + len(TEST_ONLY_SPECS) + len(QT_ONLY_SPECS) + len(QT_ONLY_STEPS) + len(GLOBAL_SCAN_SPECS) + len(JOB_LIST) + len(TOP_LEVEL), "이름이 겹쳐 표가 줄었다")
         for label, *_ in TWIN_SPECS:
             self.assertIn("test 작업: " + label, NEW_CI_MUTATIONS)
             self.assertIn("qt 작업: " + label, NEW_CI_MUTATIONS)
+        for label, *_ in TEST_ONLY_SPECS:
+            self.assertIn("test 작업만: " + label, NEW_CI_MUTATIONS)
+        for label, *_ in QT_IF_SPECS + QT_WEIGHTS_SPECS:
+            self.assertIn("qt 작업만: " + label, NEW_CI_MUTATIONS)
 
     def test_the_old_one_job_file_is_refused_with_the_job_list_reason(self):
         problems = golden.ci_problems(only_the_test_job(real("ci.yml")))
@@ -541,6 +631,40 @@ class TwoJobsAreBothPinnedTest(unittest.TestCase):
         self.assertEqual(len(CI_MUTATIONS), 6)
         self.assertEqual(len(CI_OTHER), 16)
 
+    def test_the_approved_condition_runs_the_qt_job_on_main_and_merge_branches_only(self):
+        """승인된 `if` 의 뜻 — 어느 가지에서 qt 칸이 도는가(D-718). 글자 그대로 견주는 것과 별개로 이 표가 그 뜻을 문서로 남긴다."""
+        runs = {
+            "refs/heads/main": True, "refs/heads/ai/claude/M133-v1ciqt-trial2": True, "refs/heads/ai/claude/M1234-four-digits": True,
+            "refs/heads/ai/claude/NO-MERGE-v1ciqt2-wip": False, "refs/heads/ai/claude/NO-MERGE-diag-qtt3": False, "refs/heads/ai/claude/N133-x": False,
+            "refs/heads/desktop/something": False, "refs/heads/mainx": False, "refs/heads/dev": False, "refs/heads/ai/codex/M1-x": False,
+            "refs/tags/v1.0.0": False, "refs/pull/1/merge": False,
+        }
+        for ref, expected in runs.items():
+            with self.subTest(ref=ref):
+                self.assertIs(runs_on(golden.QT_IF, ref), expected)
+        self.assertEqual(golden.CI["jobs"]["qt"]["if"], golden.QT_IF)
+        self.assertNotIn("if", golden.CI["jobs"]["test"]["job_keys"], "test 작업(열두 칸)은 모든 가지에서 돈다")
+
+    def test_the_condition_with_a_diagnosis_branch_added_would_run_there_and_is_refused(self):
+        """총괄이 진단 가지에서만 임시로 바꾸는 한 줄 — 진단 가지에서는 이 줄을 바꾼 ci.yml 이 이 시험을 빨갛게 하는 것이 맞고, 병합 가지에 그 줄이 섞이면 이 시험이 막는다."""
+        diag = "refs/heads/ai/claude/NO-MERGE-diag-qtt3"
+        widened = golden.QT_IF + " || github.ref == '" + diag + "'"
+        self.assertFalse(runs_on(golden.QT_IF, diag))
+        self.assertTrue(runs_on(widened, diag))
+        changed = change_in(real("ci.yml"), "qt", QT_IF_LINE, "    if: " + widened + "\n")
+        problems = golden.ci_problems(changed)
+        self.assertTrue(named(problems, "작업 if", "qt"), problems)
+        self.assertEqual(len(problems), 1, problems)                       # 바꾸는 줄은 이 한 줄뿐이고 다른 곳은 모두 승인값 그대로다
+
+    def test_the_condition_evaluator_knows_only_the_two_shapes_and_refuses_the_rest(self):
+        self.assertTrue(runs_on("github.ref == 'a'", "a"))
+        self.assertFalse(runs_on("github.ref == 'a'", "ab"))
+        self.assertTrue(runs_on("startsWith(github.ref, 'a')", "abc"))
+        self.assertFalse(runs_on("startsWith(github.ref, 'b')", "abc"))
+        for odd in ("true", "always()", "github.ref != 'a'", "contains(github.ref, 'a')", "github.ref == 'a' && github.ref == 'a'"):
+            with self.subTest(odd=odd), self.assertRaises(AssertionError):
+                runs_on(odd, "a")
+
     def test_comment_and_blank_line_edits_do_not_change_the_verdict(self):
         """대조군 — 글자 그대로 견주는 것은 구조(키·값)이고 주석·빈 줄·줄 끝 주석은 아니다. 손봐도 통과해야 허용 목록이 필요 이상으로 까다롭지 않다."""
         ci = real("ci.yml")
@@ -549,6 +673,8 @@ class TwoJobsAreBothPinnedTest(unittest.TestCase):
             edited = change_in(edited, job, CHECKOUT_HEAD, "      # CANARY 주석 한 줄\n" + CHECKOUT_HEAD)
             edited = change_in(edited, job, TIMEOUT_LINE, "    timeout-minutes: 40  # CANARY 줄 끝 주석\n")
             edited = change_in(edited, job, SHARD_RUN, SHARD_RUN + "\n\n")
+        edited = change_in(edited, "qt", QT_IF_LINE, QT_IF_LINE[:-1] + "  # CANARY 줄 끝 주석\n")         # if 줄의 값은 글자 그대로 견주지만 줄 끝 주석은 값이 아니다
+        edited = change_in(edited, "qt", QT_WEIGHTS_LINE, QT_WEIGHTS_LINE[:-1] + "  # CANARY 줄 끝 주석\n")
         self.assertNotEqual(edited, ci)
         self.assertEqual(golden.ci_problems(edited), [])
 

@@ -8,6 +8,7 @@
   4) 작은 가짜 시험 폴더로 실제 실행: 조각마다 자기 파일만 돌고, 실패하는 파일과 불러오기에 실패하는 파일이 그 조각을 빨갛게 만든다.
   5) `ci.yml` 의 조각 목록(`shard: [1, 2, 3]`)과 `CI_SHARD_TOTAL` 이 같고, `run:` 안에 `${{ }}` 가 없고, `fail-fast: false` 가 그대로다.
      (D-713) 둘째 잡 `qt` 가 생긴 뒤로는 이것을 `test`·`qt` 잡마다 본다(조각 목록·총수·이름 둘·`run:` 줄의 정확한 목록·`fail-fast`·`qt` 는 윈도와 3.12 하나뿐).
+     (D-717·D-718) `qt` 잡은 조각 열둘이고 `CI_WEIGHTS: qt` 를 주며 작업 수준 `if` 한 줄(병합 가지·main 에서만)이 있다 — 파일 전체의 `if` 는 그 한 줄뿐이다.
   6) (D-712) Qt 칸의 건너뜀 가드 `CI_REQUIRE_QT`: 1 만 켬(0·없음은 끔, 그 밖은 종료 코드 2)·PySide6 를 못 찾으면 시험 전에 종료 코드 3·PySide6 이유로 건너뛴 시험이 하나라도 있으면 종료 코드 1(대소문자 무시,
      `setUpClass`·파일 불러오기 건너뜀 포함)·다른 이유의 건너뜀은 알림만·시험 파일별 걸린 시간 표와 오래 걸린 파일의 즉시 알림, 그리고 Qt 깃발(`HAVE`)로 건너뛰는 모든 시험이 이유에 PySide6 낱말을 쓰는지 정적 확인.
   7) (D-717) Qt 칸 전용 무게 표 `QT_WEIGHTS`·`QT_DEFAULT_WEIGHT` 와 환경 변수 `CI_WEIGHTS`: 없음·빈 값은 기본 표(열두 칸 — 표·기본 무게·나누기 결과를 옛 코드에서 뽑은 고정 값으로 못박는다), `qt` 는 Qt 표,
@@ -285,10 +286,17 @@ class CiWorkflowShardTest(unittest.TestCase):
         self.assertEqual(runs, self.RUNS["test"] + self.RUNS["qt"], "파일 전체의 run 줄은 잡마다 정해 둔 것의 합이다")
         self.assertFalse([line for line in runs if "${{" in line])
 
+    QT_IF_LINE = "    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')"          # D-718 — 코드 줄(주석 뺀)의 글자 그대로
+
     def test_nothing_can_exclude_skip_or_forgive_a_shard(self):
         # 독립 검증 Y11~Y13: matrix exclude(조각을 통째로 뺌)·continue-on-error(실패를 용서)·if(단계를 건너뜀)가 들어와도 CI 가 초록일 수 있다.
-        for forbidden in ("exclude:", "include:", "continue-on-error", "if:"):
+        # D-718: `qt` 잡에 작업 수준 `if` 가 정확히 한 줄 생겼다(병합 가지·main 에서만 돈다). 금지가 풀린 것이 아니라 '그 한 줄만' 으로 좁혀졌다 —
+        # 그 한 줄이 글자 그대로가 아니거나 다른 곳(test 잡·단계)에 if 가 하나라도 있으면 빨갛다(열두 칸은 모든 가지에서 돈다).
+        for forbidden in ("exclude:", "include:", "continue-on-error"):
             self.assertEqual([line for line in self.code if forbidden in line], [], forbidden)
+        self.assertEqual([line for line in self.code if "if:" in line], [self.QT_IF_LINE], "파일 전체의 if 는 qt 잡 수준의 정해진 한 줄뿐이다")
+        self.assertEqual([line for line in self.jobs["qt"] if "if:" in line], [self.QT_IF_LINE.strip()])
+        self.assertEqual([line for line in self.jobs["test"] if "if:" in line], [], "test 잡(열두 칸)에는 if 가 없다")
         for job, lines in self.jobs.items():
             with self.subTest(job=job):
                 self.assertIn("fail-fast: false", lines)
@@ -298,6 +306,13 @@ class CiWorkflowShardTest(unittest.TestCase):
         self.assertIn("python-version: '3.12'", self.jobs["qt"])
         for needle in ("ubuntu-latest", "'3.10'", "matrix.os", "matrix.python"):
             self.assertNotIn(needle, self.job_text["qt"], f"qt 잡은 윈도·3.12 하나뿐이다: {needle}")
+
+    def test_only_the_qt_job_asks_for_the_qt_weight_table_and_it_has_twelve_shards(self):
+        # D-717: `CI_WEIGHTS: qt` 는 qt 잡의 시험 단계에만 있고(열두 칸은 기본 무게 표), 조각 수는 열둘이다 — 목록·총수·이름이 모두 12(위 시험들이 서로 맞는지 본다).
+        self.assertIn("CI_WEIGHTS: qt", self.jobs["qt"])
+        self.assertNotIn("CI_WEIGHTS", self.job_text["test"])
+        self.assertEqual((self.total("qt"), self.total("test")), (12, 3))
+        self.assertEqual([line for line in self.stripped if line.startswith("CI_WEIGHTS")], ["CI_WEIGHTS: qt"], "파일 전체에서 CI_WEIGHTS 줄은 이 하나뿐")
 
     def test_the_whole_workflow_is_exactly_the_approved_structure(self):
         # AS-S2 권고-7(D-693): 위 시험들은 낱말·정규식이라 작업 단위 permissions·env·matrix 의 self-hosted·액션의 소유자·SHA·persist-credentials: true 를 못 봤다(감사의 살아남은 변이 여섯).
