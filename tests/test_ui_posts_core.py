@@ -22,6 +22,7 @@ import service_support as ss  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.service import format as service_format  # noqa: E402
 from chanceblog_desktop.service import previews, review  # noqa: E402
+from chanceblog_desktop.service.context import Context  # noqa: E402
 from chanceblog_desktop.ui.core import app_state, jobs, post_fake, post_rules as rules, post_text, posts, posts_view, text  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
@@ -423,6 +424,241 @@ class PostsKeyBlockPreviewTest(unittest.TestCase):
                 self.assertEqual(rules._key_open_after(snippet, False), hidden_to_the_end)
         self.assertEqual(rules._key_open_after(f"{self.ONE}\n{pgp_tail}", True), False, "열린 채 들어와 꼬리를 만나면 닫힌다")
         self.assertEqual(rules._key_open_after(self.ONE, True), True, "열린 채 들어와 꼬리가 없으면 계속 열려 있다")
+
+    # ---- 독립 검증 S 2차 필수 N1·권고 R1 — 열림 판정과 원문 가리기를 엔진에 맡긴다 ----------------------------------------------------------------------------
+    INVISIBLE = (("소프트 하이픈", 0xAD), ("결합 서자 연결자", 0x34F), ("아랍 글자 표지", 0x61C), ("한글 초성 채움", 0x115F), ("크메르 내재 모음", 0x17B4), ("몽골 모음 구분", 0x180E), ("폭 없는 공백", 0x200B),
+                 ("폭 없는 비연결자", 0x200C), ("폭 없는 연결자", 0x200D), ("왼쪽에서 오른쪽 표지", 0x200E), ("오른쪽에서 왼쪽 덮어쓰기", 0x202E), ("워드 조이너", 0x2060), ("보이지 않는 곱", 0x2062), ("점자 빈칸", 0x2800),
+                 ("한글 채움", 0x3164), ("변형 선택자 16", 0xFE0F), ("바이트 순서 표지", 0xFEFF), ("반각 한글 채움", 0xFFA0), ("줄 구분 글자", 0x2028), ("문단 구분 글자", 0x2029), ("태그 글자", 0xE0041), ("C1 제어 글자", 0x85),
+                 ("제어 글자 하나", 0x01))
+
+    def head_shapes(self, z):
+        """머리 줄(PGP) 글자 사이 일곱 곳에 눈에 안 보이는 글자 `z` 를 끼운 모양들 — 엔진은 먼저 지우고 머리로 알아본다."""
+        return (("BEGIN 안", "-----BEG" + z + "IN PGP PRIVATE KEY BLOCK-----"), ("BEGIN 뒤", "-----BEGIN" + z + " PGP PRIVATE KEY BLOCK-----"), ("PRIVATE 안", "-----BEGIN PGP PRIV" + z + "ATE KEY BLOCK-----"),
+                ("KEY 안", "-----BEGIN PGP PRIVATE K" + z + "EY BLOCK-----"), ("대시 안", "--" + z + "---BEGIN PGP PRIVATE KEY BLOCK-----"), ("맨 앞", z + "-----BEGIN PGP PRIVATE KEY BLOCK-----"),
+                ("라벨 낱말 안", "-----BEGIN PG" + z + "P PRIVATE KEY BLOCK-----"))
+
+    def engine_open(self, snippet, inside):
+        """시험 쪽의 독립 판정 — 엔진(`display_text`)에 글과 끝 표지를 먹여 표지가 사라졌는지(머리부터 글 끝까지 가렸는지). 이미 열린 채 들어오는 조각은 앞에 가짜 머리 한 줄을 붙인다."""
+        probe = (self.RSA[0] + "\n" if inside else "") + snippet + "\nZZENDZZ"
+        return "ZZENDZZ" not in text.display_text(probe, 10 * len(probe))
+
+    def assert_three_blocks(self, markdown):
+        """앞 글 · 가려진 덩어리 하나 · 뒤 글 — 키 본문은 어느 것에도 없다."""
+        found, shown = self.blocks(markdown)
+        self.assert_hidden(markdown, shown)
+        self.assertEqual((shown[0], shown[-1], len(shown), found.total), ("앞 글", "뒤 글", 3, 3))
+
+    def test_a_head_with_an_invisible_character_inside_is_hidden_the_way_the_masking_engine_hides_it(self):
+        """필수 N1: 머리 글자 사이에 눈에 안 보이는 글자가 끼면 엔진은 먼저 지우고 머리로 알아봐 본문을 가리는데, 정규식으로 머리를 찾던 미리보기는 못 알아보고 키 본문을 그대로 내보냈다(23종 × 일곱 곳)."""
+        tail = self.PGP[1]
+        for name, code in self.INVISIBLE:
+            for where, head in self.head_shapes(chr(code)):
+                markdown = f"앞 글\n\n{head}\nVersion: 가짜\n\n{self.ONE}\n\n{self.TWO}\n{tail}\n\n뒤 글"
+                with self.subTest(character=name, where=where):
+                    self.assertNotIn(self.ONE, text.display_text(markdown, 100_000), "시험 표본이 정말 엔진이 가리는 모양이다")
+                    self.assert_three_blocks(markdown)
+
+    def test_a_head_label_of_any_length_is_hidden_the_way_the_masking_engine_hides_it(self):
+        """필수 N1: 엔진의 머리 라벨(`[A-Z ]*`)에는 길이 한도가 없다 — 라벨이 101자이거나 낱말이 쉰 개여도 엔진은 머리로 알아본다. 미리보기도 길이로 놓치지 않는다."""
+        tail = "-----END " + "PRIVATE KEY-----"
+        shapes = [(f"라벨 {n}자", "-----BEGIN " + "A" * n + " PRIVATE KEY-----") for n in (1, 99, 100, 101, 102, 150, 2000)]
+        shapes += [("낱말 50개", "-----BEGIN " + "AB " * 50 + "PRIVATE KEY-----"), ("낱말 400개(블록)", "-----BEGIN " + "AB " * 400 + "PRIVATE KEY BLOCK-----")]
+        for name, head in shapes:
+            markdown = f"앞 글\n\n{head}\n\n{self.ONE}\n\n{self.TWO}\n\n{tail}\n\n뒤 글"
+            with self.subTest(label=name):
+                self.assertNotIn(self.ONE, text.display_text(markdown, 100_000), "시험 표본이 정말 엔진이 가리는 모양이다")
+                self.assert_three_blocks(markdown)
+
+    def test_the_open_state_follows_the_engine_for_invisible_characters_and_long_labels_in_both_directions(self):
+        """`_key_open_after` 는 엔진이 가리는 대로 따라간다 — 눈에 안 보이는 글자 23종 × 일곱 곳과 라벨 길이, 닫힌 채 들어올 때와 열린 채 들어올 때 모두(표본은 엔진을 시험 쪽 표지 탐침으로 독립으로 읽는다)."""
+        tail = self.PGP[1]
+        shapes = [(f"{name}:{where}", head) for name, code in self.INVISIBLE for where, head in self.head_shapes(chr(code))]
+        shapes += [(f"라벨 {n}자", "-----BEGIN " + "A" * n + " PRIVATE KEY-----") for n in (99, 100, 101, 150, 2000)] + [("낱말 50개", "-----BEGIN " + "AB " * 50 + "PRIVATE KEY-----")]
+        for name, head in shapes:
+            for label, snippet in (("머리만", head), ("머리와 본문", f"{head}\n{self.ONE}"), ("머리·본문·꼬리", f"{head}\n{self.ONE}\n{tail}"), ("꼬리 뒤 머리", f"{tail}\n{head}\n{self.TWO}"), ("본문과 꼬리", f"{self.ONE}\n{tail}")):
+                for inside in (False, True):
+                    with self.subTest(shape=name, snippet=label, inside=inside):
+                        self.assertEqual(rules._key_open_after(snippet, inside), self.engine_open(snippet, inside))
+
+    def test_a_head_the_converter_would_drop_or_a_tail_it_would_imitate_does_not_let_a_key_body_show_that_the_engine_hides(self):
+        """권고 R1: 변환기는 이미지 설명·이미지와 링크 제목·울타리 이름 줄의 글을 버리고, 강조·링크·이미지로 꼬리를 흉내 낼 수 있으며, 줄 구분 글자(U+0085·U+2028·U+2029)로 줄을 나눈다 — 변환된 글에서 머리를 찾으면 엔진(원문)과 어긋난다.
+        미리보기는 변환 전에 엔진이 원문에서 가리는 줄을 먼저 가려서 그 차이가 키 본문을 내보내지 않게 한다."""
+        head, tail = self.RSA
+        one, two = self.ONE, self.TWO
+        shapes = {"울타리 이름 줄": f"```{head}\n{one}\n\n{two}\n```\n\n{tail}", "이미지 설명": f"![{head}](https://x.invalid/a.png)\n\n{one}\n\n{two}\n\n{tail}",
+                  "이미지 제목": f'![그림](https://x.invalid/a.png "{head}")\n\n{one}\n\n{two}\n\n{tail}', "링크 제목": f'[글](https://x.invalid/a "{head}")\n\n{one}\n\n{two}\n\n{tail}',
+                  "링크 글": f"[{head}](https://x.invalid/a)\n\n{one}\n\n{two}\n\n{tail}", "코드 한 줄": f"`{head}`\n\n{one}\n\n{two}\n\n{tail}"}
+        for look in ("_RSA_", "*RSA*", "**RSA**", "`RSA`", "[RSA](https://x.invalid/a)", "![x](https://x.invalid/a.png)"):
+            shapes[f"꼬리 흉내 {look}"] = f"{head}\n\n{one}\n\n-----END {look} PRIVATE KEY-----\n\n{two}"
+        for code in (0x85, 0x2028, 0x2029):
+            sep = chr(code)
+            shapes[f"줄 구분 글자 U+{code:04X}"] = f"{head}{sep}{sep}{one}{sep}{two}{sep}{tail}"
+            shapes[f"줄 구분 글자 U+{code:04X}(머리 안)"] = f"-----BEG{sep}IN RSA PRIVATE KEY-----\n\n{one}\n\n{two}"
+        for name, body in shapes.items():
+            markdown = f"앞 글\n\n{body}"
+            with self.subTest(shape=name):
+                engine = text.display_text(markdown, 100_000)
+                hidden = [token for token in (one, two) if token not in engine]
+                self.assertTrue(hidden, "시험 표본이 정말 엔진이 가리는 모양이다")
+                _found, shown = self.blocks(markdown)
+                for token in hidden:
+                    self.assertNotIn(token, "\n".join(shown), "엔진이 원문에서 가리는 키 본문이 미리보기에 나갔다")
+                self.assertEqual(shown[0], "앞 글")
+
+    def test_a_head_the_converter_makes_is_still_grouped_after_the_hiding_of_the_source_lines(self):
+        """변환기가 **만드는** 머리(역슬래시로 쓴 붙임표·강조로 쓴 라벨)는 원문에서 엔진이 못 알아봐 원문 가리기가 지나치므로, 변환된 글에서 찾는 한 덩어리 묶기가 그 뒤를 맡는다."""
+        tail = self.RSA[1]
+        escaped = "".join(chr(92) + char if char == "-" else char for char in self.RSA[0])
+        for name, head in (("역슬래시 붙임표", escaped), ("강조 라벨", "-----BEGIN *RSA* PRIVATE KEY-----")):
+            with self.subTest(shape=name):
+                self.assertEqual(rules._hide_key_lines(head), head, "원문에서는 엔진이 머리로 보지 않아 그대로다")
+                self.assert_three_blocks(f"앞 글\n\n{head}\n\n{self.ONE}\n\n{self.TWO}\n\n{tail}\n\n뒤 글")
+
+    def test_the_probe_mark_is_one_the_text_does_not_contain_and_a_text_with_every_candidate_counts_as_open(self):
+        """엔진에 붙여 묻는 표지가 글에 이미 있으면 머리가 글 끝까지 가려도 앞쪽의 같은 낱말이 남아 '닫혔다' 로 잘못 읽는다 — 표지는 글에 없는 후보로 고르고, 후보가 모두 글에 있으면 물을 수 없으니 열려 있다고 본다(더 많이 가리는 쪽)."""
+        head, tail = self.RSA
+        for mark in rules._PROBE_MARKS:
+            with self.subTest(mark=mark):
+                self.assertTrue(rules._key_open_after(f"{mark} 앞 글\n{head}\n{self.ONE}", False), "글 속에 표지 후보가 있어도 열린 키를 닫혔다고 읽지 않는다")
+                self.assertTrue(rules._key_open_after(f"{mark} {self.ONE}\n{tail} 뒤 {head}", True), "열린 채 들어와도 마찬가지다")
+        everything = " ".join(rules._PROBE_MARKS)
+        self.assertTrue(rules._key_open_after(f"{everything}\n{head}\n{self.ONE}", False))
+        self.assertTrue(rules._key_open_after(f"{everything} 평범한 글에 BEGIN 이라는 낱말만", False), "후보가 모두 글에 있으면 물을 수 없으니 열려 있다고 본다(더 많이 가리는 쪽)")
+
+    def test_only_a_private_key_tail_closes_the_block_and_only_a_private_key_head_opens_it(self):
+        """독립 검증 Q 2차 권고-3: 엔진은 개인 키 꼬리(`END … PRIVATE KEY`)만 꼬리로, 개인 키 머리만 머리로 본다 — 공개 키·인증서·서명 같은 다른 종류의 END 줄은 열린 블록을 닫지 않고, 다른 종류의 BEGIN 줄은 열지 않는다.
+        (꼬리를 아무 END 줄로 읽도록 바뀌면 미리보기는 닫혔다고 보고 뒤 블록을 내보내는데 엔진은 글 끝까지 가린다.)"""
+        head = self.PGP[0]
+        other_tails = ["-----END " + kind + "-----" for kind in ("CERTIFICATE", "PGP SIGNATURE", "PGP PUBLIC KEY BLOCK", "PUBLIC KEY", "RSA PUBLIC KEY", "PGP MESSAGE", "CERTIFICATE REQUEST", "X509 CRL", "PRIVATE KEYS")]
+        for tail in other_tails:
+            with self.subTest(tail=tail):
+                self.assertTrue(self.engine_open(f"{head}\n{self.ONE}\n{tail}", False), "시험 표본이 정말 엔진은 닫지 않는 꼬리다")
+                self.assertTrue(rules._key_open_after(f"{head}\n{self.ONE}\n{tail}", False))
+                self.assertTrue(rules._key_open_after(f"{self.ONE}\n{tail}", True), "열린 채 들어와도 다른 종류의 꼬리는 닫지 않는다")
+                found, shown = self.blocks(f"앞 글\n\n{head}\n\n{self.ONE}\n\n{tail}\n\n{self.TWO}\n\n뒤 글")
+                self.assert_hidden("", shown)
+                self.assertEqual((shown[0], len(shown), "뒤 글" in "\n".join(shown)), ("앞 글", 2, False), "닫히지 않았으니 글 끝까지 가린다")
+        other_heads = ["-----BEGIN " + kind + "-----" for kind in ("PUBLIC KEY", "CERTIFICATE", "PGP PUBLIC KEY BLOCK", "RSA PUBLIC KEY", "PGP SIGNATURE", "PGP MESSAGE", "PRIVATE KEYS")]
+        for other in other_heads:
+            with self.subTest(head=other):
+                self.assertFalse(self.engine_open(f"{other}\n{self.ONE}", False), "시험 표본이 정말 엔진이 열지 않는 머리다")
+                self.assertFalse(rules._key_open_after(f"{other}\n{self.ONE}", False))
+                found, shown = self.blocks(f"앞 글\n\n{other}\n\n{self.ONE}\n\n뒤 글")
+                self.assertEqual((shown[0], shown[-1], len(shown)), ("앞 글", "뒤 글", 4), "열리지 않았으니 아무것도 가리지 않는다")
+                self.assertIn(self.ONE, "\n".join(shown))
+
+    def test_a_tail_the_converter_drops_or_breaks_does_not_close_the_key_in_the_preview(self):
+        """원문 엔진은 닫힌 것으로 보지만 변환기가 꼬리를 버리거나(이미지 설명·제목·울타리 이름 줄) 줄 구분 글자로 깨면 화면에 나가는 글에서는 꼬리가 없다 — 두 눈 중 하나라도 열려 있다고 하면 열려 있는 것으로 가린다(더 많이 가리는 쪽)."""
+        head, tail = self.RSA
+        shapes = {"이미지 설명 속 꼬리": f"![{tail}](https://x.invalid/a.png)", "이미지 제목 속 꼬리": f'![그림](https://x.invalid/a.png "{tail}")', "링크 제목 속 꼬리": f'[글](https://x.invalid/a "{tail}")',
+                  "울타리 이름 줄 속 꼬리": f"```{tail}\n```"}
+        for code in (0x85, 0x2028, 0x2029):
+            shapes[f"줄 구분 글자 U+{code:04X} 로 깨진 꼬리"] = "-----END RSA PRIV" + chr(code) + "ATE KEY-----"
+        for name, closing in shapes.items():
+            markdown = f"앞 글\n\n{head}\n\n{self.ONE}\n\n{closing}\n\n{self.TWO}\n\n뒤 글"
+            with self.subTest(shape=name):
+                engine = text.display_text(markdown, 100_000)
+                self.assertIn(self.TWO, engine, "시험 표본이 정말 원문 엔진은 닫힌 것으로 보는 모양이다")
+                found, shown = self.blocks(markdown)
+                self.assert_hidden(markdown, shown)
+                self.assertEqual((shown[0], len(shown)), ("앞 글", 2), "앞 글 하나와 가려진 덩어리 하나 — 화면에 나가는 글에는 꼬리가 없으니 글 끝까지 가린다")
+
+    def test_hide_key_lines_replaces_what_the_engine_hides_line_by_line_and_leaves_everything_else(self):
+        head, tail = self.RSA
+        marker = text.display_text(head)
+        self.assertIn(marker[:1], "[", "엔진이 개인 키 블록 자리에 쓰는 표지를 엔진에게 물어 얻는다")
+        plain = "그냥 글\n\n- 목록\n> 인용\n    들여쓴 줄\nBEGIN 이라는 낱말과 END 라는 낱말\n" + tail
+        self.assertEqual(rules._hide_key_lines(plain), plain, "머리가 없으면 글 그대로(꼬리만 있는 글도)")
+        self.assertEqual(rules._hide_key_lines(f"앞 {head} 가운데 {tail} 뒤"), f"앞 {marker} 뒤", "한 줄 안에서 닫히면 앞뒤 글이 남는다")
+        multi = f"앞\n\n{head}\nVersion: 가짜\n\n{self.ONE}\n{tail} 뒤 글\n\n끝"
+        self.assertEqual(rules._hide_key_lines(multi), f"앞\n\n{marker}\n뒤 글\n\n끝", "머리 줄은 표지로, 안쪽 줄은 지우고, 꼬리 줄은 꼬리 뒤 글만")
+        self.assertEqual(rules._hide_key_lines(f"앞\n{head}\n\n{self.ONE}\n끝"), f"앞\n{marker}", "꼬리가 없으면 글 끝까지")
+        self.assertEqual(rules._hide_key_lines(f"{head}\n{self.ONE}\n{tail} 중간 {head}\n{self.TWO}\n끝"), f"{marker}\n중간 {marker}", "닫힌 줄에서 다시 열린다")
+        self.assertEqual(rules._hide_key_lines(f"> {head}\n> {self.ONE}\n> {tail}\n\n뒤"), f"> {marker}\n\n뒤", "인용 기호는 머리 줄에 남는다")
+        for sample in (multi, f"앞 {head} 가운데 {tail} 뒤", f"앞\n{head}\n\n{self.ONE}\n끝"):
+            self.assertEqual(rules._hide_key_lines(rules._hide_key_lines(sample)), rules._hide_key_lines(sample), "두 번 해도 같다")
+        self.assertNotIn(self.ONE, rules._hide_key_lines(f"{head}{chr(0x2028)}{self.ONE}{chr(0x2028)}{tail}\n뒤 글"), "줄 구분 글자로 이은 키도 한 줄로 읽어 가린다")
+
+    def test_the_preview_shows_nothing_the_masking_engine_hides_in_the_source_or_in_the_converted_text_for_random_documents(self):
+        """무작위 문서(독립 검증 S 의 무작위 탐침과 같은 모양)에서도 엔진이 원문에서 가리는 토큰과 엔진이 변환된 글에서 가리는 토큰은 미리보기에 나가지 않는다(두 눈 중 하나라도 가리면 가린다) — 머리·꼬리·본문·눈에 안 보이는 글자·긴 라벨·인용·목록·울타리·이미지 설명을 섞는다."""
+        import random
+        from chanceblog_desktop.render.markdown import markdown_blocks
+        invisible = [chr(0xAD), chr(0x200B), chr(0x2060), chr(0xFEFF), chr(0x2028), chr(0xE0041)]
+        heads = [self.RSA[0], self.PGP[0], "-----BEGIN " + "PRIVATE KEY-----", "-----BEGIN " + "A" * 130 + " PRIVATE KEY-----", "-----BEGIN " + "AB " * 60 + "PRIVATE KEY BLOCK-----"]
+        tails = [self.RSA[1], self.PGP[1], "-----END " + "PRIVATE KEY-----", "-----END *RSA* PRIVATE KEY-----", "-----END ![x](https://x.invalid/a.png) PRIVATE KEY-----"]
+        spacing = ["", "\n", "\n\n", "\n\n\n", "\n \n", "\r\n\r\n", "\n\t\n", "\n\n"]
+        for seed in range(250):
+            rng = random.Random(seed)
+            pieces, tokens = [], []
+            for index in range(rng.randint(3, 12)):
+                kind = rng.choice(["head", "head", "invisible-head", "tail", "body", "body", "text", "heading", "list", "quote", "fence", "image", "rule", "mixed"])
+                token = f"CANARY_FZ{seed:04d}X{index:02d}Q"
+                line = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcw" + token
+                head, tail = rng.choice(heads), rng.choice(tails)
+                if kind == "head":
+                    pieces.append(rng.choice(["", "> ", "- ", "1. ", "# ", "   "]) + head)
+                elif kind == "invisible-head":
+                    cut = rng.randint(2, 14)
+                    pieces.append(head[:cut] + rng.choice(invisible) + head[cut:])
+                elif kind == "tail":
+                    pieces.append(rng.choice(["", "> ", "- "]) + tail)
+                elif kind == "body":
+                    pieces.append(rng.choice(["", "", "> ", "- ", "   ", "1. "]) + line)
+                    tokens.append(token)
+                elif kind == "text":
+                    pieces.append("보통 글 문단 " + str(index))
+                elif kind == "heading":
+                    pieces.append("## 소제목 " + str(index))
+                elif kind == "list":
+                    pieces.append("- 항목 " + line + "\n- 둘째 항목")
+                    tokens.append(token)
+                elif kind == "quote":
+                    pieces.append("> 인용 " + line)
+                    tokens.append(token)
+                elif kind == "fence":
+                    pieces.append(rng.choice(["```", "```" + head]) + "\n" + line + "\n```")
+                    tokens.append(token)
+                elif kind == "image":
+                    pieces.append("![" + rng.choice([head, "그림", tail]) + "](https://x.invalid/a.png)")
+                elif kind == "rule":
+                    pieces.append("---")
+                else:
+                    pieces.append(head + "\n" + line + "\n" + tail)
+                    tokens.append(token)
+            markdown = "".join(piece + rng.choice(spacing) for piece in pieces)
+            with self.subTest(seed=seed):
+                engine = text.display_text(markdown, 4 * len(markdown) + 256)
+                converted = "\n\n".join(plain for _kind, plain in rules._entries_of(markdown_blocks(markdown)[0]))
+                engine_converted = text.display_text(converted, 4 * len(converted) + 256)
+                shown = "\n".join(block.text for block in rules.build_preview(markdown).blocks)
+                for token in tokens:
+                    if token not in engine:
+                        self.assertNotIn(token, shown, "엔진이 원문에서 가리는 토큰이 미리보기에 나갔다")
+                    if token not in engine_converted:
+                        self.assertNotIn(token, shown, "엔진이 변환된 글에서 가리는 토큰이 미리보기에 나갔다")
+
+    def test_a_piece_too_big_to_ask_the_engine_is_probed_by_its_head_and_tail_lines_and_one_huge_line_counts_as_open(self):
+        """엔진은 20만 자에서 글을 자르므로(끝 표지가 잘려 나가 '열려 있다' 로 잘못 읽는다) 15만 자가 넘는 조각은 머리·꼬리가 있을 수 있는 줄만 모아 묻는다. 줄 하나가 그만큼 길면 물을 수 없으니 열려 있다고 본다(더 많이 가리는 쪽)."""
+        head, tail = self.RSA
+        filler = "\n".join(f"채움 줄 {number}" for number in range(25_000))
+        self.assertGreater(len(filler), rules._PROBE_LIMIT)
+        self.assertFalse(rules._key_open_after(filler, False), "머리가 없으면 닫힌 채")
+        self.assertTrue(rules._key_open_after(filler, True), "꼬리가 없으면 열린 채")
+        self.assertTrue(rules._key_open_after(f"{filler}\n{head}\n{self.ONE}", False))
+        self.assertFalse(rules._key_open_after(f"{filler}\n{head}\n{self.ONE}\n{tail}\n{filler}", False), "큰 조각 안에서 닫힌 키는 닫힌 것으로 읽는다")
+        self.assertTrue(rules._key_open_after(f"{filler}\n{tail}\n{head}\n{filler}", True), "닫혔다가 다시 열린다")
+        self.assertFalse(rules._key_open_after(f"{filler}\n{tail}\n{filler}", True))
+        self.assertTrue(rules._key_open_after("가" * (rules._PROBE_LIMIT + 10) + head, False), "줄 하나가 물을 수 없을 만큼 길면 열려 있다고 본다")
+        self.assertTrue(rules._key_open_after("가" * (rules._PROBE_LIMIT + 10) + tail, True), "열린 채 들어온 물을 수 없는 줄은 계속 열려 있다")
+        self.assertFalse(rules._key_open_after("가" * (rules._PROBE_LIMIT + 10), False), "머리 낱말이 없으면 크기와 상관없이 묻지 않고 닫힌 채")
+
+    def test_chars_and_images_count_the_whole_text_even_when_the_key_lines_are_hidden_first(self):
+        head, tail = self.RSA
+        markdown = f"![그림 하나](https://x.invalid/a.png)\n\n앞 글\n\n{head}\n![그림 둘](https://x.invalid/b.png)\n\n{self.ONE}\n{tail}\n\n뒤 글"
+        found, shown = self.blocks(markdown)
+        self.assert_hidden(markdown, shown)
+        self.assertEqual((found.images, found.total), (2, 3), "가린 줄 속의 이미지도 이미지 수에 센다")
+        self.assertEqual(found.chars, len(re.sub(r"\s+", "", "앞 글" + head + self.ONE + tail + "뒤 글")), "글자 수는 글 그대로의 크기다")
 
 
 class PostsStatesCoreTest(unittest.TestCase):
@@ -1030,6 +1266,28 @@ class PostsReviewCoreTest(unittest.TestCase):
         controller = self.opened()
         self.assertTrue(controller.remember_pages(dict(RAW)), "평범한 값은 그대로 기억한다")
 
+    def test_a_value_with_only_invisible_characters_added_is_remembered_but_a_key_split_by_them_is_not(self):
+        """독립 검증 S 2차 참고 I1: `would_be_masked` 가 '엔진이 눈에 안 보이는 글자를 지운 것' 도 가렸다고 세어 ZWJ 이모지·변형 선택자·소프트 하이픈이 든 평범한 값을 기억하지 않았다.
+        이제는 가린 글을 원문에서 눈에 안 보이는 글자만 지운 글과 견준다 — 키를 그 글자로 쪼갠 값은 여전히 엔진이 가려서 기억하지 않는다."""
+        family = chr(0x1F468) + chr(0x200D) + chr(0x1F469) + chr(0x200D) + chr(0x1F467)
+        plain_values = {"ZWJ 이모지 가족": "가족 " + family + " 이야기", "변형 선택자 하트": "사랑 " + chr(0x2764) + chr(0xFE0F), "소프트 하이픈": "에너" + chr(0xAD) + "지 절약", "폭 없는 공백": "절" + chr(0x200B) + "약",
+                        "범주로만 지워지는 서식 글자(U+0600)": "가" + chr(0x600) + "나", "제어 글자(U+0001)": "가" + chr(1) + "나", "줄 구분 글자(U+2028)": "가" + chr(0x2028) + "나", "한 줄 설명 속 방향 표지": "집" + chr(0x200F) + "안일"}
+        for name, value in plain_values.items():
+            with self.subTest(value=name):
+                self.assertFalse(rules.would_be_masked(value), "눈에 안 보이는 글자만 든 평범한 값은 가릴 것이 없다")
+                controller = self.opened()
+                self.assertTrue(controller.remember_pages(dict(RAW, description=value)), "평범한 값은 그대로 기억한다")
+                self.assertEqual(controller.pages_raw[controller.open_id]["description"], value)
+        self.assertFalse(rules.would_be_masked(chr(0x200B) + chr(0xFEFF)), "눈에 안 보이는 글자뿐인 값에는 가릴 것이 없다")
+        keys = {"Slack 토큰": "xo" + "xb-" + "1234567890-" + chr(0x200B) + "abcdefghijkl", "OpenAI 프로젝트 키": "sk-" + "proj-" + "A1b2C3d4" + chr(0x2060) + "E5f6G7h8I9j0K1", "주소 속 사용자 정보": "https://user:" + chr(0xAD) + "pw@img.example.invalid/a.jpg",
+                "눈에 안 보이는 글자로 쪼갠 개인 키 머리": "-----BEG" + chr(0xAD) + "IN " + "RSA PRIVATE KEY-----"}
+        for name, value in keys.items():
+            with self.subTest(key=name):
+                self.assertTrue(rules.would_be_masked(value), "엔진이 눈에 안 보이는 글자를 지우고 키 모양으로 알아본다")
+                controller = self.opened()
+                self.assertFalse(controller.remember_pages(dict(RAW, description=value)))
+                self.assertNotIn(controller.open_id, controller.pages_raw)
+
     def test_the_pages_values_are_remembered_when_the_dialog_is_closed_without_a_review(self):
         controller = self.opened()
         controller.open_pages()
@@ -1590,7 +1848,7 @@ class PostsSourceRulesTest(unittest.TestCase):
     SERVICE_USES = {"own_posts.read_own_files", "own_posts.check_pasted_text", "own_posts.SUBJECT", "project_service.list_projects", "project_service.show_project", "project_service.new_project",
                     "project_service.import_html", "review_service.request_review", "review_service.grant_approval", "review_service.revoke_approval"}      # 함수 아홉 + 상수 하나(`SUBJECT` — 붙여 넣은 글 거절 문장의 항목 이름)
     CTX_USES = {"ctx.reading_only", "ctx.settings.naver_profile_dicts"}
-    DYNAMIC_NAMES = {"getattr", "setattr", "delattr", "vars", "globals", "locals", "__import__", "importlib", "import_module", "eval", "exec", "compile"}
+    DYNAMIC_NAMES = {"getattr", "setattr", "delattr", "vars", "globals", "locals", "__import__", "importlib", "import_module", "eval", "exec", "compile", "modules", "__dict__", "__globals__", "__builtins__"}
     QT_FILE_NAMES = {"QFile", "QSaveFile", "QTemporaryFile", "QTemporaryDir", "QTextStream", "QDataStream", "QDir", "QStandardPaths", "QIODevice", "QIODeviceBase", "QLockFile", "QSettings",
                      "QFileSystemWatcher", "QFileDialog"}
     QT_WRITE_WORDS = {"WriteOnly", "ReadWrite", "Append", "Truncate", "NewOnly", "mkpath", "rmpath", "getSaveFileName", "getExistingDirectory"}
@@ -1608,7 +1866,9 @@ class PostsSourceRulesTest(unittest.TestCase):
         """어댑터 소스가 서비스 층과 맺는 모든 연결이 허용 목록과 **정확히 같은지** 본다 → 어긋난 곳의 설명 목록(없으면 비어 있다).
         ① 서비스에서 가져오는 이름은 `SERVICE_IMPORTS` 다섯뿐(`from ..service.x import y`·`as` 별칭·`from .. import service`·`*` 도 가져온 이름으로 센다, 절대 가져오기는 금지)
         ② 서비스 모듈 별칭의 속성 접근은 `SERVICE_USES`(함수 아홉 + 상수 하나)와 같고, 별칭을 속성 접근 없이 그냥 쓰는 곳(다른 이름에 담기·인자로 넘기기)이 없다
-        ③ 컨텍스트(`ctx`·`self._context(...)` 를 담은 이름)의 속성 사슬은 `CTX_USES` 와 같다 ④ `getattr` 같은 동적 접근 이름이 없다."""
+        ③ 컨텍스트(`ctx`·`self._context(...)` 를 담은 이름)의 속성 사슬은 `CTX_USES` 와 같다 ④ `getattr` 같은 동적 접근 이름이 없다
+        ⑤ 컨텍스트의 이름(진짜 `Context` 의 공개 이름 전부)은 받는 변수 이름과 상관없이 허용된 두 사슬 밖에서 쓰지 않는다 ⑥ 컨텍스트는 `ctx = self._context(...)` 한 모양으로만 만들고 이름 `ctx` 는 속성 접근·호출 인자로만 읽는다
+        ⑦ `sys`·`builtins`·`inspect`·`gc`·`importlib` 를 가져오지 않는다(독립 검증 Q 2차 권고-2: 별칭·즉석 사슬·매개변수 이름·`sys.modules` 우회). **한계**: 이 검사는 이름과 모양으로 보는 시험 코드이지 실행 때의 방어가 아니다(문서 D-639)."""
         tree, problems = ast.parse(source), []
         parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
         pairs = []
@@ -1653,7 +1913,53 @@ class PostsSourceRulesTest(unittest.TestCase):
             name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else ""
             if name in self.DYNAMIC_NAMES:
                 problems.append(f"동적 접근 이름: {name} (줄 {node.lineno})")
+        context_names = self.context_names()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in context_names and not self.allowed_context_attribute(node, parents):
+                problems.append(f"컨텍스트의 이름이 허용된 두 사슬 밖에서 쓰였다: {node.attr} (줄 {node.lineno})")
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("_context", "_factory") and not self.allowed_context_call(node, parents):
+                problems.append(f"컨텍스트는 `ctx = self._context(...)` 한 모양으로만 만든다 (줄 {node.lineno})")
+            elif isinstance(node, ast.Name) and node.id == "ctx" and isinstance(node.ctx, ast.Load) and not self.allowed_ctx_load(node, parents):
+                problems.append(f"컨텍스트 이름 ctx 를 속성 접근이나 호출 인자 밖에서 쓴다: 다른 이름에 담거나 묶음에 넣을 수 없다 (줄 {node.lineno})")
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                modules = [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+                problems += [f"표준 도구 가져오기: {name} (줄 {node.lineno})" for name in modules if name.split(".")[0] in self.BANNED_STDLIB]
         return problems
+
+    # ---- 강화(독립 검증 Q 2차 권고-2): 컨텍스트를 담는 이름을 `ctx` 하나로만 허용하고, 컨텍스트의 이름(git·backend·keystore·store …)은 받는 변수 이름과 상관없이 허용된 두 사슬 밖에서 쓰지 못하게 한다 ----------------
+    BANNED_STDLIB = {"sys", "builtins", "inspect", "gc", "importlib"}
+
+    @staticmethod
+    def context_names():
+        """진짜 `Context`(서비스의 컨텍스트)의 공개 이름 전부 — 필드와 메서드(`git`·`backend`·`keystore`·`store`·`settings` …). 컨텍스트가 늘면 자동으로 넓어진다."""
+        return {field.name for field in dataclasses.fields(Context)} | {name for name in dir(Context) if not name.startswith("_")}
+
+    @staticmethod
+    def allowed_context_attribute(node, parents):
+        """어댑터가 컨텍스트에서 쓰는 두 모양 — `ctx.reading_only()` 와 `ctx.settings.naver_profile_dicts()` 의 가운데 `settings`."""
+        parent = parents.get(node)
+        if not (isinstance(node.value, ast.Name) and node.value.id == "ctx"):
+            return False
+        if node.attr == "reading_only":
+            return isinstance(parent, ast.Call) and parent.func is node
+        return node.attr == "settings" and isinstance(parent, ast.Attribute) and parent.value is node and parent.attr == "naver_profile_dicts"
+
+    @staticmethod
+    def allowed_context_call(node, parents):
+        """컨텍스트를 만드는 호출은 `ctx = self._context("…")`(대입 대상이 `ctx` 하나) 뿐이고, `self._factory(…)` 는 `_context` 함수 안에서만 부른다 — 이름에 안 담고 바로 사슬을 잇거나(`self._context('read').git`) 다른 이름에 담지 못한다."""
+        parent = parents.get(node)
+        if node.func.attr == "_context":
+            return isinstance(parent, ast.Assign) and len(parent.targets) == 1 and isinstance(parent.targets[0], ast.Name) and parent.targets[0].id == "ctx"
+        current = parent
+        while current is not None and not isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            current = parents.get(current)
+        return current is not None and current.name == "_context"
+
+    @staticmethod
+    def allowed_ctx_load(node, parents):
+        """이름 `ctx` 를 읽는 곳은 속성 접근(`ctx.x`)이거나 호출의 위치 인자(`f(ctx, …)`)뿐이다 — `other = ctx`·`(ctx,)`·`[ctx]`·람다 인자 밖의 사용은 없다."""
+        parent = parents.get(node)
+        return (isinstance(parent, ast.Attribute) and parent.value is node) or (isinstance(parent, ast.Call) and node in parent.args)
 
     def qt_write_problems(self, source):
         """화면 층 소스의 Qt 파일 쓰기·경로 도구(`QFile` 열기 모드 쓰기·`QSaveFile`·`QTextStream`·`mkpath` …)를 이름으로 찾는다 → 설명 목록(없으면 비어 있다). 가져오기·이름·속성(`QtCore.QFile`)을 모두 본다."""
@@ -1687,6 +1993,15 @@ class PostsSourceRulesTest(unittest.TestCase):
             "절대 가져오기": "\nimport chanceblog_desktop.service.projects\n",
             "컨텍스트의 다른 속성": "\n\ndef _extra(ctx):\n    ctx.git.push()\n",
             "컨텍스트를 다른 이름에 담기": "\n\ndef _extra(self):\n    context = self._context('read')\n    context.git.push()\n",
+            "컨텍스트를 다른 이름에 대입": "\n\ndef _extra(ctx):\n    ctx2 = ctx\n    ctx2.git.push()\n",
+            "컨텍스트 즉석 사슬": "\n\ndef _extra(self):\n    self._context('read').git.push()\n",
+            "매개변수 이름 바꾸기": "\n\ndef _helper(c):\n    c.git.push()\n\n\ndef _extra(ctx):\n    _helper(ctx)\n",
+            "람다로 풀기": "\n\ndef _extra(ctx):\n    return (lambda c: c.git)(ctx)\n",
+            "묶음에 넣어 꺼내기": "\n\ndef _extra(ctx):\n    return [x for x in (ctx,)][0].backend\n",
+            "컨텍스트로 저장소 열기": "\n\ndef _extra(ctx):\n    ctx.store().delete_project('x')\n",
+            "컨텍스트 만들기를 다른 이름에 담기": "\n\ndef _extra(self):\n    other = self._factory(data_dir='x')\n    other.keystore\n",
+            "sys.modules 로 서비스 모듈 찾기": "\nimport sys\n\n\ndef _extra(ctx):\n    sys.modules['chanceblog_desktop.service.projects'].delete_project(ctx, 'x')\n",
+            "표준 도구를 별칭으로 가져오기": "\nimport sys as _s\n",
             "가져오기 이름 하나 빼기": source.replace("from ..service.previews import PagesParams\n", ""),
         }
         for name, change in bypasses.items():
@@ -1714,6 +2029,45 @@ class PostsSourceRulesTest(unittest.TestCase):
         for name, extra in shapes.items():
             with self.subTest(shape=name):
                 self.assertTrue(self.qt_write_problems(base + extra), f"Qt 파일 도구가 걸리지 않았다: {name}")
+
+    def test_every_name_in_the_deny_lists_has_its_own_shape_that_the_check_flags_for_that_name(self):
+        """독립 검증 Q 2차 권고-5: 검사기의 거부 목록(`DYNAMIC_NAMES`·`QT_FILE_NAMES`·`QT_WRITE_WORDS`)에서 항목 하나가 조용히 빠져도 같은 우회가 다른 규칙에 걸려 가려졌다 — 항목마다 따로 **그 이름 때문에** 걸리는지 보고,
+        목록 자체도 시험 안에 적어 둔 집합과 같다고 못박는다. 컨텍스트를 담는 호출 이름 둘(`_context`·`_factory`)도 항목마다 본다."""
+        dynamic = {"getattr", "setattr", "delattr", "vars", "globals", "locals", "__import__", "importlib", "import_module", "eval", "exec", "compile", "modules", "__dict__", "__globals__", "__builtins__"}
+        qt_files = {"QFile", "QSaveFile", "QTemporaryFile", "QTemporaryDir", "QTextStream", "QDataStream", "QDir", "QStandardPaths", "QIODevice", "QIODeviceBase", "QLockFile", "QSettings", "QFileSystemWatcher",
+                    "QFileDialog"}
+        qt_words = {"WriteOnly", "ReadWrite", "Append", "Truncate", "NewOnly", "mkpath", "rmpath", "getSaveFileName", "getExistingDirectory"}
+        self.assertEqual((self.DYNAMIC_NAMES, self.QT_FILE_NAMES, self.QT_WRITE_WORDS), (dynamic, qt_files, qt_words), "거부 목록이 정해 둔 집합과 다르다 — 항목을 빼거나 더하려면 이 시험도 함께 고친다")
+        adapter = (UI_DIR / "posts_adapter.py").read_text(encoding="utf-8")
+        self.assertEqual(self.service_problems(adapter), [])
+        for name in sorted(dynamic):
+            with self.subTest(dynamic=name):
+                problems = self.service_problems(adapter + f"\n\ndef _extra(project_service):\n    return {name}\n")
+                self.assertTrue([item for item in problems if item.startswith(f"동적 접근 이름: {name} ")], f"{name} 이 동적 접근 이름으로 걸리지 않았다: {problems}")
+        base = (UI_DIR / "qt" / "post_parts.py").read_text(encoding="utf-8")
+        self.assertEqual(self.qt_write_problems(base), [])
+        for name in sorted(qt_files):
+            with self.subTest(qt_file=name):
+                for shape, message in ((f"\n\ndef _extra():\n    return {name}\n", f"Qt 파일 도구 이름: {name} "), (f"\nfrom PySide6.QtCore import {name}\n", f"Qt 파일 도구 가져오기: {name} "),
+                                       (f"\n\ndef _extra(QtCore):\n    return QtCore.{name}\n", f"Qt 파일 도구·쓰기 모드: {name} ")):
+                    self.assertTrue([item for item in self.qt_write_problems(base + shape) if item.startswith(message)], f"{name}: '{message}' 로 걸리지 않았다")
+        for word in sorted(qt_words):
+            with self.subTest(qt_word=word):
+                found = self.qt_write_problems(base + f"\n\ndef _extra(x):\n    return x.{word}\n")
+                self.assertTrue([item for item in found if item.startswith(f"Qt 파일 도구·쓰기 모드: {word} ")], f"{word} 가 걸리지 않았다")
+        for owner in ("_context", "_factory"):
+            with self.subTest(context_source=owner):
+                problems = self.service_problems(adapter + f"\n\ndef _extra(self):\n    other = self.{owner}('read')\n    other.git.push()\n")
+                self.assertTrue([item for item in problems if "컨텍스트의 속성 사슬" in item], f"{owner} 로 만든 컨텍스트를 담은 이름의 사슬을 따라가지 않았다: {problems}")
+
+    def test_the_write_wait_when_the_app_closes_is_ten_seconds_and_is_the_value_the_closing_path_waits_with(self):
+        """독립 검증 Q 2차 권고-6: 앱을 닫을 때 쓰기가 끝나기를 기다리는 한도(`post_flow.WRITE_CLOSE_WAIT`)를 시험이 못박지 못했다 — 닫기 길이 더하는 `join_all(1.0)` 때문에 한도를 1–2초로 줄여도 기다림 시험이 통과했다.
+        화면 도구 없이도 돌도록 소스에서 값을 읽는다."""
+        tree = self.parse(UI_DIR / "qt" / "post_flow.py")
+        values = [node.value.value for node in tree.body if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and any(isinstance(target, ast.Name) and target.id == "WRITE_CLOSE_WAIT" for target in node.targets)]
+        self.assertEqual(values, [10.0], "글 쓰기 기다림 한도는 10초다 — 이 값이 닫기 길이 쓰는 기다림이다")
+        joins = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "join" and [arg.id for arg in node.args if isinstance(arg, ast.Name)] == ["WRITE_CLOSE_WAIT"]]
+        self.assertEqual(len(joins), 1, "닫기 길의 `job.join(WRITE_CLOSE_WAIT)` 한 곳")
 
 
 if __name__ == "__main__":

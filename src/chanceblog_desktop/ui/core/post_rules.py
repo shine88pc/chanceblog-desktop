@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from ...content import status as st
 from ...render.pages import MAX_CATEGORY, MAX_DESCRIPTION, MAX_TAG, MAX_TAGS
@@ -30,8 +32,14 @@ KIND_LABEL = {"heading": "post_block_heading", "list": "post_block_list", "quote
 REVIEWABLE = frozenset({st.NOT_STARTED, st.DRAFT_GENERATED, st.REVIEW_REQUIRED, st.APPROVED, st.READY_TO_COPY, st.PUBLISH_FAILED})          # 이 화면이 '검토 시작·다시 검토' 를 켜는 상태 — 올라간·복사 마친·공개된 글은 1a 가 바꾸지 않는다
 APPROVED_NOW = frozenset({st.APPROVED, st.READY_TO_COPY})   # 승인 취소가 켜지는 상태
 _TAG = re.compile(r"^<([a-z0-9]+)")
-_KEY_HEAD = re.compile(r"-----BEGIN [A-Z ]{0,100}PRIVATE KEY(?: BLOCK)?-----")               # 개인 키 블록의 머리·꼬리 줄(엔진 `_PEM` 과 같은 모양 — PGP 는 `… PRIVATE KEY BLOCK-----`)
-_KEY_TAIL = re.compile(r"-----END [A-Z ]{0,100}PRIVATE KEY(?: BLOCK)?-----")
+_NON_ASCII = re.compile(r"[^\x20-\x7e]")                     # 보이는 ASCII 가 아닌 모든 글자 — 엔진이 지우는 눈에 안 보이는 글자는 전부 여기 든다(그보다 넓다). 이것을 모두 지운 글에 BEGIN·END 낱말이 없으면 엔진도 머리·꼬리를 볼 수 없다
+_PROBE_LIMIT = 150_000                                       # 엔진에 한 번에 묻는 글의 최대 길이 — 엔진은 20만 자에서 글을 자르므로(끝 표지가 잘려 나가 '열려 있다' 로 잘못 읽힌다) 그 아래로 잡는다
+_PROBE_MARKS = ("ZQJ", "QJZ", "JZQ", "XQV", "VQX", "KQZ", "ZKQ", "QZK")      # 글 뒤에 붙여 엔진에 묻는 세 글자 표지 후보 — 글에 없는 것을 쓴다(네 글자부터는 '값' 으로 읽혀 가려질 수 있다)
+_FAKE_HEAD = "-----BEGIN " + "PRIVATE KEY-----"                # 이미 열린 채 들어오는 조각 앞에 붙이는 가짜 머리 줄 — 엔진이 머리부터 읽게 한다(조립한 글자 — 키 모양을 소스에 그대로 두지 않는다)
+_INVISIBLE_RANGES = ((0xAD, 0xAD), (0x34F, 0x34F), (0x61C, 0x61C), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x2800, 0x2800), (0x3164, 0x3164),
+                     (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFFB), (0xE0000, 0xE0FFF))          # 가리기 엔진(`security/mask.py`)이 비밀을 찾기 전에 지우는 눈에 안 보이는 글자 구간 — 범주(아래)와 함께 엔진과 같은 눈이다
+_INVISIBLE = re.compile("[" + "".join(chr(low) + ("-" + chr(high) if high != low else "") for low, high in _INVISIBLE_RANGES) + "]")
+_HIDDEN_CATEGORIES = frozenset({"Cf", "Cc", "Cs", "Co", "Zl", "Zp"})      # 서식·제어·대용·사용자 지정·줄/문단 구분 문자 — 엔진이 범주로도 지운다. 어긋나도 안전한 쪽이다(견줄 때 같지 않으면 가렸다고 센다)
 _CODE = re.compile(r"[A-Z][A-Z0-9_]{0,39}")
 _STAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
 
@@ -41,13 +49,23 @@ def shown(value, limit=300):
     return display_text(value, limit)
 
 
+def _without_invisible(value):
+    """가리기 엔진이 비밀을 찾기 전에 지우는 눈에 안 보이는 글자(폭 없는 글자·방향 제어·태그·변형 선택자·채움 글자·제어·줄/문단 구분 …)를 뺀 글 — 줄바꿈·탭은 둔다.
+    엔진과 구간 목록이 어긋나도 안전한 쪽이다: 이 글을 엔진이 낸 글과 견줄 때 같지 않으면 가렸다고 세므로 기억을 덜 할 뿐 더 하지는 않는다."""
+    text = _INVISIBLE.sub("", value)
+    if text.replace("\n", "").replace("\r", "").replace("\t", "").isprintable():
+        return text
+    return "".join(char for char in text if char in "\n\r\t" or unicodedata.category(char) not in _HIDDEN_CATEGORIES)
+
+
 def would_be_masked(value):
-    """가리기 엔진이 이 글에서 무언가를 가리는가 — 저장 검사기(`secret_spots`)가 아는 여섯 유형뿐 아니라 엔진이 아는 모든 모양(Slack·Stripe·OpenAI·Anthropic 키·주소 속 사용자 정보 …)을 본다.
-    이 앱을 연 동안 기억해 칸에 다시 채울 값처럼 '키 모양이 하나라도 있으면 내보내지 않을 글' 을 가릴 때 쓴다(독립 검증 S 참고-2). 글이 아니거나 비었으면 False."""
-    if not isinstance(value, str) or not value.strip():
+    """가리기 엔진이 이 글에서 **비밀 모양을** 가리는가 — 저장 검사기(`secret_spots`)가 아는 여섯 유형뿐 아니라 엔진이 아는 모든 모양(Slack·Stripe·OpenAI·Anthropic 키·주소 속 사용자 정보 …)을 본다.
+    이 앱을 연 동안 기억해 칸에 다시 채울 값처럼 '키 모양이 하나라도 있으면 내보내지 않을 글' 을 가릴 때 쓴다(독립 검증 S 참고-2). 엔진은 먼저 눈에 안 보이는 글자를 지우므로
+    **그것만 지운 글**과 견준다(독립 검증 S 2차 참고 I1 — ZWJ 이모지·변형 선택자가 든 평범한 값을 가렸다고 세지 않는다. 키를 그 글자로 쪼갠 값은 엔진이 지우고 알아봐 가린다). 글이 아니거나 가릴 글이 없으면 False."""
+    if not isinstance(value, str):
         return False
-    flat = " ".join(value.split())
-    return display_text(flat, len(flat) + 64) != flat
+    flat = " ".join(_without_invisible(value).split())
+    return bool(flat) and display_text(flat, len(flat) + 64) != flat
 
 
 def when_text(stamp):
@@ -85,21 +103,106 @@ def _safe_block(plain):
     return "\n".join(lines)
 
 
+def _has_edge(line):
+    """이 줄에 머리·꼬리 낱말(BEGIN·END)이 있을 수 있나 — 눈에 안 보이는 글자로 쪼개 쓴 것까지 놓치지 않게 보이는 ASCII 만 남기고 본다(엔진이 지우는 글자는 모두 지워지므로 이 거름이 엔진보다 느슨하다)."""
+    flat = _NON_ASCII.sub("", line)
+    return "BEGIN" in flat or "END" in flat
+
+
+def _ask_engine(plain, inside):
+    """엔진에 글 한 조각을 묻는다 → (엔진이 가린 글, 이 조각을 읽고 난 뒤 열려 있나). `plain` 은 한 번에 물을 수 있는 크기(`_PROBE_LIMIT` 이하)다. 글 뒤에 글에 없는 표지 후보를 붙여 `display_text` 에 넣고
+    표지가 사라졌으면 열려 있는 것이다(가린 글에는 표지가 없다). 표지 후보가 모두 글에 들어 있으면 물을 수 없으니 (None, True) — 열려 있다고 본다. `inside` 면 앞에 가짜 머리 줄을 붙인다(가린 글이 표지로 시작한다)."""
+    flat = _NON_ASCII.sub("", plain)
+    mark = next((item for item in _PROBE_MARKS if item not in flat), None)
+    if mark is None:
+        return None, True
+    probe = (_FAKE_HEAD + "\n" if inside else "") + plain + "\n" + mark
+    seen = display_text(probe, 4 * len(probe) + 256)
+    if mark in seen:
+        return seen[:seen.rindex(mark)].rstrip(), False
+    return seen, True
+
+
 def _key_open_after(plain, inside):
-    """이 글 조각을 읽고 난 뒤에도 개인 키 블록(PEM·PGP)이 **열려 있나** — 머리(`-----BEGIN … PRIVATE KEY-----`)를 만나면 가장 가까운 꼬리(`-----END … PRIVATE KEY-----`)까지, 꼬리가 없으면 글 끝까지가 한 덩어리다
-    (가리기 엔진 `security/mask.py` 의 개인 키 규칙과 같다 — 머리 줄만이 아니라 본문까지). `inside` 는 이 조각에 들어올 때 이미 열려 있었는가. 머리·꼬리의 라벨은 100자까지(되돌아가는 비용을 막는다)."""
-    pos = 0
-    while True:
-        found = (_KEY_TAIL if inside else _KEY_HEAD).search(plain, pos)
-        if found is None:
-            return inside
-        inside, pos = not inside, found.end()
+    """이 글 조각을 읽고 난 뒤에도 개인 키 블록(PEM·PGP)이 **열려 있나** — 머리를 만나면 가장 가까운 개인 키 꼬리까지, 꼬리가 없으면 글 끝까지가 한 덩어리다.
+    **판정은 가리기 엔진(`security/mask.py`)에 맡긴다**(독립 검증 S 2차 필수 N1): 조각 뒤에 표지(엔진이 건드리지 않는 세 글자)를 붙여 `display_text` 에 넣고 표지가 사라졌으면(머리부터 글 끝까지 가렸다) 아직 열려 있는 것이다.
+    눈에 안 보이는 글자로 쪼갠 머리·길이 한도 없는 라벨·앞으로 엔진이 바뀌는 것까지 구성상 같다 — 이 파일에 머리·꼬리 정규식이 없다. `inside` 는 이 조각에 들어올 때 이미 열려 있었는가: 열린 채 들어오는 조각은
+    앞에 가짜 머리 줄을 붙여 엔진이 머리부터 읽게 한다. 비용: 머리(닫힌 채일 때)·꼬리(열린 채일 때) 낱말이 있을 수 없는 조각은 묻지 않는다. 15만 자가 넘는 조각은 머리·꼬리가 있을 수 있는 줄만 모아 묻고(엔진은 20만 자에서 글을
+    자른다), 그래도 15만 자가 넘는 한 줄이면 물을 수 없으니 열려 있다고 본다(더 많이 가리는 쪽). 표지 후보가 모두 글에 들어 있으면 마찬가지로 열려 있다고 본다."""
+    if ("END" if inside else "BEGIN") not in _NON_ASCII.sub("", plain):
+        return inside
+    if len(plain) > _PROBE_LIMIT:
+        plain = "\n".join(line for line in plain.split("\n") if _has_edge(line))
+        if len(plain) > _PROBE_LIMIT:
+            return True
+    return _ask_engine(plain, inside)[1]
+
+
+@lru_cache(maxsize=1)
+def _key_marker():
+    """엔진이 개인 키 블록 자리에 쓰는 표지 글 — 엔진에게 물어 얻는다(이 파일에 표지 글을 적지 않는다 — 표지가 바뀌어도 어긋나지 않는다)."""
+    return display_text(_FAKE_HEAD, 200)
+
+
+def _converted_open(line, was):
+    """변환기가 이 줄만 변환해 보여 주는 글에서도 개인 키 블록이 열려 있나. 원문 엔진이 이 줄에서 닫혔다고 해도 변환기가 그 꼬리를 버리거나 깨면(이미지 설명·제목·울타리 이름 줄에 든 꼬리, 줄 구분 글자로 쪼개진 꼬리)
+    화면에 나가는 글에서는 닫히지 않는다 — 그런 줄은 닫는 줄로 치지 않는다(원문 쪽과 변환된 글 쪽 **둘 다** 닫혔을 때만 닫힌다). 변환이 예외를 내면 열려 있다고 본다."""
+    from ...render.markdown import markdown_blocks
+    try:
+        blocks, _images = markdown_blocks(line)
+        plain = "\n\n".join(text for _kind, text in _entries_of(blocks))
+    except Exception:
+        return True
+    return _key_open_after(plain, was)
+
+
+def _line_step(line, was):
+    """원문 한 줄 → (엔진 눈에 보이는 줄, 이 줄을 읽고 난 뒤 열려 있나). `was`: 이 줄에 열린 채 들어왔나. 보이는 줄은 개인 키 블록이 덮은 곳을 표지로 바꾼 글이다 —
+    닫힌 채 들어온 줄은 머리가 없으면 줄 그대로, 머리가 있으면 엔진이 가린 글(머리 앞 글·표지·꼬리 뒤 글). 열린 채 들어온 줄은 꼬리 뒤에 남는 글만(없으면 빈 글 — 줄을 지운다).
+    원문 엔진이 닫혔다고 해도 변환된 글에서 안 닫히면(`_converted_open`) 열린 채로 둔다 — 닫힌 채 들어온 줄은 표지까지만 남기고, 열린 채 들어온 줄은 지운다.
+    줄 하나가 엔진에 물을 수 없을 만큼 길면 닫힌 채 들어온 줄은 표지 하나로, 열린 채 들어온 줄은 빈 글로, 둘 다 열려 있다고 본다."""
+    marker = _key_marker()
+    if len(line) > _PROBE_LIMIT:
+        return ("" if was else marker), True
+    seen, now = _ask_engine(line, was)
+    if seen is None:
+        return ("" if was else marker), True                 # 표지 후보가 모두 줄에 있어 물을 수 없다 — 열려 있다고 본다(더 많이 가리는 쪽)
+    if was:
+        shown = seen[len(marker):].strip() if seen.startswith(marker) else ""
+    elif marker not in seen:
+        return line, False                                   # 머리 낱말이 있을 뿐 엔진이 머리로 읽지 않는 줄 — 줄 그대로
+    else:
+        shown = seen
+    if not now and _converted_open(line, was):
+        now = True
+        shown = "" if was else shown[:shown.index(marker) + len(marker)]
+    return shown, now
+
+
+def _hide_key_lines(raw):
+    """원문(Markdown)에서 **엔진이 개인 키 블록으로 가리는 줄**을 변환 전에 먼저 가린 글(독립 검증 S 2차 권고 R1). 변환기(`render/markdown.py`)는 이미지 설명·이미지와 링크 제목·울타리 이름 줄의 글을 버리고
+    강조·링크·이미지로 꼬리를 흉내 낼 수 있고 줄 구분 글자로 줄을 나눠서, 변환된 글에서 머리·꼬리를 찾으면 엔진이 원문에서 가리는 곳과 어긋난다 — 줄바꿈 글자 기준으로 줄마다 엔진에게 묻는다:
+    머리가 든 줄은 엔진이 가린 한 줄(앞 글·표지·꼬리 뒤 글)로 바꾸고, 열려 있는 동안의 줄은 지우고, 꼬리가 든 줄은 꼬리 뒤 글만 남긴다. 꼬리는 원문 엔진과 변환된 글 **둘 다** 닫혔을 때만 닫는다(`_line_step`).
+    머리 낱말이 글 어디에도 없으면 글 그대로다(거의 모든 글)."""
+    if "BEGIN" not in _NON_ASCII.sub("", raw):
+        return raw
+    out, inside = [], False
+    for line in raw.split("\n"):
+        if ("END" if inside else "BEGIN") not in _NON_ASCII.sub("", line):
+            if not inside:
+                out.append(line)
+            continue
+        shown, now = _line_step(line, inside)
+        if not inside or shown:
+            out.append(shown)
+        inside = now
+    return "\n".join(out)
 
 
 def _key_groups(entries):
     """(종류, 글) 목록 → 개인 키 블록을 **한 덩어리로 묶은** (종류, 글) 목록. 블록은 빈 줄마다 나뉘는데 실제 PGP 키는 머리 줄 뒤에 빈 줄이 있어, 블록마다 따로 가리면 머리 줄만 가려지고 본문 줄이
     그대로 나간다 — 머리가 열린 블록부터 꼬리가 든 블록까지(사이에 빈 줄·소제목·목록·인용이 끼어도, 꼬리가 없으면 글 끝까지)를 한 글로 이어 붙여 엔진이 머리부터 꼬리까지 한 번에 가리게 한다.
-    묶인 덩어리의 종류는 머리가 든 블록의 종류다. 꼬리 뒤에 이어지는 같은 블록의 글은 그대로 남는다."""
+    묶인 덩어리의 종류는 머리가 든 블록의 종류다. 꼬리 뒤에 이어지는 같은 블록의 글은 그대로 남는다. 변환기가 **만드는** 머리(역슬래시로 쓴 붙임표·강조로 쓴 라벨)는 원문 가리기(`_hide_key_lines`)가 못 보므로 이 묶기가 맡는다."""
     groups, inside = [], False
     for kind, plain in entries:
         if inside:
@@ -110,16 +213,9 @@ def _key_groups(entries):
     return [(kind, "\n\n".join(parts)) for kind, parts in groups]
 
 
-def build_preview(markdown, *, refs=0, assets=0):
-    """원고(Markdown) → `PostPreview`. 서비스의 안전 변환이 만든 블록에서 글자만 뽑는다 — 글 속의 HTML 태그·스크립트는 변환기가 글자로 바꾸고, 여기서는 그 글자를 그대로(가려서) 내보낼 뿐 해석하지 않는다.
-    이미지·링크는 내보내지 않는다(이미지는 개수만). 개인 키 블록은 머리부터 꼬리까지 한 덩어리로 가린다(`_key_groups`). 변환이 거절하는 아주 큰 글(2,000,000자 초과)은 빈 미리보기다.
-    아주 병적인 글(인용 기호만 2MB 가까이 같은 글)은 글자 뽑기에서 예외가 날 수 있다 — 저장된 글에서는 화면의 10만 자 한도 안에서 만들어지지 않고, 나면 화면이 오류 상태로 안전하게 닫는다(빈 미리보기로 속이지 않는다)."""
-    from ...render.markdown import html_to_text, markdown_blocks
-    text = markdown if isinstance(markdown, str) else ""
-    try:
-        html_blocks, images = markdown_blocks(text)
-    except Exception:                                        # 변환이 받지 않는 글(2,000,000자 초과) — 저장된 글에는 없지만 변환기가 받지 않는 값은 빈 미리보기다
-        return PostPreview((), 0, 0, 0, int(refs), False)
+def _entries_of(html_blocks):
+    """변환된 HTML 블록들 → (종류, 글) 목록 — 글자만 뽑고(태그는 버린다) 빈 블록은 건너뛴다. 인용 블록은 줄 앞의 인용 기호를 뗀다."""
+    from ...render.markdown import html_to_text
     entries = []
     for block in html_blocks:
         tag = _TAG.match(block)
@@ -130,10 +226,32 @@ def build_preview(markdown, *, refs=0, assets=0):
         if kind == "quote":
             plain = "\n".join(re.sub(r"^> ?", "", line) for line in plain.split("\n"))
         entries.append((kind, plain))
-    kept, total, chars, used = [], 0, 0, 0
+    return entries
+
+
+def build_preview(markdown, *, refs=0, assets=0):
+    """원고(Markdown) → `PostPreview`. 서비스의 안전 변환이 만든 블록에서 글자만 뽑는다 — 글 속의 HTML 태그·스크립트는 변환기가 글자로 바꾸고, 여기서는 그 글자를 그대로(가려서) 내보낼 뿐 해석하지 않는다.
+    이미지·링크는 내보내지 않는다(이미지는 개수만). 개인 키 블록은 두 단계로 가린다 — ① 변환 전에 엔진이 원문에서 개인 키 블록으로 가리는 줄을 먼저 가리고(`_hide_key_lines`) ② 변환된 글에서 머리가 열린 블록부터
+    꼬리까지를 한 덩어리로 가린다(`_key_groups`). 열림 판정은 둘 다 엔진에게 묻는다. 글자 수·이미지 수는 가리기 전 글 그대로 센다. 변환이 거절하는 아주 큰 글(2,000,000자 초과)은 빈 미리보기다.
+    아주 병적인 글(인용 기호만 2MB 가까이 같은 글)은 글자 뽑기에서 예외가 날 수 있다 — 저장된 글에서는 화면의 10만 자 한도 안에서 만들어지지 않고, 나면 화면이 오류 상태로 안전하게 닫는다(빈 미리보기로 속이지 않는다)."""
+    from ...render.markdown import markdown_blocks
+    text = markdown if isinstance(markdown, str) else ""
+    try:
+        html_blocks, images = markdown_blocks(text)
+    except Exception:                                        # 변환이 받지 않는 글(2,000,000자 초과) — 저장된 글에는 없지만 변환기가 받지 않는 값은 빈 미리보기다
+        return PostPreview((), 0, 0, 0, int(refs), False)
+    entries = _entries_of(html_blocks)
+    chars = sum(len(re.sub(r"\s+", "", plain)) for _kind, plain in entries)         # 글자 수는 글 그대로의 크기다(가린 줄도 센다)
+    hidden = _hide_key_lines(text)
+    if hidden != text:
+        try:
+            hidden_blocks, _hidden_images = markdown_blocks(hidden)
+        except Exception:                                    # 줄을 가린 글이 변환기 한도를 넘는 경우 — 내보내지 않는 쪽(빈 미리보기)
+            return PostPreview((), 0, 0, 0, int(refs), False)
+        entries = _entries_of(hidden_blocks)
+    kept, total, used = [], 0, 0
     for kind, plain in _key_groups(entries):
         total += 1
-        chars += len(re.sub(r"\s+", "", plain))
         if len(kept) < PREVIEW_BLOCKS and used < PREVIEW_CHARS:
             block_text = _safe_block(plain)
             used += len(block_text)
