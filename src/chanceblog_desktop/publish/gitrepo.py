@@ -32,9 +32,12 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote", "pull", "clone"})
 _SSH_DEFAULT = "ssh -o BatchMode=yes"          # 질문 대신 실패하는 ssh(입력을 기다리며 멈추지 않게) — 사용자가 ssh 명령을 따로 정하지 않았을 때만 쓴다
 _LOCK_MAX_AGE = DEFAULT_TIMEOUT + 120          # 방금 끈 git 이 남긴 index.lock 으로 볼 최대 나이(초) — 이보다 오래된 잠금은 다른 프로그램의 것일 수 있어 건드리지 않는다
+# 글 저장소의 소유자·저장소 이름 — 연결한 폴더의 origin 정규식과 공개 사이트 호스트(`net/endpoints.py` 의 `pages_site`)가 모두 이 두 상수 하나에서 나온다(NET 설계서 3.6, D-724 — 정규식 글은 예전과 한 글자도 다르지 않다)
+EXPECTED_OWNER = "shine88pc"
+EXPECTED_REPO = "chanceblog"
 # re.ASCII: 터키어 ı·긴 s(ſ) 같은 글자가 i·s 와 같게 읽혀 가짜 호스트가 통과하지 않게
 EXPECTED_ORIGIN = re.compile(
-    r"^(?:https://(?:[^/\s]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)shine88pc/chanceblog(?:\.git)?/?$",
+    r"^(?:https://(?:[^/\s]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)" + re.escape(EXPECTED_OWNER) + "/" + re.escape(EXPECTED_REPO) + r"(?:\.git)?/?$",
     re.IGNORECASE | re.ASCII,
 )
 _DETAIL_CHARS = 400

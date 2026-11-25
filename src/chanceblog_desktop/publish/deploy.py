@@ -97,8 +97,12 @@ def expected_url(root, path, text, *, now=None):
 def check_deployed(root, path, text, *, deadline=720, interval=10, fetcher=None, sleep=None, clock=None, now=None, token="app"):
     """올린 글의 공개 주소가 열릴 때까지 확인한다(기본 최대 12분, 대기 10초에서 시작해 2배씩). 열리면 DeployResult, 끝내 안 열리면 PAGES_DEPLOY_NOT_VISIBLE."""
     capabilities.require_external_write("올린 글의 공개 주소 확인(네트워크)")        # 외부 관문 — 이 시험 버전은 꺼져 있어 요청을 한 번도 보내지 않는다
+    capabilities.require_net("pages_site", "올린 글의 공개 주소 확인")             # 둘째 문장: 좁은 스위치(NET_PAGES_SITE)도 켜져 있어야 한다 — EXTERNAL_WRITE 만으로는 열리지 않는다(NET 설계서 3.3)
     url = expected_url(root, path, text, now=now)                 # 검사·주소 계산을 먼저(여기서 막히면 기다리지 않는다)
     verifier = _verifier()
+    if fetcher is None:
+        from ..net.site import site_fetcher                      # 접속 틀(`ssl`·`http.client`)은 여기서 처음 불러온다 — 기본 빌드는 시작 때 불러오지 않는다(독립 검증 S 참고-3, D-739)
+        fetcher = site_fetcher(verifier.Resp)                     # vendor 도구의 `urlopen` 길(자동 이동·시스템 프록시)을 쓰지 않고 접속이 `net/` 틀을 지나게 한다(NET 설계서 F1·NT-16)
     base = site_base(root)
     log = io.StringIO()
     with tempfile.TemporaryDirectory() as tmp:

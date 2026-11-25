@@ -366,12 +366,16 @@ def setUpModule():
     from unittest import mock
     from chanceblog_desktop import capabilities
     global _EXTERNAL_WRITE
+    global _NET_PAGES_SITE
+    _NET_PAGES_SITE = mock.patch.object(capabilities, "NET_PAGES_SITE", True)           # NET(D-720): 공개 주소 확인은 좁은 스위치도 함께 요구한다 — 예전에 EXTERNAL_WRITE 하나가 열던 흐름을 그대로 돌리려고 임시로만 연다
+    _NET_PAGES_SITE.start()
     _EXTERNAL_WRITE = mock.patch.object(capabilities, "EXTERNAL_WRITE", True)          # 이 시험은 게시 모듈을 직접 부른다 — 외부 Write 관문을 임시로만 연다(소스 상수는 False — PCSEC1 H3)
     _EXTERNAL_WRITE.start()
 
 
 def tearDownModule():
     _EXTERNAL_WRITE.stop()
+    _NET_PAGES_SITE.stop()
 
 
 if __name__ == "__main__":

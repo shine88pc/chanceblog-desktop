@@ -489,6 +489,7 @@ def check_pages_deploy(ctx, text_id, *, deadline=DEFAULT_DEADLINE, interval=DEFA
     """올라간 글(PUSHED)의 공개 주소가 열리는지 확인하고 열리면 PUBLISHED 로 기록한다. 아직 안 열리면 상태는 그대로 두고 확인 대기로 보고한다(다시 실행하면 된다).
     올리는 명령과 같은 글의 잠금을 쓴다(다른 작업이 그 글을 올리는 중이면 PUBLISH_IN_PROGRESS)."""
     capabilities.require_external_write("올린 글의 공개 주소 확인")
+    capabilities.require_net("pages_site", "올린 글의 공개 주소 확인")             # 둘째 문장: 좁은 스위치도 함께(NET 설계서 3.3)
     with ctx.store() as store:
         project_id = resolve_id(store, text_id)
     with publish_lock(ctx, project_id, deadline=deadline) as lock:

@@ -36,7 +36,7 @@ GIT_ENV = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.inva
 FAKE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
 FAKE_TREE = "fedcba9876543210fedcba9876543210fedcba98"
 PYTHON_DLL = f"python{sys.version_info[0]}{sys.version_info[1]}.dll"
-SELFTEST_KEYS = ("utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "uac_manifest", "qt_plugins", "qt_screens",
+SELFTEST_KEYS = ("utf8_mode", "version_file", "package_info", "file_hashes", "licenses", "vendor_core", "capabilities", "tls", "uac_manifest", "qt_plugins", "qt_screens",
                  "gui_only_entry", "data_dir_untouched")
 
 
