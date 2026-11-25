@@ -670,6 +670,22 @@ class ConnectionCloseTest(unittest.TestCase):
                 self.assertEqual((wire.calls, sock.closed), ([], True), label)
                 del kept
 
+    def test_the_connection_is_closed_for_real_even_when_closing_the_response_fails(self):
+        """마지막 안전장치 — 응답을 닫다가 실패해도(읽개가 열린 채 남아도) 요청이 끝나면 `abort()` 가 진짜 소켓을 닫는다. 응답을 붙들어 가비지 수집이 대신 닫아 주지 못하게 한 채 본다
+        (예전에는 응답 닫기만으로 충분한지 시험이 가려내지 못했다 — 변이 R2-04)."""
+        kept = []
+
+        def failing_close(response):
+            kept.append(response)                                       # 응답 객체를 붙들어 두면 읽개도 열린 채 남는다
+            raise RuntimeError("닫다가 실패")
+        sock = ns.FakeSocket(pieces=pieces_of("length", True, self.BODY[:30_000]))
+        env = ns.Harness(self, sockets=[sock], switches=ns.USE_SWITCHES["update_check"])
+        with env, mock.patch.object(http.client.HTTPResponse, "close", failing_close), self.assertRaises(errors.NetError) as caught:
+            env.client.request("update_check", "GET", UPDATE_URL, limit=1000)          # 선언 크기가 한도보다 커서 본문을 읽지 않고 거절 — 읽개가 열린 채 끝난다
+        self.assertEqual(caught.exception.code, "NET_RESPONSE_INVALID")
+        self.assertTrue(kept, "응답 닫기가 불렸다")
+        self.assertTrue(sock.closed, "응답을 닫는 데 실패해도 요청이 끝나면 진짜 소켓은 닫힌다")
+
     def test_a_dripping_body_with_connection_close_still_stops_at_the_total_deadline(self):
         """응답에 `Connection: close` 가 있어도 찔끔 오는 본문은 마감에서 끊긴다 — 닫힌 소켓 오류(`NETWORK_OFFLINE`)가 아니라 마감 초과(`NETWORK_TIMEOUT`)다."""
         clock = ns.FakeClock()

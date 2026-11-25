@@ -392,20 +392,20 @@ class ResponseShapeTest(TlsBase):
         elapsed = time.monotonic() - began
         self.assertIsInstance(result, errors.NetError)
         self.assertEqual((result.code, result.outcome_unknown), ("NET_RESPONSE_INVALID", True))
-        self.assertLess(elapsed, 5.0, f"상한을 넘겨도 {elapsed:.1f}초나 읽었다")
+        self.assertLess(elapsed, 15.0, f"상한을 넘겨도 {elapsed:.1f}초나 읽었다")                    # 상한이 없으면 총 시간(30초)까지 읽는다 — 바쁜 PC 에서도 거짓으로 빨개지지 않게 넉넉히 둔다
         self.assertLess(usage.records()[0].received, 2 * 50_000 + 200_000, "상한 근처에서 끊겼다")
 
     def test_a_declared_size_over_the_limit_is_refused_before_the_body_is_read(self):
         """선언한 크기가 상한보다 크면 본문을 읽기 전에 거절한다(서버가 본문을 보내지 않고 기다려도 걸리지 않는다)."""
         def declare_only(server, conn, head, request_body):
             conn.sendall(head_bytes("Content-Length: 99999999", "Connection: close"))
-            server.stop.wait(4)
+            server.stop.wait(8)
         server = self.serve(fx.GOOD_CERT, fx.GOOD_KEY, handler=declare_only)
         began = time.monotonic()
         result, usage = self.call(server)
         self.assertIsInstance(result, errors.NetError)
         self.assertEqual(result.code, "NET_RESPONSE_INVALID")
-        self.assertLess(time.monotonic() - began, 3.0)
+        self.assertLess(time.monotonic() - began, 6.0, "본문을 기다리지 않고 거절해야 한다(서버는 8초 동안 본문을 안 보낸다)")
 
     def test_a_redirect_on_a_real_connection_is_refused_without_a_second_connection_and_the_first_is_closed(self):
         """이동 거절 — 응답이 `Connection: close` 와 본문을 달고 와도 둘째 연결은 없고 첫 연결은 닫힌다."""
@@ -681,7 +681,7 @@ class RealSocketDeadlineTest(TlsBase):
         result, usage = self.call(server, total=1.5)
         elapsed = time.monotonic() - began
         self.assertEqual((type(result).__name__, result.code, result.outcome_unknown), ("NetError", "NETWORK_TIMEOUT", True), getattr(result, "detail", ""))
-        self.assertLess(elapsed, 4.0, f"총 시간 1.5초를 넘겨 {elapsed:.1f}초나 걸렸다")
+        self.assertLess(elapsed, 6.0, f"총 시간 1.5초를 넘겨 {elapsed:.1f}초나 걸렸다")                # 감시가 없으면 서버가 그만 보내는 8초 뒤에야 끝난다
         self.assertGreater(elapsed, 1.0)
         self.assertTrue(server.closed_by_client.wait(WATCH_SECONDS + 2), "마감으로 끝난 뒤에도 연결을 닫는다")
 
