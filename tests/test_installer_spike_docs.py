@@ -251,11 +251,12 @@ class FirstRunFixDocsTest(unittest.TestCase):
     def test_the_row_names_the_fifth_cause_of_the_exit_zero_and_what_the_second_box_will_say(self):
         """재작업 S-R2·S-R1·S-R4·S-R5 — M18 원인 후보에 '`Start-Process` 가 띄우지 못하고 오류만 낸 경우도 종료 0 이 된다'(이 개발 PC 에서 재현)가 다섯째로 있고, 종료 코드가 비어 나오는 것은 확정이 아니라 '나올 수도' 이다.
         띄우기 실패의 윈도 오류 문장·권한 상승(elevation) 실패·G8 근거의 종료 코드·시간 초과·빌드 판정 거절·대소문자 규칙의 바른 문장."""
-        for word in ("원인 후보는 다섯이다", "비어 나올 수도 있어", "`Start-Process` 가 프로그램을 띄우지 못하고 오류만 낸 경우도 종료 코드 0 이 된다", "`-ErrorAction Stop` 이 없으면", "이 개발 PC 의 Windows PowerShell 5.1 에서 재현했다",
+        for word in ("원인 후보는 다섯이다", "비어 나올 수도 있어", "`Start-Process` 가 프로그램을 띄우지 못하고 오류만 낸 경우도 종료 코드 0 이 된다", "1차 도구는 그 오류를 잡지 않았다", "`try`/`catch` 가 없으면 오류는 화면에만 나오고", "이 개발 PC 의 Windows PowerShell 5.1 에서 재현했다",
+                     "`try`/`catch`(와 `-ErrorAction Stop`)로 잡아",
                      "앞의 넷은 이 PC 에서는 확인할 수 없고", "윈도의 오류 문장(예외 메시지", "비밀번호를 가린 뒤 잘라", "관리자 권한을 요구한 것만 실패다", "종료 740 으로 끝났거나", "권한 상승이 필요하다(elevation)",
                      "탐침이 그렇게 막히는 것은 설치 도구의 탓이 아니라 시도 불가다", "2차 상자의 M18 줄이 위 다섯 후보 가운데 어느 것인지", "종료 코드 N·시간 초과·빌드 판정 거절", "대소문자만 다르면 같은 폴더"):
             self.assertIn(word, self.row, word)
-        for old in ("원인 후보는 넷이다", "종료 코드가 비어 나와 0 으로", "대소문자까지 달라야 한다", "를 요구하는 종료 740 만 실패다"):                     # 고치기 전의 말이 남아 있지 않다
+        for old in ("원인 후보는 넷이다", "종료 코드가 비어 나와 0 으로", "대소문자까지 달라야 한다", "를 요구하는 종료 740 만 실패다", "`-ErrorAction Stop` 이 없으면"):          # 고치기 전의 말이 남아 있지 않다 — 마지막 것은 틀린 설명이다: 띄우기 실패를 종료 0 으로 흘린 것은 `try`/`catch` 가 없었기 때문이고, try/catch 가 있으면 -ErrorAction Stop 이 없어도 같은 결과다(이 PC 에서 확인)
             self.assertNotIn(old, self.row, old)
         self.assertEqual(self.row.count("원인 후보는"), 1)
 

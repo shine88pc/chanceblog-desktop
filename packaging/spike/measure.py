@@ -1518,9 +1518,10 @@ STD_TRACE_NAMES = ("version", "update.exe", "unins000.exe")
 def std_user_script():
     """임시 표준 사용자로 프로그램 하나를 띄우는 PowerShell(결정 D-810). 1차 측정은 '종료 0 인데 설치 흔적 없음' 이었다 — 원인 후보 셋을 막는다: ① 부모(러너 계정)의 환경을 물려받아 사용자 폴더 변수가 러너 계정 것으로 남는 것 →
     사용자 폴더·임시 폴더 변수를 그 사용자 것으로 **명시**한 뒤 띄운다(`-UseNewEnvironment` 는 -Credential 과 함께 쓰면 현재 사용자의 환경을 불러온다고 알려져 믿지 않는다) ② -Credential 로 띄운 프로세스의 종료 코드가 비어 나와
-    0 으로 보이는 것 → 종료 코드를 `SPIKE_EXIT=` 줄로 찍어 읽고, 못 읽으면 `none`, 띄우지 못하면 `SPIKE_START_ERROR=오류 종류` 로 밝힌다. ③ `Start-Process` 가 띄우지 못하고 오류만 내는 경우 — `-ErrorAction Stop` 이 없으면 그 오류는 화면에만
-    나오고 스크립트는 계속돼 `$p` 가 비어 종료 코드 0 이 된다(이 개발 PC 의 Windows PowerShell 5.1 에서 재현했고 1차 도구가 그 모양이었다) → `-ErrorAction Stop` 으로 잡아 `SPIKE_START_ERROR=` 에 더해 윈도의 오류 문장(예외 메시지)을
-    `SPIKE_START_MESSAGE=` 한 줄로 찍는다(공백·줄바꿈은 한 칸으로 접고 300자까지) — 오류 종류는 띄우기 실패 모두 `InvalidOperationException` 이라 로그온 거부·권한·서비스 꺼짐·권한 상승 필요를 가르는 것은 이 문장이다."""
+    0 으로 보이는 것 → 종료 코드를 `SPIKE_EXIT=` 줄로 찍어 읽고, 못 읽으면 `none`, 띄우지 못하면 `SPIKE_START_ERROR=오류 종류` 로 밝힌다. ③ `Start-Process` 가 띄우지 못하고 오류만 내는 경우 — 1차 도구는 그 오류를 잡지
+    않았다(`try`/`catch` 가 없었다): 오류는 화면에만 나오고 스크립트는 계속돼 `$p` 가 비어 종료 코드 0 이 된다(이 개발 PC 의 Windows PowerShell 5.1 에서 재현했다) → `try`/`catch` 로 잡고(`-ErrorAction Stop` 은 비종료 오류도 같은 길로 보내는 안전장치다 —
+    `try`/`catch` 가 있으면 파일이 없는 경우의 결과는 그것이 있든 없든 같다) `SPIKE_START_ERROR=` 에 더해 윈도의 오류 문장(예외 메시지)을 `SPIKE_START_MESSAGE=` 한 줄로 찍는다(공백·줄바꿈은 한 칸으로 접고 300자까지) —
+    오류 종류는 띄우기 실패 모두 `InvalidOperationException` 이라 로그온 거부·권한·서비스 꺼짐·권한 상승 필요를 가르는 것은 이 문장이다."""
     return ("$pw = ConvertTo-SecureString $env:SPIKE_PW -AsPlainText -Force; "
             "$cred = New-Object System.Management.Automation.PSCredential('.\\' + $env:SPIKE_USER, $pw); "
             "$env:USERNAME = $env:SPIKE_USER; $env:USERPROFILE = $env:SPIKE_PROFILE; $env:LOCALAPPDATA = $env:SPIKE_PROFILE + '\\AppData\\Local'; $env:APPDATA = $env:SPIKE_PROFILE + '\\AppData\\Roaming'; "

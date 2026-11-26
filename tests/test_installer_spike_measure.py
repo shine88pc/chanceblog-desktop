@@ -1079,9 +1079,10 @@ class StandardUserParsingTest(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "윈도 PowerShell 에서만 도는 시험")
     def test_the_script_run_for_real_without_the_credential_arguments_reads_the_exit_code_and_the_launch_error(self):
-        """재작업 S-R3·Q-R3 — 스크립트는 가짜 세계에서 돌지 않는다(가짜는 출력 약속만 흉내 낸다). 그래서 `-ErrorAction Stop` 한 줄이 사라져도 다른 시험은 모른다 — 1차 M18 의 '종료 0 인데 설치 흔적 없음' 이 바로 그 줄이 없을 때
-        생기는 증상이다(띄우기 실패가 화면 오류로만 나오고 `$p` 가 비어 종료 코드 0). 진짜 PowerShell 로 같은 스크립트에서 `-Credential $cred -LoadUserProfile` 두 인자만 지운 사본을 돌려 '띄운 뒤' 의 논리를 확인한다 —
-        다른 사용자로 로그온하지 않고 `cmd.exe /d /c exit N` 만 띄운다(가짜 비밀번호는 조립한 시험용 값)."""
+        """재작업 S-R3·Q-R3 — 스크립트는 가짜 세계에서 돌지 않는다(가짜는 출력 약속만 흉내 낸다). 그래서 띄우기 실패를 잡는 `try`/`catch` 가 망가져도 다른 시험은 모른다 — 1차 M18 의 '종료 0 인데 설치 흔적 없음' 이 바로 그 모양이다
+        (띄우기 실패가 화면 오류로만 나오고 스크립트는 계속돼 `$p` 가 비어 종료 코드 0). 진짜 PowerShell 로 같은 스크립트에서 `-Credential $cred -LoadUserProfile` 두 인자만 지운 사본을 돌려 '띄운 뒤' 의 논리(종료 코드 읽기·띄우기 실패 잡기)를 확인한다 —
+        다른 사용자로 로그온하지 않고 `cmd.exe /d /c exit N` 만 띄운다(가짜 비밀번호는 조립한 시험용 값). `-ErrorAction Stop` 은 `try`/`catch` 가 있으면 파일이 없는 경우의 결과를 바꾸지 않는 안전장치(비종료 오류도 같은 길로 보낸다)라 이 시험이 아니라
+        위 글 낱말·순서 시험이 지킨다(검증자 변이 N21 — 변이 시험으로 확인했다)."""
         script = measure.std_user_script()
         plain = script.replace(" -Credential $cred -LoadUserProfile", "")
         self.assertNotEqual(plain, script)                                                                                     # 정말 두 인자가 지워졌다 — 아니면 이 시험은 다른 사용자로 띄우려 들 것이다
