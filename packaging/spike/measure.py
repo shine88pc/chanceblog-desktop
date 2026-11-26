@@ -5,6 +5,7 @@
 윈도에서만 되는 부분(창 찾기·방화벽·프로세스 목록)은 호출 쪽(run_spike.py)이 Host 를 거쳐 부르므로 시험이 가짜로 바꿔 끼운다.
 보고서는 저장소를 읽을 수 있는 누구에게나 내려받아진다 — 그래서 모든 글은 Scrubber 로 가린다(경로·사용자 이름·컴퓨터 이름·저장소 이름·토큰 모양).
 """
+import ast
 import hashlib
 import os
 import re
@@ -28,6 +29,13 @@ SCRUB_ENV_KEYS = ("USERNAME", "USER", "USERDOMAIN", "COMPUTERNAME", "RUNNER_NAME
                   "GITHUB_REPOSITORY_OWNER", "GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "HOMEPATH")
 PATH_SHAPE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)[^\s\"'|*?]*")
 MIN_SCRUB_WORD = 3
+# 점검 개수의 바닥(앱의 점검 목록을 못 읽을 때만 쓴다 — 첫 측정 준비(M128) 때 앱이 찍던 개수). 앱이 점검을 늘려도 목록에서 읽으므로 이 값을 고칠 일이 없다
+MIN_SELFTEST_PASSED = 12
+# Inno Setup 은 6.5.0 이상이면 쓴다(한글 안내 파일 Korean.isl 이 들어 있는 첫 판) — 설계서가 본 6.7 줄은 기록할 뿐 문을 지키지 않는다
+INNO_MIN_VERSION = (6, 5, 0)
+INNO_DESIGN_LINE = (6, 7)
+LONG_PATH_CHARS = 100                       # 긴·한글 경로 시험(M19)의 설치 경로 길이 바닥(설계서 3-1 (f))
+HOOK_NEAR_SECONDS = 25                      # Velopack 은 설치 훅에 30초를 주고 못 끝내면 죽인다 — 설치가 이 값 가까이 걸리면 훅을 기다린 것으로 의심한다(설계서 F1)
 
 
 # ---- 기록 --------------------------------------------------------------------------------------------------------------------------------
@@ -87,6 +95,19 @@ def runner_problem(environ):
     return ""
 
 
+def env_value(environ, name, default=""):
+    """환경 변수 값 — 이름을 그대로 못 찾으면 대소문자를 무시하고 찾는다. 윈도는 이름의 대소문자를 가리지 않고 파이썬이 `os.environ` 의 이름을 모두 대문자로 올려 두므로(`dict(os.environ)` 에서 `ImageOS` 는 `IMAGEOS` 다)
+    사전으로 옮겨 온 환경에서 `ImageOS`·`ImageVersion` 을 그대로 찾으면 못 찾는다 — 첫 측정 결과 상자의 '러너: ? ?' 의 원인이었다(결정 D-810)."""
+    value = environ.get(name)
+    if value is not None:
+        return value
+    wanted = str(name).lower()
+    for key in list(environ):
+        if isinstance(key, str) and key.lower() == wanted:
+            return environ[key]
+    return default
+
+
 def secret_pattern(words):
     """가릴 낱말들을 한 번에 찾는 정규식(가릴 낱말이 없으면 None). 긴 낱말부터 고르고, 대소문자를 구분하지 않으며, 낱말의 글자 사이에 공백이나 줄바꿈이 끼어 있어도(되울림이 줄이 나뉘어 나올 때) 찾는다.
     네 글자보다 짧은 낱말은 글 속 우연한 겹침이 많아 무시한다."""
@@ -119,6 +140,12 @@ def tail(text, limit=400):
     """긴 출력의 뒤쪽 limit 글자만(앞은 '…')."""
     text = (text or "").strip()
     return text if len(text) <= limit else "…" + text[-limit:]
+
+
+def json_text(value):
+    """작은 사전을 한 줄 글로(메모에 읽은 값들을 남길 때)."""
+    import json
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 # ---- PE 읽기(실행 파일 매니페스트·가져오기 표) ------------------------------------------------------------------------------------------------------
@@ -241,6 +268,26 @@ def hangul_samples(data, limit=5):
             utf16 += 1
             samples.append(text[:40])
     return {"utf8": utf8, "utf16": utf16, "samples": samples[:limit]}
+
+
+def pe_image_end(data):
+    """PE 실행 파일에서 머리글과 구역(section)이 끝나는 자리 — 그 뒤는 실행 파일에 덧붙인 덩어리(overlay, 설치 도구가 묶음 패키지를 붙이는 자리)다. PE 가 아니면 None."""
+    pe = parse_pe(data)
+    if not pe or not pe["sections"]:
+        return None
+    end = max(rawptr + rawsize for _vsize, _vaddr, rawsize, rawptr in pe["sections"])
+    return end if 0 < end <= len(data) else None
+
+
+def hangul_regions(data):
+    """한글 글 표본을 실행 파일 본체 구간(머리글·구역)과 덧붙은 구간으로 나눠 센다 → {utf8, utf16, samples, image, overlay, split}. 1차 측정은 파일 전체를 한 번에 세어 '한글 UTF-8 479' 가 나왔는데,
+    설치 도구가 안에 붙인 앱 묶음의 글자와 설치 도구 자신의 화면 글자를 가르지 못해 해석할 수 없었다(결정 D-810). 구역 끝을 못 알아내면(split False) 전체 값만 믿는다."""
+    whole = hangul_samples(data)
+    end = pe_image_end(data)
+    if end is None:
+        return dict(whole, image=None, overlay=None, split=False)
+    image, overlay = hangul_samples(data[:end]), hangul_samples(data[end:])
+    return dict(whole, image={"utf8": image["utf8"], "utf16": image["utf16"]}, overlay={"utf8": overlay["utf8"], "utf16": overlay["utf16"]}, split=True)
 
 
 # ---- 폴더 지문·크기·상태 --------------------------------------------------------------------------------------------------------------------
@@ -374,14 +421,148 @@ def version_numbers(text):
     return tuple(int(part) for part in match.groups() if part is not None) if match else None
 
 
+def real_version(numbers):
+    """읽은 판 숫자 — 0.0.0.0 처럼 전부 0 인 것(실행 파일의 버전 자원이 비어 있을 때 나오는 값)이나 숫자가 하나뿐인 것은 읽은 것으로 치지 않는다(None)."""
+    return tuple(numbers) if numbers and len(numbers) >= 2 and any(numbers) else None
+
+
 def inno_version_ok(numbers):
-    """Inno Setup 은 6.7 줄이어야 한다(설계서 T11 — 러너 이미지가 바뀌어 다른 판이면 결과가 달라진다)."""
-    return bool(numbers) and numbers[:2] == (6, 7)
+    """Inno Setup 판 판정 — True: 6.5.0 이상이라 쓴다(한글 안내 파일 Korean.isl 이 들어 있는 첫 판이라서, 결정 D-810), False: 6.5.0 보다 낮다, None: 읽지 못했다(빈 값 0.0.0.0 포함 — '미확인' 으로 계속 진행한다).
+    1차 측정은 설계서의 6.7 줄만 허용해, 판 자원이 0.0.0.0 인 러너에서 갈래 C 를 통째로 못 쟀다."""
+    numbers = real_version(numbers)
+    if not numbers:
+        return None
+    return (tuple(numbers[:3]) + (0,) * 3)[:3] >= INNO_MIN_VERSION
+
+
+def inno_on_design_line(numbers):
+    """설계서가 본 6.7 줄인가(기록용 — 쓰고 안 쓰고를 가르지 않는다)."""
+    numbers = real_version(numbers)
+    return bool(numbers) and tuple(numbers[:2]) == INNO_DESIGN_LINE
+
+
+_INNO_ENGINE_LINE = re.compile(r"(?i)compiler engine version:\s*inno setup\s+(\d+\.\d+(?:\.\d+){0,2})")
+_INNO_NAME_VERSION = re.compile(r"(?i)inno setup\s+(?:version\s+)?(\d+\.\d+(?:\.\d+){0,2})")
+INNO_REGISTRY_SCRIPT = (r"$keys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'; "
+                        r"Get-ItemProperty -Path $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Inno Setup*' } | ForEach-Object { $_.DisplayName + '|' + $_.DisplayVersion + '|' + $_.InstallLocation }")
+INNO_FILE_SCRIPT = "$i = (Get-Item -LiteralPath $env:SPIKE_P).VersionInfo; 'FILE=' + $i.FileVersion; 'PRODUCT=' + $i.ProductVersion"
+
+
+def inno_text_version(text):
+    """ISCC 가 낸 글(사용법 출력이나 컴파일 출력)에서 컴파일러가 스스로 밝힌 판 → 숫자 튜플 또는 None. 'Compiler engine version: Inno Setup 6.7.1' 줄을 먼저, 없으면 'Inno Setup 6.7.1' 모양을 본다
+    (머리글 'Inno Setup 6 Command-Line Compiler' 는 큰 판 번호 하나뿐이라 읽은 것으로 치지 않는다)."""
+    for pattern in (_INNO_ENGINE_LINE, _INNO_NAME_VERSION):
+        found = pattern.search(text or "")
+        if found:
+            numbers = real_version(version_numbers(found.group(1)))
+            if numbers:
+                return numbers
+    return None
+
+
+def inno_registry_version(text, path=""):
+    """레지스트리 제거 항목을 읽은 글(한 줄에 '이름|판|설치 위치') → 판 숫자 튜플 또는 None. 항목이 여럿이면 설치 위치가 ISCC 경로의 윗 폴더인 것을 먼저 고른다."""
+    wanted = str(path or "").replace("/", "\\").lower()
+    found = []
+    for line in (text or "").splitlines():
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) < 2 or not parts[0].lower().startswith("inno setup"):
+            continue
+        numbers = real_version(version_numbers(parts[1]))
+        if numbers:
+            location = parts[2].replace("/", "\\").lower().rstrip("\\") if len(parts) > 2 else ""
+            found.append((bool(location and wanted.startswith(location + "\\")), numbers))
+    found.sort(key=lambda item: not item[0])
+    return found[0][1] if found else None
+
+
+def read_inno_version(host, path):
+    """Inno Setup 의 판을 여러 방법으로 읽는다(파일 버전 자원은 러너 이미지에서 0.0.0.0 으로 나왔다 — 결정 D-810): ① 컴파일러의 사용법 출력(ISCC /?) ② 레지스트리 제거 항목의 DisplayVersion
+    ③ 파일 제품 버전 ④ 파일 버전. 위에서부터 처음 읽힌 것을 쓰고 읽은 값 전부를 남긴다 → {numbers, source, reads, reason}. 하나도 안 읽히면 numbers 는 None 이고 이유가 reason 에 적힌다(그래도 계속 진행한다)."""
+    env = {"SPIKE_P": str(path)}
+    usage = host.run([str(path), "/?"], timeout=30)
+    registry = host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", INNO_REGISTRY_SCRIPT], timeout=60)
+    fileinfo = host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", INNO_FILE_SCRIPT], timeout=60, env=env)
+    file_text = {key: value.strip() for key, value in re.findall(r"(?m)^(FILE|PRODUCT)=(.*)$", fileinfo.out or "")}
+    reads = {"usage": inno_text_version(usage.text()), "registry": inno_registry_version(registry.out, path), "product": version_numbers(file_text.get("PRODUCT", "")), "file": version_numbers(file_text.get("FILE", ""))}
+    names = (("usage", "컴파일러 출력"), ("registry", "레지스트리"), ("product", "파일 제품 판"), ("file", "파일 판"))
+    shown = {key: (".".join(str(part) for part in value) if value else "") for key, value in reads.items()}
+    for key, label in names:
+        numbers = real_version(reads[key])
+        if numbers:
+            return {"numbers": numbers, "source": label, "reads": shown, "reason": ""}
+    why = ["%s %s" % (label, ("빈 값 " + shown[key]) if shown[key] else "읽히지 않음") for key, label in names]
+    return {"numbers": None, "source": "", "reads": shown, "reason": " · ".join(why)}
 
 
 def parse_selftest_counts(parsed):
-    """`build_package.parse_selftest` 결과 → {통과, 실패, 건너뜀, 실패 이름}."""
-    return {"passed": len(parsed.get("passed", [])), "failed": len(parsed.get("failed", [])), "skipped": len(parsed.get("skipped", [])), "failed_names": list(parsed.get("failed", []))}
+    """`build_package.parse_selftest` 결과 → {통과, 실패, 건너뜀, 실패 이름, 통과한 점검 이름들}."""
+    return {"passed": len(parsed.get("passed", [])), "failed": len(parsed.get("failed", [])), "skipped": len(parsed.get("skipped", [])), "failed_names": list(parsed.get("failed", [])),
+            "passed_names": list(parsed.get("passed", []))}
+
+
+def app_selftest_keys(repo=None):
+    """앱이 `--selftest` 로 찍는 점검 이름 목록 — 앱 쪽 `scripts/release_check.py` 의 `SELFTEST_KEYS` 를 글로 읽어(구문 분석 — 그 파일을 불러오지 않으므로 부수 효과가 없다) 값만 꺼낸다.
+    앱이 점검을 늘려도 이 목록이 따라가므로 개수를 이 도구에 못박지 않는다(1차 측정은 12 로 못박아 13 개를 실패로 적었다). 못 읽으면 빈 튜플이고 그때는 바닥 개수(MIN_SELFTEST_PASSED)로 본다."""
+    path = Path(repo) / "scripts" / "release_check.py" if repo else Path(__file__).resolve().parents[2] / "scripts" / "release_check.py"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return ()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "SELFTEST_KEYS" for target in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                return ()
+            if isinstance(value, (tuple, list)) and value and all(isinstance(item, str) and item for item in value) and len(set(value)) == len(value):
+                return tuple(value)
+    return ()
+
+
+def selftest_unclean(counts):
+    """`--selftest` 가 '깨끗하게' 끝나지 않은 이유들(깨끗하면 빈 목록): 시간 초과·종료 코드가 0 이 아님·실패·건너뜀·빌드 판정(`judge_selftest`) 거절. 점검 줄이 모두 통과로 찍혀도 이런 것이 있으면 통과가 아니다 —
+    상자의 근거 문구가 이유를 말하지 않으면 '점검 열세 개가 같은데 왜 실패인가' 를 알 수 없다(독립 검증 재작업 권고 S-R4)."""
+    reasons = []
+    rc = counts.get("rc", "모름")
+    if counts.get("timed_out") or rc is None:
+        reasons.append("시간 초과")
+    elif rc != 0:
+        reasons.append("종료 코드 %s" % rc)
+    if counts.get("failed"):
+        reasons.append("실패 %s" % counts.get("failed"))
+    if counts.get("skipped"):
+        reasons.append("건너뜀 %s" % counts.get("skipped"))
+    if not counts.get("judged"):
+        reasons.append("빌드 판정 거절")
+    return reasons
+
+
+def selftest_verdict(counts, expected):
+    """`--selftest` 결과 판정 → {ok, expected, missing, extra, basis}. 종료 코드 0·실패 0·건너뜀 0·빌드와 같은 판정(`judge_selftest`)이 통과이고, 앱 점검 목록을 읽었으면 그 이름이 **모두** 통과 줄로 찍혀야 한다
+    (더 찍힌 점검은 막지 않는다) — 목록을 못 읽었으면 통과 줄이 바닥 개수 이상이어야 한다. 통과 개수를 하나로 못박지 않는다. 깨끗하지 않으면(`selftest_unclean`) 근거 문구에 그 이유를 덧붙인다 — 점검 줄이 모두 통과여도 불통과인 까닭이 보이게."""
+    expected = tuple(expected or ())
+    names = list(counts.get("passed_names") or [])
+    clean = counts.get("rc") == 0 and counts.get("failed") == 0 and counts.get("skipped") == 0 and bool(counts.get("judged"))
+    unclean = "" if clean else " — 깨끗하지 않음: " + ("·".join(selftest_unclean(counts)) or "점검 결과가 모자람")
+    if expected:
+        missing = [name for name in expected if name not in names]
+        extra = [name for name in names if name not in expected]
+        ok = bool(clean and not missing)
+        if missing:
+            basis = "앱 점검 목록 %d개 중 %s 가 통과로 찍히지 않았다" % (len(expected), ",".join(missing[:4]))
+        elif extra:
+            basis = "앱 점검 목록 %d개가 모두 통과(목록에 없는 점검 %d개가 더 찍힘: %s)" % (len(expected), len(extra), ",".join(extra[:4]))
+        else:
+            basis = "앱 점검 목록 %d개와 같다" % len(expected)
+        return {"ok": ok, "expected": len(expected), "missing": missing, "extra": extra, "basis": basis + unclean}
+    ok = bool(clean and counts.get("passed", 0) >= MIN_SELFTEST_PASSED)
+    return {"ok": ok, "expected": None, "missing": [], "extra": [], "basis": "앱 점검 목록을 읽지 못해 통과 %d개 이상으로 본다" % MIN_SELFTEST_PASSED + unclean}
+
+
+def selftest_brief(label, counts):
+    """결과 상자 한 칸 — 센 개수를 그대로 적고 판정 근거를 덧붙인다."""
+    return "%s selftest 통과 %d 실패 %d 건너뜀 %d · %s" % (label, counts["passed"], counts["failed"], counts["skipped"], counts.get("basis", ""))
 
 
 def read_text_guess(path, limit=2 * 1024 * 1024):
@@ -633,7 +814,7 @@ class Context:
         self.save()
 
     def env(self, name, default=""):
-        return self.host.environ.get(name, default)
+        return env_value(self.host.environ, name, default)
 
 
 # ---- 갈래별 명령 만들기(순수) -----------------------------------------------------------------------------------------------------------------
@@ -853,6 +1034,18 @@ def state_of(ctx, arm, root, old_version, new_version):
     return tree_state(tree_hashes(app_dir(arm, root), skip=skip), bundle_tree(ctx, arm, old_version), bundle_tree(ctx, arm, new_version))
 
 
+def hook_log_lines(path, limit=6):
+    """설치 도구(Velopack)가 남긴 로그에서 훅을 말하는 줄(hook·veloapp)을 몇 줄 뽑는다 → (줄 목록, 전체 줄 수). 설치가 훅 한도(30초)를 기다렸는지 로그에서 직접 보려는 것이다(설계서 F1 — 1차 측정은 이 로그를 읽지 않았다).\n    로그가 없거나 훅 줄이 없으면 빈 목록."""
+    text = read_text_guess(path) if path and Path(path).is_file() else ""
+    found = [line.strip() for line in text.splitlines() if re.search(r"(?i)hook|veloapp", line)]
+    return found[:limit], len(found)
+
+
+def hook_wait_note(arm, seconds):
+    """Velopack 이 설치 훅에 주는 30초 한도 가까이 걸렸으면 한 마디 — 앱이 훅 인자를 거절하며 메시지 상자를 띄우고 기다렸을 수 있다(설계서 F1, 추정). 훅이 없는 갈래(Inno)는 늘 빈 글."""
+    return " (훅 한도 30초 가까이 걸림 — 훅을 기다린 것으로 의심, 추정)" if velopack_arm(arm) and seconds >= HOOK_NEAR_SECONDS else ""
+
+
 def fresh_v1(ctx, arm, inst, root, tag):
     """설치 폴더를 비우고(제거 → 남은 것 지움) 0.0.1 을 새로 설치한다 → 갖춰졌나."""
     if Path(root).exists():
@@ -870,13 +1063,24 @@ def m01_tools(ctx):
     for arm, key in (("A", "vpk"), ("B", "vpk")):
         info = tools.get(key, {})
         if info.get("status") == "ok":
-            ctx.add(record("M01", arm, "pass", note=tail(info.get("version_text", ""), 120), brief="vpk " + info.get("version", "?"), nupkg=info.get("nupkg_ok"), wheel=tools.get("sdk", {}).get("wheel_ok"), version=info.get("version")))
+            ok = info.get("version_ok") is not False                    # 도구가 밝힌 판이 잠금의 판과 다르면 실패 — 못 읽은 것은 실패가 아니다(잠금 파일 값으로 채운다)
+            ctx.add(record("M01", arm, "pass" if ok else "fail", note=tail(info.get("version_text", ""), 120) + ("" if not info.get("version_source") else " (판 출처: %s)" % info["version_source"]),
+                           brief="vpk " + (info.get("version") or "판 못 읽음") + ("" if not info.get("version_source") or info["version_source"] == "vpk --version" else "(%s)" % info["version_source"]),
+                           nupkg=info.get("nupkg_ok"), wheel=tools.get("sdk", {}).get("wheel_ok"), version=info.get("version"), version_source=info.get("version_source", "")))
         else:
             ctx.add(record("M01", arm, "fail", note=tail(info.get("reason", "도구 준비 안 됨"), 200), brief="vpk 없음"))
     iscc = tools.get("iscc", {})
     if iscc.get("status") == "ok":
-        ctx.add(record("M01", "C", "pass" if iscc.get("version_ok") else "fail", note="ISCC 파일 SHA-256 앞 12자리 " + str(iscc.get("sha256", ""))[:12] + ", 서명자 " + tail(str(iscc.get("signer", "")), 60),
-                       brief="Inno " + str(iscc.get("version", "?")), version=iscc.get("version"), signer=iscc.get("signer", ""), sha256=iscc.get("sha256", "")))
+        state = iscc.get("version_ok")
+        shown = (str(iscc.get("version")) + "(%s)" % iscc["version_source"]) if iscc.get("version") and iscc.get("version_source") else str(iscc.get("version") or "")
+        if state is None:
+            brief, status = "Inno 판 미확인(%s) 계속 진행" % tail(str(iscc.get("version_reason", "읽지 못함")), 90), "info"
+        elif state:
+            brief, status = "Inno " + shown + ("" if iscc.get("design_line") else " (설계서의 6.7 줄이 아님 — 기록)"), "pass"
+        else:
+            brief, status = "Inno %s — 6.5.0 보다 낮아 쓰지 않는다" % shown, "fail"
+        ctx.add(record("M01", "C", status, note="ISCC 파일 SHA-256 앞 12자리 " + str(iscc.get("sha256", ""))[:12] + ", 서명자 " + tail(str(iscc.get("signer", "")), 60) + (", 판 읽기 " + json_text(iscc.get("version_reads")) if iscc.get("version_reads") else ""),
+                       brief=brief, version=iscc.get("version"), version_source=iscc.get("version_source", ""), design_line=iscc.get("design_line"), signer=iscc.get("signer", ""), sha256=iscc.get("sha256", "")))
     else:
         ctx.add(record("M01", "C", "unavailable", note=tail(iscc.get("reason", "ISCC 를 찾지 못했다"), 200), brief="Inno 없음"))
 
@@ -891,11 +1095,11 @@ def m02_m03_from_state(ctx):
         entry = ctx.state.get("installers", {}).get(arm, {}).get("real") or {}
         tiny = ctx.state.get("installers", {}).get(arm, {}).get("tiny", {}).get("0.0.1", {})
         if arm == "A":
-            ctx.add(record("M03", arm, "info", note="갈래 A 는 실제 묶음에 SDK(휠 1.4MB 안팎)를 더한 것으로 본다 — 실제 묶음은 B 의 값을 쓴다(추정)", brief="작은 앱 %s MB %s초" % (mb(tiny.get("bytes", 0)), tiny.get("seconds", "?")) if tiny else "없음",
+            ctx.add(record("M03", arm, "info", note="갈래 A 는 실제 묶음에 SDK(휠 1.4MB 안팎)를 더한 것으로 본다 — 실제 묶음은 B 의 값을 쓴다(추정)", brief="%s MB %s초" % (mb(tiny.get("bytes", 0)), tiny.get("seconds", "?")) if tiny else "작은 앱 설치 파일 없음",
                            target="tiny", setup_bytes=tiny.get("bytes"), seconds=tiny.get("seconds")))
             continue
         if not entry:
-            ctx.add(record("M03", arm, "unavailable", note="실제 묶음의 설치 파일이 없다(앞 단계 실패) — 관문 G7 은 미정으로 둔다", brief="없음", target="real"))
+            ctx.add(record("M03", arm, "unavailable", note="실제 묶음의 설치 파일이 없다(앞 단계 실패) — 관문 G7 은 미정으로 둔다", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)", target="real"))
             continue
         ok = mb(entry.get("bytes", 0)) <= SETUP_MB_LIMIT and entry.get("seconds", 9999) <= PACK_SECONDS_LIMIT
         ctx.add(record("M03", arm, "pass" if ok else "fail", brief="%s MB %s초" % (mb(entry.get("bytes", 0)), entry.get("seconds", "?")), target="real", setup_bytes=entry.get("bytes"), seconds=entry.get("seconds"),
@@ -910,7 +1114,7 @@ def m04_admin(ctx):
             if setup and Path(setup).is_file():
                 found[label] = manifest_level(Path(setup).read_bytes())
         if not found:
-            ctx.add(record("M04", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
+            ctx.add(record("M04", arm, "unavailable", note="설치 파일이 없다", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)"))
             continue
         levels = sorted({str(level) for level in found.values()})
         if any(level is None for level in found.values()):
@@ -940,18 +1144,18 @@ def m07_real_bundle(ctx):
     real = ctx.state.get("bundles", {}).get("real", {})
     exe = Path(real.get("dir", "")) / REAL_EXE
     if not real.get("dir") or not exe.is_file():
-        ctx.add(record("M07", "-", "unavailable", note="실제 묶음이 없다", brief="없음", target="real"))
+        ctx.add(record("M07", "-", "unavailable", note="실제 묶음이 없다", brief="실제 묶음 없음(앞 단계 실패)", target="real"))
         return
     rows = hook_check(ctx, exe, exe.parent, "real", seconds=12)
-    ctx.add(record("M07", "-", "info", brief="실제 묶음 훅: 종료 코드 %s·최대 %s초·창 %d·멈춤 %d" % ("/".join(str(row["rc"]) for row in rows), max(row["seconds"] for row in rows), sum(row["windows"] for row in rows), sum(1 for row in rows if row["timed_out"])),
-                   target="real", rows=rows, note="설치 훅 인자를 지금의 gui_entry 에 주면 거절 문장이 메시지 상자로 뜨는지(F1) 본다"))
+    ctx.add(record("M07", "-", "info", brief="실제 묶음 훅: 종료 코드 %s·최대 %s초·창 %d·멈춤 %d" % ("/".join(str(row["rc"]) for row in rows), max(row["seconds"] for row in rows), sum(row["windows"] for row in rows), sum(1 for row in rows if row["timed_out"])) + " (표준 입출력을 NUL 로 쥐여 준 탐침 — Velopack 이 직접 부를 때와 다를 수 있다)",
+                   target="real", rows=rows, note="설치 훅 인자를 지금의 gui_entry 에 주면 거절 문장이 메시지 상자로 뜨는지(F1) 본다. 앱은 표준 출력이 있으면 거절 글을 거기에 쓰고 종료 코드 2 로 끝나고 없을 때만 메시지 상자를 띄우는데(gui_entry.say), 이 탐침은 표준 입출력을 NUL 로 쥐여 줘 앞의 길만 본다 — 설치 도구가 표준 입출력 없이 부르면 상자가 떠 훅 한도(30초)까지 기다릴 수 있다(M05 실제 묶음 설치 시간이 간접 증거)"))
 
 
 def flow_tiny(ctx, arm):
     """작은 앱으로 한 갈래의 설치·훅·업데이트·실행 중 업데이트·되돌리기·깨진 새 판·제거(M05–M12, M21)."""
     inst = installers_of(ctx, arm)
     if not inst or any(version not in inst for version in VERSIONS):
-        ctx.add(record("M05", arm, "unavailable", note="작은 앱 설치 파일 셋이 없다(앞 단계 실패)", brief="없음"))
+        ctx.add(record("M05", arm, "unavailable", note="작은 앱 설치 파일 셋이 없다(앞 단계 실패)", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)", target="tiny"))
         return
     exe_name = TINY_EXE[arm]
     root = ctx.work / "run" / arm / "root"
@@ -962,7 +1166,7 @@ def flow_tiny(ctx, arm):
         result, ready, _log = do_install(ctx, arm, inst["0.0.1"]["setup"], root, "install-1", korean=(arm == "C"))
         running = [name for name in process_names(ctx) if name in {exe_name.lower()}]
         ok = result.ok and ready and result.seconds <= SETUP_SECONDS_LIMIT and not running
-        ctx.add(record("M05", arm, "pass" if ok else "fail", brief="종료 %s %s초 %s" % (result.rc, result.seconds, "앱 저절로 뜸" if running else "앱 안 뜸"), target="tiny", rc=result.rc, seconds=result.seconds, ready=ready, autostart=bool(running),
+        ctx.add(record("M05", arm, "pass" if ok else "fail", brief="종료 %s %s초 %s%s" % (result.rc, result.seconds, "앱 저절로 뜸" if running else "앱 안 뜸", hook_wait_note(arm, result.seconds)), target="tiny", rc=result.rc, seconds=result.seconds, ready=ready, autostart=bool(running), near_hook_limit=bool(hook_wait_note(arm, result.seconds)),
                        note=tail(result.text(), 200) if not ok else ""))
         # M06 설치 결과
         layout = describe_layout(arm, root, exe_name)
@@ -1023,7 +1227,7 @@ def rollback_to_v1(ctx, arm, root, inst):
 def m09_running_update(ctx, arm, root, inst, data):
     """작은 앱을 켜 둔 채 0.0.1 -> 0.0.2 — 자동으로 닫고 새 판이 되거나 반쯤 바뀐 상태 없이 깨끗이 실패해야 한다."""
     if not fresh_v1(ctx, arm, inst, root, "install-hold"):
-        ctx.add(record("M09", arm, "error", note="0.0.1 을 다시 설치하지 못했다", brief="준비 실패"))
+        ctx.add(record("M09", arm, "error", note="0.0.1 을 다시 설치하지 못했다", brief="준비 실패(0.0.1 을 다시 설치하지 못함)"))
         return
     process = ctx.host.start([str(app_dir(arm, root) / TINY_EXE[arm]), "--hold", "120"], cwd=app_dir(arm, root), env={"SPIKE_LOG": str(ctx.logs / ("%s-hold.spikelog" % arm))})
     ctx.host.sleep(2)
@@ -1042,7 +1246,7 @@ def m09_running_update(ctx, arm, root, inst, data):
 def m11_broken(ctx, arm, root, inst):
     """시작하자마자 종료 코드 3 으로 끝나는 0.0.3 을 적용한다 — 도구가 스스로 이전 판으로 되돌리는지 기록(기대: 안 함 — 앱 쪽 복구 코드가 필요)."""
     if not fresh_v1(ctx, arm, inst, root, "install-broken"):
-        ctx.add(record("M11", arm, "error", note="0.0.1 을 다시 설치하지 못했다", brief="준비 실패"))
+        ctx.add(record("M11", arm, "error", note="0.0.1 을 다시 설치하지 못했다", brief="준비 실패(0.0.1 을 다시 설치하지 못함)"))
         return
     update = update_to(ctx, arm, root, "0.0.3", inst, log_tag="update-3")
     ran = ctx.host.run([str(app_dir(arm, root) / TINY_EXE[arm])], timeout=30, cwd=app_dir(arm, root), env={"SPIKE_LOG": str(ctx.logs / ("%s-broken.spikelog" % arm))})
@@ -1070,7 +1274,7 @@ def flow_blocked(ctx, arm, control):
     """M14 — 그 프로그램들의 바깥 접속을 막은 채 설치와 업데이트를 한 번 더 한다."""
     inst = installers_of(ctx, arm)
     if not inst or any(version not in inst for version in VERSIONS):
-        ctx.add(record("M14", arm, "unavailable", note="작은 앱 설치 파일 셋이 없다", brief="없음"))
+        ctx.add(record("M14", arm, "unavailable", note="작은 앱 설치 파일 셋이 없다", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)"))
         return
     if control.get("effective") is not True:
         note = "방화벽 규칙이 듣는지 확인하지 못했다(%s) — 결과를 믿을 수 없다" % control.get("reason", "")
@@ -1100,7 +1304,9 @@ def real_selftest(ctx, exe):
     parsed = bp.parse_selftest(result.text())
     ok, gate_present, _override, bad = bp.judge_selftest(parsed, allow_missing_gate=False)
     counts = parse_selftest_counts(parsed)
-    counts.update(ok=bool(ok and result.rc == 0), rc=result.rc, bad=bad, seconds=result.seconds)
+    counts.update(rc=result.rc, timed_out=bool(result.timed_out), bad=bad, seconds=result.seconds, judged=bool(ok))
+    verdict = selftest_verdict(counts, app_selftest_keys())
+    counts.update(ok=verdict["ok"], expected=verdict["expected"], missing=verdict["missing"], extra=verdict["extra"], basis=verdict["basis"])
     return counts
 
 
@@ -1109,21 +1315,23 @@ def flow_real(ctx, arm, defender_state):
     entry = (ctx.state.get("installers", {}).get(arm, {}).get("real")) or {}
     real = ctx.state.get("bundles", {}).get("real", {})
     if not entry.get("setup") or not real.get("dir"):
-        ctx.add(record("M05", arm, "unavailable", note="실제 묶음 설치 파일이 없다(앞 단계 실패)", brief="없음", target="real"))
+        ctx.add(record("M05", arm, "unavailable", note="실제 묶음 설치 파일이 없다(앞 단계 실패)", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)", target="real"))
         return
     root = ctx.work / "run" / arm / "real-root"
     data = prepare_data(ctx, arm + "real")
     before_links, before_keys = shortcut_snapshot(ctx), uninstall_keys(ctx)
     try:
-        result, ready, _log = do_install(ctx, arm, entry["setup"], root, "real-install", korean=(arm == "C"), wait_for=REAL_EXE)
+        result, ready, install_log = do_install(ctx, arm, entry["setup"], root, "real-install", korean=(arm == "C"), wait_for=REAL_EXE)
         running = [name for name in process_names(ctx) if name == REAL_EXE.lower()]
         ok = result.ok and ready and result.seconds <= SETUP_SECONDS_LIMIT and not running
-        ctx.add(record("M05", arm, "pass" if ok else "fail", brief="실제 묶음 종료 %s %s초 %s" % (result.rc, result.seconds, "앱 저절로 뜸" if running else "앱 안 뜸"), target="real", rc=result.rc, seconds=result.seconds, ready=ready, autostart=bool(running),
-                       installed_mb=mb(dir_size(root)) if root.exists() else 0, note=tail(result.text(), 200) if not ok else ""))
+        hook_lines, hook_count = hook_log_lines(install_log) if velopack_arm(arm) else ([], 0)
+        hook_lines = [tail(ctx.mask(line), 160) for line in hook_lines]
+        ctx.add(record("M05", arm, "pass" if ok else "fail", brief="종료 %s %s초 %s%s" % (result.rc, result.seconds, "앱 저절로 뜸" if running else "앱 안 뜸", hook_wait_note(arm, result.seconds)) + (" · 설치 로그에 훅 줄 %d개" % hook_count if hook_count else ""), target="real", rc=result.rc, seconds=result.seconds, ready=ready, autostart=bool(running), near_hook_limit=bool(hook_wait_note(arm, result.seconds)),
+                       hook_log=hook_lines, hook_log_count=hook_count, installed_mb=mb(dir_size(root)) if root.exists() else 0, note=(tail(result.text(), 200) if not ok else "") + ((" 설치 로그의 훅 줄: " + " // ".join(hook_lines)) if hook_lines else "")))
         exe = app_dir(arm, root) / REAL_EXE
         if exe.is_file():
             counts = real_selftest(ctx, exe)
-            ctx.add(record("M06", arm, "pass" if counts["ok"] and counts["passed"] == 12 else "fail", brief="설치본 selftest 통과 %d 실패 %d 건너뜀 %d" % (counts["passed"], counts["failed"], counts["skipped"]), target="real", **counts))
+            ctx.add(record("M06", arm, "pass" if counts["ok"] else "fail", brief=selftest_brief("설치본", counts), target="real", **counts))
         else:
             ctx.add(record("M06", arm, "fail", brief="설치본 실행 파일 없음", target="real"))
         scan_targets = [entry["setup"], root] + ([entry["full"]] if entry.get("full") else [])
@@ -1157,12 +1365,22 @@ def m16_status(ctx):
         data = json.loads(result.out) if result.ok and result.out.strip() else {}
     except ValueError:
         data = {}
-    ctx.add(record("M16", "-", "info", brief="실시간 보호 %s" % data.get("RealTimeProtectionEnabled", "읽지 못함"), target="status", defender=data))
+    state = data.get("RealTimeProtectionEnabled")
+    ctx.add(record("M16", "-", "info", brief="실시간 보호 %s%s" % ({True: "켜짐", False: "꺼짐"}.get(state, "읽지 못함"), " — 요청한 검사는 그대로 돈다(러너 이미지 기본값, 실제 PC 와 다를 수 있다)" if state is False else ""), target="status", defender=data))
+
+
+def long_path_base(ctx, arm):
+    """한글·공백이 든 폴더 이름으로 설치 경로 전체가 LONG_PATH_CHARS 글자 이상이 되게 한다(1차 측정의 경로는 75자였다 — 설계서의 100자에 못 미쳤다)."""
+    parent = ctx.work / "run" / arm
+    name = "한글 공백"
+    while len(str(parent / name / "real")) < LONG_PATH_CHARS:
+        name += " 가나다라마바"
+    return parent / name
 
 
 def m19_long_path(ctx, arm, entry_or_inst, exe_name, real=False):
     """한글·공백이 든 100자 안팎 경로에 설치해 본다(실제 묶음은 --selftest, 작은 앱은 실행) 뒤 제거."""
-    base = ctx.work / "run" / arm / ("한글 공백 " + "가나다라마바 " * 6).strip()
+    base = long_path_base(ctx, arm)
     root = base / ("real" if real else "tiny")
     setup = entry_or_inst["setup"] if real else entry_or_inst["0.0.1"]["setup"]
     result, ready, _log = do_install(ctx, arm, setup, root, "long-path" + ("-real" if real else ""), korean=(arm == "C"), wait_for=exe_name)
@@ -1186,7 +1404,7 @@ def m21_renamed_setup(ctx, arm):
     """A·B — 설치 파일 이름을 ChanceBlogDesktop-0.0.1-Setup.exe 로 바꿔도 설치되는지."""
     inst = installers_of(ctx, arm)
     if not inst or "0.0.1" not in inst:
-        ctx.add(record("M21", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
+        ctx.add(record("M21", arm, "unavailable", note="설치 파일이 없다", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)"))
         return
     import shutil
     folder = ctx.work / "run" / arm / "renamed"
@@ -1204,7 +1422,7 @@ def m13_id_collision(ctx):
     entry = ctx.state.get("installers", {}).get("A", {}).get("idtest") or {}
     local = ctx.env("LOCALAPPDATA")
     if not entry.get("setup") or not local:
-        ctx.add(record("M13", "A", "unavailable", note="ID 시험용 설치 파일이나 LOCALAPPDATA 가 없다", brief="없음"))
+        ctx.add(record("M13", "A", "unavailable", note="ID 시험용 설치 파일이나 LOCALAPPDATA 가 없다", brief="ID 시험용 설치 파일 또는 LOCALAPPDATA 없음"))
         return
     data_folder = Path(local) / "ChanceblogDesktop"
     install_folder = Path(local) / "ChanceBlogDesktop"
@@ -1224,7 +1442,7 @@ def m13_id_collision(ctx):
         survived = sentinel.exists()
         brief = "설치 못 함(종료 %s)" % installed.rc if not ready else "같은 폴더 %s 제거 뒤 데이터 %s" % ("예" if same_folder else "아니오", "남음" if survived else "지워짐")
         ctx.add(record("M13", "A", "info", brief=brief, installed=ready, same_folder=same_folder, sentinel_survived=survived, install_rc=installed.rc, uninstall_rc=removed.rc,
-                       note="지워지면 '패키지 ID 는 데이터 폴더 이름과 대소문자까지 달라야 한다' 규칙이 확정된다(F2)"))
+                       note="지워지면 '패키지 ID 는 데이터 폴더 이름과 대소문자를 무시하고 비교해도 다른 이름이어야 한다(대소문자만 다르면 같은 폴더)' 규칙이 확정된다(F2)"))
     finally:
         import shutil
         shutil.rmtree(data_folder, ignore_errors=True)
@@ -1243,7 +1461,7 @@ def m15_native(ctx):
         ctx.add(record("M15", "A", "info", brief="휠 %s MB 부품 %d 웹 DLL %s" % (mb(inventory["total_bytes"]), len(inventory["binaries"]), ",".join(nets) or "없음"), target="wheel", total_bytes=inventory["total_bytes"],
                        files=[item["name"] for item in inventory["files"]][:40], binaries=inventory["binaries"]))
     else:
-        ctx.add(record("M15", "A", "unavailable", note="휠을 찾지 못했다", brief="없음", target="wheel"))
+        ctx.add(record("M15", "A", "unavailable", note="휠을 찾지 못했다", brief="휠 파일 없음", target="wheel"))
     sizes = {}
     for kind in ("plain", "sdk"):
         folder = ctx.state.get("bundles", {}).get(kind, {}).get("0.0.1")
@@ -1263,10 +1481,15 @@ def m17_korean(ctx):
     for arm in ("A", "B"):
         setup = (installers_of(ctx, arm).get("0.0.1") or {}).get("setup")
         if setup and Path(setup).is_file():
-            samples = hangul_samples(Path(setup).read_bytes())
-            ctx.add(record("M17", arm, "info", brief="Setup 한글 글 UTF-8 %d·UTF-16 %d(추정)" % (samples["utf8"], samples["utf16"]), samples=samples["samples"], note="영어뿐이면 '마법사 없음·오류 상자 영어' 로 본다(무작위 바이트가 우연히 맞을 수 있어 추정)"))
+            samples = hangul_regions(Path(setup).read_bytes())
+            if samples["split"]:
+                brief = "Setup 본체 구간 한글 글 UTF-8 %d·UTF-16 %d / 덧붙은 구간(앱 묶음 자리) UTF-8 %d·UTF-16 %d(추정)" % (samples["image"]["utf8"], samples["image"]["utf16"], samples["overlay"]["utf8"], samples["overlay"]["utf16"])
+            else:
+                brief = "Setup 한글 글 UTF-8 %d·UTF-16 %d(구간을 못 나눈 전체 값 — 앱 묶음의 글자가 섞여 있을 수 있어 해석하지 않는다, 추정)" % (samples["utf8"], samples["utf16"])
+            ctx.add(record("M17", arm, "info", brief=brief, samples=samples["samples"], utf8=samples["utf8"], utf16=samples["utf16"], regions={"image": samples["image"], "overlay": samples["overlay"], "split": samples["split"]},
+                           note="본체 구간에 한글이 없으면 '마법사 없음·오류 상자 영어' 로 본다. 덧붙은 구간의 한글은 설치 도구가 안에 넣은 앱 묶음의 글자일 수 있다(무작위 바이트가 우연히 맞을 수 있어 추정)"))
         else:
-            ctx.add(record("M17", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
+            ctx.add(record("M17", arm, "unavailable", note="설치 파일이 없다", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)"))
     log = ctx.logs / "C-install-1.log"
     text = read_text_guess(log) if log.exists() else ""
     lang = re.search(r"SPIKE_LANG=(\S+)", text)
@@ -1276,66 +1499,204 @@ def m17_korean(ctx):
         ctx.add(record("M17", "C", "pass" if (lang and lang.group(1).lower() == "korean" and has_hangul) else "fail", brief="언어 %s 안내 글 한글 %s" % (lang.group(1) if lang else "?", "있음" if has_hangul else "없음"),
                        language=lang.group(1) if lang else "", next_button_hangul=has_hangul, log_chars=len(text)))
     else:
-        ctx.add(record("M17", "C", "unavailable", note="Inno 설치 로그를 읽지 못했다", brief="로그 없음"))
+        ctx.add(record("M17", "C", "unavailable", note="Inno 설치 로그를 읽지 못했다", brief="Inno 설치 로그 없음(갈래 C 를 설치해 보지 못했다)"))
+
+
+STD_PROBE_CODE = 42
+STD_WAIT_SECONDS = 45                       # 설치 도구가 비동기로 끝낼 때 흔적을 기다리는 시간 — 작은 앱 설치는 0.4초 만에 끝났는데 흔적은 그 뒤에 생겼다(M05 는 60초까지 기다린다)
+ELEVATION_REQUIRED_CODE = 740
+STD_MESSAGE_LIMIT = 200                     # 띄우기 실패의 윈도 오류 문장을 기록에 싣는 길이 상한(가린 뒤에 자른다)
+STD_REASON_LIMIT = 68                       # 상자 한 칸(110자)에 이유가 잘리지 않고 들어가는 오류 문장 길이(군더더기 머리말을 뺀 뒤) — 시험이 가장 긴 경우에도 칸 안에 들어감을 확인한다
+_STD_EXIT = re.compile(r"(?m)^SPIKE_EXIT=(\S*)\s*$")
+_STD_ERROR = re.compile(r"(?m)^SPIKE_START_ERROR=(\w+)\s*$")
+_STD_MESSAGE = re.compile(r"(?m)^SPIKE_START_MESSAGE=(.*?)\s*$")
+_START_BOILERPLATE = re.compile(r"(?i)^this command cannot be run due to the error:\s*")
+_ELEVATION_WORDS = re.compile(r"(?i)elevation|권한 상승|\b%d\b" % ELEVATION_REQUIRED_CODE)
+STD_TRACE_NAMES = ("version", "update.exe", "unins000.exe")
 
 
 def std_user_script():
+    """임시 표준 사용자로 프로그램 하나를 띄우는 PowerShell(결정 D-810). 1차 측정은 '종료 0 인데 설치 흔적 없음' 이었다 — 원인 후보 셋을 막는다: ① 부모(러너 계정)의 환경을 물려받아 사용자 폴더 변수가 러너 계정 것으로 남는 것 →
+    사용자 폴더·임시 폴더 변수를 그 사용자 것으로 **명시**한 뒤 띄운다(`-UseNewEnvironment` 는 -Credential 과 함께 쓰면 현재 사용자의 환경을 불러온다고 알려져 믿지 않는다) ② -Credential 로 띄운 프로세스의 종료 코드가 비어 나와
+    0 으로 보이는 것 → 종료 코드를 `SPIKE_EXIT=` 줄로 찍어 읽고, 못 읽으면 `none`, 띄우지 못하면 `SPIKE_START_ERROR=오류 종류` 로 밝힌다. ③ `Start-Process` 가 띄우지 못하고 오류만 내는 경우 — 1차 도구는 그 오류를 잡지
+    않았다(`try`/`catch` 가 없었다): 오류는 화면에만 나오고 스크립트는 계속돼 `$p` 가 비어 종료 코드 0 이 된다(이 개발 PC 의 Windows PowerShell 5.1 에서 재현했다) → `try`/`catch` 로 잡고(`-ErrorAction Stop` 은 비종료 오류도 같은 길로 보내는 안전장치다 —
+    `try`/`catch` 가 있으면 파일이 없는 경우의 결과는 그것이 있든 없든 같다) `SPIKE_START_ERROR=` 에 더해 윈도의 오류 문장(예외 메시지)을 `SPIKE_START_MESSAGE=` 한 줄로 찍는다(공백·줄바꿈은 한 칸으로 접고 300자까지) —
+    오류 종류는 띄우기 실패 모두 `InvalidOperationException` 이라 로그온 거부·권한·서비스 꺼짐·권한 상승 필요를 가르는 것은 이 문장이다."""
     return ("$pw = ConvertTo-SecureString $env:SPIKE_PW -AsPlainText -Force; "
             "$cred = New-Object System.Management.Automation.PSCredential('.\\' + $env:SPIKE_USER, $pw); "
-            "$p = Start-Process -FilePath $env:SPIKE_SETUP -ArgumentList $env:SPIKE_ARGS -Credential $cred -LoadUserProfile -Wait -PassThru -WorkingDirectory $env:SPIKE_CWD; "
-            "exit $p.ExitCode")
+            "$env:USERNAME = $env:SPIKE_USER; $env:USERPROFILE = $env:SPIKE_PROFILE; $env:LOCALAPPDATA = $env:SPIKE_PROFILE + '\\AppData\\Local'; $env:APPDATA = $env:SPIKE_PROFILE + '\\AppData\\Roaming'; "
+            "$env:TEMP = $env:SPIKE_TMP; $env:TMP = $env:SPIKE_TMP; "
+            "try { $p = Start-Process -FilePath $env:SPIKE_SETUP -ArgumentList $env:SPIKE_ARGS -Credential $cred -LoadUserProfile -Wait -PassThru -WorkingDirectory $env:SPIKE_CWD -ErrorAction Stop } "
+            "catch { $m = ([string]$_.Exception.Message -replace '\\s+', ' ').Trim(); if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }; "
+            "Write-Output ('SPIKE_START_ERROR=' + $_.Exception.GetType().Name); Write-Output ('SPIKE_START_MESSAGE=' + $m); exit 1 }; "
+            "try { $p.WaitForExit() } catch { }; "
+            "try { $code = $p.ExitCode } catch { $code = $null }; "
+            "if ($null -eq $code) { Write-Output 'SPIKE_EXIT=none'; exit 0 }; "
+            "Write-Output ('SPIKE_EXIT=' + $code); exit $code")
 
 
-def std_user_folders(ctx):
+def parse_std_exit(text, rc):
+    """표준 사용자 스크립트의 출력 → (종류, 값): ('error', 오류 종류) 띄우지 못함 · ('none', None) 종료 코드를 못 읽음 · ('code', 종료 코드) · ('plain', 스크립트 종료 코드) 표지가 없음."""
+    text = text or ""
+    error = _STD_ERROR.search(text)
+    if error:
+        return "error", error.group(1)
+    found = _STD_EXIT.search(text)
+    if found:
+        raw = found.group(1)
+        return ("code", int(raw)) if raw.lstrip("-").isdigit() else ("none", None)
+    return "plain", rc
+
+
+def parse_std_message(text):
+    """표준 사용자 스크립트가 띄우기 실패와 함께 찍은 윈도 오류 문장(`SPIKE_START_MESSAGE=` 줄) → 공백·줄바꿈을 한 칸으로 접은 한 줄(없으면 빈 글). 줄 맨 앞의 표지만 인정한다. 길이를 자르는 것은 호출하는 쪽이다 — 가린 뒤에 잘라야 한다."""
+    found = _STD_MESSAGE.search(text or "")
+    return " ".join(found.group(1).split()) if found else ""
+
+
+def std_start_message(ctx, text, limit=STD_MESSAGE_LIMIT):
+    """띄우기 실패의 윈도 오류 문장 → 비밀 낱말을 가린 **뒤에** 뒤쪽 limit 글자로 자른 글(없으면 빈 글). 자른 뒤에 가리면 낱말 한가운데가 잘려 조각이 남는다."""
+    message = parse_std_message(text)
+    return tail(ctx.mask(message), limit) if message else ""
+
+
+def std_reason_words(message, limit=STD_REASON_LIMIT):
+    """상자 한 칸에 넣을 이유 글 — 윈도 오류 문장 앞의 군더더기 머리말('This command cannot be run due to the error:')을 빼고 뒤쪽 limit 글자만 남긴다(이유는 문장 끝에 있다)."""
+    message = str(message or "")
+    return tail(_START_BOILERPLATE.sub("", message) or message, limit)
+
+
+def std_needs_elevation(message):
+    """띄우기 실패의 오류 문장이 '권한 상승(관리자)이 필요하다' 는 뜻인가 — 'elevation'·'권한 상승'·오류 번호 740 낱말. 설치 도구가 관리자 권한을 요구하면 Start-Process 는 종료 740 이 아니라 이 오류로 막힌다."""
+    return bool(_ELEVATION_WORDS.search(message or ""))
+
+
+def std_user_traces(local_root, limit=5):
+    """표준 사용자의 로컬 앱 데이터 폴더 아래 설치 흔적 → 찾은 파일의 상대 경로(최대 limit 개). Velopack 은 <패키지 ID>/current/VERSION·Update.exe 에, Inno 는 Programs/<폴더>/VERSION·unins000.exe 에 둔다
+    — 폴더 이름을 짐작하지 않고 파일 이름으로 폴더 전체를 훑는다(1차 측정은 프로필 아래 VERSION 파일 하나만 봤다)."""
+    root = Path(local_root)
+    found = []
+    if not root.is_dir():
+        return found
+    for current, _folders, names in os.walk(root):
+        for name in sorted(names):
+            if name.lower() in STD_TRACE_NAMES:
+                found.append((Path(current) / name).relative_to(root).as_posix())
+                if len(found) >= limit:
+                    return found
+    return found
+
+
+def std_user_name(arm):
+    """갈래마다 다른 임시 사용자 이름(spikeusera·b·c). 같은 이름으로 사용자를 지웠다 다시 만들면 윈도는 이미 남은 사용자 폴더 때문에 새 프로필 폴더에 컴퓨터 이름을 붙여(spikeuser.컴퓨터이름) 우리가 흔적을 찾는 곳이 어긋나고,
+    남은 폴더의 권한은 옛 사용자만 갖는다(1차 측정은 갈래마다 같은 이름을 다시 썼다 — 결정 D-810)."""
+    return STD_USER + str(arm).lower()
+
+
+def std_user_run(ctx, password, public, profile_root, program, arguments, timeout=180, user=STD_USER):
+    """표준 사용자 스크립트를 한 번 돌린다 → (결과, 종류, 값)."""
+    env = {"SPIKE_PW": password, "SPIKE_USER": user, "SPIKE_SETUP": str(program), "SPIKE_ARGS": arguments, "SPIKE_CWD": str(public), "SPIKE_PROFILE": str(profile_root), "SPIKE_TMP": str(Path(public) / "tmp")}
+    result = ctx.host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", std_user_script()], timeout=timeout, env=env)
+    kind, value = parse_std_exit(result.text(), result.rc)
+    return result, kind, value
+
+
+def std_user_folders(ctx, user=STD_USER):
     """표준 사용자 시험이 건드리는 폴더 둘 → (공용 폴더 안의 작업 자리, 사용자 프로필 폴더) 또는 None. 환경 변수 PUBLIC(윈도 표준 — 러너에서는 공용 사용자 폴더)이 없으면 None 이다 — 실제 폴더 이름을 짐작해 쓰지 않는다.
     프로필이 생기는 뿌리는 SPIKE_USERS_DIR(시험이 지정)이 있으면 그것, 없으면 PUBLIC 의 위 폴더(러너에서는 사용자 폴더 전체)다."""
     public_root = ctx.env("PUBLIC")
     if not public_root:
         return None
     users_root = ctx.env("SPIKE_USERS_DIR") or str(Path(public_root).parent)
-    return Path(public_root) / "spike_std", Path(users_root) / STD_USER / "AppData" / "Local"
+    return Path(public_root) / "spike_std", Path(users_root) / user / "AppData" / "Local"
 
 
 def m18_standard_user(ctx, arm):
-    """러너에 임시 표준 사용자를 만들어 그 계정으로 무음 설치를 시도한다. 안 되면 '시도 불가' 로 기록한다(운영자 실기로)."""
+    """러너에 임시 표준 사용자를 만들어 그 계정으로 무음 설치를 시도한다(결정 D-810). 먼저 같은 방법으로 아무것도 안 하는 프로그램(종료 코드 42)을 띄워 '다른 계정으로 프로그램을 띄울 수 있는지·종료 코드를 읽을 수 있는지'를 본 뒤 설치한다.
+    성공(흔적을 찾음)이면 통과, 설치 도구가 관리자 권한을 요구하면 실패 — 종료 740 으로 끝났거나, 띄우는 단계에서 '권한 상승이 필요하다' 는 오류 문장으로 막힌 경우(설치 도구가 관리자 권한을 요구하면 `Start-Process` 는 종료 코드 대신 이 오류를 낸다) —
+    그 밖에 확인하지 못한 것은 — '종료 0 인데 흔적 없음' 도 — 실패가 아니라 '시도 불가' 이고 이유를 적는다(운영자 PC 시험지 T-INST-04 로 넘긴다). 띄우지 못한 이유는 형식 이름(늘 같다)이 아니라 윈도의 오류 문장을 적는다(비밀번호를 가린 뒤 자른다).
+    아무것도 안 하는 탐침(cmd.exe)이 권한 상승 오류로 막히는 것은 설치 도구의 탓이 아니므로 '시도 불가' 다."""
     import secrets
     import shutil
     inst = installers_of(ctx, arm)
     if not inst or "0.0.1" not in inst:
-        ctx.add(record("M18", arm, "unavailable", note="설치 파일이 없다", brief="없음"))
+        ctx.add(record("M18", arm, "unavailable", note="설치 파일이 없다", brief="설치 파일 없음(앞 단계에서 이 갈래를 만들지 못했다)"))
         return
-    folders = std_user_folders(ctx)
+    user = std_user_name(arm)
+    folders = std_user_folders(ctx, user)
     if not folders:                                                 # 사용자를 만들기 전에 멈춘다
-        ctx.add(record("M18", arm, "unavailable", note="공용 폴더 환경 변수(PUBLIC)가 없어 임시 사용자를 만들지 않았다 — 실제 폴더 이름을 짐작해 쓰지 않는다", brief="시도 불가: 환경 변수 없음"))
+        ctx.add(record("M18", arm, "unavailable", note="공용 폴더 환경 변수(PUBLIC)가 없어 임시 사용자를 만들지 않았다 — 실제 폴더 이름을 짐작해 쓰지 않는다", brief="환경 변수 PUBLIC 없음(임시 사용자를 만들지 않았다) — 운영자 실기로"))
         return
     public, profile = folders
+    profile_root = profile.parent.parent
     password = PASSWORD_PREFIX + secrets.token_urlsafe(12)
     ctx.hide(password)                                              # net user 명령줄에 들어가는 값이다 — 어떤 도구가 되울려도 기록에서는 가린다
     ctx.hide(password[len(PASSWORD_PREFIX):])                       # 무작위 부분만(접두어의 느낌표가 바뀌거나 빠져서 되울려도)
     ctx.hide(password.upper())                                      # 대문자 되울림(가리개가 대소문자를 구분하지 않아도 새지 않게 변형을 한 줄씩 더 둔다)
     ctx.hide(password.lower())                                      # 소문자 되울림
     ctx.hide(quote(password, safe=""))                              # URL 인코딩 되울림(느낌표가 %21 로) — 접두어까지 한 덩어리로 가린다
-    created = ctx.host.run(["net", "user", STD_USER, password, "/add", "/Y"], timeout=60)
+    created = ctx.host.run(["net", "user", user, password, "/add", "/Y"], timeout=60)
     if not created.ok:
-        ctx.add(record("M18", arm, "unavailable", note="임시 사용자를 만들지 못했다(rc %s)" % created.rc, brief="시도 불가: 사용자 만들기 실패"))
+        ctx.add(record("M18", arm, "unavailable", note="임시 사용자를 만들지 못했다(rc %s)" % created.rc, brief="임시 사용자 만들기 실패 — 운영자 실기로"))
         return
     try:
         public.mkdir(parents=True, exist_ok=True)
+        ctx.host.run(["icacls", str(public), "/grant", user + ":(OI)(CI)M"], timeout=60)         # 그 임시 사용자만 로그·임시 파일을 쓸 수 있게(Users 모두가 아니라) — 일회용 가상 머신 안의 작업 폴더
+        (public / "tmp").mkdir(parents=True, exist_ok=True)
         setup = public / ("setup-%s.exe" % arm)
         shutil.copyfile(inst["0.0.1"]["setup"], setup)
-        ctx.host.run(["icacls", str(public), "/grant", "Users:(OI)(CI)RX"], timeout=60)
-        arguments = "--silent" if velopack_arm(arm) else "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"
-        result = ctx.host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", std_user_script()], timeout=180,
-                              env={"SPIKE_PW": password, "SPIKE_USER": STD_USER, "SPIKE_SETUP": str(setup), "SPIKE_ARGS": arguments, "SPIKE_CWD": str(public)})
-        installed = bool(profile.is_dir() and any(profile.rglob("VERSION")))
-        if result.rc == 0 and installed:
-            ctx.add(record("M18", arm, "pass", brief="표준 사용자 설치 성공 %s초" % result.seconds, rc=result.rc, seconds=result.seconds))
-        elif result.timed_out or result.rc not in (0,):
-            ctx.add(record("M18", arm, "unavailable", brief="시도 불가 또는 실패(rc %s)" % result.rc, rc=result.rc, installed=installed, note="러너 안에서 다른 계정으로 설치를 못 돌렸다 — 운영자 실기(T-INST-04)로 넘긴다. " + tail(ctx.mask(result.text()), 160)))
+        log = public / ("std-%s.log" % arm)
+        probe, probe_kind, probe_value = std_user_run(ctx, password, public, profile_root, "cmd.exe", "/d /c exit %d" % STD_PROBE_CODE, timeout=120, user=user)
+        probe_message = std_start_message(ctx, probe.text()) if probe_kind == "error" else ""                  # 띄우기 실패의 윈도 오류 문장 — 형식 이름은 늘 같아 이유를 가르지 못한다
+        launched = probe_kind in ("none", "code") or (probe_kind == "plain" and probe.rc == 0)
+        reads_exit = probe_kind == "code" and probe_value == STD_PROBE_CODE
+        probe_values = {"launched": launched, "exit_code_readable": reads_exit, "kind": probe_kind}
+        if probe_message:
+            probe_values["message"] = probe_message
+        if not launched:
+            reason = std_reason_words(probe_message) if probe_message else (probe_value if probe_kind == "error" else "rc %s" % probe.rc)
+            why = "다른 계정으로 프로그램을 띄우지 못함(%s)" % reason
+            ctx.add(record("M18", arm, "unavailable", brief="%s — 운영자 실기로" % why, probe=probe_values, start_error=probe_value if probe_kind == "error" else "", start_message=probe_message,
+                           note="러너 안에서 다른 계정으로 프로그램을 띄우지 못했다 — 설치는 시도하지 않았다. 운영자 실기(T-INST-04)로 넘긴다." + (" 윈도 오류 문장(%s): %s." % (probe_value, probe_message) if probe_message else "") + " " + tail(ctx.mask(probe.text()), 160)))
+            return
+        arguments = ('--silent --log "%s"' % log) if velopack_arm(arm) else ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /LOG="%s"' % log)
+        result, kind, value = std_user_run(ctx, password, public, profile_root, setup, arguments, user=user)
+        message = std_start_message(ctx, result.text()) if kind == "error" else ""
+        code = value if kind in ("code", "plain") else None
+        if not result.timed_out and kind != "error" and code in (0, None):
+            wait_until(ctx, lambda: bool(std_user_traces(profile)), STD_WAIT_SECONDS, 1.0)       # 1차 측정은 기다리지 않고 바로 흔적을 봤다 — Setup 이 일을 다른 프로세스에 넘기고 먼저 끝나면 흔적이 아직 없다
+        traces = std_user_traces(profile)
+        log_text = tail(ctx.mask(read_text_guess(log)), 120) if log.is_file() else ""
+        values = {"rc": result.rc, "seconds": result.seconds, "exit_kind": kind, "exit_code": code, "traces": traces, "probe": probe_values, "log_chars": len(log_text)}
+        if kind == "error":
+            values.update(start_error=value, start_message=message)
+        if traces and code in (0, None) and kind != "error" and not result.timed_out:
+            ctx.add(record("M18", arm, "pass", brief="표준 사용자 설치 성공 %s초%s" % (result.seconds, "" if kind == "code" or kind == "plain" else "(종료 코드는 못 읽음)"), **values))
+            return
+        if code == ELEVATION_REQUIRED_CODE:
+            ctx.add(record("M18", arm, "fail", brief="설치 도구가 관리자 권한을 요구했다(종료 %d)" % ELEVATION_REQUIRED_CODE, note=tail(ctx.mask(result.text()), 160), **values))
+            return
+        if kind == "error" and std_needs_elevation(parse_std_message(result.text())):      # 설치 도구가 관리자 권한을 요구하면 Start-Process 는 종료 740 대신 이 오류로 막힌다(자르기 전의 문장 전체로 가른다)
+            ctx.add(record("M18", arm, "fail", brief="설치 도구가 관리자 권한을 요구했다(띄우기 단계에서 막힘: %s)" % std_reason_words(message, 50),
+                           note="설치 도구를 다른 계정으로 띄우는 단계에서 권한 상승이 필요하다는 오류로 막혔다 — 종료 코드(%d)로 끝난 것이 아니라 띄우기 자체가 막혔다. 윈도 오류 문장(%s): %s" % (ELEVATION_REQUIRED_CODE, value, message), **values))
+            return
+        if result.timed_out:
+            why = "시간 안에 끝나지 않음"
+        elif kind == "error":
+            why = "다른 계정으로 설치 프로그램을 띄우지 못함(%s)" % (std_reason_words(message) if message else value)
+        elif traces:
+            why = "흔적은 있으나 종료 %s" % code
+        elif kind == "none":
+            why = "종료 코드를 읽지 못했고 설치 흔적도 없음"
+        elif code == 0:
+            why = "종료 0 인데 설치 흔적 없음"
         else:
-            ctx.add(record("M18", arm, "fail", brief="종료 0 인데 설치 흔적 없음", rc=result.rc, installed=installed))
+            why = "종료 %s·설치 흔적 없음" % code
+        extra = (" 설치 도구 로그 끝: " + log_text + " /") if log_text else ""
+        words = (" 윈도 오류 문장(%s): %s." % (value, message)) if kind == "error" and message else ""
+        ctx.add(record("M18", arm, "unavailable", brief="%s — 운영자 실기로" % why, note="러너 안에서 다른 계정으로 설치가 되었는지 확인하지 못했다 — 운영자 실기(T-INST-04)로 넘긴다." + words + extra + " " + tail(ctx.mask(result.text()), 160), **values))
     finally:
-        ctx.host.run(["net", "user", STD_USER, "/delete"], timeout=60)
+        ctx.host.run(["net", "user", user, "/delete"], timeout=60)
         shutil.rmtree(public, ignore_errors=True)
 
 
@@ -1360,7 +1721,7 @@ def m22_portable(ctx):
     real = ctx.state.get("bundles", {}).get("real", {})
     archive = real.get("zip")
     if not archive or not Path(archive).is_file():
-        ctx.add(record("M22", "-", "unavailable", note="실제 묶음 zip 이 없다", brief="없음"))
+        ctx.add(record("M22", "-", "unavailable", note="실제 묶음 zip 이 없다", brief="실제 묶음 zip 없음(앞 단계 실패)"))
         return
     target = ctx.work / "run" / "portable"
     import shutil
@@ -1373,7 +1734,7 @@ def m22_portable(ctx):
         return
     counts = real_selftest(ctx, exes[0])
     infos = list(target.rglob("PACKAGE_INFO.json"))
-    ctx.add(record("M22", "-", "pass" if counts["ok"] and counts["passed"] == 12 else "fail", brief="휴대용 selftest 통과 %d 실패 %d" % (counts["passed"], counts["failed"]), **counts,
+    ctx.add(record("M22", "-", "pass" if counts["ok"] else "fail", brief=selftest_brief("휴대용", counts), **counts,
                    package_info_sha256=sha256_file(infos[0]) if infos else "", note="설치본과 휴대용은 같은 데이터 폴더 이름 상수(ChanceblogDesktop)를 쓴다 — 실제로 같은 폴더인지는 운영자 실기 T-INST-09"))
     shutil.rmtree(target, ignore_errors=True)
 
