@@ -3,8 +3,10 @@
 네이버 블로그 프로필이 사는 곳은 둘로 갈라져 있었다. 명령줄(`naver-profile set`)은 설정 파일(`settings.json` 의 `naver_profiles`)에 쓰고, 화면의 `블로그 관리` 는 채널 프로필 파일
 (`topic_engine/channel_profiles.json`)에 쓴다. 네이버 검토·복사(`review.request_review`)는 설정 파일의 프로필만 읽어서 **화면만 쓰는 사람은 네이버 검토를 켤 수 없었다**.
 
-  · `profile_for(ctx, 블로그)` — **설정 파일의 프로필이 먼저**다(명령줄로 정한 값이 우선). 없을 때만 블로그 관리에 **블로그 ID 나 주소가 등록된** 슬롯에서 표시 이름·블로그 주소·주제·대상 독자·말투·제외 주제와
+  · `profile_for(ctx, 블로그)` — **설정 파일의 프로필이 먼저**다(명령줄로 정한 값이 우선). 없을 때만 블로그 관리에 **블로그 ID 나 주소가 등록된** 슬롯에서 표시 이름·블로그 주소·주제·대상 독자·말투와
     기본 태그(주요 주제 낱말 — 복사 패키지는 태그가 하나는 있어야 한다)를 가져와 프로필을 만든다(나머지 칸은 프로필의 기본값이다). 주요 주제가 없으면 태그가 없어 검토가 NAVER_PACKAGE_INCOMPLETE 로 멈춘다. 만들 수 없으면(등록 안 됨·네이버 블로그 주소가 아님·채널 파일을 읽을 수 없음) 예전처럼 NAVER_PROFILE_MISSING 이다.
+    **블로그 관리의 우선 키워드·제외 키워드·선호 글 유형은 읽지 않는다** — 그 화면이 세 칸을 '지금 저장만 해요' 라고 말하고(결정 D-241, `tests/test_ui_blogs_topic.py` 의 꼬리표 시험이 엔진 코드의 읽기를 막는다) 프로필의 '제외 주제' 는 복사 패키지의 주의 문장을 만들므로,
+    이 세 칸에서 값을 가져오면 그 말이 거짓이 된다. 합친 프로필의 '제외 주제' 는 늘 비어 있다(설정 파일의 프로필을 쓰는 사람만 이 칸을 채운다).
     설정 파일이 깨져 있으면(SETTINGS_INVALID) 합치지 않고 그대로 멈춘다 — 깨진 파일을 숨기지 않는다.
   · `profile_keys(ctx)` — 지금 검토할 수 있는(프로필이 읽히는) 네이버 블로그 열쇠들.
 **읽기만 한다**: 파일도 폴더도 만들지 않고 두 파일의 모양·위치·쓰는 길은 그대로다(이관 없음). 화면에서 프로필을 만들고 고치는 일은 이 묶음에 없다(1b-2).
@@ -43,7 +45,7 @@ def from_channel(channel):
         return None
     try:
         return NaverProfile(channel.key, channel.display_name, _address(channel.blog_ref), topic=_topic_text(channel.main_topics), audience=channel.audience, tone=channel.tone,
-                            default_tags=tuple(channel.main_topics), excluded_topics=tuple(channel.exclude_keywords))          # 복사 패키지는 태그가 하나는 있어야 해서 주요 주제 낱말을 기본 태그로 쓴다
+                            default_tags=tuple(channel.main_topics))          # 복사 패키지는 태그가 하나는 있어야 해서 주요 주제 낱말을 기본 태그로 쓴다 — 우선 키워드·제외 키워드·선호 글 유형은 읽지 않는다(그 화면이 '저장만 해요' 라고 말한다)
     except AppError:
         return None
 

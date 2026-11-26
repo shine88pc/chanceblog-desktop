@@ -276,6 +276,23 @@ class NaverProfilesMergeTest(unittest.TestCase):
         self.assertEqual((error.code, error.slots["항목"]), ("NAVER_PACKAGE_INCOMPLETE", "태그"))
         self.assertEqual(projects.show_project(self.ctx, project_id).variant("naver_a").status, st.NOT_STARTED, "멈추면 아무것도 저장하지 않는다")
 
+    def test_the_three_saved_only_fields_of_the_blog_screen_never_reach_the_naver_profile(self):
+        """CI 빨강 고치기(GUI1b): 블로그 관리 화면은 우선 키워드·제외 키워드·선호 글 유형을 '지금 저장만 해요' 라고 말한다(결정 D-241 — `test_ui_blogs_topic` 의 꼬리표 시험이 엔진 코드의 읽기를 막는다).
+        합쳐 읽은 네이버 프로필의 '제외 주제' 는 복사 패키지의 주의 문장을 만들므로, 세 칸의 값이 실리면 그 말이 거짓이 된다 — 세 칸을 채워도 합친 프로필은 한 칸도 달라지지 않고 글에 제외 키워드가 있어도 주의 문장이 생기지 않는다."""
+        from chanceblog_desktop.content.profiles import POST_TYPES
+        ChannelFile.register(self.ctx, "naver_a", display_name="에이 블로그", blog_ref="exampleid", main_topics=["생활", "절약"], audience="직장인", tone="차분한 말투")
+        without = naver_profiles.profile_for(self.ctx, "naver_a")
+        ChannelFile.register(self.ctx, "naver_a", priority_keywords=["난방비", "전기요금"], exclude_keywords=["에너지", "절약"], preferred_post_types=[POST_TYPES[0]])
+        channel = next(item for item in blog_profiles.read_snapshot(self.ctx).profiles if item.key == "naver_a")
+        self.assertEqual((channel.priority_keywords, channel.exclude_keywords, channel.preferred_post_types), (("난방비", "전기요금"), ("에너지", "절약"), (POST_TYPES[0],)), "세 칸은 저장돼 있다")
+        merged = naver_profiles.profile_for(self.ctx, "naver_a")
+        self.assertEqual(merged, without, "세 칸을 채워도 합친 프로필은 그대로다")
+        self.assertEqual(merged.excluded_topics, (), "프로필의 제외 주제는 설정 파일의 프로필을 쓰는 사람만 채운다")
+        self.assertEqual(naver_profiles.from_channel(channel), without)
+        project_id = projects.new_project(self.ctx, "에너지 절약 습관", ss.ko_text()).project_id
+        package = review.request_review(self.ctx, project_id, "naver_a").naver.package
+        self.assertEqual([line for line in package.warnings if "제외 주제" in line], [], "제목에 제외 키워드가 있어도 주의 문장이 생기지 않는다")
+
 
 class HistoryServiceTest(Base):
     def test_a_fresh_store_has_no_rows_and_review_stages_are_not_rows(self):
