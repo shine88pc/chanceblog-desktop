@@ -240,7 +240,7 @@ QT_IF_LINE_TEXT = "    if: github.ref == 'refs/heads/main' || startsWith(github.
 
 def qt_if_problems(ci):
     """`ci.yml` 글(줄 끝 그대로)의 `if:` 줄 문제 목록(없으면 빈 목록): 파일 전체에서 `qt` 잡 수준의 정해진 한 줄뿐이고, 그 줄은 줄 끝 주석·뒤 공백 없이 줄 전체가 글자 그대로이며, `test` 잡에는 `if` 가 없다.
-    재작업 2(독립 검증 Q 권고-5): 줄 끝 주석에 시험들이 다르게 반응하던 것을(골든·`qt_problems` 는 통과, `test_repo_layout` 의 한 시험만 거절) 엄격한 쪽으로 맞췄다."""
+    재작업 2(독립 검증 Q 권고-5): 줄 끝 주석에 시험들이 다르게 반응하던 것을(골든·`qt_problems`·이 묶음은 통과, `test_repo_layout` 의 한 시험만 거절) 엄격한 쪽으로 맞췄다."""
     lines = ci.replace("\r\n", "\n").split("\n")
     found = [line for line in lines if re.match(r"^\s*(?:-\s+)?if:", line)]
     problems = []
@@ -330,7 +330,7 @@ class CiWorkflowShardTest(unittest.TestCase):
             self.assertNotIn(needle, self.job_text["qt"], f"qt 잡은 윈도·3.12 하나뿐이다: {needle}")
 
     def test_the_if_line_is_whole_line_exact_and_an_end_of_line_comment_or_space_is_refused(self):
-        """독립 검증 Q 권고-5(재작업 2): `if` 줄에 줄 끝 주석을 달면 골든·`qt_problems` 는 통과시키고 `test_repo_layout` 의 한 시험만 거절하던 어긋남을 엄격한 쪽으로 맞췄다 — 이 묶음도 줄 전체를 글자 그대로 견준다."""
+        """독립 검증 Q 권고-5(재작업 2): `if` 줄에 줄 끝 주석을 달면 골든·`qt_problems`·이 묶음은 통과시키고 `test_repo_layout` 의 한 시험만 거절하던 어긋남을 엄격한 쪽으로 맞췄다 — 이 묶음도 이제 줄 전체를 글자 그대로 견준다."""
         self.assertEqual(self.QT_IF_LINE, QT_IF_LINE_TEXT)
         self.assertEqual(qt_if_problems(self.ci), [])
         self.assertEqual(qt_if_problems(self.ci.replace("\n", "\r\n")), [], "윈도 줄 끝은 덧붙임이 아니다")
@@ -926,10 +926,10 @@ def table_numbers():
     loads = sorted(set(loads_of(ci_shard.assign(names, total, weights, default), total, weights, default)))
     plan = f"{loads[0]:,}초" if len(loads) == 1 else f"{loads[0]:,}–{loads[-1]:,}초"
     top = sorted(weights.items(), key=lambda item: (-item[1], item[0]))[:7]
-    return {"count": f"{len(weights)}개", "total": f"{sum(weights.values()):,}초", "plan": plan, "top": top, "default": default, "limit": qt_limit_minutes()}
+    return {"count": f"{len(weights)}개", "total": f"{sum(weights.values()):,}초", "plan": plan, "top": top, "default": default, "limit": qt_limit_minutes(), "shards": total}
 
 
-def missing_numbers(label, text, numbers, count=True, total=True, plan=True, top=True, default=True, limit=True):
+def missing_numbers(label, text, numbers, count=True, total=True, plan=True, top=True, default=True, limit=True, shards=True):
     """`text`(문서·결정 행·주석)에 적혀 있어야 할 숫자 중 빠진 것들의 설명(없으면 빈 목록). 상위 일곱은 '이름 뒤 열두 글자 안에 그 값'(숫자 아닌 글자만 사이에)으로 읽는다."""
     missing = []
     if count and numbers["count"] not in text:
@@ -946,6 +946,8 @@ def missing_numbers(label, text, numbers, count=True, total=True, plan=True, top
         missing.append(f"{label}: 기본 무게 {numbers['default']}초")
     if limit and not re.search(r"한도[^0-9]{0,12}" + str(numbers["limit"]) + "분", text):
         missing.append(f"{label}: qt 잡의 시간 한도 {numbers['limit']}분")
+    if shards and not re.search(r"/" + str(numbers["shards"]) + r"(?![0-9])", text):
+        missing.append(f"{label}: qt 잡의 조각 수 /{numbers['shards']}(조각 N/{numbers['shards']}·두 이름의 /{numbers['shards']})")
     return missing
 
 
@@ -978,8 +980,8 @@ class TableNumbersAreWrittenDownTest(unittest.TestCase):
         places = {
             "docs/CI_QT.md": ((ROOT / "docs" / "CI_QT.md").read_text(encoding="utf-8"), {}),
             "docs/DECISIONS.md D-717": (decision_row(717), {}),
-            "scripts/ci_shard.py 의 표 위 주석": (shard_comment_block(), {"top": False, "default": False}),
-            ".github/workflows/ci.yml 의 qt 잡 주석": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False}),
+            "scripts/ci_shard.py 의 표 위 주석": (shard_comment_block(), {"top": False, "default": False, "shards": False}),
+            ".github/workflows/ci.yml 의 qt 잡 주석": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False, "shards": False}),
         }
         problems = []
         for label, (text, skip) in places.items():
@@ -988,7 +990,7 @@ class TableNumbersAreWrittenDownTest(unittest.TestCase):
 
     def test_the_numbers_come_from_the_table_and_the_workflow_and_are_the_ones_the_documents_describe(self):
         numbers = table_numbers()
-        self.assertEqual((numbers["count"], numbers["total"], numbers["plan"], numbers["default"], numbers["limit"]), ("354개", "10,956초", "913초", 3, 60))
+        self.assertEqual((numbers["count"], numbers["total"], numbers["plan"], numbers["default"], numbers["limit"], numbers["shards"]), ("354개", "10,956초", "913초", 3, 60, 12))
         self.assertEqual([name for name, _ in numbers["top"]], ["test_ui_qt_seeds", "test_ui_qt_photo_ocr", "test_ui_qt_drafts", "test_ui_qt_photo", "test_ui_qt_settings", "test_ui_qt_polish1", "test_ui_qt_polish2"])
 
     def test_a_missing_or_changed_number_is_noticed_in_each_place(self):
@@ -996,8 +998,8 @@ class TableNumbersAreWrittenDownTest(unittest.TestCase):
         sources = {
             "docs": (self.read_doc(), {}),
             "decision": (decision_row(717), {}),
-            "shard": (shard_comment_block(), {"top": False, "default": False}),
-            "workflow": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False}),
+            "shard": (shard_comment_block(), {"top": False, "default": False, "shards": False}),
+            "workflow": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False, "shards": False}),
         }
         top_name, top_value = numbers["top"][0]
         edits = {
@@ -1007,6 +1009,7 @@ class TableNumbersAreWrittenDownTest(unittest.TestCase):
             "상위 일곱": (lambda text: re.sub("(" + re.escape(top_name) + "[^0-9]{0,12})" + str(top_value) + "(?![0-9])", lambda found: found.group(1) + str(top_value + 1), text), "top"),
             "기본 무게": (lambda text: re.sub(r"(기본 무게[^0-9]{0,24})" + str(numbers["default"]) + "초", lambda found: found.group(1) + "4초", text), "default"),
             "시간 한도": (lambda text: re.sub(r"(한도[^0-9]{0,12})" + str(numbers["limit"]) + "분", lambda found: found.group(1) + "61분", text), "limit"),
+            "조각 수": (lambda text: re.sub(r"/" + str(numbers["shards"]) + r"(?![0-9])", "/13", text), "shards"),
         }
         for place, (text, skip) in sources.items():
             self.assertEqual(missing_numbers(place, text, numbers, **skip), [], place)

@@ -360,7 +360,7 @@ QT_IF_CONDITION = "    if: github.ref == 'refs/heads/main' || startsWith(github.
 
 def qt_if_problems(ci):
     """`ci.yml` 글의 `if:` 줄 문제 목록(없으면 빈 목록): `qt` 잡 수준(들여쓰기 네 칸)에 정해진 한 줄뿐이고, 파일 전체의 `if:` 도 그 한 줄뿐이며, `test` 잡에는 없다. 줄 전체를 글자 그대로 견주므로 줄 끝 주석·뒤 공백도 거절한다.
-    재작업 2(독립 검증 Q 권고-5): 줄 끝 주석에 시험들이 다르게 반응하던 것(골든·`qt_problems` 통과, 이 시험만 거절)을 엄격한 쪽인 이 방식으로 모두 맞췄다."""
+    재작업 2(독립 검증 Q 권고-5): 줄 끝 주석에 시험들이 다르게 반응하던 것(골든·`qt_problems`·`test_ci_shard` 통과, 이 시험만 거절)을 엄격한 쪽인 이 방식으로 모두 맞췄다."""
     ci = ci.replace("\r\n", "\n")
     head, marker, tail = ci.partition("\n  qt:\n")
     if not marker:
