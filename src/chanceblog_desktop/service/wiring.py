@@ -6,6 +6,7 @@
 
 지금(NET 갈래)은 진짜 어댑터 공장이 아직 없다. 아래 두 `_…_placeholder` 가 그 자리를 채운다 — **PUBPR·BLOGGER 갈래가 자기 줄의 공장 이름만 바꾼다**(예: `external.register(external.KIND_PAGES_GIT, make_branch_backend)`).
 자리표시자는 스위치를 잘못 켜도 안전하게 아무것도 열지 않는다(`pages_git` 은 파일만 읽는 `LocalOnlyBackend` 와 같은 일을 하고, `blogger` 는 부르는 곳이 아직 없다).
+덧붙임(BLOGGER 갈래, D-774): `blogger` 의 자리표시자는 진짜 공장 `_blogger_factory`(→ `service/blogger_flow.py::make_blogger_adapter`)로 바뀌었다 — 위 문장의 '`blogger` 는 부르는 곳이 아직 없다' 는 옛 상태다.
 """
 from __future__ import annotations
 
@@ -18,9 +19,10 @@ def _pages_placeholder(*, git=None, expected_origin=None, fetcher=None, sleep=No
     return external.LocalOnlyBackend(expected_origin=expected_origin) if expected_origin is not None else external.LocalOnlyBackend()
 
 
-def _blogger_placeholder(**parts):
-    """`blogger` 자리표시자 — 이 어댑터를 부르는 코드가 아직 없다. BLOGGER 갈래가 진짜 공장으로 바꾼다."""
-    return None
+def _blogger_factory(**parts):
+    """`blogger` 어댑터 공장 — 진짜 공장(`service/blogger_flow.py::make_blogger_adapter`)을 **부를 때** 불러온다(스위치가 꺼진 빌드는 이 모듈을 가져오지도 않는다)."""
+    from . import blogger_flow
+    return blogger_flow.make_blogger_adapter(**parts)
 
 
 def _update_factory(*, version, usage=None):
@@ -36,7 +38,7 @@ def register_enabled():
             external.register(external.KIND_PAGES_GIT, _pages_placeholder)
     if capabilities.net_blogger_oauth_enabled():
         if external.KIND_BLOGGER not in external.registered_kinds():
-            external.register(external.KIND_BLOGGER, _blogger_placeholder)
+            external.register(external.KIND_BLOGGER, _blogger_factory)
     if capabilities.net_update_check_enabled():
         if external.KIND_UPDATE not in external.registered_kinds():
             external.register(external.KIND_UPDATE, _update_factory)

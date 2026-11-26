@@ -450,7 +450,7 @@ class ServiceConnectionsProvider(ConnectionsProvider):
                 accepts = connection_service.accepts_input(spec)                         # 이 빌드가 새 키 입력을 받는 용도인가(Blogger 는 꺼져 있다 — 입력 칸·단추가 없다)
                 status = guard.purpose_status(key, keystore=store) if accepts and not spec.legacy_to else ""
                 providers = tuple(ProviderInfo(item.key, item.label, spec.entry_cap(item.key), item.second_key_needs_terms) for item in spec.providers) if accepts else ()
-                fields = tuple(FieldInfo(item.name, item.label, item.min_len) for item in spec.fields) if accepts else ()
+                fields = tuple(FieldInfo(item.name, item.label, item.min_len) for item in spec.entered_fields()) if accepts else ()
                 infos.append(PurposeInfo(key, spec.label, spec.implemented, accepts, spec.max_entries, spec.providers[0].rotation, bool(spec.legacy_to), status, tuple(entries),
                                          usage_of(spec, usages.get(key)), key in ON_DEMAND, providers, fields, self._can_test(spec), "terms" if key in TERMS_PENDING else ""))
         except AppError as error:

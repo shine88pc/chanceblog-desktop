@@ -347,7 +347,8 @@ class SingleKeyRuleTest(unittest.TestCase):
         self.assertTrue(sv.single_choice(info("naver_apihub")))                                                          # 키 하나인 용도
         self.assertTrue(sv.single_choice(info("blogger", max_entries=1)))                                                 # 키 하나만 두면 전환 규칙이 무엇이든 '예비' 가 없다
         self.assertTrue(sv.single_choice(info("blogger", rotation="never")))                                              # 전환이 없으면 키가 몇 개든 '예비' 가 없다
-        for key in ("naver_searchad", "ai_assist", "blogger"):                                                            # 전환하는 용도는 그대로 세 가지
+        self.assertTrue(sv.single_choice(info("blogger")))                                                                # Blogger 는 전환이 없어 키가 둘이어도 '예비' 가 없다(D-775)
+        for key in ("naver_searchad", "ai_assist"):                                                                       # 전환하는 용도는 그대로 세 가지
             self.assertFalse(sv.single_choice(info(key)), key)
             self.assertEqual(sv.state_choices(info(key)), ("active", "standby", "off"), key)
 
@@ -368,7 +369,7 @@ class SingleKeyRuleTest(unittest.TestCase):
         self.assertEqual([entry["state_line"] for entry in multi["naver_searchad"]["entries"]], ["키 사용 설정: 사용", "키 사용 설정: 예비", "키 사용 설정: 꺼짐"])
 
     def test_the_other_purposes_offer_all_three_settings_and_the_standby_sentence(self):
-        for key in ("naver_searchad", "ai_assist", "blogger"):
+        for key in ("naver_searchad", "ai_assist"):
             card = cards_of(view_of(info(key)))[key]
             self.assertEqual(card["choices"]["items"], ["사용", "예비", "꺼짐"], key)
             self.assertEqual(card["policy"], "예비: 한도·일시 오류일 때만 다음 키로 넘어가요(용도당 최대 3개)", key)
@@ -813,7 +814,8 @@ class AdapterTest(Base):
         cards = cards_of(view_of(*by_key.values()))
         self.assertEqual(cards["naver_apihub"]["choices"]["items"], ["사용", "꺼짐"])                                        # 같은 화면에서 API HUB 선택지는 [사용, 꺼짐]
         self.assertNotIn("예비", json.dumps(cards["naver_apihub"], ensure_ascii=False))
-        self.assertEqual(cards["blogger"]["choices"]["items"], ["사용", "예비", "꺼짐"])                                     # 전환하는 용도는 그대로 세 가지
+        self.assertEqual(cards["ai_assist"]["choices"]["items"], ["사용", "예비", "꺼짐"])                                   # 전환하는 용도는 그대로 세 가지
+        self.assertEqual(cards["blogger"]["choices"]["items"], ["사용", "꺼짐"])                                            # Blogger 는 영문·한글이 서로 다른 블로그라 넘어가지 않으니 '예비' 가 없다(D-775)
 
     def test_the_adapter_hands_over_the_service_table_switch_rule_so_the_image_card_does_not_promise_a_switch(self):
         """점검 A07 — 어댑터가 전환 규칙(`rotation`)을 굳은 값(limited)으로 넘기면 이미지 공급자가 거짓으로 '다음 키로 넘어가요' 라고 말한다."""
@@ -821,12 +823,13 @@ class AdapterTest(Base):
         for key, spec in cn.PURPOSES.items():
             if not spec.legacy_to:
                 self.assertEqual(by_key[key].rotation, spec.providers[0].rotation, key)
-        self.assertEqual([(key, by_key[key].rotation) for key in ("naver_apihub", "image_provider", "blogger")], [("naver_apihub", "never"), ("image_provider", "never"), ("blogger", "limited")])
+        self.assertEqual([(key, by_key[key].rotation) for key in ("naver_apihub", "image_provider", "blogger")], [("naver_apihub", "never"), ("image_provider", "never"), ("blogger", "never")])
         cards = cards_of(view_of(*by_key.values()))
         self.assertEqual(cards["image_provider"]["policy"], text.T["policy_never"])
         self.assertNotIn("다음 키로 넘어가요", cards["image_provider"]["policy"])                                            # 이미지 공급자는 넘어가지 않는다
         self.assertEqual(cards["image_provider"]["choices"]["items"], ["사용", "꺼짐"])
-        self.assertEqual(cards["blogger"]["policy"], "예비: 한도·일시 오류일 때만 다음 키로 넘어가요(용도당 최대 3개)")
+        self.assertEqual(cards["ai_assist"]["policy"], "예비: 한도·일시 오류일 때만 다음 키로 넘어가요(용도당 최대 3개)")
+        self.assertEqual(cards["blogger"]["policy"], text.T["policy_never"], "Blogger 도 넘어가지 않는다 — 영문 글이 한글 블로그로 가지 않게(D-775)")
 
     def test_a_broken_usage_record_makes_a_purpose_without_a_ledger_unreadable_instead_of_half_used(self):
         """점검 A05 — 서비스는 깨진 기록을 '절반을 썼다고 가정' 한 숫자로 보여 주지만 실제 값이 아니다. 장부가 없는 용도(이미지 공급자)도 숫자 없이 '확인할 수 없어요' 로 보인다."""

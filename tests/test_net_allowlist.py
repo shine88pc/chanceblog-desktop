@@ -1,7 +1,7 @@
 """허용 목록·관문·등록·고지·D-415 시험(NET 설계서 NT-10–NT-16·NT-61·NT-63–NT-65, E1–E4·E10, D-735에서 D-737) — 소스 훑기로 '접속은 정확히 이 곳들뿐' 을 못박는다.
 
 지키는 것:
-  1) `http`·`ssl` 을 가져오는 파일은 `net/client.py` 하나뿐이고 `socket` 은 `net/loopback.py`(BLOGGER 갈래가 더한다 — 지금은 0곳)뿐이다. `urllib`(`parse` 말고)·`requests`·`webbrowser`·`ftplib` 등은 어디서도 가져오지 않는다(NT-10·11).
+  1) `http`·`ssl` 을 가져오는 파일은 `net/client.py` 하나뿐이고 `socket` 은 `net/loopback.py`(BLOGGER 갈래가 더했다 — 지금 1곳)뿐이다. `urllib`(`parse` 말고)·`requests`·`webbrowser`·`ftplib` 등은 어디서도 가져오지 않는다(NT-10·11).
   2) TLS 를 약화하는 이름(검증 끄기·낮은 버전·암호 목록 바꾸기)이 `src/` 어디에도 없다(NT-12).
   3) 범주 표 다섯은 정확하고 서로 겹치지 않으며 접속·쓰기 범주의 이유에 관문 이름이 있다. 탐지기는 합성 소스 나무에서 새 접속 가져오기를 잡는다(NT-14·15). 허용 표가 '정확히 6곳' 이다.
   4) vendor 의 `fetch`·`urlopen` 은 앱이 한 번도 부르지 않는다 — 배포 확인은 `fetcher` 를 주입한다(NT-16).
@@ -57,7 +57,7 @@ class ImportScopeTest(unittest.TestCase):
                     owners[top].add(path.relative_to(SRC).as_posix())
         self.assertEqual(owners["http"], {"net/client.py"})
         self.assertEqual(owners["ssl"], {"net/client.py"})
-        self.assertEqual(owners["socket"], {key[0] for key in sro.ALLOWED_LOOPBACK if key[1] == "socket"}, "소켓은 루프백 범주 표의 파일(지금은 없음)뿐이다")
+        self.assertEqual(owners["socket"], {key[0] for key in sro.ALLOWED_LOOPBACK if key[1] == "socket"}, "소켓은 루프백 범주 표의 파일(`net/loopback.py` 하나)뿐이다")
         found = sro.found_outgoing()
         self.assertEqual(sorted(key for key in found if key[1] in ("http", "ssl", "socket")), sorted(key for key in sro.ALLOWED if key[1] in ("http", "ssl", "socket")))
 
@@ -67,7 +67,9 @@ class ImportScopeTest(unittest.TestCase):
         self.assertEqual(sorted(name for name in names if name.split(".")[0] in ("socket", "_socket", "subprocess", "requests", "urllib3", "ftplib", "smtplib", "asyncio", "multiprocessing", "webbrowser", "socketserver")), [])
         self.assertEqual(sorted(name for name in names if name.split(".")[0] == "urllib"), ["urllib.parse"])
         for path in sorted((SRC / "net").glob("*.py")):
-            if path.name != "client.py":
+            if path.name == "loopback.py":                                                   # 로그인 코드를 받는 창구 — 가져오는 접속 모듈은 `socket` 하나뿐이다(BLOGGER 갈래, D-771)
+                self.assertEqual(sorted(name for name in imports_of(path) if name.split(".")[0] in ("http", "ssl", "socket", "subprocess")), ["socket"], path.name)
+            elif path.name != "client.py":
                 self.assertEqual(sorted(name for name in imports_of(path) if name.split(".")[0] in ("http", "ssl", "socket", "subprocess")), [], path.name)
 
     def test_urllib_requests_and_friends_are_still_never_imported(self):
@@ -280,13 +282,13 @@ class KeyLogScopeTest(unittest.TestCase):
 
 class CategoryTablesTest(unittest.TestCase):
     def test_allowed_categories_are_exact_disjoint_and_each_network_reason_names_its_gate(self):
-        """NT-14 — E1–E3: 범주 표는 정확하고(1·1·2·2·0 = 6곳) 서로 겹치지 않고 합집합이 허용 표이며, 접속·쓰기 범주의 이유에 `require_…` 관문 이름이 있다."""
+        """NT-14 — E1–E3: 범주 표는 정확하고(1·1·2·2·1 = 7곳) 서로 겹치지 않고 합집합이 허용 표이며, 접속·쓰기 범주의 이유에 `require_…` 관문 이름이 있다."""
         sizes = {name: len(table) for name, table in sro.ALLOWED_CATEGORIES.items()}
-        self.assertEqual(sizes, {"git_write": 1, "local_worker": 1, "browser": 2, "net_client": 2, "loopback": 0})
+        self.assertEqual(sizes, {"git_write": 1, "local_worker": 1, "browser": 2, "net_client": 2, "loopback": 1})
         keys = [key for table in sro.ALLOWED_CATEGORIES.values() for key in table]
         self.assertEqual(len(keys), len(set(keys)), "범주 표의 키가 겹친다")
         self.assertEqual(sorted(keys), sorted(sro.ALLOWED))
-        self.assertEqual(len(sro.ALLOWED), 6)
+        self.assertEqual(len(sro.ALLOWED), 7)
         for table in (sro.ALLOWED_GIT_WRITE, sro.ALLOWED_NET_CLIENT, sro.ALLOWED_LOOPBACK):
             for key, reason in table.items():
                 self.assertRegex(reason, r"require_[a-z_]+", key)
@@ -481,8 +483,8 @@ class RegistrationScopeTest(unittest.TestCase):
                 if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "NetClient":
                     function = next((outer.name for outer in ast.walk(tree) if isinstance(outer, ast.FunctionDef) and node in ast.walk(outer)), "")
                     found.append((path.relative_to(SRC).as_posix(), function))
-        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher"), ("service/wiring.py", "_update_factory")],
-                         "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다(`_update_factory`: UPDATE 갈래의 `update` 어댑터 공장 — `NET_UPDATE_CHECK` 가 켜져 꽂혔을 때만 불린다)")
+        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher"), ("service/blogger_flow.py", "make_blogger_adapter"), ("service/wiring.py", "_update_factory")],
+                         "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다(`_update_factory`: UPDATE 갈래의 `update` 어댑터 공장 — `NET_UPDATE_CHECK` 가 켜져 꽂혔을 때만 불린다 / `make_blogger_adapter`: BLOGGER 갈래가 더했다, D-774)")
         callers = [path.relative_to(SRC).as_posix() for path in files() if "site_fetcher(" in path.read_text(encoding="utf-8") and path.name != "site.py"]
         self.assertEqual(callers, ["publish/deploy.py"], "site_fetcher 를 부르는 곳은 두 관문을 지난 공개 주소 확인뿐이다")
 
