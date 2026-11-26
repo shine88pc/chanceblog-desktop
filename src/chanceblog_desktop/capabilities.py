@@ -17,6 +17,8 @@ Cookie·Session 사용·예약 게시·외부 초안 전송)을 **하지 않는�
 인터넷 접속 스위치 다섯(`NET_UPDATE_CHECK`·`NET_PAGES_SITE`·`PAGES_BRANCH_PUSH`·`NET_BLOGGER_OAUTH`·`NET_BLOGGER_DRAFT`, D-720, 운영자 확인 038 ①)은 같은 방식의 상수다 — 새 접속마다 따로 두고 모두 False 다.
 `require_net(용도, 작업)` 은 `net/client.py` 와 접속 흐름의 관문이다(용도마다 필요한 스위치가 모두 True 여야 지나고, 모르는 용도는 거절한다). `SWITCH_NAMES` 가 모든 상수 이름의 표이고,
 출하 표(`packaging/pkgcommon.py` 의 `SHIPPED_OPEN_SWITCHES`)에 적힌 것만 켠 채 내보낼 수 있다 — 지금은 빈 표다(켜진 것 0).
+업데이트 설치 스위치 하나(`UPDATE_APPLY`, UPDATE 갈래, 운영자 확인 038 ①)도 같은 방식의 상수다 — 접속이 아니라 **설치 도구를 띄우고 시작 때 업데이트 점검 표식을 읽고 쓰는 일**의 스위치라서
+`NET_USES` 에 없고 `require_update_apply(작업)` 이 관문이다(꺼져 있으면 `UPDATE_DISABLED`). `NET_UPDATE_CHECK`(확인·내려받기)와 따로 켠다 — 확인만 켜고 설치는 꺼 두는 단계가 가능해야 한다.
 """
 from __future__ import annotations
 
@@ -31,9 +33,10 @@ NET_PAGES_SITE = False            # 올린 글의 공개 주소 확인(읽기) �
 PAGES_BRANCH_PUSH = False         # git 으로 새 가지에 올리기·병합 확인용 받기 — EXTERNAL_WRITE 와 함께
 NET_BLOGGER_OAUTH = False         # Blogger 로그인·토큰 갱신·연결 해제와 읽기 요청 — 함께 켜져 있어야 하는 것 없음
 NET_BLOGGER_DRAFT = False         # Blogger 초안 저장(쓰기 한 가지) — EXTERNAL_WRITE·NET_BLOGGER_OAUTH 와 함께
+UPDATE_APPLY = False              # 내려받은 업데이트를 설치 도구에 넘겨 적용하는 일과 시작 때의 점검 표식 — 켜는 확인은 구현·독립 검증 뒤 새 번호로(UPDATE 갈래)
 
 # 모든 스위치 상수 이름의 표(시험이 소스의 대문자 상수 대입·출하 표·문서 표와 같음을 확인한다 — 새 상수를 빼먹으면 빨개진다)
-SWITCH_NAMES = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT", "LOCAL_OCR", "NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT")
+SWITCH_NAMES = ("EXTERNAL_WRITE", "BLOGGER_OAUTH_INPUT", "LOCAL_OCR", "NET_UPDATE_CHECK", "NET_PAGES_SITE", "PAGES_BRANCH_PUSH", "NET_BLOGGER_OAUTH", "NET_BLOGGER_DRAFT", "UPDATE_APPLY")
 # `require_net` 이 아는 용도 이름(이 밖의 이름은 거절한다)
 NET_USES = ("update_check", "pages_site", "pages_branch", "blogger_oauth", "blogger_read", "blogger_draft")
 
@@ -90,6 +93,17 @@ def net_blogger_draft_enabled():
     return NET_BLOGGER_DRAFT is True
 
 
+def update_apply_enabled():
+    """업데이트 설치(설치 도구 넘기기·시작 때 점검 표식)가 열려 있는가(소스 상수가 글자 그대로 True 일 때만)."""
+    return UPDATE_APPLY is True
+
+
+def require_update_apply(operation):
+    """업데이트 설치 진입점의 첫 줄 — 꺼져 있으면 `UPDATE_DISABLED`(아무것도 하지 않는다: 하위 프로세스·파일 쓰기 전)."""
+    if UPDATE_APPLY is not True:
+        raise AppError("UPDATE_DISABLED", {"작업": operation})
+
+
 def open_switch_names():
     """지금 열려 있는(글자 그대로 True) 스위치 이름들 — 읽기만 하는 점검(`doctor` 같은 곳)이 쓴다. 기본 빌드는 빈 튜플이다."""
     return tuple(name for name in SWITCH_NAMES if globals().get(name) is True)
@@ -117,6 +131,6 @@ def require_net(use, operation):
         raise AppError("NETWORK_DISABLED", {"작업": operation})
 
 
-__all__ = ["BLOGGER_OAUTH_INPUT", "EXTERNAL_WRITE", "LOCAL_OCR", "NET_BLOGGER_DRAFT", "NET_BLOGGER_OAUTH", "NET_PAGES_SITE", "NET_UPDATE_CHECK", "NET_USES", "PAGES_BRANCH_PUSH", "SWITCH_NAMES",
+__all__ = ["BLOGGER_OAUTH_INPUT", "EXTERNAL_WRITE", "LOCAL_OCR", "NET_BLOGGER_DRAFT", "NET_BLOGGER_OAUTH", "NET_PAGES_SITE", "NET_UPDATE_CHECK", "NET_USES", "PAGES_BRANCH_PUSH", "SWITCH_NAMES", "UPDATE_APPLY",
            "blogger_oauth_input_enabled", "external_write_enabled", "local_ocr_enabled", "net_blogger_draft_enabled", "net_blogger_oauth_enabled", "net_pages_site_enabled", "net_update_check_enabled",
-           "open_switch_names", "pages_branch_push_enabled", "require_external_write", "require_local_ocr", "require_net"]
+           "open_switch_names", "pages_branch_push_enabled", "require_external_write", "require_local_ocr", "require_net", "require_update_apply", "update_apply_enabled"]

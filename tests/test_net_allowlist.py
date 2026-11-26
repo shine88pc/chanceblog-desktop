@@ -469,7 +469,7 @@ class RegistrationScopeTest(unittest.TestCase):
                         if isinstance(cursor, ast.If) and re.search(r"capabilities\.\w+_enabled\(\)", ast.unparse(cursor.test)):
                             guarded = True
                     calls.append((path.relative_to(SRC).as_posix(), guarded))
-        self.assertEqual(calls, [("service/wiring.py", True), ("service/wiring.py", True)], "어댑터를 꽂는 곳은 wiring.py 의 스위치 `if` 안 두 줄뿐이다")
+        self.assertEqual(calls, [("service/wiring.py", True), ("service/wiring.py", True), ("service/wiring.py", True)], "어댑터를 꽂는 곳은 wiring.py 의 스위치 `if` 안 세 줄뿐이다(UPDATE 갈래가 `update` 종류의 한 줄을 더했다)")
 
     def test_net_client_objects_are_made_in_one_known_place_for_now(self):
         """NT-18(3.11.4 의 4) — 접속 클라이언트 객체(`NetClient(…)`)를 만드는 곳이 `src/` 에 표의 곳뿐이다. 지금은 공개 주소 확인용 fetcher(`net/site.py::site_fetcher`)의 기본값 한 곳이고,
@@ -481,7 +481,8 @@ class RegistrationScopeTest(unittest.TestCase):
                 if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == "NetClient":
                     function = next((outer.name for outer in ast.walk(tree) if isinstance(outer, ast.FunctionDef) and node in ast.walk(outer)), "")
                     found.append((path.relative_to(SRC).as_posix(), function))
-        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher")], "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다")
+        self.assertEqual(sorted(set(found)), [("net/site.py", "site_fetcher"), ("service/wiring.py", "_update_factory")],
+                         "NetClient 를 만드는 곳이 표와 다르다 — 새 곳은 어댑터 공장 안이어야 하고 이 표에 이유와 함께 더한다(`_update_factory`: UPDATE 갈래의 `update` 어댑터 공장 — `NET_UPDATE_CHECK` 가 켜져 꽂혔을 때만 불린다)")
         callers = [path.relative_to(SRC).as_posix() for path in files() if "site_fetcher(" in path.read_text(encoding="utf-8") and path.name != "site.py"]
         self.assertEqual(callers, ["publish/deploy.py"], "site_fetcher 를 부르는 곳은 두 관문을 지난 공개 주소 확인뿐이다")
 

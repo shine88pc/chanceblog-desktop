@@ -13,7 +13,9 @@ from chanceblog_desktop import capabilities  # noqa: E402
 
 _PATCHERS = {"EXTERNAL_WRITE": [], "BLOGGER_OAUTH_INPUT": [], "LOCAL_OCR": [],
              # 인터넷 접속 스위치 다섯(NET, D-720) — 시험이 임시로만 켠다
-             "NET_UPDATE_CHECK": [], "NET_PAGES_SITE": [], "PAGES_BRANCH_PUSH": [], "NET_BLOGGER_OAUTH": [], "NET_BLOGGER_DRAFT": []}
+             "NET_UPDATE_CHECK": [], "NET_PAGES_SITE": [], "PAGES_BRANCH_PUSH": [], "NET_BLOGGER_OAUTH": [], "NET_BLOGGER_DRAFT": [],
+             # 업데이트 설치 스위치(UPDATE 갈래) — 시험이 임시로만 켠다
+             "UPDATE_APPLY": []}
 
 
 def _on(name):

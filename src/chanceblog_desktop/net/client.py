@@ -32,7 +32,7 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from .. import capabilities
 from . import parse as parsing
-from .endpoints import CONNECT_TIMEOUT, ENDPOINTS, IO_TIMEOUT, MAX_BEARER_CHARS, MAX_HEADER_BYTES, MAX_URL_CHARS, user_agent
+from .endpoints import CONNECT_TIMEOUT, ENDPOINTS, IO_TIMEOUT, MAX_BEARER_CHARS, MAX_HEADER_BYTES, MAX_URL_CHARS, USER_AGENT_NAME, user_agent
 from .errors import (REASON_ENCODING, REASON_HASH, REASON_HEADERS, REASON_LENGTH, REASON_REDIRECT, REASON_SHAPE, REASON_TOO_LARGE, NetError, code_for_status, counts_as_failure, from_exception, invalid,
                      program_error, status_error)
 from .usage import SESSION
@@ -248,6 +248,7 @@ class _Plan:
     accept: str                       # 표의 고정 Accept
     cache_control: str                # 표의 Cache-Control(없으면 빈 글)
     keep: tuple                       # 이 용도가 더 고르는 응답 머리글
+    versioned: bool = True            # `User-Agent` 에 버전을 싣는가(표의 `send_version` — 업데이트 확인은 제품 이름만 보낸다)
 
 
 @dataclass(frozen=True)
@@ -334,7 +335,8 @@ def _plan(endpoint, method, url, body, bearer, accept_encoding, limit, *, downlo
     smallest = 1 if download else 0                           # 받을 크기가 0 인 내려받기는 뜻이 없다(빈 파일을 성공으로 남기며 해시 약속을 건너뛰는 길이었다 — D-739)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < smallest or limit > cap or (accept_encoding != "identity" and limit != 0):
         raise program_error(use, "limit")
-    return _Plan(endpoint.host, route, method, parts.path + ("?" + parts.query if parts.query else ""), body, bearer, accept_encoding, limit, endpoint.accept, endpoint.cache_control, endpoint.keep_headers)
+    return _Plan(endpoint.host, route, method, parts.path + ("?" + parts.query if parts.query else ""), body, bearer, accept_encoding, limit, endpoint.accept, endpoint.cache_control, endpoint.keep_headers,
+                 endpoint.send_version)
 
 
 def _redirect_url(endpoint, current_url, location, hops):
@@ -529,7 +531,7 @@ class NetClient:
 
     def _headers(self, plan):
         """우리가 쓰는 머리글의 전부 — 표에 있는 것만(순서도 고정)."""
-        headers = [("Host", plan.host), ("User-Agent", self._agent), ("Accept", plan.accept), ("Accept-Encoding", plan.accept_encoding), ("Connection", "close")]
+        headers = [("Host", plan.host), ("User-Agent", self._agent if plan.versioned else USER_AGENT_NAME), ("Accept", plan.accept), ("Accept-Encoding", plan.accept_encoding), ("Connection", "close")]
         if plan.body is not None:
             headers += [("Content-Type", plan.route.content_type), ("Content-Length", str(len(plan.body)))]
         if plan.bearer:
