@@ -118,6 +118,16 @@ def _check_net():
     return check("인터넷 접속", "ok", "", f"열려 있는 스위치가 없어요 — 앱은 사용자가 누를 때만 접속하고 이 시험 버전에서는 접속이 모두 꺼져 있습니다. 이번 실행의 접속 기록은 {count}건입니다.")
 
 
+def _check_blogger(ctx):
+    """Blogger 접속의 상태 한 줄(BLOGGER 설계서 3.3·B5, D-777) — 입력 칸·로그인·초안 저장의 세 스위치가 닫혀 있는지와 연결 항목 수. **읽기만 한다**(접속하지 않고 보관소·파일도 만들지 않는다).
+    스위치 이름은 이 파일에 쓰지 않고 읽는 함수(`capabilities.…_enabled()`)로만 본다."""
+    opened = [label for label, on in (("입력 칸", capabilities.blogger_oauth_input_enabled()), ("로그인·읽기", capabilities.net_blogger_oauth_enabled()), ("초안 저장", capabilities.net_blogger_draft_enabled())) if on]
+    count = len(connections.load(ctx).of_purpose(connections.BLOGGER_PURPOSE)) if ctx.workspace.connections_path.exists() else 0
+    if opened:
+        return check("Blogger", "warn", "", f"열려 있는 것이 있어요: {', '.join(opened)} — 개발·시험용 빌드입니다(소스 상수를 바꿨습니다). 연결 항목은 {count}개입니다. 초안만 저장하고 공개는 하지 않습니다.")
+    return check("Blogger", "ok", "", f"이 시험 버전에서는 닫혀 있어요 — 로그인·초안 저장이 모두 꺼져 있고 Blogger 로는 아무것도 보내지 않습니다. 저장해 둔 연결 항목은 {count}개입니다.")
+
+
 def _check_git(ctx):
     try:
         done = ctx.git(os.getcwd(), ["--version"])
@@ -316,7 +326,7 @@ def run_doctor(ctx, *, online=False):
     점검은 읽기만 한다 — 글 저장소도 읽기 전용으로 열어(`ctx.reading_only()`) 옛 구조의 파일을 올리거나 사본을 남기지 않고, 파일이 없으면 만들지 않는다."""
     ctx = ctx.reading_only()
     results = []
-    for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("외부 게시", _check_external_write), ("인터넷 접속", _check_net), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
+    for name, work in (("프로그램 버전", _check_version), ("Python", _check_python), ("외부 게시", _check_external_write), ("인터넷 접속", _check_net), ("Blogger", lambda: _check_blogger(ctx)), ("git", lambda: _check_git(ctx)), ("데이터 폴더", lambda: _check_data_dir(ctx)),
                        ("설정 파일", lambda: _check_settings(ctx)), ("연결 설정(키 항목)", lambda: _check_connections(ctx)), ("글 저장소", lambda: _check_store(ctx)), ("백업", lambda: _check_backups(ctx)), ("핵심 코드(vendor/)", _check_core),
                        ("연결한 chanceblog 저장소", lambda: _check_repo(ctx)), ("올리기 권한", lambda: _check_push_access(ctx, online)), ("네이버 프로필", lambda: _check_naver(ctx)),
                        ("이어서 처리할 글", lambda: _check_pending(ctx))):

@@ -22,7 +22,7 @@ from ..publish.gitrepo import EXPECTED_ORIGIN, MAIN, RepoInfo
 from ..security.mask import mask
 
 KIND_PAGES_GIT = "pages_git"                  # 연결한 chanceblog 저장소에 git 으로 올리는 어댑터(`service/backend.py` 의 `GitPagesBackend`)
-KIND_BLOGGER = "blogger"                      # Blogger API 어댑터(없다 — 이 빌드에는 호출 코드가 없다)
+KIND_BLOGGER = "blogger"                      # Blogger API 어댑터(공장은 `service/blogger_flow.py::make_blogger_adapter` — `service/wiring.py` 가 로그인·읽기 스위치가 켜졌을 때만 꽂는다, D-774)
 KIND_NAVER_PUBLISH = "naver_publish"          # 네이버 자동 로그인·게시 어댑터(만들지 않는다 — 네이버는 사람이 직접 글쓰기 페이지에서 올린다)
 KIND_UPDATE = "update"                        # 업데이트 확인·내려받기의 접속 클라이언트 공장(`service/update_flow.py` 가 쓴다 — `NET_UPDATE_CHECK` 스위치가 켜졌을 때만 꽂힌다, UPDATE 갈래)
 KINDS = (KIND_PAGES_GIT, KIND_BLOGGER, KIND_NAVER_PUBLISH, KIND_UPDATE)
@@ -74,6 +74,14 @@ def registered_kinds():
 def adapter_factory(kind):
     """꽂힌 어댑터 공장 — 없으면 None(꽂지 않은 종류는 쓸 수 없다). 읽기만 한다."""
     return _ADAPTERS.get(kind)
+
+
+def blogger_adapter(**parts):
+    """꽂힌 `blogger` 어댑터 공장으로 어댑터를 만든다. **꽂힌 것이 없으면 `NETWORK_DISABLED`** — 이 빌드(스위치가 모두 꺼짐)는 아무것도 꽂지 않아 어디서든 이렇게 거절된다."""
+    factory = _ADAPTERS.get(KIND_BLOGGER)
+    if factory is None:
+        raise AppError("NETWORK_DISABLED", {"작업": "Blogger 접속"})
+    return factory(**parts)
 
 
 def pages_backend(*, git=None, expected_origin=None, fetcher=None, sleep=None, monotonic=None):

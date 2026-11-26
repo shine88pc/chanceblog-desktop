@@ -262,7 +262,7 @@ class ApiHubSpecTest(unittest.TestCase):
         self.assertEqual([(item.key, item.label, item.rotation, item.tiers) for item in ai.providers], [("gemini", "Gemini", "limited", (("default", ()),))])
         blogger = c.PURPOSES["blogger"]
         self.assertEqual([(item.name, item.secret, item.min_len, item.max_len) for item in blogger.fields], [("client_id", False, 20, 128), ("client_secret", True, 8, 128), ("refresh_token", True, 20, 512)])
-        self.assertEqual(([(item.key, item.label, item.rotation, item.tiers) for item in blogger.providers], blogger.identity_field), ([("", "Google", "limited", (("default", ()),))], "client_id"))
+        self.assertEqual(([(item.key, item.label, item.rotation, item.tiers) for item in blogger.providers], blogger.identity_field), ([("", "Google", "never", (("default", (c.Window("day", "day", 30), c.Window("minute", "sliding", 6, 1))),))], "client_id"))
         git = c.PURPOSES["github_repo"]
         self.assertEqual((git.takes_keys, git.fields, [(item.key, item.label, item.rotation, item.tiers) for item in git.providers]), (False, (), [("", "GitHub", "never", (("default", ()),))]))
 

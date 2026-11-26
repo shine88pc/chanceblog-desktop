@@ -27,6 +27,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 
+from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.security import keystore as ks  # noqa: E402
 from chanceblog_desktop.security import shape  # noqa: E402
@@ -59,9 +60,9 @@ NEIGHBORS = (("", ""), ("키는", "입니다"), ("(", ")"), ('"', '"'), ("'", "'
 
 
 def values(purpose, seed="a"):
-    """용도의 모든 칸에 넣을 가짜 값 — seed 가 다르면 값이 다르고 칸마다 다르다. 모든 칸이 최소 길이를 넘고 끝 4자는 `TAIL`."""
+    """용도의 모든 **입력 칸**에 넣을 가짜 값 — seed 가 다르면 값이 다르고 칸마다 다르다. 모든 칸이 최소 길이를 넘고 끝 4자는 `TAIL`. (Blogger 의 갱신용 값은 입력 칸이 아니라 로그인이 쓴다 — D-775)"""
     found = {}
-    for index, item in enumerate(c.PURPOSES[purpose].fields):
+    for index, item in enumerate(c.PURPOSES[purpose].entered_fields()):
         body = (f"{seed}{index}Zk3") * 40
         found[item.name] = body[: item.min_len + 3] + TAIL
     return found
@@ -227,9 +228,11 @@ class RegistryTest(Base):
         old = c.PURPOSES["naver_openapi"].providers[0]                            # 옛 용도의 정의는 그대로 남아 있다(옛 파일을 읽고 보여 주려고)
         self.assertEqual((old.key, old.rotation, old.windows()), ("", "limited", (c.Window("day", "day", 25000),)))
         self.assertEqual(ss.generic_registry()["naver_openapi"].providers[0].windows(), (c.Window("day", "day", 25000),))      # 시험용으로 되살린 옛 첫 용도도 같은 하루 창이다
-        for purpose in ("naver_searchad", "ai_assist", "blogger"):
+        for purpose in ("naver_searchad", "ai_assist"):
             with self.subTest(purpose=purpose):
                 self.assertEqual(c.PURPOSES[purpose].providers[0].windows(), ())
+        blogger = c.PURPOSES["blogger"].providers[0]                              # Blogger(D-775) — 항목마다 하루 30회·1분 6회를 앱이 스스로 두고, 영문·한글은 다른 블로그라서 항목끼리 넘어가지 않는다
+        self.assertEqual((blogger.key, blogger.rotation, blogger.windows()), ("", "never", (c.Window("day", "day", 30), c.Window("minute", "sliding", 6, 1))))
 
     def test_fallback_providers_are_empty_by_default_and_every_purpose_works_without_a_key(self):
         for purpose, spec in c.PURPOSES.items():
@@ -430,9 +433,13 @@ class AddEntryTest(Base):
         import hashlib
         secrets = []
         for purpose in ("naver_apihub", "naver_searchad", "image_provider", "ai_assist", "blogger"):
-            self.add(purpose, name="기본", seed="q", project="앱")
+            self.add(purpose, name="영문" if purpose == "blogger" else "기본", seed="q", project="앱")
             spec = c.PURPOSES[purpose]
-            secrets += [(purpose, item.name, values(purpose, "q")[item.name]) for item in spec.fields if item.secret]
+            secrets += [(purpose, item.name, values(purpose, "q")[item.name]) for item in spec.entered_fields() if item.secret]
+            if purpose == "blogger":                                                   # 로그인이 더하는 갱신용 값도 같은 보관소 묶음에만 있고 파일에는 그것에서 만든 것이 없다(D-775)
+                refresh = "1//0" + "Zk3" + "q" * 40 + TAIL
+                c.attach_refresh_token(self.ctx, c.load(self.ctx).of_purpose("blogger")[0], refresh, keystore=self.ctx.keystore)
+                secrets.append((purpose, "refresh_token", refresh))
         text = self.file_path().read_text(encoding="utf-8")
         self.assertGreaterEqual(len(secrets), 7)
         checked = 0
@@ -537,17 +544,50 @@ class RejectionTest(Base):
         registry = ss.generic_registry()                       # 현재 용도 6개 + 옛 첫 용도(`naver_openapi`)를 새 항목을 받는 시험용으로 되살린 것 — 옛 용도의 칸 길이도 그대로 지킨다
         self.assertEqual(list(registry), list(c.PURPOSES))
         for purpose, spec in registry.items():
-            for item in spec.fields:
+            for item in spec.entered_fields():                                   # 입력 칸만 — Blogger 의 갱신용 값은 사용자가 넣을 수 없다(아래에서 따로 거절을 확인한다)
                 for length, accepted in ((item.min_len - 1, False), (item.min_len, True), (item.max_len, True), (item.max_len + 1, False)):
                     with self.subTest(purpose=purpose, field=item.name, length=length):
                         ctx = self.new_ctx()
                         fields = {**values(purpose), item.name: "a" * length}
+                        name = "영문" if purpose == "blogger" else "기본"
                         if accepted:
-                            self.assertEqual(c.add_entry(ctx, purpose, name="기본", fields=fields, registry=registry).entry.purpose, purpose)
+                            self.assertEqual(c.add_entry(ctx, purpose, name=name, fields=fields, registry=registry).entry.purpose, purpose)
                         else:
-                            error = self.assert_rejected("KEY_INVALID_SHAPE", purpose, ctx=ctx, name="기본", fields=fields, registry=registry)
+                            error = self.assert_rejected("KEY_INVALID_SHAPE", purpose, ctx=ctx, name=name, fields=fields, registry=registry)
                             self.assertEqual(error.slots["항목"], item.label)
                             self.assertIn("최소" if length < item.min_len else "최대", error.slots["이유"])
+
+    def test_blogger_takes_only_its_two_input_fields_and_never_a_refresh_token_from_the_user(self):
+        """D-775 — 갱신용 값은 입력 칸이 아니다: 사용자가 넣으려 하면 '이 용도에 없는 칸' 으로 거절하고, 빠뜨린 입력 칸은 '빠진 칸' 으로 거절한다."""
+        registry = ss.generic_registry()
+        good = values("blogger")
+        self.assertEqual(sorted(good), ["client_id", "client_secret"])
+        for label, fields, word in (("갱신용 값을 더함", {**good, "refresh_token": "a" * 40}, "이 용도에 없는"), ("시크릿 빠짐", {"client_id": good["client_id"]}, "빠진 칸")):
+            with self.subTest(case=label):
+                ctx = self.new_ctx()
+                error = self.assert_rejected("KEY_INVALID_SHAPE", "blogger", ctx=ctx, name="영문", fields=fields, registry=registry)
+                self.assertIn(word, error.slots["이유"])
+                self.assertEqual(ctx.keystore.list_refs(), [], "보관소에 아무것도 쓰지 않았다")
+
+    def test_blogger_entry_names_are_english_or_korean_only_so_a_slot_is_found_by_name(self):
+        """D-775 — 슬롯(영문·한글 블로그)은 항목 이름으로 찾는다: 다른 이름은 거절하고(키를 묻기 전이 아니라 자리 확인 뒤), 둘이 겹치면 기존 `KEY_DUPLICATE`, 이름 바꾸기도 같은 규칙이다."""
+        registry = ss.generic_registry()
+        for bad in ("기본", "English", "영어", "한국어", "블로그", "영문1", "영문·한글", "한글 영문"):
+            with self.subTest(name=bad):
+                ctx = self.new_ctx()
+                error = self.assert_rejected("KEY_INVALID_SHAPE", "blogger", ctx=ctx, name=bad, fields=values("blogger"), registry=registry)
+                self.assertEqual((error.slots["항목"], error.slots["이유"]), ("이름", c.BLOGGER_NAME_RULE))
+        self.assert_rejected("KEY_INVALID_SHAPE", "blogger", ctx=self.new_ctx(), name="영문 ", fields=values("blogger"), registry=registry)                  # 앞뒤 공백은 이름 모양 검사가 먼저 거절한다
+        ctx = self.new_ctx()
+        first = c.add_entry(ctx, "blogger", name="영문", fields=values("blogger", "a"), registry=registry)
+        self.assert_rejected("KEY_DUPLICATE", "blogger", ctx=ctx, name="영문", fields=values("blogger", "c"), registry=registry)
+        c.add_entry(ctx, "blogger", name="한글", fields=values("blogger", "b"), registry=registry)
+        with self.assertRaises(AppError) as caught:
+            c.rename_entry(ctx, first.entry.entry_id, "기본", registry=registry)
+        self.assertEqual(caught.exception.code, "KEY_INVALID_SHAPE")
+        self.assertEqual(c.rename_entry(ctx, first.entry.entry_id, "영문", registry=registry)[1], "영문", "같은 이름으로는 바뀌는 것이 없다")
+        other = self.new_ctx()
+        self.assertEqual(c.add_entry(other, "image_provider", name="아무 이름", fields=values("image_provider"), registry=registry).entry.name, "아무 이름", "다른 용도의 이름 규칙은 그대로다")
 
     def test_field_names_must_match_the_purpose_exactly(self):
         good = values("naver_apihub")
@@ -969,6 +1009,21 @@ class ListAndStatusTest(Base):
         for label, changes in {"시험한 적 없음": {}, "오류 기록": {"check_result": "error", "last_ok_at": recent}, "성공 시각 없음": {"check_result": "ok"}}.items():
             with self.subTest(case=label):
                 self.assertEqual(status(self.entry_with(**changes)), "needs_check")
+
+    def test_the_blogger_purpose_counts_as_implemented_only_while_the_login_and_read_switch_is_on(self):
+        """재작업 1 시험 렌즈 Q 권고 R4 — Blogger 는 표의 `implemented`(False — 이 빌드는 호출 코드를 켜지 않는다)가 아니라 로그인·읽기 스위치(`NET_BLOGGER_OAUTH`)로 '구현됨' 이 된다(`is_implemented`):
+        스위치가 꺼져 있으면 시험 성공 기록이 유효해도 '연결 확인 필요', 켜면 '연결됨'. 다른 용도는 스위치와 상관없이 표의 값 그대로이고, 표가 True 인 용도는 스위치가 꺼져 있어도 구현됨이다."""
+        blogger, plain = c.PURPOSES["blogger"], c.PURPOSES["image_provider"]
+        self.assertFalse(blogger.implemented)
+        self.assertFalse(plain.implemented)
+        now, recent = self.ctx.now(), self.ctx.stamp()
+        entry = self.entry_with(check_result="ok", last_ok_at=recent, checked_at=recent)
+        for switch, expected in ((False, "needs_check"), (True, "connected")):
+            with self.subTest(switch=switch), mock.patch.object(capabilities, "NET_BLOGGER_OAUTH", switch):
+                self.assertEqual((c.is_implemented(blogger), c.entry_status(entry, blogger, now=now)), (switch, expected))
+                self.assertEqual((c.is_implemented(plain), c.entry_status(entry, plain, now=now)), (False, "needs_check"), "다른 용도는 스위치와 상관없다")
+                self.assertTrue(c.is_implemented(dataclasses.replace(plain, implemented=True)), "표의 값이 참이면 스위치와 상관없이 구현됨")
+                self.assertTrue(c.is_implemented(dataclasses.replace(blogger, implemented=True)))
 
     def test_a_successful_test_counts_for_exactly_twenty_four_hours(self):
         impl = dataclasses.replace(c.PURPOSES["image_provider"], implemented=True)
