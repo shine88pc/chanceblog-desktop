@@ -41,9 +41,9 @@ def piece(*parts):
 
 
 def fake_fields(purpose, seed="a"):
-    """용도의 모든 칸에 넣을 가짜 값(칸마다·seed 마다 다르고 최소 길이를 넘는다)."""
+    """용도의 모든 **입력 칸**에 넣을 가짜 값(칸마다·seed 마다 다르고 최소 길이를 넘는다 — Blogger 의 갱신용 값은 로그인이 쓰는 칸이라 입력이 아니다, D-775)."""
     found = {}
-    for index, item in enumerate(c.PURPOSES[purpose].fields):
+    for index, item in enumerate(c.PURPOSES[purpose].entered_fields()):
         body = piece(seed, str(index), "Zk3x9Qm7") * 40
         found[item.name] = body[: item.min_len + 4]
     return found

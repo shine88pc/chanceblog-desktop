@@ -149,6 +149,7 @@ PySide6 가 없는 PC 에서 `gui` 를 실행하면 설치 방법을 쉬운 한�
 | [`docs/RELEASE.md`](docs/RELEASE.md) | 설치 파일·자동 업데이트·릴리스 절차 |
 | [`docs/PACKAGE.md`](docs/PACKAGE.md) · [`docs/PERSONAL_PC_TEST.md`](docs/PERSONAL_PC_TEST.md) | 개인 PC 제한 시험용 Package 만들기(개발자용)와 운영자가 개인 PC 에서 해 보는 시험지 |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | 키·로그·업데이트 보안 |
+| [`docs/BLOGGER_SETUP.md`](docs/BLOGGER_SETUP.md) | Blogger 초안 저장 — 운영자가 구글 클라우드에서 할 일·앱에서 하는 순서·실기 시험·켜는 변경(지금은 스위치가 모두 꺼진 채 구현·검증까지) |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | 회사 PC → 개인 PC 이관과 새 PC 준비 |
 | [`docs/UI_DESIGN_SPEC.md`](docs/UI_DESIGN_SPEC.md) · [`UI_COMPONENTS.md`](docs/UI_COMPONENTS.md) · [`UI_STATES.md`](docs/UI_STATES.md) · [`UI_ICONS.md`](docs/UI_ICONS.md) · [`UI_IMAGES.md`](docs/UI_IMAGES.md) · [`UI_VISUAL_QA.md`](docs/UI_VISUAL_QA.md) | 화면(GUI) 설계 값·부품·상태·아이콘·사진 규칙·사진 검수 |
 | [`CHANGELOG.md`](CHANGELOG.md) · `VERSION` | 변경 이력과 현재 버전 |

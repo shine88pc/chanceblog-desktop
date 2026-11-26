@@ -10,8 +10,8 @@
 (`probe_scanner.py` 의 목록)이 모두 잡히고 지금 소스는 위반이 0 이다.
 
 덧붙임(NET 갈래, D-735 — 운영자 확인 038 ①): 허용 목록을 **범주 표**로 쪼갰다(`ALLOWED_GIT_WRITE`·`ALLOWED_LOCAL_WORKER`·`ALLOWED_BROWSER`·`ALLOWED_NET_CLIENT`·`ALLOWED_LOOPBACK`) — 뒤 갈래가 같은 줄을 고쳐 병합 충돌을 내지 않고 **자기 범주 표에 한 줄**만 더하게 하려는 것이다.
-`ALLOWED` 는 다섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 6곳: 1 + 1 + 2 + 2 + 0). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
-`http`·`ssl` 은 `net/client.py` 한 파일에만, `socket` 은 `net/loopback.py` 한 파일에만(지금은 0곳) 허용되며 `urllib`(`parse` 말고) 항목과 그 밖의 하위 프로세스 항목은 여전히 허용 표에 없다.
+`ALLOWED` 는 다섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 7곳: 1 + 1 + 2 + 2 + 1 — BLOGGER 갈래가 루프백 한 줄을 더했다, D-771). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
+`http`·`ssl` 은 `net/client.py` 한 파일에만, `socket` 은 `net/loopback.py` 한 파일에만(지금 1곳) 허용되며 `urllib`(`parse` 말고) 항목과 그 밖의 하위 프로세스 항목은 여전히 허용 표에 없다.
 """
 import ast
 import sys
@@ -26,6 +26,10 @@ SRC = ss.ROOT / "src" / "chanceblog_desktop"
 OUTGOING_MODULES = {"subprocess", "socket", "ssl", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "requests", "asyncio", "webbrowser", "socketserver", "imaplib", "poplib", "multiprocessing",
                     # AS-S1 2차 권고-3(D-619) — 같은 길의 안쪽 이름·옛 모듈: C 쪽 소켓·TLS·프로세스 모듈, 가져오기만 해도 브라우저를 여는 `antigravity`, 파이썬 3.10 의 `asyncore`·`smtpd`(3.12 에서 없어졌어도 3.10 칸이 돈다)
                     "_socket", "_ssl", "_multiprocessing", "antigravity", "asyncore", "smtpd"}
+# BLOGGER 재작업 1(안전 검증 S 의 참고-13, D-780) — 이름 목록 밖이던 서버·바깥 모듈: 새 파일이 `wsgiref.simple_server` 로 모든 주소를 듣는 서버를 열어도 이 시험이 빨개지지 않았다. 표준 라이브러리의 서버·클라이언트(`wsgiref`·`nntplib`·`pydoc` 은 작은 웹 서버를 띄울 수 있다)와
+# 흔한 바깥 라이브러리 이름이다 — 앱이 쓰는 의존성이 아니라서 소스에 하나라도 생기면 허용 목록 시험이 빨개진다(회귀 그물일 뿐, 일부러 숨기는 코드를 막는 방어가 아니다).
+EXTRA_OUTGOING_MODULES = {"wsgiref", "nntplib", "pydoc", "urllib3", "httpx", "aiohttp", "websockets", "paramiko", "pycurl", "tornado", "twisted", "gevent", "grpc", "zmq", "flask", "fastapi", "uvicorn"}
+OUTGOING_MODULES |= EXTRA_OUTGOING_MODULES
 OUTGOING_OS = {"system", "popen", "startfile", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe", "posix_spawn", "posix_spawnp"}
 QT_NAMES = {"QDesktopServices", "QNetworkAccessManager", "QTcpSocket", "QUdpSocket", "QWebEngineView", "QWebSocket"}
 QT_MODULES = {"QtNetwork", "QtWebEngineCore", "QtWebEngineWidgets", "QtWebChannel", "QtWebSockets", "QtHttpServer"}
@@ -56,7 +60,9 @@ ALLOWED_NET_CLIENT = {                      # 정확히 2곳 — 새 인터넷 �
     ("net/client.py", "http"): "보안 접속 클라이언트가 `http.client` 로 요청 한 건을 보내는 유일한 곳(`NetClient`) — 공개 함수의 첫 문장이 `capabilities.require_net` 관문이고 호스트·길·머리글·크기·시간·이동은 `net/endpoints.py` 의 소스 표가 정하며 스위치가 모두 꺼진 이 빌드에서는 만들어지지도 않는다",
     ("net/client.py", "ssl"): "같은 클라이언트의 TLS 환경(`_make_context`) — 인증서 검증 필수·호스트 이름 확인·최소 TLS 1.2 이고 `capabilities.require_net` 관문 뒤에서만 쓰인다(검증을 끄거나 낮추는 이름은 소스 어디에도 없다)",
 }
-ALLOWED_LOOPBACK = {}                       # 정확히 0곳 — BLOGGER 갈래가 `net/loopback.py` · `socket` 한 줄을 더해 정확히 1곳이 된다(로그인 코드를 받으려 이 PC 안에서만 듣는다 — 관문 `require_net("blogger_oauth", …)`)
+ALLOWED_LOOPBACK = {                        # 정확히 1곳 — BLOGGER 갈래(D-771)가 더했다
+    ("net/loopback.py", "socket"): '로그인 코드를 받으려고 이 PC 안(127.0.0.1)에서 **한 번만** 듣는 유일한 곳 — `capabilities.require_net("blogger_oauth", …)` 가 공개 함수의 첫 문장이고 바깥 주소로 나가는 연결은 만들지 않으며 주소는 글자 `127.0.0.1` 하나뿐이다',
+}
 ALLOWED_CATEGORIES = {"git_write": ALLOWED_GIT_WRITE, "local_worker": ALLOWED_LOCAL_WORKER, "browser": ALLOWED_BROWSER, "net_client": ALLOWED_NET_CLIENT, "loopback": ALLOWED_LOOPBACK}
 ALLOWED = {**ALLOWED_GIT_WRITE, **ALLOWED_LOCAL_WORKER, **ALLOWED_BROWSER, **ALLOWED_NET_CLIENT, **ALLOWED_LOOPBACK}
 
@@ -506,6 +512,41 @@ class BypassShapesTest(unittest.TestCase):
         text = (ss.ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
         self.assertIn("정직한 코드의 회귀 그물", text)
         self.assertIn("**의도적** 우회는 막지 못하고", text, "옛 한계(D-359)는 그대로 남는다")
+
+
+class NamedServerModulesTest(unittest.TestCase):
+    """BLOGGER 재작업 1(D-780) — 이름 목록에 더한 서버·바깥 모듈을 탐지기가 모든 가져오기 모양에서 이름으로 알아보고, 지금 소스(와 vendor)에는 하나도 없다."""
+
+    @staticmethod
+    def names_of(source):
+        return {name for node in ast.walk(ast.parse(source)) for name in outgoing_names(node)}
+
+    def test_each_added_name_is_seen_in_every_import_shape(self):
+        for name in sorted(EXTRA_OUTGOING_MODULES):
+            for source in (f"import {name}\n", f"import {name}.sub\n", f"from {name} import thing\n", f"from {name}.sub import thing\n", f"import {name} as alias\n"):
+                with self.subTest(source=source.strip()):
+                    self.assertEqual(self.names_of(source), {name})
+
+    def test_a_new_file_that_opens_a_server_with_one_of_them_is_not_in_the_allowed_list(self):
+        """안전 검증 S 의 S-M10 — 새 파일이 서버를 여는 모양(`wsgiref.simple_server`)이 허용 목록에 없는 곳으로 잡힌다."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a").mkdir()
+            (root / "a" / "server.py").write_text("import wsgiref.simple_server\n\n\ndef serve():\n    return wsgiref.simple_server.make_server('', 0, None)\n", encoding="utf-8")
+            (root / "a" / "fine.py").write_text("import json\nimport os\nos.getcwd()\n", encoding="utf-8")
+            self.assertEqual(sorted(found_outgoing(root=root)), [("a/server.py", "wsgiref")])
+
+    def test_no_source_file_or_vendor_script_uses_them_today_and_the_names_are_in_the_list(self):
+        self.assertTrue(EXTRA_OUTGOING_MODULES <= OUTGOING_MODULES)
+        self.assertTrue({"wsgiref", "nntplib", "pydoc", "urllib3", "httpx", "aiohttp", "websockets", "paramiko"} <= OUTGOING_MODULES, "표준 라이브러리의 서버·클라이언트와 흔한 바깥 라이브러리 이름은 목록에 남아 있어야 한다(목록에서 이름을 빼도 시험이 따라 줄지 않게 글자로 못박는다)")
+        self.assertEqual(sorted(key for key in found_outgoing() if key[1] in EXTRA_OUTGOING_MODULES), [])
+        self.assertEqual(sorted(key for key in found_outgoing(root=ss.ROOT / "vendor") if key[1] in EXTRA_OUTGOING_MODULES), [])
+
+    def test_ordinary_look_alike_names_are_not_flagged(self):
+        for source in ("import json\nimport html\n", "from pathlib import Path\n", "x = object()\nx.wsgiref_name\n", "import wsgiref_helper_that_is_not_the_module\n", "from . import helpers\n"):
+            with self.subTest(source=source.strip()[:40]):
+                self.assertEqual(self.names_of(source), set())
 
 
 if __name__ == "__main__":

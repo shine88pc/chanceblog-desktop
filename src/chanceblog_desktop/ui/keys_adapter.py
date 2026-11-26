@@ -45,7 +45,7 @@ def problems_of(error, spec):
     """서비스 오류 → `{입력 칸 이름: 문제 이름}`(없으면 빈 dict). 칸은 서비스가 알려 준 항목 이름('이름'·칸 화면 이름)으로 찾는다."""
     slots = error.slots or {}
     if error.code == "KEY_TOO_LONG":
-        return {item.name: "long" for item in spec.fields}
+        return {item.name: "long" for item in spec.entered_fields()}
     if error.code == "KEY_DUPLICATE":
         return {"value": "duplicate"} if slots.get("항목") == "같은 값" else {"name": "duplicate"}
     if error.code != "KEY_INVALID_SHAPE":
@@ -53,7 +53,7 @@ def problems_of(error, spec):
     item, code = slots.get("항목", ""), reason_code(slots.get("이유", ""))
     if item in ITEM_ALIAS:
         return {"name": code}
-    named = {field.label: field.name for field in spec.fields}
+    named = {field.label: field.name for field in spec.entered_fields()}
     return {named[item]: code} if item in named else {}
 
 

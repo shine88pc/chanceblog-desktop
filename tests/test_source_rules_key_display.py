@@ -112,5 +112,65 @@ class KeyDisplayRulesTest(unittest.TestCase):
         self.assertEqual((len(names), len(stars), len(cuts)), (1, 2, 1))
 
 
+# 값 객체 `Secret` 이 보관소 값 묶음에 값을 넘겨 주는 문 `into(값 묶음, 이름)` — `reveal(` 과 같은 효력이라(값이 사전으로 나간다) 같은 허용 목록 방식으로 막는다(재작업 1 권고-3, 안전 검증 S).
+# 허용은 (파일, 함수) 쌍이다 — 서비스·화면·보안 소스 어디서든 이 이름을 부르거나 가리키거나 글자로 넘기는 곳은 이 한 곳뿐이다.
+ALLOWED_INTO = {("service/connections.py", "attach_refresh_token"): "로그인이 받은 갱신용 값을 같은 보관소 값 묶음에 한 칸으로 더하는 유일한 곳 — 서비스 층이 값을 꺼내는 호출(`reveal`)을 하지 않으려고 값 객체가 사전에 직접 넣는 문이다"}
+
+
+def scopes(tree):
+    """(범위 이름, 그 안의 모든 노드) 들 — 범위는 맨 바깥 함수·메서드('클래스.메서드')이고 그 밖의 모듈 맨 위 줄은 '(모듈)' 이다."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node.name, ast.walk(node)
+        elif isinstance(node, ast.ClassDef):
+            for member in node.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield f"{node.name}.{member.name}", ast.walk(member)
+                else:
+                    yield "(모듈)", ast.walk(member)
+        else:
+            yield "(모듈)", ast.walk(node)
+
+
+def into_scopes(tree):
+    """그 소스에서 `into` 를 쓰는 범위들 — 호출(`x.into(…)`)만이 아니라 가리키기(`f = x.into`)·글자로 꺼내기(`getattr(x, "into")`·`hasattr`)·가져오기(`from m import into`)·이름 자체도 센다."""
+    found = set()
+    for scope, nodes in scopes(tree):
+        for node in nodes:
+            if (isinstance(node, ast.Attribute) and node.attr == "into") or (isinstance(node, ast.Name) and node.id == "into") or (isinstance(node, ast.Constant) and node.value == "into") \
+                    or (isinstance(node, ast.alias) and node.name == "into") or (isinstance(node, ast.keyword) and node.arg == "into") or (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "into"):
+                found.add(scope)
+    return found
+
+
+class SecretHandoverRuleTest(unittest.TestCase):
+    """재작업 1 권고-3 — `Secret.into` 는 `reveal(` 금지 규칙(위 규칙 4)이 보지 않던 새 문이었다: `service/`·`ui/` 가 앞으로 `secret.into({}, "x")` 로 값을 꺼내도 규칙이 빨개지지 않았다."""
+
+    def test_the_value_object_hands_its_value_over_only_where_the_allow_list_says(self):
+        found = set()
+        for path, tree in files():
+            rel = path.relative_to(SRC).as_posix()
+            found |= {(rel, scope) for scope in into_scopes(tree)}
+        self.assertEqual(found, set(ALLOWED_INTO), "`into` 를 쓰는 곳이 허용 목록과 다르다 — 새로 생겼거나 사라졌다. 값을 꺼내는 길이라 `reveal(` 처럼 막는다")
+
+    def test_the_allowance_has_a_reason_and_the_allowed_function_really_uses_it(self):
+        for key, reason in ALLOWED_INTO.items():
+            self.assertGreater(len(reason), 15, key)
+        rel, function = next(iter(ALLOWED_INTO))
+        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        self.assertEqual({scope for scope in into_scopes(tree)}, {function}, "허용한 함수가 정말 이 문을 쓴다(낡은 허용을 남기지 않는다)")
+
+    def test_the_rule_would_catch_every_shape_of_the_door(self):
+        """대조 — 규칙이 헛돌지 않는다: 합성 소스에서 같은 함수로 찾아 본다(평범한 코드는 걸리지 않는다)."""
+        shapes = {"호출": "def put(secret, values):\n    secret.into(values, 'x')\n", "가리키기": "def put(secret):\n    return secret.into\n", "글자로 꺼내기": "def put(secret, values):\n    getattr(secret, 'into')(values, 'x')\n",
+                  "가져오기": "from m import into\n", "정의": "class Box:\n    def into(self, values, name):\n        pass\n", "이름 인자": "def go(**kw):\n    return kw\ngo(into=1)\n"}
+        for label, source in shapes.items():
+            with self.subTest(label=label):
+                self.assertTrue(into_scopes(ast.parse(source)), label)
+        for label, source in {"into 가 든 낱말": "def go(x):\n    return x.intolerance, 'into the woods', x.into_value\n", "그냥 코드": "import json\njson.dumps({'a': 1})\n"}.items():
+            with self.subTest(label=label):
+                self.assertEqual(into_scopes(ast.parse(source)), set(), label)
+
+
 if __name__ == "__main__":
     unittest.main()
