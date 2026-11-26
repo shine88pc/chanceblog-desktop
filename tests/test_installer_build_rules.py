@@ -769,6 +769,12 @@ class BuildFlowTest(FlowBase):
         with self.assertRaises(mm.BuildRefused):
             bi.build(bi.Options(out_dir=self.out, icon=str(Path(self.work.name) / "none.ico")), host=bs.FakeHost(), say=self.lines.append)
 
+    def test_a_bogus_low_file_version_of_a_shim_does_not_stop_the_build_when_the_compiler_names_its_own_version(self):
+        """바로가기·껍데기 파일의 버전 자원이 엉뚱한 낮은 값이어도(컴파일 전에는 파일 판을 판정에 쓰지 않는다) 컴파일러가 컴파일 출력에서 밝힌 판이 최종 판정이다."""
+        host, result = self.run_build(host=bs.FakeHost(file_versions=("1.0.0.0", "1.0.0.0")))
+        self.assertEqual(len(host.calls), 1)
+        self.assertEqual(result["installer"]["tool_version"], "6.7.1")
+
     def test_running_twice_replaces_the_installer_columns_instead_of_stacking_them(self):
         self.run_build()
         first = (self.release / "PACKAGE_INFO.json").read_bytes()

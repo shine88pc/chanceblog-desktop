@@ -522,13 +522,6 @@ def _remove(path):
         shutil.rmtree(path, onerror=writable)
 
 
-def _write_atomic(path, data):
-    path = Path(path)
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_bytes(data)
-    os.replace(temp, path)
-
-
 def build(options, *, host=None, say=print, iss_path=None):
     """전체 순서. `host` 로 바깥 세계(도구 찾기·ISCC 실행)를 바꿔 끼울 수 있다(시험용). 돌려주는 값: 만든 것들의 사전. 거절·실패는 `BuildRefused`이고 그때 release 폴더에는 새 설치 파일이 나오지 않는다."""
     host = host or Host()
@@ -554,9 +547,9 @@ def build(options, *, host=None, say=print, iss_path=None):
         raise mm.BuildRefused("기본 설치 폴더와 데이터 폴더가 겹쳐요 — " + overlap)
     say(f"[4/{STEPS}] Inno Setup 컴파일러 찾기와 판 확인")
     iscc = find_iscc(host, options.iscc)
-    before = read_inno_version(host, iscc)
-    if before["numbers"]:
-        judge_inno_version(before)
+    before = registry_version(host.registry_entries(), iscc)                                  # 컴파일 전에 믿을 만한 것은 이 컴파일러가 든 폴더의 레지스트리 항목뿐이다(파일 판은 바로가기·껍데기 파일이면 엉뚱한 값일 수 있다) — 최종 판정은 컴파일 출력이 밝힌 판이다
+    if before:
+        judge_inno_version({"numbers": before, "reason": ""})
     icon = options.icon or (str(HERE / ICON_NAME) if host.is_file(HERE / ICON_NAME) else None)
     if icon is not None and not host.is_file(icon):
         raise mm.BuildRefused("--icon 으로 준 아이콘 파일이 없어요.")
@@ -567,7 +560,7 @@ def build(options, *, host=None, say=print, iss_path=None):
     try:
         _remove(stage)
         stage.mkdir(parents=True)
-        say(f"[5/{STEPS}] 컴파일(ISCC) — 보통 30초 안팎 · 컴파일 전에 읽은 판: " + (".".join(str(part) for part in before["numbers"]) if before["numbers"] else "아직 읽지 못함(컴파일 출력에서 읽어요)"))
+        say(f"[5/{STEPS}] 컴파일(ISCC) — 보통 30초 안팎 · 컴파일 전에 읽은 판: " + (".".join(str(part) for part in before) if before else "아직 읽지 못함(컴파일 출력에서 읽어요)"))
         args = iscc_args(iscc, iss_path, version=version, source_dir=found["bundle"], out_dir=stage, out_base=name[:-len(".exe")], icon=icon)
         result = host.run_iscc(args, timeout=COMPILE_SECONDS, cwd=iss_path.parent)
         if result.error:
