@@ -7,7 +7,7 @@
   3) `naver_profiles.profile_for` 는 설정 파일의 프로필이 먼저이고 없으면 블로그 관리에 등록한 것에서 합쳐 읽는다(읽기만 — 파일을 만들지 않고, 깨진 설정 파일은 숨기지 않는다).
   4) `history.list_history` 는 글 저장소를 한 번 열어 승인 이후 단계의 (글, 플랫폼) 쌍을 읽는다(검토 전 상태만 빼고 모두 — 모르는 새 상태도).
   5) `worklog.read_work_log` 는 작업 로그를 칸으로 쪼개 글자표를 통과한 줄만 내고(키 모양이 든 줄은 건너뛴다) 읽기만 한다.
-     (재작업 1, 독립 검증 S 권고-1·3) `logs` 폴더 자신이 링크(정션·심볼릭)이면 따라가지 않고, 영문·숫자가 24자 이상 이어지는 덩어리가 든 줄(엔진이 모르는 모양의 키를 낱말에 붙여 손으로 고친 줄)은 건너뛴다.
+     (재작업 1, 독립 검증 S 권고-1·3) `logs` 폴더 자신이 링크(정션·심볼릭)이면 따라가지 않고, 영문·숫자·밑줄·붙임표가 24자 이상 이어지는 덩어리가 든 줄(엔진이 모르는 모양의 키를 낱말에 붙여 손으로 고친 줄)은 건너뛴다.
 """
 import ast
 import hashlib
@@ -525,7 +525,7 @@ class WorkLogServiceTest(unittest.TestCase):
     def glued_keys():
         """낱말 바로 뒤에 붙은 키 모양들 — 엔진은 키 앞이 영숫자면 키로 읽지 않아 가리지 않는다(독립 검증 S 의 탐침 모양). 실행 때 조립한다(소스에 키 글자 0)."""
         keys = {"github": "gh" + "p_" + "A" * 36, "groq": "gs" + "k_" + "I" * 44, "huggingface": "hf" + "_" + "N" * 36, "stripe": "sk" + "_live_" + "K" * 28, "aws": "AK" + "IA" + "D" * 16, "nvidia": "nv" + "api-" + "J1" * 25,
-                "google": "AI" + "za" + "B" * 35, "openai-project": "sk-" + "proj-" + "F" * 30, "anthropic": "sk-" + "ant-api03-" + "G" * 30, "slack": "xo" + "xb-" + "123456789012-" + "1234567890123-" + "E" * 24,
+                "google": "AI" + "za" + "B" * 35, "openai-project": "sk-" + "proj-" + "F" * 30, "anthropic": "sk-" + "ant-api03-" + "G" * 30, "slack": "xo" + "xb-" + "1234567890-" + "E" * 20, "slack-real": "xo" + "xb-" + "123456789012-" + "1234567890123-" + "E" * 24,
                 "jwt": "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJ" + "zdWIiOiIxMjM0NTY3ODkw" + "." + "abcdefghijklmnop"}
         return {name: "word" + key for name, key in keys.items()}
 
@@ -542,14 +542,17 @@ class WorkLogServiceTest(unittest.TestCase):
             for start in range(0, len(glued) - 7, 4):
                 self.assertNotIn(glued[start:start + 8], blob, f"{name}: 키의 조각이 결과에 남았다")
 
-    def test_the_limit_is_a_run_of_letters_and_digits_and_the_separators_end_a_run(self):
+    def test_the_limit_is_a_run_of_letters_digits_underscores_and_hyphens_and_dots_colons_and_spaces_end_a_run(self):
         limit = worklog.MAX_CHUNK
         self.assertEqual(limit, 24)
         stamp = "2026-11-24T05:30:12Z"
         short, long_ = "a" * (limit - 1), "a" * limit
-        kept = [f"{stamp} main {name} {place}" for name, place in ((short, "-"), ("KeyError", short + ".py:1"), ("KeyError", "-"), ("KeyError", "_".join(["abcdefgh"] * 5) + ".py:1"), ("KeyError", ".".join(["abcdefgh"] * 5)),
-                                                                   ("KeyError", "-".join(["abcdefgh"] * 5) + ".py:1"), ("Q" + "9" * (limit - 2), "a.py:1"))]
-        skipped = [f"{stamp} main {name} {place}" for name, place in ((long_, "-"), ("KeyError", long_ + ".py:1"), ("KeyError", "x.py:1 < " + long_ + ".py:2"), ("Q" + "9" * (limit - 1), "a.py:1"), ("KeyError", "A1" * 20 + ".py:3"))]
+        kept = [f"{stamp} main {name} {place}" for name, place in ((short, "-"), ("KeyError", short + ".py:1"), ("KeyError", "-"), ("KeyError", ".".join(["abcdefgh"] * 5)), ("KeyError", "_".join(["abcdefgh"] * 2) + ".py:1"),
+                                                                   ("KeyError", "a" * 11 + "_" + "b" * 11 + ".py:1"), ("KeyError", "a" * 11 + "-" + "b" * 11 + ".py:1"), ("KeyError", "abcdefgh.py:1 < abcdefgh.py:2 < " + "x" * (limit - 1) + ".py:3"),
+                                                                   ("Q" + "9" * (limit - 2), "a.py:1"))]
+        skipped = [f"{stamp} main {name} {place}" for name, place in ((long_, "-"), ("KeyError", long_ + ".py:1"), ("KeyError", "x.py:1 < " + long_ + ".py:2"), ("Q" + "9" * (limit - 1), "a.py:1"), ("KeyError", "A1" * 20 + ".py:3"),
+                                                                      ("KeyError", "_".join(["abcdefgh"] * 3) + ".py:1"), ("KeyError", "-".join(["abcdefgh"] * 3)), ("KeyError", "a" * 11 + "_" + "b" * 12 + ".py:1"),
+                                                                      ("KeyError", "a" * 11 + "-" + "b" * 12 + ".py:1"), ("Qt_" + "9" * (limit - 3), "a.py:1"))]
         self.write("errors.log", kept + skipped)
         result = worklog.read_work_log(self.ctx)
         self.assertEqual((len(result.lines), result.skipped), (len(kept), len(skipped)))

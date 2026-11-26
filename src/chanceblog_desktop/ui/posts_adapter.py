@@ -286,7 +286,7 @@ class ServicePostsProvider(PostsProvider):
         return HistoryData(rows, found.unreadable, "ok", False, False)
 
     def load_work_log(self, progress, cancelled):
-        """작업 로그(`logs/errors.log`)의 최근 줄을 읽는다 — 서비스가 칸으로 쪼개 글자표·가리기를 통과한 줄만 준다(D-93). 파일이 없으면 빈 결과이고 만들지 않는다."""
+        """작업 로그(`logs/errors.log`)의 최근 줄을 읽는다 — 서비스가 칸으로 쪼개 글자표·가리기·긴 덩어리 거름을 통과한 줄만 준다(D-93 — 막는 범위는 엔진이 아는 모양과 긴 덩어리까지). 파일이 없으면 빈 결과이고 만들지 않는다."""
         ctx = self._context("read")
         try:
             found = worklog_service.read_work_log(ctx)
