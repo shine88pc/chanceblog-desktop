@@ -282,9 +282,11 @@ class NaverProfilesMergeTest(unittest.TestCase):
         from chanceblog_desktop.content.profiles import POST_TYPES
         ChannelFile.register(self.ctx, "naver_a", display_name="에이 블로그", blog_ref="exampleid", main_topics=["생활", "절약"], audience="직장인", tone="차분한 말투")
         without = naver_profiles.profile_for(self.ctx, "naver_a")
-        ChannelFile.register(self.ctx, "naver_a", priority_keywords=["난방비", "전기요금"], exclude_keywords=["에너지", "절약"], preferred_post_types=[POST_TYPES[0]])
+        kinds = [kind for kind in POST_TYPES if kind != without.post_type][:2]                      # 프로필의 기본 글 유형과 다른 것 — 기본값과 같으면 옮겨 읽어도 티가 나지 않는다
+        self.assertEqual(len(kinds), 2)
+        ChannelFile.register(self.ctx, "naver_a", priority_keywords=["난방비", "전기요금"], exclude_keywords=["에너지", "절약"], preferred_post_types=kinds)
         channel = next(item for item in blog_profiles.read_snapshot(self.ctx).profiles if item.key == "naver_a")
-        self.assertEqual((channel.priority_keywords, channel.exclude_keywords, channel.preferred_post_types), (("난방비", "전기요금"), ("에너지", "절약"), (POST_TYPES[0],)), "세 칸은 저장돼 있다")
+        self.assertEqual((channel.priority_keywords, channel.exclude_keywords, channel.preferred_post_types), (("난방비", "전기요금"), ("에너지", "절약"), tuple(kinds)), "세 칸은 저장돼 있다")
         merged = naver_profiles.profile_for(self.ctx, "naver_a")
         self.assertEqual(merged, without, "세 칸을 채워도 합친 프로필은 그대로다")
         self.assertEqual(merged.excluded_topics, (), "프로필의 제외 주제는 설정 파일의 프로필을 쓰는 사람만 채운다")
