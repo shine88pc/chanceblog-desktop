@@ -4,7 +4,8 @@
 
   build_branch_commit  글 검사(경로·머리말·제어 문자·키 모양 문자열) → 연결 확인 → 원격 main 받기(원격 추적 참조만 바뀐다) → 같은 글이 이미 있는지 → **객체만** 만든다
                 (`hash-object`·`mktree`·`commit-tree`). 작업 폴더의 파일·색인·로컬 가지·HEAD 는 한 바이트도 바뀌지 않는다. 만든 커밋은 받은 원격 main 위에 글 파일 하나를 더한 것이다.
-  push_branch          그 커밋을 `desktop/post-…` 모양의 **새 가지 하나**에 올린다. 같은 가지가 이미 원격에 있고 끝이 같으면 아무것도 보내지 않고 이어 간다(멱등), 끝이 다르면 덮어쓰지 않고 거절한다.
+  push_branch          그 커밋을 `desktop/post-…` 모양의 **새 가지 하나**에 올린다. 올리기 직전에 원격 main 을 다시 받아(읽기) 만든 커밋의 부모가 거기서 닿는지 본다 — main 의 이력이 다시 쓰여 닿지 않으면 보내지 않는다(지운 옛 이력이 새 공개 가지로
+                되살아나는 길). 같은 가지가 이미 원격에 있고 끝이 같으면 아무것도 보내지 않고 이어 간다(멱등), 끝이 다르면 덮어쓰지 않고 거절한다.
   post_on_main         병합 확인 — 원격 main 에 그 경로로 **한 글자도 다르지 않은** 글이 있는지만 읽는다(병합 방식은 가리지 않는다).
   compare_link         GitHub 비교 화면 주소(글자로만 보여 주고 앱은 열지 않는다).
 
@@ -447,6 +448,15 @@ def _main_tip(git, root):
     return number
 
 
+def base_reaches_main(repo_path, base, *, git=run_git):
+    """이어받을 글 커밋의 부모(`base`)가 이 PC 에 **마지막으로 받아 둔** 원격 main 에서 닿는가 — `git merge-base --is-ancestor <base> refs/remotes/origin/main` 이 0 이면 닿는다(읽기만 한다 — 받지는 않는다).
+    main 의 이력이 다시 쓰여(비밀 제거 같은 이유) 그 부모가 main 에서 닿지 않게 됐다면, 올리다 막혀 남은 글 커밋을 이어받아 올리는 순간 **지운 옛 이력이 새 공개 가지로 되살아난다** — 그래서 이어받기 전에 이것을 본다
+    (`push_branch` 는 원격 main 을 새로 받은 뒤 같은 확인을 한다 — 거기가 마지막 문이다). 부모 모양이 아니거나 부모 객체가 없거나 git 이 실패하면 닿지 않는 것으로 본다(닿는다고 믿지 않는다)."""
+    if not isinstance(base, str) or _COMMIT_ID.fullmatch(base) is None:
+        return False
+    return git(Path(repo_path), ["merge-base", "--is-ancestor", base, _REMOTE_MAIN]).returncode == 0
+
+
 def _check_not_on_main(git, root, base, post, blob):
     """받은 원격 main 의 `_posts` 아래에 같은 주소(날짜-언어-시각)의 글이나 내용이 한 글자도 다르지 않은 글이 있는지 — 있으면 DUPLICATE_SLUG·DUPLICATE_CONTENT."""
     listing = git(root, ["ls-tree", "-r", "-z", base, "--", "_posts"])
@@ -535,7 +545,9 @@ def branch_on_remote(repo_path, branch, *, git=run_git, expected_origin=EXPECTED
 def push_branch(repo_path, built, post, *, git=run_git, expected_origin=EXPECTED_ORIGIN):
     """`build_branch_commit` 이 만든 커밋을 **새 가지 하나**에 올린다(강제 push 없음 — 인자는 정해진 한 모양뿐이고 main 은 시도하지 않는다). 같은 일을 두 번 해도 같은 결과다:
     원격에 그 가지가 이미 있고 끝이 이 커밋이면 아무것도 보내지 않고 이어 가며(`already`), 끝이 다르면 덮어쓰지 않고 PAGES_PUSH_REFUSED(이름 충돌). 올린 뒤 다시 `ls-remote` 로 확인한 뒤에만 성공이다.
-    올렸는데 응답이 끊겼으면(시간 초과·연결 실패) 가지를 한 번 더 읽어 보고, 이미 올라갔으면 두 번째 push 를 하지 않는다."""
+    올렸는데 응답이 끊겼으면(시간 초과·연결 실패) 가지를 한 번 더 읽어 보고, 이미 올라갔으면 두 번째 push 를 하지 않는다.
+    **올리기 전에 원격 main 을 다시 받고**(읽기 — 원격 추적 참조만 바뀐다) 만든 커밋의 부모(`built.base`)가 거기서 닿는지 본다: 올리다 막혀 남은 커밋을 이어받는 사이 main 의 이력이 다시 쓰였다면(비밀을 지우려고 이력을 고친 경우 등) 그 커밋을 올리는 것이
+    지운 옛 이력을 새 공개 가지로 되살리는 일이므로 보내지 않고 UNEXPECTED(세부에 '다시 만든다')로 멈춘다 — 호출한 쪽(`pages_flow._branch_stage`)이 기록을 치우고 지금의 main 위에서 한 번 새로 만든다. 같은 가지가 이미 올라가 있어도(`already`) 이 확인이 먼저다."""
     capabilities.require_external_write("새 가지에 올리기(push)")
     capabilities.require_net("pages_branch", "새 가지에 올리기(push)")                  # 둘째 문장: 좁은 스위치도 함께(D-736)
     check_post(post)
@@ -545,6 +557,9 @@ def push_branch(repo_path, built, post, *, git=run_git, expected_origin=EXPECTED
     info = inspect_repo(repo_path, git, expected_origin)
     root = info.path
     _verify_commit(git, root, built, post)                                              # 올리기 직전에도 '글 하나만 더한 커밋' 이 맞는지 다시 본다
+    gitrepo.fetch_main(root, git, expected_origin)                                      # 이어받은 낡은 커밋이 이력이 다시 쓰인 main 의 옛 부모를 공개 가지에 되살리지 않게 — 지금의 원격 main 을 받아(읽기) 견준다
+    if not base_reaches_main(root, built.base, git=git):
+        raise AppError(UNEXPECTED, detail="만들어 둔 글 커밋의 부모가 지금의 원격 main 에서 닿지 않는다(main 의 이력이 다시 쓰였을 수 있다) — 다시 만든다")
     tip = gitrepo.remote_branch_tip(root, built.branch, git, expected_origin)
     if tip == built.commit:
         return BranchPush(built.branch, built.commit, True)

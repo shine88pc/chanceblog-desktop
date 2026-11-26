@@ -214,6 +214,54 @@ class AdoptFlowTest(unittest.TestCase):
         self.assertEqual(report.status, st.MERGE_PENDING)
         self.assertEqual(self.backend.count("build_branch_commit"), 1, "새 글은 새로 만든다")
 
+    def test_a_built_record_whose_parent_left_the_main_is_not_adopted_and_the_commit_is_built_again(self):
+        """M-1(독립 검증 S 필수 1) — 이어받을 커밋의 부모가 받아 둔 원격 main 에서 닿지 않으면(main 의 이력이 다시 쓰였다) 이어받지 않는다. 점검(미리 보기)이 그렇게 알리고, 올리기는 같은 파일 이름·가지 이름으로
+        새 커밋을 만든다(옛 커밋을 올리지 않는다 — 지운 옛 이력이 새 공개 가지로 되살아나지 않게)."""
+        record = self.leave_a_built_record()
+        self.backend.base_reaches = False
+        plan = pages_flow.plan_pages_publish(self.ctx, self.project_id)
+        self.assertEqual((plan.stale_base, plan.resumed, plan.path, plan.branch), (True, record, ss.KO_PATH, record.branch))
+        self.assertTrue(any("이어받지 않고" in line for line in plan.actions), plan.actions)
+        self.assertIn(("base_reaches_main", record.base), self.backend.calls)
+        self.assertEqual(self.backend.count("build_branch_commit"), 0, "미리 보기는 아무것도 만들지 않는다")
+        self.backend.built_commit_id = "e" * 40                                            # 다시 만든 커밋
+        report = pages_flow.run_pages_publish(self.ctx, self.project_id, confirmed=True)
+        self.assertEqual((report.status, self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (st.MERGE_PENDING, 1, 1), "옛 커밋은 올리기 단계에 넘기지도 않았다")
+        steps = " ".join(report.steps)
+        self.assertIn("이어받지 않았습니다", steps)
+        self.assertNotIn("이어받았습니다", steps)
+        self.assertEqual(st.split_remote_id(projects_remote_id(self.ctx, self.project_id)), (record.branch, "e" * 40), "올라간 것은 다시 만든 커밋이다")
+        self.assertEqual(self.journal.read(self.project_id).commit, "e" * 40)
+
+    def test_a_push_that_finds_the_old_commit_unusable_sends_the_flow_to_build_it_again_and_says_so(self):
+        """올리는 쪽(`push_branch`)이 '다시 만든다' 로 멈추면(저장소에 없거나 원격 main 이 이력을 다시 썼다 — 점검 때는 받아 둔 기록이 낡아 몰랐다) 기록을 치우고 한 번 새로 만든다. 이어받았다고 알리지 않는다."""
+        record = self.leave_a_built_record()
+        self.backend.push_errors = [AppError("UNEXPECTED_ERROR", detail="만들어 둔 글 커밋의 부모가 지금의 원격 main 에서 닿지 않는다(main 의 이력이 다시 쓰였을 수 있다) — 다시 만든다"), None]
+        self.backend.built_commit_id = "e" * 40
+        self.assertFalse(pages_flow.plan_pages_publish(self.ctx, self.project_id).stale_base, "받아 둔 기록으로는 아직 모른다")
+        report = pages_flow.run_pages_publish(self.ctx, self.project_id, confirmed=True)
+        self.assertEqual((report.status, self.backend.count("build_branch_commit"), self.backend.count("push_branch")), (st.MERGE_PENDING, 1, 2))
+        steps = " ".join(report.steps)
+        self.assertIn("올리지 않았습니다", steps)
+        self.assertNotIn("이어받았습니다", steps, "다시 만든 것을 이어받았다고 알리지 않는다")
+        self.assertEqual(st.split_remote_id(projects_remote_id(self.ctx, self.project_id)), (record.branch, "e" * 40))
+
+    def test_when_the_received_main_cannot_be_read_the_adoption_is_not_blocked_here(self):
+        """받아 둔 기록을 읽다가 실패하면 알 수 없으니 여기서는 막지 않는다 — 올리는 쪽이 원격 main 을 새로 받아 다시 확인하는 것이 마지막 문이다. 처음 올리는 글(이어받을 기록 없음)은 부모 확인을 부르지도 않는다."""
+        fresh = pages_flow.plan_pages_publish(self.ctx, self.project_id)
+        self.assertEqual((fresh.resumed, fresh.stale_base, self.backend.count("base_reaches_main")), (None, False, 0))
+        record = self.leave_a_built_record()
+
+        def unreadable(repo, base):
+            raise AppError("NETWORK_TIMEOUT")
+
+        self.backend.base_reaches_main = unreadable
+        plan = pages_flow.plan_pages_publish(self.ctx, self.project_id)
+        self.assertEqual((plan.resumed, plan.stale_base), (record, False))
+        report = pages_flow.run_pages_publish(self.ctx, self.project_id, confirmed=True)
+        self.assertEqual((report.status, self.backend.count("build_branch_commit")), (st.MERGE_PENDING, 0), "이어받았다")
+        self.assertTrue(any("이어받았습니다" in step for step in report.steps))
+
 
 def projects_remote_id(ctx, project_id):
     with ctx.store() as store:

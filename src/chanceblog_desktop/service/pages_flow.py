@@ -19,6 +19,9 @@
   9) **두 글이 같은 저장소를 동시에 바꾸지 못한다**: 받기·가지 올리기·병합 확인 구간은 연결한 저장소마다 한 번에 한 작업(저장소 잠금 — 글 잠금을 잡은 다음에 잡는다, 순서 고정이라 서로 기다리며 멈추지 않는다)이고,
      다른 작업이 쥐고 있으면 `Context.lock_wait` 초 기다리다 PUBLISH_REPO_BUSY 로 물러난다(아무것도 바꾸지 않는다 — 같은 명령을 다시 실행하면 된다). 공개 확인을 기다리는 동안에는 저장소 잠금을 쥐지 않는다.
  10) **같은 초의 파일 이름을 피한다**: 새 글의 파일 이름은 올리는 순간의 초로 정해지는데 바로 앞 글이 같은 초에 올라갔으면(저장소에 이미 있거나 올리는 중인 글이 쓰는 이름) 점검 단계에서 다음 초의 이름으로 정한다(최대 5번, 읽기만 한다).
+ 11) **이어받는 커밋의 부모가 지금의 원격 main 에서 닿아야 한다**: 올리다 막혀 남은 `built` 기록(만들어 둔 커밋)은 그 부모(`base`)가 지금의 원격 main 에서 닿을 때만 이어받는다. main 의 이력이 다시 쓰여(비밀 제거 같은 이유) 닿지 않으면 그 커밋을 올리는 것이
+     지운 옛 이력을 새 공개 가지로 되살리는 일이라 이어받지 않고 지금의 main 위에서 다시 만든다(같은 가지 이름 — 이미 같은 이름의 가지가 원격에 있으면 덮어쓰지 않고 PAGES_PUSH_REFUSED). 이 모듈은 이 PC 에 받아 둔 기록으로 먼저 보고(`_reaches_main` — 점검과 이어받기의 두 곳),
+     마지막 문은 `push_branch` 가 원격 main 을 새로 받은 뒤 하는 같은 확인이다.
 옛 방식(main 에 곧바로 commit·push)이 남긴 `COMMITTED` 글은 **읽기만** 한다 — 이어서 올리는 길은 없고 `--cancel --yes` 로 이 PC 의 글 기록만 되돌릴 수 있다(되돌린 뒤 글을 다시 만들어 승인한다).
 이 모듈은 git 을 직접 쓰지 않는다 — `Context.backend`(기존 `publish/` 모듈)에 맡긴다. 강제 push 는 없다.
 """
@@ -48,6 +51,9 @@ DEFAULT_INTERVAL = 10
 MAX_SECOND_PROBES = 5           # 파일 이름의 초가 이미 쓰였을 때 다음 초로 밀어 보는 최대 횟수(바로 앞 글이 같은 초에 올라간 경우)
 MERGE_PENDING_LIMIT = 3         # 같은 저장소에 병합을 기다리는 글이 이만큼이면 새 글을 올리지 않는다
 _STAGE_OF = {st.APPROVED: STAGE_BRANCH, st.MERGE_PENDING: STAGE_MERGE, st.PUSHED: STAGE_VERIFY, st.PUBLISHED: STAGE_DONE}
+_STALE_ACTION = "앞서 올리다 멈춘 글 커밋은 부모가 지금 받아 둔 원격 main 에서 닿지 않아(main 의 이력이 다시 쓰였을 수 있습니다) 이어받지 않고, 올릴 때 지금의 main 위에서 다시 만듭니다(파일 이름·가지 이름은 그대로입니다)."
+_NOT_ADOPTED = ("앞서 올리다 멈춘 이 글의 커밋은 이어받지 않았습니다 — 그 커밋의 부모가 지금의 원격 main 에서 닿지 않아(main 의 이력이 다시 쓰였을 수 있습니다) 지운 옛 이력이 새 가지로 되살아날 수 있기 때문입니다. 지금의 main 위에서 다시 만듭니다.")
+_NOT_ADOPTED_RETRY = "앞서 만들어 둔 글 커밋은 올리지 않았습니다 — 저장소에 없거나 부모가 지금의 원격 main 에서 닿지 않습니다(main 의 이력이 다시 쓰였을 수 있습니다). 지금의 main 위에서 다시 만듭니다."
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,7 @@ class PagesPlan:
     branch: str = ""        # 올릴(또는 올린) 가지 이름 — 사용자 글에서 온 글자가 없는 정해진 모양
     link: str = ""          # GitHub 비교 화면 주소(글자로만 보여 준다 — 앱이 열지 않는다)
     record: object = None   # 병합 기다리는 글·병합을 확인한 글의 발행 기록(파일이 없으면 보관함의 식별자에서 다시 만든 것)
+    stale_base: bool = False  # 이어받을 기록(`resumed`)의 부모가 지금 받아 둔 원격 main 에서 닿지 않는다 — 이어받지 않고 지금의 main 위에서 다시 만든다(이력이 다시 쓰였을 수 있다)
 
     @property
     def post(self):
@@ -267,6 +274,15 @@ def _plan_record(record_or_none):
     return None
 
 
+def _reaches_main(ctx, repo, record):
+    """이어받을 앞선 실행의 글 커밋(`record`)의 부모가 이 PC 에 받아 둔 원격 main 에서 닿는가(읽기만 한다 — 받지는 않는다). 닿지 않으면 이어받지 않는다: main 의 이력이 다시 쓰였다면 그 커밋을 올리는 것이 지운 옛 이력을
+    새 공개 가지로 되살리는 일이다. 읽다가 실패하면 알 수 없으니 막지 않고 True — 올리는 쪽(`push_branch`)이 원격 main 을 새로 받은 뒤 같은 확인을 다시 하므로 마지막 문은 거기다. 점검(`plan_pages_publish`)과 이어받기(`_branch_stage`)가 같은 규칙을 쓴다."""
+    try:
+        return bool(ctx.backend.base_reaches_main(repo, record.base))
+    except AppError:
+        return True
+
+
 def plan_pages_publish(ctx, text_id, *, now=None, deadline=DEFAULT_DEADLINE):
     """올리기 전 점검(아무것도 쓰지 않는다 — 연결한 저장소·데이터 폴더·네트워크 모두). 올릴 수 없으면 이유를 AppError 로 낸다.
 
@@ -310,6 +326,7 @@ def plan_pages_publish(ctx, text_id, *, now=None, deadline=DEFAULT_DEADLINE):
         resumed = _plan_record(record) if stage == STAGE_BRANCH else None
         if resumed is not None and resumed.branch != publish_pages.branch_name(PagesPost(resumed.path, text, category, lang)):
             resumed = None                                                      # 앞선 실행이 올리려던 글이 지금 승인한 글과 다르다(그 사이 고쳐 다시 승인했다) — 가지 이름이 글 내용의 해시를 담고 있어 알아본다. 낡은 기록은 새 기록이 덮는다
+        stale_base = resumed is not None and not _reaches_main(ctx, repo, resumed)      # 만들어 둔 커밋의 부모가 지금 받아 둔 원격 main 에서 닿지 않는다(이력이 다시 쓰였다) — 이어받지 않는다(이름은 그대로, 커밋만 다시 만든다)
         fresh = resumed is None                                                 # 파일 이름(시각)을 이번에 정한다 — 같은 초의 이름이 이미 있으면 다음 초로 피한다(방금 다른 글이 올라간 경우)
         probes = 0
         while True:
@@ -347,8 +364,8 @@ def plan_pages_publish(ctx, text_id, *, now=None, deadline=DEFAULT_DEADLINE):
         link = publish_pages.compare_link(branch, project.title)
     else:
         link = ""
-    return PagesPlan(project_id, project.title, variant.status, stage, path, category, lang, text, len(text.encode("utf-8")), url, str(repo), gates, _describe(stage, path, url, deadline, branch, link), resumed, now, branch, link,
-                     record if stage != STAGE_BRANCH else None)
+    return PagesPlan(project_id, project.title, variant.status, stage, path, category, lang, text, len(text.encode("utf-8")), url, str(repo), gates,
+                     _describe(stage, path, url, deadline, branch, link) + ((_STALE_ACTION,) if stale_base else ()), resumed, now, branch, link, record if stage != STAGE_BRANCH else None, stale_base)
 
 
 def preview_publish(ctx, text_id, *, deadline=DEFAULT_DEADLINE):
@@ -409,12 +426,15 @@ def _record_branch_pushed(ctx, journal, project_id, built):
 
 
 def _branch_stage(ctx, repo, journal, plan, steps):
-    """가지 단계: 객체로 글 커밋을 만들고(앞선 실행이 만든 것이 있으면 그것을 이어받고) → `built` 를 적고 → 새 가지에 올리고 → `branch_pushed`·MERGE_PENDING 을 남긴다."""
+    """가지 단계: 객체로 글 커밋을 만들고(앞선 실행이 만든 것이 있으면 그것을 이어받고 — 단 그 커밋의 부모가 지금의 원격 main 에서 닿을 때만) → `built` 를 적고 → 새 가지에 올리고 → `branch_pushed`·MERGE_PENDING 을 남긴다."""
     post, project_id = plan.post, plan.project_id
     built = None
     if plan.resumed is not None:
-        built = publish_pages.BranchCommit(plan.resumed.path, plan.resumed.branch, plan.resumed.commit, plan.resumed.base)
-        steps.append(f"앞서 올리다 멈춘 이 글의 가지({built.branch})를 이어받았습니다.")
+        if plan.stale_base or not _reaches_main(ctx, repo, plan.resumed):          # 이어받기 직전에 한 번 더(점검과 같은 규칙) — 닿지 않으면 그 커밋은 쓰지 않고 지금의 main 위에서 다시 만든다
+            steps.append(_NOT_ADOPTED)
+        else:
+            built = publish_pages.BranchCommit(plan.resumed.path, plan.resumed.branch, plan.resumed.commit, plan.resumed.base)
+    adopted = built is not None                                                 # 앞선 실행의 커밋을 이어받았다 — 올리기가 받아들인 뒤에야 '이어받았습니다' 로 알린다(받아들이지 않으면 아래에서 다시 만든다)
     mine = None
     for attempt in range(2):
         if built is None:
@@ -429,14 +449,17 @@ def _branch_stage(ctx, repo, journal, plan, steps):
             break
         except AppError as error:
             if error.code == UNEXPECTED and attempt == 0 and plan.resumed is not None and "다시 만든다" in str(error.detail):
-                journal.remove(project_id, only=mine)                                      # 만들어 둔 커밋이 사라졌다(정리됨) — 한 번만 처음부터 다시 만든다
-                built, mine = None, None
+                journal.remove(project_id, only=mine)                                      # 만들어 둔 커밋이 사라졌거나(정리됨) 부모가 지금의 원격 main 에서 닿지 않는다(이력이 다시 쓰임) — 한 번만 처음부터 다시 만든다
+                built, mine, adopted = None, None, False
+                steps.append(_NOT_ADOPTED_RETRY)
                 continue
             if error.code == "PAGES_PUSH_REFUSED":                                        # 앱의 안전 규칙이 막았다 — 같은 글로 다시 해도 같다. 실패로 남기고 기록을 치운다(새 글로 다시 승인한다)
                 _fail_after_refusal(ctx, journal, project_id, mine, error)
             else:
                 _annotate(error, "글은 아직 올라가지 않았다(원격 main 은 건드리지 않았다) — 해결한 뒤 같은 명령을 다시 실행하면 이어서 한다")
             raise
+    if adopted:
+        steps.append(f"앞서 올리다 멈춘 이 글의 가지({built.branch})를 이어받았습니다.")
     steps.append("원격(origin)에 새 가지 하나를 만들어 올렸습니다 — main 에는 올리지 않았습니다." if not pushed.already else "같은 가지가 이미 원격에 같은 끝으로 올라가 있어 다시 올리지 않았습니다.")
     _record_branch_pushed(ctx, journal, project_id, built)
     return built

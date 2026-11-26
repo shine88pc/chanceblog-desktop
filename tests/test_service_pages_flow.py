@@ -805,7 +805,7 @@ class ResumeAndRecordTest(Base):
         plan = pages_flow.plan_pages_publish(self.ctx, project_id)
         self.assertEqual((plan.stage, plan.status, plan.path), (pages_flow.STAGE_BRANCH, st.APPROVED, ss.KO_PATH))
         self.assertIsNotNone(plan.resumed)
-        self.assertEqual(self.backend.names(), ["inspect", "expected_url"], "같은 주소·같은 내용 점검은 처음 한 번뿐이다(이어받는 글은 자기 이름을 쥐고 있다)")
+        self.assertEqual(self.backend.names(), ["inspect", "base_reaches_main", "expected_url"], "같은 주소·같은 내용 점검은 처음 한 번뿐이다(이어받는 글은 자기 이름을 쥐고 있다) — 대신 이어받을 커밋의 부모가 받아 둔 원격 main 에서 닿는지 읽기 한 번이 붙는다(M-1)")
         self.assertTrue(plan.gates.ok)
         with mock.patch.dict(gate.LENGTH_MIN, {"ko": 10 ** 6}):
             self.assertEqual(ss.code_of(pages_flow.plan_pages_publish, self.ctx, project_id).code, "CHECK_FAILED")

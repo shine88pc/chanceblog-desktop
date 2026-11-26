@@ -4,6 +4,7 @@
   1) `build_branch_commit`: 받은 원격 main 위에 **글 파일 하나만 더한 커밋 한 개**를 객체로만 만든다 — 내용은 승인한 글과 한 글자도 다르지 않고(줄바꿈 변환(autocrlf)·`.gitattributes`·한글 분야 폴더 포함),
      트리는 `git add`+`git commit` 이 만들 트리와 같으며(오라클), **작업 폴더·색인·HEAD·로컬 가지는 한 바이트도 바뀌지 않는다**. 같은 주소·같은 내용이 원격 main 에 있으면 만들지 않는다.
   2) `push_branch`: 새 가지 **하나**만 올린다 — 원격의 다른 참조(특히 main)는 한 바이트도 안 변하고, 인자는 정해진 한 모양이며(강제 없음), 같은 일을 두 번 해도 같은 결과다(끝이 같으면 보내지 않고 이어 가며, 다르면 덮어쓰지 않는다).
+     올리기 전에 원격 main 을 다시 받아 만든 커밋의 부모가 거기서 닿는지 본다 — main 의 이력이 다시 쓰였으면(독립 검증 S 필수 1) 옛 커밋을 올리지 않고 '다시 만든다' 로 멈춘다(지운 옛 이력이 새 공개 가지로 되살아나지 않게).
   3) 서버가 main 갱신을 거절하는 저장소에서도 클라이언트는 main 을 시도하지 않는다(대조: 앱 밖에서 직접 올리면 main 이 실제로 움직인다 — '0' 이 빈 실험이 아니다).
   4) `post_on_main`(병합 확인): 일반 병합·squash·rebase 가 어느 쪽이든 **내용**으로 알아보고, 같은 경로에 다른 글이면 `different`, 아직이면 `not_yet`(같은 내용이 다른 경로면 그 경로만 알린다) — 아무것도 쓰지 않는다.
 """
@@ -148,6 +149,19 @@ class BranchBase(unittest.TestCase):
     def merge_into_main(self, built):
         """병합을 흉내 낸다 — 올라간 가지의 끝으로 원격 main 을 앞으로 옮긴다(빨리감기, 시험 준비)."""
         git(self.origin, "update-ref", "refs/heads/main", built.commit)
+
+    def is_ancestor(self, first, second, repo=None):
+        """`first` 가 `second` 의 조상(같아도 된다)인가 — 기본은 원격(bare) 저장소에서 본다(시험의 눈, 앱 코드를 거치지 않는다)."""
+        return subprocess.run(["git", "-C", str(repo or self.origin), "merge-base", "--is-ancestor", first, second], capture_output=True).returncode == 0
+
+    def rewrite_main(self):
+        """운영자가 원격 main 의 이력을 다시 쓴다(비밀을 지우려고 옛 커밋을 없애는 경우 등) — 같은 트리를 **부모 없는 새 뿌리 커밋**으로 바꾼다. 옛 main 은 새 main 에서 더는 닿지 않는다(시험 준비 — 앱 코드를 거치지 않는다) → (옛 main, 새 main)."""
+        old = self.remote_main()
+        tree = self.plumb(["rev-parse", "refs/heads/main^{tree}"])
+        new = self.plumb(["commit-tree", tree, "-m", "이력을 다시 씀(옛 커밋을 지움)"])
+        git(self.origin, "update-ref", "refs/heads/main", new)
+        self.assertFalse(self.is_ancestor(old, new), "시험 준비가 맞는지: 옛 main 은 새 main 에서 닿지 않는다")
+        return old, new
 
     def set_origin_main_to(self, layout):
         """원격 main 을 시험이 정한 모양의 **새 뿌리 커밋**으로 바꾼다(플러밍) — layout 은 {이름: 글(파일) 또는 {...}(폴더)}. `_posts` 가 없는 저장소·분야 이름이 파일인 저장소 같은 모양을 복제 없이 만든다."""
@@ -420,7 +434,7 @@ class PushTest(BranchBase):
         (push,) = spy.pushes()
         self.assertEqual(push, ["push", "--porcelain", "--no-verify", "origin", f"{built.commit}:refs/heads/{built.branch}"], "커밋 번호로, 새 가지 하나만")
         shapes = [gitrepo.network_shape(call) for call in spy.network()]
-        self.assertEqual(sorted(set(shapes)), ["ls_remote", "push_branch"])
+        self.assertEqual(shapes, ["fetch_main", "ls_remote", "push_branch", "ls_remote"], "올리기 전 원격 main 받기(M-1) → 가지 확인 → 올리기 → 올라갔는지 확인 — 순서까지 정해져 있다")
         self.assertEqual(git(self.work, "for-each-ref", "--format=%(refname)", "refs/heads"), "refs/heads/main", "이 PC 에는 새 로컬 가지가 없다")
         self.assertIsNone(pages.branch_on_remote(self.work, "desktop/post-20990101-000000-00000000", expected_origin=ss.LOCAL_ORIGIN))
         self.assertEqual(pages.branch_on_remote(self.work, built.branch, expected_origin=ss.LOCAL_ORIGIN), built.commit)
@@ -479,11 +493,14 @@ class PushTest(BranchBase):
         self.assertEqual([call for call in record if call[0] in ("fetch", "push", "ls-remote")], [], "받기도 나가지 않았다")
         git(self.work, "config", "--unset-all", "remote.origin.pushurl")
         built = self.build()
-        record = []
-        error = ss.code_of(pages.push_branch, self.work, built, self.ko, git=hostile_at(5, record), expected_origin=ss.LOCAL_ORIGIN)         # inspect 둘 + 가지 확인 앞의 둘 + 올리기 앞의 다시 읽기가 다섯째
-        self.assertEqual(error.code, "PAGES_LOCAL_REPO_INVALID")
-        self.assertEqual([call[0] for call in record if call[0] in ("push",)], [], "올리기는 나가지 않았다")
-        self.assertEqual(set(self.remote_refs()), {"refs/heads/main"}, "원격에 아무것도 올라가지 않았다")
+        for number, ran in ((3, []), (5, ["fetch"]), (7, ["fetch", "ls-remote"])):         # inspect 둘 뒤: 받기 앞의 다시 읽기가 셋째 · 가지 확인 앞이 다섯째 · 올리기 앞이 일곱째(M-1 로 올리기 전 받기가 하나 더 생겼다 — 셋 모두 본다)
+            with self.subTest(hostile_at=number):
+                record = []
+                error = ss.code_of(pages.push_branch, self.work, built, self.ko, git=hostile_at(number, record), expected_origin=ss.LOCAL_ORIGIN)
+                self.assertEqual(error.code, "PAGES_LOCAL_REPO_INVALID")
+                self.assertEqual([call[0] for call in record if call[0] in ("fetch", "ls-remote", "push")], ran, "바뀐 곳 바로 앞의 다시 읽기에서 막혔다 — 그 명령도 그 뒤 명령도 나가지 않았다")
+                self.assertEqual(set(self.remote_refs()), {"refs/heads/main"}, "원격에 아무것도 올라가지 않았다")
+                git(self.work, "config", "--unset-all", "remote.origin.pushurl")
 
     def test_pushing_again_after_it_already_went_through_is_a_success_that_sends_nothing(self):
         """PT-19 (끝이 같음) — 같은 일을 두 번 해도 같은 결과: 이미 올라가 있고 끝이 같으면 보내지 않고 이어 간다."""
@@ -551,6 +568,64 @@ class PushTest(BranchBase):
         self.assertEqual(spy.pushes(), [])
         wrong = pages.BranchCommit(built.path, "desktop/post-20990101-000000-00000000", built.commit, built.base)
         self.assertEqual(ss.code_of(pages.push_branch, self.work, wrong, self.ko, expected_origin=ss.LOCAL_ORIGIN).code, "PAGES_PUSH_REFUSED", "가지 이름이 이 글의 것이 아니면 올리지 않는다")
+
+    def test_a_built_commit_whose_parent_left_the_remote_main_is_not_pushed_after_the_history_was_rewritten(self):
+        """M-1(독립 검증 S 필수 1) — 올리다 막혀 남은 커밋을 이어받는 사이 운영자가 main 의 이력을 다시 썼다(비밀을 지우려고 옛 커밋을 없앴다). 그 커밋의 부모는 새 main 에서 닿지 않는다 —
+        그대로 올리면 지운 옛 이력이 새 공개 가지로 되살아난다. 올리기 전에 원격 main 을 다시 받아 부모가 닿는지 보고, 닿지 않으면 아무것도 보내지 않고 '다시 만든다' 로 멈춘다(그 뒤 새 main 위에서 다시 만들면 올라간다). 원격 main 은 앱 때문에 안 움직인다."""
+        built = self.build()
+        old_main, new_main = self.rewrite_main()
+        self.assertEqual(old_main, built.base)
+        spy = Spy()
+        error = ss.code_of(pages.push_branch, self.work, built, self.ko, git=spy, expected_origin=ss.LOCAL_ORIGIN)
+        self.assertEqual(error.code, "UNEXPECTED_ERROR")
+        self.assertIn("다시 만든다", error.detail)
+        self.assertEqual(spy.pushes(), [], "옛 이력이 든 커밋을 보내지 않았다")
+        self.assertEqual([gitrepo.network_shape(call) for call in spy.network()], ["fetch_main"], "원격 main 받기(읽기) 하나뿐 — 가지 확인도 올리기도 하지 않았다")
+        self.assertEqual(self.remote_main(), new_main, "원격 main 은 시험이 다시 쓴 그대로다 — 앱은 건드리지 않았다")
+        self.assertEqual(set(self.remote_refs()), {"refs/heads/main"}, "원격에 새 가지가 생기지 않았다")
+        self.assertEqual(git(self.work, "rev-parse", "refs/remotes/origin/main"), new_main, "받아 둔 기록만 새 main 으로 갔다(읽기)")
+        again = self.build()                                           # 호출한 쪽이 하는 대로 — 지금의 main 위에서 다시 만든다
+        self.assertEqual((again.base, again.branch), (new_main, built.branch))
+        self.assertNotEqual(again.commit, built.commit)
+        info = self.push(again)
+        self.assertEqual((info.branch, info.commit, info.already), (again.branch, again.commit, False))
+        self.assertTrue(self.is_ancestor(new_main, f"refs/heads/{again.branch}"), "올라간 가지는 새 main 위에 있다")
+        self.assertFalse(self.is_ancestor(old_main, f"refs/heads/{again.branch}"), "지운 옛 이력은 새 공개 가지에 없다")
+        self.assertEqual(self.remote_main(), new_main)
+
+    def test_even_when_the_old_commit_is_already_on_the_remote_branch_it_is_not_adopted_after_a_history_rewrite(self):
+        """M-1 의 어려운 쪽 — 올라갔는데 앱이 죽어 기록을 못 남겼고(원격 가지에 옛 커밋이 이미 있다) 그 사이 main 의 이력이 다시 쓰였다. '이미 올라가 있으니 보내지 않고 이어 간다' 로 끝내면 병합 기다리는 글이
+        옛 이력이 든 가지를 가리키게 된다 — 그래서 부모 확인이 '같은 끝이면 이어 간다' 보다 먼저다. 다시 만든 커밋은 같은 이름이라 덮어쓰지 않고 멈춘다(원격 가지는 앱이 지우지 않는다 — 사람이 정리한다)."""
+        built = self.build()
+        self.push(built)
+        old_main, new_main = self.rewrite_main()
+        spy = Spy()
+        error = ss.code_of(pages.push_branch, self.work, built, self.ko, git=spy, expected_origin=ss.LOCAL_ORIGIN)
+        self.assertEqual(error.code, "UNEXPECTED_ERROR")
+        self.assertIn("다시 만든다", error.detail)
+        self.assertEqual((spy.pushes(), [gitrepo.network_shape(call) for call in spy.network()]), ([], ["fetch_main"]), "'이미 올라가 있다' 로 이어 가지 않았고 가지 확인도 하지 않았다")
+        self.assertEqual(git(self.origin, "rev-parse", built.branch), built.commit, "원격 가지는 그대로다 — 앱은 지우거나 덮어쓰지 않는다")
+        again = self.build()
+        self.assertEqual((again.base, again.branch), (new_main, built.branch))
+        error = ss.code_of(pages.push_branch, self.work, again, self.ko, git=spy, expected_origin=ss.LOCAL_ORIGIN)
+        self.assertEqual(error.code, "PAGES_PUSH_REFUSED", "같은 이름의 가지가 다른 끝으로 이미 있다 — 덮어쓰지 않는다")
+        self.assertEqual((spy.pushes(), git(self.origin, "rev-parse", built.branch), self.remote_main()), ([], built.commit, new_main))
+
+    def test_when_main_only_moved_forward_or_the_branch_was_merged_the_adoption_goes_on_as_before(self):
+        """M-1 이 평소 길을 건드리지 않는다는 짝 시험 — main 이 앞으로만 갔거나(봇이 올림) 올린 가지가 병합돼(병합 커밋) 부모가 main 의 조상인 채면 올리기·이어 가기가 그대로이고 원격 main 은 앱 때문에 안 움직인다."""
+        self.bot_pushes()
+        built = self.build()
+        self.bot_pushes(name="_posts/Bot/2026-10-31-KR-090000.md", text="봇 글 둘\n")
+        ahead = self.remote_main()
+        info = self.push(built)                                       # 만들 때보다 main 이 한 칸 앞서 있어도 부모는 main 의 조상이다
+        self.assertEqual((info.already, self.remote_main()), (False, ahead), "main 은 봇이 둔 그대로다")
+        self.assertEqual(git(self.origin, "rev-parse", f"{built.branch}^"), built.base)
+        merged = self.commit_on_origin(KO_PATH, KO_TEXT, message="병합", extra_parents=(built.commit,))        # 사람이 병합한 것을 흉내 낸다(병합 커밋 — 시험 준비)
+        spy = Spy()
+        again = self.push(built, git=spy)
+        self.assertEqual((again.already, again.commit), (True, built.commit))
+        self.assertEqual(spy.pushes(), [])
+        self.assertEqual(self.remote_main(), merged, "받기와 확인은 읽기뿐이다 — 앱은 main 을 움직이지 않았다")
 
 
 class MergeCheckTest(BranchBase):

@@ -137,6 +137,7 @@ class FakeBackend:
         self.remote_has_post = False       # 받아 둔 원격 main 에 이 글 파일이 이미 있는가(올리고 나서 멈춘 글을 되돌리려 할 때)
         self.head = "c" * 40               # 지금 HEAD 의 커밋 번호
         self.hooks = {}                    # 이름 → 그 일을 시작할 때 먼저 부르는 함수(그 순간의 상태를 들여다보려고)
+        self.base_reaches = True           # 이어받을 글 커밋의 부모가 받아 둔 원격 main 에서 닿는가(`base_reaches_main` 의 답) — False 면 main 의 이력이 다시 쓰인 것이다
 
     def _enter(self, name, *args):
         self.calls.append((name, *args))
@@ -195,6 +196,10 @@ class FakeBackend:
     def head_commit(self, repo):
         self.calls.append(("head_commit",))
         return self.head
+
+    def base_reaches_main(self, repo, base):
+        self.calls.append(("base_reaches_main", base))
+        return self.base_reaches
 
     def orphan_commit(self, repo, text, category, lang):
         self.calls.append(("orphan_commit",))

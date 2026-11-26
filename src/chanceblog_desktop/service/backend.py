@@ -120,6 +120,10 @@ class GitBranchBackend:
         """지금 HEAD 가 그 글 파일을 담고 있는가."""
         return self.git(Path(repo), ["cat-file", "-e", f"HEAD:{path}"]).returncode == 0
 
+    def base_reaches_main(self, repo, base):
+        """이어받을 글 커밋의 부모(`base`)가 마지막으로 받아 둔 원격 main 에서 닿는가(이 PC 의 git 기록만 읽는다 — 받지 않는다). 올리는 쪽(`push_branch`)은 원격 main 을 새로 받은 뒤 같은 확인을 다시 한다."""
+        return pages.base_reaches_main(repo, base, git=self.git)
+
     def on_remote(self, repo, path):
         """마지막으로 받아 둔 원격 main 이 그 글 파일을 담고 있는가(읽기만 한다) — 이미 올라간 글인지 보려고."""
         return self.git(Path(repo), ["cat-file", "-e", f"{REMOTE_MAIN}:{path}"]).returncode == 0

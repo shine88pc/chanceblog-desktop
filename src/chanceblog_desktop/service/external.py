@@ -194,6 +194,9 @@ class LocalOnlyBackend:
     def post_in_head(self, repo, path):
         return False
 
+    def base_reaches_main(self, repo, base):
+        return True                        # git 이 없으니 알 수 없다 — 막지 않는다(올리는 쪽은 이 backend 에서 거절되고, 진짜 어댑터의 `push_branch` 가 마지막으로 다시 확인한다)
+
     def orphan_commit(self, repo, text, category, lang):
         return None
 
