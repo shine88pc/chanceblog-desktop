@@ -1234,6 +1234,9 @@ class SourceRulesTest(unittest.TestCase):
         blogger = (src / "render" / "blogger.py").read_text(encoding="utf-8")                              # 위 표의 이유가 사실로 남게 — Blogger 변환은 대표 사진 출처 한 줄만 말하고 사진 정리(사진 정보·본문 연결) 부품은 모른다
         for name in ("photo_manifest", "photo_flow", "photo_rules", "photo_view", "photo_text", "PhotoBoard", "DraftPhoto"):
             self.assertNotIn(name, blogger, f"render/blogger.py 가 사진 정리 부품({name})을 말한다 — PHOTO_FILES 의 이유(사진 정리와 무관)가 틀려진다")
+        allowed = {"photo", "Photo", "PhotoCredit", "photographer_name", "photo_link", "ui.core.attribution.PhotoCredit", "credit.photographer_name", "credit.photo_link"}          # 대표 사진 출처 한 줄이 쓰는 낱말 여덟뿐 — 닫힌 금지 목록은 `photo_store`·`photo_ocr_view` 같은 새 이름을 못 막는다(재작업 1 — 시험 렌즈 Q R6)
+        words = set(re.findall(r"[A-Za-z_.]*photo[A-Za-z_]*", blogger, re.I))
+        self.assertEqual(sorted(words - allowed), [], "render/blogger.py 가 허용한 낱말 밖의 사진 이야기를 한다 — 사진 정리와 무관하다는 PHOTO_FILES 의 이유가 다시 사실이 아니게 된다(새 낱말은 이유와 함께 여기에 더한다)")
 
     def test_every_tone_the_sheet_uses_has_a_readable_text_color_on_every_surface(self):
         """글자 대비 — 사진 정리 화면이 글에 입히는 계열(`set_tone` 과 `TONE` 표)의 글자색은 바탕(면·앱 바탕·옅은 면) 어디서나 대비 4.5 이상이다(토큰 시험이 계열마다 따로도 지킨다 — 여기서는 이 화면이 실제로 쓰는 것만 본다)."""

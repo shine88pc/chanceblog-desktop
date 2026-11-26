@@ -27,6 +27,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 
+from chanceblog_desktop import capabilities  # noqa: E402
 from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.security import keystore as ks  # noqa: E402
 from chanceblog_desktop.security import shape  # noqa: E402
@@ -1008,6 +1009,21 @@ class ListAndStatusTest(Base):
         for label, changes in {"시험한 적 없음": {}, "오류 기록": {"check_result": "error", "last_ok_at": recent}, "성공 시각 없음": {"check_result": "ok"}}.items():
             with self.subTest(case=label):
                 self.assertEqual(status(self.entry_with(**changes)), "needs_check")
+
+    def test_the_blogger_purpose_counts_as_implemented_only_while_the_login_and_read_switch_is_on(self):
+        """재작업 1 시험 렌즈 Q 권고 R4 — Blogger 는 표의 `implemented`(False — 이 빌드는 호출 코드를 켜지 않는다)가 아니라 로그인·읽기 스위치(`NET_BLOGGER_OAUTH`)로 '구현됨' 이 된다(`is_implemented`):
+        스위치가 꺼져 있으면 시험 성공 기록이 유효해도 '연결 확인 필요', 켜면 '연결됨'. 다른 용도는 스위치와 상관없이 표의 값 그대로이고, 표가 True 인 용도는 스위치가 꺼져 있어도 구현됨이다."""
+        blogger, plain = c.PURPOSES["blogger"], c.PURPOSES["image_provider"]
+        self.assertFalse(blogger.implemented)
+        self.assertFalse(plain.implemented)
+        now, recent = self.ctx.now(), self.ctx.stamp()
+        entry = self.entry_with(check_result="ok", last_ok_at=recent, checked_at=recent)
+        for switch, expected in ((False, "needs_check"), (True, "connected")):
+            with self.subTest(switch=switch), mock.patch.object(capabilities, "NET_BLOGGER_OAUTH", switch):
+                self.assertEqual((c.is_implemented(blogger), c.entry_status(entry, blogger, now=now)), (switch, expected))
+                self.assertEqual((c.is_implemented(plain), c.entry_status(entry, plain, now=now)), (False, "needs_check"), "다른 용도는 스위치와 상관없다")
+                self.assertTrue(c.is_implemented(dataclasses.replace(plain, implemented=True)), "표의 값이 참이면 스위치와 상관없이 구현됨")
+                self.assertTrue(c.is_implemented(dataclasses.replace(blogger, implemented=True)))
 
     def test_a_successful_test_counts_for_exactly_twenty_four_hours(self):
         impl = dataclasses.replace(c.PURPOSES["image_provider"], implemented=True)

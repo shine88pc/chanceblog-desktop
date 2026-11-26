@@ -157,6 +157,20 @@ class ExchangeTest(World):
         long = auth._access_from({"token_type": "bearer", "access_token": "ya29." + "a" * 30, "expires_in": 7200}, NOW)
         self.assertEqual(long.valid_until, NOW + 55 * 60, "최대 55분")
 
+    def test_expires_in_is_taken_only_from_sixty_to_seven_thousand_two_hundred_seconds_and_the_edges_are_in(self):
+        """재작업 1 시험 렌즈 Q 권고 R5 — `expires_in` 은 정수 60–7,200 초만 받는다(경계 59·60·7200·7201): 상한이 풀리면(예 86400) 하루가 넘게 '쓸 수 있는' 토큰이 생긴다. 가짜 서버 표본(5·10억)만으로는 경계가 자유로웠다.
+        받은 값 가운데 쓰는 시간은 `expires_in - 60` 초이되 55분을 넘지 않는다."""
+        def answer(seconds):
+            return {"token_type": "Bearer", "access_token": "ya29." + "a" * 30, "expires_in": seconds}
+
+        for seconds in (60, 61, 120, 3599, 3600, 7199, 7200):
+            with self.subTest(accepted=seconds):
+                self.assertEqual(auth._access_from(answer(seconds), NOW).valid_until, NOW + min(seconds - 60, 55 * 60))
+        for seconds in (59, 0, -1, 7201, 86400, 10 ** 9, True, False, 3599.0, "3599", None, [3599]):
+            with self.subTest(refused=repr(seconds)), self.assertRaises(NetError) as caught:
+                auth._access_from(answer(seconds), NOW)
+            self.assertEqual(caught.exception.code, "NET_RESPONSE_INVALID")
+
     def test_token_response_scope_and_type_and_shapes_are_checked(self):
         """BT-13 — 범위가 줄거나 늘거나 없으면 거절하고, `token_type`·`expires_in`·`access_token`·`refresh_token` 의 모양이 틀리면 거절한다. 어느 쪽도 토큰을 돌려주지 않는다."""
         scope_cases = {"scope_narrow": "허용한 범위가 달라요", "scope_wide": "허용한 범위가 달라요", "scope_missing": "허용한 범위가 달라요", "no_refresh": "로그인 값을 받지 못했어요"}
@@ -298,7 +312,8 @@ class RevokeTest(World):
 
     def test_revoke_failures_are_errors_not_successes(self):
         refresh = self.google.grant()
-        for mode, code in (("status:503", "BLOGGER_SERVER_ERROR"), ("status:429", "API_RATE_LIMITED"), ("status:404", "NET_RESPONSE_INVALID")):
+        for mode, code in (("status:503", "BLOGGER_SERVER_ERROR"), ("status:500", "BLOGGER_SERVER_ERROR"), ("status:502", "BLOGGER_SERVER_ERROR"), ("status:429", "API_RATE_LIMITED"), ("status:404", "NET_RESPONSE_INVALID"),
+                           ("status:403", "NET_RESPONSE_INVALID"), ("status:401", "NET_RESPONSE_INVALID")):         # 500 이 '취소됨' 으로 읽히면 연결 해제가 구글 쪽 값이 살아 있는데도 지운 척한다(재작업 1 — 시험 렌즈 Q R4)
             self.google.mode["revoke"] = mode
             self.reset_cooldown()
             with self.subTest(mode=mode), self.assertRaises(NetError) as caught:

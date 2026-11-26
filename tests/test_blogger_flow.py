@@ -273,6 +273,20 @@ class CheckTest(fs.FlowCase):
         self.assertEqual(self.google.summaries(), ["POST oauth2.googleapis.com/token", f"GET www.googleapis.com/blogger/v3/blogs/{fs.BLOG_EN}"])
         self.assertClean()
 
+    def test_a_cached_access_token_is_used_while_it_is_valid_and_replaced_before_the_request_once_it_has_run_out(self):
+        """재작업 1 시험 렌즈 Q 권고 R4 — 메모리의 접근 토큰은 받은 뒤 55분까지만 쓴다(`AccessToken.usable`): 그 안에는 갱신 요청 없이 읽기 한 번, 넘으면 요청을 **보내기 전에** 갱신한다
+        (옛 토큰으로 먼저 보내 401 을 맞고 돌아오지 않는다 — 그 길은 요청 한 건을 낭비하고 한도를 하나 더 쓴다)."""
+        self.login()
+        self.advance(minutes=54)
+        self.google.requests.clear()
+        flow.check(self.ctx, "blogger_en")
+        self.assertEqual(self.google.summaries(), [f"GET www.googleapis.com/blogger/v3/blogs/{fs.BLOG_EN}"], "55분 안이라 갱신하지 않는다")
+        self.advance(minutes=2)                                                      # 로그인으로부터 56분 — 쓸 수 있다고 약속한 55분을 넘겼다
+        self.google.requests.clear()
+        flow.check(self.ctx, "blogger_en")
+        self.assertEqual(self.google.summaries(), ["POST oauth2.googleapis.com/token", f"GET www.googleapis.com/blogger/v3/blogs/{fs.BLOG_EN}"], "만료된 토큰은 요청 전에 새로 받는다")
+        self.assertClean()
+
     def test_a_401_refreshes_once_and_asks_once_more_and_never_a_third_time(self):
         self.login()
         self.google.access_tokens.clear()                                    # 서버가 토큰을 무효로 만들었다(취소·만료)

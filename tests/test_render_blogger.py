@@ -81,6 +81,28 @@ class LocalImageTest(unittest.TestCase):
                 self.assertNotIn("evil.test", post.html)
                 self.assertTrue(any("사진" in note for note in post.notes), post.notes)
 
+    def test_the_allowed_photo_host_table_is_exactly_one_host_and_its_neighbours_stay_blocked(self):
+        """재작업 1 시험 렌즈 Q 권고 R1 — 허용 사진 호스트 표를 글자 그대로 못박는다. 표가 한 줄이라도 늘면(예: `unsplash.com`) 이 시험이 빨개진다 — 호스트를 더하는 일은 승인과 설계 문서 갱신이 따로 필요한 일이다.
+        이웃 호스트(`unsplash.com`·`plus.`·`www.`·`source.`·글자가 붙거나 바뀐 이름)는 막히고, 글에서는 조용히 빠지며 알림만 남는다."""
+        self.assertEqual(bl.ALLOWED_IMAGE_HOSTS, ("images.unsplash.com",))
+        self.assertEqual(bl.classify_image(HERO_URL), "ok")
+        for url in ("https://unsplash.com/photo-1", "https://plus.unsplash.com/premium_photo-1", "https://www.unsplash.com/photo-1", "https://source.unsplash.com/random", "https://evilimages.unsplash.com/photo-1",
+                    "https://images.unsplash.com.evil.test/a.png", "https://images.unsplash.org/photo-1", "https://images-unsplash.com/photo-1"):
+            with self.subTest(url=url):
+                self.assertEqual(bl.classify_image(url), "blocked")
+                post = bl.render_blogger_post(project(BODY + f"\n![사진]({url})\n"), "ko")
+                self.assertNotIn("<img", post.html)
+                self.assertTrue(any("사진" in note for note in post.notes), post.notes)
+
+    def test_a_file_address_with_a_server_name_is_this_pcs_file_and_never_an_internet_photo(self):
+        """재작업 1 시험 렌즈 Q 권고 R5 — `file://서버/공유/x.jpg` 는 이 PC 쪽(네트워크 공유) 파일이라 `local` 이다 — 호스트 이름이 있어도 인터넷 사진(`blocked`)이 아니다. `blocked` 는 글에서 조용히 빼고 알림만 하지만 `local` 은 글을 멈춘다
+        (사진은 이 PC 를 떠나지 않는다 — BT-50). 옛 표본은 호스트 없는 `file:///C:/…` 뿐이었다."""
+        for url in ("file://server/share/photo.jpg", "file://localhost/C:/photo.jpg", "FILE://SERVER/share/a.png", "ftp://server/share/a.png"):
+            with self.subTest(url=url):
+                self.assertEqual(bl.classify_image(url), "local")
+                error = refused(self, source=f"{BODY}\n![사진 설명]({url})\n")
+                self.assertEqual((error.code, error.slots), ("BLOGGER_IMAGE_UNSUPPORTED", {"사진 수": "1"}))
+
     def test_the_html_never_contains_a_local_path_or_a_user_name_for_a_clean_post(self):
         """BT-51 — 사진을 거절하는 길 말고도, 깨끗한 글의 결과에 경로 모양·이 PC 의 사용자 이름이 없다(대표 사진·본문 사진이 있어도)."""
         post = bl.render_blogger_post(project(BODY + "\n![사진](" + HERO_URL + ")\n"), "ko", hero=bl.HeroImage(HERO_URL, credit(), "대표"), tags=("가", "나"))
@@ -155,7 +177,7 @@ class LimitsTest(unittest.TestCase):
         self.assertEqual(bl.clean_labels(("a,b", "c，d", "e;f")), ("a b", "c d", "e f"), "쉼표류는 공백으로 — 라벨 하나가 둘로 갈라지지 않는다")
         self.assertEqual(bl.clean_labels(("a\x00b", "  ", "")), ("a b",), "제어 문자는 공백으로, 빈 라벨은 버린다")
         self.assertEqual(bl.clean_labels(["가" * 40]), ("가" * 40,))
-        for bad in (tuple(f"라벨{n}" for n in range(11)), ("가" * 41,), ("a<b",), (5,), "abc", None):
+        for bad in (tuple(f"라벨{n}" for n in range(11)), ("가" * 41,), ("a<b",), ("a>b",), ("<b>",), (5,), "abc", None):         # 꺾쇠는 여는 쪽도 닫는 쪽도 따로 막는다(재작업 1 — 시험 렌즈 Q R5)
             with self.subTest(bad=repr(bad)[:30]), self.assertRaises(AppError) as caught:
                 bl.clean_labels(bad)
             self.assertEqual(caught.exception.code, "CONTENT_INVALID")

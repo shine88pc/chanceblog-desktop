@@ -231,13 +231,34 @@ class OpenUrlTest(unittest.TestCase):
         self.assertEqual(sorted(open_url.LOGIN_KEYS), sorted(auth.AUTH_KEYS))
         variants = {"하나 더": self.good + "&login_hint=a%40b.example", "하나 빠짐": self.good.replace("&prompt=consent", ""), "겹침": self.good + "&state=x", "포트": self.good.replace("accounts.google.com", "accounts.google.com:8443"),
                     "사용자 정보": self.good.replace("https://", "https://u:p@", 1), "조각": self.good + "#x", "http": self.good.replace("https:", "http:", 1), "길": self.good.replace("/v2/auth", "/v1/auth"),
-                    "호스트": self.good.replace("accounts.google.com", "accounts.google.org"), "공백": self.good.replace("prompt=consent", "prompt=con sent"), "긴 글": self.good + "&x=" + "a" * 2000, "443": self.good.replace("accounts.google.com", "accounts.google.com:443")}
+                    "호스트": self.good.replace("accounts.google.com", "accounts.google.org"), "공백": self.good.replace("prompt=consent", "prompt=con sent"), "긴 글": self.good + "&x=" + "a" * 2000, "443": self.good.replace("accounts.google.com", "accounts.google.com:443"),
+                    "꼬리가 같은 호스트": self.good.replace("accounts.google.com", "xaccounts.google.com"), "하위 호스트": self.good.replace("accounts.google.com", "evil.accounts.google.com"),
+                    "긴 클라이언트 ID": self.good.replace("client_id=" + bs.CLIENT_ID, "client_id=" + bs.CLIENT_ID + "a" * 3000, 1)}
         for label, url in variants.items():
             with self.subTest(label=label):
                 ours = auth.check_auth_url(url) == []
                 table = open_url.check_open_url(url) == open_url.KIND_LOGIN
                 self.assertEqual(ours, table, f"로그인 주소를 만드는 쪽과 열기 표가 다르게 말한다: {label}")
                 self.assertEqual(ours, label == "443")
+
+    def test_a_login_address_is_taken_up_to_two_thousand_characters_and_no_further_by_both_checks(self):
+        """재작업 1 시험 렌즈 Q 권고 R5 — 길이 상한은 2,000자(만드는 쪽 `MAX_AUTH_URL` 과 열기 표 `MAX_URL` 이 같은 말): 정확히 2,000자인 같은 모양은 열리고 2,001자·긴 클라이언트 ID(3,000자)는 둘 다 거절한다.
+        다른 규칙(칸 아홉·호스트·길)에는 걸리지 않는 표본이라 상한만 본다."""
+        base = len(self.good)
+        self.assertIn("client_id=" + bs.CLIENT_ID, self.good)
+        self.assertLess(base, 2000)
+
+        def padded(total):
+            return self.good.replace("client_id=" + bs.CLIENT_ID, "client_id=" + bs.CLIENT_ID + "a" * (total - base), 1)
+
+        edge, over, long = padded(2000), padded(2001), padded(base + 3000)
+        self.assertEqual((len(edge), len(over)), (2000, 2001))
+        self.assertEqual((open_url.MAX_URL, auth.MAX_AUTH_URL), (2000, 2000))
+        self.assertEqual((auth.check_auth_url(edge), open_url.check_open_url(edge)), ([], open_url.KIND_LOGIN))
+        for url in (over, long):
+            with self.subTest(length=len(url)):
+                self.assertNotEqual(auth.check_auth_url(url), [])
+                self.assertIsNone(open_url.check_open_url(url))
 
     def test_the_open_table_is_a_pure_layer_with_no_qt_and_no_connection(self):
         import ast

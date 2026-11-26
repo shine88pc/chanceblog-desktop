@@ -260,6 +260,16 @@ class ReadTest(World):
         self.assertEqual(info.name, "alert(1)이름 & 둘", "태그는 글자 참조로 숨긴 것까지 지우고 꺾쇠는 남기지 않는다(화면에는 글자로만 보인다)")
         self.assertNotIn("<", info.name + ">")
 
+    def test_markup_hidden_behind_two_and_three_layers_of_character_references_is_removed_too(self):
+        """재작업 1 시험 렌즈 Q 권고 R5 — `&lt;b&gt;`(한 겹)뿐 아니라 `&amp;lt;b&amp;gt;`(두 겹)·`&amp;amp;lt;b&amp;amp;gt;`(세 겹)으로 숨긴 태그도 지운다(풀기 반복을 한 번으로 줄이는 변이가 통과하던 틈 —
+        화면이 글을 서식으로 읽는 일은 없지만 이름 칸에 태그 글자가 남지 않는다는 약속이다)."""
+        for layers in (1, 2, 3):
+            amp = "&" + "amp;" * (layers - 1)
+            hidden = f"{amp}lt;b{amp}gt;굵게{amp}lt;/b{amp}gt;"
+            with self.subTest(layers=layers):
+                self.assertEqual(api.plain_text("앞 " + hidden + " 뒤"), "앞 굵게 뒤")
+        self.assertEqual(api.plain_text("&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;"), "alert(1)")
+
     def test_an_unknown_blog_is_not_found_and_a_foreign_token_is_refused(self):
         with self.assertRaises(NetError) as caught:
             api.get_blog(self.client, self.token, "55555")
@@ -280,6 +290,14 @@ class ReadTest(World):
         self.assertTrue(all(item.status == "DRAFT" for item in items))
         request = [item for item in self.google.requests if item.path.endswith("/posts") and item.method == "GET"][-1]
         self.assertEqual(request.query, {"status": "DRAFT", "orderBy": "UPDATED", "maxResults": "5", "fetchBodies": "false", "view": "ADMIN"})
+        self.assertClean()
+
+    def test_a_server_that_returns_more_than_five_items_is_cut_to_five_on_our_side_too(self):
+        """재작업 1 시험 렌즈 Q 권고 R5 — 서버가 `maxResults=5` 를 어기고 여덟 건을 줘도 이쪽에서 앞의 다섯 건까지만 읽는다(가짜 서버가 약속을 지키면 이 자름이 한 번도 쓰이지 않았다)."""
+        raw = {"items": [{"id": str(100 + number), "title": f"제목 {number}", "updated": "2026-11-25T09:00:00Z", "status": "DRAFT"} for number in range(8)]}
+        self.google.push("list", bs.Reply(200, raw))
+        items = api.find_drafts(self.client, self.token, self.blog)
+        self.assertEqual([item.post_id for item in items], ["100", "101", "102", "103", "104"])
         self.assertClean()
 
     def test_malformed_list_items_are_refused(self):

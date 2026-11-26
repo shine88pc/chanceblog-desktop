@@ -406,6 +406,7 @@ class ListenerTest(Base):
 
     def test_only_eight_connections_are_served_and_the_ninth_is_refused(self):
         """BT-29 — 길이 틀린 요청도 센다. 여덟 번째 뒤에는 창구가 닫혀 아홉째 연결은 되지 않는다."""
+        self.assertEqual(lb.MAX_CONNECTIONS, 8, "여덟 — 아래 반복 횟수를 상수에서 가져오므로 숫자는 여기서 글자로 못박는다(재작업 1 — 시험 렌즈 Q R5)")
         listener = self.open()
         port = listener.port
         run = Run(listener)

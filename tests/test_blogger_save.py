@@ -6,7 +6,9 @@
   3) 공개(LIVE) 같은 초안이 아닌 답은 즉시 멈추고 글 상태는 실패로 바뀐다 · 저널은 보내기 전에 쓰고 해시뿐이다 · 한도는 항목마다.
   4) 재작업 1 권고-1 — 보내기 직전 검사는 두 눈이다: 본문 속 비밀 형태 검사기와 올리기 직전 마지막 관문(`pages.secret_labels`)의 합집합 — 한쪽만 보면 놓치던 모양(눈에 안 보이는 글자가 낀 토큰·Slack·Anthropic 따위)도 보내기 전에 막힌다.
   5) 재작업 1 권고-2 — 이어받기는 저널이 가리키는 글이 **지금 승인한 글**(제목·내용 해시가 같다)일 때만 한다: 원고를 고쳐 다시 승인한 글은 옛 초안을 이어받지 않고 새로 보낸다(옛 초안은 지우지도 덮어쓰지도 않는다).
+  6) 재작업 1 시험 렌즈 Q 권고 R2–R4 — 저널 파일 길 막이(`../`·`a/b`·65자 따위는 어느 길로도 파일을 건드리지 못한다)와 지우기 실패 알림 · 구글 429 뒤의 쉼 · 사용량 기록 잠김·못 읽음의 오류 이름(`KEYS_BUSY`·`QUOTA_STATE_INVALID`) · 승인 상태인데 렌더링이 낡은 글의 가드.
 """
+import dataclasses
 import json
 import sys
 import unittest
@@ -25,6 +27,7 @@ from chanceblog_desktop.errors import AppError  # noqa: E402
 from chanceblog_desktop.net.errors import NetError  # noqa: E402
 from chanceblog_desktop.render.blogger import HeroImage  # noqa: E402
 from chanceblog_desktop.service import blogger_flow as flow  # noqa: E402
+from chanceblog_desktop.service import connections as cn  # noqa: E402
 from chanceblog_desktop.service import projects  # noqa: E402
 from chanceblog_desktop.ui.core.attribution import PhotoCredit  # noqa: E402
 
@@ -78,6 +81,23 @@ class HappyPathTest(SaveCase):
         self.assertEqual(sorted(request.headers), sorted(["host", "user-agent", "accept", "accept-encoding", "connection", "content-type", "content-length", "authorization"]))
 
 
+class HandEdited:
+    """읽어 온 프로젝트를 감싸 '승인했다는 상태는 그대로인데 렌더링이 지금 원고와 맞지 않는' 프로젝트를 흉내 낸다(재작업 1 — 시험 렌즈 Q R4). 정상 길로는 그런 프로젝트가 읽히지 않는다 —
+    불러오기 검사(`ContentProject`)가 승인 상태의 렌더 판 번호가 다르면 거절한다 — 그래서 불러오는 길(`Store.load`)을 바꿔야 보내는 쪽의 겹쳐 둔 가드에 닿는다."""
+
+    def __init__(self, project, *, newer_revision=False, empty_render=False):
+        self._project = project
+        self._empty_render = empty_render
+        self.revision = project.revision + (1 if newer_revision else 0)
+
+    def variant(self, slot):
+        variant = self._project.variant(slot)
+        return dataclasses.replace(variant, rendered="") if self._empty_render else variant
+
+    def __getattr__(self, name):
+        return getattr(self._project, name)
+
+
 class NothingHappensTest(SaveCase):
     def test_without_the_confirmation_nothing_happens(self):
         with self.assertRaises(AppError) as caught:
@@ -101,6 +121,20 @@ class NothingHappensTest(SaveCase):
             self.assertEqual(caught.exception.code, "STATUS_TRANSITION_INVALID", label)
         self.assertEqual(self.google.requests, [])
         self.assertEqual(self.variant(edited).status, "DRAFT_GENERATED")
+
+    def test_an_approved_post_whose_render_is_not_the_current_text_is_never_sent_even_if_the_state_still_says_approved(self):
+        """재작업 1 시험 렌즈 Q 권고 R4 — 두 번째 가드(`rendered_revision != revision`·빈 렌더링)를 직접 본다. 위 시험의 '승인 뒤 원고를 고침' 은 상태가 '렌더링 만듦' 으로 돌아가 앞 줄에서 걸려 이 가드에 닿지 않는다.
+        그래서 불러오는 길을 바꿔 닿게 한다 — 겹쳐 둔 방어가 그대로 살아 있는지 본다. 한 건도 보내지 않고 저널도 없고 상태는 승인 그대로다."""
+        real = Store.load
+        cases = (("렌더링이 옛 판", lambda project: HandEdited(project, newer_revision=True)), ("렌더링이 빔", lambda project: HandEdited(project, empty_render=True)))
+        for label, wrap in cases:
+            with self.subTest(case=label), mock.patch.object(Store, "load", lambda store, project_id, wrap=wrap: wrap(real(store, project_id))), self.assertRaises(AppError) as caught:
+                self.save(self.pid)
+            self.assertEqual(caught.exception.code, "STATUS_TRANSITION_INVALID", label)
+            self.assertIn("렌더링", str(caught.exception.detail), label)
+            self.assertNothingSent()
+        self.save(self.pid)                                                          # 가드가 글을 상하게 하지 않았다 — 정상 길로는 그대로 저장된다
+        self.assertEqual(self.variant(self.pid).status, "DRAFT_SAVED")
 
     def test_an_unknown_post_a_wrong_slot_and_a_missing_login_stop_before_any_request(self):
         with self.assertRaises(AppError) as caught:
@@ -228,6 +262,24 @@ class NoAutomaticResendTest(SaveCase):
                 self.save(self.pid)
             self.assertEqual(caught.exception.code, code)
             self.assertEqual((len(self.inserts()), self.journals(), self.variant(self.pid).status), (1, [], "APPROVED"), code)
+
+    def test_after_a_429_the_item_rests_and_the_next_press_asks_google_nothing_until_the_rest_is_over(self):
+        """재작업 1 시험 렌즈 Q 권고 R3 — 구글이 429 로 답하면 한도 저장소에 '쉬어라' 가 적힌다(`API_RATE_LIMITED` → `quota.RATE_LIMITED`): 곧바로 다시 눌러도 구글에는 요청이 한 건도 가지 않고 쉬는 시각이 알림에 있다.
+        쉬는 시간이 지나면 다시 된다. (위 시험은 사례마다 `cool()` 로 쉼을 지워서 이 줄이 묶이지 않았다 — 429 를 다른 오류로 적으면 429 뒤에도 곧바로 구글을 두드린다.)"""
+        self.google.push("insert", bs.google_error(429, "rateLimitExceeded"))
+        with self.assertRaises(NetError) as first:
+            self.save(self.pid)
+        self.assertEqual((first.exception.code, len(self.inserts()), self.journals()), ("API_RATE_LIMITED", 1, []))
+        self.google.requests.clear()
+        with self.assertRaises(AppError) as second:
+            self.save(self.pid)
+        self.assertEqual(second.exception.code, "API_RATE_LIMITED")
+        self.assertTrue(second.exception.slots.get("재시도 가능 시각"), "쉬는 시각을 알린다")
+        self.assertIn("한국 시간", second.exception.rendered().message)
+        self.assertEqual((self.google.requests, self.journals(), self.variant(self.pid).status), ([], [], "APPROVED"))
+        self.advance(minutes=2)                                                      # 쉬는 시간(처음 429 는 5초)이 지났다
+        self.save(self.pid)
+        self.assertEqual((len(self.inserts()), len(self.stored()), self.variant(self.pid).status), (1, 1, "DRAFT_SAVED"))
 
     def test_a_401_refreshes_the_token_once_and_resends_once(self):
         """유일한 자동 재전송 — 401 은 처리되지 않은 요청이라 갱신해서 한 번만 다시 보낸다(글은 하나만 저장된다)."""
@@ -635,6 +687,79 @@ class JournalAndLockTest(SaveCase):
             self.save(self.pid)
         self.assertEqual(caught.exception.code, "API_RATE_LIMITED")
         self.assertEqual((self.google.requests, self.journals(), self.variant(self.pid).status), ([], [], "APPROVED"))
+
+    def test_a_usage_record_that_is_busy_or_cannot_be_read_stops_the_save_before_any_request_with_its_own_error(self):
+        """재작업 1 시험 렌즈 Q 권고 R3 — 사용량 기록을 못 잡으면(다른 창이 쓰는 중 / 읽거나 쓰지 못함) 구글에 한 건도 보내지 않고 **각자의 오류 이름**으로 멈춘다: `KEYS_BUSY`·`QUOTA_STATE_INVALID`.
+        둘 다 `API_RATE_LIMITED`(한도를 다 씀)로 뭉개 말하면 사람이 '내일 다시' 로 오해한다. 저널은 남지 않고 글은 승인 상태 그대로이며, 풀리면 같은 글이 그대로 저장된다."""
+        real = cn.locked
+
+        def broken(failure):
+            def locked(ctx, name="connections", *, wait=cn.KEYS_LOCK_WAIT):
+                if name == "quota-state":
+                    raise failure
+                return real(ctx, name, wait=wait)
+            return locked
+
+        for failure, code in ((AppError("KEYS_BUSY"), "KEYS_BUSY"), (AppError("FILE_WRITE_FAILED", {"경로": "시험"}, detail="시험용 실패"), "QUOTA_STATE_INVALID")):
+            with self.subTest(code=code), mock.patch.object(cn, "locked", broken(failure)), self.assertRaises(AppError) as caught:
+                self.save(self.pid)
+            self.assertEqual(caught.exception.code, code)
+            self.assertEqual((self.google.requests, self.journals(), self.variant(self.pid).status), ([], [], "APPROVED"), code)
+        self.save(self.pid)
+        self.assertEqual(self.variant(self.pid).status, "DRAFT_SAVED")
+
+    def test_the_journal_file_name_comes_only_from_a_plain_post_number_and_a_known_slot(self):
+        """재작업 1 시험 렌즈 Q 권고 R2 — 저널 파일 길 막이: 글 번호는 영문·숫자·`-`·`_` 1–64자 **통째**(`fullmatch`)이고 구분은 아는 둘뿐이다. `../`·`a/b`·`a` 역슬래시 `b`·공백·65자·빈 글·줄바꿈·NUL·모르는 구분은
+        읽기·쓰기·지우기 어느 길로도 파일을 건드리지 못한다 — 폴더 밖의 표식 파일이 그대로 있고 새 파일이 생기지 않는다(이 갈래가 새로 연 '파일 하나 지우기' 의 근거 — `test_service_safety` 의 허용 한 줄이 가리키는 동작 시험)."""
+        folder = self.journal_dir()
+        (folder / "a").mkdir(parents=True, exist_ok=True)                            # `a/../../x` 를 운영체제가 실제로 풀 수 있게 — 없는 폴더를 지나는 `..` 는 윈도 밖에서는 풀리지 않는다
+        marker = folder.parent / "x-blogger_en.json"
+        marker.write_text("표식", encoding="utf-8")
+        journal = flow.BloggerJournal(folder)
+        record = flow.JournalRecord(self.pid, "blogger_en", "a" * 64, "b" * 64, "sending", self.ctx.stamp())
+
+        def write(project_id, slot):
+            return journal.write(dataclasses.replace(record, project_id=project_id, slot=slot))
+
+        for good in (self.pid, "a" * 64, "Ab_9-z"):                                  # 멀쩡한 번호는 막지 않는다(전부 막는 길 막이가 아니다)
+            for slot in ("blogger_en", "blogger_ko"):
+                write(good, slot)
+                self.assertEqual((journal.read(good, slot).project_id, journal.remove(good, slot), journal.read(good, slot)), (good, str(), None))
+        self.assertEqual(journal.remove(self.pid, "blogger_en"), str(), "원래 없던 파일을 지우는 것은 알릴 일이 아니다")
+        before = sorted(path.relative_to(self.tmp).as_posix() for path in self.tmp.rglob("*") if path.is_file())
+        bad_ids = ("a/../../x", "../x", "..", "a/b", "a" + chr(92) + "b", "a b", "x" * 65, "", "a\n", "a\x00b", "한글", None, 5)
+        bad_slots = ("", "blogger", "BLOGGER_EN", "blogger_en/../x", "blogger_en ", "일본어", None)
+        for project_id, slot in [(item, "blogger_en") for item in bad_ids] + [(self.pid, item) for item in bad_slots]:
+            for name, action in (("read", journal.read), ("remove", journal.remove), ("write", write)):
+                with self.subTest(project_id=repr(project_id)[:20], slot=repr(slot)[:20], action=name), self.assertRaises(AppError) as caught:
+                    action(project_id, slot)
+                self.assertEqual((caught.exception.code, caught.exception.slots), ("CONTENT_INVALID", {"항목": "프로젝트 번호"}))
+        self.assertEqual(marker.read_text(encoding="utf-8"), "표식", "폴더 밖의 파일은 읽히지도 지워지지도 바뀌지도 않았다")
+        self.assertEqual(sorted(path.relative_to(self.tmp).as_posix() for path in self.tmp.rglob("*") if path.is_file()), before, "새 파일도 생기지 않았다")
+
+    def test_when_the_journal_file_cannot_be_deleted_the_result_says_so_and_the_save_still_counts(self):
+        """재작업 1 시험 렌즈 Q 권고 R2 — 저장이 끝난 뒤 저널 파일을 못 지우면(읽기 전용 흉내) 알림 글이 결과에 실린다: 파일 이름·경로·오류 글 없이 예외 종류만. 글은 저장된 채이고 저널은 남는다
+        (다음에 눌러도 이미 저장된 글이라 새로 보내지 않는다). 파일이 원래 없었으면 알릴 것이 없다."""
+        real = Path.unlink
+
+        def refuse(path, *args, **kwargs):
+            if path.name.endswith("-blogger_en.json"):
+                raise PermissionError(13, "CANARY_읽기_전용")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", refuse):
+            result = self.save(self.pid)
+        text = " ".join(result.notes)
+        self.assertIn("발행 기록 파일을 지우지 못했", text)
+        self.assertIn("PermissionError", text)
+        for hidden in ("CANARY_", self.pid, "-blogger_en.json", str(self.tmp)):
+            self.assertNotIn(hidden, text)
+        self.assertEqual((self.variant(self.pid).status, self.journals()), ("DRAFT_SAVED", [f"{self.pid}-blogger_en.json"]))
+        journal = flow.BloggerJournal(self.journal_dir())
+        with mock.patch.object(Path, "unlink", refuse):
+            self.assertIn("PermissionError", journal.remove(self.pid, "blogger_en"))
+        self.assertEqual((journal.remove(self.pid, "blogger_en"), self.journals()), (str(), []), "이제 지워진다")
+        self.assertEqual(journal.remove(self.pid, "blogger_en"), str(), "없는 파일은 알릴 것이 없다")
 
     def exhaust(self, entry):
         from chanceblog_desktop.service import quota

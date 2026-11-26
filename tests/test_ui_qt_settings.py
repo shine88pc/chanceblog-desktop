@@ -581,6 +581,8 @@ class UsageBarsTest(Base):
 class CardTextFitTest(Base):
     """UI-C1b(D-183 카드 글 줄이기) — 줄인 안내 문장이 실제로 좁은 카드에서 덜 꺾이는지 **그려진 폭**으로 잰다."""
 
+    POLICY_CARDS = 2                                                                                                                # 정책 문장이 보이는 카드 수 — 열린 모양: 이미지 공급자 카드와 Blogger 카드(키를 받는다). 닫힌 모양(출하 모양)은 아래 하위 클래스가 1 로 바꾼다
+
     @staticmethod
     def wrapped_lines(window):
         """카드 안의 줄바꿈 글 중 한 줄이면 들어갈 글이 두 줄 이상으로 꺾인 것들의 글."""
@@ -599,12 +601,12 @@ class CardTextFitTest(Base):
         grid = self.accordions(window)["data"].body
         first, second = grid._widgets[:2]
         self.assertEqual(first.y(), second.y())                                                                                     # 두 열이다
-        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]] * 2)                                                 # 같은 문장이 이미지 공급자 카드와 Blogger 카드(제공자 전환 없음 — D-775) 둘에 보인다
+        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]] * self.POLICY_CARDS)                                  # 같은 문장이 이미지 공급자 카드와 Blogger 카드(제공자 전환 없음 — D-775) 둘에 보인다(닫힌 모양은 이미지 공급자 카드 하나)
 
     def test_nothing_wraps_in_the_wider_two_column_cards_except_the_same_one_and_the_single_column_window_shows_all_on_one_line(self):
         window = self.make(size=(1366, 768))
         self.open_all(window)
-        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]] * 2)                                                 # 이미지 공급자 카드와 Blogger 카드(D-775)
+        self.assertEqual(self.wrapped_lines(window), [text.T["policy_never"]] * self.POLICY_CARDS)                                  # 이미지 공급자 카드와 Blogger 카드(D-775) — 닫힌 모양은 이미지 공급자 카드 하나
         window.resize(*SIZES[-1])                                                                                                   # 최소 창(900×560) — 한 열이라 카드가 더 넓다
         self.settle()
         ui_offscreen.wait_until(self.app, lambda: self.wrapped_lines(window) == [], 3)
@@ -939,7 +941,9 @@ class _ClosedBlogger:
 
 
 class ClosedStateCardTextFitTest(_ClosedBlogger, CardTextFitTest):
-    """닫힌 Blogger 카드의 안내 글도 좁은 카드에서 꺾이지 않는다 — 위 두 시험(정책 두 문장만 꺾임)이 닫힌 모양에서도 그대로 통과한다."""
+    """닫힌 Blogger 카드의 안내 글도 좁은 카드에서 꺾이지 않는다 — 위 두 시험이 닫힌 모양에서도 통과한다. 닫힌 모양에서는 Blogger 카드가 키를 받지 않아 정책 문장이 없으므로(`ui/core/services.py` 의 `takes_keys` 가 입력 스위치에 묶여 있다) 정책 문장이 보이는 카드는 이미지 공급자 하나뿐이다(재작업 1 — 시험 렌즈 Q 필수 M1)."""
+
+    POLICY_CARDS = 1
 
 
 class ClosedStateTest(_ClosedBlogger, Base):
