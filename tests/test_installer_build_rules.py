@@ -19,6 +19,7 @@ import sys
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 import installer_build_support as bs
 import packaging_support as ps
@@ -169,8 +170,8 @@ def insert_after(line, more):
 
 ISS_MUTANTS = {
     "PrivilegesRequired 삭제": drop("PrivilegesRequired"),
-    "PrivilegesRequired 를 관리자로": replace("PrivilegesRequired=lowest", "PrivilegesRequired=admin"),
-    "PrivilegesRequiredOverridesAllowed 더하기": insert_after("PrivilegesRequired=lowest", "PrivilegesRequiredOverridesAllowed=commandline dialog"),
+    "PrivilegesRequired 를 관리자로": replace("\nPrivilegesRequired=lowest\n", "\nPrivilegesRequired=admin\n"),
+    "PrivilegesRequiredOverridesAllowed 더하기": replace("\nPrivilegesRequired=lowest\n", "\nPrivilegesRequired=lowest\nPrivilegesRequiredOverridesAllowed=commandline dialog\n"),
     "UninstallDelete 에 데이터 폴더": append('[UninstallDelete]\nType: filesandordirs; Name: "{localappdata}\\ChanceblogDesktop"'),
     "UninstallRun 구역": append('[UninstallRun]\nFilename: "{app}\\ChanceBlogDesktop.exe"'),
     "InstallDelete 구역": append('[InstallDelete]\nType: filesandordirs; Name: "{app}\\old"'),
@@ -847,7 +848,9 @@ class RefusalFlowTest(FlowBase):
                 target.write_bytes(b"not an executable at all")
                 return result
         self.refused(NotPe(), "실행 파일")
-        self.refused(bs.FakeHost(setup_bytes=bi.MAX_SETUP_BYTES + 1), "너무 커요")
+        self.assertEqual(bi.MAX_SETUP_BYTES, 200 * 1024 * 1024, "업데이트 매니페스트의 파일 하나 크기 상한과 같다")
+        with mock.patch.object(bi, "MAX_SETUP_BYTES", 1000):
+            self.refused(bs.FakeHost(setup_bytes=2048), "너무 커요")
 
     def test_a_setup_that_is_empty_is_refused(self):
         self.refused(bs.FakeHost(setup_bytes=0), "설치 파일")
@@ -874,6 +877,21 @@ class RefusalFlowTest(FlowBase):
         with self.assertRaises(mm.BuildRefused):
             bi.build(bi.Options(out_dir=self.out), host=bs.FakeHost(), say=self.lines.append, iss_path=Path(self.work.name) / "missing.iss")
 
+    def test_default_install_and_data_folders_that_overlap_stop_the_build_before_the_compiler(self):
+        """기본 설치 폴더가 데이터 폴더와 겹치게 상수를 틀리게 하면(설치 폴더 이름이 한 단계 올라온 경우) 빌드가 컴파일 전에 거절한다 — 제거할 때 데이터가 지워질 수 있다."""
+        host = bs.FakeHost()
+        with mock.patch.object(pc, "INNO_PROGRAMS_FOLDER", ""):
+            self.assertNotEqual(pc.install_dir_problem(pc.default_install_dir("C:\\Local"), pc.default_data_dir("C:\\Local")), "")
+            with self.assertRaises(mm.BuildRefused) as caught:
+                bi.build(bi.Options(out_dir=self.out), host=host, say=self.lines.append)
+        self.assertIn("같은 폴더", str(caught.exception))
+        self.assertEqual(host.calls, [])
+
+    def test_main_returns_two_and_prints_a_sentence_for_a_refused_build(self):
+        with mock.patch.object(sys, "stderr", new=mock.MagicMock()) as shown, mock.patch.object(sys, "stdout", new=mock.MagicMock()):
+            self.assertEqual(bi.main(["--out-dir", str(Path(self.work.name) / "nothing-here")]), 2)
+        self.assertIn("설치 파일 만들기를 멈췄어요", "".join(call.args[0] for call in shown.write.call_args_list if call.args))
+
 
 class WithInstallerTest(unittest.TestCase):
     RECORD = {"tool": "inno-setup", "tool_version": "6.7.1", "iscc_sha256": "a" * 64, "built_on": "local"}
@@ -899,7 +917,8 @@ class WithInstallerTest(unittest.TestCase):
         info = ps.sample_info("outer")
         text = mm.render_json(info)
         self.assertEqual(mm.render_json(json.loads(text)), text)
-        self.assertNotIn("installer", text)
+        self.assertNotIn('"installer"', text)
+        self.assertNotIn('"artifacts"', text)
         self.assertEqual(mm.render_markdown(info), mm.render_markdown(json.loads(text)))
         self.assertNotIn("## 설치 파일(Inno Setup)", mm.render_markdown(info))
 

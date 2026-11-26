@@ -166,3 +166,27 @@ Velopack 의 롤백·서명 검증은 '문서에 없음'일 뿐 코드는 미확
 - 후보(`rc`) 채널의 폴더에서 업데이트(오프라인 적용): 앱의 서비스 흐름(`check_from_folder`·`stage_update_from_folder`)은 있고 `rc` 매니페스트를 읽지만(`CHANNELS_OFFLINE`) 폴더를 고르는 화면('파일에서 업데이트…')은 아직 없다(U-5).
 - 릴리스 자산을 실제로 내려주는 이동 호스트가 `release-assets.githubusercontent.com` 인지는 첫 실접속(운영자 실기)에서 확인한다 — 다르면 접속 틀의 표를 바꾸는 T3 다.
 - 설치 종류(`velopack`·`inno`)와 `files` 의 역할 표(`apply.REQUIRED_ROLES`)는 설치 도구 시험 결과(확인 041)를 기다리는 잠정값이다.
+
+## 설치 파일과 휴대용 압축 파일 — 두 산출물 (V1INSTALL, D-830에서 D-836)
+
+> **이 절은 설치 파일을 만드는 쪽의 사실이다.** 설치 파일을 만드는 도구(`packaging/build_installer.py`)는 들어왔지만 릴리스 워크플로·서명·태그는 아직 없고(맨 위 배너 그대로), 이 절은 그 도구가 내놓는 산출물과 릴리스 갈래가 이어받을 일을 적는다. 도구 선택은 위 '방식' 의 Velopack 1순위가 아니라 **Inno Setup** 으로 정해졌다(설치 도구 시험 2차 결과 — 이슈 #288). 만드는 법·옵션·무음 설치와 제거 명령·한계는 [`PACKAGE.md`](PACKAGE.md) 의 '설치 파일(Inno Setup)' 절에 있다.
+
+### 두 산출물
+
+릴리스마다 사용자가 받는 파일은 둘이다: **설치 파일** `ChanceBlogDesktop-<버전>-Setup.exe` 와 **휴대용 압축 파일** `ChanceBlogDesktop-<버전>-win64.zip`. 둘은 **같은 묶음 폴더**(`bundle/`)에서 만들어 안의 프로그램 파일이 같은 바이트다(설치 파일을 만들 때 폴더와 압축 파일을 파일마다 SHA-256 으로 견주고 다르면 만들지 않는다). 시험 빌드(`TESTBUILD`)에는 설치 파일이 없다. 두 파일의 이름은 업데이트 매니페스트가 읽는 이름(위 'schema 1' 절의 `setup`·`portable` 역할)과 같다.
+
+- **SHA-256**: `SHA256SUMS` 에 두 파일의 줄이 있고(`sha256sum -c` 로 확인), 바깥 `PACKAGE_INFO.json` 의 선택 칸 `artifacts`(역할 `setup`·`portable` 별 이름·SHA-256·크기)와 `installer`(도구 `inno-setup`·판·컴파일러 파일의 SHA-256·만든 곳)에도 같은 값이 있다. `schema` 번호는 올리지 않았다(1 그대로).
+- **서명이 없다**: 설치 파일도 코드 서명이 없어 처음 실행할 때 SmartScreen 경고('추가 정보' → '실행')가 뜰 수 있고, 스마트 앱 컨트롤이 켜진 PC 에서는 막힐 수 있다. 릴리스 본문에는 SHA-256 확인법과 이 안내를 넣는다(위 '릴리스 노트 규칙' 3 절). 운영자 확인 항목은 시험지 초안의 T-INST-01에서 03.
+- **관리자 권한 없이**: 설치는 사용자 폴더에 하고(관리자 암호를 묻지 않는다), 제거해도 글·설정·백업·자격 증명은 남는다.
+
+### 릴리스 갈래가 이어받을 일(이 갈래는 `.github`·서명·태그·릴리스를 만지지 않았다)
+
+| 일 | 이유 |
+|---|---|
+| 러너 스모크 — 무음 설치 → 설치본 `--selftest` → 무음 제거 → 잔여물·센티넬 데이터 확인, **생산 호출(앱이 먼저 끝남 + `/CLOSEAPPLICATIONS`)의 재측정** | 켜 둔 앱이 있으면 무음 Setup 이 새 판을 적용하지 못한 측정(M09)이 생산 호출과 달랐다 |
+| 첫 실제 컴파일 확인 | 생산 `.iss` 는 앱 검사(CI)의 윈도 칸에서 처음 진짜로 컴파일된다(이 PC 에는 Inno 가 없다) |
+| `release_check`·`release_chain`(후보 목록)이 `artifacts` 의 두 이름·SHA-256 과 릴리스 자산 목록을 견주기 | 같은 값이 두 곳에 있다 |
+| 업로드 허용 모양(`ALLOWED_UPLOAD_FILES`, 결정 D-344)에 `ChanceBlogDesktop-*-Setup.exe` 더하기 | 지금 허용 모양에는 설치 파일이 없다 |
+| 바깥 정보의 `schema` 2·`channel`·`notice`·`update`·`release_eligible` 확장(설계서 P3) | RELEASE·UPDATE 와 겹쳐 총괄이 그쪽 몫으로 미뤘다(영향: 지금의 `channel` 은 `personal-pc-preview` 그대로) |
+| Inno Setup 의 저작권자·라이선스 이름·전문을 `LICENSES/` 에 채우기(러너의 Inno 설치 폴더에서 복사) | 고지문에는 사실과 '아직 없음' 표시만 있다(법률 판단이 아니다) |
+| 아이콘(`.ico`) 한 장 | 운영자 결정 — 없으면 기본 아이콘 |

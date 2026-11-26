@@ -77,7 +77,7 @@ class FakeHost:
         if self.make_setup and self.exit_code == 0:
             target = Path(out_dir) / (base + ".exe")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(ps.pe_bytes(size=self.setup_bytes))
+            target.write_bytes(b"" if self.setup_bytes == 0 else ps.pe_bytes(size=self.setup_bytes))
         return bi.HostResult(self.exit_code, self.compile_output, 0.1)
 
 
