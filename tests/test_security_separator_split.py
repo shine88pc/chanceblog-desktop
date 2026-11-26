@@ -10,7 +10,7 @@
   4) **가리기 엔진**: 모든 키·토큰 모양(여섯 유형 + Slack·OpenAI·Anthropic·Stripe·GitLab·npm 같은 엔진 목록)과 이름 붙은 비밀(`password: 값`·`secret=값`)은 쪼개도 가려지고, 글자는 출력에서 지워진다.
   5) **같은 판정**: 한 길의 판정은 쪼갠 값과 쪼개지 않은 값이 같다 — 저장 검사·서비스 `check_no_secret_shape`·초안 복사 관문·가리기 엔진·화면 글(`display_text`)·올리기 직전 관문(`secret_labels`).
      화면 어댑터의 가져오기는 쪼갠 여섯 유형을 쪼개지 않은 것과 같은 고정 문장으로 거절하고 아무것도 저장하지 않는다.
-  6) **병적 입력**: 구분 글자만 반복·키 모양 반복·한 글자 사이마다 구분 글자 — 6,400·64,000자에서 선형 시간이다.
+  6) **병적 입력**: 구분 글자만 반복·키 모양 반복·한 글자 사이마다 구분 글자 — 16,000·64,000자(네 배 단계)에서 선형 시간이다.
   7) **알려진 한계(고정)**: 미리보기 변환(`render/markdown.py`)이 U+0085·U+2028·U+2029 를 공백으로 바꿔서, 저장 검사가 아는 여섯 유형 밖의 모양(Slack·OpenAI·Stripe …)을 쪼갠 글은 가져오기를 지나 미리보기에 두 쪽이 보인다.
      이 갈래는 `ui/`·`render/` 를 고치지 않는다 — 그 시험은 한계를 못박은 것이고 변환이 고쳐지면 빨개져서 알려 준다. 눈에 안 보이는 글자(U+200B·소프트 하이픈 …)로 쪼갠 것은 저장 검사의 기존 한계 그대로다.
 가짜 비밀은 모두 실행할 때 조각을 이어 붙여 만든다. 네트워크·실제 비밀 없이 돈다.
@@ -603,10 +603,13 @@ class AdapterTest(unittest.TestCase):
 
 
 class PerformanceTest(unittest.TestCase):
-    """병적 입력(구분 글자만·한 글자 사이마다·키 모양 반복·짧은 키를 한 번씩 쪼갠 것 반복)이 선형 시간이다 — 새 지움·위치표·합성이 제곱으로 느려지지 않는다."""
+    """병적 입력(구분 글자만·한 글자 사이마다·키 모양 반복·짧은 키를 한 번씩 쪼갠 것 반복)이 선형 시간이다 — 새 지움·위치표·합성이 제곱으로 느려지지 않는다.
+    한 번 재서 한도를 넘었다고 바로 빨갛게 하지 않는다: 포화된 PC·낮은 우선순위에서는 작은 글을 잴 때와 큰 글을 잴 때의 부하가 달라 선형인데도 비율이 튄다(WIP 4 재확인 필수-1).
+    그래서 한도를 넘으면 작은 글·큰 글을 처음부터 다시 재서(최대 `ATTEMPTS` 번) 한 번이라도 한도 안이면 통과한다. 제곱 시간은 어느 시도에서도 한도를 넘으므로 계속 빨갛다."""
 
     SIZES = (16_000, 64_000)                                                   # 네 배 단계 — 선형이면 약 4배, 제곱이면 약 16배(독립 검증 Q 권고-2)
     GROWTH_LIMIT = 8                                                           # 선형(4)과 제곱(16) 사이
+    ATTEMPTS = 5                                                               # 한도를 넘으면 작은 글·큰 글을 처음부터 다시 재는 최대 횟수(한도 숫자·크기 단계는 그대로)
 
     @staticmethod
     def shapes(size):
@@ -645,17 +648,19 @@ class PerformanceTest(unittest.TestCase):
         small, big = (self.shapes(size) for size in self.SIZES)
         for name in big:
             for call_name, call in calls.items():
-                low, high = self.best(call, small[name]), self.best(call, big[name])
+                for _ in range(self.ATTEMPTS):                                   # 한도를 넘으면 작은 글·큰 글을 처음부터 다시 잰다 — 한 번이라도 한도 안이면 통과(제곱은 매번 넘는다)
+                    low, high = self.best(call, small[name]), self.best(call, big[name])
+                    if high < LIMIT_SECONDS and high < max(low, 0.002) * self.GROWTH_LIMIT:
+                        break
                 with self.subTest(shape=name, call=call_name):
-                    self.assertLess(high, LIMIT_SECONDS, "64,000자가 0.5초 안에 끝나지 않는다")
-                    self.assertLess(high, max(low, 0.002) * self.GROWTH_LIMIT, "네 배 긴 입력이 여덟 배 넘게 걸린다 — 제곱 시간 의심")
+                    self.assertLess(high, LIMIT_SECONDS, f"64,000자가 0.5초 안에 끝나지 않는다({self.ATTEMPTS}번 다시 재도)")
+                    self.assertLess(high, max(low, 0.002) * self.GROWTH_LIMIT, f"네 배 긴 입력이 여덟 배 넘게 걸린다({self.ATTEMPTS}번 다시 재도) — 제곱 시간 의심")
 
     def test_a_hundred_thousand_separators_inside_one_key_still_end_fast_and_find_it(self):
         token = S.github()
         text = "앞 " + token[:20] + chr(0x2028) * 100_000 + token[20:] + " 뒤"
-        began = time.perf_counter()
+        self.assertLess(self.best(scan.scan_secrets, text), LIMIT_SECONDS, "10만 자가 0.5초 안에 끝나지 않는다(세 번 재서 빠른 쪽)")
         result = scan.scan_secrets(text)
-        self.assertLess(time.perf_counter() - began, LIMIT_SECONDS)
         self.assertEqual([item.kind for item in result], ["github_token"])
         self.assertEqual((result[0].line, result[0].col_start, result[0].col_end), (1, 3, 2 + len(token) + 100_000))
 
@@ -697,7 +702,7 @@ class DocsTest(unittest.TestCase):
         row = lines[mine[0]]
         self.assertTrue(lines[mine[0] - 1].startswith("| D-"), "큰 결정 표 안(앞 줄이 결정 행)이어야 한다 — 문서 끝에 새 표를 붙이지 않는다")
         self.assertTrue(row.rstrip().endswith("|") and row.split("|")[2].strip() == "2026-11-25")
-        for word in ("SECSEP", "줄 구분 글자", "U+0085", "U+2028", "U+2029", "scan.py", "mask.py", "미리보기", "붙임", "차분", "변이", "T2", "지우고도 찾는다", "한계", "부분집합", "거짓 양성", "앞붙임", "SECSEP2", "50개까지"):
+        for word in ("SECSEP", "줄 구분 글자", "U+0085", "U+2028", "U+2029", "scan.py", "mask.py", "미리보기", "붙임", "차분", "변이", "T2", "지우고도 찾는다", "한계", "부분집합", "거짓 양성", "앞붙임", "SECSEP2", "50개까지", "실측 15/15", "숨은 글자를 지우지 않은 원문 눈", "Blogger 초안 길", "VT·FF·U+001C–U+001F"):
             self.assertIn(word, row, word)
         self.assertNotIn(" | ", row[len("| D-760 | 2026-11-25 | "):-1], "결정 칸 속의 세로줄은 색인이 칸 나눔으로 읽는다")
         self.plain(row, "D-760 행")
@@ -710,12 +715,12 @@ class DocsTest(unittest.TestCase):
         self.assertTrue(start < text.index(self.SENTENCE) < end, "저장 검사 절 안에 있어야 한다")
         self.assertEqual(text.count(self.HEADING), 1)
         part = text[text.index(self.HEADING):end]
-        for word in ("U+000B", "U+000C", "U+001C–U+001F", "U+0085", "U+2028", "U+2029", "두 눈", "한계", "미리보기", "붙임", "차분", "mask.py", "scan.py", "`_strip_invisible`", "앞붙임", "SECSEP2", "50개까지", "VT·U+001C"):
+        for word in ("U+000B", "U+000C", "U+001C–U+001F", "U+0085", "U+2028", "U+2029", "두 눈", "한계", "미리보기", "붙임", "차분", "mask.py", "scan.py", "`_strip_invisible`", "앞붙임", "SECSEP2", "50개까지", "VT·FF·U+001C–U+001F", "실측 15/15", "숨은 글자를 지우지 않은 원문 눈", "Blogger 초안 길", "표시도 백업 멈춤도 없고", "CONTENT_INVALID"):
             self.assertIn(word, part, word)
         self.plain(part, "보안 문서의 새 절")
 
     def test_the_changelog_has_one_line_of_this_bundle(self):
-        lines = [line for line in self.read("CHANGELOG.md").splitlines() if line.startswith("- 줄 구분 글자 아홉으로 쪼갠 키·토큰을 저장 검사가 알아본다(SECSEP")]
+        lines = [line for line in self.read("CHANGELOG.md").splitlines() if line.startswith("- 줄 구분 글자 아홉으로 쪼갠 키·토큰을 저장 검사가 알아본다(SECSEP — 2026-11-25")]
         self.assertEqual(len(lines), 1, "이 묶음의 고유 문장으로 찾는다 — 다른 갈래의 줄이 늘어도 깨지지 않는다")
         for word in ("줄 구분 글자 아홉", "security/scan.py", "security/mask.py", "tests/test_security_separator_split.py", "D-760", "T2", "한계"):
             self.assertIn(word, lines[0], word)
