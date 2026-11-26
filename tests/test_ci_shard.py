@@ -920,7 +920,7 @@ def qt_limit_minutes():
 
 
 def table_numbers():
-    """문서·결정·주석이 적어야 하는 표의 숫자를 표와 `ci.yml` 에서 읽는다 → 개수·합계·조각 계획·상위 일곱·기본 무게·시간 한도."""
+    """문서·결정·주석이 적어야 하는 표의 숫자를 표와 `ci.yml` 에서 읽는다 → 개수·합계·조각 계획·상위 일곱·기본 무게·시간 한도·조각 수."""
     weights, default = ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT
     names, total = real_names(), ci_total("qt")
     loads = sorted(set(loads_of(ci_shard.assign(names, total, weights, default), total, weights, default)))
@@ -929,24 +929,28 @@ def table_numbers():
     return {"count": f"{len(weights)}개", "total": f"{sum(weights.values()):,}초", "plan": plan, "top": top, "default": default, "limit": qt_limit_minutes(), "shards": total}
 
 
-def missing_numbers(label, text, numbers, count=True, total=True, plan=True, top=True, default=True, limit=True, shards=True):
-    """`text`(문서·결정 행·주석)에 적혀 있어야 할 숫자 중 빠진 것들의 설명(없으면 빈 목록). 상위 일곱은 '이름 뒤 열두 글자 안에 그 값'(숫자 아닌 글자만 사이에)으로 읽는다."""
+ALL_CHECKS = ("count", "total", "plan", "top", "default", "limit", "shards")
+
+
+def missing_numbers(label, text, numbers, checks=ALL_CHECKS, plan_pattern=None, limit_pattern=None):
+    """`text`(문서의 문단·표 줄·결정의 문장·주석 토막)에 적혀 있어야 할 숫자(`checks` 이름들) 중 빠진 것의 설명(없으면 빈 목록).
+    상위 일곱은 '이름 뒤 열두 글자 안에 그 값'(숫자 아닌 글자만 사이에)으로 읽고, 조각 계획·시간 한도는 그 토막이 쓰는 꼴(`plan_pattern`·`limit_pattern` — `{plan}`·`{limit}` 자리에 숫자가 들어간다)로 읽는다."""
     missing = []
-    if count and numbers["count"] not in text:
+    if "count" in checks and numbers["count"] not in text:
         missing.append(f"{label}: 표의 시험 파일 개수 {numbers['count']}")
-    if total and numbers["total"] not in text:
+    if "total" in checks and numbers["total"] not in text:
         missing.append(f"{label}: 표의 합계 {numbers['total']}")
-    if plan and numbers["plan"] not in text:
+    if "plan" in checks and not re.search((plan_pattern or "{plan}").replace("{plan}", re.escape(numbers["plan"])), text):
         missing.append(f"{label}: 조각마다의 표 기준 계획 {numbers['plan']}")
-    if top:
+    if "top" in checks:
         for name, value in numbers["top"]:
             if not re.search(re.escape(name) + r"[^0-9]{0,12}" + str(value) + r"(?![0-9])", text):
                 missing.append(f"{label}: 상위 일곱의 {name} {value}")
-    if default and not re.search(r"기본 무게[^0-9]{0,24}" + str(numbers["default"]) + "초", text):
+    if "default" in checks and not re.search(r"기본 무게[^0-9]{0,24}" + str(numbers["default"]) + "초", text):
         missing.append(f"{label}: 기본 무게 {numbers['default']}초")
-    if limit and not re.search(r"한도[^0-9]{0,12}" + str(numbers["limit"]) + "분", text):
+    if "limit" in checks and not re.search((limit_pattern or "한도[^0-9]{0,12}{limit}분").replace("{limit}", str(numbers["limit"])), text):
         missing.append(f"{label}: qt 잡의 시간 한도 {numbers['limit']}분")
-    if shards and not re.search(r"/" + str(numbers["shards"]) + r"(?![0-9])", text):
+    if "shards" in checks and not re.search(r"/" + str(numbers["shards"]) + r"(?![0-9])", text):
         missing.append(f"{label}: qt 잡의 조각 수 /{numbers['shards']}(조각 N/{numbers['shards']}·두 이름의 /{numbers['shards']})")
     return missing
 
@@ -957,35 +961,56 @@ def decision_row(number):
     return rows[0]
 
 
-def shard_comment_block():
-    """`scripts/ci_shard.py` 의 Qt 표 바로 위 설명 주석(첫 줄부터 `QT_DEFAULT_WEIGHT = ` 앞까지)."""
-    source = (ROOT / "scripts" / "ci_shard.py").read_text(encoding="utf-8")
-    start = source.index("# Qt 칸(`ci.yml` 의 `qt` 잡")
-    return source[start:source.index("QT_DEFAULT_WEIGHT = ", start)]
+def segment(text, start, end, label):
+    """`text` 안에서 `start` 로 시작해 `end` 앞에서 끝나는 토막(두 표지는 글에 있어야 한다). 표지가 없으면 시험이 빨개지고 어느 표지가 없는지 알려 준다 — 문서 구조를 바꿨으면 이 시험의 표지도 함께 고친다."""
+    first = text.find(start)
+    assert first >= 0, f"{label}: 시작 표지 {start!r} 가 없다"
+    last = text.find(end, first + len(start))
+    assert last >= 0, f"{label}: 끝 표지 {end!r} 가 없다"
+    return text[first:last]
 
 
-def ci_qt_comment_block():
-    """`ci.yml` 의 `qt` 잡과 그 위의 설명 주석(`# Qt 칸 — ` 부터 끝까지)."""
-    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    start = text.index("  # Qt 칸 — ")
-    return text[start:]
+def line_of(text, prefix, label):
+    hits = [line for line in text.splitlines() if line.startswith(prefix)]
+    assert len(hits) == 1, f"{label}: 줄 머리 {prefix!r} 가 {len(hits)}번 나온다(기대 1)"
+    return hits[0]
+
+
+def table_number_places():
+    """표의 숫자를 적어야 하는 토막들 → [(이름, 토막 글, 거기서 읽을 숫자들, 조각 계획 꼴, 시간 한도 꼴)]. 숫자마다 그 숫자를 설명하는 토막 하나로 좁혀 두어(문서 전체에서 '있는가' 가 아니다)
+    같은 숫자가 여러 번 적힌 문서에서 한 곳만 고쳐도 못 알아채던 틈(독립 검증 Q 의 변이 D01 의 일반형)을 막는다."""
+    doc = (ROOT / "docs" / "CI_QT.md").read_text(encoding="utf-8")
+    row = decision_row(717)
+    section7 = "## 7. 무게 표와 다시 재는 법"
+    shard_source = (ROOT / "scripts" / "ci_shard.py").read_text(encoding="utf-8")
+    comment_start = shard_source.index("# Qt 칸(`ci.yml` 의 `qt` 잡")
+    shard_comment = shard_source[comment_start:shard_source.index("QT_DEFAULT_WEIGHT = ", comment_start)]
+    ci_text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_comment = ci_text[ci_text.index("  # Qt 칸 — "):]
+    return [
+        ("docs/CI_QT.md 7절 첫 문단(표의 개수·합계·조각 계획)", segment(doc, section7, "가장 큰 일곱은", "CI_QT.md 7절"), ("count", "total", "plan"), None, None),
+        ("docs/CI_QT.md 7절 '가장 큰 일곱' 문단", segment(doc, "가장 큰 일곱은", "**기본 무게 3초", "CI_QT.md 7절"), ("top",), None, None),
+        ("docs/CI_QT.md 7절 기본 무게 문단", segment(doc, "**기본 무게 3초", "**왜 다시 맞췄나", "CI_QT.md 7절"), ("default",), None, None),
+        ("docs/CI_QT.md 2절 '시간 한도' 줄", line_of(doc, "| 시간 한도 |", "CI_QT.md 2절"), ("limit",), None, "timeout-minutes: {limit}"),
+        ("docs/CI_QT.md 2절 '잡 이름' 줄", line_of(doc, "| 잡 이름 |", "CI_QT.md 2절"), ("shards",), None, None),
+        ("docs/DECISIONS.md D-717 의 표 문장", segment(row, "그래서 **재작업 2(2026-11-26)**", "환경 변수 `CI_WEIGHTS=qt` 일 때만", "D-717"), ("count", "total", "plan", "top", "default"), None, None),
+        ("docs/DECISIONS.md D-717 의 한도 문장", segment(row, "그래서 운영자가 **확인 046 ①", "조각을 13–14 로 늘려도", "D-717"), ("limit",), None, None),
+        ("docs/DECISIONS.md D-717 의 qt 잡 문장(조각 수·한도)", segment(row, "그래서 `qt` 잡: 조각", "머리 설명은", "D-717"), ("shards", "limit"), None, None),
+        ("scripts/ci_shard.py 표 위 주석", shard_comment, ("count", "total", "plan", "limit"), "조각마다 {plan}", "시간 한도를 {limit}분"),
+        (".github/workflows/ci.yml 의 qt 잡 주석", ci_comment, ("plan", "limit"), "한 조각은 {plan}", "한도를 {limit}분으로"),
+    ]
 
 
 class TableNumbersAreWrittenDownTest(unittest.TestCase):
-    """표의 숫자(개수·합계·조각 계획·상위 일곱·기본 무게)와 `qt` 잡의 시간 한도가 `docs/CI_QT.md`·결정 D-717·`scripts/ci_shard.py` 의 표 위 주석·`ci.yml` 의 `qt` 잡 주석에 같게 적혀 있다.
-    표를 다시 재면서 한 곳을 빠뜨리면(독립 검증 Q 의 변이 D01 — D-717 의 합계를 한 글자 고쳐도 어떤 시험도 몰랐다) 여기서 빨개지고 어느 곳에 무슨 숫자가 없는지 알려 준다. 값은 표와 `ci.yml` 에서 읽으므로 이 시험은 숫자를 따로 못박지 않는다(못박는 곳은 위 `QtWeightsTableTest`)."""
+    """표의 숫자(개수·합계·조각 계획·상위 일곱·기본 무게)·`qt` 잡의 시간 한도와 조각 수가 `docs/CI_QT.md`·결정 D-717·`scripts/ci_shard.py` 의 표 위 주석·`ci.yml` 의 `qt` 잡 주석에 같게 적혀 있다.
+    표를 다시 재면서 한 곳을 빠뜨리면(독립 검증 Q 의 변이 D01 — D-717 의 합계를 한 글자 고쳐도 어떤 시험도 몰랐다) 여기서 빨개지고 어느 곳에 무슨 숫자가 없는지 알려 준다. 값은 표와 `ci.yml` 에서 읽으므로 이 시험은 숫자를 따로 못박지 않는다(못박는 곳은 위 `QtWeightsTableTest`).
+    숫자마다 그 숫자를 설명하는 토막 하나(`table_number_places`)에서 읽는다 — 문서 전체에서 '있는가' 만 보면 같은 숫자가 여러 번 적힌 문서에서 한 곳만 고쳐도 통과한다(재작업 2 의 변이가 드러냈다)."""
 
     def test_the_numbers_of_the_table_and_the_time_limit_are_written_the_same_in_every_place(self):
         numbers = table_numbers()
-        places = {
-            "docs/CI_QT.md": ((ROOT / "docs" / "CI_QT.md").read_text(encoding="utf-8"), {}),
-            "docs/DECISIONS.md D-717": (decision_row(717), {}),
-            "scripts/ci_shard.py 의 표 위 주석": (shard_comment_block(), {"top": False, "default": False, "shards": False}),
-            ".github/workflows/ci.yml 의 qt 잡 주석": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False, "shards": False}),
-        }
         problems = []
-        for label, (text, skip) in places.items():
-            problems += missing_numbers(label, text, numbers, **skip)
+        for label, text, checks, plan_pattern, limit_pattern in table_number_places():
+            problems += missing_numbers(label, text, numbers, checks, plan_pattern, limit_pattern)
         self.assertEqual(problems, [], "표의 숫자가 이 곳들에 같게 적혀 있어야 한다 — 표를 다시 쟀거나 시간 한도를 바꿨으면 문서·결정·주석을 같은 변경에서 고친다(docs/CI_QT.md 7절 5단계)")
 
     def test_the_numbers_come_from_the_table_and_the_workflow_and_are_the_ones_the_documents_describe(self):
@@ -993,37 +1018,49 @@ class TableNumbersAreWrittenDownTest(unittest.TestCase):
         self.assertEqual((numbers["count"], numbers["total"], numbers["plan"], numbers["default"], numbers["limit"], numbers["shards"]), ("354개", "10,956초", "913초", 3, 60, 12))
         self.assertEqual([name for name, _ in numbers["top"]], ["test_ui_qt_seeds", "test_ui_qt_photo_ocr", "test_ui_qt_drafts", "test_ui_qt_photo", "test_ui_qt_settings", "test_ui_qt_polish1", "test_ui_qt_polish2"])
 
+    def test_every_place_names_each_of_its_numbers_exactly_once_so_that_changing_one_spot_is_noticed(self):
+        """토막마다 읽을 숫자가 그 토막에 정확히 한 번 있다 — 두 번 있으면 한 곳만 고쳐도 통과한다(변이 R27·R29·R33·R34·R36 이 드러낸 틈). 다시 재면서 토막에 숫자가 늘어나면 이 시험이 알려 준다."""
+        numbers = table_numbers()
+        for label, text, checks, plan_pattern, limit_pattern in table_number_places():
+            counts = {
+                "count": text.count(numbers["count"]),
+                "total": text.count(numbers["total"]),
+                "plan": len(re.findall((plan_pattern or "{plan}").replace("{plan}", re.escape(numbers["plan"])), text)),
+                "default": len(re.findall(r"기본 무게[^0-9]{0,24}" + str(numbers["default"]) + "초", text)),
+                "limit": len(re.findall((limit_pattern or "한도[^0-9]{0,12}{limit}분").replace("{limit}", str(numbers["limit"])), text)),
+                "shards": len(re.findall(r"/" + str(numbers["shards"]) + r"(?![0-9])", text)),
+            }
+            for name, value in numbers["top"]:
+                counts["top:" + name] = len(re.findall(re.escape(name) + r"[^0-9]{0,12}" + str(value) + r"(?![0-9])", text))
+            for check in checks:
+                for key, found in counts.items():
+                    if key == check or (check == "top" and key.startswith("top:")):
+                        with self.subTest(place=label, number=key):
+                            self.assertEqual(found, 1, f"{label}: {key} 가 {found}번 적혀 있다(정확히 한 번이어야 한다)")
+
     def test_a_missing_or_changed_number_is_noticed_in_each_place(self):
         numbers = table_numbers()
-        sources = {
-            "docs": (self.read_doc(), {}),
-            "decision": (decision_row(717), {}),
-            "shard": (shard_comment_block(), {"top": False, "default": False, "shards": False}),
-            "workflow": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False, "shards": False}),
-        }
         top_name, top_value = numbers["top"][0]
-        edits = {
-            "개수": (lambda text: text.replace(numbers["count"], "353개"), "count"),
-            "합계": (lambda text: text.replace(numbers["total"], "10,955초"), "total"),
-            "조각 계획": (lambda text: text.replace(numbers["plan"], "914초"), "plan"),
-            "상위 일곱": (lambda text: re.sub("(" + re.escape(top_name) + "[^0-9]{0,12})" + str(top_value) + "(?![0-9])", lambda found: found.group(1) + str(top_value + 1), text), "top"),
-            "기본 무게": (lambda text: re.sub(r"(기본 무게[^0-9]{0,24})" + str(numbers["default"]) + "초", lambda found: found.group(1) + "4초", text), "default"),
-            "시간 한도": (lambda text: re.sub(r"(한도[^0-9]{0,12})" + str(numbers["limit"]) + "분", lambda found: found.group(1) + "61분", text), "limit"),
-            "조각 수": (lambda text: re.sub(r"/" + str(numbers["shards"]) + r"(?![0-9])", "/13", text), "shards"),
-        }
-        for place, (text, skip) in sources.items():
-            self.assertEqual(missing_numbers(place, text, numbers, **skip), [], place)
-            for label, (edit, key) in edits.items():
-                if skip.get(key) is False:
-                    continue                                    # 그 곳이 적지 않는 숫자(예: 주석에는 상위 일곱이 없다)
-                with self.subTest(place=place, number=label):
-                    changed = edit(text)
+        for label, text, checks, plan_pattern, limit_pattern in table_number_places():
+            self.assertEqual(missing_numbers(label, text, numbers, checks, plan_pattern, limit_pattern), [], label)
+            plan_regex = (plan_pattern or "{plan}").replace("{plan}", re.escape(numbers["plan"]))
+            limit_regex = (limit_pattern or "한도[^0-9]{0,12}{limit}분").replace("{limit}", str(numbers["limit"]))
+            edits = {
+                "count": lambda value: value.replace(numbers["count"], "353개"),
+                "total": lambda value: value.replace(numbers["total"], "10,955초"),
+                "plan": lambda value: re.sub(plan_regex, lambda found: found.group(0).replace(numbers["plan"], "914초"), value),
+                "top": lambda value: re.sub("(" + re.escape(top_name) + "[^0-9]{0,12})" + str(top_value) + "(?![0-9])", lambda found: found.group(1) + str(top_value + 1), value),
+                "default": lambda value: re.sub(r"(기본 무게[^0-9]{0,24})" + str(numbers["default"]) + "초", lambda found: found.group(1) + "4초", value),
+                "limit": lambda value: re.sub(limit_regex, lambda found: found.group(0).replace(str(numbers["limit"]), "61"), value),
+                "shards": lambda value: re.sub(r"/" + str(numbers["shards"]) + r"(?![0-9])", "/13", value),
+            }
+            for check in checks:
+                with self.subTest(place=label, number=check):
+                    if check == "top" and top_name not in text:
+                        self.fail(f"{label}: 상위 일곱의 {top_name} 이 토막에 없다")
+                    changed = edits[check](text)
                     self.assertNotEqual(changed, text, "변이가 글을 바꾸지 못했다")
-                    self.assertTrue(missing_numbers(place, changed, numbers, **skip), "숫자를 바꿨는데 시험이 몰랐다")
-
-    @staticmethod
-    def read_doc():
-        return (ROOT / "docs" / "CI_QT.md").read_text(encoding="utf-8")
+                    self.assertTrue(missing_numbers(label, changed, numbers, checks, plan_pattern, limit_pattern), "숫자를 바꿨는데 시험이 몰랐다")
 
 
 class WeightsFlagRunTest(unittest.TestCase):
