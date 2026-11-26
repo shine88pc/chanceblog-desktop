@@ -688,8 +688,8 @@ FROZEN_THREE = {
 }
 FROZEN_FILLERS_THREE = [3, 3, 3, 3, 3, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3]
 FROZEN_TWO = {"test_pages_publish": 1, "test_pages_repo": 1, "test_service_recovery": 2, "test_service_repolock": 2, "test_service_echo": 2, "test_vendor_core": 2}
-QT_MEASURED_TOP = {                   # 2차 진단(실행 45585260861)이 잰 가장 큰 일곱 — 총괄 지시서의 숫자와 같다
-    "test_ui_qt_references": 1050, "test_ui_qt_seeds": 1000, "test_ui_qt_settings": 977, "test_ui_qt_photo_ocr": 925, "test_ui_qt_polish2": 908, "test_ui_qt_style": 846, "test_ui_qt_polish1": 774,
+QT_MEASURED_TOP = {                   # 3차 진단(실행 45720452621, 열두 조각 실측·시험 파일 354개 전부)이 잰 가장 큰 일곱 — 총괄 지시서의 숫자와 같다
+    "test_ui_qt_polish1": 747, "test_ui_qt_photo": 605, "test_ui_qt_photo_ocr": 544, "test_ui_qt_posts": 508, "test_ui_qt_blogs": 459, "test_ui_qt_drafts": 455, "test_ui_qt_keys": 385,
 }
 
 
@@ -813,24 +813,27 @@ class QtWeightsTableTest(unittest.TestCase):
                 self.assertIs(type(value), int)
                 self.assertGreater(value, 0, "무게 0 은 가장 가벼운 조각이 늘 같아 한 조각에 몰린다")
 
-    def test_the_numbers_of_the_second_diagnosis_are_what_the_table_holds(self):
-        # 표를 다시 재면(docs/CI_QT.md) 이 숫자와 결정(D-717)을 함께 고친다 — 슬쩍 바꾸면 여기서 빨개진다
+    def test_the_numbers_of_the_third_diagnosis_are_what_the_table_holds(self):
+        # 표를 다시 재면(docs/CI_QT.md) 이 숫자와 결정(D-717)을 함께 고친다 — 슬쩍 바꾸면 여기서 빨개진다. 3차 진단(실행 45720452621)의 시험 파일 354개 전부, 값은 max(1, round(초))
         for name, seconds in QT_MEASURED_TOP.items():
             self.assertEqual(ci_shard.QT_WEIGHTS[name], seconds, name)
         self.assertEqual(sorted(ci_shard.QT_WEIGHTS.values(), reverse=True)[:7], sorted(QT_MEASURED_TOP.values(), reverse=True))
-        self.assertEqual((len(ci_shard.QT_WEIGHTS), sum(ci_shard.QT_WEIGHTS.values())), (209, 16285))
-        self.assertEqual((ci_shard.QT_WEIGHTS["test_pages_publish"], ci_shard.QT_WEIGHTS["test_service_recovery"], ci_shard.QT_WEIGHTS["test_service_repolock"]), (166, 105, 89))
+        self.assertEqual((len(ci_shard.QT_WEIGHTS), sum(ci_shard.QT_WEIGHTS.values())), (354, 10641))
+        self.assertEqual((ci_shard.QT_WEIGHTS["test_pages_publish"], ci_shard.QT_WEIGHTS["test_service_recovery"], ci_shard.QT_WEIGHTS["test_service_repolock"]), (157, 104, 80))
+
+    # 옛 이름(2차 진단 때의 이름) — 시험 id 가 사라지지 않게 같은 시험을 별칭으로 한 번 더 둔다(이름이 말하는 '2차' 는 낡았다: 위 시험이 3차 진단 값을 지킨다)
+    test_the_numbers_of_the_second_diagnosis_are_what_the_table_holds = test_the_numbers_of_the_third_diagnosis_are_what_the_table_holds
 
     def test_the_default_weight_is_a_small_value_and_not_the_default_tables(self):
-        self.assertEqual(ci_shard.QT_DEFAULT_WEIGHT, 5)
+        self.assertEqual(ci_shard.QT_DEFAULT_WEIGHT, 3)
         self.assertNotEqual(ci_shard.QT_DEFAULT_WEIGHT, ci_shard.DEFAULT_WEIGHT, "같으면 기본 무게를 잘못 집어도 시험이 모른다")
-        self.assertEqual(ci_shard.weight_of("test_a_brand_new_module", ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), 5)
+        self.assertEqual(ci_shard.weight_of("test_a_brand_new_module", ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), 3)
         self.assertLess(ci_shard.QT_DEFAULT_WEIGHT, min(ci_shard.QT_WEIGHTS["test_ui_qt_references"], 100))
 
     def test_the_qt_table_is_its_own_table_measured_on_the_runner(self):
         self.assertIsNot(ci_shard.QT_WEIGHTS, ci_shard.WEIGHTS)
         self.assertNotIn("test_ui_qt_references", ci_shard.WEIGHTS)
-        self.assertNotEqual(ci_shard.QT_WEIGHTS["test_pages_publish"], ci_shard.WEIGHTS["test_pages_publish"], "열두 칸 표는 개발 PC 값(780), Qt 칸 표는 러너 값(166)이다")
+        self.assertNotEqual(ci_shard.QT_WEIGHTS["test_pages_publish"], ci_shard.WEIGHTS["test_pages_publish"], "열두 칸 표는 개발 PC 값(780), Qt 칸 표는 러너 값(157)이다")
 
     def test_the_qt_split_covers_every_test_file_once_and_leaves_no_shard_empty(self):
         names, total = real_names(), ci_total("qt")
@@ -898,7 +901,7 @@ class WeightsFlagRunTest(unittest.TestCase):
         folder = self.folder()
         qt = run_script("1", "2", folder, env_extra={"CI_WEIGHTS": "qt"})
         self.assertEqual(qt.returncode, 0, qt.stderr[-300:])
-        self.assertIn("조각 1/2: 시험 파일 1개·시험 1개 (전체 3개 파일·3개 시험) — 무게 표 qt: 이 조각 1,050초", qt.stdout)
+        self.assertIn("조각 1/2: 시험 파일 1개·시험 1개 (전체 3개 파일·3개 시험) — 무게 표 qt: 이 조각 330초", qt.stdout)
         plain = run_script("1", "2", folder)
         self.assertEqual(plain.returncode, 0, plain.stderr[-300:])
         self.assertIn("조각 1/2: 시험 파일 2개·시험 2개 (전체 3개 파일·3개 시험)\n", plain.stdout)
