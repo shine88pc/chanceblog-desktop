@@ -5,7 +5,8 @@
 (진짜 동작은 병합 뒤 운영자의 수동 실행이 알려 준다) — 시험이 지키는 것은 흐름이 어긋나지 않고 기록이 쓰이며 실패가 갇히는지이다.
 스위치(속성)로 실패를 만든다: dotnet_fail·delta_ok·sdk_needs_skip·iscc_version·build_fail·mixed_on_running·hook_rc·autostart·keep_shortcut·std_user_ok 등.
 환경 변수 이름은 윈도의 `dict(os.environ)` 처럼 **모두 대문자**로 담는다(`ImageOS` 가 `IMAGEOS` — 1차 측정이 '러너: ? ?' 로 나온 원인을 흉내 낸다). `selftest_names` 는 설치본·휴대용 `--selftest` 가 찍는 점검 이름 목록(기본은 앱의 목록),
-`iscc_*`·`vpk_version_text`·`std_*` 스위치는 판 읽기와 표준 사용자 시험의 여러 모양을 만든다.
+`iscc_*`·`vpk_version_text`·`std_*` 스위치는 판 읽기와 표준 사용자 시험의 여러 모양을 만든다 — 재작업 1 에서 `std_launch_message`(띄우기 실패 때 스크립트가 함께 찍는 윈도 오류 문장, 빈 글이면 옛 스크립트처럼 그 줄이 없다)·`std_install_launch_ok`(탐침은 되고 설치 도구만 못 띄움)·
+`std_timeout`(설치 도구 호출이 시간 안에 끝나지 않음)·`selftest_rc`·`selftest_timed_out`(점검 줄은 모두 통과인데 종료 코드가 0 이 아니거나 시간 초과)를 더했다.
 `users_root` 는 임시 사용자 프로필이 생기는 폴더(기본은 `SPIKE_USERS_DIR` 환경 변수가 가리키는 같은 자리)이고 `present_files` 는 `is_file` 이 '있다' 고 답할 경로 집합(기본은 비어 있어 늘 '없다' — 러너 이미지에 실제로 깔린 도구가 끼어들지 않게), `echo_layout` 은 임시 사용자 설치가 실패할 때 PowerShell 이 비밀번호를 되울리는 모양(글을 돌려주는 함수)이다.
 """
 import itertools

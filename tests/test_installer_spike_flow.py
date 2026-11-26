@@ -145,6 +145,8 @@ class WholePipelineTest(unittest.TestCase):
         self.assertEqual(item["values"]["same_folder"], os.name == "nt")                          # 윈도(대소문자 구분 없음)에서만 같은 폴더가 된다 — F2
         if os.name == "nt":
             self.assertFalse(item["values"]["sentinel_survived"])
+        self.assertIn("대소문자를 무시하고 비교해도 다른 이름이어야 한다(대소문자만 다르면 같은 폴더)", item["note"])      # 재작업 S-R5 — 규칙 문장이 거꾸로 읽히지 않게('대소문자까지 달라야' 는 대소문자만 달라도 된다는 뜻으로 읽힌다)
+        self.assertNotIn("대소문자까지", item["note"])
 
     def test_rollback_and_the_broken_version_are_recorded_without_a_verdict(self):
         for arm in "ABC":
@@ -1376,13 +1378,19 @@ class StandardUserLaunchMessageTest(unittest.TestCase):
 
     def test_the_sentence_is_cut_after_the_password_is_hidden_so_no_piece_of_the_password_is_left(self):
         """가린 뒤에 자른다 — 자른 뒤에 가리면 비밀번호 한가운데가 잘려 가릴 낱말 전체가 안 맞고 조각이 남는다(설치 도구 로그 꼬리와 같은 규칙)."""
-        sentence = "q" * 20 + LIGHT_PASSWORD + "z" * 190                                                       # 200자 꼬리가 비밀번호의 열두 번째 글자에서 시작한다
-        self.assertEqual(longest_piece(sentence[-run.measure.STD_MESSAGE_LIMIT:], LIGHT_PASSWORD), len(LIGHT_PASSWORD) - 12)      # 사전 확인: 자르기만 하면 조각이 남는다
-        for switches in ({"std_launch_ok": False}, {"std_install_launch_ok": False}):
-            with self.subTest(switches):
-                world, ctx, item = self.attempt(std_launch_message=sentence, **switches)
-                self.assertIn("<가림>", item["note"])
-                self.assertEqual(longest_piece(everything_left(world, ctx), LIGHT_PASSWORD), 0)
+        cut_in_the_sentence = "q" * 20 + LIGHT_PASSWORD + "z" * 190                                            # 200자 꼬리가 비밀번호의 열두 번째 글자에서 시작한다(문장을 싣는 자리)
+        cut_in_the_note_tail = "q" * 20 + LIGHT_PASSWORD + "z" * 150                                       # 문장은 200자 안이지만 메모의 160자 꼬리(표지 줄 포함 원문 끝)가 비밀번호를 가른다
+        self.assertEqual(longest_piece(cut_in_the_sentence[-run.measure.STD_MESSAGE_LIMIT:], LIGHT_PASSWORD), len(LIGHT_PASSWORD) - 12)       # 사전 확인: 자르기만 하면 조각이 남는다
+        raw_text = "SPIKE_START_ERROR=InvalidOperationException\r\nSPIKE_START_MESSAGE=" + cut_in_the_note_tail + "\r\n"
+        self.assertEqual(longest_piece(raw_text.strip()[-160:], LIGHT_PASSWORD), len(LIGHT_PASSWORD) - 12)                    # 사전 확인: 160자 꼬리가 비밀번호의 열두 번째 글자에서 시작한다
+        self.assertNotIn(LIGHT_PASSWORD, raw_text.strip()[-160:])
+        self.assertLessEqual(len(cut_in_the_note_tail), run.measure.STD_MESSAGE_LIMIT)                                         # 문장 자리의 200자 자르기는 이 경우를 자르지 않는다 — 메모 꼬리만 시험한다
+        for label, sentence in (("문장 자리", cut_in_the_sentence), ("메모 꼬리", cut_in_the_note_tail)):
+            for switches in ({"std_launch_ok": False}, {"std_install_launch_ok": False}):
+                with self.subTest((label, tuple(switches))):
+                    world, ctx, item = self.attempt(std_launch_message=sentence, **switches)
+                    self.assertIn("<가림>", item["note"])
+                    self.assertEqual(longest_piece(everything_left(world, ctx), LIGHT_PASSWORD), 0)
 
     def test_a_long_or_many_line_sentence_is_folded_to_one_line_and_the_reason_fits_the_box_cell(self):
         measure = run.measure
