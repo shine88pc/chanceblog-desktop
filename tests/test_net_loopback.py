@@ -513,9 +513,9 @@ class HostileRequestTest(Base):
 
     def test_bad_percent_encodings_odd_bytes_and_long_paths_are_refused_and_the_window_goes_on(self):
         def cases(port):
-            host = f"state={STATE}"
-            return {"퍼센트 뒤가 16진수가 아님": (raw(f"GET /callback?code=%zz&{host} HTTP/1.1", port), b"HTTP/1.1 400 "),
-                    "끝이 잘린 퍼센트": (raw(f"GET /callback?code=abc%&{host} HTTP/1.1", port), b"HTTP/1.1 400 "),
+            state_query = f"state={STATE}"
+            return {"퍼센트 뒤가 16진수가 아님": (raw(f"GET /callback?code=%zz&{state_query} HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "끝이 잘린 퍼센트": (raw(f"GET /callback?code=abc%&{state_query} HTTP/1.1", port), b"HTTP/1.1 400 "),
                     "state 가 잘못된 UTF-8": (raw("GET /callback?code=abc&state=%ff%fe%c3 HTTP/1.1", port), b"HTTP/1.1 400 "),
                     "길에 제어 문자": (raw(b"GET /call\x01back?code=a HTTP/1.1", port), b"HTTP/1.1 400 "),
                     "길에 DEL": (raw(b"GET /callback\x7f?code=a HTTP/1.1", port), b"HTTP/1.1 400 "),
@@ -678,9 +678,14 @@ class SlowCloseTest(Base):
             lb._send(conn, lb.NOT_FOUND_RESPONSE)
             elapsed = time.monotonic() - began
         drip.finish()
-        self.assertLess(elapsed, lb.LINGER_SECONDS + 1.5, f"읽어 버리기가 {elapsed:.2f}초 걸렸다 — 전체 시간({lb.LINGER_SECONDS}초)으로 묶이지 않았다")
+        self.assertLess(elapsed, 2.0, f"읽어 버리기가 {elapsed:.2f}초 걸렸다 — 전체 시간으로 묶이지 않았다(상대가 계속 보내는 동안 안 끝났다)")
         self.assertGreater(drip.sent, 0, "시험이 헛돌지 않았다 — 나쁜 연결이 실제로 보내고 있었다")
         self.assertNoOutside()
+
+    def test_the_total_time_of_the_linger_is_short_so_it_cannot_slow_the_deadline_or_a_cancel(self):
+        """전체 시간 상수 자체를 못박는다 — 다른 시험의 한도가 이 상수에서 계산되면 상수를 늘려도 시험이 따라 늘어나 못 잡는다(변이 R-M06 이 그랬다)."""
+        self.assertGreater(lb.LINGER_SECONDS, 0)
+        self.assertLessEqual(lb.LINGER_SECONDS, 1.0, "답을 보낸 뒤 읽어 버리는 전체 시간은 1초 이하여야 마감·취소·정상 콜백을 늦추지 않는다")
 
     def test_the_linger_does_not_wait_for_a_silent_peer_longer_than_its_total_time(self):
         """보내지도 닫지도 않는 상대 — 한 번의 `recv` 제한이 남은 시간을 넘지 않으니 읽어 버리기는 전체 시간 안에 끝난다(답은 그대로 간다)."""
@@ -693,7 +698,7 @@ class SlowCloseTest(Base):
             began = time.monotonic()
             lb._send(conn, lb.BAD_RESPONSE)
             elapsed = time.monotonic() - began
-        self.assertLess(elapsed, lb.LINGER_SECONDS + 1.5, f"조용한 상대를 {elapsed:.2f}초 기다렸다 — 한 번의 recv 제한이 남은 시간보다 길다")
+        self.assertLess(elapsed, 2.0, f"조용한 상대를 {elapsed:.2f}초 기다렸다 — 한 번의 recv 제한이 남은 시간보다 길다")
         self.assertTrue(peer.recv(65536).startswith(b"HTTP/1.1 400 "))
         self.assertNoOutside()
 

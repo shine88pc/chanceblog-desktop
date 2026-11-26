@@ -539,6 +539,7 @@ class NamedServerModulesTest(unittest.TestCase):
 
     def test_no_source_file_or_vendor_script_uses_them_today_and_the_names_are_in_the_list(self):
         self.assertTrue(EXTRA_OUTGOING_MODULES <= OUTGOING_MODULES)
+        self.assertTrue({"wsgiref", "nntplib", "pydoc", "urllib3", "httpx", "aiohttp", "websockets", "paramiko"} <= OUTGOING_MODULES, "표준 라이브러리의 서버·클라이언트와 흔한 바깥 라이브러리 이름은 목록에 남아 있어야 한다(목록에서 이름을 빼도 시험이 따라 줄지 않게 글자로 못박는다)")
         self.assertEqual(sorted(key for key in found_outgoing() if key[1] in EXTRA_OUTGOING_MODULES), [])
         self.assertEqual(sorted(key for key in found_outgoing(root=ss.ROOT / "vendor") if key[1] in EXTRA_OUTGOING_MODULES), [])
 
