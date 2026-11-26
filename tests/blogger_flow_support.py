@@ -38,7 +38,7 @@ SLOT_NAME = {"blogger_en": "영문", "blogger_ko": "한글"}
 
 class FakeBrowser:
     """시스템 브라우저 역할 — 열기 요청을 받으면 로그인 주소를 읽어 가짜 구글에 코드를 발급하게 하고, 스레드에서 `127.0.0.1` 의 창구로 돌아온다(진짜 소켓).
-    `mode`: allow(올바른 돌아옴) · deny(`access_denied`) · wrong_state_then_allow(틀린 state 먼저) · wrong_state_only · never(돌아오지 않음) · broken(열기에서 예외)."""
+    `mode`: allow(올바른 돌아옴) · deny(`access_denied`) · wrong_state_then_allow(틀린 state 먼저) · wrong_state_only · hostile_then_allow(이상한 요청 넷 먼저 — 재작업 1) · never(돌아오지 않음) · broken(열기에서 예외)."""
 
     def __init__(self, google, mode="allow", client_id=None, burst=0):
         self.google, self.mode, self.client_id, self.burst = google, mode, client_id, burst
@@ -80,6 +80,9 @@ class FakeBrowser:
                 self.get(port, "/favicon.ico")
             if self.mode == "never":
                 return
+            if self.mode == "hostile_then_allow":                              # 같은 PC 의 다른 프로그램이 보낸 이상한 요청들 — `state`·`code` 가 맞는 `///callback` 도 있다
+                for target in ("//[x", "//x]", "//[::1", f"///callback?code={code}&state={state}"):
+                    self.get(port, target)
             if self.mode in ("wrong_state_then_allow", "wrong_state_only"):
                 self.get(port, f"/callback?code=4/0CANARY_FORGED_CODE_{'f' * 20}&state={'W' * 43}")
                 if self.mode == "wrong_state_only":

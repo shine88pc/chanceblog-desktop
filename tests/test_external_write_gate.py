@@ -289,18 +289,27 @@ def gate_callers():
     return found
 
 
+def listed_entry_points():
+    """진입점 표 — 이름이 `ENTRY_POINTS` 로 끝나는 이 파일의 표 모두(조건부 표 포함). 갈래마다 자기 표(예: 따로 만든 `…_ENTRY_POINTS`)를 더해도 합쳐서 본다."""
+    found = []
+    for name, value in sorted(globals().items()):
+        if name.endswith("ENTRY_POINTS") and isinstance(value, tuple):
+            found += [tuple(item) for item in value]
+    return found
+
+
 class EntryPointTableIsCompleteTest(unittest.TestCase):
     """재작업 1 참고(안전 검증 S 의 S-M14) — 위 표는 '표에 적힌 곳이 관문을 가졌는지' 만 보고 '관문을 가진 곳이 표에 다 있는지' 는 보지 않아서 표의 줄을 지워도 시험이 빨개지지 않았다.
     이제 소스에서 관문을 부르는 함수를 모두 찾아 표(조건부 둘 포함)와 **정확히 같음**을 본다 — 새 진입점은 표에 올려야 하고 표의 줄을 지우면 빨개진다."""
 
     def test_every_function_that_calls_the_gate_is_in_the_table_and_the_table_has_nothing_else(self):
-        self.assertEqual(sorted(gate_callers()), sorted(set(ENTRY_POINTS) | set(CONDITIONAL_ENTRY_POINTS)),
+        self.assertEqual(sorted(gate_callers()), sorted(set(listed_entry_points())),
                          "외부 쓰기 관문을 부르는 함수가 진입점 표와 다르다 — 새 진입점은 `ENTRY_POINTS` 에 올리고(첫 문장이 관문이어야 한다) 낡은 줄은 지운다")
 
-    def test_the_table_has_no_duplicate_rows_and_the_two_tables_do_not_overlap(self):
-        self.assertEqual(len(ENTRY_POINTS), len(set(ENTRY_POINTS)))
-        self.assertEqual(len(CONDITIONAL_ENTRY_POINTS), len(set(CONDITIONAL_ENTRY_POINTS)))
-        self.assertEqual(set(ENTRY_POINTS) & set(CONDITIONAL_ENTRY_POINTS), set())
+    def test_the_tables_have_no_duplicate_rows_and_do_not_overlap_each_other(self):
+        rows = listed_entry_points()
+        self.assertEqual(len(rows), len(set(rows)), "같은 줄이 표에 두 번 있거나 두 표에 걸쳐 있다")
+        self.assertTrue(set(ENTRY_POINTS) <= set(rows) and set(CONDITIONAL_ENTRY_POINTS) <= set(rows))
 
     def test_the_finder_would_see_a_new_gated_function_and_a_method(self):
         """대조 — 찾는 함수가 헛돌지 않는다: 합성 소스에서 같은 방식으로 찾아 본다."""

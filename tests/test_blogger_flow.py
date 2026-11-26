@@ -96,6 +96,20 @@ class LoginTest(fs.FlowCase):
         self.assertEqual(result.slot, "blogger_en")
         self.assertEqual(self.google.count("/token"), 1)
 
+    def test_hostile_requests_in_the_middle_of_a_login_do_not_end_it_and_the_real_callback_still_logs_in(self):
+        """재작업 1 필수-1(안전 검증 S 의 p12) — 서비스 층에서도: 같은 PC 의 다른 프로그램이 이상한 요청(`//[x` 따위와 `state`·`code` 가 맞는 `///callback?…`)을 보내도 로그인은 `ValueError` 로 죽지 않고
+        그 요청들은 400 이며 올바른 콜백이 오면 정상으로 끝나 교환 요청은 한 번뿐이다."""
+        browser = fs.FakeBrowser(self.google, "hostile_then_allow")
+        result = flow.login(self.ctx, "blogger_en", open_url=browser)
+        browser.join()
+        self.assertEqual((result.slot, result.replaced), ("blogger_en", False))
+        self.assertEqual([item.split(b"\r\n", 1)[0] for item in browser.responses], [b"HTTP/1.1 400 Bad Request"] * 4 + [b"HTTP/1.1 200 OK"])
+        self.assertEqual(self.google.count("/token"), 1)
+        self.assertTrue(flow.status(self.ctx, "blogger_en").logged_in)
+        self.assertTrue(flow._LOGIN_LOCK.acquire(blocking=False), "로그인 잠금은 풀려 있다")
+        flow._LOGIN_LOCK.release()
+        self.assertClean()
+
     def test_the_user_denying_the_access_stores_nothing(self):
         with self.assertRaises(AppError) as caught:
             self.login(mode="deny")

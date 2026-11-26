@@ -528,7 +528,7 @@ class BothSecretEyesTest(unittest.TestCase):
         self.assertEqual(error.code, "SECRET_IN_TEXT_BLOCKED")
         shown = error.rendered()
         for hidden in (text, text[:12], text[-10:]):
-            self.assertNotIn(hidden, shown.message + shown.action + str(error.detail) + repr(error.slots) + "".join(error.notes))
+            self.assertNotIn(hidden, shown.message + shown.action + str(error.detail) + repr(error.slots) + "".join(getattr(error, "notes", ())))
 
     def test_the_first_eye_still_answers_first_for_what_it_knows(self):
         self.assertEqual(self.refused_code(html="<p>" + "AI" + "za" + "A" * 35 + "</p>"), "SECRET_SHAPE_FOUND")
