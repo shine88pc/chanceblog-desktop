@@ -429,5 +429,137 @@ class OtherDocsTest(unittest.TestCase):
                     self.assertIn(number, defined, f"{rel}: {number}")
 
 
+DOUBLE_OPEN = "{" * 2
+INSTALLER_ROW = re.compile(r"^\| D-8[34]\d \|")                          # 설치 파일(V1INSTALL)의 결정 번호 대역 830–849 — 다른 갈래의 행은 보지 않는다
+
+
+def section_after(text, heading):
+    """`heading` 으로 시작하는 `## ` 절의 본문(다음 `## ` 절 앞까지) — 다른 갈래가 그 뒤에 새 절을 덧붙여도 그 글은 읽지 않는다."""
+    start = text.index(heading)
+    end = text.find("\n## ", start + len(heading))
+    return text[start:] if end == -1 else text[start:end]
+
+
+class InstallerDocsTest(unittest.TestCase):
+    """설치 파일(Inno Setup, V1INSTALL — D-830에서 D-836)의 문서 — `docs/PACKAGE.md`·`docs/RELEASE.md`·`docs/SECURITY.md`·시험지 초안의 T-INST 표·`CHANGELOG.md`·결정 행이 코드와 어긋나지 않게 한다."""
+    PACKAGE_HEAD = "## 설치 파일(Inno Setup) — 만드는 법·무음 설치와 제거·한계"
+    RELEASE_HEAD = "## 설치 파일과 휴대용 압축 파일 — 두 산출물"
+    SECURITY_HEAD = "## 설치 파일(Inno Setup) — 보안 경계와 위협 대응"
+    DRAFT_HEAD = "## 설치 파일 확인표 — T-INST-01에서 13"
+
+    def clean(self, text, name):
+        self.assertNotIn(TILDE, text, name)
+        self.assertIsNone(URL.search(text), name)
+        self.assertNotIn(DOUBLE_OPEN, text, name)
+        self.assertNotIn("}" * 2, text, name)
+
+    def test_the_package_doc_has_the_unnumbered_installer_section_once_after_the_ten_numbered_ones(self):
+        text = read("docs/PACKAGE.md")
+        self.assertEqual(text.count(self.PACKAGE_HEAD), 1)
+        self.assertGreater(text.index(self.PACKAGE_HEAD), text.index("## 10. 한계와 다음 일"))
+        self.clean(section_after(text, self.PACKAGE_HEAD), "PACKAGE.md 설치 파일 절")
+
+    def test_the_package_section_tells_how_to_build_the_silent_commands_and_where_the_data_stays(self):
+        section = section_after(read("docs/PACKAGE.md"), self.PACKAGE_HEAD)
+        for needle in ("python packaging/build_installer.py", "ChanceBlogDesktop-0.1.0-preview.1-Setup.exe", "packaging/ChanceBlogDesktop.iss", "--out-dir", "--iscc", "CHANCEBLOG_ISCC", "6.5.0",
+                       "PrivilegesRequired=lowest", "{autopf}", "Korean.isl", "CloseApplications=yes", "RestartApplications=yes", "Compression=lzma2/max", "skipifsilent", "TESTBUILD",
+                       "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-", "/CLOSEAPPLICATIONS", "unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", "/LANG=korean",
+                       "%LOCALAPPDATA%\\ChanceblogDesktop", "자격 증명 관리자", "[UninstallDelete]", "install_dir_problem", "SHA256SUMS", "PACKAGE_INFO.json", "installer", "artifacts", "schema"):
+            self.assertIn(needle, section, needle)
+
+    def test_the_package_section_says_honestly_what_was_not_measured_and_who_checks_it_first(self):
+        section = section_after(read("docs/PACKAGE.md"), self.PACKAGE_HEAD)
+        for needle in ("M09", "새 판이 적용되지 않", "옛 Setup", "되돌리지 않", "서명이 없", "SmartScreen", "러너에서 처음", "이 PC 에는 Inno 가 없", "건너뛴다", "릴리스 갈래", "재측정", "아이콘", "고지문"):
+            self.assertIn(needle, section, needle)
+
+    def test_the_package_section_names_the_single_source_of_the_silent_arguments_and_what_u4_must_add(self):
+        section = section_after(read("docs/PACKAGE.md"), self.PACKAGE_HEAD)
+        for needle in ("INNO_SILENT_INSTALL_ARGS", "INNO_SILENT_UNINSTALL_ARGS", "INNO_UPDATE_EXTRA_ARGS", "packaging/pkgcommon.py", "U-4", "src", "같은 값", "같음 시험"):
+            self.assertIn(needle, section, needle)
+        for name in ("INNO_SILENT_INSTALL_ARGS", "INNO_SILENT_UNINSTALL_ARGS", "INNO_UPDATE_EXTRA_ARGS"):
+            self.assertTrue(hasattr(ps.pkgcommon, name), name)
+
+    def test_the_commands_in_the_package_section_are_the_constants_of_the_shared_module(self):
+        section = section_after(read("docs/PACKAGE.md"), self.PACKAGE_HEAD)
+        self.assertIn(" ".join(ps.pkgcommon.INNO_SILENT_INSTALL_ARGS), section)
+        self.assertIn(ps.pkgcommon.INNO_UNINSTALLER_NAME + " " + " ".join(ps.pkgcommon.INNO_SILENT_UNINSTALL_ARGS), section)
+        for arg in ps.pkgcommon.INNO_UPDATE_EXTRA_ARGS:
+            self.assertIn(arg, section)
+
+    def test_the_release_doc_explains_the_two_artifacts_the_hashes_and_the_unsigned_warning(self):
+        text = read("docs/RELEASE.md")
+        self.assertEqual(text.count(self.RELEASE_HEAD), 1)
+        section = section_after(text, self.RELEASE_HEAD)
+        self.clean(section, "RELEASE.md 두 산출물 절")
+        for needle in ("ChanceBlogDesktop-<버전>-Setup.exe", "ChanceBlogDesktop-<버전>-win64.zip", "SHA256SUMS", "SHA-256", "서명", "SmartScreen", "스마트 앱 컨트롤", "artifacts", "installer", "Inno Setup",
+                       "schema", "release_check", "러너", "고지문"):
+            self.assertIn(needle, section, needle)
+
+    def test_the_security_doc_has_the_installer_threats_t4_to_t7_t11_and_t12(self):
+        text = read("docs/SECURITY.md")
+        self.assertEqual(text.count(self.SECURITY_HEAD), 1)
+        section = section_after(text, self.SECURITY_HEAD)
+        self.clean(section, "SECURITY.md 설치 파일 절")
+        rows = [line for line in section.splitlines() if re.match(r"^\| T\d+ \|", line)]
+        self.assertEqual([row.split("|")[1].strip() for row in rows], ["T4", "T5", "T6", "T7", "T11", "T12"])
+        for row in rows:
+            self.assertEqual(row.count("|"), 5, row)
+        for needle in ("install_dir_problem", "[UninstallDelete]", "SHA-256", "6.5.0", "ISCC", "unins000", "서명", "하위 프로세스", "test_installer_ids", "test_installer_build_rules"):
+            self.assertIn(needle, section, needle)
+
+    def test_the_operator_draft_has_the_thirteen_installer_rows_in_plain_words(self):
+        text = read("docs/PERSONAL_PC_TEST_V1_DRAFT.md")
+        self.assertEqual(text.count(self.DRAFT_HEAD), 1)
+        section = section_after(text, self.DRAFT_HEAD)
+        self.clean(section, "시험지 초안 T-INST 절")
+        rows = [line for line in section.splitlines() if re.match(r"^\| T-INST-\d\d \|", line)]
+        self.assertEqual([row.split("|")[1].strip() for row in rows], [f"T-INST-{number:02d}" for number in range(1, 14)])
+        for row in rows:
+            self.assertEqual(row.count("|"), 5, row)
+        for needle in ("스마트 앱 컨트롤", "SHA-256", "SmartScreen", "표준 사용자", "관리자 암호", "시작 메뉴", "앱 및 기능", "한글", "125%", "휴대용", "자격 증명 관리자", "다른 일반 계정", "(n-1)"):
+            self.assertIn(needle, section, needle)
+        for word in ("python", "pip ", "git ", "PyInstaller", "pyinstaller", "venv"):
+            self.assertNotIn(word, section, word)
+
+    def test_the_changelog_names_the_installer_work(self):
+        text = read("CHANGELOG.md")
+        first = re.search(r"(?m)^## \[([^\]]+)\] — (.+)$", text)
+        section = text.split(first.group(0))[1].split("\n## [")[0]
+        for needle in ("build_installer.py", "ChanceBlogDesktop.iss", "Inno Setup", "D-830", "install_dir_problem", "schema"):
+            self.assertIn(needle, section, needle)
+
+    def rows(self):
+        return [line for line in read("docs/DECISIONS.md").splitlines() if INSTALLER_ROW.match(line)]
+
+    def test_the_decision_rows_are_in_the_band_in_order_and_inside_the_big_table(self):
+        lines = read("docs/DECISIONS.md").splitlines()
+        rows = self.rows()
+        numbers = [int(re.match(r"^\| D-(\d+) \|", row).group(1)) for row in rows]
+        self.assertGreaterEqual(len(rows), 6)
+        self.assertTrue(all(830 <= number <= 849 for number in numbers), numbers)
+        self.assertEqual(numbers, sorted(set(numbers)))
+        first = lines.index(rows[0])
+        self.assertTrue(lines[first - 1].startswith("| D-"), "새 결정 행은 큰 결정 표의 마지막 D 행 바로 뒤 — 문서 끝에 새 표를 붙이지 않는다")
+        self.assertEqual(lines[first:first + len(rows)], rows, "이 갈래의 행은 빈틈 없이 이어진다")
+        for row in rows:
+            self.assertEqual(row.count(" | "), 3, row[:40])
+            self.assertTrue(row.rstrip().endswith("|"))
+            self.assertTrue(row.split("|")[2].strip().startswith("2026-11-"), row[:30])
+            self.clean(row, row[:12])
+
+    def test_each_decision_row_says_its_own_topic_and_the_things_not_done(self):
+        by_number = {re.match(r"^\| (D-\d+) \|", row).group(1): row for row in self.rows()}
+        topics = {"D-830": ("CF5B18A9-6CBC-4916-9978-7729E88B70C8", "setup_name", "INNO_SILENT_INSTALL_ARGS", "단일 출처", "U-4", "같음 시험", "게시자"),
+                  "D-831": ("install_dir_problem", "pack_id_problem", "Velopack", "만들지 않"),
+                  "D-832": ("build_installer.py", "ChanceBlogDesktop.iss", "ISCC", "6.5.0", "컴파일 출력", "레지스트리", "읽지 못하", "하위 프로세스", "스파이크"),
+                  "D-833": ("installer", "artifacts", "schema", "RELEASE", "UPDATE", "미뤘"),
+                  "D-834": ("고지문", "Inno Setup", "아이콘", "SetupIconFile", "운영자 결정"),
+                  "D-835": ("변이", "진짜 컴파일", "러너에서 처음", "이 PC", "건너뛴"),
+                  "D-836": ("T-INST", "M09", "릴리스 갈래", "하지 않은 것", "Velopack", ".github")}
+        for number, needles in topics.items():
+            self.assertIn(number, by_number, number)
+            for needle in needles:
+                self.assertIn(needle, by_number[number], (number, needle))
+
 if __name__ == "__main__":
     unittest.main()
