@@ -1,7 +1,7 @@
 """`update/ed25519.py` 시험(UPDATE 설계서 3-3·5절, v1update U-1) — **서명 검증기는 수제 암호 코드**라서 '참이어야 할 것이 참인가' 보다 '거짓이어야 할 것이 거짓인가' 를 더 세게 본다.
 
 지키는 것:
-  1) RFC 8032 7.1 의 공개 시험 벡터 네 개(길이 0·1·2·64)가 참이고, 기본점·위수가 RFC 의 상수와 같다.
+  1) RFC 8032 7.1 의 공개 시험 벡터 다섯 개(길이 0·1·2·64·1023 — 모두 정적 상수)가 참이고, 기본점·위수가 RFC 의 상수와 같다.
   2) 아핀 좌표로 따로 쓴 참고 서명기(`update_support`)가 만든 무작위 서명 수십 쌍이 참이고, `openssl`(3.x)이 있으면 `openssl` 이 서명한 것도 참, 우리가 만든 것을 `openssl` 도 참으로 본다(없으면 건너뜀).
   3) 서명 64바이트×8비트·공개키 32바이트×8비트·메시지의 모든 비트를 하나씩 바꾸면 거짓이다.
   4) 말랑함: S 에 L 을 더하거나 S 가 L 이상이면 거짓이다(RFC 8.4).
@@ -13,7 +13,6 @@
 """
 import ast
 import hashlib
-import os
 import random
 import sys
 import time
@@ -32,7 +31,7 @@ from chanceblog_desktop.update import ed25519  # noqa: E402
 
 SRC = ROOT / "src" / "chanceblog_desktop" / "update"
 OPENSSL = us.openssl_path()
-OPENSSL_PAIRS = int(os.environ.get("UPDATE_TEST_OPENSSL_PAIRS", "12"))
+OPENSSL_PAIRS = us.openssl_pairs()                  # 빈 값·글자·0 이하는 기본 열두 쌍(예전에는 빈 값이 이 파일을 통째로 불러오기 실패시켰다)
 
 
 def pair(label, message=b"hello update"):
@@ -49,6 +48,35 @@ class KnownAnswerTest(unittest.TestCase):
                 self.assertTrue(ed25519.verify(pub, message, signature))
                 self.assertEqual(us.public_key(seed), pub, "참고 서명기가 RFC 의 공개키를 만든다")
                 self.assertEqual(us.sign(seed, message), signature, "참고 서명기가 RFC 의 서명을 만든다")
+
+    def test_the_fifth_rfc_vector_with_a_1023_byte_message_is_a_static_constant_that_verifies_and_the_reference_signer_reproduces(self):
+        """RFC 7.1 의 다섯 값 가운데 1023바이트(TEST 1024)도 정적 상수다 — 예전에는 이 길이를 openssl 이 있는 칸의 시험만 덮어 openssl 이 없는 칸에서는 0 이었다(독립 검증 S R8)."""
+        seed, pub, message, signature = (bytes.fromhex(item) for item in us.RFC_VECTOR_1023)
+        self.assertEqual((len(seed), len(pub), len(message), len(signature)), (32, 32, 1023, 64))
+        self.assertTrue(ed25519.verify(pub, message, signature))
+        self.assertEqual(us.public_key(seed), pub, "참고 서명기가 공개키를 만든다")
+        self.assertEqual(us.sign(seed, message), signature, "참고 서명기가 서명을 만든다")
+
+    def test_the_five_rfc_vectors_cover_the_five_message_lengths_zero_one_two_sixty_four_and_1023(self):
+        lengths = sorted(len(bytes.fromhex(message)) for _seed, _pub, message, _signature in us.RFC_VECTORS + (us.RFC_VECTOR_1023,))
+        self.assertEqual(lengths, [0, 1, 2, 64, 1023])
+
+    def test_the_static_1023_byte_vector_breaks_with_one_changed_bit_anywhere_or_a_changed_length(self):
+        seed, pub, message, signature = (bytes.fromhex(item) for item in us.RFC_VECTOR_1023)
+        self.assertTrue(ed25519.verify(pub, message, signature), "대조 — 바꾸기 전에는 참")
+
+        def flipped(data, index):
+            changed = bytearray(data)
+            changed[index] ^= 0x01
+            return bytes(changed)
+        for index in (0, 1, 511, 1021, 1022):
+            self.assertFalse(ed25519.verify(pub, flipped(message, index), signature), f"메시지 바이트 {index}")
+        for index in (0, 31, 32, 63):
+            self.assertFalse(ed25519.verify(pub, message, flipped(signature, index)), f"서명 바이트 {index}")
+        for index in (0, 31):
+            self.assertFalse(ed25519.verify(flipped(pub, index), message, signature), f"공개키 바이트 {index}")
+        for shorter_or_longer in (message[:-1], message[1:], message + bytes(1), b""):
+            self.assertFalse(ed25519.verify(pub, shorter_or_longer, signature), len(shorter_or_longer))
 
     def test_base_point_and_group_order_match_the_rfc_constants(self):
         self.assertEqual(us.BASE, (us.RFC_BASE_X, us.RFC_BASE_Y))
@@ -103,6 +131,14 @@ class CrossCheckTest(unittest.TestCase):
                     bad[count * 7 % 64] ^= 1 << (count % 8)
                     self.assertFalse(ed25519.verify(pub, message, bytes(bad)))
                     self.assertFalse(us.openssl_verify(pub, message, bytes(bad), OPENSSL), "대조 — 바꾼 서명은 openssl 도 거짓")
+
+    @unittest.skipIf(OPENSSL is None, "건너뜀: openssl 3.x 가 없다 — 정적 1023바이트 벡터와 openssl 의 대조는 openssl 이 있는 칸에서만")
+    def test_openssl_makes_the_same_static_1023_byte_vector_from_the_same_seed(self):
+        """두 곳이 같은지 — 정적 상수(`RFC_VECTOR_1023`)의 공개키·서명을 openssl 이 같은 씨앗·메시지에서 그대로 만들고 그 서명을 참으로 본다."""
+        seed, pub, message, signature = (bytes.fromhex(item) for item in us.RFC_VECTOR_1023)
+        theirs, their_pub = us.openssl_sign(seed, message, OPENSSL)
+        self.assertEqual((their_pub, theirs), (pub, signature))
+        self.assertTrue(us.openssl_verify(pub, message, signature, OPENSSL))
 
     @unittest.skipIf(OPENSSL is None, "건너뜀: openssl 3.x 가 없다")
     def test_a_1023_byte_message_signed_by_openssl(self):
