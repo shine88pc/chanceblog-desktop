@@ -344,7 +344,7 @@ class RoundTripTest(Base):
         self.assertEqual(result.status, bf.STATUS_COMPLETE)
         with Store.open(self.world.path("chanceblog.db"), migrate=False) as store:
             self.assertEqual([item.project_id for item in store.list()], ["legacy-1"])
-            self.assertEqual(store.schema_version, 2, "되돌린 뒤 지금 판으로 올라갔다")
+            self.assertEqual(store.schema_version, 3, "되돌린 뒤 지금 판(PUBPR 가 올린 판 3)으로 올라갔다")
             self.assertEqual(store.check(), [])
 
 

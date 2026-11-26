@@ -125,7 +125,7 @@ class SaveLoadTest(Base):
     def test_the_draft_lives_in_the_existing_drafts_table_so_the_store_backup_carries_it(self):
         saved = self.save()
         with Store.open(self.ctx.workspace.store_path, migrate=False) as store:
-            self.assertEqual(store.schema_version, 2, "표를 새로 만들지 않는다(구조 판 그대로)")
+            self.assertEqual(store.schema_version, 3, "표를 새로 만들지 않는다(PUBPR 의 판 3 그대로 — 표 구조는 판 2 와 같다)")
             row = store.load_draft(saved.draft_id)
         self.assertEqual(row.project_id, saved.draft_id)
         self.assertEqual(sd.SavedDraft.from_text(row.text, saved.draft_id), saved)

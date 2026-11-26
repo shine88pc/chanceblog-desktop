@@ -580,7 +580,7 @@ class SourceRulesTest(unittest.TestCase):
 
     def test_the_publish_gate_calls_the_one_shared_function_for_the_text_and_for_the_title(self):
         text = (ROOT / "src" / "chanceblog_desktop" / "publish" / "pages.py").read_text(encoding="utf-8")
-        self.assertEqual(text.count("secret_labels("), 3, "정의 하나·글 검사·commit 제목 검사")
+        self.assertEqual(text.count("secret_labels("), 4, "정의 하나·글 검사·commit 제목 검사 둘(commit_post·build_branch_commit)")
         self.assertEqual(text.count("find_secrets("), 1, "정본 패턴은 `secret_labels` 안에서만 부른다")
 
 
