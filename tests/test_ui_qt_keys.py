@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -268,6 +269,22 @@ class ScreenTest(Base):
         notices = [widget for widget in window.screen_widget.findChildren(QFrame) if widget.property("notice")]
         self.assertEqual([notice.property("notice") for notice in notices], ["ok"])
         self.assertIn(T["keys_ok_state"], notices[0].accessibleName())
+
+
+class ThreeBoxProvider(keys.FakeKeysProvider):
+    """입력 칸이 셋인 카드가 하나 있는 가짜 공급자 — 실제 용도 가운데 입력 칸이 셋인 것이 없어졌다(Blogger 의 갱신용 값은 로그인이 받아 입력 칸이 아니다, D-775).
+    등록 대화상자가 가장 높아지는 모양(칸 셋)에서도 창에 들어가는지 보려고 Blogger 카드에 칸 하나를 **시험에서만** 더한다."""
+    EXTRA = services.FieldInfo("extra_value", "추가 값", 8)
+
+    def _more(self, infos):
+        return tuple(replace(info, fields=info.fields + (self.EXTRA,)) if info.key == "blogger" else info for info in infos)
+
+    def _purposes(self):
+        return self._more(super()._purposes())
+
+    def load_connections(self, progress, cancelled):
+        data = super().load_connections(progress, cancelled)
+        return replace(data, purposes=self._more(data.purposes))
 
 
 class RegisterTest(Base):
@@ -547,7 +564,7 @@ class RegisterTest(Base):
     def test_the_dialog_fits_every_size_with_its_buttons_visible_even_for_three_boxes(self):
         for size in SIZES:
             with self.subTest(size=size):
-                window = self.make(keys.FakeKeysProvider("not_connected"), size=size)
+                window = self.make(ThreeBoxProvider("not_connected"), size=size)
                 form = self.open_register(window, "blogger")
                 self.assertEqual(len(form.secret_edits), 3)
                 self.settle(6)
