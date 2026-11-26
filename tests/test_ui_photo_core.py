@@ -1219,6 +1219,7 @@ class SourceRulesTest(unittest.TestCase):
         "ui/qt/ocr_input.py": "글자 읽기에 보낼 사진 한 장을 메모리에서 읽고 줄여 RGB 바이트로(결정 D-513) — 회전 적용·투명 PNG 는 흰 바탕·PNG 6천만 화소 초과는 읽기 전 거절. 디스크에 쓰지 않고 경로를 어디에도 되풀이하지 않는다",
         "ui/qt/ocr_runner.py": "글자 읽기 진행자(결정 D-513) — 요청을 작업 스레드에 한 장씩 맡기고 시간 초과·취소·유휴 종료를 감시한다. 사진 위치는 읽는 동안 값으로만 쥐고 컨트롤러는 화면 스레드에서만 만진다",
         "ui/qt/photo_ocr_parts.py": "사진 한 줄 안의 글자 읽기 칸과 읽은 글 목록 위젯(결정 D-513) — 뷰모델을 그리기만 한다(사진 경로·파일을 모른다)",
+        "render/blogger.py": "BLOGGER 갈래(결정 D-770) — Blogger 초안에 넣는 대표 사진 블록(사진작가 출처 한 줄 — `ui/core/attribution.py` 의 출처 값만 받는다)이라 사진 정리(사진 목록·확정)와 무관하다. 사진 정리 부품은 말하지도 않는다(아래 시험이 지킨다)",
     }
 
     def test_only_the_listed_source_files_mention_photos_so_saving_making_exporting_and_backup_are_untouched(self):
@@ -1230,6 +1231,9 @@ class SourceRulesTest(unittest.TestCase):
         for untouched in ("service/draft_store.py", "content/saved_draft.py", "content/draft_options.py", "service/backup_flow.py"):
             if (src / untouched).exists():
                 self.assertNotIn("photo", (src / untouched).read_text(encoding="utf-8").lower(), untouched)
+        blogger = (src / "render" / "blogger.py").read_text(encoding="utf-8")                              # 위 표의 이유가 사실로 남게 — Blogger 변환은 대표 사진 출처 한 줄만 말하고 사진 정리(사진 정보·본문 연결) 부품은 모른다
+        for name in ("photo_manifest", "photo_flow", "photo_rules", "photo_view", "photo_text", "PhotoBoard", "DraftPhoto"):
+            self.assertNotIn(name, blogger, f"render/blogger.py 가 사진 정리 부품({name})을 말한다 — PHOTO_FILES 의 이유(사진 정리와 무관)가 틀려진다")
 
     def test_every_tone_the_sheet_uses_has_a_readable_text_color_on_every_surface(self):
         """글자 대비 — 사진 정리 화면이 글에 입히는 계열(`set_tone` 과 `TONE` 표)의 글자색은 바탕(면·앱 바탕·옅은 면) 어디서나 대비 4.5 이상이다(토큰 시험이 계열마다 따로도 지킨다 — 여기서는 이 화면이 실제로 쓰는 것만 본다)."""
