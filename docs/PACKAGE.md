@@ -195,7 +195,7 @@ python -m venv ..\chanceblog-package-venv
 
 ### 설치 파일의 모양(`packaging/ChanceBlogDesktop.iss`)
 
-스파이크(`packaging/spike/ChanceBlogSpike.iss`)에서 러너가 실제로 컴파일하고 설치·제거·업데이트까지 통과한 줄 모양 그대로이고, 이름과 ID 만 생산 값이다(새 지시문 없음, 시험용 `[Code]` 만 없앴다). 값은 ISCC 의 `/D` 정의(`AppVersion`·`SourceDir`, 아이콘이 있으면 `IconFile`)와 `/O`·`/F` 로 받는다.
+스파이크(`packaging/spike/ChanceBlogSpike.iss`)에서 러너가 실제로 컴파일하고 설치·제거·업데이트까지 통과한 줄 모양 그대로이고, 이름과 ID 만 생산 값이다(새 지시문 없음 — 시험용 `[Code]` 와 설치 확인 쪽을 건너뛰는 `DisableReadyPage` 만 뺐다). 값은 ISCC 의 `/D` 정의(`AppVersion`·`SourceDir`, 아이콘이 있으면 `IconFile`)와 `/O`·`/F` 로 받는다.
 
 - `PrivilegesRequired=lowest` — **관리자 권한 없이** 사용자 폴더에 설치한다(Setup 의 실행 수준은 `asInvoker`로 측정됐다). `DefaultDirName={autopf}\ChanceBlogDesktop` 는 사용자 권한에서 `%LocalAppData%\Programs\ChanceBlogDesktop` 이 된다.
 - `Languages` 는 공식 `compiler:Languages\Korean.isl` 하나(한국어 안내, `/LANG=korean` 으로 확인했다).
