@@ -29,6 +29,7 @@ from ..net import loopback
 from ..net.errors import NetError
 from ..publish import blogger as api
 from ..publish import blogger_auth as auth
+from ..publish import pages
 from ..render import blogger as render
 from ..security import refuse
 from . import blog_profiles, external, gate, quota
@@ -455,8 +456,15 @@ def html_problems(post, project, local_paths=()):
 
 
 def check_post(post, project, local_paths=()):
-    """키·토큰 모양(`SECRET_SHAPE_FOUND`)과 위 사유(`CHECK_FAILED`)를 보내기 **전에** 거절로 바꾼다 — 걸리면 아무것도 보내지 않는다."""
+    """키·토큰 모양과 위 사유를 보내기 **전에** 거절로 바꾼다 — 걸리면 아무것도 보내지 않는다. 키·토큰 모양은 **두 눈**으로 본다(설계 H8·3.7 ③, 재작업 1 권고-1):
+    ① 본문 속 비밀 형태 검사기 `SECRET_SHAPE_FOUND`(위치·유형만 알린다) ② 올리기 직전 마지막 관문 `pages.secret_labels`(정본의 이름 있는 패턴·앱의 가리기 목록·눈에 안 보이는 글자로 쪼갠 키 — 공용 함수를 **부르기만** 한다) `SECRET_IN_TEXT_BLOCKED`.
+    둘은 서로 다른 구멍을 막는다(한쪽은 눈에 안 보이는 글자가 낀 토큰을, 다른 쪽은 낱말에 바로 붙은 토큰을 놓친다) — 합집합이다. 그 밖의 사유는 `CHECK_FAILED`."""
     refuse.refuse_secret_shapes({"제목": post.title, "본문": post.html, "라벨": ", ".join(post.labels)}, "Blogger 초안 저장")
+    labels = set()
+    for text in (post.title, post.html, ", ".join(post.labels)):
+        labels |= pages.secret_labels(text)
+    if labels:
+        raise AppError("SECRET_IN_TEXT_BLOCKED", detail="키 모양 문자열: " + ", ".join(sorted(labels)))
     reasons = html_problems(post, project, local_paths)
     if reasons:
         codes = list(dict.fromkeys(reason.split("]", 1)[0].lstrip("[") for reason in reasons if reason.startswith("[")))
@@ -522,6 +530,9 @@ def _save(ctx, project_id, slot, hero, tags, keystore, adapter):
     meter = _Meter(ctx, entry)
     journal = BloggerJournal(ctx.workspace.journal_dir / JOURNAL_FOLDER)
     previous = journal.read(project_id, slot)
+    if previous is not None and not _is_this_post(previous, post):                 # 저널이 가리키는 글은 옛 판이다(원고를 고쳐 다시 승인했다) — 그 초안은 지금 글이 아니니 이어받지 않고 새로 보낸다(옛 초안은 지우지도 덮어쓰지도 않는다)
+        notes.append("이전에 보내다 멈춘 글은 지금 승인한 글과 내용이 달라서 이어받지 않고 새로 보냈어요 — Blogger 의 초안 목록에 이전 판이 남아 있을 수 있으니 필요 없으면 직접 지워 주세요")
+        previous = None
     if previous is not None:                                                       # 앱이 꺼졌거나 확인 중 실패했다 — 새로 보내기 전에 같은 제목의 초안부터 찾는다
         found = _same_title(ctx, entry, secrets, adapter, meter, blog_id, post.title, previous)
         if len(found) == 1:
@@ -561,6 +572,11 @@ def _save(ctx, project_id, slot, hero, tags, keystore, adapter):
         if not verified:
             notes.append("Blogger 가 초안인지 알려 주지 않았어요 — Blogger 의 초안 목록에서 확인해 주세요")
     return _finish(ctx, journal, project_id, slot, project.revision, inserted.post_id, inserted.url, adopted=False, verified=verified, notes=notes + meter.notes)
+
+
+def _is_this_post(record, post):
+    """저널이 가리키는 글이 지금 보내려는 글인가 — 제목과 내용(만든 HTML)의 해시가 둘 다 같을 때만(저널에는 해시뿐이다). 라벨은 해시에 들어 있지 않다."""
+    return record.title_sha256 == _sha(post.title) and record.content_sha256 == _sha(post.html)
 
 
 def _same_title(ctx, entry, secrets, adapter, meter, blog_id, title, record):

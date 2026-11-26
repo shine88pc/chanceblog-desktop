@@ -5,9 +5,11 @@ Blogger 로그인은 시스템 기본 브라우저가 구글 화면을 열고, �
   · **주소는 문자열 `127.0.0.1` 하나뿐**이다(포트는 운영체제가 고르게 0 으로 바인딩한 뒤 `getsockname()` 으로 안다). 모든 주소를 듣는 모양·이름으로 듣는 모양·IPv6 는 쓰지 않는다. 바깥으로 나가는 연결(`connect`)은 만들지 않는다.
   · 윈도에서는 `SO_EXCLUSIVEADDRUSE` 로 다른 프로세스가 같은 포트에 겹쳐 바인딩하지 못하게 한다. 그 밖의 곳에서는 주소·포트 재사용 옵션을 **설정하지 않는다**.
   · `listen(1)` — 한 번에 연결 하나, 연결은 **모두 8번까지만** 받는다(브라우저가 아이콘 같은 것을 더 요청할 수 있다). 전체 180초 안에 끝나지 않으면 닫는다. 기다리는 동안 `accept` 는 0.5초 제한으로 돌며 취소·시간을 본다(스레드를 죽이지 않는다).
-    연결 하나의 읽기는 5초 · 요청 줄 4,096바이트 · 머리글 8 KiB 이하 · 본문은 읽지 않는다.
+    연결 하나의 읽기는 5초 · 요청 줄 4,096바이트 · 머리글 8 KiB 이하 · 본문은 읽지 않는다. 답을 보낸 뒤 남은 요청을 읽어 버리는 일은 **전체 0.2초**로 묶는다(받는 쪽이 1바이트씩 천천히 보내도 이 시간이 지나면 닫는다 — 재작업 1 필수-2, 설계 L4·L13).
   · `GET /callback` 만 받는다. 그 밖의 방법·길은 짧은 고정 글(404)로 답하고 **연결 횟수에는 센다**. `Host` 머리글이 `127.0.0.1:<포트>` 가 아니면 400(다른 사이트가 이름 풀이를 바꿔 이 창구를 두드리는 것을 막는다).
     `state` 는 `hmac.compare_digest` 로 견주고 **틀리면 그 연결에 400 만 보내고 계속 듣는다**(남이 로그인을 끝내 버리지 못하게).
+  · **어떤 요청이 와도 창구는 죽지 않는다**(재작업 1 필수-1, 설계 L6): 길이 `//` 로 시작하는 요청(주소 쪼개기가 `//[x` 같은 글에서 예외를 던진다)은 400 으로 거절하고, 주소 쪼개기가 예외를 던져도 400 이며,
+    요청을 읽고 따지는 어느 곳에서 예상 밖의 예외가 나도 그 연결에 400 만 보내고 계속 듣는다(요청의 글은 어디에도 남기지 않는다).
   · 올바른 `code` 가 `state` 와 함께 오거나, `state` 가 맞는 `error` 가 오면 **응답 페이지를 보내고 곧바로 소켓을 닫는다**(응답이 오면 포트를 닫는다 — RFC 8252). 응답 페이지는 고정된 글이고 질의 값을 되풀이하지 않는다.
   · `code`·`state`·콜백 주소는 로그·오류·기록·예외에 쓰지 않는다 — 읽은 직후 필요한 두 값만 남기고 나머지는 버린다.
   · `http.server`·`socketserver` 를 쓰지 않고 `socket` 만 쓴다(표면이 작고 허용 표에 한 줄이면 된다). 공개 함수 `open_listener`·`LoopbackListener.wait` 의 첫 문장이 관문(`capabilities.require_net`)이라 스위치가 꺼져 있으면 소켓을 만들지도 않는다.
@@ -36,7 +38,7 @@ MAX_HEADER_LINES = 100
 MAX_FIELDS = 10
 MAX_VALUE = 2048
 BACKLOG = 1
-LINGER_SECONDS = 0.2                         # 답을 보낸 뒤 남은 요청을 읽어 버리는 시간(아래 `_send`)
+LINGER_SECONDS = 0.2                         # 답을 보낸 뒤 남은 요청을 읽어 버리는 **전체** 시간(아래 `_send`) — 연결 하나가 이보다 오래 붙잡지 못한다
 LINGER_BYTES = 64 * 1024
 REASON_BIND, REASON_TIMEOUT, REASON_CANCELLED, REASON_TOO_MANY = "bind", "timeout", "cancelled", "too_many"
 REASONS = (REASON_BIND, REASON_TIMEOUT, REASON_CANCELLED, REASON_TOO_MANY)
@@ -131,9 +133,12 @@ def _parse(lines, port):
     method, target, _version = pieces
     if method != "GET":
         raise _Rejected(404)
-    if _TARGET.fullmatch(target) is None:
+    if _TARGET.fullmatch(target) is None or target.startswith("//"):         # `//` 로 시작하는 길은 주소 쪼개기가 사이트 이름으로 읽는다(`//[x` 는 예외까지 던진다) — 이 창구의 길이 아니다
         raise _Rejected()
-    parts = urlsplit(target)
+    try:
+        parts = urlsplit(target)
+    except ValueError:                                                       # 위 검사 뒤에는 나오지 않아야 하지만 쪼개기가 던지는 예외 하나가 창구를 죽이지 않게 한 겹 더
+        raise _Rejected() from None
     if parts.path != CALLBACK_PATH:
         raise _Rejected(404)
     hosts = [line.split(":", 1)[1].strip() for line in lines[1:] if line.lower().startswith("host:")]
@@ -175,9 +180,13 @@ def _send(conn, data):
         conn.settimeout(READ_SECONDS)
         conn.sendall(data)
         conn.shutdown(socket.SHUT_WR)
-        conn.settimeout(LINGER_SECONDS)
+        end = _clock() + LINGER_SECONDS                          # 읽어 버리기는 **전체 시간**으로 묶는다 — 한 번의 `recv` 제한만으로는 1바이트씩 천천히 보내는 연결 하나가 `wait()` 를 오래 붙잡는다
         total = 0
         while total < LINGER_BYTES:
+            left = end - _clock()
+            if left <= 0:
+                break
+            conn.settimeout(left)
             chunk = conn.recv(4096)
             if not chunk:
                 break
@@ -253,10 +262,14 @@ class LoopbackListener:
             lines = _read_head(conn, min(deadline, _clock() + READ_SECONDS))
             outcome = _judge(_parse(lines, self.port), expected_state)
         except _Rejected as rejected:
-            _send(conn, NOT_FOUND_RESPONSE if rejected.status == 404 else BAD_RESPONSE)
-            return None
-        _send(conn, OK_RESPONSE)
-        return outcome
+            status = rejected.status
+        except Exception:                                                                   # noqa: BLE001 - 요청 한 번이 창구를 죽이지 못한다(설계 L6): 예상 밖의 예외도 그 연결에 400 만 보내고 계속 듣는다(예외의 글은 어디에도 쓰지 않는다)
+            status = 400
+        else:
+            _send(conn, OK_RESPONSE)
+            return outcome
+        _send(conn, NOT_FOUND_RESPONSE if status == 404 else BAD_RESPONSE)
+        return None
 
 
 def open_listener():

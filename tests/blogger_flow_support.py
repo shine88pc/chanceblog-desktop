@@ -171,6 +171,23 @@ class FlowCase(unittest.TestCase):
             project.source_content = markdown
             store.save(project)
 
+    def reapprove(self, project_id, slot="blogger_en", markdown=None, title=None):
+        """승인한 글의 원고(또는 제목)를 **실제 고치기 길**로 고친다 — 판이 올라가고(`ContentProject.edit`) 다시 렌더링·검토·승인을 거친다(재작업 1 권고-2 의 시험이 쓴다)."""
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+            project.edit(source_content=markdown, title=title)
+            project.set_rendered(slot, "승인한 렌더링(고친 판)")
+            project.transition(slot, st.REVIEW_REQUIRED)
+            project.transition(slot, st.APPROVED)
+            store.save(project)
+
+    def post_hash(self, project_id, slot="blogger_en", tags=()):
+        """그 글을 지금 보내면 저널에 적힐 내용 해시(`save_draft` 가 만드는 HTML 의 해시) — 저널을 손으로 만드는 시험이 '같은 글' 의 저널임을 나타내려고 쓴다."""
+        from chanceblog_desktop.render import blogger as render
+        with self.ctx.store() as store:
+            project = store.load(project_id)
+        return flow._sha(render.render_blogger_post(project, flow.SLOT_LANG[slot], hero=None, tags=tags).html)
+
     def variant(self, project_id, slot="blogger_en"):
         with self.ctx.store() as store:
             return store.load(project_id).variant(slot)

@@ -4,7 +4,7 @@
 호출하는 쪽의 검사에만 기대지 않고 열기 함수 안쪽에서도 한 번 더 본다 — 그 연결은 화면 갈래가 맡는다(이 갈래는 Qt 코드를 건드리지 않는다). 허용하는 모양:
   · **구글 로그인**(`KIND_LOGIN`) — https · 호스트 `accounts.google.com` · 포트 없음 또는 443 · 길 `/o/oauth2/v2/auth` · 사용자 정보·조각 없음 · 2,000자 이하 · 공백·제어 문자·비 ASCII 없음 ·
     질의 키는 `client_id`·`redirect_uri`·`response_type`·`scope`·`state`·`code_challenge`·`code_challenge_method`·`access_type`·`prompt` 아홉 가지가 **각각 한 번**.
-  · **네이버 글쓰기**(`KIND_NAVER_WRITE`) — `draft_rules.naver_write_url` 이 만드는 모양(`https://blog.naver.com/<아이디>?Redirect=Write`)과 글자까지 같다.
+  · **네이버 글쓰기**(`KIND_NAVER_WRITE`) — `draft_rules.naver_write_url` 이 만드는 모양(https · 호스트 `blog.naver.com` · 길은 아이디 한 토막 · 질의는 글쓰기 표시 하나)과 글자까지 같다.
   · **이미지 출처 링크**(`KIND_UNSPLASH`) — `attribution.check_url` 이 받는 Unsplash 의 https 주소.
 그 밖은 전부 거절한다: `file:`·`javascript:`·`ms-settings:`·평문 http·다른 호스트·UNC(`\\\\서버`)·너무 긴 글·공백이나 제어 문자가 든 글. 이 표는 로그인 주소를 만드는 쪽(`publish/blogger_auth.py` 의 `check_auth_url`)과 **따로 적었다** — 두 곳이 같은 말을 해야 열린다(시험이 견준다).
 """

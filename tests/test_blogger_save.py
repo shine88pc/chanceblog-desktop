@@ -4,6 +4,8 @@
   1) 확인 없이는 아무것도 하지 않고, 승인한 현재 판의 글만 보낸다 · 막힌 글(키 모양·이 PC 경로·위험한 표기·이 PC 의 사진)은 한 건도 보내지 않는다.
   2) 쓰기는 요청 한 건이다: 보내기 전 실패·4xx 는 다시 보내지 않고, 보낸 뒤 끊기거나 5xx 면 **같은 제목의 초안을 먼저 찾아** 정확히 하나일 때만 이어받고 아니면 멈춘다(중복 초안 없음). 401 뒤 갱신해 한 번 다시 보내는 것이 유일한 예외다.
   3) 공개(LIVE) 같은 초안이 아닌 답은 즉시 멈추고 글 상태는 실패로 바뀐다 · 저널은 보내기 전에 쓰고 해시뿐이다 · 한도는 항목마다.
+  4) 재작업 1 권고-1 — 보내기 직전 검사는 두 눈이다: 본문 속 비밀 형태 검사기와 올리기 직전 마지막 관문(`pages.secret_labels`)의 합집합 — 한쪽만 보면 놓치던 모양(눈에 안 보이는 글자가 낀 토큰·Slack·Anthropic 따위)도 보내기 전에 막힌다.
+  5) 재작업 1 권고-2 — 이어받기는 저널이 가리키는 글이 **지금 승인한 글**(제목·내용 해시가 같다)일 때만 한다: 원고를 고쳐 다시 승인한 글은 옛 초안을 이어받지 않고 새로 보낸다(옛 초안은 지우지도 덮어쓰지도 않는다).
 """
 import json
 import sys
@@ -313,7 +315,7 @@ class UnknownOutcomeTest(SaveCase):
         for label, offset, adopted in (("정각", timedelta(0), True), ("5분 전", timedelta(minutes=-5), True), ("15분 뒤", timedelta(minutes=15), True), ("6분 전", timedelta(minutes=-6), False), ("16분 뒤", timedelta(minutes=16), False)):
             pid = self.approve("blogger_en", "시간 시험 " + label)
             self.google.add_post(fs.BLOG_EN, "시간 시험 " + label, updated=now + offset)
-            record = flow.JournalRecord(pid, "blogger_en", flow._sha("시간 시험 " + label), "0" * 64, "sending", self.ctx.stamp())
+            record = flow.JournalRecord(pid, "blogger_en", flow._sha("시간 시험 " + label), self.post_hash(pid), "sending", self.ctx.stamp())
             flow.BloggerJournal(self.journal_dir()).write(record)
             self.google.requests.clear()
             self.cool()
@@ -326,14 +328,14 @@ class UnknownOutcomeTest(SaveCase):
     def test_a_different_title_or_a_published_post_is_never_adopted(self):
         self.google.add_post(fs.BLOG_EN, fs.TITLE + " 다름", updated=self.ctx.now())
         self.google.add_post(fs.BLOG_EN, fs.TITLE, status="LIVE", updated=self.ctx.now())
-        flow.BloggerJournal(self.journal_dir()).write(flow.JournalRecord(self.pid, "blogger_en", flow._sha(fs.TITLE), "0" * 64, "sending", self.ctx.stamp()))
+        flow.BloggerJournal(self.journal_dir()).write(flow.JournalRecord(self.pid, "blogger_en", flow._sha(fs.TITLE), self.post_hash(self.pid), "sending", self.ctx.stamp()))
         result = self.save(self.pid)
         self.assertEqual((result.adopted, len(self.inserts())), (False, 1))
 
     def test_a_journal_left_by_a_crashed_run_is_checked_before_anything_new_is_sent(self):
         """앱 종료 중 전송 — 저널 `sending` 이 남은 채 다시 실행하면 새로 보내기 전에 먼저 찾는다."""
         self.google.add_post(fs.BLOG_EN, fs.TITLE, updated=self.ctx.now())
-        flow.BloggerJournal(self.journal_dir()).write(flow.JournalRecord(self.pid, "blogger_en", flow._sha(fs.TITLE), "0" * 64, "sending", self.ctx.stamp()))
+        flow.BloggerJournal(self.journal_dir()).write(flow.JournalRecord(self.pid, "blogger_en", flow._sha(fs.TITLE), self.post_hash(self.pid), "sending", self.ctx.stamp()))
         result = self.save(self.pid)
         self.assertEqual((result.adopted, self.inserts(), len(self.stored())), (True, [], 1))
         self.assertTrue(any("이전에 보내다 멈춘 글" in note for note in result.notes))
@@ -367,6 +369,216 @@ class UnknownOutcomeTest(SaveCase):
         with self.assertRaises(AppError) as caught:
             self.save(self.pid)
         self.assertEqual((caught.exception.code, len(self.inserts())), ("BLOGGER_DRAFT_UNKNOWN", 1))
+
+
+class StaleJournalTest(SaveCase):
+    """재작업 1 권고-2 — 안전 검증 S 의 탐침 p5b: 보내다 끊겨 서버에 판 A 가 저장된 채 사람이 원고를 판 B 로 고쳐 다시 승인하고 '초안 저장' 을 누르면 옛 판 A 를 이어받아 '저장됨'(`adopted·verified`)으로 적었다.
+    저널에는 제목·내용의 해시가 있으니 지금 글과 견주어 다르면 이어받지 않고 새로 보낸다 — 옛 초안은 지우지도 덮어쓰지도 않는다(Blogger 의 글은 사람이 정리한다)."""
+
+    FIRST = "## 소제목\n\n에너지를 아끼는 작은 습관은 매일 조금씩 실천할 때 가장 오래 갑니다. 이 글은 첫째 판본입니다.\n\n둘째 문단입니다.\n"
+    SECOND = "## 소제목\n\n전혀 다른 내용으로 고쳐 쓴 둘째 판본입니다. 이전 글의 문장은 하나도 남기지 않았어요.\n\n마지막 문단입니다.\n"
+
+    def first_attempt_that_ends_unknown(self, pid):
+        """서버는 저장했는데 답이 끊기고 같은 제목 찾기도 실패한다 — 서버에 초안 하나(판 A)가 있고 저널이 `unknown` 으로 남는다. 그 초안의 번호를 돌려준다."""
+        self.google.push("insert", bs.STORE_THEN_DISCONNECT)
+        self.google.push("list", bs.google_error(503))
+        with self.assertRaises(AppError) as caught:
+            self.save(pid)
+        self.assertEqual(caught.exception.code, "BLOGGER_DRAFT_UNKNOWN")
+        self.assertEqual((len(self.stored()), self.journals()), (1, [f"{pid}-blogger_en.json"]))
+        return self.stored()[0]["id"]
+
+    def second_press(self, pid):
+        self.advance(minutes=1)
+        self.cool()
+        self.google.requests.clear()
+        return self.save(pid)
+
+    def test_an_edited_post_does_not_adopt_the_old_draft_and_a_new_one_is_made_beside_it(self):
+        pid = self.approve("blogger_en", markdown=self.FIRST)
+        old_id = self.first_attempt_that_ends_unknown(pid)
+        old_content = self.stored()[0]["content"]
+        self.reapprove(pid, markdown=self.SECOND)
+        result = self.second_press(pid)
+        self.assertFalse(result.adopted)
+        self.assertNotEqual(result.post_id, old_id)
+        self.assertEqual(self.google.summaries()[0], f"POST www.googleapis.com/blogger/v3/blogs/{fs.BLOG_EN}/posts?isDraft=true")
+        self.assertEqual((len(self.inserts()), self.google.count("?status=DRAFT")), (1, 0), "새로 한 번 보냈고 옛 글 때문에 같은 제목 찾기를 하지도 않았다")
+        drafts = {draft["id"]: draft for draft in self.stored()}
+        self.assertEqual(sorted(drafts), sorted([old_id, result.post_id]), "옛 초안은 그대로 있고 새 초안이 하나 더 생겼다")
+        self.assertEqual(drafts[old_id]["content"], old_content, "옛 초안은 지우지도 덮어쓰지도 않았다")
+        self.assertIn("둘째 판본", drafts[result.post_id]["content"])
+        self.assertNotIn("첫째 판본", drafts[result.post_id]["content"])
+        self.assertTrue(any("내용이 달라서 이어받지 않고" in note for note in result.notes), result.notes)
+        variant = self.variant(pid)
+        self.assertEqual((variant.status, variant.remote_id), ("DRAFT_SAVED", result.post_id), "저장됨으로 적히는 번호는 지금 글의 초안이다")
+        self.assertEqual(self.journals(), [])
+        self.assertClean()
+
+    def test_an_edited_title_does_not_adopt_the_old_draft_either(self):
+        pid = self.approve("blogger_en", "첫째 제목", markdown=self.FIRST)
+        old_id = self.first_attempt_that_ends_unknown(pid)
+        self.reapprove(pid, title="고쳐 쓴 둘째 제목")
+        result = self.second_press(pid)
+        self.assertEqual((result.adopted, len(self.inserts()), result.post_id == old_id), (False, 1, False))
+        self.assertEqual(sorted(draft["title"] for draft in self.stored()), ["고쳐 쓴 둘째 제목", "첫째 제목"])
+        self.assertTrue(any("내용이 달라서 이어받지 않고" in note for note in result.notes), result.notes)
+
+    def test_the_same_post_is_adopted_on_the_next_press_and_nothing_is_sent_again(self):
+        pid = self.approve("blogger_en", markdown=self.FIRST)
+        old_id = self.first_attempt_that_ends_unknown(pid)
+        result = self.second_press(pid)
+        self.assertEqual((result.adopted, result.verified, result.post_id), (True, True, old_id))
+        self.assertEqual((self.inserts(), len(self.stored()), self.journals()), ([], 1, []))
+        self.assertFalse(any("내용이 달라서" in note for note in result.notes))
+        self.assertEqual(self.variant(pid).remote_id, old_id)
+
+    def test_what_counts_is_the_text_not_the_revision_so_an_edit_undone_is_the_same_post_again(self):
+        """원고를 고쳤다가 되돌려 승인하면 판 번호는 올랐어도 글은 같다 — 저널의 해시가 같으니 옛 초안을 이어받는다."""
+        pid = self.approve("blogger_en", markdown=self.FIRST)
+        old_id = self.first_attempt_that_ends_unknown(pid)
+        self.reapprove(pid, markdown=self.SECOND)
+        self.reapprove(pid, markdown=self.FIRST)
+        result = self.second_press(pid)
+        self.assertEqual((result.adopted, result.post_id, self.inserts()), (True, old_id, []))
+
+    def test_a_stale_journal_of_any_stage_is_replaced_by_the_new_send_and_the_next_press_follows_the_new_one(self):
+        """옛 저널(`sending`)이 남은 채 글을 고쳐 보내면 새 저널이 옛 저널을 덮고, 그 보냄이 또 끊겨도 다음 누름은 새 글의 저널을 따른다."""
+        pid = self.approve("blogger_en", markdown=self.FIRST)
+        flow.BloggerJournal(self.journal_dir()).write(flow.JournalRecord(pid, "blogger_en", flow._sha(fs.TITLE), self.post_hash(pid), "sending", self.ctx.stamp()))
+        self.reapprove(pid, markdown=self.SECOND)
+        self.google.push("insert", bs.DISCONNECT)
+        self.google.push("list", bs.google_error(503))
+        with self.assertRaises(AppError) as caught:
+            self.save(pid)
+        self.assertEqual(caught.exception.code, "BLOGGER_DRAFT_UNKNOWN")
+        record = flow.BloggerJournal(self.journal_dir()).read(pid, "blogger_en")
+        self.assertEqual((record.stage, record.content_sha256 == self.post_hash(pid)), ("unknown", True), "저널은 지금 글의 해시를 가리킨다")
+        self.assertEqual(len(self.inserts()), 1)
+
+    def test_the_journal_matches_only_when_both_hashes_are_equal(self):
+        from chanceblog_desktop.render.blogger import BloggerPost
+        post = BloggerPost("제목", "<p>본문</p>", ())
+        same = flow.JournalRecord("p1", "blogger_en", flow._sha("제목"), flow._sha("<p>본문</p>"), "sending", "2026-11-26T00:00:00Z")
+        self.assertTrue(flow._is_this_post(same, post))
+        for label, record in (("제목 해시가 다름", flow.JournalRecord("p1", "blogger_en", flow._sha("다른 제목"), flow._sha("<p>본문</p>"), "sending", "2026-11-26T00:00:00Z")),
+                              ("내용 해시가 다름", flow.JournalRecord("p1", "blogger_en", flow._sha("제목"), flow._sha("<p>다른 본문</p>"), "unknown", "2026-11-26T00:00:00Z")),
+                              ("둘 다 다름", flow.JournalRecord("p1", "blogger_en", "0" * 64, "1" * 64, "sending", "2026-11-26T00:00:00Z"))):
+            with self.subTest(label=label):
+                self.assertFalse(flow._is_this_post(record, post))
+
+
+def secret_samples():
+    """한쪽 눈만으로는 놓치던 모양들(안전 검증 S 의 탐침 p4 — 열셋) — 가짜 값은 모두 **실행 때 조립**한다(소스에는 키 모양이 한 덩어리로 없다)."""
+    zero_width, soft_hyphen, word_joiner, bom = chr(0x200B), chr(0x00AD), chr(0x2060), chr(0xFEFF)
+    body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    google_tail = "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q"
+    return {
+        "GitHub 토큰 접두사 안에 폭 없는 공백": "gh" + zero_width + "p_" + body,
+        "GitHub 토큰 몸통 가운데 폭 없는 공백": "ghp_" + body[:10] + zero_width + body[10:],
+        "GitHub 토큰 안에 소프트 하이픈": "gh" + soft_hyphen + "p_" + body,
+        "GitHub 토큰 안에 단어 이음표": "ghp" + word_joiner + "_" + body,
+        "GitHub 토큰 안에 BOM": "gh" + bom + "p_" + body,
+        "Google API 키 안에 폭 없는 공백": "AI" + zero_width + "za" + google_tail,
+        "Slack 봇 토큰": "xox" + "b-" + "1234567890-1234567890123-" + "a" * 24,
+        "Slack 웹훅 주소": "https" + "://hooks." + "slack.com/services/" + "T00000000/B00000000/" + "X" * 24,
+        "OpenAI 프로젝트 키": "sk-" + "proj-" + "a" * 40,
+        "Anthropic 키": "sk-" + "ant-api03-" + "a" * 40,
+        "npm 토큰": "npm_" + "a" * 36,
+        "Telegram 봇 토큰": "123456789:" + "AA" + "a" * 33,
+        "글자에 바로 붙은 Google API 키": "abc" + "AI" + "za" + google_tail,
+    }
+
+
+def ordinary_texts():
+    """평범한 글 — 두 눈이 모두 지나가게 두어야 한다(거짓 경보 점검): 한글·영문 문장·사진 주소·커밋 해시·UUID·'token' 같은 낱말."""
+    return {"한글 문장": "에너지를 아끼는 작은 습관은 매일 조금씩 실천할 때 가장 오래 갑니다.", "영문 문장": "Small habits that save energy add up when you repeat them every day.",
+            "사진 주소": "https://images.unsplash.com/photo-1500000000000-aaaaaaaaaaaa?w=1200", "커밋 해시": "commit " + "0123456789abcdef" * 2 + "01234567",
+            "UUID": "id 123e4567-e89b-12d3-a456-426614174000", "token 이라는 낱말": "the token of appreciation and the key to a good habit", "하이픈 낱말": "task-oriented sk-ills and ghp stands for nothing here",
+            "숫자와 콜론": "회의는 12:30 이고 전화는 010-1234-5678 입니다"}
+
+
+class BothSecretEyesTest(unittest.TestCase):
+    """재작업 1 권고-1 — 보내기 직전 검사(`check_post`)는 본문 속 비밀 형태 검사기와 올리기 직전 마지막 관문(`pages.secret_labels`)의 합집합이다(설계 H8·3.7 ③).
+    예전에는 앞의 눈만 보아 표본 31개 가운데 13개가 이 길을 지났다 — 승인 관문이 대부분 먼저 막지만 보낼 때 따로 입력하는 라벨·저장소 파일을 직접 고친 글·승인한 글과 다른 글은 그 관문을 거치지 않는다."""
+
+    def check(self, title="안전한 제목", html="<p>안전한 본문입니다.</p>", labels=()):
+        from types import SimpleNamespace
+        from chanceblog_desktop.render.blogger import BloggerPost
+        project = SimpleNamespace(source_content="안전한 본문입니다.", title=title, references=(), assets=())
+        flow.check_post(BloggerPost(title, html, tuple(labels)), project, ())
+
+    def refused_code(self, **fields):
+        with self.assertRaises(AppError) as caught:
+            self.check(**fields)
+        return caught.exception.code
+
+    def test_every_sample_one_eye_alone_used_to_miss_is_refused_before_any_request(self):
+        from chanceblog_desktop.publish import pages
+        for label, text in secret_samples().items():
+            with self.subTest(label=label):
+                self.assertTrue(pages.secret_labels(text), f"{label}: 올리기 직전 마지막 관문이 이 표본을 알아보지 못한다 — 시험이 헛돈다")
+                self.assertIn(self.refused_code(html="<p>" + text + "</p>"), ("SECRET_SHAPE_FOUND", "SECRET_IN_TEXT_BLOCKED"), label)
+
+    def test_a_shape_that_only_the_last_gate_knows_is_refused_with_the_designed_code_and_names_no_value(self):
+        text = secret_samples()["Slack 봇 토큰"]
+        with self.assertRaises(AppError) as caught:
+            self.check(html="<p>" + text + "</p>")
+        error = caught.exception
+        self.assertEqual(error.code, "SECRET_IN_TEXT_BLOCKED")
+        shown = error.rendered()
+        for hidden in (text, text[:12], text[-10:]):
+            self.assertNotIn(hidden, shown.message + shown.action + str(error.detail) + repr(error.slots) + "".join(error.notes))
+
+    def test_the_first_eye_still_answers_first_for_what_it_knows(self):
+        self.assertEqual(self.refused_code(html="<p>" + "AI" + "za" + "A" * 35 + "</p>"), "SECRET_SHAPE_FOUND")
+
+    def test_a_sample_is_refused_in_the_title_in_the_html_and_in_a_label_alike(self):
+        for name in ("Slack 봇 토큰", "npm 토큰", "GitHub 토큰 안에 소프트 하이픈"):
+            text = secret_samples()[name]
+            for where, fields in (("제목", dict(title="제목 " + text)), ("본문", dict(html="<p>" + text + "</p>")), ("라벨", dict(labels=("에너지", text)))):
+                with self.subTest(sample=name, where=where):
+                    self.assertIn(self.refused_code(**fields), ("SECRET_SHAPE_FOUND", "SECRET_IN_TEXT_BLOCKED"))
+
+    def test_ordinary_texts_pass_both_eyes(self):
+        for label, text in ordinary_texts().items():
+            with self.subTest(label=label):
+                self.check(title="평범한 제목 " + label, html="<p>" + text + "</p>", labels=("에너지", "생활 습관"))
+
+    def test_the_gate_calls_the_shared_last_gate_and_never_changes_it(self):
+        """공용 함수는 부르기만 한다 — `check_post` 가 `pages.secret_labels` 를 제목·본문·라벨 세 글에 부른다."""
+        seen = []
+        real = flow.pages.secret_labels
+
+        def spy(text):
+            seen.append(text)
+            return real(text)
+
+        with mock.patch.object(flow.pages, "secret_labels", spy):
+            self.check(title="제목 가", html="<p>본문 나</p>", labels=("라벨 다", "라벨 라"))
+        self.assertEqual(seen, ["제목 가", "<p>본문 나</p>", "라벨 다, 라벨 라"])
+
+
+class SecretEyesEndToEndTest(SaveCase):
+    def test_a_token_the_first_eye_misses_in_the_text_stops_the_save_and_nothing_is_sent(self):
+        token = secret_samples()["Slack 봇 토큰"]
+        pid = self.approve("blogger_en", "토큰 든 글")
+        self.poison(pid, fs.BODY_MARKDOWN + f"\n\n여기에 {token} 를 붙였어요.\n")
+        with self.assertRaises(AppError) as caught:
+            self.save(pid)
+        self.assertEqual(caught.exception.code, "SECRET_IN_TEXT_BLOCKED")
+        shown = caught.exception.rendered()
+        for hidden in (token, token[:12]):
+            self.assertNotIn(hidden, shown.message + shown.action + str(caught.exception.detail) + repr(caught.exception.slots))
+        self.assertEqual((self.google.requests, self.journals(), self.variant(pid).status), ([], [], "APPROVED"))
+
+    def test_a_token_typed_as_a_label_at_send_time_is_stopped_too_because_no_approval_looked_at_it(self):
+        """`--tags` 는 승인할 때 검사되지 않는 입력이다 — 첫 번째 눈이 모르는 모양을 라벨에 넣어도 보내기 직전에 막힌다."""
+        token = secret_samples()["npm 토큰"]
+        with self.assertRaises(AppError) as caught:
+            self.save(self.pid, tags=("에너지", token))
+        self.assertEqual(caught.exception.code, "SECRET_IN_TEXT_BLOCKED")
+        self.assertEqual((self.google.requests, self.journals(), self.variant(self.pid).status), ([], [], "APPROVED"))
 
 
 class JournalAndLockTest(SaveCase):

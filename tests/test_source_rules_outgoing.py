@@ -26,6 +26,10 @@ SRC = ss.ROOT / "src" / "chanceblog_desktop"
 OUTGOING_MODULES = {"subprocess", "socket", "ssl", "http", "urllib", "ftplib", "smtplib", "telnetlib", "xmlrpc", "requests", "asyncio", "webbrowser", "socketserver", "imaplib", "poplib", "multiprocessing",
                     # AS-S1 2차 권고-3(D-619) — 같은 길의 안쪽 이름·옛 모듈: C 쪽 소켓·TLS·프로세스 모듈, 가져오기만 해도 브라우저를 여는 `antigravity`, 파이썬 3.10 의 `asyncore`·`smtpd`(3.12 에서 없어졌어도 3.10 칸이 돈다)
                     "_socket", "_ssl", "_multiprocessing", "antigravity", "asyncore", "smtpd"}
+# BLOGGER 재작업 1(안전 검증 S 의 참고-13, D-780) — 이름 목록 밖이던 서버·바깥 모듈: 새 파일이 `wsgiref.simple_server` 로 모든 주소를 듣는 서버를 열어도 이 시험이 빨개지지 않았다. 표준 라이브러리의 서버·클라이언트(`wsgiref`·`nntplib`·`pydoc` 은 작은 웹 서버를 띄울 수 있다)와
+# 흔한 바깥 라이브러리 이름이다 — 앱이 쓰는 의존성이 아니라서 소스에 하나라도 생기면 허용 목록 시험이 빨개진다(회귀 그물일 뿐, 일부러 숨기는 코드를 막는 방어가 아니다).
+EXTRA_OUTGOING_MODULES = {"wsgiref", "nntplib", "pydoc", "urllib3", "httpx", "aiohttp", "websockets", "paramiko", "pycurl", "tornado", "twisted", "gevent", "grpc", "zmq", "flask", "fastapi", "uvicorn"}
+OUTGOING_MODULES |= EXTRA_OUTGOING_MODULES
 OUTGOING_OS = {"system", "popen", "startfile", "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe", "posix_spawn", "posix_spawnp"}
 QT_NAMES = {"QDesktopServices", "QNetworkAccessManager", "QTcpSocket", "QUdpSocket", "QWebEngineView", "QWebSocket"}
 QT_MODULES = {"QtNetwork", "QtWebEngineCore", "QtWebEngineWidgets", "QtWebChannel", "QtWebSockets", "QtHttpServer"}
@@ -508,6 +512,40 @@ class BypassShapesTest(unittest.TestCase):
         text = (ss.ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
         self.assertIn("정직한 코드의 회귀 그물", text)
         self.assertIn("**의도적** 우회는 막지 못하고", text, "옛 한계(D-359)는 그대로 남는다")
+
+
+class NamedServerModulesTest(unittest.TestCase):
+    """BLOGGER 재작업 1(D-780) — 이름 목록에 더한 서버·바깥 모듈을 탐지기가 모든 가져오기 모양에서 이름으로 알아보고, 지금 소스(와 vendor)에는 하나도 없다."""
+
+    @staticmethod
+    def names_of(source):
+        return {name for node in ast.walk(ast.parse(source)) for name in outgoing_names(node)}
+
+    def test_each_added_name_is_seen_in_every_import_shape(self):
+        for name in sorted(EXTRA_OUTGOING_MODULES):
+            for source in (f"import {name}\n", f"import {name}.sub\n", f"from {name} import thing\n", f"from {name}.sub import thing\n", f"import {name} as alias\n"):
+                with self.subTest(source=source.strip()):
+                    self.assertEqual(self.names_of(source), {name})
+
+    def test_a_new_file_that_opens_a_server_with_one_of_them_is_not_in_the_allowed_list(self):
+        """안전 검증 S 의 S-M10 — 새 파일이 서버를 여는 모양(`wsgiref.simple_server`)이 허용 목록에 없는 곳으로 잡힌다."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a").mkdir()
+            (root / "a" / "server.py").write_text("import wsgiref.simple_server\n\n\ndef serve():\n    return wsgiref.simple_server.make_server('', 0, None)\n", encoding="utf-8")
+            (root / "a" / "fine.py").write_text("import json\nimport os\nos.getcwd()\n", encoding="utf-8")
+            self.assertEqual(sorted(found_outgoing(root=root)), [("a/server.py", "wsgiref")])
+
+    def test_no_source_file_or_vendor_script_uses_them_today_and_the_names_are_in_the_list(self):
+        self.assertTrue(EXTRA_OUTGOING_MODULES <= OUTGOING_MODULES)
+        self.assertEqual(sorted(key for key in found_outgoing() if key[1] in EXTRA_OUTGOING_MODULES), [])
+        self.assertEqual(sorted(key for key in found_outgoing(root=ss.ROOT / "vendor") if key[1] in EXTRA_OUTGOING_MODULES), [])
+
+    def test_ordinary_look_alike_names_are_not_flagged(self):
+        for source in ("import json\nimport html\n", "from pathlib import Path\n", "x = object()\nx.wsgiref_name\n", "import wsgiref_helper_that_is_not_the_module\n", "from . import helpers\n"):
+            with self.subTest(source=source.strip()[:40]):
+                self.assertEqual(self.names_of(source), set())
 
 
 if __name__ == "__main__":

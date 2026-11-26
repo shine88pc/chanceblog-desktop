@@ -4,6 +4,8 @@
   1) 소스 훑기(BT-23): `socket` 은 이 파일 하나 · 바인딩 주소는 글자 `127.0.0.1` · `0.0.0.0`·빈 글·`localhost`·`::` 이 없다 · `listen` 인자 1 이하 · `accept` 는 `settimeout` 과 함께 · `http.server`·`socketserver` 없음 · 첫 문장이 관문.
   2) 진짜 창구의 행동(BT-24·26–29): 다른 호스트 머리글·길·방법·너무 큰 요청·느린 요청은 거절하고 계속 듣는다 · 올바른 첫 콜백 뒤에는 연결이 안 된다 · 180초·취소 · 응답 페이지는 질의 값을 되풀이하지 않는다 · 연결은 8번까지.
   3) 윈도 독점 바인딩과 그 밖의 곳의 '재사용 옵션 없음'(BT-25).
+  4) 적대적 요청 한 번이 창구를 죽이지 못한다(재작업 1 필수-1, 안전 검증 S 의 탐침 A1 — 길이 `//` 로 시작하는 요청·잘못된 퍼센트 부호·제어 문자·빈 요청 줄·GET 이 아닌 방법·예상 밖의 예외 모두 400 또는 404 로 거절하고 계속 듣고
+     이어서 오는 올바른 콜백을 받는다)와, 답을 보낸 뒤 읽어 버리기가 **전체 시간**으로 묶여 있다(필수-2, 탐침 A7 — 1바이트씩 천천히 보내는 연결 하나가 마감·취소·정상 콜백을 막지 못한다).
 스위치가 꺼져 있으면 소켓을 만들지도 않는다(BT-80·81).
 """
 import ast
@@ -176,6 +178,29 @@ class SourceRulesTest(unittest.TestCase):
         for node in ast.walk(judge):
             if isinstance(node, ast.Compare) and any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops):
                 self.assertNotIn("state", ast.unparse(node), f"state 를 == 로 견준다: {ast.unparse(node)}")
+
+    def test_one_request_cannot_kill_the_window_the_parser_and_the_handler_are_walled_three_ways(self):
+        """재작업 1 필수-1·필수-2 의 구조 못박기 — 행동 시험이 각각 따로 보지만 줄이 지워지면 소스에서도 바로 보이게 한다."""
+        parse = next(node for node in ast.walk(self.tree) if isinstance(node, ast.FunctionDef) and node.name == "_parse")
+        parents = {child: parent for parent in ast.walk(parse) for child in ast.iter_child_nodes(parent)}
+        splits = [node for node in ast.walk(parse) if isinstance(node, ast.Call) and ast.unparse(node.func) == "urlsplit"]
+        self.assertEqual(len(splits), 1)
+        cursor, guarded = splits[0], False
+        while cursor in parents:
+            cursor = parents[cursor]
+            if isinstance(cursor, ast.Try) and any(handler.type is not None and ast.unparse(handler.type) == "ValueError" for handler in cursor.handlers):
+                guarded = True
+        self.assertTrue(guarded, "주소 쪼개기는 ValueError 를 잡는 try 안에 있어야 한다")
+        self.assertIn("target.startswith('//')", ast.unparse(parse), "길이 // 로 시작하는 요청은 쪼개기 전에 거절한다")
+        handle = next(node for node in ast.walk(self.tree) if isinstance(node, ast.FunctionDef) and node.name == "_handle")
+        caught = [ast.unparse(handler.type) for node in ast.walk(handle) if isinstance(node, ast.Try) for handler in node.handlers if handler.type is not None]
+        self.assertEqual(caught, ["_Rejected", "Exception"], "연결 하나를 처리하다 나는 예외는 모두 400 으로 닫는다")
+        send = next(node for node in ast.walk(self.tree) if isinstance(node, ast.FunctionDef) and node.name == "_send")
+        loops = [node for node in ast.walk(send) if isinstance(node, ast.While)]
+        self.assertEqual(len(loops), 1)
+        loop_text = ast.unparse(loops[0])
+        self.assertIn("_clock()", loop_text, "읽어 버리기 반복은 전체 시간(남은 시간)을 매번 본다")
+        self.assertIn("conn.settimeout(left)", loop_text, "한 번의 recv 제한은 남은 시간을 넘지 않는다")
 
     def test_the_scan_is_not_blind(self):
         probe = ast.parse("import socket\ns = socket.socket()\ns.bind(('0.0.0.0', 0))\ns.bind(('', 80))\nx = 'localhost'\n")
@@ -445,6 +470,293 @@ class ListenerTest(Base):
                 lb.open_listener()
         self.assertEqual(caught.exception.reason, lb.REASON_BIND)
         self.assertNotIn("CANARY_OS_TEXT", repr(caught.exception) + str(caught.exception))
+
+
+def raw(first, port, extra=""):
+    """요청 줄 하나(글 또는 바이트)와 올바른 `Host` 머리글이 든 요청 — 요청 줄은 시험이 정하고 나머지는 올바르다."""
+    first = first.encode("latin-1") if isinstance(first, str) else first
+    return first + f"\r\nHost: 127.0.0.1:{port}\r\n{extra}\r\n".encode("ascii")
+
+
+class HostileRequestTest(Base):
+    """재작업 1 필수-1 — 이 PC 의 어떤 프로그램이 어떤 요청을 보내도 로그인 창구는 죽지 않는다: 거절(400, 방법이 다르면 404)하고 계속 들으며 이어서 오는 올바른 콜백을 받는다.
+    안전 검증 S 의 탐침 A1(`//[x` 한 줄에 `wait()` 가 `ValueError` 로 끝났다)을 시험으로 옮기고 같은 종류의 모양을 더했다. 요청마다 연결 횟수를 세므로 한 시험에 일곱을 넘기지 않는다."""
+
+    def check(self, build_cases):
+        listener = self.open()
+        port = listener.port
+        run = Run(listener)
+        cases = build_cases(port)
+        self.assertLessEqual(len(cases), lb.MAX_CONNECTIONS - 1)
+        for label, (data, status) in cases.items():
+            with self.subTest(label=label):
+                try:
+                    answer = talk(port, data)
+                except OSError as error:
+                    self.fail(f"{label}: 창구가 이미 끝나서 연결이 되지 않는다({type(error).__name__}) — wait() 의 끝: {run.error!r}")
+                self.assertTrue(answer.startswith(status), f"{label}: {answer[:40]!r}")
+                self.assertTrue(run.thread.is_alive(), f"{label}: 요청 하나로 창구가 끝났다 — {run.error!r}")
+        self.assertIsNone(run.error)
+        talk(port, valid(port))
+        run.finish()
+        self.assertIsNone(run.error)
+        self.assertEqual((run.result.code, run.result.served), (CODE_TEXT, len(cases) + 1), "거절한 연결도 모두 세고 마지막 올바른 콜백은 받는다")
+        self.assertNoOutside()
+
+    def test_a_path_that_starts_with_two_slashes_is_a_400_and_never_ends_the_window(self):
+        """탐침 A1 — `//[x`·`//x]`·`//[::1` 은 주소 쪼개기가 예외를 던지던 글이고 `//호스트/길`·`///callback?…` 은 쪼개기가 사이트 이름·빈 이름으로 읽는 글이다. 마지막 것은 `state` 와 `code` 가 **맞는** 요청이라
+        길 검사가 없으면 올바른 콜백으로 받아들여진다 — 그래도 길이 `//` 로 시작하면 거절한다."""
+        def cases(port):
+            paths = ["//[x", "//x]", "//[::1", "//[v1.x]/callback", "//host/path", f"//callback?code=a&state={STATE}", f"///callback?code={CODE_TEXT}&state={STATE}"]
+            return {path[:26]: (raw(f"GET {path} HTTP/1.1", port), b"HTTP/1.1 400 ") for path in paths}
+        self.check(cases)
+
+    def test_bad_percent_encodings_odd_bytes_and_long_paths_are_refused_and_the_window_goes_on(self):
+        def cases(port):
+            host = f"state={STATE}"
+            return {"퍼센트 뒤가 16진수가 아님": (raw(f"GET /callback?code=%zz&{host} HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "끝이 잘린 퍼센트": (raw(f"GET /callback?code=abc%&{host} HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "state 가 잘못된 UTF-8": (raw("GET /callback?code=abc&state=%ff%fe%c3 HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "길에 제어 문자": (raw(b"GET /call\x01back?code=a HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "길에 DEL": (raw(b"GET /callback\x7f?code=a HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "길에 ASCII 가 아닌 바이트": (raw(b"GET /callback\xe9?code=a HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "아주 긴 길": (raw("GET /" + "a" * 5000 + " HTTP/1.1", port), b"HTTP/1.1 400 ")}
+        self.check(cases)
+
+    def test_a_percent_zero_zero_in_the_path_and_a_long_but_legal_path_are_404_and_the_window_goes_on(self):
+        def cases(port):
+            return {"길 속 %00": (raw(f"GET /callback%00?code=a&state={STATE} HTTP/1.1", port), b"HTTP/1.1 404 "),
+                    "한도 안의 긴 길": (raw("GET /" + "a" * 3900 + " HTTP/1.1", port), b"HTTP/1.1 404 "),
+                    "점 마디": (raw(f"GET /./callback?code=a&state={STATE} HTTP/1.1", port), b"HTTP/1.1 404 "),
+                    "위로 가기": (raw(f"GET /x/../callback?code=a&state={STATE} HTTP/1.1", port), b"HTTP/1.1 404 ")}
+        self.check(cases)
+
+    def test_an_empty_or_broken_request_line_is_400(self):
+        def cases(port):
+            return {"빈 요청 줄": (raw("", port), b"HTTP/1.1 400 "), "방법만": (raw("GET", port), b"HTTP/1.1 400 "), "버전이 없음": (raw("GET /callback", port), b"HTTP/1.1 400 "),
+                    "조각이 넷": (raw(f"GET /callback?code=a&state={STATE} HTTP/1.1 extra", port), b"HTTP/1.1 400 "), "공백 둘": (raw(f"GET  /callback?code=a&state={STATE} HTTP/1.1", port), b"HTTP/1.1 400 "),
+                    "HTTP/2": (raw(f"GET /callback?code=a&state={STATE} HTTP/2.0", port), b"HTTP/1.1 400 "), "탭으로 가른 조각": (raw(f"GET\t/callback?code=a&state={STATE}\tHTTP/1.1", port), b"HTTP/1.1 400 ")}
+        self.check(cases)
+
+    def test_methods_that_are_not_get_are_404_whatever_the_path_and_the_window_goes_on(self):
+        def cases(port):
+            query = f"/callback?code={CODE_TEXT}&state={STATE}"
+            return {method: (raw(f"{method} {query} HTTP/1.1", port, "Content-Length: 0\r\n"), b"HTTP/1.1 404 ") for method in ("POST", "PUT", "DELETE", "HEAD", "TRACE", "get", "PATCH")}
+        self.check(cases)
+
+    def test_connect_and_options_shapes_are_404_and_the_window_goes_on(self):
+        def cases(port):
+            return {"CONNECT": (raw("CONNECT example.test:443 HTTP/1.1", port), b"HTTP/1.1 404 "), "OPTIONS *": (raw("OPTIONS * HTTP/1.1", port), b"HTTP/1.1 404 "),
+                    "방법이 길다": (raw("G" * 300 + " /callback HTTP/1.1", port), b"HTTP/1.1 404 "), "방법이 숫자": (raw("12345 /callback HTTP/1.1", port), b"HTTP/1.1 404 ")}
+        self.check(cases)
+
+    def test_an_unexpected_error_while_judging_a_request_is_a_400_and_the_window_goes_on(self):
+        """어느 곳에서 예상 밖의 예외가 나도(여기서는 요청을 따지는 함수가 한 번 깨진다 — 올바른 요청도 그 한 번은 400) 창구는 죽지 않고 예외의 글은 답에도 결과에도 나오지 않는다."""
+        real = lb._parse
+        calls = []
+
+        def flaky(lines, port):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("CANARY_PARSER_FAILURE")
+            return real(lines, port)
+
+        listener = self.open()
+        port = listener.port
+        with mock.patch.object(lb, "_parse", flaky):
+            run = Run(listener)
+            first = talk(port, valid(port))
+            self.assertTrue(first.startswith(b"HTTP/1.1 400 "), first[:40])
+            self.assertNotIn(b"CANARY_PARSER_FAILURE", first)
+            self.assertTrue(run.thread.is_alive(), f"예상 밖의 예외 하나로 창구가 끝났다 — {run.error!r}")
+            talk(port, valid(port))
+            run.finish()
+        self.assertIsNone(run.error)
+        self.assertEqual((run.result.code, run.result.served), (CODE_TEXT, 2))
+        self.assertNotIn("CANARY_PARSER_FAILURE", repr(run.result))
+        self.assertNoOutside()
+
+    def test_a_socket_error_while_reading_the_head_is_a_400_too_and_the_window_goes_on(self):
+        real = lb._read_head
+        calls = []
+
+        def flaky(conn, deadline):
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError(10038, "CANARY_SOCKET_FAILURE")
+            return real(conn, deadline)
+
+        listener = self.open()
+        port = listener.port
+        with mock.patch.object(lb, "_read_head", flaky):
+            run = Run(listener)
+            first = talk(port, valid(port))
+            self.assertNotIn(b"CANARY_SOCKET_FAILURE", first)
+            self.assertTrue(run.thread.is_alive(), f"읽다가 난 소켓 오류 하나로 창구가 끝났다 — {run.error!r}")
+            talk(port, valid(port))
+            run.finish()
+        self.assertEqual((run.error, run.result.code, run.result.served), (None, CODE_TEXT, 2))
+
+    def test_the_parser_turns_a_url_split_error_into_a_rejection_and_asks_the_splitter_nothing_for_a_double_slash(self):
+        lines = [f"GET /callback?code=a&state={STATE} HTTP/1.1", "Host: 127.0.0.1:4242"]
+        with mock.patch.object(lb, "urlsplit", side_effect=ValueError("CANARY_SPLIT_FAILURE")):
+            with self.assertRaises(lb._Rejected) as caught:
+                lb._parse(lines, 4242)
+        self.assertEqual(caught.exception.status, 400)
+        self.assertNotIn("CANARY_SPLIT_FAILURE", repr(caught.exception) + str(caught.exception))
+        self.assertTrue(caught.exception.__suppress_context__, "쪼개기의 예외는 이어 붙이지 않는다")
+        with mock.patch.object(lb, "urlsplit", side_effect=AssertionError("길이 // 로 시작하면 쪼개기를 부르지 않는다")):
+            with self.assertRaises(lb._Rejected) as caught:
+                lb._parse(["GET //[x HTTP/1.1", "Host: 127.0.0.1:4242"], 4242)
+        self.assertEqual(caught.exception.status, 400)
+        for target in ("//[x", "//x]", "//[::1", "//host/path", "///callback"):
+            with self.subTest(target=target), self.assertRaises(lb._Rejected) as caught:
+                lb._parse([f"GET {target} HTTP/1.1", "Host: 127.0.0.1:4242"], 4242)
+            self.assertEqual(caught.exception.status, 400, target)
+
+    def test_a_normal_callback_still_parses_and_a_single_slash_path_never_trips_the_url_splitter(self):
+        """고침이 정상 요청을 막지 않는다 — `/callback?…`(퍼센트·질의 포함)은 그대로 받고, 길이 `/` 하나로 시작하면 이상한 글(대괄호·이중 빗금이 안쪽에 있는 길)도 쪼개기가 예외를 던지지 않고 404 로 거절된다."""
+        for target in (f"/callback?code=a&state={STATE}", f"/callback?code=a%2Fb&state={STATE}", "/callback"):
+            fields = lb._parse([f"GET {target} HTTP/1.1", "Host: 127.0.0.1:4242"], 4242)
+            self.assertIsInstance(fields, dict, target)
+        for target in ("/x?" + "a" * 3000, "/[x", "/x]", "/a//[b", "/?//[x"):
+            with self.assertRaises(lb._Rejected) as caught:
+                lb._parse([f"GET {target} HTTP/1.1", "Host: 127.0.0.1:4242"], 4242)
+            self.assertEqual(caught.exception.status, 404, target)
+
+
+class Drip:
+    """느리게 보내는 나쁜 연결 하나 — 요청 하나를 보내 답(404)을 받게 한 뒤 **서버가 쓰기를 닫은 다음에도** `gap` 초마다 1바이트씩 `seconds` 동안 보낸다(안전 검증 S 의 탐침 A7).
+    받는 쪽이 끝(FIN)을 본 뒤에도 보낼 수 있는 반닫힘이다. 서버가 연결을 닫으면 스스로 끝난다."""
+
+    def __init__(self, port, *, seconds=6.0, gap=0.01):
+        self.port, self.seconds, self.gap = port, seconds, gap
+        self.stop = threading.Event()
+        self.sent = 0
+        self.thread = threading.Thread(target=self._go, daemon=True)
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def _go(self):
+        try:
+            with socket.create_connection(("127.0.0.1", self.port), timeout=5.0) as conn:
+                conn.sendall(f"GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n\r\n".encode("ascii"))
+                end = time.monotonic() + self.seconds
+                while not self.stop.is_set() and time.monotonic() < end:
+                    try:
+                        conn.sendall(b"x")
+                    except OSError:
+                        return                                                 # 서버가 연결을 닫았다 — 이 나쁜 연결의 일은 끝났다
+                    self.sent += 1
+                    self.stop.wait(self.gap)
+        except OSError:
+            return
+
+    def finish(self):
+        self.stop.set()
+        self.thread.join(5.0)
+
+
+class SlowCloseTest(Base):
+    """재작업 1 필수-2 — 답을 보낸 뒤 남은 요청을 읽어 버리는 일은 **전체 시간**으로 묶여 있다. 안전 검증 S 의 탐침 A7: 연결 하나가 1바이트씩 천천히 보내면 한 번의 `recv` 제한(0.2초)만으로는 끝나지 않아
+    `wait()` 가 마감(3초)이 아니라 15초 넘게 돌았고 취소도 정상 콜백도 먹지 않았다(설계 L4·L13)."""
+
+    def start_drip(self, port, **kwargs):
+        drip = Drip(port, **kwargs).start()
+        self.addCleanup(drip.finish)
+        return drip
+
+    def test_the_linger_after_a_reply_is_bounded_in_total_time_even_when_the_peer_keeps_dripping(self):
+        listener = self.open()
+        listener._sock.settimeout(5.0)
+        drip = self.start_drip(listener.port, seconds=6.0)
+        conn, _peer = listener._sock.accept()
+        with conn:
+            began = time.monotonic()
+            lb._send(conn, lb.NOT_FOUND_RESPONSE)
+            elapsed = time.monotonic() - began
+        drip.finish()
+        self.assertLess(elapsed, lb.LINGER_SECONDS + 1.5, f"읽어 버리기가 {elapsed:.2f}초 걸렸다 — 전체 시간({lb.LINGER_SECONDS}초)으로 묶이지 않았다")
+        self.assertGreater(drip.sent, 0, "시험이 헛돌지 않았다 — 나쁜 연결이 실제로 보내고 있었다")
+        self.assertNoOutside()
+
+    def test_the_linger_does_not_wait_for_a_silent_peer_longer_than_its_total_time(self):
+        """보내지도 닫지도 않는 상대 — 한 번의 `recv` 제한이 남은 시간을 넘지 않으니 읽어 버리기는 전체 시간 안에 끝난다(답은 그대로 간다)."""
+        listener = self.open()
+        listener._sock.settimeout(5.0)
+        peer = socket.create_connection(("127.0.0.1", listener.port), timeout=5.0)
+        self.addCleanup(peer.close)
+        conn, _address = listener._sock.accept()
+        with conn:
+            began = time.monotonic()
+            lb._send(conn, lb.BAD_RESPONSE)
+            elapsed = time.monotonic() - began
+        self.assertLess(elapsed, lb.LINGER_SECONDS + 1.5, f"조용한 상대를 {elapsed:.2f}초 기다렸다 — 한 번의 recv 제한이 남은 시간보다 길다")
+        self.assertTrue(peer.recv(65536).startswith(b"HTTP/1.1 400 "))
+        self.assertNoOutside()
+
+    def test_the_linger_still_drains_what_the_browser_already_sent_before_closing(self):
+        """묶은 뒤에도 천천히 닫는 본래 이유는 남는다 — 이미 와 있던 남은 요청은 읽어 버리고 닫는다(윈도가 읽지 않은 데이터 때문에 연결을 끊어 답이 사라지는 일을 막는다)."""
+        listener = self.open()
+        port = listener.port
+        run = Run(listener)
+        extra = "X-Padding: " + "p" * 3000 + "\r\n"
+        answer = talk(port, f"GET /nope HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{extra}\r\n".encode("ascii") + b"q" * 20000)
+        self.assertTrue(answer.startswith(b"HTTP/1.1 404 "), answer[:40])
+        self.assertTrue(run.thread.is_alive())
+        talk(port, valid(port))
+        run.finish()
+        self.assertEqual(run.result.code, CODE_TEXT)
+
+    def test_the_window_ends_at_its_deadline_even_while_one_connection_drips_after_its_reply(self):
+        listener = self.open()
+        port = listener.port
+        began = time.monotonic()
+        with mock.patch.object(lb, "ACCEPT_TICK", 0.05):
+            run = Run(listener, seconds=1.0)
+            drip = self.start_drip(port, seconds=6.0)
+            run.finish(10.0)
+        elapsed = time.monotonic() - began
+        drip.finish()
+        self.assertEqual((type(run.error).__name__, run.error.reason), ("LoginWindowError", lb.REASON_TIMEOUT))
+        self.assertLess(elapsed, 1.0 + 2.5, f"마감 1초인 창구가 {elapsed:.2f}초 만에 끝났다 — 나쁜 연결 하나가 마감을 늦췄다")
+        self.assertIsNone(listener._sock)
+
+    def test_a_cancel_is_honoured_while_one_connection_drips_after_its_reply(self):
+        listener = self.open()
+        port = listener.port
+        flag = [False]
+        with mock.patch.object(lb, "ACCEPT_TICK", 0.05):
+            run = Run(listener, seconds=60.0, cancelled=lambda: flag[0])
+            drip = self.start_drip(port, seconds=6.0)
+            time.sleep(0.6)
+            self.assertTrue(run.thread.is_alive())
+            flag[0] = True
+            cancelled_at = time.monotonic()
+            run.finish(10.0)
+        elapsed = time.monotonic() - cancelled_at
+        drip.finish()
+        self.assertEqual(run.error.reason, lb.REASON_CANCELLED)
+        self.assertLess(elapsed, 2.5, f"취소가 {elapsed:.2f}초 뒤에야 먹었다 — 나쁜 연결 하나가 취소를 막았다")
+        self.assertIsNone(listener._sock)
+
+    def test_a_real_callback_is_answered_and_received_while_another_connection_drips(self):
+        listener = self.open()
+        port = listener.port
+        with mock.patch.object(lb, "ACCEPT_TICK", 0.05):
+            run = Run(listener, seconds=20.0)
+            drip = self.start_drip(port, seconds=8.0)
+            time.sleep(0.5)
+            self.assertTrue(run.thread.is_alive())
+            answer = talk(port, valid(port), timeout=4.0)
+            run.finish(10.0)
+        drip.finish()
+        self.assertTrue(answer.startswith(b"HTTP/1.1 200 "), f"정상 콜백이 답을 받지 못했다: {answer[:40]!r}")
+        self.assertIsNone(run.error)
+        self.assertEqual((run.result.code, run.result.served), (CODE_TEXT, 2))
+        self.assertNoOutside()
 
 
 class ExclusiveBindTest(Base):
