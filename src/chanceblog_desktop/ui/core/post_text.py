@@ -199,7 +199,7 @@ POST_T = {
     "post_rec_intro": "네이버에 직접 발행한 글의 주소를 붙여 넣어 주세요. 이 앱은 주소를 열거나 네이버에 접속하지 않고 이 PC 에만 기록해요.",
     "post_rec_label": "발행한 글 주소", "post_rec_a11y": "발행한 글 주소 입력 칸", "post_rec_hint": "blog.naver.com 이나 m.blog.naver.com 의 글 주소(https 로 시작)만 받아요.",
     "post_rec_start": "기록", "post_rec_start_a11y": "이 주소를 발행 주소로 기록", "post_rec_cancel": "취소", "post_rec_cancel_a11y": "발행 주소 창 닫기", "post_rec_working": "기록하고 있어요…",
-    "post_rec_p_empty": "주소를 적어 주세요.", "post_rec_p_space": "주소 안에 띄어쓰기나 줄바꿈이 있어요. 주소만 붙여 넣어 주세요.", "post_rec_p_long": "주소가 너무 길어요. 500자까지만 받아요.",
+    "post_rec_p_empty": "주소를 적어 주세요.", "post_rec_p_space": "주소 안에 띄어쓰기나 줄바꿈, 눈에 보이지 않는 글자가 있어요. 주소만 붙여 넣어 주세요.", "post_rec_p_long": "주소가 너무 길어요. 500자까지만 받아요.",
     "post_rec_p_secret": "키·토큰처럼 보이는 글이 들어 있어요. 지운 뒤 다시 적어 주세요. 글은 보이지 않게 가렸어요.", "post_rec_p_scheme": "https 로 시작하는 주소를 적어 주세요.",
     "post_rec_p_host": "blog.naver.com 이나 m.blog.naver.com 의 주소만 받아요. 계정 정보나 포트 번호가 든 주소는 안 돼요.", "post_rec_p_path": "블로그 첫 화면이 아니라 발행한 글의 주소를 적어 주세요.",
     "post_sim_button": "그래도 승인하기", "post_sim_button_a11y": "{name} 두 블로그 글이 많이 비슷한 것을 알고도 승인하기. 확인 창이 먼저 떠요",

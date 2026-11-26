@@ -11,6 +11,7 @@
 import dataclasses
 import re
 import sys
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,16 @@ A, B = posts.NAVER_A, posts.NAVER_B
 GOOD_URL = "https://blog.naver.com/exampleaaa/223000000001"
 STOP_SENTENCE = "이 영양제를 먹으면 통증이 완전히 사라집니다."
 RAW = {"category": "생활", "lang": "ko", "image_url": "https://img.example.invalid/a.jpg", "tags": "에너지, 습관", "description": ""}
+PREFIX = "https://blog.naver.com/x/"                                                    # 글 주소의 정상 앞부분(경로가 있다)
+
+
+def engine_keys():
+    """가리기 엔진이 아는 키 모양(저장 검사기의 여섯 유형 밖 여덟 + 안의 하나) — 실행 때 조각을 이어 만든다(소스에 키 글자를 두지 않는다 — `tests/scan_samples.py` 방식)."""
+    return {"openai-project": "sk-" + "proj-" + "F" * 30, "anthropic": "sk-" + "ant-api03-" + "G" * 30, "groq": "gs" + "k_" + "I" * 44, "slack": "xo" + "xb-" + "1234567890-" + "E" * 20,
+            "stripe": "sk" + "_live_" + "K" * 28, "hugging-face": "hf" + "_" + "N" * 36, "nvidia": "nv" + "api-" + "J1" * 25, "github": "gh" + "p_" + "A" * 36}
+
+
+HIDING = {"ZWSP": chr(0x200B), "ZWJ": chr(0x200D), "word joiner": chr(0x2060), "BOM": chr(0xFEFF), "soft hyphen": chr(0xAD), "RLO": chr(0x202E), "LRM": chr(0x200E), "VS16": chr(0xFE0F), "tag letter": chr(0xE0041)}
 
 
 class Recording(post_fake.FakePostsProvider):
@@ -366,6 +377,144 @@ class PostsRecordCoreTest(unittest.TestCase):
         controller.open_record()
         controller.detail = dataclasses.replace(controller.detail, platforms=tuple(dataclasses.replace(item, status=st.READY_TO_COPY) if item.platform == A else item for item in controller.detail.platforms))
         self.assertEqual(controller.start_record(GOOD_URL)[0], "state")
+
+
+class PostsAddressRuleCoreTest(unittest.TestCase):
+    """재작업 1(독립 검증 S 참고-1·필수-1) — 발행 주소 칸의 규칙: 공백만이 아니라 제어·서식·눈에 안 보이는 글자도 거절하고(주소 복사는 날것을 그대로 복사한다), 걸린 주소를 실패로 바꾸는 함수 하나를
+    가짜 공급자와 실제 어댑터가 같이 쓴다. 엔진 전용 키 모양과 주소 인자의 토큰은 주소 칸이 거절한다."""
+
+    @staticmethod
+    def code_points(test):
+        return [code for code in range(0x110000) if test(chr(code))]
+
+    def test_every_control_and_format_character_is_refused_inside_the_address(self):
+        hidden = self.code_points(lambda char: unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp"))
+        self.assertGreater(len(hidden), 150, "제어·서식 글자를 실제로 모았다")
+        for code in hidden:
+            self.assertEqual(rules.naver_url_problem("https://blog.naver.com/x" + chr(code) + "/1"), "space", f"U+{code:04X}")
+
+    def test_the_masking_engines_invisible_characters_are_refused_even_when_their_category_is_not_a_format_one(self):
+        invisible = self.code_points(lambda char: rules._INVISIBLE.match(char) is not None)
+        self.assertGreater(len(invisible), 4000, "엔진이 지우는 글자(태그·변형 선택자 …)를 실제로 모았다")
+        for code in invisible:
+            self.assertEqual(rules.naver_url_problem("https://blog.naver.com/x" + chr(code) + "/1"), "space", f"U+{code:04X}")
+        for code in (0x3164, 0x2800, 0x34F, 0x115F, 0xFFA0, 0xFE0F, 0x2065):                     # 채움·점자 빈칸·결합 글자 잇기 — 서식 범주가 아니어도 눈에 안 보인다
+            self.assertEqual(rules.naver_url_problem(GOOD_URL + chr(code)), "space", f"U+{code:04X}")
+
+    def test_hidden_characters_at_the_ends_are_refused_but_plain_spaces_around_the_address_are_trimmed(self):
+        for char in (chr(0), chr(0x7F), chr(0x202E), chr(0xFEFF), chr(0x200B), chr(0xAD), chr(0xE0041)):
+            with self.subTest(code=f"U+{ord(char):04X}"):
+                self.assertEqual(rules.naver_url_problem(GOOD_URL + char), "space")
+                self.assertEqual(rules.naver_url_problem(char + GOOD_URL), "space")
+                self.assertEqual(rules.naver_url_problem(" " + char + GOOD_URL), "space", "공백을 떼어도 그 안쪽의 숨은 글자는 남는다")
+        self.assertEqual(rules.naver_url_problem("  " + GOOD_URL + chr(10)), "")
+
+    def test_lone_surrogates_private_use_and_line_separators_are_refused_too(self):
+        for code in (0xD800, 0xDFFF, 0xE000, 0xF8FF, 0x2028, 0x2029, 0x85, 0xA0, 0x3000):
+            self.assertEqual(rules.naver_url_problem("https://blog.naver.com/x" + chr(code) + "/1"), "space", f"U+{code:04X}")
+
+    def test_ordinary_addresses_still_pass_the_character_rule(self):
+        for url in (GOOD_URL, "https://m.blog.naver.com/exampleaaa/223000000001", "https://blog.naver.com/PostView.naver?blogId=exampleaaa&logNo=223", "https://blog.naver.com/x/1#댓글", "https://blog.naver.com/x/%EB%8C%93%EA%B8%80",
+                    "HTTPS://Blog.Naver.Com/x/1", "https://blog.naver.com/a-b_c.d/1"):
+            with self.subTest(url=url[:40]):
+                self.assertEqual(rules.naver_url_problem(url), "")
+
+    def test_an_engine_only_key_shape_and_an_argument_token_are_refused_as_secret_where_the_screen_checks(self):
+        for name, key in engine_keys().items():
+            with self.subTest(key=name):
+                self.assertEqual(rules.naver_url_problem(PREFIX + key), "secret")
+                self.assertEqual(rules.naver_url_problem(PREFIX + "1?v=" + key), "secret")
+        self.assertEqual(rules.naver_url_problem(PREFIX + "1?tok" + "en=abcdefghijklmnop1234"), "secret")
+        self.assertEqual(rules.naver_url_problem("https://user:" + "pw@blog.naver.com/x/1"), "secret")
+
+    def test_the_failure_of_a_refused_address_is_one_function_and_never_repeats_the_address(self):
+        self.assertIsNone(rules.address_failure(GOOD_URL))
+        self.assertIsNone(rules.address_failure("  " + GOOD_URL + "  "))
+        for url in ("", "   ", None, 5, "http://blog.naver.com/x/1", "https://example.invalid/x/1", "https://blog.naver.com:443/x/1", "https://blog.naver.com", "https://blog.naver.com/x/" + "1" * 600,
+                    PREFIX + "1?tok" + "en=abcdefghijklmnop1234", PREFIX + engine_keys()["groq"], "https://blog.naver.com/x" + chr(0x200B) + "/1", "https://user:" + "pw@blog.naver.com/x/1"):
+            with self.subTest(url=str(url)[:40]):
+                failure = rules.address_failure(url)
+                self.assertEqual((failure.kind, failure.code, failure.user_message), ("address", "NAVER_PUBLISH_URL_INVALID", T["post_fail_address"]))
+        secret = rules.address_failure(PREFIX + KEY)
+        self.assertEqual((secret.kind, secret.code, secret.user_message), ("secret", "SECRET_SHAPE_FOUND", T["post_fail_secret_plain"]), "저장 검사기가 아는 여섯 유형은 서비스가 내던 것과 같은 종류다")
+        self.assertNotIn(KEY[:10], repr(vars(secret)) + secret.user_message)
+
+    def test_the_dialog_refuses_a_hidden_character_before_the_provider_with_the_space_sentence(self):
+        controller, _ = with_post()
+        ready(controller)
+        copied(controller)
+        controller.open_record()
+        before = len(controller.provider.requests)
+        for char in (chr(0x200B), chr(0x202E), chr(0), chr(0xFEFF), chr(0xAD)):
+            with self.subTest(code=f"U+{ord(char):04X}"):
+                self.assertEqual(controller.start_record(GOOD_URL[:-1] + char + "1"), ("invalid", "space"))
+                self.assertEqual(controller.record_view(5)["problem"], T["post_rec_p_space"])
+        self.assertIn("눈에 보이지 않는 글자", T["post_rec_p_space"], "문장이 숨은 글자를 말한다")
+        self.assertEqual(len(controller.provider.requests), before, "걸린 주소는 서비스를 부르지 않는다")
+        self.assertTrue(controller.record_open)
+
+    def test_the_fake_provider_refuses_with_the_same_function(self):
+        controller, project_id = with_post()
+        ready(controller)
+        copied(controller)
+        for url in ("https://blog.naver.com:443/x/1", PREFIX + engine_keys()["groq"], PREFIX + KEY, GOOD_URL + chr(0x200B)):
+            with self.subTest(url=url[:40]):
+                with self.assertRaises(posts.PostFailure) as raised:
+                    controller.provider.record_published(posts.RecordRequest(project_id, A, url), SAFE, NEVER)
+                wanted = rules.address_failure(url)
+                self.assertEqual((raised.exception.kind, raised.exception.code, raised.exception.user_message), (wanted.kind, wanted.code, wanted.user_message))
+        self.assertEqual(controller.provider.projects[project_id].variants[A].status, st.COPY_COMPLETED)
+        self.assertIsNone(controller.provider.projects[project_id].variants[A].published_url)
+
+
+class PostsHiddenPrefixKeyCoreTest(unittest.TestCase):
+    """재작업 1(독립 검증 S 권고-2) — 1b 복사 길(클립보드)과 주소 칸의 임시 방어. 낱말 바로 뒤에 숨은 글자를 두고 키 모양을 붙이면(`낱말 + 숨은 글자 + 키`) 가리기 엔진(`security/mask.py`)은 키 앞의 글자가
+    영숫자라 키로 읽지 않고 숨은 글자는 지워서 붙은 낱말로 본다 — 그대로 가려지지 않는다(엔진 한계, SECSEP2 갈래가 고친다). 이 갈래는 `would_be_masked` 가 숨은 글자를 **공백으로 바꾼** 글도 엔진에 물어
+    하나라도 가려지면 막는다. '낱말 + 키' 를 숨은 글자 없이 붙인 것은 평범한 긴 낱말과 구별할 수 없어 못 막는다(문서 SECURITY.md 의 알려진 한계)."""
+
+    def test_a_key_after_a_word_and_a_hidden_character_is_seen_through_the_hiding(self):
+        for name, key in engine_keys().items():
+            for hidden_name, hidden in HIDING.items():
+                text = "word" + hidden + key
+                with self.subTest(key=name, hidden=hidden_name):
+                    self.assertTrue(rules.would_be_masked(text))
+                    self.assertTrue(rules.copy_blocked(text), "복사 단추가 꺼진다")
+
+    def test_the_same_key_inside_a_longer_sentence_and_after_other_hidden_characters_is_blocked_too(self):
+        key = engine_keys()["groq"]
+        for text in ("본문 줄 word" + chr(0x200B) + key + " 이어지는 글입니다.", "앞 글" + chr(0x200D) + chr(0x200B) + key, "x" + chr(0xAD) + chr(0xAD) + key, "가나다" + chr(0x2060) + key + "끝"):
+            self.assertTrue(rules.copy_blocked(text), text[:20])
+        for label in ("제목", "본문", "태그"):
+            self.assertTrue(rules.copy_blocked(label + chr(0x200B) + key))
+
+    def test_the_old_cases_still_hold_a_key_split_by_hidden_characters_and_a_plain_key(self):
+        key = engine_keys()["openai-project"]
+        self.assertTrue(rules.would_be_masked("xo" + "xb-" + "1234567890-" + chr(0x200B) + "abcdefghijkl"), "쪼갠 키는 엔진이 지우고 알아본다")
+        self.assertTrue(rules.would_be_masked(key))
+        self.assertTrue(rules.would_be_masked("앞 " + key + " 뒤"))
+        self.assertTrue(rules.would_be_masked("sk-" + "proj-" + "A1b2C3d4" + chr(0x2060) + "E5f6G7h8I9j0K1"))
+
+    def test_ordinary_texts_with_hidden_characters_are_not_blocked(self):
+        family = chr(0x1F468) + chr(0x200D) + chr(0x1F469) + chr(0x200D) + chr(0x1F467)
+        plain = ["가족과 함께한 산책 기록입니다.", "👩" + chr(0x200D) + "💻 개발자 일상 #tech", "오늘" + chr(0x200B) + "의" + chr(0x200B) + " 날씨는" + chr(0x200B) + " 맑음", "soft" + chr(0xAD) + "hyphen" + chr(0xAD) + "ated words in a long paragraph about energy saving habits",
+                 chr(0xFEFF) + "본문 시작(BOM)", "𝐒𝐭𝐞𝐩 1: 설정" + chr(0x2060) + "하기", "task-proj-management-tips-for-busy-teams-and-more-text", "sk-learn is a library; also Sk-Hynix" + chr(0x200B) + "-based text; key" + chr(0x200B) + "=value 설명",
+                 "가족 " + family + " 이야기", "사랑 " + chr(0x2764) + chr(0xFE0F), "절" + chr(0x200B) + "약", "집" + chr(0x200F) + "안일", "한" + chr(0x202E) + "글" + chr(0x202C), "word" + chr(0x200B) + "word" + chr(0x200B) + "word"]
+        for value in plain:
+            with self.subTest(value=value[:24]):
+                self.assertFalse(rules.would_be_masked(value))
+                self.assertFalse(rules.copy_blocked(value))
+
+    def test_the_address_box_refuses_the_prefixed_shapes_for_either_reason(self):
+        for name, key in engine_keys().items():
+            for hidden_name, hidden in HIDING.items():
+                url = PREFIX + "word" + hidden + key
+                with self.subTest(key=name, hidden=hidden_name):
+                    self.assertNotEqual(rules.naver_url_problem(url), "")
+
+    def test_the_card_blocks_only_the_parts_that_hold_such_a_key(self):
+        key = engine_keys()["slack"]
+        package = posts.NaverPackageInfo(A, "일반 제목", "본문 word" + chr(0x200B) + key + " 끝", "#태그", "전체 글")
+        self.assertEqual([kind for kind, value in (("title", package.title), ("body", package.body), ("tags", package.tags), ("all", package.copy_text)) if rules.copy_blocked(value)], ["body"])
 
 
 class PostsSimilarityAckCoreTest(unittest.TestCase):

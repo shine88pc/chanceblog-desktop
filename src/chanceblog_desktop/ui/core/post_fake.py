@@ -282,8 +282,9 @@ class FakePostsProvider(PostsProvider):
     def record_published(self, request, progress, cancelled):
         self._enter("record_published", cancelled)
         project = self._naver_project(request.project_id, request.platform, st.COPY_COMPLETED)
-        if rules.naver_url_problem(request.url):
-            raise PostFailure(T["post_fail_address"], code="NAVER_PUBLISH_URL_INVALID", kind="address")
+        refused = rules.address_failure(request.url)                         # 실제 어댑터와 같은 함수 — 서비스를 부르기 전에 화면과 같은 규칙으로 거절한다(재작업 1)
+        if refused is not None:
+            raise refused
         project.transition(request.platform, st.PUBLISHED_MANUAL, published_url=request.url.strip(), now=self._next_stamp())
         return PostOutcome("recorded", self._detail(project))
 

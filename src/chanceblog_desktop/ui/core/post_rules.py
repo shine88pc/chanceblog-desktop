@@ -18,7 +18,7 @@ from ...content import status as st
 from ...render.pages import MAX_CATEGORY, MAX_DESCRIPTION, MAX_TAG, MAX_TAGS
 from .draft_rules import HEALTH_STOP, HealthReview, health_units
 from .drafts import review_health
-from .posts import PLATFORMS, PagesValues, PostPreview, PreviewBlock
+from .posts import PLATFORMS, PagesValues, PostFailure, PostPreview, PreviewBlock
 from .text import T, display_text
 
 PREVIEW_BLOCKS = 80                                          # 미리보기에 그리는 최대 블록(문단) 수
@@ -61,14 +61,28 @@ def _without_invisible(value):
     return "".join(char for char in text if char in "\n\r\t" or unicodedata.category(char) not in _HIDDEN_CATEGORIES)
 
 
+def _invisible_as_spaces(value):
+    """`_without_invisible` 이 지우는 글자와 같은 글자를 지우는 대신 **공백으로 바꾼** 글 — 줄바꿈·탭은 둔다. 엔진은 키 바로 앞의 글자가 영문·숫자이면 키로 읽지 않는데, 낱말 바로 뒤에 숨은 글자를 두고 키를 붙이면
+    (`낱말` + 숨은 글자 + `키`) 숨은 글자를 지운 글에서는 키가 낱말에 붙어 버려 가려지지 않는다. 눈으로 보면 낱말과 키가 갈려 있으니 그 모습을 엔진에 한 번 더 물어 본다(독립 검증 S 권고-2 의 임시 방어 — 엔진 한계는 SECSEP2 가 고친다)."""
+    text = _INVISIBLE.sub(" ", value)
+    if text.replace("\n", "").replace("\r", "").replace("\t", "").isprintable():
+        return text
+    return "".join(" " if char not in "\n\r\t" and unicodedata.category(char) in _HIDDEN_CATEGORIES else char for char in text)
+
+
 def would_be_masked(value):
     """가리기 엔진이 이 글에서 **비밀 모양을** 가리는가 — 저장 검사기(`secret_spots`)가 아는 여섯 유형뿐 아니라 엔진이 아는 모든 모양(Slack·Stripe·OpenAI·Anthropic 키·주소 속 사용자 정보 …)을 본다.
     이 앱을 연 동안 기억해 칸에 다시 채울 값처럼 '키 모양이 하나라도 있으면 내보내지 않을 글' 을 가릴 때 쓴다(독립 검증 S 참고-2). 엔진은 먼저 눈에 안 보이는 글자를 지우므로
-    **그것만 지운 글**과 견준다(독립 검증 S 2차 참고 I1 — ZWJ 이모지·변형 선택자가 든 평범한 값을 가렸다고 세지 않는다. 키를 그 글자로 쪼갠 값은 엔진이 지우고 알아봐 가린다). 글이 아니거나 가릴 글이 없으면 False."""
+    **그것만 지운 글**과 견준다(독립 검증 S 2차 참고 I1 — ZWJ 이모지·변형 선택자가 든 평범한 값을 가렸다고 세지 않는다. 키를 그 글자로 쪼갠 값은 엔진이 지우고 알아봐 가린다).
+    **숨은 글자를 공백으로 바꾼 글도 함께 묻는다**(독립 검증 S 권고-2, 글 흐름 1b 재작업 1): 낱말 뒤에 숨은 글자를 두고 붙인 키는 지운 글에서는 낱말에 붙어 엔진이 못 알아보지만 공백으로 바꾼 글에서는 알아본다 —
+    둘 중 하나라도 가려지면 참이다(복사 가드·주소 칸이 막는다). 낱말에 숨은 글자 없이 바로 붙인 키는 평범한 긴 낱말과 구별할 수 없어 여전히 못 막는다(엔진 한계 — `docs/SECURITY.md`). 글이 아니거나 가릴 글이 없으면 False."""
     if not isinstance(value, str):
         return False
-    flat = " ".join(_without_invisible(value).split())
-    return bool(flat) and display_text(flat, len(flat) + 64) != flat
+    for plain in dict.fromkeys((_without_invisible(value), _invisible_as_spaces(value))):          # 숨은 글자가 없으면 두 글이 같다 — 같은 글은 한 번만 묻는다
+        flat = " ".join(plain.split())
+        if flat and display_text(flat, len(flat) + 64) != flat:
+            return True
+    return False
 
 
 def when_text(stamp, seconds=False):
@@ -298,17 +312,28 @@ def pages_health_extra(values):
 
 
 def copy_blocked(text):
-    """복사할 글에 키·토큰 모양이 있나 — 저장 검사기(`secret_spots`)나 가리기 엔진(`would_be_masked`)이 하나라도 건드리면 참이다(그 글은 클립보드로 보내지 않는다). 작업 스레드에서 부른다(글 흐름 1b, D-643)."""
+    """복사할 글에 키·토큰 모양이 있나 — 저장 검사기(`secret_spots`)나 가리기 엔진(`would_be_masked`)이 하나라도 건드리면 참이다(그 글은 클립보드로 보내지 않는다). 낱말 뒤에 숨은 글자를 두고 붙인 키 모양은 `would_be_masked` 가 숨은 글자를 공백으로 바꾼 글도 물어 막는다
+    (임시 방어 — 엔진 한계는 SECSEP2 가 고친다, 재작업 1). 작업 스레드에서 부른다(글 흐름 1b, D-643)."""
     return isinstance(text, str) and bool(text) and bool(secret_spots("", text) or would_be_masked(text))
 
 
+def _spacey(value):
+    """글 안에 공백이나 눈에 안 보이는 글자가 하나라도 있나 — 제어·서식·줄/문단 구분 글자(NUL·DEL·방향 제어·BOM·폭 없는 공백·소프트 하이픈 …)와 가리기 엔진이 지우는 채움·변형·태그 글자까지.
+    발행 주소 칸은 이런 글자를 받지 않는다(화면에 보이는 모습은 가려져도 `주소 복사` 는 글자를 그대로 복사한다 — 독립 검증 S 참고-1). 앞뒤 공백은 부른 쪽이 먼저 뗀다."""
+    if len(value.split()) > 1 or _INVISIBLE.search(value):
+        return True
+    return not value.isprintable() and any(unicodedata.category(char) in _HIDDEN_CATEGORIES for char in value)
+
+
 def naver_url_problem(text):
-    """발행 주소 칸의 글 → 문제 열쇠(`empty`·`space`·`long`·`secret`·`scheme`·`host`·`path`) 또는 ''(통과). **글은 되풀이하지 않는다.** 서비스(`content/model.py` 의 `_published_url`)가 한 번 더 보지만
-    화면이 먼저 거른다(글 흐름 1b, D-645): 앞뒤 공백은 떼고 보고, 안에 공백이 있거나 500자를 넘으면 거절한다. 키·토큰 모양(저장 검사기 + 가리기 엔진)·`https` 아님·주소 앞쪽 계정 정보나 포트·네이버 블로그 주소 아님·글 주소(경로) 없음도 거절한다."""
+    """발행 주소 칸의 글 → 문제 열쇠(`empty`·`space`·`long`·`secret`·`scheme`·`host`·`path`) 또는 ''(통과). **글은 되풀이하지 않는다.** 화면이 먼저 거르고 어댑터(`record_published`)가 서비스를 부르기 전에
+    **같은 규칙을 다시 건다**(`address_failure` — 화면을 건너뛰는 호출도 막는다, 글 흐름 1b 재작업 1). 서비스(`content/model.py` 의 `_published_url`·`refuse_secret_shapes`)의 검사는 이보다 좁다 — https·네이버 호스트·계정 정보·저장 검사기
+    여섯 유형뿐이라 포트·경로 없음·500자 초과·엔진 전용 키 모양·주소 인자의 토큰은 거르지 않는다(글 흐름 1b, D-645): 앞뒤 공백은 떼고 보고, 안에 공백이나 눈에 안 보이는 글자(제어·서식 글자 포함)가 있거나 500자를 넘으면 거절한다.
+    키·토큰 모양(저장 검사기 + 가리기 엔진)·`https` 아님·주소 앞쪽 계정 정보나 포트·네이버 블로그 주소 아님·글 주소(경로) 없음도 거절한다."""
     url = text.strip() if isinstance(text, str) else ""
     if not url:
         return "empty"
-    if any(char.isspace() for char in url):
+    if _spacey(url):
         return "space"
     if len(url) > MAX_URL:
         return "long"
@@ -324,6 +349,17 @@ def naver_url_problem(text):
     if not path.startswith("/") or len(path) < 2 or path[1] in "/?#":
         return "path"
     return ""
+
+
+def address_failure(text):
+    """발행 주소 글 → 받지 않을 때의 실패(`PostFailure`), 받을 수 있으면 None(글 흐름 1b 재작업 1, 독립 검증 S 필수-1). `naver_url_problem` 과 **같은 규칙**이고 가짜 공급자(`post_fake`)와 실제 어댑터(`record_published`)가
+    이 함수 하나로 거절한다 — 어댑터는 서비스를 부르기 **전에** 걸어 화면을 건너뛰는 호출도 막는다. 실패 종류는 서비스가 같은 주소에 내던 것과 같다: 저장 검사기가 아는 여섯 유형이 든 주소는 `secret`, 그 밖의 모든 거절
+    (엔진만 아는 키 모양·계정 정보·포트·경로 없음·길이 포함)은 `address`. 문장은 고정 문장이고 입력한 주소는 어디에도 없다."""
+    if not naver_url_problem(text):
+        return None
+    if isinstance(text, str) and secret_spots("", text.strip()):
+        return PostFailure(T["post_fail_secret_plain"], code="SECRET_SHAPE_FOUND", kind="secret")
+    return PostFailure(T["post_fail_address"], code="NAVER_PUBLISH_URL_INVALID", kind="address")
 
 
 def text_blocks(title, body, references=(), assets=(), extra=()):
@@ -451,6 +487,6 @@ def title_of(name):
     return stem.strip()[:200]
 
 
-__all__ = ["APPROVED_NOW", "COPYABLE", "MAX_URL", "NAVER_HOSTS", "text_blocks", "BLOCK_LIMIT", "HealthReview", "PAGE", "PREVIEW_BLOCKS", "PREVIEW_CHARS", "REVIEWABLE", "approval_state", "build_preview", "code_of", "copy_blocked",
+__all__ = ["APPROVED_NOW", "COPYABLE", "MAX_URL", "NAVER_HOSTS", "text_blocks", "BLOCK_LIMIT", "HealthReview", "PAGE", "PREVIEW_BLOCKS", "PREVIEW_CHARS", "REVIEWABLE", "address_failure", "approval_state", "build_preview", "code_of", "copy_blocked",
            "gate_sentence", "health_of", "naver_url_problem", "pages_health_extra", "pages_problems", "pages_raw_of", "pages_values_of", "platform_text", "review_blocks", "secret_spots", "shown", "split_tags", "status_text",
            "title_of", "unique_codes", "when_text", "would_be_masked"]

@@ -6,6 +6,8 @@
   3) 서비스의 `similarity_approved` 는 센 확인창을 거친 요청에서만 참이고 일반 승인은 늘 거짓이다. Pages 의 한 줄 설명·태그 건강 판정은 승인 직전 재검사에도 걸린다.
   4) 발행 기록·작업 로그·검토할 수 있는 네이버 블로그(블로그 관리 등록분 포함)는 읽기뿐이고 데이터 폴더를 한 바이트도 바꾸지 않는다.
   5) 끝까지 돌려도 소켓·하위 프로세스·git 이 불리지 않고, 위험한 서비스 호출은 정해진 함수 안에서 정해진 모양으로만 있다. 가짜 공급자와 같은 일을 하면 같은 상태 순서를 낸다.
+  6) (재작업 1, 독립 검증 S 필수-1) 발행 주소는 어댑터가 서비스를 부르기 **전에** 화면과 같은 규칙으로 다시 거른다 — 화면을 건너뛰는 호출도 포트·경로 없음·500자 초과·엔진 전용 키 모양·주소 인자의 토큰·눈에 안 보이는 글자가 든 주소를
+     받지 않고(상태 불변·서비스 호출 0), 가짜 공급자와 같은 실패 종류·같은 상태를 낸다. 서비스 자신의 검사는 이보다 좁다(https·네이버 호스트·계정 정보·저장 검사기 여섯 유형).
 가짜 비밀은 조립한 문자열이고 실제 글·블로그 이름은 어디에도 없다.
 """
 import ast
@@ -24,10 +26,12 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 
+from chanceblog_desktop.content import model as content_model  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
+from chanceblog_desktop.security.refuse import refuse_secret_shapes  # noqa: E402
 from chanceblog_desktop.service import blog_profiles, naver_flow, projects, review  # noqa: E402
 from chanceblog_desktop.ui import posts_adapter  # noqa: E402
-from chanceblog_desktop.ui.core import post_fake, posts, text  # noqa: E402
+from chanceblog_desktop.ui.core import post_fake, post_rules as rules, posts, text  # noqa: E402
 
 T = text.T
 SAFE = lambda *a: None  # noqa: E731
@@ -38,6 +42,28 @@ GOOD_URL = "https://blog.naver.com/exampleaaa/223000000001"
 STOP_SENTENCE = "이 영양제를 먹으면 통증이 완전히 사라집니다."
 NL = chr(10)
 VALUES = posts.PagesValues("경제·일", "ko", "https://images.example.invalid/a.jpg", ("에너지", "생활"), "")
+PREFIX = "https://blog.naver.com/x/"                                                    # 글 주소의 정상 앞부분(경로가 있다 — 길이 25)
+
+
+def engine_keys():
+    """가리기 엔진만 아는 키 모양 넷(저장 검사기의 여섯 유형 밖) — 실행 때 조각을 이어 만든다(소스에 키 글자를 두지 않는다 — `tests/scan_samples.py` 방식)."""
+    return {"groq": "gs" + "k_" + "I" * 44, "openai-project": "sk-" + "proj-" + "F" * 30, "slack": "xo" + "xb-" + "1234567890-" + "E" * 20, "stripe": "sk" + "_live_" + "K" * 28}
+
+
+def bad_addresses():
+    """화면 규칙(`rules.naver_url_problem`)은 거절하는데 서비스의 두 검사(`refuse_secret_shapes`·`_published_url`)는 받아 버리던 주소들 → (이름, 주소, 기대하는 실패 종류).
+    독립 검증 S 의 탐침(`probe_service.py url`)이 찾은 입력이다: 포트·경로 없음·500자 초과·엔진 전용 키 모양·주소 인자의 토큰, 그리고 눈에 안 보이는 글자(참고-1).
+    실패 종류는 서비스가 같은 주소에 내던 것과 같다 — 저장 검사기가 아는 여섯 유형(`KEY` 는 그 하나)이 든 주소는 `secret`, 그 밖의 거절(엔진만 아는 키 모양·주소 속 계정 정보 포함)은 `address`."""
+    cases = [("port 443", "https://blog.naver.com:443/exampleaaa/1", "address"), ("empty port", "https://blog.naver.com:/exampleaaa/1", "address"), ("no path", "https://blog.naver.com", "address"),
+             ("slash only", "https://blog.naver.com/", "address"), ("double slash", "https://blog.naver.com//x", "address"), ("question mark only", "https://blog.naver.com?x=1", "address"),
+             ("501 chars", PREFIX + "1" * (501 - len(PREFIX)), "address"), ("5000 chars", PREFIX + "1" * 5000, "address"), ("token argument", PREFIX + "1?tok" + "en=abcdefghijklmnop1234", "address"),
+             ("http scheme", "http://blog.naver.com/x/1", "address"), ("other host", "https://example.invalid/x/1", "address"), ("account info", "https://user:pw@blog.naver.com/x/1", "address"), ("empty", "", "address"),
+             ("scanner key in the path", PREFIX + KEY, "secret")]
+    cases += [(f"{name} key in the path", PREFIX + key, "address") for name, key in engine_keys().items()]
+    hidden = {"NUL": chr(0), "DEL": chr(0x7F), "RLO": chr(0x202E), "BOM": chr(0xFEFF), "ZWSP": chr(0x200B), "soft hyphen": chr(0xAD), "tag letter": chr(0xE0041)}
+    for name, char in hidden.items():
+        cases += [(f"{name} inside", "https://blog.naver.com/x" + char + "/1", "address"), (f"{name} at the end", GOOD_URL + char, "address"), (f"{name} at the start", char + GOOD_URL, "address")]
+    return cases
 
 
 def hashes(root):
@@ -134,6 +160,19 @@ class PostsAdapterPackageTest(Base):
         self.assertNotIn(KEY[:10], repr(loaded) + repr(package))
         self.assertEqual(self.failure_of(self.approve, project_id, B, 2).kind, "state", "검토하지 않은 블로그는 승인하지 않는다")
 
+    def test_a_stored_package_with_an_engine_only_key_hidden_behind_a_word_and_an_invisible_character_marks_those_copies_blocked(self):
+        """재작업 1(독립 검증 S 권고-2): 저장 검사기 여섯 유형 밖의 키 모양(엔진만 안다)이 낱말 + 숨은 글자 뒤에 붙어 승인까지 지난 글도 복사 가드가 막는다 — 엔진은 그 모양을 그대로는 가리지 못한다(임시 방어)."""
+        key = engine_keys()["groq"]
+        project_id = self.new_post().project_id
+        ss.inject_text(self.ctx, project_id, text=ss.ko_text() + NL + NL + "본문 줄 word" + chr(0x200B) + key + " 이어지는 글입니다.")
+        self.review(project_id, A)
+        review.grant_approval(self.ctx, project_id, "naver_a")
+        loaded = self.provider.load_post(project_id, SAFE, NEVER)
+        package = loaded.package(A)
+        self.assertIn(chr(0x200B) + key[:6], package.body, "숨은 글자가 렌더링을 지나서도 남아 있어야 이 시험이 뜻을 가진다")
+        self.assertEqual(sorted(package.blocked), ["all", "body"])
+        self.assertNotIn(key[:10], repr(loaded) + repr(package))
+
     def test_a_damaged_stored_package_is_left_out_and_the_rest_still_loads(self):
         project_id = self.new_post().project_id
         self.ready(project_id, A)
@@ -212,6 +251,97 @@ class PostsAdapterCopiedAndRecordTest(Base):
         for call in (self.copied, lambda project_id: self.record(project_id, GOOD_URL)):
             failure = self.failure_of(call, "zzzzzzzzzzzz")
             self.assertEqual((failure.kind, failure.code), ("notfound", "CONTENT_NOT_FOUND"))
+
+
+class PostsAdapterAddressRecheckTest(Base):
+    """재작업 1(독립 검증 S 필수-1): 어댑터가 서비스를 부르기 **전에** 화면과 같은 규칙(`rules.naver_url_problem`)으로 발행 주소를 다시 건다. 이전에는 화면을 건너뛰는 호출이 포트(:443)·경로 없음·501자·5000자·
+    엔진 전용 키 모양·주소 인자의 토큰이 든 주소를 서비스에 그대로 넘겨 직접 발행함으로 저장됐다(서비스의 두 검사는 https·네이버 호스트·계정 정보·저장 검사기 여섯 유형뿐이다)."""
+
+    def at_copied(self):
+        project_id = self.new_post().project_id
+        self.ready(project_id, A)
+        self.copied(project_id)
+        return project_id
+
+    def test_every_address_the_screen_refuses_is_refused_by_the_adapter_and_changes_nothing(self):
+        project_id = self.at_copied()
+        for name, url, kind in bad_addresses():
+            with self.subTest(case=name):
+                self.assertNotEqual(rules.naver_url_problem(url), "", "시험 값이 정말 화면이 거절하는 모양이다")
+                failure = self.failure_of(self.record, project_id, url)
+                self.assertEqual((failure.kind, failure.code), (kind, "NAVER_PUBLISH_URL_INVALID" if kind == "address" else "SECRET_SHAPE_FOUND"))
+                self.assertEqual(failure.user_message, T["post_fail_address"] if kind == "address" else T["post_fail_secret_plain"], "고정 문장 — 입력한 주소가 문장에 없다")
+                self.assertEqual((self.status(project_id), self.variant(project_id).published_url, self.variant(project_id).published_at), (st.COPY_COMPLETED, None, None), "거절하면 상태는 그대로이고 기록은 0")
+
+    def test_a_refusal_leaves_the_data_folder_byte_for_byte_as_it_was(self):
+        project_id = self.at_copied()
+        before = hashes(self.ctx.workspace.root)
+        for name, url, _kind in bad_addresses():
+            with self.subTest(case=name):
+                self.failure_of(self.record, project_id, url)
+        self.assertEqual(hashes(self.ctx.workspace.root), before)
+
+    def test_the_service_is_not_even_called_for_them(self):
+        project_id = self.at_copied()
+        with mock.patch.object(review, "record_naver_published", side_effect=AssertionError("서비스를 불러서는 안 된다")) as service:
+            for name, url, kind in bad_addresses():
+                with self.subTest(case=name):
+                    self.assertEqual(self.failure_of(self.record, project_id, url).kind, kind)
+        service.assert_not_called()
+
+    def test_what_the_screen_accepts_reaches_the_service_trimmed_the_way_the_screen_sends_it(self):
+        project_id = self.at_copied()
+        accepted = [GOOD_URL, "https://m.blog.naver.com/exampleaaa/223000000001", "HTTPS://BLOG.NAVER.COM/x/1", "https://blog.naver.com/PostView.naver?blogId=exampleaaa&logNo=223", "  " + GOOD_URL + "  ", GOOD_URL + NL]
+        with mock.patch.object(review, "record_naver_published", return_value=None) as service:
+            for url in accepted:
+                with self.subTest(url=url.strip()[:40]):
+                    self.assertEqual(rules.naver_url_problem(url), "")
+                    self.assertEqual(self.record(project_id, url).kind, "recorded")
+                    self.assertEqual(service.call_args.args[1:], (project_id, "naver_a", url.strip()), "화면처럼 앞뒤 공백을 떼어 서비스에 넘긴다")
+            self.assertEqual(service.call_count, len(accepted))
+
+    def test_the_adapter_decides_exactly_like_the_screen_for_a_wide_set_of_inputs(self):
+        project_id = self.at_copied()
+        more = ["", "   ", "blog.naver.com/x/1", "https://blog.naver.com.evil.example/x/1", "https://evil.example/blog.naver.com/x/1", "https://naver.com/x/1", "ftp://blog.naver.com/x/1", "javascript:alert(1)",
+                "https://blog.naver.com/x /1", "https://blog.naver.com/x/1#comment", "https://blog.naver.com/x/1?v=1", "https://blog.naver.com/exampleaaa", "https://BLOG.Naver.COM/x/1"]
+        inputs = [url for _name, url, _kind in bad_addresses()] + more + [GOOD_URL]
+        with mock.patch.object(review, "record_naver_published", return_value=None) as service:
+            for url in inputs:
+                with self.subTest(url=url[:40]):
+                    before = service.call_count
+                    if rules.naver_url_problem(url):
+                        self.failure_of(self.record, project_id, url)
+                        self.assertEqual(service.call_count, before, "화면이 거절하는 주소는 서비스까지 가지 않는다")
+                    else:
+                        self.record(project_id, url)
+                        self.assertEqual(service.call_count, before + 1, "화면이 받는 주소는 서비스가 판단한다")
+
+    def test_what_the_adapter_lets_through_the_services_narrower_checks_accept_too(self):
+        """어댑터(= 화면 규칙)를 지난 주소는 서비스의 더 좁은 두 검사(`refuse_secret_shapes`·`_published_url`)도 지난다 — 어댑터 다시 걸기가 서비스를 건너뛰는 것이 아니라 서비스 앞에 더하는 것임을 견준다(문서 8-3)."""
+        accepted = [GOOD_URL, "https://m.blog.naver.com/exampleaaa/223000000001", "HTTPS://BLOG.NAVER.COM/x/1", "https://blog.naver.com/PostView.naver?blogId=exampleaaa&logNo=223", "https://blog.naver.com/x/1#comment",
+                    "https://blog.naver.com/x/1?v=1", "https://BLOG.Naver.COM/exampleaaa/1", "  " + GOOD_URL + "  ", GOOD_URL + NL]
+        inputs = accepted + [url for _name, url, _kind in bad_addresses()] + ["blog.naver.com/x/1", "https://blog.naver.com.evil.example/x/1", "https://naver.com/x/1", "ftp://blog.naver.com/x/1", "https://blog.naver.com/x /1"]
+        passed = [url for url in inputs if rules.naver_url_problem(url) == ""]
+        self.assertGreaterEqual(len(passed), len(accepted), "화면이 받는 주소를 실제로 모았다")
+        for url in passed:
+            with self.subTest(url=url.strip()[:40]):
+                refuse_secret_shapes({"발행 주소": url.strip()}, "저장")
+                content_model._published_url("naver_a", url.strip())
+
+    def test_a_wrong_state_is_still_a_state_failure_whatever_the_address_is(self):
+        project_id = self.new_post().project_id
+        self.ready(project_id, A)
+        for url in (GOOD_URL, "https://blog.naver.com", PREFIX + engine_keys()["groq"]):
+            with self.subTest(url=url[:40]):
+                self.assertEqual(self.failure_of(self.record, project_id, url).kind, "state", "복사 표시 전에는 주소 검사보다 상태가 먼저다 — 가짜 공급자와 같다")
+        self.assertEqual((self.status(project_id), self.variant(project_id).published_url), (st.READY_TO_COPY, None))
+
+    def test_a_good_address_is_still_recorded_through_the_real_service_after_the_refusals(self):
+        project_id = self.at_copied()
+        for name, url, _kind in bad_addresses()[:6]:
+            self.failure_of(self.record, project_id, url)
+        done = self.record(project_id, "  " + GOOD_URL + "  ")
+        self.assertEqual((done.kind, done.detail.platform(A).status, done.detail.platform(A).published_url), ("recorded", st.PUBLISHED_MANUAL, GOOD_URL))
 
 
 class PostsAdapterSimilarityTest(Base):
@@ -467,6 +597,10 @@ class PostsFakeMatchesRealFor1bTest(Base):
         attempt("copy", lambda: provider.mark_copied(posts.CopiedRequest(project_id, A, True), SAFE, NEVER))
         attempt("copy-twice", lambda: provider.mark_copied(posts.CopiedRequest(project_id, A, True), SAFE, NEVER))
         attempt("record-bad", lambda: provider.record_published(posts.RecordRequest(project_id, A, "http://example.invalid/x"), SAFE, NEVER))
+        for name, url, _kind in bad_addresses():                                         # 재작업 1: 서비스가 받아 버리던 주소도 가짜와 실제가 같은 실패 종류로 거절하고 상태는 그대로다(거절 바로 뒤의 상태·주소를 함께 견준다)
+            attempt(f"record-bad:{name}", lambda url=url: provider.record_published(posts.RecordRequest(project_id, A, url), SAFE, NEVER))
+            peeked = provider.load_post(project_id, SAFE, NEVER).platform(A)
+            steps.append((f"after:{name}", peeked.status, peeked.published_url))
         attempt("uncopy", lambda: provider.mark_copied(posts.CopiedRequest(project_id, A, False), SAFE, NEVER))
         attempt("copy-again", lambda: provider.mark_copied(posts.CopiedRequest(project_id, A, True), SAFE, NEVER))
         attempt("record", lambda: provider.record_published(posts.RecordRequest(project_id, A, GOOD_URL), SAFE, NEVER))
@@ -482,6 +616,12 @@ class PostsFakeMatchesRealFor1bTest(Base):
         self.assertEqual(real, fake)
         self.assertEqual([step[0] for step in real][-3:], ["copy-again", "record", "record-twice"])
         self.assertEqual(real[-2][1], st.PUBLISHED_MANUAL)
+        wanted = {f"record-bad:{name}": kind for name, _url, kind in bad_addresses()}
+        self.assertEqual({step[0]: step[2] for step in real if step[0] in wanted}, wanted, "서비스가 받아 버리던 주소도 둘 다 같은 종류로 거절한다")
+        self.assertTrue(all(step[1] == "refused" for step in real if step[0] in wanted))
+        after = [step for step in real if step[0].startswith("after:")]
+        self.assertEqual(len(after), len(wanted))
+        self.assertEqual({step[1:] for step in after}, {(st.COPY_COMPLETED, "")}, "거절한 바로 뒤에도 복사함이고 기록한 주소는 없다")
 
 
 if __name__ == "__main__":

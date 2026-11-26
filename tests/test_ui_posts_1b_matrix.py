@@ -128,6 +128,46 @@ class DocumentFacts1bTest(unittest.TestCase):
         self.assertIn("의도적", row[654])
         self.assertRegex(row[656], r"변이")
 
+    def test_the_documents_state_the_address_checks_the_way_the_code_does(self):
+        """재작업 1(독립 검증 S 필수-1): 문서가 '화면과 서비스가 둘 다 검사한다' 고 말하지 않는다 — 화면이 거르고 어댑터가 서비스를 부르기 전에 같은 규칙으로 다시 거르며 서비스 자신의 검사는 더 좁다는 사실대로 적는다."""
+        section = self.doc.split("### 8-3.", 1)[1].split("### 8-4.", 1)[0]
+        self.assertNotIn("화면과 서비스가 **둘 다**", self.doc)
+        self.assertIn("어댑터가 서비스를 부르기 전에 같은 규칙으로 다시 검사한다", section)
+        self.assertIn("서비스 자신의 검사는 이보다 좁다", section)
+        self.assertIn("어댑터가 서비스를 부르기 **전에 같은 규칙을 다시 건다**", re.search(r"(?m)^- \*\*D-645 [^\n]*", self.doc).group(0))
+        row = re.search(r"(?m)^\| B05 \|[^\n]*", self.doc).group(0)
+        self.assertNotIn("화면과 서비스가 둘 다", row)
+        self.assertIn("어댑터가 서비스를 부르기 전에 같은 규칙으로 다시 거름", row)
+        log = LOG.read_text(encoding="utf-8")
+        decision = re.search(r"(?m)^\| D-645 \|[^\n]*", log).group(0)
+        self.assertIn("어댑터가 서비스를 부르기 전에 같은 규칙을 다시 건다", decision)
+        self.assertIn("화면 규칙보다 좁다", decision)
+        trouble = (ROOT / "docs" / "TROUBLESHOOTING.md").read_text(encoding="utf-8")
+        self.assertIn("어댑터가 서비스를 부르기 전에 같은 규칙으로 다시 거른다", trouble)
+        self.assertNotIn("화면이 먼저 거르고(칸 옆에 이유가 보인다) 서비스가 한 번 더 거른다", trouble)
+        adapter = (ROOT / "src" / "chanceblog_desktop" / "ui" / "posts_adapter.py").read_text(encoding="utf-8")
+        self.assertNotIn("주소 모양·비밀 모양은 서비스가 한 번 더 거른다", adapter)
+        self.assertIn("rules.address_failure", adapter)
+
+    def test_the_work_log_promise_names_its_range_and_the_chunk_length_is_the_codes(self):
+        """재작업 1(독립 검증 S 권고-3): 작업 로그의 '키·토큰·끝 4자도 안 보인다' 는 엔진이 아는 모양과 긴 덩어리까지라고 문서가 말하고, 그 덩어리 길이(24자 이상)가 코드의 상수와 같다."""
+        from chanceblog_desktop.service import worklog
+        section = self.doc.split("### 8-5.", 1)[1].split("### 8-6.", 1)[0]
+        self.assertEqual(worklog.MAX_CHUNK, 24)
+        self.assertIn("막는 범위는 엔진이 아는 모양과 긴 덩어리까지다", section)
+        self.assertIn(f"{worklog.MAX_CHUNK}자 이상", section)
+        self.assertIn("쓰는 쪽(`security/errorlog.py`)은 메시지·값을 읽지 않고", section)
+        self.assertNotIn("키·토큰·끝 4자도 안 보인다", self.doc)
+        self.assertIn(f"{worklog.MAX_CHUNK}자 이상", LOG.read_text(encoding="utf-8"))
+        for relative in ("docs/SECURITY.md", "docs/TROUBLESHOOTING.md"):
+            self.assertIn(f"{worklog.MAX_CHUNK}자 이상", (ROOT / relative).read_text(encoding="utf-8"), relative)
+
+    def test_the_security_document_knows_the_two_new_roads_and_the_known_limit(self):
+        """재작업 1(독립 검증 S 참고-5 ①·권고-2): 보안 문서가 1b 의 새 길 둘(클립보드 쓰기·오류 기록 읽기)과 '1b 복사 길의 알려진 한계(SECSEP2 가 닫음)' 를 적는다."""
+        security = (ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
+        for needle in ("클립보드에 글을 쓰는 길", "오류 기록 파일을 읽는 길", "1b 복사 길의 알려진 한계(SECSEP2 가 닫음)"):
+            self.assertEqual(security.count(needle), 1, needle)
+
 
 if __name__ == "__main__":
     unittest.main()

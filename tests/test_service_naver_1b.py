@@ -7,7 +7,9 @@
   3) `naver_profiles.profile_for` 는 설정 파일의 프로필이 먼저이고 없으면 블로그 관리에 등록한 것에서 합쳐 읽는다(읽기만 — 파일을 만들지 않고, 깨진 설정 파일은 숨기지 않는다).
   4) `history.list_history` 는 글 저장소를 한 번 열어 승인 이후 단계의 (글, 플랫폼) 쌍을 읽는다(검토 전 상태만 빼고 모두 — 모르는 새 상태도).
   5) `worklog.read_work_log` 는 작업 로그를 칸으로 쪼개 글자표를 통과한 줄만 내고(키 모양이 든 줄은 건너뛴다) 읽기만 한다.
+     (재작업 1, 독립 검증 S 권고-1·3) `logs` 폴더 자신이 링크(정션·심볼릭)이면 따라가지 않고, 영문·숫자가 24자 이상 이어지는 덩어리가 든 줄(엔진이 모르는 모양의 키를 낱말에 붙여 손으로 고친 줄)은 건너뛴다.
 """
+import ast
 import hashlib
 import json
 import os
@@ -20,9 +22,11 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 
+from chanceblog_desktop import fslink  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.content.store import Store  # noqa: E402
 from chanceblog_desktop.service import blog_profiles, history, naver_flow, naver_profiles, previews, projects, review, worklog  # noqa: E402
+from chanceblog_desktop.security import errorlog  # noqa: E402
 from chanceblog_desktop.service.naver_flow import NaverOptions  # noqa: E402
 
 COPY_TIME = "2026-11-02T02:00:00Z"
@@ -32,6 +36,16 @@ NAVER_URL = "https://blog.naver.com/exampleaaa/223000000001"
 def tree_hashes(root):
     root = Path(root)
     return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def remove_link(path):
+    """링크 자체를 지운다(목적지는 건드리지 않는다) — 이미 없으면 그대로 둔다. 정션은 `rmdir`, 심볼릭 링크는 `unlink` 다."""
+    if not os.path.lexists(path):
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        os.rmdir(path)
 
 
 class Base(unittest.TestCase):
@@ -448,6 +462,128 @@ class WorkLogServiceTest(unittest.TestCase):
         (self.folder / "errors.log").write_bytes(self.GOOD[0].encode("utf-8") + b"\n\xff\xfe\x80 \xed\xa0\x80\n" + self.GOOD[1].encode("utf-8") + b"\n")
         result = worklog.read_work_log(self.ctx)
         self.assertEqual((len(result.lines), result.skipped), (2, 1))
+
+    # ---- 재작업 1(독립 검증 S 권고-1): `logs` 폴더 자신이 링크이면 따라가지 않는다 — 윈도 정션은 `Path.is_symlink()` 가 거짓이라 파일 링크만 보던 옛 검사가 놓쳤다 -------------------------------------
+    def outside_log(self):
+        """데이터 폴더 밖에 좋은 줄이 든 기록 폴더를 만든다(링크의 목적지) → (폴더, 파일 글)."""
+        outside = self.tmp / "outside_logs"
+        outside.mkdir()
+        text = "\n".join(self.GOOD) + "\n"
+        (outside / "errors.log").write_text(text, encoding="utf-8")
+        self.ctx.workspace.root.mkdir(parents=True, exist_ok=True)
+        return outside, text
+
+    @unittest.skipUnless(sys.platform == "win32", "정션(junction)은 윈도에서만 만들 수 있다 — 다른 운영체제는 바로 아래 심볼릭 링크 시험이 같은 일을 본다")
+    def test_a_logs_folder_that_is_a_windows_junction_is_not_followed(self):
+        outside, text = self.outside_log()
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(outside), str(self.folder))
+        except (ImportError, AttributeError, OSError) as error:
+            self.skipTest(f"이 환경에서는 정션을 만들 수 없다({type(error).__name__})")
+        self.addCleanup(remove_link, self.folder)
+        self.assertFalse(self.folder.is_symlink(), "윈도 정션은 `Path.is_symlink()` 가 거짓이다 — 옛 검사가 놓친 까닭")
+        self.assertTrue(self.folder.is_dir())
+        self.assertTrue(fslink.is_link(self.folder), "공용 링크 판정은 정션도 링크로 본다")
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual((result.lines, result.files, result.skipped, result.older), ((), 0, 0, 0), "정션 너머의 기록은 읽지 않는다")
+        self.assertEqual((outside / "errors.log").read_text(encoding="utf-8"), text, "목적지는 그대로다")
+
+    def test_a_logs_folder_that_is_a_symbolic_link_is_not_followed(self):
+        outside, text = self.outside_log()
+        try:
+            os.symlink(outside, self.folder, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"이 환경에서는 심볼릭 링크를 만들 수 없다({type(error).__name__})")
+        self.addCleanup(remove_link, self.folder)
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual((result.lines, result.files, result.skipped, result.older), ((), 0, 0, 0), "폴더 심볼릭 링크 너머의 기록은 읽지 않는다")
+        self.assertEqual((outside / "errors.log").read_text(encoding="utf-8"), text)
+
+    def test_the_folder_and_every_file_are_checked_with_the_shared_link_test(self):
+        """링크 판정은 `fslink.is_link` 한 곳이다(백업·주제 DB 와 같은 기준). 폴더 하나와 파일 셋을 모두 그것으로 본다 — 소스가 옛 `is_symlink()` 반쪽 검사로 돌아오면 알린다."""
+        self.write("errors.log", self.GOOD[:1])
+        seen, real = [], fslink.is_link
+        with mock.patch.object(fslink, "is_link", side_effect=lambda path: seen.append(Path(path).name) or real(path)):
+            result = worklog.read_work_log(self.ctx)
+        self.assertEqual(len(result.lines), 1)
+        self.assertEqual(set(seen), {"logs", "errors.log", "errors.log.1", "errors.log.2"})
+        tree = ast.parse(Path(worklog.__file__).read_text(encoding="utf-8"))
+        self.assertEqual([node.lineno for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "is_symlink"], [], "옛 반쪽 검사(`Path.is_symlink`)가 소스에 돌아오지 않는다")
+
+    def test_a_folder_the_link_test_calls_a_link_is_not_read_at_all_and_a_file_it_calls_a_link_is_left_out(self):
+        for name, line in (("errors.log.2", self.GOOD[0]), ("errors.log.1", self.GOOD[1]), ("errors.log", self.GOOD[2])):
+            self.write(name, [line])
+        with mock.patch.object(fslink, "is_link", side_effect=lambda path: Path(path).name == "logs"):
+            self.assertEqual(worklog.read_work_log(self.ctx).lines, (), "폴더가 링크면 아무것도 읽지 않는다")
+        with mock.patch.object(fslink, "is_link", side_effect=lambda path: Path(path).name == "errors.log.1"):
+            result = worklog.read_work_log(self.ctx)
+        self.assertEqual(([line.name for line in result.lines], result.files), (["QtCriticalMsg", "KeyError"], 2), "링크인 파일 하나만 빠진다")
+
+    # ---- 재작업 1(독립 검증 S 권고-3): 글자표를 통과하고 엔진도 건드리지 않는 모양 — 엔진이 모르는 키를 낱말에 붙여 손으로 고친 줄 — 은 긴 영숫자 덩어리로 건너뛴다 ---------------------------------------
+    @staticmethod
+    def glued_keys():
+        """낱말 바로 뒤에 붙은 키 모양들 — 엔진은 키 앞이 영숫자면 키로 읽지 않아 가리지 않는다(독립 검증 S 의 탐침 모양). 실행 때 조립한다(소스에 키 글자 0)."""
+        keys = {"github": "gh" + "p_" + "A" * 36, "groq": "gs" + "k_" + "I" * 44, "huggingface": "hf" + "_" + "N" * 36, "stripe": "sk" + "_live_" + "K" * 28, "aws": "AK" + "IA" + "D" * 16, "nvidia": "nv" + "api-" + "J1" * 25,
+                "google": "AI" + "za" + "B" * 35, "openai-project": "sk-" + "proj-" + "F" * 30, "anthropic": "sk-" + "ant-api03-" + "G" * 30, "slack": "xo" + "xb-" + "123456789012-" + "1234567890123-" + "E" * 24,
+                "jwt": "eyJ" + "hbGciOiJIUzI1NiJ9" + "." + "eyJ" + "zdWIiOiIxMjM0NTY3ODkw" + "." + "abcdefghijklmnop"}
+        return {name: "word" + key for name, key in keys.items()}
+
+    def test_a_key_glued_to_a_word_in_a_hand_edited_line_is_skipped_wherever_it_sits(self):
+        stamp = "2026-11-24T05:30:12Z"
+        lines = list(self.GOOD)
+        for glued in self.glued_keys().values():
+            lines += [f"{stamp} main {glued[:64]} a.py:1", f"{stamp} main KeyError {glued[:64]}", f"{stamp} main KeyError a.py:1 < {glued[:64]}"]
+        self.write("errors.log", lines)
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual((len(result.lines), result.skipped), (3, len(lines) - 3), "손으로 고친 줄은 모두 건너뛰고 개수만 안다")
+        blob = json.dumps(result.to_dict(), ensure_ascii=False)
+        for name, glued in self.glued_keys().items():
+            for start in range(0, len(glued) - 7, 4):
+                self.assertNotIn(glued[start:start + 8], blob, f"{name}: 키의 조각이 결과에 남았다")
+
+    def test_the_limit_is_a_run_of_letters_and_digits_and_the_separators_end_a_run(self):
+        limit = worklog.MAX_CHUNK
+        self.assertEqual(limit, 24)
+        stamp = "2026-11-24T05:30:12Z"
+        short, long_ = "a" * (limit - 1), "a" * limit
+        kept = [f"{stamp} main {name} {place}" for name, place in ((short, "-"), ("KeyError", short + ".py:1"), ("KeyError", "-"), ("KeyError", "_".join(["abcdefgh"] * 5) + ".py:1"), ("KeyError", ".".join(["abcdefgh"] * 5)),
+                                                                   ("KeyError", "-".join(["abcdefgh"] * 5) + ".py:1"), ("Q" + "9" * (limit - 2), "a.py:1"))]
+        skipped = [f"{stamp} main {name} {place}" for name, place in ((long_, "-"), ("KeyError", long_ + ".py:1"), ("KeyError", "x.py:1 < " + long_ + ".py:2"), ("Q" + "9" * (limit - 1), "a.py:1"), ("KeyError", "A1" * 20 + ".py:3"))]
+        self.write("errors.log", kept + skipped)
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual((len(result.lines), result.skipped), (len(kept), len(skipped)))
+
+    def test_real_looking_names_are_kept(self):
+        """이 앱의 실제 줄 — 클래스 이름과 파일 이름은 영문·숫자가 24자 이상 이어지지 않는다(밑줄·점·붙임표가 끊는다). 쓰는 쪽은 메시지·값을 읽지 않고 클래스 이름과 파일 이름만 쓴다."""
+        stamp = "2026-11-24T05:30:12Z"
+        real = ["UnicodeDecodeError post_history_flow.py:120 < post_package_parts.py:88", "ConnectionRefusedError shell.py:45", "SSLError qt.qpa.fonts", "QtCriticalMsg qt.qpa.xcb < xcberror.cpp:99", "NotImplementedError test_ui_qt_posts_1b.py:5"]
+        self.write("errors.log", [f"{stamp} slot {item}" for item in real])
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual((len(result.lines), result.skipped), (len(real), 0))
+
+    def test_what_the_real_writer_writes_is_read_back_and_none_of_it_is_skipped(self):
+        """쓰는 쪽(`errorlog.ErrorLog`)이 실제 예외로 쓴 줄은 읽는 쪽의 글자표와 긴 덩어리 검사를 모두 지난다 — 읽는 쪽의 거름이 정상 기록을 건너뛰지 않는다(쓰는 쪽은 그런 줄을 만들지 않는다)."""
+        writer = errorlog.ErrorLog(lambda: self.ctx.workspace.root)
+        raised = [lambda: {}["missing"], lambda: int("x"), lambda: [][1], lambda: 1 / 0, lambda: open(self.tmp / "no_such_folder" / "x.txt"), lambda: bytes([255]).decode("utf-8"), lambda: (_ for _ in ()).throw(NotImplementedError("x")),
+                  lambda: (_ for _ in ()).throw(ConnectionRefusedError("x"))]
+        names = []
+        for make in raised:
+            try:
+                make()
+            except BaseException as error:
+                self.assertTrue(writer.record("slot", type(error), error, error.__traceback__))
+                names.append(type(error).__name__)
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual(([line.name for line in result.lines], result.skipped), (names[::-1], 0))
+        self.assertTrue(all(line.places and line.places[0].startswith("test_service_naver_1b.py:") for line in result.lines), "코드 위치는 파일 이름만이고 폴더가 없다")
+
+    def test_only_ascii_digits_are_part_of_the_character_table(self):
+        """글자표의 '숫자' 는 ASCII 숫자뿐이다(쓰는 쪽도 그렇다) — 다른 글자 체계의 숫자로 쓴 시각·줄 번호는 손으로 고친 줄이다."""
+        arabic = "".join(chr(0x660 + int(char)) if char.isdigit() else char for char in "2026-11-24T05:30:12Z")
+        self.write("errors.log", [arabic + " slot KeyError a.py:1", "2026-11-24T05:30:12Z slot KeyError a.py:" + chr(0x661) + chr(0x662), self.GOOD[1]])
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual(([line.name for line in result.lines], result.skipped), (["ValueError"], 2))
 
 
 if __name__ == "__main__":

@@ -252,15 +252,20 @@ class ServicePostsProvider(PostsProvider):
         return PostOutcome("copied" if request.copied is True else "uncopied", self._detail(ctx, self._read_view(ctx, request.project_id, "copied")))
 
     def record_published(self, request, progress, cancelled):
-        """`발행 주소 기록` — **복사함에서만**(복사했어요를 누르지 않은 글에는 기록하지 않는다 — 서비스는 복사 준비됨에서도 받지만 화면 흐름은 복사 표시를 먼저 요구한다). 주소 모양·비밀 모양은 서비스가 한 번 더 거른다.
-        실패 문장에는 입력한 주소가 없다(고정 문장 + 칸 이름)."""
+        """`발행 주소 기록` — **복사함에서만**(복사했어요를 누르지 않은 글에는 기록하지 않는다 — 서비스는 복사 준비됨에서도 받지만 화면 흐름은 복사 표시를 먼저 요구한다).
+        주소는 서비스를 부르기 **전에 화면과 같은 규칙으로 다시 건다**(`rules.address_failure` — 500자·경로·포트·엔진 전용 키 모양·주소 인자의 토큰·눈에 안 보이는 글자 …, 가짜 공급자와 같은 함수): 화면(컨트롤러)을 건너뛰는 호출도
+        막고, 거절하면 서비스를 부르지 않으니 상태는 그대로이고 기록은 0 이다. 서비스 자신의 검사는 이보다 좁다 — https·네이버 호스트·계정 정보·저장 검사기 여섯 유형뿐이라 이 다시 걸기 없이는
+        포트·경로 없음·500자 초과·엔진 전용 키 모양이 직접 발행함으로 저장됐다(독립 검증 S 필수-1). 화면처럼 앞뒤 공백은 떼어 서비스에 넘긴다. 실패 문장에는 입력한 주소가 없다(고정 문장)."""
         ctx = self._context("record")
         current = self._read_view(ctx, request.project_id, "record")
         state = current.variant(request.platform) if request.platform in NAVER_PLATFORMS else None
         if state is None or state.status != st.COPY_COMPLETED:
             raise PostFailure(T["post_fail_state"], code="STATUS_TRANSITION_INVALID", kind="state")
+        refused = rules.address_failure(request.url)
+        if refused is not None:
+            raise refused
         try:
-            review_service.record_naver_published(ctx, request.project_id, request.platform, request.url)
+            review_service.record_naver_published(ctx, request.project_id, request.platform, request.url.strip())
         except AppError as error:
             raise failure_of(error, action="record") from None
         return PostOutcome("recorded", self._detail(ctx, self._read_view(ctx, request.project_id, "record")))
