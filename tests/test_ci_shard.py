@@ -911,6 +911,118 @@ class QtWeightsTableTest(unittest.TestCase):
         self.assertNotEqual(ci_shard.assign(names, 12, ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT), ci_shard.assign(names, 12))
 
 
+def qt_limit_minutes():
+    """`ci.yml` 의 `qt` 잡 `timeout-minutes`(정수) — 시험이 한도를 따로 정하지 않고 CI 가 정한 값을 따른다."""
+    code = jobs_of(code_lines((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")))
+    found = re.search(r"^    timeout-minutes:\s*(\d+)\s*$", "\n".join(code["qt"]), re.M)
+    assert found, "ci.yml 의 qt 잡에 timeout-minutes 가 없다"
+    return int(found.group(1))
+
+
+def table_numbers():
+    """문서·결정·주석이 적어야 하는 표의 숫자를 표와 `ci.yml` 에서 읽는다 → 개수·합계·조각 계획·상위 일곱·기본 무게·시간 한도."""
+    weights, default = ci_shard.QT_WEIGHTS, ci_shard.QT_DEFAULT_WEIGHT
+    names, total = real_names(), ci_total("qt")
+    loads = sorted(set(loads_of(ci_shard.assign(names, total, weights, default), total, weights, default)))
+    plan = f"{loads[0]:,}초" if len(loads) == 1 else f"{loads[0]:,}–{loads[-1]:,}초"
+    top = sorted(weights.items(), key=lambda item: (-item[1], item[0]))[:7]
+    return {"count": f"{len(weights)}개", "total": f"{sum(weights.values()):,}초", "plan": plan, "top": top, "default": default, "limit": qt_limit_minutes()}
+
+
+def missing_numbers(label, text, numbers, count=True, total=True, plan=True, top=True, default=True, limit=True):
+    """`text`(문서·결정 행·주석)에 적혀 있어야 할 숫자 중 빠진 것들의 설명(없으면 빈 목록). 상위 일곱은 '이름 뒤 열두 글자 안에 그 값'(숫자 아닌 글자만 사이에)으로 읽는다."""
+    missing = []
+    if count and numbers["count"] not in text:
+        missing.append(f"{label}: 표의 시험 파일 개수 {numbers['count']}")
+    if total and numbers["total"] not in text:
+        missing.append(f"{label}: 표의 합계 {numbers['total']}")
+    if plan and numbers["plan"] not in text:
+        missing.append(f"{label}: 조각마다의 표 기준 계획 {numbers['plan']}")
+    if top:
+        for name, value in numbers["top"]:
+            if not re.search(re.escape(name) + r"[^0-9]{0,12}" + str(value) + r"(?![0-9])", text):
+                missing.append(f"{label}: 상위 일곱의 {name} {value}")
+    if default and not re.search(r"기본 무게[^0-9]{0,24}" + str(numbers["default"]) + "초", text):
+        missing.append(f"{label}: 기본 무게 {numbers['default']}초")
+    if limit and not re.search(r"한도[^0-9]{0,12}" + str(numbers["limit"]) + "분", text):
+        missing.append(f"{label}: qt 잡의 시간 한도 {numbers['limit']}분")
+    return missing
+
+
+def decision_row(number):
+    rows = [line for line in (ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8").splitlines() if line.startswith(f"| D-{number} |")]
+    assert len(rows) == 1, f"D-{number} 행이 {len(rows)}개"
+    return rows[0]
+
+
+def shard_comment_block():
+    """`scripts/ci_shard.py` 의 Qt 표 바로 위 설명 주석(첫 줄부터 `QT_DEFAULT_WEIGHT = ` 앞까지)."""
+    source = (ROOT / "scripts" / "ci_shard.py").read_text(encoding="utf-8")
+    start = source.index("# Qt 칸(`ci.yml` 의 `qt` 잡")
+    return source[start:source.index("QT_DEFAULT_WEIGHT = ", start)]
+
+
+def ci_qt_comment_block():
+    """`ci.yml` 의 `qt` 잡과 그 위의 설명 주석(`# Qt 칸 — ` 부터 끝까지)."""
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    start = text.index("  # Qt 칸 — ")
+    return text[start:]
+
+
+class TableNumbersAreWrittenDownTest(unittest.TestCase):
+    """표의 숫자(개수·합계·조각 계획·상위 일곱·기본 무게)와 `qt` 잡의 시간 한도가 `docs/CI_QT.md`·결정 D-717·`scripts/ci_shard.py` 의 표 위 주석·`ci.yml` 의 `qt` 잡 주석에 같게 적혀 있다.
+    표를 다시 재면서 한 곳을 빠뜨리면(독립 검증 Q 의 변이 D01 — D-717 의 합계를 한 글자 고쳐도 어떤 시험도 몰랐다) 여기서 빨개지고 어느 곳에 무슨 숫자가 없는지 알려 준다. 값은 표와 `ci.yml` 에서 읽으므로 이 시험은 숫자를 따로 못박지 않는다(못박는 곳은 위 `QtWeightsTableTest`)."""
+
+    def test_the_numbers_of_the_table_and_the_time_limit_are_written_the_same_in_every_place(self):
+        numbers = table_numbers()
+        places = {
+            "docs/CI_QT.md": ((ROOT / "docs" / "CI_QT.md").read_text(encoding="utf-8"), {}),
+            "docs/DECISIONS.md D-717": (decision_row(717), {}),
+            "scripts/ci_shard.py 의 표 위 주석": (shard_comment_block(), {"top": False, "default": False}),
+            ".github/workflows/ci.yml 의 qt 잡 주석": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False}),
+        }
+        problems = []
+        for label, (text, skip) in places.items():
+            problems += missing_numbers(label, text, numbers, **skip)
+        self.assertEqual(problems, [], "표의 숫자가 이 곳들에 같게 적혀 있어야 한다 — 표를 다시 쟀거나 시간 한도를 바꿨으면 문서·결정·주석을 같은 변경에서 고친다(docs/CI_QT.md 7절 5단계)")
+
+    def test_the_numbers_come_from_the_table_and_the_workflow_and_are_the_ones_the_documents_describe(self):
+        numbers = table_numbers()
+        self.assertEqual((numbers["count"], numbers["total"], numbers["plan"], numbers["default"], numbers["limit"]), ("354개", "10,956초", "913초", 3, 60))
+        self.assertEqual([name for name, _ in numbers["top"]], ["test_ui_qt_seeds", "test_ui_qt_photo_ocr", "test_ui_qt_drafts", "test_ui_qt_photo", "test_ui_qt_settings", "test_ui_qt_polish1", "test_ui_qt_polish2"])
+
+    def test_a_missing_or_changed_number_is_noticed_in_each_place(self):
+        numbers = table_numbers()
+        sources = {
+            "docs": (self.read_doc(), {}),
+            "decision": (decision_row(717), {}),
+            "shard": (shard_comment_block(), {"top": False, "default": False}),
+            "workflow": (ci_qt_comment_block(), {"count": False, "total": False, "top": False, "default": False}),
+        }
+        top_name, top_value = numbers["top"][0]
+        edits = {
+            "개수": (lambda text: text.replace(numbers["count"], "353개"), "count"),
+            "합계": (lambda text: text.replace(numbers["total"], "10,955초"), "total"),
+            "조각 계획": (lambda text: text.replace(numbers["plan"], "914초"), "plan"),
+            "상위 일곱": (lambda text: re.sub("(" + re.escape(top_name) + "[^0-9]{0,12})" + str(top_value) + "(?![0-9])", lambda found: found.group(1) + str(top_value + 1), text), "top"),
+            "기본 무게": (lambda text: re.sub(r"(기본 무게[^0-9]{0,24})" + str(numbers["default"]) + "초", lambda found: found.group(1) + "4초", text), "default"),
+            "시간 한도": (lambda text: re.sub(r"(한도[^0-9]{0,12})" + str(numbers["limit"]) + "분", lambda found: found.group(1) + "61분", text), "limit"),
+        }
+        for place, (text, skip) in sources.items():
+            self.assertEqual(missing_numbers(place, text, numbers, **skip), [], place)
+            for label, (edit, key) in edits.items():
+                if skip.get(key) is False:
+                    continue                                    # 그 곳이 적지 않는 숫자(예: 주석에는 상위 일곱이 없다)
+                with self.subTest(place=place, number=label):
+                    changed = edit(text)
+                    self.assertNotEqual(changed, text, "변이가 글을 바꾸지 못했다")
+                    self.assertTrue(missing_numbers(place, changed, numbers, **skip), "숫자를 바꿨는데 시험이 몰랐다")
+
+    @staticmethod
+    def read_doc():
+        return (ROOT / "docs" / "CI_QT.md").read_text(encoding="utf-8")
+
+
 class WeightsFlagRunTest(unittest.TestCase):
     """작은 가짜 시험 폴더로 진짜 `ci_shard.py` 를 자식 프로세스에서 돌려 `CI_WEIGHTS` 가 조각 나누기까지 이어지는지 본다(진짜 시험 폴더는 느려서 쓰지 않는다 — 표 자체는 위에서 진짜 이름으로 본다)."""
 

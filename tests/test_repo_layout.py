@@ -355,6 +355,26 @@ class TroubleshootingTest(unittest.TestCase):
         self.assertIn("키·토큰", text)
 
 
+QT_IF_CONDITION = "    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')"          # D-718 — 줄 전체 글자 그대로(줄 끝 주석·뒤 공백 없이)
+
+
+def qt_if_problems(ci):
+    """`ci.yml` 글의 `if:` 줄 문제 목록(없으면 빈 목록): `qt` 잡 수준(들여쓰기 네 칸)에 정해진 한 줄뿐이고, 파일 전체의 `if:` 도 그 한 줄뿐이며, `test` 잡에는 없다. 줄 전체를 글자 그대로 견주므로 줄 끝 주석·뒤 공백도 거절한다.
+    재작업 2(독립 검증 Q 권고-5): 줄 끝 주석에 시험들이 다르게 반응하던 것(골든·`qt_problems` 통과, 이 시험만 거절)을 엄격한 쪽인 이 방식으로 모두 맞췄다."""
+    ci = ci.replace("\r\n", "\n")
+    head, marker, tail = ci.partition("\n  qt:\n")
+    if not marker:
+        return ["ci.yml 에 qt 잡이 없다"]
+    problems = []
+    if [line for line in tail.splitlines() if line.startswith("    if:")] != [QT_IF_CONDITION]:
+        problems.append("qt 잡 수준의 if 줄이 승인된 한 줄 그대로가 아니다")
+    if [line for line in ci.splitlines() if line.lstrip().startswith("if:")] != [QT_IF_CONDITION]:
+        problems.append("파일 전체의 if 는 qt 잡 수준의 이 한 줄뿐이다")
+    if "    if:" in head:
+        problems.append("test 잡(열두 칸)에는 if 가 없다")
+    return problems
+
+
 class CiWorkflowTest(unittest.TestCase):
     def test_ci_is_read_only_runs_both_python_versions_and_both_systems(self):
         ci = read(".github/workflows/ci.yml")
@@ -398,10 +418,31 @@ class CiWorkflowTest(unittest.TestCase):
         ci = read(".github/workflows/ci.yml").replace("\r\n", "\n")
         head, marker, tail = ci.partition("\n  qt:\n")
         self.assertTrue(marker, "ci.yml 에 qt 잡이 없다")
-        condition = "    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')"
+        condition = QT_IF_CONDITION
         self.assertEqual([line for line in tail.splitlines() if line.startswith("    if:")], [condition])
         self.assertEqual([line for line in ci.splitlines() if line.lstrip().startswith("if:")], [condition], "파일 전체의 if 는 qt 잡 수준의 이 한 줄뿐이다")
         self.assertNotIn("    if:", head, "test 잡(열두 칸)에는 if 가 없다")
+        self.assertEqual(qt_if_problems(ci), [], "도우미도 같은 판정이다")
+
+    def test_the_qt_if_line_refuses_an_end_of_line_comment_or_space_like_the_other_test_bundles(self):
+        """독립 검증 Q 권고-5(재작업 2): 골든·`test_ci_workflow_qt`·`test_ci_shard` 도 이 시험과 같은 엄격한 잣대(줄 전체 글자 그대로)를 쓴다 — 줄 끝 주석·뒤 공백·값 바꾸기·줄 더하기·test 잡의 if 를 모두 거절한다."""
+        ci = read(".github/workflows/ci.yml").replace("\r\n", "\n")
+        self.assertEqual(qt_if_problems(ci), [])
+        self.assertEqual(qt_if_problems(ci.replace("\n", "\r\n")), [], "윈도 줄 끝은 덧붙임이 아니다")
+        variants = {
+            "줄 끝 주석(값은 같다)": ci.replace(QT_IF_CONDITION, QT_IF_CONDITION + "  # CANARY 줄 끝 주석", 1),
+            "줄 끝 주석(공백 하나)": ci.replace(QT_IF_CONDITION, QT_IF_CONDITION + " # CANARY", 1),
+            "줄 끝 공백": ci.replace(QT_IF_CONDITION, QT_IF_CONDITION + " ", 1),
+            "if 줄 삭제": ci.replace(QT_IF_CONDITION + "\n", "", 1),
+            "if 를 true 로": ci.replace(QT_IF_CONDITION, "    if: true", 1),
+            "if 줄을 하나 더": ci.replace(QT_IF_CONDITION + "\n", QT_IF_CONDITION + "\n" + QT_IF_CONDITION + "\n", 1),
+            "test 잡에 if": ci.replace("    timeout-minutes: 40\n", "    timeout-minutes: 40\n    if: github.ref == 'refs/heads/main'\n", 1),
+            "단계 수준 if": ci.replace("      - name: PySide6 두 줄만 설치·점검\n", "      - name: PySide6 두 줄만 설치·점검\n        if: always()\n", 1),
+        }
+        for label, broken in variants.items():
+            with self.subTest(variant=label):
+                self.assertNotEqual(broken, ci, "변이가 글을 바꾸지 못했다")
+                self.assertTrue(qt_if_problems(broken), "if 줄 변이가 통과했다")
 
 
 if __name__ == "__main__":
