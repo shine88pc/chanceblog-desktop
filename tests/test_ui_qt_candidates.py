@@ -331,16 +331,16 @@ class Base(unittest.TestCase):
 class MenuTest(Base):
     def test_the_topic_menu_is_in_the_core_group_after_home_and_opens_the_new_screen(self):
         window = self.make(page=None)
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])     # 의도적 갱신(P4e, D-282): 초안 작성이 주제 후보 다음에 올랐다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         self.assertEqual(window.nav_buttons["topics"].accessibleName(), "주제 후보 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
-        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다
+        self.assertEqual(list(S.SCREEN_BUILDERS), ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])      # 의도적 갱신(P4e, D-282): 화면 표에 초안 작성 줄이 더해졌다 / 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 초안 작성 다음에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         window.nav_buttons["topics"].click()
         self.assertTrue(self.loaded(window))
         self.settle()
         self.assertEqual((window.state.page, window.nav_buttons["topics"].isChecked(), window.nav_buttons["home"].isChecked()), ("topics", True, False))
         self.assertEqual(len(self.ui(window).grid.cards), 14)
-        self.assertEqual([item.name.text() for item in window.sidebar.soon_list.items], ["발행 기록"])      # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 '다음 단계' 목록에서 빠졌다
+        self.assertIsNone(window.sidebar.soon_list)      # 의도적 갱신(P4e, D-282): 초안 작성도 완성돼 '다음 단계' 목록에서 빠졌다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 다음 단계 목록이 비었다 — 실제 목록은 비어 있고 아래 시험이 목록을 채운 사본으로 상자의 모양 규칙을 계속 지킨다
 
     def test_the_screen_has_no_draft_button_and_no_route_to_an_unfinished_screen(self):
         window = self.make()
@@ -1296,7 +1296,7 @@ class KeyboardTest(Base):
         for key in ("cand-make", "refresh-candidates", "cand-query", "cand-filter-more", "cand:channel:all", "cand:status:all"):
             self.assertIn(key, keys)
         self.assertEqual([widget.candidate_id for widget in seen if isinstance(widget, candidate_parts.CandidateCard)], self.ids(window), "카드는 읽는 순서(위에서 아래로, 왼쪽에서 오른쪽)로 한 번씩")
-        self.assertEqual(sum(1 for widget in seen if widget.property("nav")), 7)                  # 의도적 갱신(글 흐름 1a, D-620·D-638): 메뉴가 여섯에서 일곱(글 검토가 더해졌다) / 의도적 갱신(P4e, D-282): 메뉴가 다섯에서 여섯(초안 작성이 더해졌다)
+        self.assertEqual(sum(1 for widget in seen if widget.property("nav")), 8)                  # 의도적 갱신(글 흐름 1a, D-620·D-638): 메뉴가 여섯에서 일곱(글 검토가 더해졌다) / 의도적 갱신(P4e, D-282): 메뉴가 다섯에서 여섯(초안 작성이 더해졌다) / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 메뉴가 일곱에서 여덟(옛 값 7)
         order = [widget.property("focus_key") for widget in seen]
         self.assertLess(order.index("cand-query"), order.index("cand:" + self.ids(window)[0]), "검색 칸은 카드보다 앞")
         self.assertLess(order.index("cand-make"), order.index("cand-query"), "머리의 단추가 거르기보다 앞")

@@ -7,6 +7,7 @@
   revoke_approval  승인을 거둔다(검토 중으로 되돌린다).
 원고를 고치면 모델이 알아서 승인을 풀어 처음부터 다시 검토하게 한다(`content/model.py`) — 여기서 그 규칙을 우회하지 않는다. 잘못된 단계는 STATUS_TRANSITION_INVALID.
 Blogger 는 이 묶음에서 다루지 않는다.
+글 흐름 1b(화면 — D-644)가 더한 둘: `read_naver_package`(저장된 복사용 패키지를 읽기만 — 아무것도 바꾸지 않는다)·`mark_naver_copied`(복사 준비됨 ↔ 복사함 한 칸).
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from ..check import similarity
 from ..content import status as st
 from ..errors import AppError
 from ..security.refuse import refuse_secret_shapes, text_of
-from . import naver_flow
+from . import naver_flow, naver_profiles
 from .gate import GateReport, require_gates
 from .previews import PLATFORM_PAGES, NaverItem, pages_preview_of, similarity_dict
 from .projects import resolve_id
@@ -89,7 +90,7 @@ def request_review(ctx, text_id, platform, *, pages=None, naver_options=None):
             preview = pages_preview_of(ctx, project, pages)
             rendering = preview.text
         else:
-            profile = ctx.settings.naver_profile(platform)
+            profile = naver_profiles.profile_for(ctx, platform)          # 설정 파일의 프로필이 먼저, 없으면 블로그 관리에 등록한 것에서 합쳐 읽는다(D-648 — 읽기만)
             package = naver_flow.build_for_blog(profile, project, naver_options)
             naver = NaverItem(platform, package)
             rendering = naver_flow.package_to_json(package)
@@ -148,6 +149,11 @@ class NaverIssue:
     package: object                 # NaverPackage
     similarity: object              # SimilarityReport 또는 None
 
+    @property
+    def copy_text(self):
+        """사람이 붙여 넣을 복사용 글 전체(제목·본문·태그·이미지 자리·체크리스트·주의) — `to_dict` 의 `copy_text` 와 같은 글이다."""
+        return naver_flow.copy_text(self.package)
+
     def to_dict(self):
         item = NaverItem(self.platform, self.package)
         return {"project_id": self.project_id, "platform": self.platform, "status": self.status, "similarity": similarity_dict(self.similarity), "package": item.to_dict(with_text=True),
@@ -185,5 +191,38 @@ def record_naver_published(ctx, text_id, blog, url):
         if project.variant(blog).status == st.READY_TO_COPY:
             project.transition(blog, st.COPY_COMPLETED, now=now)
         project.transition(blog, st.PUBLISHED_MANUAL, published_url=url, now=now)      # 주소 검사는 여기서 — 실패하면 아래 저장까지 가지 않는다
+        store.save(project)
+        return ApprovalResult(project.project_id, blog, project.variant(blog).status)
+
+
+def read_naver_package(ctx, text_id, blog):
+    """저장된 복사용 패키지를 **읽기만** 한다(글 흐름 1b, D-644) — 복사 준비됨·복사함일 때만이고 아무 상태도 바꾸지 않으며 글 저장소에 쓰지 않는다.
+    `issue_naver_package` 는 검토 중이면 그 자리에서 유사도를 점검하고 승인(복사 준비됨)까지 해 버리지만 이 함수는 그런 길이 없다 — 그 밖의 상태는 STATUS_TRANSITION_INVALID.
+    사람이 검토한 바로 그 패키지(저장된 것)가 나온다. 네이버에 접속하지 않는다."""
+    if blog not in ("naver_a", "naver_b"):
+        raise AppError("CONTENT_INVALID", {"항목": "네이버 블로그 구분"})
+    with ctx.store() as store:
+        project = store.load(resolve_id(store, text_id))
+        variant = project.variant(blog)
+        if not naver_flow.stage_ok_for_issue(variant.status):
+            raise AppError("STATUS_TRANSITION_INVALID", {"현재 상태": variant.status, "요청 상태": st.READY_TO_COPY})
+        return NaverIssue(project.project_id, blog, variant.status, naver_flow.package_from_json(variant.rendered), None)
+
+
+def mark_naver_copied(ctx, text_id, blog, *, copied=True):
+    """사람이 복사용 글을 복사했다고 표시한다(글 흐름 1b, D-644): `copied=True` 는 복사 준비됨 → 복사함, `copied=False` 는 복사함 → 복사 준비됨(되돌리기).
+    한 칸만 옮기고 모델의 이동 규칙 그대로다(다른 상태에서는 STATUS_TRANSITION_INVALID — 아무것도 바뀌지 않는다). 글·렌더링·발행 주소는 건드리지 않는다.
+    `copied` 는 진짜 참·거짓이어야 한다(아니면 CONTENT_INVALID — `1`·`'yes'` 같은 값으로 표시가 켜지지 않는다)."""
+    if blog not in ("naver_a", "naver_b"):
+        raise AppError("CONTENT_INVALID", {"항목": "네이버 블로그 구분"})
+    if copied is not True and copied is not False:
+        raise AppError("CONTENT_INVALID", {"항목": "복사 표시"})
+    wanted, target = (st.READY_TO_COPY, st.COPY_COMPLETED) if copied else (st.COPY_COMPLETED, st.READY_TO_COPY)
+    with ctx.store() as store:
+        project = store.load(resolve_id(store, text_id))
+        current = project.variant(blog).status
+        if current != wanted:                                          # 복사 준비됨으로 '되돌리기' 는 복사함에서만이다 — 검토 중에서 이 길로 복사 준비됨(= 승인)이 되지 않게 모델의 이동표에 맡기지 않고 여기서 먼저 막는다
+            raise AppError("STATUS_TRANSITION_INVALID", {"현재 상태": current, "요청 상태": target})
+        project.transition(blog, target, now=ctx.stamp())
         store.save(project)
         return ApprovalResult(project.project_id, blog, project.variant(blog).status)

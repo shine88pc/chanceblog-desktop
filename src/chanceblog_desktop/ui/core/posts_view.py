@@ -19,7 +19,7 @@ from dataclasses import replace
 from ...content import status as st
 from . import post_rules as rules
 from .jobs import JobFailure
-from .posts import (KINDS, NAVER_PLATFORMS, PAGES, PLATFORMS, ApproveRequest, ImportRequest, ReviewRequest, RevokeRequest)
+from .posts import (KINDS, NAVER_PLATFORMS, PAGES, PLATFORMS, ApproveRequest, CopiedRequest, ImportRequest, RecordRequest, ReviewRequest, RevokeRequest)
 from .save_gate import blocked_while_restoring
 from .text import T
 
@@ -35,6 +35,11 @@ HEALTH_TEXT = {"general": "post_health_general", "mark": "post_health_mark", "ev
 HEALTH_BADGE = {"general": "pass", "mark": "info", "evidence": "check", "stop": "block"}
 SIMILARITY_TEXT = {"ok": "post_naver_similarity_ok", "warn": "post_naver_similarity_warn", "high": "post_naver_similarity_high"}
 SIMILARITY_BADGE = {"ok": "pass", "warn": "check", "high": "block"}
+COPY_KINDS = ("title", "body", "tags", "all")                # 복사 단추 넷(글 흐름 1b) — 제목·본문·태그·전체
+COPY_TEXT = {"title": ("post_pkg_copy_title", "post_pkg_copy_title_a11y", "post_pkg_copied_title"), "body": ("post_pkg_copy_body", "post_pkg_copy_body_a11y", "post_pkg_copied_body"),
+             "tags": ("post_pkg_copy_tags", "post_pkg_copy_tags_a11y", "post_pkg_copied_tags"), "all": ("post_pkg_copy_all", "post_pkg_copy_all_a11y", "post_pkg_copied_all")}      # 종류 → (단추 글, 접근 이름, 복사한 뒤 안내)
+RECORD_PROBLEM_TEXT = {"empty": "post_rec_p_empty", "space": "post_rec_p_space", "long": "post_rec_p_long", "secret": "post_rec_p_secret", "scheme": "post_rec_p_scheme", "host": "post_rec_p_host", "path": "post_rec_p_path"}
+RECORD_KEPT_KINDS = ("address", "secret", "input", "other", "locked", "disk", "io")   # 발행 주소 대화를 열어 둔 채 이유만 보이는 실패 종류(주소 칸은 그대로다)
 
 
 PAGES_FIELDS = ("category", "lang", "image_url", "tags", "description")      # Pages 값 칸의 이름들
@@ -88,6 +93,9 @@ class PostsController:
         self.pages_open = False
         self.pages_problems = {}
         self.pages_message = ""
+        self.record_open = False                             # 발행 주소 대화(글 흐름 1b) — 칸의 글은 위젯에만 있고 컨트롤러는 문제 열쇠·이유 문장만 안다
+        self.record_problem = ""
+        self.record_message = ""
 
     # ---- 읽기(파일·폴더를 만들지 않는다) ----
     @property
@@ -153,6 +161,7 @@ class PostsController:
         from .app_state import clean_failure
         self.data, self.pending = None, None
         self.epoch += 1                                      # 받아 둔 값을 모두 버렸다 — 아직 오고 있는 읽기 결과도 받지 않는다
+        self.close_record()
         self.close_post()
         self.failure, self.failed_at = clean_failure(JobFailure(T["job_failed"], code=type(error).__name__)), when
         self.state = "error"
@@ -241,6 +250,7 @@ class PostsController:
         closed = self.open_id
         self.open_id, self.detail, self.detail_state, self.detail_failure = None, None, "none", None
         self.review, self.approve_asked = None, None
+        self.close_record()                                  # 열린 발행 주소 대화는 그 글과 함께 닫힌다(대화 부품은 셸이 컨트롤러를 보고 닫는다)
         return closed
 
     def select_platform(self, key):
@@ -416,23 +426,125 @@ class PostsController:
         self.approve_asked = (detail.project_id, self.platform, detail.revision)
         return {"title": T["post_confirm_title"], "body": T["post_confirm_body"].format(name=rules.platform_text(self.platform), revision=detail.revision), "ok": T["post_confirm_ok"], "cancel": T["post_confirm_cancel"]}
 
+    def similarity_approval(self):
+        """`그래도 승인하기`(두 블로그 글이 많이 비슷한 것을 알고도 승인 — 글 흐름 1b, D-646)를 켤 수 있나 → (가능한가, 이유 열쇠). 규칙은 `post_rules.approval_state(allow_similarity=True)` 한 곳이다:
+        승인할 수 있는 조건이 모두 맞고 막힘이 **정확히 유사도 하나뿐**이어야 한다. 네이버가 아니면 늘 안 된다."""
+        if self.platform not in NAVER_PLATFORMS:
+            return False, "post_approve_why_state"
+        return rules.approval_state(self.review, self.detail, self.platform, busy=self.busy, restoring=self.restoring(), allow_similarity=True)
+
+    def similarity_dialog(self):
+        """`그래도 승인하기` 의 센 확인창 글 — 켤 수 있을 때만 있고(아니면 None), 이 확인창을 **보였다는 표시**(일반 승인의 표시와 다른 모양)를 남긴다. 이 표시가 없으면 `start_approve(similarity=True)` 는 시작하지 않는다."""
+        ok, _why = self.similarity_approval()
+        if not ok:
+            return None
+        detail, info = self.detail, self.review.similarity
+        self.approve_asked = (detail.project_id, self.platform, detail.revision, "similarity")
+        reasons = "\n".join(rules.shown(reason, 200) for reason in info.reasons[:3])
+        body = T["post_sim_body"].format(name=rules.platform_text(self.platform), revision=detail.revision, percent=f"{round(info.overall * 100)}")
+        return {"title": T["post_sim_title"], "body": body + ("\n\n" + reasons if reasons else ""), "ok": T["post_sim_ok"], "cancel": T["post_sim_cancel"]}
+
     def discard_approve(self):
         self.approve_asked = None
 
     @blocked_while_restoring
-    def start_approve(self, **callbacks):
-        """확인창에서 `승인` 을 눌렀다 — `(상태, 내용)`: `("refused", 이유 열쇠)` 승인할 수 없다 · `("unconfirmed", None)` 확인창을 보이지 않았다 · `("started", 작업)`."""
-        ok, why = self.approval()
+    def start_approve(self, similarity=False, **callbacks):
+        """확인창에서 `승인` 을 눌렀다 — `(상태, 내용)`: `("refused", 이유 열쇠)` 승인할 수 없다 · `("unconfirmed", None)` 확인창을 보이지 않았다 · `("started", 작업)`.
+        `similarity` 가 참이면 `그래도 승인하기` 의 센 확인창에서 누른 것이다 — 일반 승인 확인창을 본 것으로는 시작하지 않고(표시 모양이 다르다), 서비스에 `similarity_approved` 가 이 길에서만 참으로 간다."""
+        ok, why = self.similarity_approval() if similarity else self.approval()
         if not ok:
             self.approve_asked = None
             return "refused", why
         detail = self.detail
-        asked = (detail.project_id, self.platform, detail.revision)
+        asked = (detail.project_id, self.platform, detail.revision) + (("similarity",) if similarity else ())
         if self.approve_asked != asked:
             return "unconfirmed", None
         self.approve_asked = None
-        request = ApproveRequest(*asked)
-        return self._start("approve", {"id": asked[0], "platform": asked[1], "revision": asked[2]}, lambda progress, cancelled: self.provider.approve_post(request, progress, cancelled), callbacks)
+        request = ApproveRequest(asked[0], asked[1], asked[2], bool(similarity), self.review.pages if self.review is not None else None)
+        return self._start("approve", {"id": asked[0], "platform": asked[1], "revision": asked[2], "similarity": bool(similarity)}, lambda progress, cancelled: self.provider.approve_post(request, progress, cancelled), callbacks)
+
+    # ---- 복사용 패키지·복사 표시·발행 주소(글 흐름 1b) ----
+    def package(self):
+        """지금 고른 네이버 블로그의 복사용 패키지(`NaverPackageInfo`) — **그 블로그의 것만**이고(A 와 B 는 각자 따로 담겨 있다) 복사 준비됨·복사함일 때만 있다. 아니면 None."""
+        detail, platform = self.detail, self.platform
+        if detail is None or platform not in NAVER_PLATFORMS:
+            return None
+        state = detail.platform(platform)
+        if state is None or state.status not in rules.COPYABLE:
+            return None
+        package = detail.package(platform)
+        return package if package is not None and package.platform == platform else None
+
+    def copy_payload(self, kind):
+        """복사 단추(`title`·`body`·`tags`·`all`)나 `주소 복사`(`url`)를 눌렀을 때 클립보드에 쓸 글 → (글, 이유 열쇠). 글이 없으면 (None, 이유). **상태를 바꾸지 않는다** — 복사만으로 '복사함' 이 되지 않는다(D-643).
+        키·토큰 모양이 든 글(패키지가 만들어질 때 미리 검사한 표시 — 주소는 여기서 바로)은 내지 않는다."""
+        if kind == "url":
+            detail, state = self.detail, (self.detail.platform(self.platform) if self.detail is not None else None)
+            url = state.published_url if state is not None and self.platform in NAVER_PLATFORMS and state.status == st.PUBLISHED_MANUAL else ""
+            if not url:
+                return None, "post_pkg_copy_none"
+            return (None, "post_pkg_copy_blocked") if rules.copy_blocked(url) else (url, "")
+        package = self.package()
+        if kind not in COPY_KINDS or package is None:
+            return None, "post_pkg_copy_none"
+        if kind in package.blocked:
+            return None, "post_pkg_copy_blocked"
+        text = {"title": package.title, "body": package.body, "tags": package.tags, "all": package.copy_text}[kind]
+        if not isinstance(text, str) or not text.strip():
+            return None, "post_pkg_copy_none"
+        return text, ""
+
+    @blocked_while_restoring
+    def start_copied(self, copied=True, **callbacks):
+        """`복사했어요`(copied 참 — 복사 준비됨 → 복사함)·`복사 표시 취소`(거짓 — 복사함 → 복사 준비됨) — `(상태, 내용)`: `("busy", None)` · `("state", None)` 이 상태에서는 하지 않는다 · `("started", 작업)`.
+        사람이 이 단추를 눌러야만 시작한다(복사 단추는 이 길을 부르지 않는다). 되돌리기가 아닌 표시는 패키지를 읽어 둔 때만이다."""
+        detail = self.detail
+        if detail is None or self.open_id is None or self.busy:
+            return "busy", None
+        state = detail.platform(self.platform) if self.platform in NAVER_PLATFORMS else None
+        wanted = st.READY_TO_COPY if copied else st.COPY_COMPLETED
+        if state is None or state.status != wanted or (copied and self.package() is None):
+            return "state", None
+        request = CopiedRequest(detail.project_id, self.platform, bool(copied))
+        return self._start("copied" if copied else "uncopied", {"id": detail.project_id, "platform": self.platform}, lambda progress, cancelled: self.provider.mark_copied(request, progress, cancelled), callbacks)
+
+    def open_record(self):
+        """`발행 주소 기록` 대화를 연다 → 열었으면 True. 복사함일 때만이고 쓰는 중·복원 중에는 열지 않는다(D-645)."""
+        detail = self.detail
+        state = detail.platform(self.platform) if detail is not None and self.platform in NAVER_PLATFORMS else None
+        if state is None or state.status != st.COPY_COMPLETED or self.busy or self.restoring() or self.record_open:
+            return False
+        self.record_open, self.record_problem, self.record_message = True, "", ""
+        return True
+
+    def close_record(self):
+        self.record_open, self.record_problem, self.record_message = False, "", ""
+        return True
+
+    @blocked_while_restoring
+    def start_record(self, url, **callbacks):
+        """대화의 `기록` — 칸의 주소 글을 이때 한 번 받아 검사한다 → `("busy", None)` · `("state", None)` · `("invalid", 문제 열쇠)`(서비스를 부르지 않는다 — 이유가 칸 옆에 보인다) · `("started", 작업)`.
+        주소 글은 이 컨트롤러가 쥐지 않는다(요청에만 담겨 간다)."""
+        detail = self.detail
+        if not self.record_open or detail is None or self.busy:
+            return "busy", None
+        state = detail.platform(self.platform) if self.platform in NAVER_PLATFORMS else None
+        if state is None or state.status != st.COPY_COMPLETED:
+            return "state", None
+        problem = rules.naver_url_problem(url)
+        self.record_problem, self.record_message = problem, ""
+        if problem:
+            return "invalid", problem
+        request = RecordRequest(detail.project_id, self.platform, url.strip())
+        return self._start("record", {"id": detail.project_id, "platform": self.platform}, lambda progress, cancelled: self.provider.record_published(request, progress, cancelled), callbacks)
+
+    def record_view(self, chars=0):
+        """발행 주소 대화의 뷰모델 — 칸의 글자 수만 받는다(주소 글은 받지 않는다)."""
+        busy = self.busy
+        return {"title": T["post_rec_title"], "intro": T["post_rec_intro"], "a11y": T["post_rec_title"], "label": T["post_rec_label"], "input_a11y": T["post_rec_a11y"], "hint": T["post_rec_hint"],
+                "problem": T[RECORD_PROBLEM_TEXT[self.record_problem]] if self.record_problem in RECORD_PROBLEM_TEXT else "", "message": self.record_message,
+                "start": {"text": T["post_rec_start"], "a11y": T["post_rec_start_a11y"], "enabled": chars > 0 and not busy}, "cancel": {"text": T["post_rec_cancel"], "a11y": T["post_rec_cancel_a11y"], "enabled": not busy},
+                "working": T["post_rec_working"] if busy else ""}
 
     @blocked_while_restoring
     def start_revoke(self, **callbacks):
@@ -464,9 +576,16 @@ class PostsController:
             self.review = outcome.review
             self.notice = ("ok", T["post_done_review"])
         elif outcome.kind == "approved":
-            self.notice = ("ok", T["post_done_approved"])
+            self.notice = ("ok", T["post_done_approved_similarity"] if work.get("similarity") else T["post_done_approved"])
         elif outcome.kind == "revoked":
             self.notice = ("ok", T["post_done_revoked"])
+        elif outcome.kind == "copied":
+            self.notice = ("ok", T["post_done_copied"])
+        elif outcome.kind == "uncopied":
+            self.notice = ("ok", T["post_done_uncopied"])
+        elif outcome.kind == "recorded":
+            self.close_record()
+            self.notice = ("ok", T["post_done_recorded"])
         return {"reload_list": True}
 
     def apply_write_failed(self, failure):
@@ -481,7 +600,11 @@ class PostsController:
         if work["kind"] == "review" and self.pages_open and kind in KEPT_OPEN_KINDS:
             self.pages_message = text                        # Pages 값 대화는 열어 둔 채 이유만 보인다 — 값은 칸에 그대로다(키 모양이 든 값은 컨트롤러가 기억하지 않는다)
             return {}
+        if work["kind"] == "record" and self.record_open and kind in RECORD_KEPT_KINDS:
+            self.record_message = text                       # 발행 주소 대화도 열어 둔 채 이유만 보인다 — 칸의 글은 그대로다(글 흐름 1b, D-645)
+            return {}
         self.close_pages()
+        self.close_record()
         self.notice = ("error", text)
         if kind in RELOAD_KINDS:
             self.review = None
@@ -494,6 +617,7 @@ class PostsController:
         self.pending = None
         self.epoch += 1
         self.close_pages()
+        self.close_record()
         self.notice = ("error", T["post_fail_other"])
 
     # ---- 뷰모델 ----
@@ -583,6 +707,16 @@ class PostsController:
         approve_visible = status == st.REVIEW_REQUIRED
         primary = "approve" if (approve_visible and can_approve) else "review" if (reviewable and review_enabled and not revokable) else ""
         approve_why = "" if can_approve else T[why] if (approve_visible and why) else ""
+        naver = platform in NAVER_PLATFORMS
+        review = self.review
+        mine = review is not None and review.project_id == detail.project_id and review.platform == platform and review.revision == detail.revision
+        similarity_visible = naver and approve_visible and mine and rules.review_blocks(review) == ("similarity",)          # 막힘이 유사도 하나뿐일 때만 보조 단추가 보인다(D-646)
+        similarity_ok, similarity_why = self.similarity_approval()
+        after = T["post_review_after_note"] if (state is not None and status not in rules.REVIEWABLE and status not in (st.NOT_STARTED,)) else ""
+        if naver and status == st.COPY_COMPLETED:
+            after = ""                                       # 복사함 다음 일(발행 주소 기록)은 패키지 카드가 말한다
+        elif naver and status == st.PUBLISHED_MANUAL:
+            after = T["post_review_after_done"]              # 직접 발행함 — 다음 일이 없다('다음 단계에서 열려요' 라고 하지 않는다)
         return {
             "platform": platform, "name": name, "status": status, "status_line": T["post_status_line"].format(status=rules.status_text(status)),
             "profile_missing": T["post_naver_profile_missing"] if profile_missing else "",
@@ -590,9 +724,45 @@ class PostsController:
                        "a11y": (T["post_review_again_a11y"] if again else T["post_review_start_a11y"]).format(name=name), "note": T["post_review_again_note"] if revokable else "", "primary": primary == "review"},
             "approve": {"visible": approve_visible, "enabled": can_approve, "text": T["post_approve"], "a11y": T["post_approve_a11y"].format(name=name), "why": approve_why, "primary": primary == "approve"},
             "revoke": {"visible": revokable, "enabled": revokable and not busy and not restoring, "text": T["post_revoke"], "a11y": T["post_revoke_a11y"].format(name=name)},
-            "after": T["post_review_after_note"] if (state is not None and status not in rules.REVIEWABLE and status not in (st.NOT_STARTED,)) else "",
+            "approve_similarity": {"visible": similarity_visible, "enabled": similarity_visible and similarity_ok, "text": T["post_sim_button"], "a11y": T["post_sim_button_a11y"].format(name=name),
+                                   "why": "" if similarity_ok or not similarity_visible else T[similarity_why] if similarity_why else "", "note": T["post_sim_note"] if similarity_visible else ""},
+            "package": self._package_view(state, name) if naver else None,
+            "after": after,
             "result": self._result_view(detail, state if state is not None else None) if state is not None else None,
         }
+
+    def _package_view(self, state, name):
+        """복사용 패키지 카드(글 흐름 1b, D-643) — 네이버 블로그 하나의 복사 준비됨·복사함에서는 패키지 요약과 복사 단추 넷·상태 단추, 직접 발행함에서는 기록한 주소. 다른 상태에서는 None.
+        글은 모두 가린 뒤에 줄인다. 복사 단추는 눌러도 상태가 바뀌지 않고 상태 단추(`복사했어요`·`발행 주소 기록`·`복사 표시 취소`)가 사람이 눌러야 하는 단계다."""
+        if state is None:
+            return None
+        busy, restoring = self.busy, self.restoring()
+        if state.status == st.PUBLISHED_MANUAL:
+            url, when = rules.shown(state.published_url, 300), rules.when_text(state.published_at)
+            lines = ([T["post_published_url"].format(url=url)] if url else []) + ([T["post_published_when"].format(when=when)] if when else [])
+            blocked = bool(state.published_url) and rules.copy_blocked(state.published_url)
+            return {"mode": "published", "title": T["post_published_title"], "a11y": T["post_pkg_a11y"].format(name=name), "lines": lines, "copies": [],
+                    "copy_url": {"visible": bool(state.published_url), "enabled": bool(state.published_url) and not blocked, "text": T["post_published_copy"], "a11y": T["post_published_copy_a11y"].format(name=name), "focus_key": "post:copy:url"},
+                    "copied": None, "uncopy": None, "record": None, "checklist": [], "warnings": [], "reread": None}
+        if state.status not in rules.COPYABLE:
+            return None
+        package = self.package()
+        if package is None:
+            return {"mode": "missing", "title": T["post_pkg_title"], "a11y": T["post_pkg_a11y"].format(name=name), "lines": [T["post_pkg_missing"]], "copies": [], "copy_url": None, "copied": None, "uncopy": None, "record": None,
+                    "checklist": [], "warnings": [], "reread": {"text": T["post_retry"], "a11y": T["post_pkg_reread_a11y"].format(name=name)}}
+        lines = [T["post_pkg_line_title"].format(title=rules.shown(package.title, 120)), T["post_pkg_line_size"].format(chars=f"{package.chars:,}", paragraphs=package.paragraphs, images=package.images),
+                 T["post_pkg_line_tags"].format(tags=rules.shown(package.tags, 200) or "-")]
+        if package.category:
+            lines.append(T["post_pkg_line_category"].format(category=rules.shown(package.category, 80)))
+        copies = [{"kind": kind, "text": T[COPY_TEXT[kind][0]], "a11y": T[COPY_TEXT[kind][1]].format(name=name), "enabled": kind not in package.blocked, "focus_key": "post:copy:" + kind} for kind in COPY_KINDS]
+        ready, copied = state.status == st.READY_TO_COPY, state.status == st.COPY_COMPLETED
+        free = not busy and not restoring
+        return {"mode": "copied" if copied else "ready", "title": T["post_pkg_title"], "sub": T["post_pkg_sub"], "a11y": T["post_pkg_a11y"].format(name=name), "lines": lines, "copies": copies, "copy_url": None,
+                "blocked": T["post_pkg_copy_blocked"] if package.blocked else "",
+                "copied": {"visible": ready, "enabled": ready and free, "text": T["post_copied"], "a11y": T["post_copied_a11y"].format(name=name), "note": T["post_copied_note"], "primary": True},
+                "uncopy": {"visible": copied, "enabled": copied and free, "text": T["post_uncopy"], "a11y": T["post_uncopy_a11y"].format(name=name)},
+                "record": {"visible": copied, "enabled": copied and free, "text": T["post_record"], "a11y": T["post_record_a11y"].format(name=name), "note": T["post_record_note"], "primary": True},
+                "checklist": [rules.shown(item, 300) for item in package.checklist], "warnings": [rules.shown(item, 300) for item in package.warnings], "reread": None}
 
     def _detail_view(self, diag):
         if self.detail_state == "loading":

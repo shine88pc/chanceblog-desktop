@@ -11,6 +11,7 @@ from ..core import posts_view as pv
 from ..core.app_state import report_unexpected
 from ..core.posts import PAGES
 from ..core.text import T
+from .post_package_parts import RecordDialog
 from .post_parts import DIALOG_WIDTH, ImportDialog, PagesDialog
 from .workers import JobBridge
 
@@ -24,6 +25,7 @@ class PostFlowMixin:
         """글 검토의 작업 다리 넷 — 목록 읽기·글 읽기·파일 읽기·쓰기가 따로 돈다(홈·설정·다른 화면의 읽기와도 따로다)."""
         self.post_import_form = None                                                  # 열려 있는 '글 가져오기' 대화의 안쪽 부품(없으면 None)
         self.post_pages_form = None                                                   # 열려 있는 'Pages 검토 값' 대화의 안쪽 부품(없으면 None)
+        self.post_record_form = None                                                  # 열려 있는 '발행 주소 기록' 대화의 안쪽 부품(없으면 None — 글 흐름 1b)
         for name, loaded, failed, cancelled in (("posts_bridge", self._on_posts_loaded, self._on_posts_failed, self._on_posts_cancelled),
                                                 ("post_detail_bridge", self._on_post_detail_loaded, self._on_post_detail_failed, self._on_post_detail_cancelled),
                                                 ("post_file_bridge", self._on_post_file_loaded, self._on_post_file_failed, self._on_post_file_cancelled),
@@ -38,7 +40,7 @@ class PostFlowMixin:
     def _render_posts(self):
         if self.state.page == "posts":                                                # 다른 화면을 보는 중이면 값만 받아 두고 다시 그리지 않는다
             self.render()
-            if self.dialog.is_open and (self.post_import_form is not None or self.post_pages_form is not None):
+            if self.dialog.is_open and (self.post_import_form is not None or self.post_pages_form is not None or self.post_record_form is not None):
                 self._trap_focus(True, self.dialog)                                   # 다시 그리면서 새로 생긴 위젯으로 Tab 이 대화상자 밖으로 새지 않게 다시 가둔다
 
     def _posts_opened(self):
@@ -106,6 +108,10 @@ class PostFlowMixin:
     def _post_pages_live(self):
         form = self.post_pages_form
         return form if form is not None and self.state.posts.pages_open and self.dialog.is_open else None
+
+    def _post_record_live(self):
+        form = self.post_record_form
+        return form if form is not None and self.state.posts.record_open and self.dialog.is_open else None
 
     # ---- 가져오기 대화 ----
     def post_import(self):
@@ -342,6 +348,97 @@ class PostFlowMixin:
         self._post_start_notice(status)
         return status
 
+    def post_approve_similarity(self):
+        """`그래도 승인하기` — 두 블로그 글이 많이 비슷한 것을 알고도 승인한다(글 흐름 1b, D-646). 막힘이 유사도 하나뿐일 때만 **센 확인창**이 먼저 뜨고(처음 포커스는 취소), `그래도 승인` 을 눌러야 시작한다.
+        취소·Esc 로 닫으면 '확인창을 보였다' 표시도 거둔다."""
+        posts = self.state.posts
+        if self.state.save_blocked():
+            self._notify_restoring()
+            return None
+        dialog = posts.similarity_dialog()
+        if dialog is None:
+            _ok, why = posts.similarity_approval()
+            self.notify(T[why] if why else T["post_busy"])
+            return None
+        self.show_dialog(dialog["title"], dialog["body"], ok=dialog["ok"], cancel=dialog["cancel"], on_ok=self.post_approve_similarity_confirmed, safe_focus=True, on_cancel=posts.discard_approve)
+        return dialog
+
+    def post_approve_similarity_confirmed(self):
+        status, detail = self.state.posts.start_approve(similarity=True, **self.posts_write_bridge.callbacks())
+        if status == "refused":
+            self.notify(T[detail] if detail else T["post_fail_state"])
+            self.render()
+        else:
+            self._post_start_notice(status)
+        return status
+
+    # ---- 복사용 패키지(글 흐름 1b) — 복사 단추는 클립보드뿐이고 상태를 바꾸지 않는다 ----
+    def post_copy(self, kind):
+        """복사 단추(`title`·`body`·`tags`·`all`)와 `주소 복사`(`url`) — 컨트롤러가 정한 글을 **셸의 기존 복사 길**(`copy` — 클립보드에 쓰고 다시 읽어 본다)로 보낸다. 네이버에 접속하지 않고 **상태를 바꾸지 않는다**
+        (`복사했어요` 를 눌러야 복사함이 된다). 키·토큰 모양이 든 글은 복사하지 않고 이유를 알린다 → 복사했으면 True."""
+        text, why = self.state.posts.copy_payload(kind)
+        if text is None:
+            self.notify(T[why], "error")
+            return False
+        if not self.copy(text):
+            self.notify(T["post_pkg_copy_failed"], "error")
+            return False
+        self.notify(T["post_published_copied"] if kind == "url" else T[pv.COPY_TEXT[kind][2]])
+        return True
+
+    def post_copied(self):
+        """`복사했어요` — 복사 준비됨 → 복사함(사람이 눌러야만 바뀐다)."""
+        status, _job = self.state.posts.start_copied(True, **self.posts_write_bridge.callbacks())
+        self._post_start_notice(status)
+        return status
+
+    def post_uncopied(self):
+        """`복사 표시 취소` — 복사함 → 복사 준비됨."""
+        status, _job = self.state.posts.start_copied(False, **self.posts_write_bridge.callbacks())
+        self._post_start_notice(status)
+        return status
+
+    # ---- 발행 주소 기록 대화(글 흐름 1b) ----
+    def post_record(self):
+        """`발행 주소 기록` — 창 안 대화상자를 연다(복사함에서만, 다른 대화상자가 열려 있거나 쓰는 중이면 열지 않는다). 주소 칸은 비어 있고 아무것도 읽거나 쓰지 않는다."""
+        if self.dialog.is_open:
+            return None
+        if not self.state.posts.open_record():
+            self.notify(T["post_approve_why_restoring"] if self.state.save_blocked() else T["post_busy"])
+            return None
+        form = RecordDialog(self, self.state.posts)
+        self.post_record_form = form
+        self._post_present(form, T["post_rec_title"], self._post_record_discard)
+        form.refresh()
+        form.focus_start()
+        return form
+
+    def _post_record_discard(self):
+        """대화상자가 닫히거나 바뀔 때(어느 길로든) — 주소 칸을 비우고 컨트롤러의 대화 상태를 닫는다. 여러 번 불러도 같다."""
+        form, self.post_record_form = self.post_record_form, None
+        if form is not None:
+            form.discard()
+        self.state.posts.close_record()
+
+    def post_record_start(self):
+        """`기록` — 칸의 주소를 이때 한 번 읽어 컨트롤러가 검사한다(걸리면 서비스를 부르지 않고 칸 옆에 이유). 통과하면 작업 스레드에서 어댑터가 서비스를 부르기 전에 같은 규칙으로 다시 거르고(화면을 건너뛰는 호출도 막는다) 서비스가 자기 기준으로 한 번 더 거른 뒤 기록한다. 실패하면 대화는 열려 있고 칸의 글은 그대로다."""
+        form = self._post_record_live()
+        if form is None:
+            return None
+        status, _detail = self.state.posts.start_record(form.value(), **self.posts_write_bridge.callbacks())
+        form.refresh()
+        if status == "invalid":
+            form.focus_problem()
+        elif status == "started":
+            self.render()
+        else:
+            self._post_start_notice(status)
+        return status
+
+    def post_record_cancel(self):
+        if self._post_record_live() is not None and not self.state.posts.busy:
+            self.close_dialog()
+
     # ---- 읽기 결과 받기 ----
     def _on_posts_loaded(self, data):
         self._guarded(self._show_posts_loaded, data, recover=self._recover_posts)
@@ -418,11 +515,11 @@ class PostFlowMixin:
         if todo.get("reload_list"):
             self.state.posts.start_load(**self.posts_bridge.callbacks())
         self._render_posts()
-        self._restore_focus({"imported": "post:back", "reviewed": "post:approve", "approved": "post:revoke", "revoked": "post:review"}.get(outcome.kind, ""))
+        self._restore_focus({"imported": "post:back", "reviewed": "post:approve", "approved": "post:revoke", "revoked": "post:review", "copied": "post:record", "uncopied": "post:copied", "recorded": "post:copy:url"}.get(outcome.kind, ""))
 
     def _show_posts_write_failed(self, failure):
         todo = self.state.posts.apply_write_failed(failure)
-        for form in (self._post_import_live(), self._post_pages_live()):
+        for form in (self._post_import_live(), self._post_pages_live(), self._post_record_live()):
             if form is not None:
                 form.refresh()                                                        # 이유는 대화 안에 보이고 칸의 글은 그대로다
         self._post_close_finished_forms()
@@ -433,7 +530,7 @@ class PostFlowMixin:
 
     def _post_close_finished_forms(self):
         """컨트롤러가 대화를 이미 닫은(가져오기 성공·검토 시작 성공·낡음) 뒤에도 대화 부품이 남아 있으면 닫는다 — 정리 훅이 칸을 비운다. 대화상자가 이미 다른 것으로 바뀌었으면 훅만 부른다."""
-        finished = (self.post_import_form is not None and not self.state.posts.import_open) or (self.post_pages_form is not None and not self.state.posts.pages_open)
+        finished = (self.post_import_form is not None and not self.state.posts.import_open) or (self.post_pages_form is not None and not self.state.posts.pages_open) or (self.post_record_form is not None and not self.state.posts.record_open)
         if not finished:
             return
         if self.dialog.is_open:
@@ -443,6 +540,8 @@ class PostFlowMixin:
             self._post_import_discard()
         if self.post_pages_form is not None and not self.state.posts.pages_open:
             self._post_pages_discard()
+        if self.post_record_form is not None and not self.state.posts.record_open:
+            self._post_record_discard()
 
     def _recover_posts_write(self, error):
         report_unexpected(type(error), "")

@@ -30,18 +30,20 @@ from .photo_ocr_panel import OcrPanel
 from .photo_ocr_view import OcrBoard
 from .photo_view import FakePhotoProvider
 from .post_fake import FakePostsProvider
+from .post_history_view import HistoryController
 from .posts_view import PostsController
 from .services import GROUP_ORDER, FakeConnectionsProvider, FakeHomeProvider
 from .text import NO_DATA, T, display_text, fmt_demand, fmt_docs
 
 # 실제 Navigation — **완성된 화면만** 둔다(홈·설정). 열 수 있는 화면은 모두 여기 있고 `screens.SCREEN_BUILDERS` 에 만드는 함수가 있다(시험이 같은 열쇠인지 지킨다).
 # 화면이 완성되면 메뉴 한 줄 + 화면 한 줄을 같이 더한다 — 메뉴 개수 상한은 두지 않는다(옛 `MAX_NAV = 6` 은 UI-C1a 에서 없앴다: 운영자 2026-11-06 확인 요청 004 · D-155 ⑤).
-NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("drafts", "nav_draft", "draft"), ("posts", "nav_posts", "check_circle"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"), ("settings", "nav_settings", "settings"))
+NAV = (("home", "nav_home", "home"), ("topics", "nav_topics", "search"), ("drafts", "nav_draft", "draft"), ("posts", "nav_posts", "check_circle"), ("history", "nav_history", "calendar_check"), ("seed", "nav_seed", "sprout"), ("blogs", "nav_blogs", "book"),
+       ("settings", "nav_settings", "settings"))                                    # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
 # 묶음(핵심 작업 / 데이터·관리 / 시스템) — (묶음 열쇠, 이름 문구 열쇠, 그 묶음의 실제 메뉴 열쇠들). **묶음 이름은 그 묶음에 실제 메뉴가 있을 때만 보인다**(`nav_groups`).
-NAV_GROUPS = (("core", "nav_group_core", ("home", "topics", "drafts", "posts")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
+NAV_GROUPS = (("core", "nav_group_core", ("home", "topics", "drafts", "posts", "history")), ("data", "nav_group_data", ("seed", "blogs")), ("system", "nav_group_system", ("settings",)))
 # '다음 단계' 목록 — 아직 만들지 않은 화면의 **이름만**(열 수 없다: 메뉴·화면 이동·단추가 없다). 화면이 완성되면 여기서 빼고 NAV 에 더한다. (열쇠, 이름 문구 열쇠, 아이콘)
 # 의도적 갱신(P4e, D-282): 초안 작성이 실제 메뉴가 되어 발행 기록만 남는다. 글 검토(글 흐름 1a, D-620)도 실제 메뉴가 됐고 발행 기록은 1b 에서 승격한다.
-NEXT_STEPS = (("history", "nav_history", "calendar_check"),)
+NEXT_STEPS = ()                                                                 # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 목록이 비었다 — 다음 단계 상자는 그려지지 않는다(사이드바는 목록이 비면 상자를 만들지 않는다)
 LIST_STATES = ("loading", "normal", "empty", "error", "partial", "offline")
 
 
@@ -184,6 +186,8 @@ class AppState:
         paired_posts = getattr(self.provider, "posts_provider", None)
         self.posts_provider = posts if posts is not None else (paired_posts() if paired_posts else FakePostsProvider())
         self.posts = PostsController(self.posts_provider, self.runner)
+        # 발행 기록(글 흐름 1b, D-649·D-650) — 글 검토와 같은 공급자의 읽기 둘(목록·작업 로그)만 쓴다. 읽기뿐이라 쓰기 틈새(`save_gate`)가 필요 없다
+        self.history = HistoryController(self.posts_provider, self.runner)
         # 사진 정리(사진 연동 2단계, D-499) — 사진 파일을 읽기만 하는 짝 공급자(`ui/photo_adapter.py`). 사진 목록은 초안 컨트롤러(`self.drafts.photos`)가 들고 있고 저장한 초안을 저장·열기·지우기할 때 초안 공급자가 함께 다룬다(3단계). 짝이 없으면(예시 화면·시험) 파일을 읽지 않는 가짜다
         paired_photos = getattr(self.provider, "photos_provider", None)
         self.drafts.photos.provider = photos if photos is not None else (paired_photos() if paired_photos else FakePhotoProvider())
@@ -460,6 +464,11 @@ class AppState:
         failed_at = self.posts.detail_failed_at if self.posts.detail_state == "error" else self.posts.failed_at
         return self.posts.view(diagnostic_text(failure, failed_at) if failure else "")
 
+    def history_view(self):
+        """발행 기록 화면 뷰모델 — 만드는 일은 `HistoryController.view`(순수)가 한다. 읽기 오류(목록·작업 로그)의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
+        failure, log_failure = self.history.failure, self.history.log_failure
+        return self.history.view(diagnostic_text(failure, self.history.failed_at) if failure else "", diagnostic_text(log_failure, self.history.log_failed_at) if log_failure else "")
+
     def blogs_view(self):
         """블로그 관리 화면 뷰모델 — 만드는 일은 `BlogsController.view`(순수)가 한다. 읽기 오류의 진단 정보는 홈과 같은 규칙(오류 코드·시각뿐)이다."""
         failure = self.blogs.failure
@@ -484,10 +493,11 @@ class AppState:
         홈 새 구역 중 따로 읽지 못한 구역의 실패 가운데 남아 있는 것들에서 시각(`failed_at`)이 가장 늦은 것(목록·구역 실패는 시각이 없어 시각이 있는 실패가 있으면 그쪽이 먼저다). 남은 실패가 하나도 없으면 None(나아져서 지워진 실패는 없다).
         **저장·복원·키 등록·삭제처럼 단추를 눌러 하는 일의 실패와 대화상자(참고 글·문체 참고값)의 실패는 코드를 상태로 들고 있지 않아(화면에 안내 줄·고정 문장만 남는다) 여기에 없다** — 그 일이 막힌 뒤에도 None 일 수 있다(한계는 D-541). 코드만 쓰고 실패의 안내 문장(`user_message`)은 읽지 않는다."""
         slots = [(self.failure, self.failed_at), (self.conn_failure, self.conn_failed_at)]
-        for controller in (self.candidates, self.drafts, self.seeds, self.blogs, self.backups, self.posts):
+        for controller in (self.candidates, self.drafts, self.seeds, self.blogs, self.backups, self.posts, self.history):
             if controller is not None:                                                       # 백업은 짝 공급자가 없으면 없다
                 slots.append((getattr(controller, "failure", None), getattr(controller, "failed_at", None)))
         slots.append((self.posts.detail_failure, self.posts.detail_failed_at))                # 글 검토에서 글 하나를 읽지 못한 실패(목록의 실패와 따로 쥔다)
+        slots.append((self.history.log_failure, self.history.log_failed_at))                   # 발행 기록의 작업 로그를 읽지 못한 실패(목록의 실패와 따로 쥔다)
         if getattr(self.drafts, "list_state", "") == "error":                                  # 저장한 초안 목록을 못 읽은 것 — 초안 작성이 따로 들고 있는 읽기 실패(목록 자리의 오류·`다시 시도`)이고 시각은 없다
             slots.append((getattr(self.drafts, "list_failure", None) or object(), None))        # 실패 값이 비었으면 코드를 모르는 실패(빈 값)로 센다
         slots.extend((failure, None) for failure in self._board_failures())

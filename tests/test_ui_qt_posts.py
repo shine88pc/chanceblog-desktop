@@ -155,7 +155,7 @@ class Base(unittest.TestCase):
 class PostsQtMenuTest(Base):
     def test_the_menu_is_in_the_core_group_after_drafts_and_opens_the_screen(self):
         window = self.make(go=False)
-        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])
+        self.assertEqual(list(window.nav_buttons), ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         self.assertEqual(window.nav_buttons["posts"].accessibleName(), "글 검토 메뉴로 이동")
         self.assertEqual(list(window.sidebar.group_titles), ["core", "data", "system"])
         window.nav_buttons["posts"].click()

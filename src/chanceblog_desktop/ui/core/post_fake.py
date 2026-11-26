@@ -15,7 +15,8 @@ from ...errors import AppError
 from ...render.markdown import html_to_markdown
 from . import post_rules as rules
 from .jobs import JobCancelled
-from .posts import (KINDS, NAVER_PLATFORMS, PAGES, PLATFORMS, PlatformStatus, PostDetail, PostFailure, PostOutcome, PostRow, PostsData, PostsProvider, ReviewReport, SimilarityInfo)
+from .post_history import BEFORE_REVIEWED, HistoryData, HistoryEntry, LogEntry, WorkLogData
+from .posts import (KINDS, NAVER_PLATFORMS, PAGES, PLATFORMS, NaverPackageInfo, PlatformStatus, PostDetail, PostFailure, PostOutcome, PostRow, PostsData, PostsProvider, ReviewReport, SimilarityInfo)
 from .text import T
 
 SCENARIOS = ("normal", "empty", "error", "many", "partial", "offline")
@@ -24,6 +25,11 @@ LENGTH_MIN = {"ko": 1000, "en": 1500}                               # 서비스 
 SENTENCE = "에너지 절약은 작은 습관에서 시작되며 매일 조금씩 실천하면 생활비와 환경 모두에 도움이 됩니다. "
 _HTML = re.compile(r"<(/?[A-Za-z][A-Za-z0-9-]{0,40})(?=[\s/>])[^<>]{0,2000}>|<[!?]")
 _PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]+(?:Users|Documents and Settings)[\\/]", re.IGNORECASE)
+EXAMPLE_HISTORY = (HistoryEntry("exh00001", "예시 — 겨울 난방비 줄이는 방법", "naver_a", st.PUBLISHED_MANUAL, 2, "2026-10-21T01:00:00Z", "https://blog.naver.com/exampleid/100000000001", "2026-10-21T03:20:00Z"),
+                   HistoryEntry("exh00002", "예시 — 장바구니 물가 살펴보기", "naver_b", st.READY_TO_COPY, 1, "2026-11-10T06:40:00Z"),
+                   HistoryEntry("exh00003", "예시 — 에너지 절약 습관", "github_pages", st.APPROVED, 3, "2026-11-12T09:15:00Z"))       # 발행 기록 화면의 예시 줄 — 글 검토의 예시 글과 이어져 있지 않다(예시 화면에서 화면이 비어 보이지 않게)
+EXAMPLE_LOG = (LogEntry("2026-11-20T04:12:30Z", "slot", "KeyError", ("example_view.py:120", "example_shell.py:45")), LogEntry("2026-11-21T10:03:01Z", "thread", "ValueError", ("example_job.py:88",)),
+               LogEntry("2026-11-22T23:59:59Z", "qt", "QtCriticalMsg", ("qt.qpa.example", "example.cpp:7")))                      # 작업 로그 카드의 예시 줄(가짜 이름뿐)
 
 
 def sample_text(chars=1500):
@@ -65,10 +71,11 @@ class FakePostsProvider(PostsProvider):
     """메모리에서만 일하는 가짜 공급자 — 가져오기·검토·승인·승인 취소도 메모리 안에서만 바뀐다. `fail` 은 이름(메서드)마다 그대로 던질 실패(시험), `profiles` 는 네이버 프로필이 있는 블로그들이다."""
     sample = True
 
-    def __init__(self, scenario="normal", delay=0.0, *, profiles=NAVER_PLATFORMS, fail=None):
+    def __init__(self, scenario="normal", delay=0.0, *, profiles=NAVER_PLATFORMS, fail=None, history_examples=None):
         if scenario not in SCENARIOS:
             raise ValueError(scenario)
         self.scenario, self.delay, self.profiles, self.fail = scenario, delay, tuple(profiles), dict(fail or {})
+        self.history_examples = scenario not in ("empty", "error") if history_examples is None else bool(history_examples)         # 발행 기록·작업 로그의 예시 줄을 더 보이나(글 검토의 예시 글과는 이어져 있지 않다)
         self.calls = []
         self.projects = {}
         self.tick = 0
@@ -126,11 +133,20 @@ class FakePostsProvider(PostsProvider):
             raise PostFailure(T["post_error_desc"], code="SAMPLE_POSTS_UNREADABLE", kind="corrupt")
         return PostsData(self._rows(), tuple(self.profiles), "ok", True, self.scenario == "offline")
 
+    def _package(self, project, platform):
+        """복사 준비됨·복사함인 네이버 블로그의 복사용 패키지 — 실제 서비스(`naver_flow`)와 같은 모양(제목·본문·태그·전체 글)이고 **그 블로그의 것만** 담는다. 키 모양이 든 글이면 그 복사 열쇠가 `blocked` 에 든다."""
+        title, body, tags = project.title, project.source_content, "#예시 #" + ("에이" if platform == NAVER_PLATFORMS[0] else "비")          # 블로그마다 태그가 달라 A 와 B 의 패키지가 섞이면 시험이 알아본다
+        every = f"[제목]\n{title}\n\n[본문]\n{body}\n\n[태그]\n{tags}\n\n[발행 전 체크리스트]\n- [ ] 미리보기에서 제목과 본문을 처음부터 끝까지 읽습니다\n"
+        blocked = tuple(kind for kind, text in (("title", title), ("body", body), ("tags", tags), ("all", every)) if rules.copy_blocked(text))
+        return NaverPackageInfo(platform, title, body, tags, every, len("".join(body.split())), body.count("\n\n") + 1, len(project.assets), "", (), ("- [ ] 미리보기에서 제목과 본문을 처음부터 끝까지 읽습니다",), blocked, True)
+
     def _detail(self, project):
-        platforms = tuple(PlatformStatus(key, project.variants[key].status, project.variants[key].rendered_revision, bool(project.variants[key].rendered), project.variants[key].error_code or "")
+        variants = project.variants
+        platforms = tuple(PlatformStatus(key, variants[key].status, variants[key].rendered_revision, bool(variants[key].rendered), variants[key].error_code or "", variants[key].published_url or "", variants[key].published_at or "")
                           for key in PLATFORMS)
+        packages = tuple(self._package(project, key) for key in NAVER_PLATFORMS if variants[key].status in rules.COPYABLE)
         return PostDetail(project.project_id, project.title, project.revision, project.created_at, project.updated_at, platforms,
-                          rules.build_preview(project.source_content, refs=len(project.references), assets=len(project.assets)), True)
+                          rules.build_preview(project.source_content, refs=len(project.references), assets=len(project.assets)), True, None, packages)
 
     def _project(self, project_id):
         project = self.projects.get(project_id)
@@ -198,8 +214,10 @@ class FakePostsProvider(PostsProvider):
         reasons, warnings = fake_gates(project.source_content, lang) if platform == PAGES else ((), ())
         similarity = self._similarity(project, platform)
         summary = (T["post_summary_pages"].format(category=rules.shown(request.pages.category, 60), lang=T["post_lang_" + lang], kb=max(1, len(project.source_content.encode("utf-8")) // 1024)),) if platform == PAGES             else (T["post_summary_naver"].format(title=rules.shown(project.title, 60), chars=f"{len(project.source_content):,}", paragraphs=project.source_content.count(chr(10) * 2) + 1),)
+        pages = request.pages if platform == PAGES else None
         report = ReviewReport(project.project_id, platform, project.revision, project.variants[platform].status, not reasons, rules.unique_codes(reasons), tuple(rules.shown(item, 400) for item in reasons),
-                              warnings, summary, similarity, rules.health_of(project.title, project.source_content), rules.secret_spots(project.title, project.source_content, project.references, project.assets), True)
+                              warnings, summary, similarity, rules.health_of(project.title, project.source_content, rules.pages_health_extra(pages)),
+                              rules.secret_spots(project.title, project.source_content, project.references, project.assets), True, pages)
         return PostOutcome("reviewed", self._detail(project), report)
 
     def _similarity(self, project, platform):
@@ -221,13 +239,13 @@ class FakePostsProvider(PostsProvider):
         variant = project.variant(platform)
         if variant.status != st.REVIEW_REQUIRED:
             raise PostFailure(T["post_fail_state"], code="STATUS_TRANSITION_INVALID", kind="state")
-        if rules.text_blocks(project.title, project.source_content, project.references, project.assets):
+        if rules.text_blocks(project.title, project.source_content, project.references, project.assets, rules.pages_health_extra(request.pages) if platform == PAGES else ()):
             raise PostFailure(T["post_fail_blocked"], code="REVIEW_BLOCKED", kind="gate")
         lang = self.stored.get((project.project_id, platform), "ko")
         if platform == PAGES and fake_gates(project.source_content, lang)[0]:
             raise PostFailure(T["post_fail_gate"], code="CHECK_FAILED", kind="gate")
         similarity = self._similarity(project, platform)
-        if similarity is not None and similarity.blocks:
+        if similarity is not None and similarity.blocks and request.similarity_ack is not True:          # 알고도 승인(센 확인창을 거친 요청)만 유사도 막힘을 넘는다 — 서비스의 `similarity_approved` 와 같다
             raise PostFailure(T["post_fail_similarity"], code="NAVER_SIMILARITY_HIGH", kind="similarity")
         try:
             project.transition(platform, st.APPROVED if platform == PAGES else st.READY_TO_COPY, now=self._next_stamp())
@@ -244,6 +262,47 @@ class FakePostsProvider(PostsProvider):
         except AppError:
             raise PostFailure(T["post_fail_state"], code="STATUS_TRANSITION_INVALID", kind="state") from None
         return PostOutcome("revoked", self._detail(project))
+
+    # ---- 글 흐름 1b: 복사 표시·발행 주소 기록·발행 기록·작업 로그 ----
+    def _naver_project(self, project_id, platform, wanted):
+        """네이버 블로그 하나의 변형이 `wanted` 상태일 때만 글을 돌려준다(아니면 상태 실패) — 서비스의 한 칸 이동 규칙을 흉내 낸다."""
+        project = self._project(project_id)
+        self._guard_platform(platform)
+        if platform not in NAVER_PLATFORMS or project.variants[platform].status != wanted:
+            raise PostFailure(T["post_fail_state"], code="STATUS_TRANSITION_INVALID", kind="state")
+        return project
+
+    def mark_copied(self, request, progress, cancelled):
+        self._enter("mark_copied", cancelled)
+        wanted, target = (st.READY_TO_COPY, st.COPY_COMPLETED) if request.copied else (st.COPY_COMPLETED, st.READY_TO_COPY)
+        project = self._naver_project(request.project_id, request.platform, wanted)
+        project.transition(request.platform, target, now=self._next_stamp())
+        return PostOutcome("copied" if request.copied else "uncopied", self._detail(project))
+
+    def record_published(self, request, progress, cancelled):
+        self._enter("record_published", cancelled)
+        project = self._naver_project(request.project_id, request.platform, st.COPY_COMPLETED)
+        refused = rules.address_failure(request.url)                         # 실제 어댑터와 같은 함수 — 서비스를 부르기 전에 화면과 같은 규칙으로 거절한다(재작업 1)
+        if refused is not None:
+            raise refused
+        project.transition(request.platform, st.PUBLISHED_MANUAL, published_url=request.url.strip(), now=self._next_stamp())
+        return PostOutcome("recorded", self._detail(project))
+
+    def load_history(self, progress, cancelled):
+        self._enter("load_history", cancelled)
+        if self.scenario == "error":
+            raise PostFailure(T["post_error_desc"], code="SAMPLE_POSTS_UNREADABLE", kind="corrupt")
+        rows = [HistoryEntry(project.project_id, project.title, key, variant.status, project.revision, project.updated_at, variant.published_url or "", variant.published_at or "")
+                for project in self.projects.values() for key in PLATFORMS for variant in (project.variants[key],) if variant.status not in BEFORE_REVIEWED]
+        if self.history_examples:
+            rows += list(EXAMPLE_HISTORY)
+        unreadable = 1 if self.scenario == "partial" else 0
+        return HistoryData(tuple(rows), unreadable, "ok", True, self.scenario == "offline")
+
+    def load_work_log(self, progress, cancelled):
+        self._enter("load_work_log", cancelled)
+        lines = tuple(reversed(EXAMPLE_LOG)) if self.history_examples else ()
+        return WorkLogData(lines, 1 if lines else 0, 0, 0, True)
 
 
 __all__ = ["FakePostsProvider", "SCENARIOS", "fake_gates", "sample_text"]

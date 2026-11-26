@@ -109,7 +109,7 @@ class Sidebar(QFrame):
         card = QFrame()
         card.setObjectName("brandcard")
         inner = QVBoxLayout(card)
-        inner.setContentsMargins(K.SPACE["4"], K.SPACE["2"], K.SPACE["4"], K.SPACE["2"])
+        inner.setContentsMargins(K.SPACE["4"], K.SPACE["1"], K.SPACE["4"], K.SPACE["1"])             # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 여덟째 메뉴가 되어(+44) 다음 단계 상자를 없애도 최소 높이가 493 으로 경보 492 를 1 넘었다 — 시험의 경보는 올리지 않고 이 카드의 위아래 여백만 8 에서 4 로 줄여 485 로 맞췄다(메뉴 줄 높이·글자·아이콘은 그대로)
         inner.setSpacing(K.SPACE["1"])
         inner.addWidget(theme.IconWidget("sprout", theme.colors()["success"], 24), 0, Qt.AlignHCenter)
         name = UI.label(T["brand_version"], "caption", wrap=True)

@@ -157,7 +157,8 @@ def review_card(shell, vm):
     bar = QHBoxLayout()
     bar.setSpacing(K.SPACE["2"])
     frame.buttons = {}
-    for name, handler, focus in (("review", lambda: shell.post_review(panel["platform"]), "post:review"), ("approve", shell.post_approve, "post:approve"), ("revoke", shell.post_revoke, "post:revoke")):
+    for name, handler, focus in (("review", lambda: shell.post_review(panel["platform"]), "post:review"), ("approve", shell.post_approve, "post:approve"), ("approve_similarity", shell.post_approve_similarity, "post:approve-similarity"),
+                                 ("revoke", shell.post_revoke, "post:revoke")):
         action = panel[name]
         if not action["visible"]:
             continue
@@ -171,9 +172,14 @@ def review_card(shell, vm):
         bar.addWidget(button)
     bar.addStretch(1)
     inner.addLayout(bar)
-    for text in (panel["review"]["note"] if panel["review"]["visible"] else "", panel["approve"]["why"] if panel["approve"]["visible"] else ""):
+    for text in (panel["review"]["note"] if panel["review"]["visible"] else "", panel["approve"]["why"] if panel["approve"]["visible"] else "", panel["approve_similarity"]["note"]):
         if text:
             inner.addWidget(UI.label(text, "caption", wrap=True))
+    frame.package = None
+    if panel["package"] is not None:
+        from .post_package_parts import package_card                                  # 늦게 가져온다 — 그 파일이 이 파일의 대화상자 틀을 가져온다(서로 가져오지 않게)
+        frame.package = package_card(shell, panel["package"])
+        inner.addWidget(frame.package)
     result = panel["result"]
     if result is not None:
         inner.addWidget(_result(result))

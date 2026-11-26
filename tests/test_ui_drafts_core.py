@@ -1198,12 +1198,12 @@ class LossGuardsTest(unittest.TestCase):
         self.assertEqual(state.drafts.state, "empty")
 
     def test_the_menu_has_the_draft_screen_after_the_topics_and_the_next_steps_keep_only_the_history(self):
-        self.assertEqual([item[0] for item in app_state.NAV], ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])                  # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 핵심 작업 묶음 끝(초안 작성 다음)에 올랐다
+        self.assertEqual([item[0] for item in app_state.NAV], ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])                  # 의도적 갱신(글 흐름 1a, D-633): 글 검토 메뉴가 핵심 작업 묶음 끝(초안 작성 다음)에 올랐다 / 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
         self.assertEqual(dict((item[0], item[1]) for item in app_state.NAV)["drafts"], "nav_draft")
         self.assertEqual(T["nav_draft"], "초안 작성")
-        self.assertEqual(app_state.NAV_GROUPS[0], ("core", "nav_group_core", ("home", "topics", "drafts", "posts")))
-        self.assertEqual([item[0] for item in app_state.NEXT_STEPS], ["history"])
-        self.assertEqual([key for _group, _label, items in app_state.nav_groups() for key, _name, _icon in items], ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])
+        self.assertEqual(app_state.NAV_GROUPS[0], ("core", "nav_group_core", ("home", "topics", "drafts", "posts", "history")))  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
+        self.assertEqual([item[0] for item in app_state.NEXT_STEPS], [])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 실제 메뉴가 되어 다음 단계 목록이 비었다
+        self.assertEqual([key for _group, _label, items in app_state.nav_groups() for key, _name, _icon in items], ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
 
 
 class CopyGateTest(unittest.TestCase):

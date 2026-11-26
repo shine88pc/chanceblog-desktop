@@ -10,7 +10,7 @@ from ..check import similarity
 from ..content.profiles import KEYS as NAVER_KEYS
 from ..errors import AppError
 from ..render.pages import render_pages_post
-from . import naver_flow
+from . import naver_flow, naver_profiles
 from .gate import GateReport, require_clean_front_values, run_gates
 from .projects import resolve_id
 
@@ -119,7 +119,7 @@ def preview_naver(ctx, text_id, options=None):
     items, missing = [], []
     for key in NAVER_KEYS:
         try:
-            profile = ctx.settings.naver_profile(key)
+            profile = naver_profiles.profile_for(ctx, key)          # 설정 파일의 프로필이 먼저, 없으면 블로그 관리에 등록한 것에서 합쳐 읽는다(글 흐름 1b, D-648 — 읽기만)
         except AppError as error:
             if error.code != "NAVER_PROFILE_MISSING":
                 raise

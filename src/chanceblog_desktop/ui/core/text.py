@@ -183,6 +183,10 @@ from .update_text import UPDATE_T  # noqa: E402
 
 T.update(UPDATE_T)                                                   # 설정 화면의 업데이트 카드(UPDATE 갈래, 결정 D-790)의 문구도 새 파일(`update_text.py`)에 따로 두고 합친다
 
+from .post_history_text import HIST_T  # noqa: E402
+
+T.update(HIST_T)                                                     # 발행 기록 화면·작업 로그 카드(글 흐름 1b, 결정 D-649·D-650)의 문구도 새 파일(`post_history_text.py`)에 따로 두고 합친다
+
 FORBIDDEN = ("상위노출", "노출 확률", "검색 1위", "수익 보장", "수익보장", "보장")      # 화면 글에 쓰지 않는 표현(시험이 확인)
 
 
