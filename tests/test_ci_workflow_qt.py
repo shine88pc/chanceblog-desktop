@@ -3,10 +3,11 @@
 
 지키는 것(`qt_problems` 가 문제 글을 모으고, 진짜 파일은 빈 목록이어야 하며, 일부러 틀리게 만든 사본은 모두 걸려야 한다):
   1) 잡은 `test`(오늘 그대로) 다음에 `qt` 하나 — 최상위 키·권한(`contents: read` 한 줄, 잡 권한 없음)·비밀 0.
-  2) `qt` 잡: 윈도(`windows-latest`)·파이썬 `'3.12'` 고정(행렬은 조각 하나뿐이고 정확히 열둘 — D-717), 작업 수준 `if:` 한 줄(글자 그대로 `QT_IF` — 병합 가지 `ai/claude/M…` 와 main 에서만 돈다, D-718), `fail-fast: false`, 시간 한도 **정확히 40분**(`test` 잡도 — 하한 40분은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한 40분은 `auto-pr.yml` 의 최대 대기 60분(`AUTOPR_MAX_WAIT_SECONDS` 3600 초)에서 줄 서는 시간 20분을 뺀 값이라 그보다 길면 늦게 시작한 조각이 끝나기 전에 병합 문턱이 먼저 포기한다 — 독립 검증 R1 은 대기가 40분이던 때 이 상한을 지켰고 D-719 가 대기를 60분으로 올렸다), 이름이 `Qt 시험 (` 으로 시작해 기존 이름 시험과 안 부딪히고 조각 총수가 환경 변수와 같다.
+  2) `qt` 잡: 윈도(`windows-latest`)·파이썬 `'3.12'` 고정(행렬은 조각 하나뿐이고 정확히 열둘 — D-717), 작업 수준 `if:` 한 줄(글자 그대로 `QT_IF` — 병합 가지 `ai/claude/M…` 와 main 에서만 돈다, D-718), `fail-fast: false`, 시간 한도 **잡마다 정확히**(`test` 잡 40분 — 하한 40분은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한 40분은 열두 칸이 글자 그대로 40분이라는 것(D-220). `qt` 잡 60분 — 4차 진단에서 가장 느린 조각이 설치까지 약 33분(한도 40분의 82%)이었고 교차 평가의 최악이 약 39분이라 40분은 빠듯해 운영자 확인 046 ① 이 올렸다(D-717). 상한 60분은 `auto-pr.yml` 의 최대 대기 60분(`AUTOPR_MAX_WAIT_SECONDS` 3600 초)과 같은 값이라 그보다 길면 늦게 끝나는 조각이 있어도 병합 문턱이 먼저 포기한다 — 독립 검증 R1 은 대기가 한도와 같던 때 이 상한을 지켰고 D-719 는 대기를 60분으로 올려 '대기 = 한도 40분 + 줄 서는 20분' 으로 했으며 화면 칸 한도를 60분으로 올리자 다시 '대기 = 한도' 가 됐다), 이름이 `Qt 시험 (` 으로 시작해 기존 이름 시험과 안 부딪히고 조각 총수가 환경 변수와 같다.
   3) 단계 넷: 가져오기·파이썬(둘 다 `test` 잡과 **같은 SHA**, 이 파일의 액션은 그 둘뿐)·`python scripts/ci_qt_setup.py`(환경·옵션 없음)·`python scripts/ci_shard.py`(환경 변수 정확히 여섯: PYTHONUTF8·CI_SHARD·CI_SHARD_TOTAL·CI_WEIGHTS=qt·CI_REQUIRE_QT=1·QT_QPA_PLATFORM=offscreen). 단계마다 맨 위 키 집합도 글자 그대로 못박는다(가져오기·파이썬은 `uses`·`with`, 설치는 `name`·`run`, 시험은 `name`·`env`·`run` — `shell`·`working-directory`·단계 수준 `timeout-minutes`·`id` 같은 낯선 키가 붙으면 빨개진다 — 독립 검증 R3, `test` 잡의 세 단계도 같다).
   4) `test` 잡의 시험 단계에는 `CI_REQUIRE_QT`·`CI_WEIGHTS`·`QT_QPA_PLATFORM` 이 없다(열두 칸은 Qt 건너뜀이 정상이고 기본 무게 표를 쓴다) — 그리고 `continue-on-error`·`include:`·`exclude:`·잡·파일 수준 `env:` 가 어디에도 없고,
      `if:` 는 파일 전체에서 `qt` 잡 수준의 정해진 한 줄뿐이다(`test` 잡·단계에는 없다 — 열두 칸은 모든 가지에서 돈다). D-718 앞에서는 `if:` 가 어디에도 없어야 했다 — 그 금지를 '정해진 한 줄만' 으로 좁힌 것이지 푼 것이 아니다.
+     그 한 줄은 줄 끝 주석·뒤 공백 없이 줄 전체가 글자 그대로여야 한다(독립 검증 Q 권고-5 — `test_repo_layout`·골든·`test_ci_shard` 와 같은 잣대). 가지 이름 비교는 GitHub 식이 대소문자를 가리지 않으므로 평가기도 가리지 않는다(독립 검증 S 권고-3, D-718 ⑥).
 """
 import re
 import unittest
@@ -17,16 +18,16 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 EXPECTED_TOP = ["name", "on", "permissions", "concurrency", "jobs"]
 ALLOWED_ACTIONS = {"actions/checkout", "actions/setup-python"}
 QT_ENV = {"PYTHONUTF8": "'1'", "CI_SHARD": "${{ matrix.shard }}", "CI_WEIGHTS": "qt", "CI_REQUIRE_QT": "'1'", "QT_QPA_PLATFORM": "offscreen"}       # CI_SHARD_TOTAL 은 따로(조각 총수)
-QT_SHARDS = 12                      # D-717: 표(`scripts/ci_shard.py` 의 QT_WEIGHTS)로 나눈 조각 하나가 한도 40분의 약 60% 안에 끝나는 가장 작은 수(docs/CI_QT.md)
+QT_SHARDS = 12                      # D-717: 조각 열둘은 승인된 모양이다 — 4차 진단 뒤에도 그대로다(조각을 13–14 로 늘려도 표만으로는 시간 흔들림이 안 사라져 시간 한도를 60분으로 올렸다, docs/CI_QT.md 12절)
 QT_IF = "github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')"           # D-718: 병합 가지와 main 에서만 돈다 — `NO-MERGE-…`·`desktop/…` 같은 작업 중 가지에서는 건너뛴다
 QT_IF_LINE = "    if: " + QT_IF + "\n"
 FORBIDDEN_WORDS = ("continue-on-error", "include:", "exclude:", "pull_request")        # `if:` 는 아래 qt_problems 가 따로 — 파일 전체에서 qt 잡 수준의 정해진 한 줄뿐
-# 시간 한도(분): 하한은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한은 `auto-pr.yml` 의 최대 대기(60분 — AUTOPR_MAX_WAIT_SECONDS 3600 초)에서 줄 서는 시간(QUEUE_MINUTES)을 뺀 값이다 —
-# 병합 가지에서는 열두 칸에 Qt 칸 열두 조각이 더해져 동시 작업 20개 한도 때문에 일부 조각이 줄을 서서 최대 20분 늦게 시작할 수 있다. 한도가 40분보다 길면 늦게 시작한 조각이 끝나기 전에 병합 문턱이 먼저 포기한다. 그래서 값은 정확히 40 하나다
-# (독립 검증 R1 은 최대 대기가 한도와 같던 때 이 상한을 지켰다 — D-719 가 대기를 60분으로 올렸다. 관계는 RealWorkflowTest 가 auto-pr.yml 을 읽어 지킨다).
-TIMEOUT_MINUTES = 40
-QUEUE_MINUTES = 20                  # D-719: 줄 서서 늦게 시작하는 시간의 여유 — 자동 PR 의 최대 대기 = 작업 시간 한도 + 이 값
-MAX_WAIT_MINUTES = TIMEOUT_MINUTES + QUEUE_MINUTES
+# 시간 한도(분) — 잡마다 정확히 이 값이다. `test` 잡(열두 칸)은 40분: 하한은 느린 윈도 칸이 한도에 닿아 빨개지지 않을 여유(D-28·D-176), 상한은 글자 그대로 40분이라는 것(D-220).
+# `qt` 잡은 60분: 4차 진단(2026-11-26)에서 가장 느린 조각이 설치까지 약 33분(한도 40분의 82%)이었고 교차 평가의 최악이 약 39분이라 40분은 빠듯해 운영자 확인 046 ① 이 올렸다(D-717).
+# 상한 60분은 `auto-pr.yml` 의 최대 대기 60분(AUTOPR_MAX_WAIT_SECONDS 3600 초)과 같은 값이라 그보다 길면 늦게 끝나는 조각이 있어도 병합 문턱이 먼저 포기한다 — 관계는 RealWorkflowTest 가 auto-pr.yml 을 읽어 지킨다.
+# (D-719 때는 대기 = 작업 한도 40분 + 줄 서는 20분이었고, 한도 인상이 그 줄 서기 여유를 가져갔다. 한도에 닿는 칸은 칸이 빨강이라 어차피 PR 이 필요 없다 — docs/CI_QT.md 14절.)
+TIMEOUT_MINUTES = {"test": 40, "qt": 60}
+MAX_WAIT_MINUTES = 60               # D-719 + 확인 046 ①: 자동 PR 의 최대 대기 = 화면 칸(qt 잡)의 시간 한도 — 둘 다 정확히 60분
 # 단계마다 맨 위 키 집합(정렬한 목록) — `shell`·`working-directory`·단계 수준 `timeout-minutes`·`id` 같은 낯선 키가 붙어도 통과하던 틈(독립 검증 R3)을 닫는다.
 STEP_KEYS = {"가져오기": ["uses", "with"], "파이썬": ["uses", "with"], "설치": ["name", "run"], "시험": ["env", "name", "run"]}
 STEP_KINDS = {"test": ("가져오기", "파이썬", "시험"), "qt": ("가져오기", "파이썬", "설치", "시험")}
@@ -156,6 +157,9 @@ def qt_problems(text):
             problems.append(f"금지된 낱말: {word}")
     if [line for line in lines if "if:" in line] != ["    if: " + QT_IF]:
         problems.append(f"if: 줄은 파일 전체에서 qt 잡 수준(들여쓰기 네 칸)의 한 줄뿐이고 글자 그대로 `{QT_IF}` 여야 한다(단계 수준 if·다른 조건·진단 가지 이름 끼우기·test 잡의 if 금지): {[line for line in lines if 'if:' in line]}")
+    raw_ifs = [line for line in text.replace("\r\n", "\n").split("\n") if re.match(r"^\s*(?:-\s+)?if:", line)]
+    if raw_ifs != ["    if: " + QT_IF]:
+        problems.append(f"if: 줄은 파일의 줄 그대로(줄 끝 주석·뒤 공백 없이) 정확히 `    if: {QT_IF}` 한 줄뿐이어야 한다 — 값이 같아도 줄 전체를 글자 그대로 견준다(독립 검증 Q 권고-5): {raw_ifs}")
     if [line for line in lines if re.match(r"^(env|defaults|services|container):", line) or re.match(r"^    (env|defaults|services|container|permissions|needs):", line)]:
         problems.append("파일·잡 수준 env·defaults·services·container·permissions·needs 가 있다")
     jobs = jobs_of(lines)
@@ -163,11 +167,12 @@ def qt_problems(text):
         problems.append(f"잡은 test 다음에 qt 하나여야 한다: {list(jobs)}")
         return problems
     for name, job in jobs.items():
-        minutes = job_value(job, "timeout-minutes")
-        if not (minutes or "").isdigit() or int(minutes) < TIMEOUT_MINUTES:
-            problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분 이상이어야 한다({minutes})")
-        elif int(minutes) > TIMEOUT_MINUTES:
-            problems.append(f"{name}: 시간 한도가 {TIMEOUT_MINUTES}분을 넘으면 안 된다 — auto-pr.yml 의 최대 대기 {MAX_WAIT_MINUTES}분에서 줄 서는 시간 {QUEUE_MINUTES}분을 뺀 값보다 길면 늦게 시작한 조각이 끝나기 전에 병합 문턱이 먼저 포기한다({minutes})")
+        minutes, wanted = job_value(job, "timeout-minutes"), TIMEOUT_MINUTES[name]
+        if not (minutes or "").isdigit() or int(minutes) < wanted:
+            problems.append(f"{name}: 시간 한도가 {wanted}분 이상이어야 한다({minutes})")
+        elif int(minutes) > wanted:
+            why = (f"auto-pr.yml 의 최대 대기 {MAX_WAIT_MINUTES}분과 같은 값이라 더 길면 늦게 끝나는 조각이 있어도 병합 문턱이 먼저 포기한다" if name == "qt" else "열두 칸 잡은 글자 그대로 40분이다(D-220)")
+            problems.append(f"{name}: 시간 한도가 {wanted}분을 넘으면 안 된다 — {why}({minutes})")
         if "      fail-fast: false" not in job:
             problems.append(f"{name}: fail-fast: false 가 없다")
     test, qt = jobs["test"], jobs["qt"]
@@ -196,7 +201,7 @@ def qt_problems(text):
     if count < 1 or shard_list(qt) != list(range(1, count + 1)):
         problems.append(f"qt 잡 조각 목록 {shard_list(qt)} 이 1..CI_SHARD_TOTAL({total}) 과 다르다")
     if count != QT_SHARDS:
-        problems.append(f"qt 잡의 조각 수가 열둘이 아니다({count}) — 조각 하나가 시간 한도 40분의 약 60% 안에 끝나는 값이다(D-717, docs/CI_QT.md). 바꾸면 이 시험과 골든 표(tests/workflow_golden.py)와 문서를 함께 고친다")
+        problems.append(f"qt 잡의 조각 수가 열둘이 아니다({count}) — 열둘은 승인된 모양이다(조각을 늘려도 표만으로는 시간 흔들림이 안 사라져 시간 한도를 60분으로 올렸다, D-717, docs/CI_QT.md 12절). 바꾸면 이 시험과 골든 표(tests/workflow_golden.py)와 문서를 함께 고친다")
     if job_value(qt, "name") != f"Qt 시험 (windows-latest, Python 3.12, 조각 ${{{{ matrix.shard }}}}/{count})":
         problems.append(f"qt 잡 이름이 규칙과 다르다: {job_value(qt, 'name')}")
     if step_value(qt_steps[3], "name") != f"Qt 시험 실행(조각 ${{{{ matrix.shard }}}}/{count})":
@@ -225,16 +230,21 @@ def qt_problems(text):
     return problems
 
 
+def fold(text):
+    """GitHub 식의 문자열 비교(`==`·`startsWith`)는 대소문자를 가리지 않는다(GitHub 문서 기준 — 글자마다 대문자로 바꿔 견주는 방식). 이 시험의 평가기도 같게 견준다(D-718 ⑥, 독립 검증 S 권고-3)."""
+    return "".join(char.upper() if len(char.upper()) == 1 else char for char in text)
+
+
 def runs_on(expression, ref):
-    """`if` 식(이 시험이 아는 두 꼴 — `github.ref == '글'` 과 `startsWith(github.ref, '글')` — 을 ` || ` 로 이은 것)이 `ref` 에서 참인가. 모르는 꼴이면 AssertionError(식을 추측해서 통과시키지 않는다)."""
+    """`if` 식(이 시험이 아는 두 꼴 — `github.ref == '글'` 과 `startsWith(github.ref, '글')` — 을 ` || ` 로 이은 것)이 `ref` 에서 참인가(대소문자는 가리지 않는다 — `fold`). 모르는 꼴이면 AssertionError(식을 추측해서 통과시키지 않는다)."""
     result = False
     for atom in expression.split(" || "):
         equal = re.fullmatch(r"github\.ref == '([^']*)'", atom)
         prefix = re.fullmatch(r"startsWith\(github\.ref, '([^']*)'\)", atom)
         if equal:
-            result = result or ref == equal.group(1)
+            result = result or fold(ref) == fold(equal.group(1))
         elif prefix:
-            result = result or ref.startswith(prefix.group(1))
+            result = result or fold(ref).startswith(fold(prefix.group(1)))
         else:
             raise AssertionError("이 시험이 모르는 if 식의 꼴: " + repr(atom))
     return result
@@ -270,17 +280,24 @@ class RealWorkflowTest(unittest.TestCase):
             self.assertNotIn(word, "\n".join(code_lines(self.text)), word)
 
     def test_the_job_time_limit_is_exactly_the_max_wait_of_the_auto_pr_workflow(self):
-        """자동 PR 의 최대 대기(AUTOPR_MAX_WAIT_SECONDS)는 작업 시간 한도 40분에 줄 서는 시간 20분을 더한 60분(3600 초)이고, 그 작업의 시간 한도는 대기에 마지막 걸음 몫 5분을 더한 65분이다(D-719). 위 설명이 낡아 가지 않도록 그 파일을 읽어 지킨다.
-        이름의 'exactly_the_max_wait' 는 옛 관계(둘이 같다 — 독립 검증 R1)의 흔적이다 — 이름을 바꾸면 시험 id 가 사라지므로 그대로 두고, 같다는 단언은 '더 길고 정확히 20분 차이'(더 엄격)로 바꿨다."""
+        """자동 PR 의 최대 대기(AUTOPR_MAX_WAIT_SECONDS)는 화면 칸(`qt` 잡)의 시간 한도와 같은 60분(3600 초)이고, 그 작업의 시간 한도는 대기에 마지막 걸음 몫 5분을 더한 65분이다(D-719 + 운영자 확인 046 ①). 위 설명이 낡아 가지 않도록 그 파일을 읽어 지킨다.
+        이름의 'exactly_the_max_wait' 는 처음의 관계(둘이 같다 — 독립 검증 R1)와 같다: D-719 때는 '대기 = 한도 40분 + 줄 서는 20분' 이었고(그때 이 단언은 '정확히 20분 더 길다'), 화면 칸 한도를 60분으로 올리자 다시 둘이 같다 — 줄 서기 여유는 한도 인상이 가져갔다.
+        숫자는 모두 정확히 못박는다(대기 3600초·한도 60분과 40분·자동 PR 작업 65분) — 어느 하나를 바꾸면 이 관계를 의식적으로 다시 정하게 된다."""
         auto_pr = (ROOT / ".github" / "workflows" / "auto-pr.yml").read_text(encoding="utf-8")
         found = re.findall(r"^\s*AUTOPR_MAX_WAIT_SECONDS:\s*'(\d+)'\s*$", auto_pr, re.M)
         self.assertEqual(len(found), 1, "auto-pr.yml 에 최대 대기 시간 줄이 정확히 하나여야 한다")
         self.assertEqual(int(found[0]), MAX_WAIT_MINUTES * 60)
-        self.assertEqual(int(found[0]) - TIMEOUT_MINUTES * 60, QUEUE_MINUTES * 60, "대기는 작업 시간 한도보다 정확히 줄 서는 시간만큼 길다")
+        self.assertEqual(int(found[0]), TIMEOUT_MINUTES["qt"] * 60, "대기는 화면 칸의 시간 한도와 같다(둘 다 정확히 60분)")
         job_limit = re.findall(r"^    timeout-minutes:\s*(\d+)\s*$", auto_pr, re.M)
         self.assertEqual(job_limit, [str(MAX_WAIT_MINUTES + 5)], "자동 PR 작업의 시간 한도는 최대 대기에 마지막 걸음 몫 5분을 더한 값")
         for name, job in jobs_of(code_lines(self.text)).items():
-            self.assertEqual(job_value(job, "timeout-minutes"), str(TIMEOUT_MINUTES), name)
+            self.assertEqual(job_value(job, "timeout-minutes"), str(TIMEOUT_MINUTES[name]), name)
+
+    def test_each_job_has_its_own_exact_time_limit_forty_for_the_twelve_cells_and_sixty_for_the_qt_chamber(self):
+        """운영자 확인 046 ①(2026-11-26): 화면 칸만 60분으로 올랐다 — 열두 칸(`test` 잡)은 글자 그대로 40분이다. 두 값이 서로 바뀌거나 같아지면 빨개진다."""
+        limits = {name: job_value(job, "timeout-minutes") for name, job in jobs_of(code_lines(self.text)).items()}
+        self.assertEqual(limits, {"test": "40", "qt": "60"})
+        self.assertEqual({name: int(value) for name, value in limits.items()}, TIMEOUT_MINUTES)
 
     def test_every_step_of_both_jobs_has_exactly_the_keys_the_check_names(self):
         jobs = jobs_of(code_lines(self.text))
@@ -324,6 +341,9 @@ class RealWorkflowTest(unittest.TestCase):
             "refs/heads/main": True, "refs/heads/ai/claude/M133-v1ciqt-trial2": True, "refs/heads/ai/claude/M1234-four-digits": True,
             "refs/heads/ai/claude/NO-MERGE-v1ciqt2-wip": False, "refs/heads/ai/claude/NO-MERGE-diag-qtt3": False, "refs/heads/desktop/something": False,
             "refs/heads/mainx": False, "refs/heads/dev": False, "refs/tags/v1.0.0": False, "refs/pull/1/merge": False,
+            # GitHub 식의 비교는 대소문자를 가리지 않는다(D-718 ⑥) — 소문자 m 으로 시작하는 병합 가지와 대문자 MAIN 도 돈다. 다른 글자(N·no-merge)는 대소문자를 가려도 안 돈다
+            "refs/heads/ai/claude/m134-secsep-split-keys": True, "refs/heads/AI/CLAUDE/M1-X": True, "REFS/HEADS/MAIN": True, "refs/heads/Main": True,
+            "refs/heads/ai/claude/n133-x": False, "refs/heads/ai/claude/no-merge-x": False, "refs/heads/ai/codex/m1-x": False,
         }
         for ref, expected in runs.items():
             with self.subTest(ref=ref):
@@ -334,6 +354,10 @@ class RealWorkflowTest(unittest.TestCase):
         self.assertFalse(runs_on("github.ref == 'a'", "ab"))
         self.assertTrue(runs_on("startsWith(github.ref, 'a')", "abc"))
         self.assertTrue(runs_on("github.ref == 'x' || startsWith(github.ref, 'a')", "abc"))
+        self.assertTrue(runs_on("github.ref == 'A'", "a"), "대소문자를 가리지 않는다(GitHub 식의 문자열 비교)")
+        self.assertTrue(runs_on("startsWith(github.ref, 'AB')", "abc"))
+        self.assertFalse(runs_on("github.ref == 'a'", "b"))
+        self.assertEqual(fold("Ai/Claude/M1"), fold("aI/cLAUDE/m1"))
         for odd in ("true", "always()", "github.ref != 'a'", "contains(github.ref, 'a')", "github.ref == 'a' && github.ref == 'a'", "${{ github.ref == 'a' }}"):
             with self.subTest(odd=odd), self.assertRaises(AssertionError):
                 runs_on(odd, "a")
@@ -365,7 +389,7 @@ class MutationTest(unittest.TestCase):
         yield "test 잡(열두 칸)에 CI_REQUIRE_QT 추가", mutated(text, "          CI_SHARD_TOTAL: '3'\n", "          CI_SHARD_TOTAL: '3'\n          CI_REQUIRE_QT: '1'\n", within="test")
         yield "qt 의 가져오기 액션을 태그로", mutated(text, "actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0", "actions/checkout@v4")
         yield "qt 의 파이썬 액션 SHA 를 다르게", mutated(text, "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065", "actions/setup-python@" + "b" * 40)
-        yield "qt 시간 한도 10분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 10")
+        yield "qt 시간 한도 10분", mutated(text, "timeout-minutes: 60", "timeout-minutes: 10")
         yield "qt fail-fast 를 켬", mutated(text, "fail-fast: false", "fail-fast: true")
         yield "qt 에 continue-on-error", mutated(text, "    runs-on: windows-latest\n", "    runs-on: windows-latest\n    continue-on-error: true\n")
         yield "qt 단계에 if", mutated(text, "      - name: PySide6 두 줄만 설치·점검\n", "      - name: PySide6 두 줄만 설치·점검\n        if: always()\n")
@@ -422,9 +446,17 @@ class MutationTest(unittest.TestCase):
         yield "qt 잡에 if 줄을 하나 더(같은 키 두 번 — 첫 줄은 승인된 그대로)", mutated(text, QT_IF_LINE, QT_IF_LINE + "    if: always()\n"), ifs
         yield "qt 조각 수를 열하나로", mutated(mutated(mutated(text, "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]", "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]"),
                                                        "CI_SHARD_TOTAL: '12'", "CI_SHARD_TOTAL: '11'"), "조각 ${{ matrix.shard }}/12)\n    if:", "조각 ${{ matrix.shard }}/11)\n    if:"), twelve
-        yield "qt 시간 한도 400분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 400"), limit
-        yield "qt 시간 한도 41분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 41"), limit
+        below = "분 이상이어야 한다"
+        yield "qt 시간 한도 600분", mutated(text, "timeout-minutes: 60", "timeout-minutes: 600"), limit
+        yield "qt 시간 한도 61분", mutated(text, "timeout-minutes: 60", "timeout-minutes: 61"), limit
+        yield "qt 시간 한도 59분(한 칸 모자람)", mutated(text, "timeout-minutes: 60", "timeout-minutes: 59"), below
+        yield "qt 시간 한도를 옛 값 40분으로(test 잡과 같은 값)", mutated(text, "timeout-minutes: 60", "timeout-minutes: 40"), below
         yield "test 잡 시간 한도 41분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 41", within="test"), limit
+        yield "test 잡 시간 한도 39분", mutated(text, "timeout-minutes: 40", "timeout-minutes: 39", within="test"), below
+        yield "test 잡 시간 한도를 60분으로(qt 잡과 같은 값)", mutated(text, "timeout-minutes: 40", "timeout-minutes: 60", within="test"), limit
+        # 재작업 2(Q 권고-5): `if` 줄은 값이 같아도 줄 끝 주석·뒤 공백이 붙으면 거절한다(코드 줄만 보는 검사는 주석을 못 보므로 줄 그대로 견주는 규칙이 잡는다)
+        yield "qt if 줄 끝에 주석(값은 같다)", mutated(text, QT_IF_LINE, QT_IF_LINE[:-1] + "  # CANARY 줄 끝 주석\n"), "줄 그대로"
+        yield "qt if 줄 끝에 공백 하나", mutated(text, QT_IF_LINE, QT_IF_LINE[:-1] + " \n"), "줄 그대로"
 
     def test_every_broken_copy_is_caught(self):
         count = 0
@@ -436,7 +468,7 @@ class MutationTest(unittest.TestCase):
                 if reason:
                     self.assertTrue(any(reason in problem for problem in problems), f"엉뚱한 이유로 걸렸다(이유 글 {reason!r}): {label} → {problems}")
                 count += 1
-        self.assertGreaterEqual(count, 58)                  # 37 에서 올렸다(D-717·D-718 의 새 변이 열아홉 + 이유를 보는 열 — 모두 걸린다)
+        self.assertGreaterEqual(count, 64)                  # 37 → 58(D-717·D-718 의 새 변이 열아홉 + 이유를 보는 열) → 64(재작업 2: 시간 한도 60분의 변이 넷과 if 줄 끝 덧붙임 둘 — 모두 걸린다)
 
 
 if __name__ == "__main__":

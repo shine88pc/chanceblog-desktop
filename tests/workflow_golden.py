@@ -10,11 +10,14 @@ matrix 에 `self-hosted`·작업 단위 `env` 에 `PYTHONPATH`(이상 `ci.yml`),
 `ci.yml` 의 matrix 줄(`os: [ubuntu-latest, windows-latest]` 같은 한 줄 목록)은 읽개가 거절하는 표기라, **정해진 세 줄(들여쓰기 8칸의 os·python·shard)만** 따옴표 글로 바꿔 읽는다 — 다른 곳의 흐름식은 그대로 거절된다.
 
 여러 작업(D-716): `ci.yml` 은 작업이 둘이다 — `test`(열두 칸, 승인값은 D-693 때 그대로)와 `qt`(윈도·파이썬 3.12 의 Qt 칸, D-710–D-713). 명세의 `jobs` 가 작업의 이름·순서·개수를 못박고(작업을 더하거나 빼거나 이름·순서를 바꾸면 문제다) 작업마다 키 집합·`runs-on`·`timeout-minutes`·`strategy`·`env`·단계를
-승인값과 견준다. `qt` 작업은 `name` 도 글자 그대로 못박고 시간 한도는 정확히 40분이다(`test` 잡과 같은 값이고 `auto-pr.yml` 의 최대 대기 60분 = 이 한도 40분 + 줄 서는 20분이다 — D-719, `tests/test_ci_workflow_qt.py`). `test` 작업은 D-693 의 값(시간 한도 범위 포함)을 그대로 둔다.
+승인값과 견준다. `qt` 작업은 `name` 도 글자 그대로 못박고 시간 한도는 정확히 60분이다(`test` 잡의 40분과 다르다 — 4차 진단에서 가장 느린 조각이 설치까지 약 33분이라 40분은 빠듯해 운영자 확인 046 ① 이 올렸다, D-717. `auto-pr.yml` 의 최대 대기 60분과 같은 값이다 — D-719, `tests/test_ci_workflow_qt.py`). `test` 작업은 D-693 의 값(시간 한도 범위 포함)을 그대로 둔다.
 문제 글에는 `작업 <이름>:` 을 앞에 붙여 어느 작업이 어긋났는지 보이게 한다. 두 작업의 승인값 표는 `tests/test_workflow_golden.py` 가 한 번 더 글자 그대로 못박는다(표를 슬쩍 느슨하게 고치면 그 시험이 빨개진다).
 
 D-717·D-718(Qt 칸 마무리): `qt` 작업의 승인값이 바뀌었다 — 조각 열둘(`shard` 목록·`CI_SHARD_TOTAL`·이름의 `/12`)·Qt 칸 전용 무게 표를 고르는 환경 변수 `CI_WEIGHTS: qt`·작업 수준 `if`(`QT_IF`: 병합 가지 `ai/claude/M…` 와 main 에서만 돈다, 글자 그대로).
 `test` 작업은 한 글자도 안 바뀌었다(작업 키에 `if` 가 없다 — 열두 칸은 모든 가지에서 돈다). `if` 가 승인된 글과 한 글자라도 다르면(진단 가지 이름을 더하거나 `true`·`always()` 로 바꾸는 것 포함) 작업 문제로 거절한다.
+
+재작업 2(2026-11-26, 4차 진단 — 운영자 확인 046 ①): `qt` 작업의 `timeout-minutes` 승인값이 40 에서 60 으로 바뀌었다(위). 그리고 `if` 줄은 값만이 아니라 줄 전체가 글자 그대로여야 한다 — 줄 끝에 주석이나 공백을 달아도 거절한다
+(읽개는 줄 끝 주석을 값으로 보지 않아 예전에는 통과했지만, 이 줄은 Qt 칸이 도는 가지를 정하므로 다른 시험 묶음(`test_repo_layout`·`test_ci_workflow_qt`·`test_ci_shard`)이 쓰는 엄격한 잣대에 맞췄다 — 독립 검증 Q 권고-5).
 """
 import re
 import sys
@@ -60,7 +63,7 @@ CI_QT_JOB = {            # D-716 — `ci.yml` 끝의 둘째 잡(D-710–D-713)�
     "if": QT_IF,
     "job_keys": {"name", "if", "runs-on", "timeout-minutes", "strategy", "steps"},
     "runs_on": "windows-latest",
-    "timeout": re.compile(r"40"),
+    "timeout": re.compile(r"60"),
     "strategy": {"fail-fast": "false", "matrix": {"shard": "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]"}},
     "env": None,
     "steps": CI_QT_STEPS,
@@ -135,7 +138,7 @@ def _step_problems(position, step, expected):
     return problems
 
 
-def _job_problems(job_id, job, spec):
+def _job_problems(job_id, job, spec, raw_lines=()):
     """작업 하나(`jobs.<job_id>`)를 승인된 모양(`spec`)과 견준 문제 목록 — 문제 글 앞에 `작업 <이름>:` 을 붙여 어느 작업이 어긋났는지 보이게 한다(작업이 둘이다, D-716)."""
     label = f"작업 {job_id}: "
     if not isinstance(job, dict) or set(job) != spec["job_keys"]:
@@ -145,6 +148,8 @@ def _job_problems(job_id, job, spec):
         problems.append(label + f"작업 name 이 승인된 글 {spec['name']!r} 와 다르다: {job['name']!r}")
     if "if" in spec and job["if"] != spec["if"]:
         problems.append(label + f"작업 if 가 승인된 글 {spec['if']!r} 와 다르다(이 조건이 Qt 칸을 병합 가지와 main 에서만 돌게 한다 — 진단 가지 이름을 더하거나 true·always() 로 바꾸지 못한다): {job['if']!r}")
+    elif "if" in spec and "    if: " + spec["if"] not in raw_lines:
+        problems.append(label + f"작업 if 줄이 승인된 한 줄 그대로가 아니다(값은 같아도 줄 끝 주석·뒤 공백 같은 덧붙임을 못 단다 — 이 줄은 Qt 칸이 도는 가지를 정하므로 줄 전체를 글자 그대로 견준다): {spec['if']!r}")
     if job["runs-on"] != spec["runs_on"] or not spec["timeout"].fullmatch(str(job["timeout-minutes"])):
         problems.append(label + f"runs-on 은 {spec['runs_on']!r}, timeout-minutes 는 정해진 범위여야 한다: {job['runs-on']!r} {job['timeout-minutes']!r}")
     if spec["strategy"] is not None and job.get("strategy") != spec["strategy"]:
@@ -180,8 +185,9 @@ def structure_problems(text, spec):
     wanted_jobs = list(spec["jobs"])
     if not isinstance(jobs, dict) or list(jobs) != wanted_jobs:
         return problems + [f"작업 목록이 승인된 {wanted_jobs}(이름·순서·개수 모두)와 다르다 — 작업을 더하거나 빼거나 이름·순서를 바꾸려면 이 허용 목록과 시험을 같이 고친다: {list(jobs) if isinstance(jobs, dict) else type(jobs).__name__}"]
+    raw_lines = text.split("\n")                      # 줄 전체를 글자 그대로 견주는 곳(작업 if 줄)이 쓴다 — 읽개는 줄 끝 주석을 값으로 보지 않는다
     for job_id, job_spec in spec["jobs"].items():
-        problems += _job_problems(job_id, jobs[job_id], job_spec)
+        problems += _job_problems(job_id, jobs[job_id], job_spec, raw_lines)
     problems += action_problems(text)
     return problems
 

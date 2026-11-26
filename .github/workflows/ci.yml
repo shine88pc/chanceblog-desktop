@@ -54,16 +54,17 @@ jobs:
         run: python scripts/ci_shard.py
 
   # Qt 칸 — 윈도·파이썬 3.12 에서 PySide6 두 줄(packaging/requirements-package.txt 의 runtime)만 깔고 화면(Qt) 시험까지 모두 돌린다(offscreen — 창을 띄우지 않는다).
-  # 같은 `ci_shard` 규칙으로 조각을 열둘로 나누되 Qt 칸 전용 무게 표(CI_WEIGHTS: qt — 러너에서 잰 시험 파일별 초, D-717)로 나눠 조각마다 비슷한 시간에 끝나게 한다.
+  # 같은 `ci_shard` 규칙으로 조각을 열둘로 나누되 Qt 칸 전용 무게 표(CI_WEIGHTS: qt — 러너에서 잰 시험 파일별 초의 두 실행 평균, D-717)로 나눈다(조각마다 비슷한 시간을 노리지만 실제는 실행마다 고르지 않다 — 아래 한도 설명).
   # CI_REQUIRE_QT=1 이면 PySide6 가 없어 건너뛴 시험이 하나라도 있을 때 이 칸이 빨개진다(조용한 초록 금지).
   # 병합 가지(ai/claude/M…)와 main 에서만 돈다(아래 if — 작업 중 가지 NO-MERGE-… 에서는 건너뛴다, D-718). 건너뛴 잡은 초록 취급이라 그런 가지는 test 칸만으로 검사가 끝난다. 수동 실행은 main 을 골라 돌릴 때 이 칸도 돈다.
-  # 위 test 잡은 한 글자도 바뀌지 않았다. 이 잡도 시험이 지킨다(tests/test_ci_workflow_qt.py·tests/workflow_golden.py): 액션은 test 잡과 같은 SHA 둘뿐·비밀 값 0·시간 한도 정확히 40분.
+  # 위 test 잡은 한 글자도 바뀌지 않았다. 이 잡도 시험이 지킨다(tests/test_ci_workflow_qt.py·tests/workflow_golden.py): 액션은 test 잡과 같은 SHA 둘뿐·비밀 값 0·시간 한도 정확히 60분(test 잡은 정확히 40분).
   qt:
     name: Qt 시험 (windows-latest, Python 3.12, 조각 ${{ matrix.shard }}/12)
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ai/claude/M')
     runs-on: windows-latest
-    # 한 조각은 표 기준 약 15분(조각마다 886–887초)에 설치 1–1.5분을 더해 16분 남짓으로 어림된다 — 한도 40분의 약 40%(실측이 +35% 흔들려도 약 21분, 한도의 절반 남짓이고 줄 서기를 넣어도 한도 안, 근거는 docs/CI_QT.md 7·12절). 한도는 test 잡과 같은 40분이다(시험이 지킨다).
-    timeout-minutes: 40
+    # 표 기준 한 조각은 913초(약 15분)지만 실제 시간은 고르지 않다 — 4차 진단에서 조각마다 252–1,875초(같은 프로세스에서 앞서 돈 Qt 작업량에 따라 시간이 움직인다): 가장 느린 조각이 설치까지 약 33분으로 한도 40분의 82% 였다.
+    # 그래서 이 잡만 한도를 60분으로 올렸다(운영자 확인 046 ① 승인, D-717): 교차 평가의 최악 약 39분에 설치 1.5분을 더해도 한도의 약 67% 다. 근거는 docs/CI_QT.md 7·12절, 자동 PR 의 기다림(60분)과의 관계는 14절. test 잡은 그대로 40분이다(시험이 지킨다).
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
