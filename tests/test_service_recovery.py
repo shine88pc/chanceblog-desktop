@@ -256,20 +256,38 @@ class NotAdoptedTest(RealGit):
         if two:
             ss.commit_file(self.work, "다음 파일.txt", "x", "또 하나")
 
-    def assert_left_alone(self, project_id, what):
-        head, remote = self.head(), self.remote()
+    def assert_left_alone(self, project_id, what, *, publishes=False):
+        """조금이라도 다른 앞선 commit(앱이 이어받거나 되돌릴 수 있는 고아가 아니다)은 어떤 길로도 건드리지 않는다.
+        CI 빨강 고치기: 새 흐름(PUBPR)은 이 PC 의 저장소에 commit 을 만들지 않고 받은 원격 main 위에 객체로만 만들므로 앞선 commit·파일·HEAD 는 한 바이트도 바뀌지 않는다 —
+        같은 글이 이 폴더에 이미 있으면 점검·올리기가 `DUPLICATE_CONTENT`(같은 주소만 겹치면 `DUPLICATE_SLUG`)로 멈추고 상태는 APPROVED 그대로이며(옛 흐름의 `PAGES_LOCAL_REPO_DIVERGED` 는 이제 나오지 않는다),
+        다른 글이면(`publishes=True`) 막지 않고 앞선 commit 을 담지 않은 새 가지로 올라간다(MERGE_PENDING, 앞선 commit 의 경로와 겹치면 다음 초의 이름으로 피한다)."""
+        head, remote, files = self.head(), self.remote(), ss.tree_snapshot(self.work)
         self.assertIsNone(self.backend.orphan_commit(self.work, self.rendering(project_id), "경제·일", "ko"), what)
-        for call in (lambda: pages_flow.plan_pages_publish(self.ctx, project_id), lambda: pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)):
-            error = ss.code_of(call)
-            self.assertIn(error.code, ("DUPLICATE_SLUG", "PAGES_LOCAL_REPO_DIVERGED"), f"{what}: {error.code}")
+        plan = lambda: pages_flow.plan_pages_publish(self.ctx, project_id)
+        run = lambda: pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True)
+        if publishes:
+            plan()
+            run()
+            self.assertEqual(self.status(project_id), st.MERGE_PENDING, what)
+            self.assertEqual(len(self.branches()), 1, what)
+            branch = self.branches()[0]
+            record = self.journal.read(project_id)
+            self.assertNotEqual(record.path, ss.KO_PATH, f"{what}: 앞선 commit 의 경로와 겹치는 이름은 피했다")
+            self.assertEqual(ss.git(self.origin, "diff-tree", "--no-commit-id", "--name-status", "-r", branch), f"A\t{record.path}", f"{what}: 가지에는 새 글 하나뿐이다")
+            self.assertIsNone(ss.blob(self.origin, f"{branch}:{ss.KO_PATH}"), f"{what}: 앞선 commit 의 글은 가지에 담기지 않았다")
+        else:
+            for call in (plan, run):
+                error = ss.code_of(call)
+                self.assertIn(error.code, ("DUPLICATE_SLUG", "DUPLICATE_CONTENT"), f"{what}: {error.code}")
+            self.assertEqual(self.status(project_id), st.APPROVED, what)
         self.assertEqual(ss.code_of(pages_flow.cancel_pages_publish, self.ctx, project_id, confirmed=True).code, "STATUS_TRANSITION_INVALID", what)
-        self.assertEqual((self.head(), self.remote(), self.status(project_id)), (head, remote, st.APPROVED), what)
+        self.assertEqual((self.head(), self.remote(), ss.tree_snapshot(self.work)), (head, remote, files), what)
         self.assertTrue((self.work / ss.KO_PATH).exists(), what)
 
     def test_a_commit_with_different_content(self):
         project_id = self.approved()
         self.orphan_like(project_id, text=self.rendering(project_id) + "\n한 줄 더\n")
-        self.assert_left_alone(project_id, "내용이 다른 commit")
+        self.assert_left_alone(project_id, "내용이 다른 commit", publishes=True)
 
     def test_a_commit_that_also_adds_another_file(self):
         project_id = self.approved()
