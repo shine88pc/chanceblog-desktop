@@ -6,14 +6,18 @@
   3) `그래도 승인하기` 는 막힘이 유사도 하나뿐일 때만, 센 확인창을 거친 요청만 서비스의 `similarity_approved` 가 되고 일반 승인은 늘 거짓이다.
   4) 발행 기록은 오래된 순서가 기본이고 모르는 상태도 죽지 않으며 작업 로그는 읽기뿐이고 줄을 다시 가린다(D-93).
   5) 건강 효과 단정 판정은 Pages 한 줄 설명·태그에도 걸리고 검토가 쓴 값이 승인 요청에 함께 간다.
+  6) (재작업 2, 시험 렌즈 Q) 주소 검사의 경계(500자·한 글자 경로·`#` 바로 앞에서 끝나는 호스트·여러 가지 공백), 복사 막기 두 겹의 각자 몫, 쓰는 중·복원 중에 꺼지는 상태 단추, 대화를 열어 두는 실패 종류, 다른 글·블로그·판의 검토 결과에서는 보이지
+     않는 `그래도 승인하기`, 홈 진단 정보의 발행 기록 오류 코드, 건너뛴 줄뿐인 작업 로그의 상태를 시험이 못박는다. 모르는 상태 시험은 어느 갈래도 정의하지 않을 이름(`FUTURE_STATE`)을 쓴다.
 가짜 비밀은 조립한 문자열이고 실제 글·블로그 이름은 어디에도 없다.
 """
 import dataclasses
+import datetime
 import re
 import sys
 import unicodedata
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -24,7 +28,7 @@ from chanceblog_desktop.content import model as content_model  # noqa: E402
 from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.service import history as service_history  # noqa: E402
 from chanceblog_desktop.service import worklog as service_worklog  # noqa: E402
-from chanceblog_desktop.ui.core import jobs, post_fake, post_history, post_history_text, post_history_view, post_rules as rules, posts, posts_view, text  # noqa: E402
+from chanceblog_desktop.ui.core import app_state, jobs, post_fake, post_history, post_history_text, post_history_view, post_rules as rules, posts, posts_view, text  # noqa: E402
 
 UI_DIR = ROOT / "src" / "chanceblog_desktop" / "ui"
 T = text.T
@@ -36,6 +40,7 @@ GOOD_URL = "https://blog.naver.com/exampleaaa/223000000001"
 STOP_SENTENCE = "이 영양제를 먹으면 통증이 완전히 사라집니다."
 RAW = {"category": "생활", "lang": "ko", "image_url": "https://img.example.invalid/a.jpg", "tags": "에너지, 습관", "description": ""}
 PREFIX = "https://blog.naver.com/x/"                                                    # 글 주소의 정상 앞부분(경로가 있다)
+FUTURE_STATE = "ZZ_FUTURE_STATE_Q"                                                       # 어느 갈래도 정의하지 않을 상태 이름 — 다른 갈래가 더할 실제 이름을 쓰면 그 갈래가 병합될 때 시험이 깨진다(재작업 2, 시험 렌즈 Q 필수-1)
 
 
 def engine_keys():
@@ -224,6 +229,39 @@ class PostsPackageCoreTest(unittest.TestCase):
         self.assertEqual(card["reread"]["text"], T["post_retry"])
         self.assertEqual(controller.start_copied(True)[0], "state", "패키지를 읽지 못했으면 복사함으로 표시하지 않는다")
 
+    def test_the_state_buttons_are_off_while_a_write_or_a_restore_runs_and_the_copy_buttons_stay_on(self):
+        """재작업 2(시험 렌즈 Q 권고-7, B11·B12) — 눌러도 컨트롤러가 거절하지만(안전) 화면이 말하는 모습도 맞아야 한다: 쓰는 중·복원 중에는 `복사했어요`·`복사 표시 취소`·`발행 주소 기록` 이 꺼진다.
+        복사 단추 넷은 클립보드에만 쓰고 상태를 바꾸지 않으므로 늘 켜져 있다."""
+        def writing():
+            return mock.patch.object(controller.runner, "running", side_effect=lambda key: key == posts_view.WRITE_KEY)
+
+        def seen(card, keys):
+            return [(card[key]["visible"], card[key]["enabled"]) for key in keys]
+
+        controller, _ = with_post()
+        ready(controller)
+        self.assertEqual(seen(panel(controller)["package"], ("copied",)), [(True, True)])
+        with writing():
+            self.assertTrue(controller.busy)
+            card = panel(controller)["package"]
+            self.assertEqual(seen(card, ("copied",)), [(True, False)], "쓰는 중에는 복사했어요가 꺼진다")
+            self.assertTrue(all(item["enabled"] for item in card["copies"]), "복사 단추는 상태를 바꾸지 않아 켜져 있다")
+        controller.save_gate = lambda: True
+        card = panel(controller)["package"]
+        self.assertEqual(seen(card, ("copied",)), [(True, False)], "복원 중에는 복사했어요가 꺼진다")
+        self.assertTrue(all(item["enabled"] for item in card["copies"]))
+        controller.save_gate = None
+        copied(controller)
+        self.assertEqual(seen(panel(controller)["package"], ("uncopy", "record")), [(True, True), (True, True)])
+        with writing():
+            card = panel(controller)["package"]
+            self.assertEqual(seen(card, ("uncopy", "record")), [(True, False), (True, False)], "쓰는 중에는 복사 표시 취소·발행 주소 기록이 꺼진다")
+            self.assertTrue(all(item["enabled"] for item in card["copies"]))
+        controller.save_gate = lambda: True
+        card = panel(controller)["package"]
+        self.assertEqual(seen(card, ("uncopy", "record")), [(True, False), (True, False)], "복원 중에도 꺼진다")
+        self.assertTrue(all(item["enabled"] for item in card["copies"]))
+
 
 class PostsCopiedCoreTest(unittest.TestCase):
     def test_the_copied_button_is_the_only_way_to_the_copied_state_and_it_can_be_taken_back(self):
@@ -366,6 +404,25 @@ class PostsRecordCoreTest(unittest.TestCase):
                 else:
                     self.assertEqual(controller.notice[0], "error")
 
+    def test_every_known_failure_kind_keeps_the_dialog_open_or_closes_it_as_listed(self):
+        """재작업 2(시험 렌즈 Q 권고-7, B14) — 서비스가 거절할 때 대화를 열어 두는 종류(주소·키 모양·입력·기타·잠김·디스크·입출력 — 칸의 글을 고치거나 다시 눌러 볼 수 있다)와 닫고 안내만 하는 종류(상태·글 없음·낡음·검토·프로필·관문·패키지·손상·새 버전 …)가
+        정해져 있다. 알려진 종류를 하나도 빼지 않고 본다."""
+        kept = {"address", "secret", "input", "other", "locked", "disk", "io"}
+        self.assertTrue(kept <= set(posts.KINDS_OF_FAILURE), "열어 두는 종류는 모두 알려진 종류다")
+        for kind in posts.KINDS_OF_FAILURE:
+            with self.subTest(kind=kind):
+                provider = Recording("empty", fail={"record_published": posts.PostFailure(T["post_fail_address"], code="X_" + kind.upper(), kind=kind)})
+                controller, _ = with_post(provider=provider)
+                ready(controller)
+                copied(controller)
+                controller.open_record()
+                status, end, todo = drive(controller, lambda **cb: controller.start_record(GOOD_URL, **cb))
+                self.assertEqual((status, end, controller.record_open), ("started", "failed", kind in kept))
+                if kind in kept:
+                    self.assertEqual((todo, controller.record_view(5)["message"]), ({}, T["post_fail_address"]), "이유는 대화 안에 보인다")
+                else:
+                    self.assertEqual(controller.notice[0], "error", "닫힌 대화의 이유는 안내로 나간다")
+
     def test_the_dialog_goes_away_with_the_post(self):
         controller, _ = self.at_copied()
         controller.open_record()
@@ -418,6 +475,31 @@ class PostsAddressRuleCoreTest(unittest.TestCase):
                     "HTTPS://Blog.Naver.Com/x/1", "https://blog.naver.com/a-b_c.d/1"):
             with self.subTest(url=url[:40]):
                 self.assertEqual(rules.naver_url_problem(url), "")
+
+    def test_the_edges_of_the_rule_are_exact_and_each_variant_names_its_own_problem(self):
+        """재작업 2(시험 렌즈 Q 권고-3, B01–B04) — 경계: 500자는 받고 501자는 길다고 거절한다 · 경로 한 글자는 받고 슬래시 하나는 거절한다 · 호스트는 `#`·`?` 바로 앞에서 끝난다(그래서 `경로 없음` 이지 `호스트 아님` 이 아니다) ·
+        탭·줄바꿈·NBSP·전각 공백은 주소 안에서 `공백` 으로 거절하고 바깥에 붙은 것은 뗀다. 받는 주소는 서비스도 받는다(화면은 서비스보다 느슨하지 않다)."""
+        stem = "https://blog.naver.com/"
+        exact = stem + "a" * (500 - len(stem))
+        self.assertEqual(len(exact), 500)
+        accepted = {"exactly 500 characters": exact, "one-letter path": stem + "a", "query on the post": stem + "x?a=1", "fragment on the post": stem + "x#c", "mobile host": "https://m.blog.naver.com/x",
+                    "500 characters between spaces": " " * 5 + exact + " " * 5}
+        for label, url in accepted.items():
+            with self.subTest(accepted=label):
+                self.assertEqual(rules.naver_url_problem(url), "")
+                content_model._published_url("naver_a", url.strip())
+        refused = {"501 characters": (exact + "a", "long"), "slash only": (stem, "path"), "no slash": ("https://blog.naver.com", "path"), "fragment right after the host": ("https://blog.naver.com#x/1", "path"),
+                   "fragment only": ("https://blog.naver.com#x", "path"), "dot after a fragment": ("https://blog.naver.com#.example/x", "path"), "query right after the host": ("https://blog.naver.com?x=1", "path"),
+                   "slash then query": (stem + "?x=1", "path"), "slash then fragment": (stem + "#x", "path"), "double slash": (stem + "/x", "path"), "port": ("https://blog.naver.com:8080/x", "host"),
+                   "tab inside": (stem + "a" + chr(9) + "b", "space"), "newline inside": (stem + "a" + chr(10) + "b", "space"), "carriage return inside": (stem + "a" + chr(13) + "b", "space"),
+                   "no-break space inside": (stem + "a" + chr(0xA0) + "b", "space"), "ideographic space inside": (stem + "a" + chr(0x3000) + "b", "space"), "tab before the path": ("https://blog.naver.com" + chr(9) + "/x", "space")}
+        for label, (url, problem) in refused.items():
+            with self.subTest(refused=label):
+                self.assertEqual(rules.naver_url_problem(url), problem)
+        for outside in (chr(9), chr(10), chr(13) + chr(10), chr(0xA0), chr(0x3000), " ", chr(0xB) + chr(0xC)):
+            with self.subTest(trimmed=f"U+{ord(outside[0]):04X}"):
+                self.assertEqual(rules.naver_url_problem(outside + GOOD_URL + outside), "", "바깥에 붙은 공백은 떼고 본다")
+        self.assertEqual(rules.naver_url_problem(chr(10) + chr(9) + " "), "empty", "공백뿐이면 비었다")
 
     def test_an_engine_only_key_shape_and_an_argument_token_are_refused_as_secret_where_the_screen_checks(self):
         for name, key in engine_keys().items():
@@ -516,6 +598,24 @@ class PostsHiddenPrefixKeyCoreTest(unittest.TestCase):
         package = posts.NaverPackageInfo(A, "일반 제목", "본문 word" + chr(0x200B) + key + " 끝", "#태그", "전체 글")
         self.assertEqual([kind for kind, value in (("title", package.title), ("body", package.body), ("tags", package.tags), ("all", package.copy_text)) if rules.copy_blocked(value)], ["body"])
 
+    def test_each_layer_of_the_copy_block_stops_a_key_on_its_own(self):
+        """재작업 2(시험 렌즈 Q 권고-4, B08·B09) — 복사 막기는 두 겹이다: 저장 검사기(`secret_spots`)와 가리기 엔진(`would_be_masked`). 시험의 키 모양이 두 겹 모두에 걸리면 한 겹이 조용히 빠져도 초록이라
+        한 겹을 꺼 둔 채 다른 겹이 혼자 막는지를 본다. 둘 다 끄면 막는 것이 없다(셋째 겹은 없다). 엔진만 아는 모양은 진짜 두 겹으로도 막힌다."""
+        scanner_shapes = {"google": KEY, "github": engine_keys()["github"]}                           # 저장 검사기가 아는 모양(엔진도 안다)
+        engine_shapes = {name: key for name, key in engine_keys().items() if name != "github"}        # 저장 검사기의 여섯 유형 밖 — 엔진만 안다
+        with mock.patch.object(rules, "would_be_masked", return_value=False):                         # 가리기 엔진 겹을 끈다
+            for name, key in scanner_shapes.items():
+                self.assertTrue(rules.copy_blocked("본문 " + key), f"저장 검사기 혼자 막는다: {name}")
+        with mock.patch.object(rules, "secret_spots", return_value=[]):                               # 저장 검사기 겹을 끈다
+            for name, key in {**scanner_shapes, **engine_shapes}.items():
+                self.assertTrue(rules.copy_blocked("본문 " + key), f"가리기 엔진 혼자 막는다: {name}")
+        with mock.patch.object(rules, "would_be_masked", return_value=False), mock.patch.object(rules, "secret_spots", return_value=[]):
+            for key in {**scanner_shapes, **engine_shapes}.values():
+                self.assertFalse(rules.copy_blocked("본문 " + key), "두 겹을 다 끄면 막는 것이 없다")
+        for name, key in engine_shapes.items():
+            self.assertTrue(rules.copy_blocked("본문 " + key), f"진짜 두 겹이 엔진만 아는 모양을 막는다: {name}")
+            self.assertTrue(rules.copy_blocked(key), name)
+
 
 class PostsSimilarityAckCoreTest(unittest.TestCase):
     def two_blogs(self, **kwargs):
@@ -581,6 +681,22 @@ class PostsSimilarityAckCoreTest(unittest.TestCase):
         clean.select_platform(posts.PAGES)
         self.assertEqual(clean.similarity_approval(), (False, "post_approve_why_state"))
         self.assertFalse(panel(clean)["approve_similarity"]["visible"])
+
+    def test_the_strong_button_is_hidden_for_the_review_result_of_another_post_blog_or_version(self):
+        """재작업 2(시험 렌즈 Q 권고-7, B16) — 보조 단추는 **지금 보는** 글·블로그·판의 검토 결과일 때만 보인다(`_panel_view` 의 `mine`). 다른 것의 결과가 남아 있어도 눌러서는 거절되지만(`similarity_approval`) 단추가 보이거나 켜져 있으면 안 된다."""
+        controller, project_id = self.two_blogs()
+        report = controller.review
+        shown = panel(controller)["approve_similarity"]
+        self.assertEqual((shown["visible"], shown["enabled"]), (True, True))
+        others = (("다른 글", dataclasses.replace(report, project_id=project_id + "-other")), ("다른 블로그", dataclasses.replace(report, platform=A)),
+                  ("다른 판", dataclasses.replace(report, revision=report.revision + 1)))
+        for label, other in others:
+            with self.subTest(label=label):
+                controller.review = other
+                current = panel(controller)["approve_similarity"]
+                self.assertEqual((current["visible"], current["enabled"], current["note"], current["why"]), (False, False, "", ""))
+        controller.review = report
+        self.assertTrue(panel(controller)["approve_similarity"]["visible"], "지금 보는 것의 결과로 돌려놓으면 다시 보인다")
 
     def test_busy_or_restoring_turns_the_strong_road_off(self):
         controller, _ = self.two_blogs()
@@ -724,7 +840,7 @@ class PostsHistoryCoreTest(unittest.TestCase):
 
     def test_a_state_the_table_does_not_know_is_shown_as_unknown_and_nothing_crashes(self):
         controller, _ = self.make("empty", history_examples=False)
-        odd = post_history.HistoryEntry("p1", "새 상태 글", "github_pages", "MERGE_PENDING", 1, "2026-11-02T00:00:00Z")
+        odd = post_history.HistoryEntry("p1", "새 상태 글", "github_pages", FUTURE_STATE, 1, "2026-11-02T00:00:00Z")
         other = post_history.HistoryEntry("p2", "새 갈래 글", "somewhere_else", st.APPROVED, 1, "2026-11-03T00:00:00Z")
         controller.apply_loaded(post_history.HistoryData((odd, other), 0, "ok", False, False))
         rows = {row["key"]: row for row in controller.view()["list"]["rows"]}
@@ -763,6 +879,28 @@ class PostsHistoryCoreTest(unittest.TestCase):
         approve(controller, A)
         self.assertEqual(len([row for row in self.load(history)["list"]["rows"] if row["key"].startswith(project_id)]), 1)
         self.assertEqual(post_history.BEFORE_REVIEWED, service_history.BEFORE_REVIEWED, "서비스와 같은 '검토 전' 목록이다")
+
+    def test_the_home_diagnostics_see_a_failed_history_list_and_a_failed_work_log_and_the_later_one_wins(self):
+        """재작업 2(시험 렌즈 Q 권고-1, B23·B23b) — 설정의 `진단 정보 복사` 가 담는 마지막 오류 코드(`AppState.last_error_code`)는 발행 기록의 **목록 읽기 실패**와 **작업 로그 읽기 실패**를 따로 센다 — 남은 실패 중 시각이 가장 늦은 것이 마지막이고,
+        나아져서 지워진 실패는 없다. 코드만 담고 실패의 안내 문장은 읽지 않는다."""
+        when = datetime.datetime(2026, 11, 26, 9, 0, 0)
+        state = app_state.AppState(posts=Recording("empty"))
+        self.assertIsNone(state.last_error_code())
+        state.history.apply_load_failed(jobs.JobFailure("목록 문장", code="HIST_LIST_DOWN"), when)
+        self.assertEqual(state.last_error_code(), "HIST_LIST_DOWN", "목록을 못 읽은 실패가 센다")
+        state.history.apply_log_failed(jobs.JobFailure("로그 문장", code="HIST_LOG_DOWN"), when + datetime.timedelta(seconds=30))
+        self.assertEqual(state.last_error_code(), "HIST_LOG_DOWN", "작업 로그를 못 읽은 더 늦은 실패가 마지막이다")
+        state.history.apply_load_failed(jobs.JobFailure("다시 목록 문장", code="HIST_LIST_AGAIN"), when + datetime.timedelta(minutes=2))
+        self.assertEqual(state.last_error_code(), "HIST_LIST_AGAIN", "목록의 더 늦은 실패가 다시 마지막이다")
+        report = state.diagnostic_report(22631, 100)
+        self.assertEqual(report.splitlines()[-1], "last_error_code: HIST_LIST_AGAIN")
+        for sentence in ("목록 문장", "로그 문장", "다시 목록 문장"):
+            self.assertNotIn(sentence, report, "코드만 담고 안내 문장은 읽지 않는다")
+        state.history.apply_loaded(post_history.HistoryData())
+        self.assertEqual(state.last_error_code(), "HIST_LOG_DOWN", "목록은 나았으니 아직 남은 작업 로그의 실패가 마지막이다")
+        state.history.apply_log(post_history.WorkLogData())
+        self.assertIsNone(state.last_error_code(), "둘 다 나았으면 남은 실패가 없다")
+        self.assertEqual(state.diagnostic_report(22631, 100).splitlines()[-1], "last_error_code: none")
 
 
 class PostsWorkLogCoreTest(unittest.TestCase):
@@ -834,6 +972,23 @@ class PostsWorkLogCoreTest(unittest.TestCase):
         log = self.read_log(failing)
         self.assertEqual((log["state"], log["error"]["text"], log["retry"]["enabled"]), ("error", T["hist_log_error"], True))
         self.assertTrue(failing.set_log_open(True), "읽기가 실패했으면 다시 펼칠 때 다시 읽는다")
+
+    def test_a_log_with_only_skipped_or_only_older_lines_is_not_an_empty_log(self):
+        """재작업 2(시험 렌즈 Q 권고-6, B20) — 보여 줄 줄이 하나도 없어도 건너뛴 줄이나 한도 밖의 오래된 줄이 있으면 '비었다' 가 아니라 그 개수를 알리는 보통 상태다(건너뛴 줄을 없던 것처럼 숨기지 않는다)."""
+        controller, _ = self.make()
+        controller.set_log_open(True)
+        controller.apply_log(post_history.WorkLogData((), 1, 3, 0, False))
+        log = controller.view()["log"]
+        self.assertEqual((log["state"], log["lines"], log["notes"]), ("normal", [], [T["hist_log_skipped"].format(n=3)]))
+        controller.apply_log(post_history.WorkLogData((), 1, 0, 4, False))
+        log = controller.view()["log"]
+        self.assertEqual((log["state"], log["lines"], log["notes"]), ("normal", [], [T["hist_log_older"].format(n=4)]))
+        controller.apply_log(post_history.WorkLogData((), 1, 2, 5, False))
+        log = controller.view()["log"]
+        self.assertEqual((log["state"], log["notes"]), ("normal", [T["hist_log_skipped"].format(n=2), T["hist_log_older"].format(n=5)]))
+        controller.apply_log(post_history.WorkLogData((), 0, 0, 0, False))
+        log = controller.view()["log"]
+        self.assertEqual((log["state"], log["lines"], log["notes"]), ("empty", [], []), "정말 아무것도 없을 때만 비었다")
 
     def test_an_unknown_source_is_named_as_unknown(self):
         controller, _ = self.make()

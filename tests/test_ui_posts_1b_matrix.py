@@ -168,6 +168,26 @@ class DocumentFacts1bTest(unittest.TestCase):
         for needle in ("클립보드에 글을 쓰는 길", "오류 기록 파일을 읽는 길", "1b 복사 길의 알려진 한계(SECSEP2 가 닫음)"):
             self.assertEqual(security.count(needle), 1, needle)
 
+    def test_the_work_log_limit_the_documents_name_is_the_codes_default(self):
+        """재작업 2(시험 렌즈 Q 권고-6, A07): 문서가 말하는 '최근 N줄' 이 서비스의 기본 한도와 같다(숫자가 바뀌면 문서도 함께 고친다)."""
+        from chanceblog_desktop.service import worklog
+        for relative, text in (("docs/UI_POST_FLOW.md", self.doc), ("docs/DECISIONS.md", LOG.read_text(encoding="utf-8"))):
+            found = {int(number) for number in re.findall(r"최근 (\d+)줄", text)}
+            self.assertEqual(found, {worklog.MAX_LINES}, relative)
+
+    def test_no_test_of_1b_uses_a_state_name_another_branch_defines(self):
+        """재작업 2(시험 렌즈 Q 필수-1): '모르는 상태' 시험이 다른 갈래가 곧 더할 실제 상태 이름을 쓰면 그 갈래가 병합될 때 시험이 깨진다(병합 모의에서 순수 시험 둘과 Qt 시험 하나가 빨강이었다).
+        1b 시험 파일은 그 낱말을 쓰지 않고, 모르는 상태 시험 셋은 어느 갈래도 정의하지 않을 이름(`FUTURE_STATE`)을 쓴다."""
+        real_name = "MERGE" + "_PENDING"                                                 # 조립한 글자 — 이 파일도 그 낱말을 쓰지 않는다
+        for name in TEST_FILES + ("test_ui_posts_1b_matrix.py",):
+            self.assertNotIn(real_name, (ROOT / "tests" / name).read_text(encoding="utf-8"), name)
+        uses = {"test_ui_posts_1b_core.py": '"github_pages", FUTURE_STATE, 1', "test_ui_qt_posts_1b.py": '"github_pages", FUTURE_STATE, 1', "test_service_naver_1b.py": 'project.transition("github_pages", FUTURE_STATE'}
+        for name, use in uses.items():
+            source = (ROOT / "tests" / name).read_text(encoding="utf-8")
+            self.assertIn('FUTURE_STATE = "ZZ_FUTURE_STATE_Q"', source, name)
+            self.assertIn(use, source, f"{name}: 모르는 상태 시험이 그 이름을 쓴다")
+        self.assertEqual(self.doc.count("ZZ_FUTURE_STATE_Q"), 1, "문서가 시험이 쓰는 이름을 한 번 적는다")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,7 @@ from chanceblog_desktop.service.naver_flow import NaverOptions  # noqa: E402
 
 COPY_TIME = "2026-11-02T02:00:00Z"
 NAVER_URL = "https://blog.naver.com/exampleaaa/223000000001"
+FUTURE_STATE = "ZZ_FUTURE_STATE_Q"                                                       # 어느 갈래도 정의하지 않을 상태 이름 — 다른 갈래가 더할 실제 이름을 쓰면 그 갈래가 병합될 때 시험이 깨진다(재작업 2, 시험 렌즈 Q 필수-1)
 
 
 def tree_hashes(root):
@@ -309,6 +310,30 @@ class NaverProfilesMergeTest(unittest.TestCase):
         package = review.request_review(self.ctx, project_id, "naver_a").naver.package
         self.assertEqual([line for line in package.warnings if "제외 주제" in line], [], "제목에 제외 키워드가 있어도 주의 문장이 생기지 않는다")
 
+    def test_a_long_main_topic_list_is_cut_at_a_whole_word_and_the_blog_still_gives_a_profile(self):
+        """재작업 2(시험 렌즈 Q 권고-5, A13) — 네이버 프로필의 주제 칸은 200자까지다. 블로그 관리의 주요 주제는 열 낱말(낱말마다 30자까지)까지 쓸 수 있어 쉼표로 이으면 200자를 넘을 수 있는데, 낱말을 끊지 않고 200자 안에서 자른다
+        (자르지 않으면 프로필이 거절돼 등록한 블로그가 '프로필 없음' 으로 보인다). 기본 태그는 낱말을 하나도 자르지 않는다."""
+        words = [f"주제{number:02d}" + "가" * 21 for number in range(10)]                         # 25자 낱말 열 개 — 쉼표로 이으면 268자
+        self.assertEqual((len(words[0]), len(", ".join(words))), (25, 268))
+        ChannelFile.register(self.ctx, "naver_a", display_name="에이 블로그", blog_ref="exampleid", main_topics=words)
+        profile = naver_profiles.profile_for(self.ctx, "naver_a")
+        self.assertEqual(profile.topic, ", ".join(words[:7]), "낱말 일곱 개(187자)까지 — 여덟째를 더하면 214자라 그 앞에서 자른다")
+        self.assertEqual((len(profile.topic), profile.default_tags), (187, tuple(words)), "기본 태그는 열 낱말 모두다")
+        self.assertEqual(naver_profiles.profile_keys(self.ctx), ("naver_a",), "등록한 블로그가 프로필 없음으로 보이지 않는다")
+
+    def test_the_topic_cut_is_exact_at_two_hundred_characters(self):
+        """재작업 2(시험 렌즈 Q 권고-5) — 쉼표로 이은 글이 정확히 200자면 모두 받고 201자면 마지막 낱말 하나만 뺀다(경계는 `>` 다)."""
+        eight = [f"{number:02d}" + "가" * 16 for number in range(8)]                              # 18자 낱말 여덟 개(서로 다르다)
+        exact = eight + ["08" + "나" * 17, "09" + "나" * 17]                                       # 18×8 + 19×2 + 쉼표 9번(18자) = 200자
+        self.assertEqual(len(", ".join(exact)), 200)
+        ChannelFile.register(self.ctx, "naver_a", display_name="에이 블로그", blog_ref="exampleid", main_topics=exact)
+        self.assertEqual(naver_profiles.profile_for(self.ctx, "naver_a").topic, ", ".join(exact), "200자는 모두 받는다")
+        over = eight + ["08" + "나" * 17, "09" + "다" * 18]                                          # 201자 — 마지막 낱말을 뺀 179자
+        self.assertEqual(len(", ".join(over)), 201)
+        ChannelFile.register(self.ctx, "naver_a", main_topics=over)
+        topic = naver_profiles.profile_for(self.ctx, "naver_a").topic
+        self.assertEqual((topic, len(topic)), (", ".join(over[:9]), 179), "201자는 마지막 낱말 하나를 뺀다")
+
 
 class HistoryServiceTest(Base):
     def test_a_fresh_store_has_no_rows_and_review_stages_are_not_rows(self):
@@ -347,16 +372,17 @@ class HistoryServiceTest(Base):
         self.assertEqual((result.unreadable, [row.project_id for row in result.rows]), (1, [self.project_id]))
 
     def test_a_state_the_table_does_not_know_yet_is_still_listed(self):
-        """서비스에 새 상태가 생겨도(PUBPR 의 병합 대기 …) 화면이 죽지 않게 — 닫힌 목록으로 못박지 않았다. 새 상태를 시험이 직접 만들어 쓴다."""
+        """서비스에 새 상태가 생겨도 화면이 죽지 않게 — 닫힌 목록으로 못박지 않았다. 새 상태를 시험이 직접 만들어 쓰되 **어느 갈래도 정의하지 않을 이름**이다(재작업 2, 시험 렌즈 Q 필수-1:
+        다른 갈래가 곧 더할 실제 상태 이름을 쓰면 그 갈래가 병합될 때 이 시험이 빨개진다)."""
         pages_id = ss.make_approved(self.ctx, title="새 상태 글")
-        extra = {"MERGE_PENDING": ()}
-        with mock.patch.dict(st.FLOWS[st.PAGES], {**extra, st.APPROVED: st.FLOWS[st.PAGES][st.APPROVED] + ("MERGE_PENDING",)}):
+        extra = {FUTURE_STATE: ()}
+        with mock.patch.dict(st.FLOWS[st.PAGES], {**extra, st.APPROVED: st.FLOWS[st.PAGES][st.APPROVED] + (FUTURE_STATE,)}):
             with self.ctx.store() as store:
                 project = store.load(pages_id)
-                project.transition("github_pages", "MERGE_PENDING", now=COPY_TIME)
+                project.transition("github_pages", FUTURE_STATE, now=COPY_TIME)
                 store.save(project)
             rows = history.list_history(self.ctx.reading_only()).rows
-            self.assertEqual([(row.platform, row.status) for row in rows], [("github_pages", "MERGE_PENDING")])
+            self.assertEqual([(row.platform, row.status) for row in rows], [("github_pages", FUTURE_STATE)])
 
     def test_a_missing_store_file_is_not_created_by_reading(self):
         tmp = tempfile.TemporaryDirectory()
@@ -435,6 +461,17 @@ class WorkLogServiceTest(unittest.TestCase):
         self.write("errors.log", lines)
         result = worklog.read_work_log(self.ctx, limit=5)
         self.assertEqual(([line.name for line in result.lines], result.older), (["Error11", "Error10", "Error9", "Error8", "Error7"], 7))
+
+    def test_the_default_limit_is_two_hundred_lines_newest_first_and_the_rest_are_counted(self):
+        """재작업 2(시험 렌즈 Q 권고-6, A07) — 화면·문서가 말하는 '최근 200줄' 이 기본 한도다: 250줄이 든 로그를 한도를 주지 않고 읽으면 200줄(최신이 먼저)과 오래된 50줄의 개수다."""
+        lines = [f"2026-11-24T{number // 3600:02d}:{number % 3600 // 60:02d}:{number % 60:02d}Z main Error{number} a.py:{number}" for number in range(250)]
+        self.write("errors.log", lines)
+        result = worklog.read_work_log(self.ctx)
+        self.assertEqual((len(result.lines), result.older, result.skipped, result.files), (200, 50, 0, 1))
+        self.assertEqual((result.lines[0].name, result.lines[-1].name), ("Error249", "Error50"), "최신이 먼저이고 가장 오래된 쉰 줄이 한도 밖이다")
+        exact = worklog.read_work_log(self.ctx, limit=250)
+        self.assertEqual((len(exact.lines), exact.older), (250, 0), "한도를 늘리면 모두 나온다")
+        self.assertEqual(worklog.MAX_LINES, 200, "문서와 화면이 말하는 숫자다")
 
     def test_a_huge_file_is_skipped_and_a_link_is_not_followed(self):
         self.write("errors.log", self.GOOD[:1])

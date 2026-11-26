@@ -31,7 +31,7 @@ from chanceblog_desktop.content import status as st  # noqa: E402
 from chanceblog_desktop.security.refuse import refuse_secret_shapes  # noqa: E402
 from chanceblog_desktop.service import blog_profiles, naver_flow, projects, review  # noqa: E402
 from chanceblog_desktop.ui import posts_adapter  # noqa: E402
-from chanceblog_desktop.ui.core import post_fake, post_rules as rules, posts, text  # noqa: E402
+from chanceblog_desktop.ui.core import jobs, post_fake, post_rules as rules, posts, text  # noqa: E402
 
 T = text.T
 SAFE = lambda *a: None  # noqa: E731
@@ -466,6 +466,19 @@ class PostsAdapterReadsTest(Base):
         data = self.provider.load_work_log(SAFE, NEVER)
         self.assertEqual(([line.name for line in data.lines], data.skipped), (["ValueError"], 1))
         self.assertNotIn(KEY[:10], repr(data) + repr([vars(line) for line in data.lines]))
+
+    def test_a_read_that_was_cancelled_while_it_ran_gives_nothing_back(self):
+        """재작업 2(시험 렌즈 Q 권고-6, B31) — 발행 기록·작업 로그를 읽는 도중 사용자가 화면을 떠나 읽기가 취소됐으면 읽은 값을 내지 않고 취소로 끝난다(`JobCancelled` — 화면은 취소 상태로 받는다). 취소되지 않은 읽기는 같은 값을 낸다."""
+        first = self.new_post().project_id
+        self.ready(first, A)
+        folder = self.ctx.workspace.root / "logs"
+        folder.mkdir(parents=True)
+        (folder / "errors.log").write_text("2026-11-24T05:30:12Z slot KeyError a.py:1" + NL, encoding="utf-8")
+        for name, read in (("load_history", self.provider.load_history), ("load_work_log", self.provider.load_work_log)):
+            with self.subTest(read=name):
+                with self.assertRaises(jobs.JobCancelled):
+                    read(SAFE, lambda: True)
+                self.assertTrue(read(SAFE, NEVER), "취소되지 않았으면 같은 읽기가 값을 낸다")
 
     def test_the_posts_screen_can_review_a_blog_that_is_only_registered_in_the_blog_screen(self):
         tmp = tempfile.TemporaryDirectory()

@@ -51,6 +51,7 @@ GOOD_URL = "https://blog.naver.com/exampleaaa/223000000001"
 STOP_SENTENCE = "이 영양제를 먹으면 통증이 완전히 사라집니다."
 RAW_FIELDS = {"category": "생활", "image_url": "https://img.example.invalid/a.jpg"}
 NL = chr(10)
+FUTURE_STATE = "ZZ_FUTURE_STATE_Q"                                                       # 어느 갈래도 정의하지 않을 상태 이름 — 다른 갈래가 더할 실제 이름을 쓰면 그 갈래가 병합될 때 시험이 깨진다(재작업 2, 시험 렌즈 Q 필수-1)
 
 
 def ready(provider, project_id, platform=A, ack=False):
@@ -500,6 +501,89 @@ class PostsQtPackageTest(Base):
                 seen.add(widget)
         self.assertTrue(all(form.isAncestorOf(widget) or widget is form for widget in seen), "포커스가 대화 밖으로 나가지 않는다")
 
+    # ---- 재작업 2(시험 렌즈 Q 권고-2) — 키보드·포커스 구멍 다섯. 머리의 소스는 이미 맞다(프로브로 확인) — 시험이 없어 변이가 살아남았던 것을 시험으로 못박는다 ----
+    def test_after_a_service_refusal_the_screen_behind_the_dialog_still_has_no_tab_stop(self):
+        """QA — 서비스가 주소를 거절해 화면이 다시 그려져도(대화는 열려 있다) 새로 생긴 위젯이 Tab 정거장이 되지 않는다: 다시 그린 뒤 Tab 을 대화 안에 다시 가둔다."""
+        project_id, form = self.copied_post()
+        self.provider.fail["record_published"] = posts.PostFailure(T["post_fail_address"], code="NAVER_PUBLISH_URL_INVALID", kind="address")
+        self.addCleanup(self.provider.fail.pop, "record_published", None)
+        form.input.setText(GOOD_URL)
+        form.start_button.click()
+        self.wait_write(self.window)
+        self.assertTrue(self.window.dialog.is_open)
+        self.assertIs(self.window.post_record_form, form)
+        outside = [widget for widget in self.window.screen_widget.findChildren(QWidget) if widget.focusPolicy() != Qt.NoFocus]
+        self.assertEqual(outside, [], "거절 뒤 다시 그린 화면에서 대화 뒤 위젯 %d 개가 Tab 정거장이 됐다" % len(outside))
+
+    def test_escape_does_not_close_the_record_dialog_while_its_write_is_running(self):
+        """QB — 쓰기가 도는 동안 Esc 는 대화를 닫지 않는다(`취소` 와 같은 길이고 쓰는 중에는 무시한다). 쓰기는 끝까지 가서 기록된다."""
+        project_id, form = self.copied_post()
+        gate = threading.Event()
+        provider = self.provider
+        original = provider.record_published
+
+        def held(request, progress, cancelled):
+            gate.wait(20)                                                                          # 시험이 문을 열 때까지 쓰는 중이다(시간으로 기다리지 않는다)
+            return original(request, progress, cancelled)
+
+        provider.record_published = held
+        self.addCleanup(gate.set)
+        self.addCleanup(lambda: provider.__dict__.pop("record_published", None))
+        form.input.setText(GOOD_URL)
+        form.start_button.click()
+        self.settle(3)
+        self.assertTrue(self.window.state.posts.busy, "쓰기가 돌고 있어야 한다")
+        self.window.escape()
+        self.settle(3)
+        still_open = self.window.dialog.is_open
+        gate.set()
+        self.wait_write(self.window)
+        self.assertTrue(still_open, "쓰는 동안 Esc 가 발행 주소 대화를 닫았다")
+        self.assertEqual(self.window.state.posts.detail.platform(A).status, st.PUBLISHED_MANUAL, "쓰기는 끝까지 갔다")
+
+    def test_taking_the_copy_mark_back_puts_the_focus_on_the_copied_button(self):
+        """QC — 복사 표시 취소를 누르면 그 단추가 사라진다 — 포커스는 되돌아간 단계의 `복사했어요` 로 간다(맨 위 메뉴로 튀지 않는다)."""
+        self.fresh(lambda provider, pid: (ready(provider, pid), copied(provider, pid)))
+        self.window.activateWindow()
+        self.settle(3)
+        button = self.card().buttons["uncopy"]
+        button.setFocus(Qt.TabFocusReason)
+        self.settle(3)
+        button.click()
+        self.wait_write(self.window)
+        self.assertEqual(self.window.state.posts.detail.platform(A).status, st.READY_TO_COPY)
+        focused = QApplication.focusWidget()
+        self.assertIsNotNone(focused, "복사 표시를 취소한 뒤 포커스가 어디에도 없다")
+        self.assertEqual(focused.property("focus_key"), "post:copied")
+
+    def test_after_the_address_is_recorded_the_focus_goes_to_the_address_copy_button(self):
+        """QC — 주소를 기록하면 대화가 닫히고 기록 단추가 사라진다 — 포커스는 새로 생긴 `주소 복사` 로 간다."""
+        project_id, form = self.copied_post()
+        self.window.activateWindow()
+        self.settle(3)
+        form.input.setText(GOOD_URL)
+        form.start_button.setFocus(Qt.TabFocusReason)
+        self.settle(2)
+        form.start_button.click()
+        self.wait_write(self.window)
+        self.assertEqual(self.window.state.posts.detail.platform(A).status, st.PUBLISHED_MANUAL)
+        focused = QApplication.focusWidget()
+        self.assertIsNotNone(focused, "주소를 기록한 뒤 포커스가 어디에도 없다")
+        self.assertEqual(focused.property("focus_key"), "post:copy:url")
+
+    def test_a_bad_address_puts_the_focus_back_in_the_field(self):
+        """QF — 잘못된 주소는 칸 옆에 이유가 보이고 포커스가 주소 칸으로 돌아간다(키보드로 단추를 누른 사람의 포커스가 단추에 남지 않는다)."""
+        project_id, form = self.copied_post()
+        self.window.activateWindow()
+        self.settle(3)
+        form.input.setText("not an address at all")
+        form.start_button.setFocus(Qt.TabFocusReason)                                               # 키보드로 방금 단추를 눌렀다 — 포커스가 단추에 있다
+        self.settle(2)
+        form.start_button.click()
+        self.settle(4)
+        self.assertTrue(form.problem.isVisible())
+        self.assertEqual(QApplication.focusWidget(), form.input, "포커스는 주소 칸으로 돌아간다")
+
     def test_every_button_and_input_of_the_package_card_and_the_record_dialog_has_an_accessible_name(self):
         self.fresh(lambda provider, pid: (ready(provider, pid), copied(provider, pid)))
         for button in self.card().findChildren(QAbstractButton):
@@ -741,7 +825,7 @@ class PostsQtWorkLogTest(Base):
     def test_a_key_shaped_log_line_never_reaches_a_label_and_a_key_shaped_address_cannot_be_copied(self):
         class Odd(Recording):
             def load_history(self, progress, cancelled):
-                rows = (post_history.HistoryEntry("odd1", "새 상태 글", "github_pages", "MERGE_PENDING", 1, "2026-11-02T00:00:00Z"),
+                rows = (post_history.HistoryEntry("odd1", "새 상태 글", "github_pages", FUTURE_STATE, 1, "2026-11-02T00:00:00Z"),
                         post_history.HistoryEntry("odd2", "주소 글", "naver_a", st.PUBLISHED_MANUAL, 1, "2026-11-03T00:00:00Z", f"https://blog.naver.com/x/1?token={KEY}", "2026-11-04T00:00:00Z"),
                         post_history.HistoryEntry("odd3", "제목 " + KEY, "naver_b", st.COPY_COMPLETED, 1, "2026-11-05T00:00:00Z"))
                 return post_history.HistoryData(rows, 0, "ok", True, False)
@@ -831,6 +915,62 @@ class PostsQtHistoryStatesTest(Base):
         ui.more_button.click()
         self.settle(6)
         self.assertEqual(len(window.screen_widget.history_ui.rows), 100)
+
+    def test_the_more_button_and_the_log_toggle_keep_the_keyboard_focus_after_the_screen_is_drawn_again(self):
+        """재작업 2(시험 렌즈 Q 권고-2, QH) — `더 보기`·`작업 로그 펼치기/접기` 는 누르면 화면이 다시 그려진다(단추가 새로 만들어진다). 포커스는 같은 단추로 돌아온다(맨 위로 튀지 않는다).
+        두 길을 본다: ① 키보드로 그 단추를 눌렀다 — 그릴 때 같은 `focus_key` 로 되돌리는 길 ② 포커스가 다른 곳(정렬 단추)에 있을 때 동작을 직접 불렀다 — 동작 자신이 단추로 되돌리는 길(① 만으로는 이 줄을 지워도
+        시험이 초록이라 변이가 살아남는다)."""
+        class Many(Recording):
+            def load_history(self, progress, cancelled):
+                rows = tuple(post_history.HistoryEntry(f"many{number:04d}", f"예시 글 {number}", "naver_a", st.READY_TO_COPY, 1, f"2026-11-01T00:{number // 3600:02d}:{number // 60 % 60:02d}:{number % 60:02d}Z") for number in range(200))
+                return post_history.HistoryData(rows, 0, "ok", True, False)
+
+        def focused_key():
+            widget = QApplication.focusWidget()
+            return widget.property("focus_key") if widget is not None else None
+
+        window = self.make(Many("empty"), page="history")
+        window.activateWindow()
+        self.settle(3)
+        ui = window.screen_widget.history_ui
+        ui.more_button.setFocus(Qt.TabFocusReason)                                                  # ① 키보드로 더 보기를 누른다
+        self.settle(3)
+        ui.more_button.click()
+        self.settle(6)
+        ui = window.screen_widget.history_ui
+        self.assertEqual(len(ui.rows), 100)
+        self.assertIs(QApplication.focusWidget(), ui.more_button, "더 보기를 누른 뒤 포커스가 새로 그려진 더 보기 단추로 돌아온다")
+        self.assertEqual(focused_key(), "hist:more")
+        ui.order_button.setFocus(Qt.TabFocusReason)                                                 # ② 포커스가 다른 곳에 있을 때 동작을 부른다
+        self.settle(3)
+        self.assertEqual(focused_key(), "hist:order")
+        window.history_more()
+        self.settle(6)
+        ui = window.screen_widget.history_ui
+        self.assertEqual(len(ui.rows), 150)
+        self.assertIsNotNone(ui.more_button, "아직 남은 줄이 있어 더 보기가 있다")
+        self.assertIs(QApplication.focusWidget(), ui.more_button, "동작이 끝나면 포커스는 자기 단추에 있다")
+
+        def toggle_log(direct):
+            before = window.state.history.log_open
+            ui = window.screen_widget.history_ui
+            if direct:                                                                              # ② 포커스가 다른 곳(정렬 단추)에 있을 때 동작을 부른다
+                ui.order_button.setFocus(Qt.TabFocusReason)
+                self.settle(3)
+                window.history_toggle_log()
+            else:                                                                                   # ① 키보드로 그 단추를 누른다
+                ui.log_toggle.setFocus(Qt.TabFocusReason)
+                self.settle(3)
+                ui.log_toggle.click()
+            self.wait_for(lambda: window.state.history.log_open != before and not window.state.history.log_loading)
+            self.settle(6)
+            ui = window.screen_widget.history_ui
+            what = f"{'직접 부른' if direct else '키보드로 누른'} 작업 로그 {'펼치기' if window.state.history.log_open else '접기'}"
+            self.assertIs(QApplication.focusWidget(), ui.log_toggle, f"{what}가 끝나면 포커스는 작업 로그 단추에 있다")
+            self.assertEqual(focused_key(), "hist:log-toggle")
+
+        for direct in (False, False, True, True):                                                   # 펼침·접음(키보드), 펼침·접음(직접)
+            toggle_log(direct)
 
 
 class PostsQtLayoutTest(Base):
