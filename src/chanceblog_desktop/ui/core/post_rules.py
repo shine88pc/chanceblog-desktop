@@ -18,7 +18,7 @@ from ...content import status as st
 from ...render.pages import MAX_CATEGORY, MAX_DESCRIPTION, MAX_TAG, MAX_TAGS
 from .draft_rules import HEALTH_STOP, HealthReview, health_units
 from .drafts import review_health
-from .posts import PLATFORMS, PagesValues, PostPreview, PreviewBlock
+from .posts import PLATFORMS, PagesValues, PostFailure, PostPreview, PreviewBlock
 from .text import T, display_text
 
 PREVIEW_BLOCKS = 80                                          # 미리보기에 그리는 최대 블록(문단) 수
@@ -31,6 +31,9 @@ KIND_OF_TAG = {"h2": "heading", "h3": "heading", "h4": "heading", "ul": "list", 
 KIND_LABEL = {"heading": "post_block_heading", "list": "post_block_list", "quote": "post_block_quote", "paragraph": "post_block_paragraph"}
 REVIEWABLE = frozenset({st.NOT_STARTED, st.DRAFT_GENERATED, st.REVIEW_REQUIRED, st.APPROVED, st.READY_TO_COPY, st.PUBLISH_FAILED})          # 이 화면이 '검토 시작·다시 검토' 를 켜는 상태 — 올라간·복사 마친·공개된 글은 1a 가 바꾸지 않는다
 APPROVED_NOW = frozenset({st.APPROVED, st.READY_TO_COPY})   # 승인 취소가 켜지는 상태
+COPYABLE = frozenset({st.READY_TO_COPY, st.COPY_COMPLETED})   # 복사용 패키지 카드가 보이고 복사 단추가 켜지는 상태(글 흐름 1b)
+MAX_URL = 500                                                # 발행 주소 칸의 최대 글자 수(글 흐름 1b)
+NAVER_HOSTS = ("blog.naver.com", "m.blog.naver.com")         # 발행 주소로 받는 네이버 블로그 주소(서비스 `content/model.py` 와 같다 — 시험이 견준다)
 _TAG = re.compile(r"^<([a-z0-9]+)")
 _NON_ASCII = re.compile(r"[^\x20-\x7e]")                     # 보이는 ASCII 가 아닌 모든 글자 — 엔진이 지우는 눈에 안 보이는 글자는 전부 여기 든다(그보다 넓다). 이것을 모두 지운 글에 BEGIN·END 낱말이 없으면 엔진도 머리·꼬리를 볼 수 없다
 _PROBE_LIMIT = 150_000                                       # 엔진에 한 번에 묻는 글의 최대 길이 — 엔진은 20만 자에서 글을 자르므로(끝 표지가 잘려 나가 '열려 있다' 로 잘못 읽힌다) 그 아래로 잡는다
@@ -58,18 +61,32 @@ def _without_invisible(value):
     return "".join(char for char in text if char in "\n\r\t" or unicodedata.category(char) not in _HIDDEN_CATEGORIES)
 
 
+def _invisible_as_spaces(value):
+    """`_without_invisible` 이 지우는 글자와 같은 글자를 지우는 대신 **공백으로 바꾼** 글 — 줄바꿈·탭은 둔다. 엔진은 키 바로 앞의 글자가 영문·숫자이면 키로 읽지 않는데, 낱말 바로 뒤에 숨은 글자를 두고 키를 붙이면
+    (`낱말` + 숨은 글자 + `키`) 숨은 글자를 지운 글에서는 키가 낱말에 붙어 버려 가려지지 않는다. 눈으로 보면 낱말과 키가 갈려 있으니 그 모습을 엔진에 한 번 더 물어 본다(독립 검증 S 권고-2 의 임시 방어 — 엔진 한계는 SECSEP2 가 고친다)."""
+    text = _INVISIBLE.sub(" ", value)
+    if text.replace("\n", "").replace("\r", "").replace("\t", "").isprintable():
+        return text
+    return "".join(" " if char not in "\n\r\t" and unicodedata.category(char) in _HIDDEN_CATEGORIES else char for char in text)
+
+
 def would_be_masked(value):
     """가리기 엔진이 이 글에서 **비밀 모양을** 가리는가 — 저장 검사기(`secret_spots`)가 아는 여섯 유형뿐 아니라 엔진이 아는 모든 모양(Slack·Stripe·OpenAI·Anthropic 키·주소 속 사용자 정보 …)을 본다.
     이 앱을 연 동안 기억해 칸에 다시 채울 값처럼 '키 모양이 하나라도 있으면 내보내지 않을 글' 을 가릴 때 쓴다(독립 검증 S 참고-2). 엔진은 먼저 눈에 안 보이는 글자를 지우므로
-    **그것만 지운 글**과 견준다(독립 검증 S 2차 참고 I1 — ZWJ 이모지·변형 선택자가 든 평범한 값을 가렸다고 세지 않는다. 키를 그 글자로 쪼갠 값은 엔진이 지우고 알아봐 가린다). 글이 아니거나 가릴 글이 없으면 False."""
+    **그것만 지운 글**과 견준다(독립 검증 S 2차 참고 I1 — ZWJ 이모지·변형 선택자가 든 평범한 값을 가렸다고 세지 않는다. 키를 그 글자로 쪼갠 값은 엔진이 지우고 알아봐 가린다).
+    **숨은 글자를 공백으로 바꾼 글도 함께 묻는다**(독립 검증 S 권고-2, 글 흐름 1b 재작업 1): 낱말 뒤에 숨은 글자를 두고 붙인 키는 지운 글에서는 낱말에 붙어 엔진이 못 알아보지만 공백으로 바꾼 글에서는 알아본다 —
+    둘 중 하나라도 가려지면 참이다(복사 가드·주소 칸이 막는다). 낱말에 숨은 글자 없이 바로 붙인 키는 평범한 긴 낱말과 구별할 수 없어 여전히 못 막는다(엔진 한계 — `docs/SECURITY.md`). 글이 아니거나 가릴 글이 없으면 False."""
     if not isinstance(value, str):
         return False
-    flat = " ".join(_without_invisible(value).split())
-    return bool(flat) and display_text(flat, len(flat) + 64) != flat
+    for plain in dict.fromkeys((_without_invisible(value), _invisible_as_spaces(value))):          # 숨은 글자가 없으면 두 글이 같다 — 같은 글은 한 번만 묻는다
+        flat = " ".join(plain.split())
+        if flat and display_text(flat, len(flat) + 64) != flat:
+            return True
+    return False
 
 
-def when_text(stamp):
-    """글에 적힌 UTC 시각(`2026-11-24T05:30:12Z`) → 한국 시각 `2026-11-24 14:30`. 모양이 다르면 빈 글(지어내지 않는다). 시계를 읽지 않는다."""
+def when_text(stamp, seconds=False):
+    """글에 적힌 UTC 시각(`2026-11-24T05:30:12Z`) → 한국 시각 `2026-11-24 14:30`(`seconds` 면 `2026-11-24 14:30:12` — 작업 로그 줄). 모양이 다르면 빈 글(지어내지 않는다). 시계를 읽지 않는다."""
     found = _STAMP.match(stamp) if isinstance(stamp, str) else None
     if found is None:
         return ""
@@ -77,7 +94,7 @@ def when_text(stamp):
         moment = datetime(*(int(part) for part in found.groups()), tzinfo=timezone.utc).astimezone(KST)
     except ValueError:
         return ""
-    return moment.strftime("%Y-%m-%d %H:%M")
+    return moment.strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M")
 
 
 def status_text(status):
@@ -279,15 +296,77 @@ def secret_spots(title, body, references=(), assets=()):
     return tuple((item.where, item.line, scan.KIND_LABELS[item.kind]) for item in found)
 
 
-def health_of(title, body):
-    """제목·본문의 건강 효과 단정 판정 → `HealthReview` — 초안 작성 화면의 복사 관문과 **같은 함수**(`drafts.review_health`)를 글 조각(문장)마다 따로 건다."""
-    return review_health((T["drf_where_title"], (title,) if isinstance(title, str) else ()), (T["drf_where_body"], health_units(body)))
+def health_of(title, body, extra=()):
+    """제목·본문의 건강 효과 단정 판정 → `HealthReview` — 초안 작성 화면의 복사 관문과 **같은 함수**(`drafts.review_health`)를 글 조각(문장)마다 따로 건다.
+    `extra` 는 더 걸 (이름, 조각들) 쌍들이다 — Pages 검토 값의 한 줄 설명·태그(`pages_health_extra`, 글 흐름 1b D-652). 가장 높은 단계와 막힘 조각의 앞부분이 모두 합쳐진다."""
+    return review_health((T["drf_where_title"], (title,) if isinstance(title, str) else ()), (T["drf_where_body"], health_units(body)), *extra)
 
 
-def text_blocks(title, body, references=(), assets=()):
-    """글 자신(제목·본문·출처·이미지 이름과 설명)이 승인을 막는 이유들 → `("health",)`·`("secret",)` 같은 튜플(막는 것이 없으면 비어 있다). 컨트롤러의 검토 결과와 별개로 **공급자가 승인 직전에 글을 다시 읽어 한 번 더** 건다 — 화면 틀이 어긋나도 막힌 글이 승인되지 않게."""
+def pages_health_extra(values):
+    """Pages 검토 값(`PagesValues`) → 건강 효과 단정 판정에 더 거는 (이름, 조각들) 쌍들 — 한 줄 설명은 문장마다, 태그는 하나씩이다. 값이 없으면(네이버·옛 요청) 빈 튜플(글 흐름 1b, D-652)."""
+    if values is None:
+        return ()
+    description = values.description if isinstance(values.description, str) else ""
+    tags = tuple(tag for tag in (values.tags or ()) if isinstance(tag, str))
+    return ((T["post_where_description"], health_units(description)), (T["post_where_tags"], tags))
+
+
+def copy_blocked(text):
+    """복사할 글에 키·토큰 모양이 있나 — 저장 검사기(`secret_spots`)나 가리기 엔진(`would_be_masked`)이 하나라도 건드리면 참이다(그 글은 클립보드로 보내지 않는다). 낱말 뒤에 숨은 글자를 두고 붙인 키 모양은 `would_be_masked` 가 숨은 글자를 공백으로 바꾼 글도 물어 막는다
+    (임시 방어 — 엔진 한계는 SECSEP2 가 고친다, 재작업 1). 작업 스레드에서 부른다(글 흐름 1b, D-643)."""
+    return isinstance(text, str) and bool(text) and bool(secret_spots("", text) or would_be_masked(text))
+
+
+def _spacey(value):
+    """글 안에 공백이나 눈에 안 보이는 글자가 하나라도 있나 — 제어·서식·줄/문단 구분 글자(NUL·DEL·방향 제어·BOM·폭 없는 공백·소프트 하이픈 …)와 가리기 엔진이 지우는 채움·변형·태그 글자까지.
+    발행 주소 칸은 이런 글자를 받지 않는다(화면에 보이는 모습은 가려져도 `주소 복사` 는 글자를 그대로 복사한다 — 독립 검증 S 참고-1). 앞뒤 공백은 부른 쪽이 먼저 뗀다."""
+    if len(value.split()) > 1 or _INVISIBLE.search(value):
+        return True
+    return not value.isprintable() and any(unicodedata.category(char) in _HIDDEN_CATEGORIES for char in value)
+
+
+def naver_url_problem(text):
+    """발행 주소 칸의 글 → 문제 열쇠(`empty`·`space`·`long`·`secret`·`scheme`·`host`·`path`) 또는 ''(통과). **글은 되풀이하지 않는다.** 화면이 먼저 거르고 어댑터(`record_published`)가 서비스를 부르기 전에
+    **같은 규칙을 다시 건다**(`address_failure` — 화면을 건너뛰는 호출도 막는다, 글 흐름 1b 재작업 1). 서비스(`content/model.py` 의 `_published_url`·`refuse_secret_shapes`)의 검사는 이보다 좁다 — https·네이버 호스트·계정 정보·저장 검사기
+    여섯 유형뿐이라 포트·경로 없음·500자 초과·엔진 전용 키 모양·주소 인자의 토큰은 거르지 않는다(글 흐름 1b, D-645): 앞뒤 공백은 떼고 보고, 안에 공백이나 눈에 안 보이는 글자(제어·서식 글자 포함)가 있거나 500자를 넘으면 거절한다.
+    키·토큰 모양(저장 검사기 + 가리기 엔진)·`https` 아님·주소 앞쪽 계정 정보나 포트·네이버 블로그 주소 아님·글 주소(경로) 없음도 거절한다."""
+    url = text.strip() if isinstance(text, str) else ""
+    if not url:
+        return "empty"
+    if _spacey(url):
+        return "space"
+    if len(url) > MAX_URL:
+        return "long"
+    if secret_spots("", url) or would_be_masked(url):
+        return "secret"
+    if not url.lower().startswith("https://"):
+        return "scheme"
+    rest = url[len("https://"):]
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0]
+    if authority.lower() not in NAVER_HOSTS:
+        return "host"
+    path = rest[len(authority):]
+    if not path.startswith("/") or len(path) < 2 or path[1] in "/?#":
+        return "path"
+    return ""
+
+
+def address_failure(text):
+    """발행 주소 글 → 받지 않을 때의 실패(`PostFailure`), 받을 수 있으면 None(글 흐름 1b 재작업 1, 독립 검증 S 필수-1). `naver_url_problem` 과 **같은 규칙**이고 가짜 공급자(`post_fake`)와 실제 어댑터(`record_published`)가
+    이 함수 하나로 거절한다 — 어댑터는 서비스를 부르기 **전에** 걸어 화면을 건너뛰는 호출도 막는다. 실패 종류는 서비스가 같은 주소에 내던 것과 같다: 저장 검사기가 아는 여섯 유형이 든 주소는 `secret`, 그 밖의 모든 거절
+    (엔진만 아는 키 모양·계정 정보·포트·경로 없음·길이 포함)은 `address`. 문장은 고정 문장이고 입력한 주소는 어디에도 없다."""
+    if not naver_url_problem(text):
+        return None
+    if isinstance(text, str) and secret_spots("", text.strip()):
+        return PostFailure(T["post_fail_secret_plain"], code="SECRET_SHAPE_FOUND", kind="secret")
+    return PostFailure(T["post_fail_address"], code="NAVER_PUBLISH_URL_INVALID", kind="address")
+
+
+def text_blocks(title, body, references=(), assets=(), extra=()):
+    """글 자신(제목·본문·출처·이미지 이름과 설명)이 승인을 막는 이유들 → `("health",)`·`("secret",)` 같은 튜플(막는 것이 없으면 비어 있다). 컨트롤러의 검토 결과와 별개로 **공급자가 승인 직전에 글을 다시 읽어 한 번 더** 건다 — 화면 틀이 어긋나도 막힌 글이 승인되지 않게.
+    `extra` 는 건강 효과 단정 판정에 더 거는 (이름, 조각들) 쌍들(Pages 한 줄 설명·태그 — `pages_health_extra`)이다."""
     found = []
-    if health_of(title, body).stage == HEALTH_STOP:
+    if health_of(title, body, extra).stage == HEALTH_STOP:
         found.append("health")
     if secret_spots(title, body, references, assets):
         found.append("secret")
@@ -339,9 +418,10 @@ def review_blocks(review):
     return tuple(blocks)
 
 
-def approval_state(review, detail, platform, *, busy=False, restoring=False):
+def approval_state(review, detail, platform, *, busy=False, restoring=False, allow_similarity=False):
     """`승인하기` 를 켤 수 있나 → (가능한가, 이유 문구 열쇠 — 가능하면 빈 글). 규칙 전부가 여기 한 곳이다:
-    ① 복원이 도는 중이 아니다 ② 쓰기가 돌고 있지 않다 ③ 그 플랫폼의 상태가 '검토 중' ④ 이 앱을 연 뒤 **이 글·이 플랫폼**의 검토 결과를 받았다 ⑤ 그 결과가 **지금 글의 판**의 것이다 ⑥ 막힘이 없다."""
+    ① 복원이 도는 중이 아니다 ② 쓰기가 돌고 있지 않다 ③ 그 플랫폼의 상태가 '검토 중' ④ 이 앱을 연 뒤 **이 글·이 플랫폼**의 검토 결과를 받았다 ⑤ 그 결과가 **지금 글의 판**의 것이다 ⑥ 막힘이 없다.
+    `allow_similarity` 면(`그래도 승인하기` — 글 흐름 1b, D-646) ⑥ 이 바뀐다: 막힘이 **정확히 유사도 하나뿐**일 때만 가능하다(다른 막힘이 하나라도 있으면 그대로 막힌다)."""
     if restoring:
         return False, "post_approve_why_restoring"
     if busy:
@@ -353,7 +433,12 @@ def approval_state(review, detail, platform, *, busy=False, restoring=False):
         return False, "post_res_lost"
     if review.revision != detail.revision or state.rendered_revision != detail.revision:
         return False, "post_approve_why_stale"
-    if review_blocks(review):
+    blocks = review_blocks(review)
+    if allow_similarity:
+        if blocks != ("similarity",):
+            return False, "post_approve_why_blocked"
+        return True, ""
+    if blocks:
         return False, "post_approve_why_blocked"
     return True, ""
 
@@ -402,5 +487,6 @@ def title_of(name):
     return stem.strip()[:200]
 
 
-__all__ = ["APPROVED_NOW", "text_blocks", "BLOCK_LIMIT", "HealthReview", "PAGE", "PREVIEW_BLOCKS", "PREVIEW_CHARS", "REVIEWABLE", "approval_state", "build_preview", "code_of", "gate_sentence", "health_of", "pages_problems",
-           "pages_raw_of", "pages_values_of", "platform_text", "review_blocks", "secret_spots", "shown", "split_tags", "status_text", "title_of", "unique_codes", "when_text", "would_be_masked"]
+__all__ = ["APPROVED_NOW", "COPYABLE", "MAX_URL", "NAVER_HOSTS", "text_blocks", "BLOCK_LIMIT", "HealthReview", "PAGE", "PREVIEW_BLOCKS", "PREVIEW_CHARS", "REVIEWABLE", "address_failure", "approval_state", "build_preview", "code_of", "copy_blocked",
+           "gate_sentence", "health_of", "naver_url_problem", "pages_health_extra", "pages_problems", "pages_raw_of", "pages_values_of", "platform_text", "review_blocks", "secret_spots", "shown", "split_tags", "status_text",
+           "title_of", "unique_codes", "when_text", "would_be_masked"]

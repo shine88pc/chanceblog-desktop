@@ -40,6 +40,7 @@ from .ocr_runner import OcrRunner
 from .photo_screen import DIALOG_WIDTH as PHOTO_DIALOG_WIDTH
 from .photo_screen import PhotoSheet
 from .post_flow import PostFlowMixin
+from .post_history_flow import HistoryFlowMixin
 from .style_dialog import DIALOG_WIDTH as STYLE_DIALOG_WIDTH
 from .style_dialog import StyleDialog
 from .topbar import TopBar
@@ -92,7 +93,7 @@ def qt_files_picker(parent, title, filter_text):
     return list(paths)
 
 
-class AppShell(PostFlowMixin, QMainWindow):
+class AppShell(HistoryFlowMixin, PostFlowMixin, QMainWindow):
     def __init__(self, provider=None, *, connections=None, clipboard=None, runner=None, clock=None, version_info=None, autoload=True, blogs=None, file_picker=None, seeds=None, clipboard_wipe=None, candidates=None, drafts=None, url_opener=None, style=None, backups=None, references=None, files_picker=None, photos=None, photo_preview_maker=None, environment=None, ocr=None, ocr_options=None, posts=None):
         super().__init__()
         self.version_info = version_info or read_version()                                # 사이드바 아래에 보일 버전(`v0.0.0` 또는 `개발 버전`)
@@ -217,6 +218,7 @@ class AppShell(PostFlowMixin, QMainWindow):
         self.references = ReferenceLibrary(references or (paired_references() if paired_references else FakeReferencesProvider()))
         self.references_form = None                                                      # 열려 있는 보관함 대화상자의 안쪽 부품(없으면 None)
         self._init_posts()                                                               # 글 검토 화면(글 흐름 1a, 결정 D-620)의 작업 다리와 대화상자 자리 — 동작은 `post_flow.py` 의 `PostFlowMixin` 이 한다
+        self._init_history()                                                             # 발행 기록 화면(글 흐름 1b, 결정 D-649)의 작업 다리 둘(목록·작업 로그) — 동작은 `post_history_flow.py` 의 `HistoryFlowMixin` 이 한다. 읽기뿐이다
         self.setMinimumSize(*K.LAYOUT["window_min"])
         self.resize(*self.default_size())
         self.render()
@@ -485,12 +487,15 @@ class AppShell(PostFlowMixin, QMainWindow):
 
     def show_sample_info(self, screen="home"):
         """'예시 데이터' 설명 — 화면마다 보이는 것이 달라 설명도 그 화면 것이다(홈은 주제·숫자, 설정은 키 이름·사용량 숫자)."""
-        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"], "posts": T["post_sample_dialog_body"], "drafts": T["drf_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
+        self.show_dialog(T["sample_dialog_title"], {"settings": T["conn_sample_dialog_body"], "blogs": T["blogs_sample_dialog_body"], "seed": T["seeds_sample_dialog_body"], "topics": T["cand_sample_dialog_body"], "posts": T["post_sample_dialog_body"], "history": T["hist_sample_dialog_body"], "drafts": T["drf_sample_dialog_body"]}.get(screen, T["sample_dialog_body"]))
 
     def escape(self):
         if self.dialog.is_open:
             if self.post_pages_form is not None:                                  # 글 검토의 Pages 값 대화는 Esc 가 `취소` 와 같다
                 self.post_pages_cancel()
+                return
+            if self.post_record_form is not None:                                 # 글 검토의 발행 주소 기록 대화도 Esc 가 `취소` 와 같다(글 흐름 1b)
+                self.post_record_cancel()
                 return
             if self.post_import_form is not None:                                 # 글 가져오기 대화는 Esc 도 `취소` 단추와 같은 확인을 거친다(입력한 글을 조용히 버리지 않는다)
                 self.post_import_escape()
@@ -563,6 +568,8 @@ class AppShell(PostFlowMixin, QMainWindow):
                 self.state.candidates.start_load(**self.cand_bridge.callbacks())
             elif key == "posts":                                                      # 글 검토 화면도 열 때마다 목록(과 열어 둔 글)을 읽는다(읽기만 — 파일도 폴더도 만들지 않는다). 쓰는 중이면 읽지 않는다
                 self._posts_opened()
+            elif key == "history":                                                    # 발행 기록 화면도 열 때마다 목록(과 펼쳐 둔 작업 로그)을 읽는다(읽기만 — 파일도 폴더도 만들지 않는다)
+                self._history_opened()
             elif key == "drafts" and self.state.drafts.state == "empty":              # 초안 작성 화면을 후보 없이 열면 저장한 초안 목록을 읽는다(읽기만 — 저장 기능이 있는 공급자만)
                 self._start_saved_list(render=False)
             self.render()
@@ -1404,6 +1411,10 @@ class AppShell(PostFlowMixin, QMainWindow):
     def drf_to_topics(self):
         """초안 화면의 `← 주제 후보`·`주제 후보로 가기` — 이미 있는 주제 후보 화면으로 간다(고친 내용이 있으면 `go` 가 확인창을 먼저 띄운다). 화면 부품은 화면 이동을 직접 부르지 않고 이 함수로 요청한다."""
         self.go("topics")
+
+    def history_go_posts(self, *_):
+        """발행 기록의 빈 화면 `글 검토로 가기`(글 흐름 1b) — 이미 있는 글 검토 화면(실제 메뉴)으로 간다. 화면 부품은 화면 이동을 직접 부르지 않고 이 셸 함수만 부른다(`go` 를 부르는 곳은 사이드바와 셸뿐이다)."""
+        self.go("posts")
 
     def _render_drafts(self):
         if self.state.page == "drafts":                                          # 다른 화면을 보는 중이면 값만 받아 둔다(떠난 뒤에 온 답은 컨트롤러가 버린다)

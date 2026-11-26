@@ -1628,11 +1628,12 @@ class PostsConcurrencyCoreTest(unittest.TestCase):
 
     def test_the_menu_has_the_posts_entry_in_the_core_group_after_drafts(self):
         keys = [key for key, _label, _icon in app_state.NAV]
-        self.assertEqual(keys, ["home", "topics", "drafts", "posts", "seed", "blogs", "settings"])
-        self.assertEqual(app_state.NAV_GROUPS[0][2], ("home", "topics", "drafts", "posts"))
+        self.assertEqual(keys, ["home", "topics", "drafts", "posts", "history", "seed", "blogs", "settings"])  # 의도적 갱신(글 흐름 1b, D-651): 발행 기록이 다음 단계 목록에서 실제 메뉴로 올라 글 검토 다음에 놓였다(메뉴 여덟)
+        self.assertEqual(app_state.NAV_GROUPS[0][2], ("home", "topics", "drafts", "posts", "history"))  # 의도적 갱신(글 흐름 1b, D-651): 핵심 작업 묶음 끝에 발행 기록이 글 검토 다음으로 올랐다
         self.assertEqual(T["nav_posts"], "글 검토")
         self.assertEqual(dict((key, icon) for key, _label, icon in app_state.NAV)["posts"], "check_circle")
         self.assertNotIn("posts", [key for key, _label, _icon in app_state.NEXT_STEPS])
+        self.assertEqual(app_state.NEXT_STEPS, ())  # 의도적 강화(글 흐름 1b, D-651): 다음 단계 목록이 비었음을 못박는다 — 발행 기록이 실제 메뉴가 되었다
 
 
 class PostsStaleReadsCoreTest(unittest.TestCase):
@@ -1799,6 +1800,7 @@ class PostsSourceRulesTest(unittest.TestCase):
     QT = sorted((UI_DIR / "qt").glob("post*.py"))
     BANNED_IMPORTS = re.compile(r"(^|\.)(socket|subprocess|urllib|http|ssl|requests|ftplib|smtplib|webbrowser|ctypes|multiprocessing|asyncio)(\.|$)")
     BANNED_WORDS = ("PIPELINE_PAUSE", "pages_flow", "naver_flow", "issue_naver_package", "record_naver_published", "check_pages_deploy", "gitrepo", "capabilities", "workflow_dispatch", "keystore")
+    ADAPTER_MAY_NAME = {"record_naver_published"}                          # 의도적 갱신(글 흐름 1b, D-647): 발행 주소 기록(`record_published`)이 이 서비스 함수 하나를 부르므로 **어댑터에서만** 이 낱말을 푼다 — 화면 층(`ui/core/post*.py`·`ui/qt/post*.py`)은 계속 금지이고 나머지 금지 낱말은 모두 그대로다
 
     def parse(self, path):
         return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -1841,6 +1843,8 @@ class PostsSourceRulesTest(unittest.TestCase):
         for path in self.CORE + self.QT + [UI_DIR / "posts_adapter.py"]:
             body = self.code_only(path)
             for word in self.BANNED_WORDS:
+                if path.name == "posts_adapter.py" and word in self.ADAPTER_MAY_NAME:
+                    continue                                              # 의도적 갱신(글 흐름 1b, D-647): 어댑터만 — 그 한 곳은 아래 시험이 따로 못박는다
                 with self.subTest(file=path.name, word=word):
                     self.assertNotIn(word, body)
 
@@ -1853,13 +1857,15 @@ class PostsSourceRulesTest(unittest.TestCase):
 
     def test_the_adapter_calls_exactly_these_service_functions_and_nothing_else(self):
         tree = self.parse(UI_DIR / "posts_adapter.py")
-        service_aliases = {"own_posts", "project_service", "review_service"}
+        service_aliases = {"own_posts", "project_service", "review_service", "history_service", "profile_service", "worklog_service"}          # 의도적 갱신(글 흐름 1b, D-647): 서비스 모듈 별칭 셋이 늘었다
         calls = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id in service_aliases:
                 calls.add(f"{node.func.value.id}.{node.func.attr}")
         self.assertEqual(calls, {"own_posts.read_own_files", "own_posts.check_pasted_text", "project_service.list_projects", "project_service.show_project", "project_service.new_project",
-                                 "project_service.import_html", "review_service.request_review", "review_service.grant_approval", "review_service.revoke_approval"})
+                                 "project_service.import_html", "review_service.request_review", "review_service.grant_approval", "review_service.revoke_approval",
+                                 "review_service.read_naver_package", "review_service.mark_naver_copied", "review_service.record_naver_published", "history_service.list_history",
+                                 "worklog_service.read_work_log", "profile_service.profile_keys"})              # 의도적 갱신(글 흐름 1b, D-647): 아홉에서 열다섯 — 여섯을 더했고 정확히 같음을 못박는 방식은 그대로다
         imported = {alias.name if isinstance(node, ast.Import) else f"{node.module}.{alias.name}" for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
         for banned in ("pages_flow", "naver_flow", "external", "capabilities", "gitrepo", "gate", "backup_flow", "doctor"):
             self.assertFalse([name for name in imported if name.endswith(banned) or f".{banned}." in name], banned)
@@ -1867,10 +1873,13 @@ class PostsSourceRulesTest(unittest.TestCase):
 
     # ---- 강화(독립 검증 S 권고-1·2): 서비스를 부르는 길을 가져오기·별칭·속성까지 따라가고, Qt 의 파일 쓰기 도구도 막는다 ------------------------------------------------------------------
     SERVICE_IMPORTS = {"own_posts": "chanceblog_desktop.service.own_posts", "project_service": "chanceblog_desktop.service.projects", "review_service": "chanceblog_desktop.service.review",
-                       "make_context": "chanceblog_desktop.service.context.make_context", "PagesParams": "chanceblog_desktop.service.previews.PagesParams"}
+                       "make_context": "chanceblog_desktop.service.context.make_context", "PagesParams": "chanceblog_desktop.service.previews.PagesParams",
+                       "history_service": "chanceblog_desktop.service.history", "profile_service": "chanceblog_desktop.service.naver_profiles", "worklog_service": "chanceblog_desktop.service.worklog"}          # 의도적 갱신(글 흐름 1b, D-647): 서비스 모듈 셋(발행 기록·프로필 합쳐 읽기·작업 로그)이 늘었다
     SERVICE_USES = {"own_posts.read_own_files", "own_posts.check_pasted_text", "own_posts.SUBJECT", "project_service.list_projects", "project_service.show_project", "project_service.new_project",
-                    "project_service.import_html", "review_service.request_review", "review_service.grant_approval", "review_service.revoke_approval"}      # 함수 아홉 + 상수 하나(`SUBJECT` — 붙여 넣은 글 거절 문장의 항목 이름)
-    CTX_USES = {"ctx.reading_only", "ctx.settings.naver_profile_dicts"}
+                    "project_service.import_html", "review_service.request_review", "review_service.grant_approval", "review_service.revoke_approval",
+                    "review_service.read_naver_package", "review_service.mark_naver_copied", "review_service.record_naver_published", "history_service.list_history", "worklog_service.read_work_log",
+                    "profile_service.profile_keys"}      # 함수 열다섯 + 상수 하나(`SUBJECT` — 붙여 넣은 글 거절 문장의 항목 이름) — 1a 에서는 함수 아홉이었다(글 흐름 1b, D-647)
+    CTX_USES = {"ctx.reading_only"}                                               # 의도적 강화(글 흐름 1b, D-648): 어댑터가 설정 파일을 직접 읽던 `ctx.settings.naver_profile_dicts` 가 없어졌다 — 프로필은 서비스 함수(`profile_keys`)가 합쳐 읽는다
     DYNAMIC_NAMES = {"getattr", "setattr", "delattr", "vars", "globals", "locals", "__import__", "importlib", "import_module", "eval", "exec", "compile", "modules", "__dict__", "__globals__", "__builtins__"}
     QT_FILE_NAMES = {"QFile", "QSaveFile", "QTemporaryFile", "QTemporaryDir", "QTextStream", "QDataStream", "QDir", "QStandardPaths", "QIODevice", "QIODeviceBase", "QLockFile", "QSettings",
                      "QFileSystemWatcher", "QFileDialog"}
@@ -1906,7 +1915,7 @@ class PostsSourceRulesTest(unittest.TestCase):
                         pairs.append((alias.asname or alias.name, target))
         if sorted(pairs) != sorted(self.SERVICE_IMPORTS.items()):
             problems.append(f"서비스에서 가져오는 이름이 허용 목록과 다르다: {sorted(set(pairs) ^ set(self.SERVICE_IMPORTS.items()))}")
-        module_names = {local for local, target in pairs if target in {self.SERVICE_IMPORTS[name] for name in ("own_posts", "project_service", "review_service")}}
+        module_names = {local for local, target in pairs if target in {self.SERVICE_IMPORTS[name] for name in ("own_posts", "project_service", "review_service", "history_service", "profile_service", "worklog_service")}}
         used = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id in module_names and isinstance(node.ctx, ast.Load):
@@ -1959,13 +1968,11 @@ class PostsSourceRulesTest(unittest.TestCase):
 
     @staticmethod
     def allowed_context_attribute(node, parents):
-        """어댑터가 컨텍스트에서 쓰는 두 모양 — `ctx.reading_only()` 와 `ctx.settings.naver_profile_dicts()` 의 가운데 `settings`."""
+        """어댑터가 컨텍스트에서 쓰는 모양은 `ctx.reading_only()` 하나다 — 1a 에서는 `ctx.settings.naver_profile_dicts()` 의 가운데 `settings` 도 있었으나 1b(D-648)가 그 길을 서비스 함수로 바꿔 없앴다(강화)."""
         parent = parents.get(node)
         if not (isinstance(node.value, ast.Name) and node.value.id == "ctx"):
             return False
-        if node.attr == "reading_only":
-            return isinstance(parent, ast.Call) and parent.func is node
-        return node.attr == "settings" and isinstance(parent, ast.Attribute) and parent.value is node and parent.attr == "naver_profile_dicts"
+        return node.attr == "reading_only" and isinstance(parent, ast.Call) and parent.func is node
 
     @staticmethod
     def allowed_context_call(node, parents):
@@ -2032,6 +2039,31 @@ class PostsSourceRulesTest(unittest.TestCase):
                 changed = change if name == "가져오기 이름 하나 빼기" else source + change
                 self.assertNotEqual(changed, source)
                 self.assertTrue(self.service_problems(changed), f"우회가 걸리지 않았다: {name}")
+
+    def test_the_new_service_roads_of_1b_are_closed_the_same_way(self):
+        """글 흐름 1b(D-647)가 서비스를 부르는 길을 열다섯으로 넓혔다 — 새 길 둘레의 우회(승인까지 해 버리는 옛 함수·같은 모듈의 다른 속성·옛 설정 파일 길·별칭 담기)도 같은 검사기가 빠짐없이 잡는다."""
+        source = (UI_DIR / "posts_adapter.py").read_text(encoding="utf-8")
+        self.assertEqual(self.service_problems(source), [])
+        bypasses = {
+            "승인까지 해 버리는 옛 함수 가져오기": "\nfrom ..service.review import issue_naver_package\n",
+            "승인까지 해 버리는 옛 함수를 속성으로": "\n\ndef _extra(ctx):\n    review_service.issue_naver_package(ctx, 'x', 'naver_a')\n",
+            "발행 기록 모듈의 다른 속성": "\n\ndef _extra(ctx):\n    history_service.delete_history(ctx)\n",
+            "작업 로그를 지우는 길": "\n\ndef _extra(ctx):\n    worklog_service.clear_work_log(ctx)\n",
+            "프로필을 쓰는 길": "\n\ndef _extra(ctx):\n    profile_service.save_profile(ctx, 'naver_a', {})\n",
+            "설정 파일을 직접 읽던 옛 길": "\n\ndef _extra(ctx):\n    return ctx.settings.naver_profile_dicts()\n",
+            "네이버 흐름 모듈 가져오기": "\nfrom ..service import naver_flow\n",
+            "서비스 모듈 별칭을 다른 이름에 담기": "\n\ndef _extra(ctx):\n    other = review_service\n    other.mark_naver_copied(ctx, 'x', 'naver_a')\n",
+            "발행 기록 모듈을 다른 이름으로 가져오기": "\nfrom ..service import history as other_history\n\n\ndef _extra(ctx):\n    other_history.list_history(ctx)\n",
+            "프로필 모듈을 별표로 가져오기": "\nfrom ..service.naver_profiles import *\n",
+        }
+        for name, change in bypasses.items():
+            with self.subTest(way=name):
+                self.assertTrue(self.service_problems(source + change), f"우회가 걸리지 않았다: {name}")
+        for word in ("issue_naver_package", "naver_flow", "pages_flow"):
+            self.assertIn(word, self.BANNED_WORDS)
+            self.assertNotIn(word, self.ADAPTER_MAY_NAME, "어댑터에서 풀린 낱말은 발행 주소 기록 하나뿐이다")
+        self.assertEqual(self.ADAPTER_MAY_NAME, {"record_naver_published"})
+        self.assertEqual(self.code_only(UI_DIR / "posts_adapter.py").count("record_naver_published"), 1, "그 낱말은 어댑터 코드에 한 번(발행 주소 기록 길)만 있다")
 
     def test_the_screen_files_have_no_qt_file_write_tool_and_the_check_sees_every_shape(self):
         """화면 층(`post*.py`)과 어댑터에는 `QFile`(쓰기 열기 모드)·`QSaveFile`·`QTextStream`·`QDir.mkpath` 같은 Qt 파일 도구가 없다(독립 검증 S 권고-2: 파이썬 쓰기 이름만 보던 시험이 `QFile` 쓰기를 못 잡았다)."""
