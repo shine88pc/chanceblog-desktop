@@ -877,8 +877,10 @@ class SelftestShapesTest(unittest.TestCase):
         return [find(results, "M06", arm, "real")[0] for arm in "BC"] + find(results, "M22")
 
     def test_the_twelve_checks_of_the_old_world_are_now_short_of_the_apps_list(self):
-        names = [name for name in fakeworld_names() if name != "tls"]                           # 1차 측정이 가정한 열두 점검 — 앱은 그 사이 tls 를 더했다
-        self.assertEqual(len(names), 12)
+        everything = fakeworld_names()
+        names = [name for name in everything if name != "tls"]                                  # 1차 측정이 가정한 열두 점검 — 앱은 그 사이 tls 를 더했다
+        self.assertEqual(len(names), len(everything) - 1)                                       # 개수를 못박지 않고 계산한다 — 다른 갈래가 점검을 더하거나 빼도(같은 상수를 두 갈래가 고쳐도) 합친 나무에서 깨지지 않는다
+        self.assertIn("tls", everything)
         results, report = self.full(selftest_names=names)
         for item in self.verdicts(results):
             self.assertEqual(item["status"], "fail")
@@ -909,6 +911,38 @@ class SelftestShapesTest(unittest.TestCase):
             for item in self.verdicts(results):
                 self.assertEqual(item["status"], "pass")                                       # 열세 줄도 통과(1차 측정은 여기서 실패로 적었다)
                 self.assertIn("목록을 읽지 못해 통과 12개 이상으로 본다", item["values"]["brief"])
+
+    def test_a_nonzero_exit_after_every_check_line_passed_still_fails_and_the_box_says_why(self):
+        """재작업 S-R4 — 점검 줄이 모두 통과로 찍혀도 종료 코드가 0 이 아니면 통과가 아니다. 상자가 '통과 13 실패 0 건너뜀 0 · 앱 점검 목록 13개와 같다' 만 말하면 왜 실패인지 알 수 없다(1차 측정의 G8 실패처럼)."""
+        names = fakeworld_names()
+        results, report = self.full(selftest_rc=3)
+        for item in self.verdicts(results):
+            self.assertEqual(item["status"], "fail")
+            self.assertEqual((item["values"]["passed"], item["values"]["failed"], item["values"]["skipped"], item["values"]["missing"]), (len(names), 0, 0, []))     # 점검 줄은 모두 통과였다
+            self.assertEqual(item["values"]["rc"], 3)
+            self.assertIn("통과 %d 실패 0 건너뜀 0 · 앱 점검 목록 %d개와 같다" % (len(names), len(names)), item["values"]["brief"])
+            self.assertIn("깨끗하지 않음: 종료 코드 3", item["values"]["brief"])
+        for arm in "ABC":
+            self.assertEqual(report["gates"][arm]["G8"]["status"], "fail", arm)
+        self.assertEqual(report["block"].count("깨끗하지 않음: 종료 코드 3"), 3)                    # 상자의 세 칸 — M06 실제 묶음 B·C 와 M22 휴대용
+
+    def test_a_selftest_that_timed_out_after_every_check_line_is_named_in_the_counts_and_fails(self):
+        for label, switches, word in (("시간 초과", {"selftest_timed_out": True}, "시간 초과"), ("종료 코드", {"selftest_rc": 7}, "종료 코드 7")):
+            with self.subTest(label):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                world = FakeWorld(tmp.name, **switches)
+                exe = Path(tmp.name) / "app" / "ChanceBlogDesktop.exe"
+                exe.parent.mkdir()
+                exe.write_bytes(b"MZ")
+                counts = run.measure.real_selftest(run.Context(Path(tmp.name) / "work", host=world), exe)
+                self.assertFalse(counts["ok"])
+                self.assertEqual((counts["failed"], counts["skipped"], counts["missing"]), (0, 0, []))
+                self.assertEqual(counts["passed"], len(fakeworld_names()))
+                self.assertIs(counts["timed_out"], label == "시간 초과")
+                self.assertIs(counts["judged"], True)                                          # 빌드 판정은 점검 줄만 보므로 통과다 — 그래서 종료 코드·시간 초과를 따로 근거에 적는다
+                self.assertIn("깨끗하지 않음: " + word, counts["basis"])
+                self.assertIn(word, run.measure.selftest_brief("설치본", counts))
 
 
 class InnoShapesTest(unittest.TestCase):
@@ -1126,6 +1160,17 @@ class StandardUserOutcomeTest(unittest.TestCase):
         self.assertEqual(item["status"], "unavailable")
         self.assertEqual(item["values"]["brief"], "종료 0 인데 설치 흔적 없음 — 운영자 실기로")
 
+    def test_an_install_that_does_not_finish_in_time_is_handed_over_even_when_a_trace_is_there(self):
+        """재작업 Q-R2 — 합격 조건 '시간 안에 끝남': 설치 도구 호출이 시간 안에 끝나지 않았는데 흔적이 보인다고 통과로 적으면 끝나지 않은(반쯤 한) 설치를 통과로 센다. 흔적이 있어도 '시도 불가' 다."""
+        for label, switches in (("흔적 있음", {"std_user_ok": True}), ("흔적 없음", {"std_silent": True})):
+            with self.subTest(label):
+                world, ctx, item = self.attempt(std_timeout=True, **switches)
+                self.assertEqual(item["status"], "unavailable")
+                self.assertEqual(item["values"]["brief"], "시간 안에 끝나지 않음 — 운영자 실기로")
+                self.assertEqual(bool(item["values"]["traces"]), "std_user_ok" in switches)                # 흔적은 있었지만 통과가 아니다
+                self.assertIsNone(item["values"]["rc"])
+                self.assertLess(world.clock, 20, "시간이 지난 호출은 흔적을 기다리지도 않는다")
+
     def test_it_does_not_wait_when_the_install_could_not_even_start_or_failed_for_certain(self):
         for switches in ({"std_launch_ok": False}, {"std_silent": True, "std_exit_code": 740}, {"std_silent": True, "std_exit_code": 5}):
             with self.subTest(switches):
@@ -1164,7 +1209,8 @@ class StandardUserOutcomeTest(unittest.TestCase):
     def test_when_the_program_cannot_be_started_as_that_user_the_install_is_not_even_tried(self):
         world, ctx, item = self.attempt(std_launch_ok=False)
         self.assertEqual(item["status"], "unavailable")
-        self.assertEqual(item["values"]["brief"], "다른 계정으로 프로그램을 띄우지 못함(InvalidOperationException) — 운영자 실기로")
+        self.assertEqual(item["values"]["brief"], "다른 계정으로 프로그램을 띄우지 못함(The user name or password is incorrect.) — 운영자 실기로")    # 재작업 S-R1 — 형식 이름(띄우기 실패는 늘 같다)이 아니라 윈도의 오류 문장이 이유로 보인다
+        self.assertEqual(item["values"]["start_error"], "InvalidOperationException")                       # 형식 이름은 값에 그대로 남는다
         self.assertFalse(item["values"]["probe"]["launched"])
         self.assertEqual(len(world.ps_calls), 1)                                                   # 탐침 하나뿐 — 설치 파일은 돌리지 않았다
         self.assertEqual(world.ps_calls[0][1]["SPIKE_SETUP"], "cmd.exe")
@@ -1227,6 +1273,19 @@ class StandardUserOutcomeTest(unittest.TestCase):
         self.assertIn("error 0x5 access denied", item["note"])
         self.assertEqual(longest_piece(everything_left(world, ctx), LIGHT_PASSWORD), 0)
 
+    def test_a_log_tail_that_cuts_the_password_in_the_middle_leaves_no_piece_because_the_hiding_comes_first(self):
+        """재작업 S-R8·Q-R4 — 설치 도구 로그 끝(120자)은 '가린 뒤에 자른다'. 로그가 120자보다 짧거나 꼬리가 비밀번호를 가르지 않으면 이 순서가 지켜지는지 알 수 없다 — 꼬리가 비밀번호 한가운데에서 시작하게 만든다
+        (StandardUserEchoTest 의 160자 꼬리 시험과 같은 모양)."""
+        def log_text(password):
+            return "x" * 100 + password + "y" * 110
+        raw_tail = run.measure.tail(log_text(LIGHT_PASSWORD), 120)
+        self.assertGreaterEqual(longest_piece(raw_tail, LIGHT_PASSWORD), 4)                      # 사전 확인: 자르기만 하면 비밀번호 조각이 꼬리에 남는다
+        self.assertNotIn(LIGHT_PASSWORD, raw_tail)
+        world, ctx, item = self.attempt(std_silent=True, std_log_text=log_text)
+        self.assertIn("설치 도구 로그 끝:", item["note"])
+        self.assertIn("<가림>", item["note"])
+        self.assertEqual(longest_piece(everything_left(world, ctx), LIGHT_PASSWORD), 0)
+
     def test_no_log_means_no_log_sentence(self):
         world, ctx, item = self.attempt(std_silent=True)
         self.assertNotIn("설치 도구 로그 끝", item["note"])
@@ -1249,6 +1308,109 @@ class StandardUserOutcomeTest(unittest.TestCase):
         world, ctx = light_m18(second.name, net_user_ok=False)
         self.assertEqual(ctx.results[-1]["values"]["brief"], "임시 사용자 만들기 실패 — 운영자 실기로")
         self.assertEqual(ctx.results[-1]["status"], "unavailable")
+
+
+class StandardUserLaunchMessageTest(unittest.TestCase):
+    """독립 검증 재작업 권고 S-R1 — 다른 계정으로 띄우지 못했을 때 형식 이름(`Start-Process` 의 띄우기 실패는 모두 `InvalidOperationException`)만 남기면 로그온 거부·서비스 꺼짐·권한 상승 필요를 가를 수 없어
+    2차 상자에서 원인을 또 모른다. 스크립트가 윈도의 오류 문장을 한 줄(`SPIKE_START_MESSAGE=`)로 더 찍고, 도구가 비밀번호를 가린 **뒤에** 잘라 상자·기록에 싣는다. 설치 도구가 관리자 권한을 요구해 띄우는 단계에서 막히면
+    (종료 740 이 아니라 이 오류로 막힌다) 실패(관리자 요구)이고, 아무것도 안 하는 탐침이 그렇게 막히는 것은 설치 도구의 탓이 아니므로 시도 불가다."""
+    ELEVATION = "This command cannot be run due to the error: The requested operation requires elevation."
+    WRONG_PASSWORD = "This command cannot be run due to the error: The user name or password is incorrect."
+
+    def attempt(self, arm="A", **switches):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        world, ctx = light_m18(tmp.name, arm=arm, **switches)
+        return world, ctx, ctx.results[-1]
+
+    def test_the_windows_sentence_is_the_reason_in_the_box_the_note_and_the_values(self):
+        world, ctx, item = self.attempt(std_launch_ok=False)                                                # 가짜 세계의 기본 문장: 로그온 거부
+        self.assertEqual(item["status"], "unavailable")
+        self.assertEqual(item["values"]["brief"], "다른 계정으로 프로그램을 띄우지 못함(The user name or password is incorrect.) — 운영자 실기로")
+        self.assertEqual((item["values"]["start_error"], item["values"]["start_message"]), ("InvalidOperationException", self.WRONG_PASSWORD))
+        self.assertEqual(item["values"]["probe"]["message"], self.WRONG_PASSWORD)
+        self.assertIn("윈도 오류 문장(InvalidOperationException): " + self.WRONG_PASSWORD, item["note"])
+        line = run.measurement_lines(ctx.results, "M18")[0]
+        self.assertTrue(line.endswith(item["values"]["brief"]), line)                                      # 상자의 한 칸이 이유를 자르지 않고 그대로 싣는다
+
+    def test_without_a_message_line_the_type_name_alone_is_shown_as_it_was_before(self):
+        world, ctx, item = self.attempt(std_launch_ok=False, std_launch_message="")
+        self.assertEqual(item["values"]["brief"], "다른 계정으로 프로그램을 띄우지 못함(InvalidOperationException) — 운영자 실기로")
+        self.assertEqual((item["values"]["start_error"], item["values"]["start_message"]), ("InvalidOperationException", ""))
+        self.assertNotIn("message", item["values"]["probe"])
+        self.assertNotIn("윈도 오류 문장", item["note"])
+
+    def test_an_installer_that_cannot_be_started_after_a_good_probe_says_why_and_the_probe_stayed_clean(self):
+        world, ctx, item = self.attempt(std_install_launch_ok=False)
+        self.assertEqual(item["status"], "unavailable")
+        self.assertEqual(item["values"]["brief"], "다른 계정으로 설치 프로그램을 띄우지 못함(The user name or password is incorrect.) — 운영자 실기로")
+        self.assertEqual((item["values"]["start_error"], item["values"]["start_message"]), ("InvalidOperationException", self.WRONG_PASSWORD))
+        self.assertEqual(item["values"]["probe"], {"launched": True, "exit_code_readable": True, "kind": "code"})      # 탐침은 띄워졌다 — 탐침 칸에는 오류 문장이 없다
+        self.assertEqual(len(world.ps_calls), 2)
+        self.assertIn("윈도 오류 문장(InvalidOperationException): " + self.WRONG_PASSWORD, item["note"])
+
+    def test_an_installer_the_system_refuses_to_start_without_elevation_fails_the_check_and_the_gate(self):
+        world, ctx, item = self.attempt(std_install_launch_ok=False, std_launch_message=self.ELEVATION)
+        self.assertEqual(item["status"], "fail")
+        self.assertTrue(item["values"]["brief"].startswith("설치 도구가 관리자 권한을 요구했다(띄우기 단계에서 막힘: "), item["values"]["brief"])
+        self.assertIn("The requested operation requires elevation.", item["values"]["brief"])
+        self.assertNotIn("종료 740", item["values"]["brief"])                                               # 종료 코드로 끝난 것이 아니라 띄우기 자체가 막혔다
+        self.assertEqual((item["values"]["start_error"], item["values"]["start_message"]), ("InvalidOperationException", self.ELEVATION))
+        self.assertIn("종료 코드(740)로 끝난 것이 아니라", item["note"])
+        gates = run.judge([run.record("M04", "A", "pass", brief="수준 asInvoker"), item])
+        self.assertEqual(gates["A"]["G1"]["status"], "fail")                                               # 관문 G1 도 실패 — 매니페스트가 통과여도 표준 사용자 설치가 관리자 권한을 요구하면 탈락
+        self.assertNotIn("open", gates["A"]["G1"])
+
+    def test_the_probe_that_is_stopped_for_elevation_is_not_the_installers_fault(self):
+        world, ctx, item = self.attempt(std_launch_ok=False, std_launch_message=self.ELEVATION)
+        self.assertEqual(item["status"], "unavailable")                                                     # 아무것도 안 하는 프로그램이 막힌 것은 설치 도구가 관리자 권한을 요구한 것이 아니다
+        self.assertEqual(len(world.ps_calls), 1)
+        self.assertIn("The requested operation requires elevation.", item["values"]["brief"])
+
+    def test_other_words_for_the_need_of_elevation_are_recognized_and_lookalikes_are_not(self):
+        measure = run.measure
+        for text in ("The requested operation requires elevation.", "ELEVATION is required", "요청한 작업을 수행하려면 권한 상승이 필요합니다.", "오류 740", "error 740: x", "(Win32 740)", "code=740"):
+            self.assertTrue(measure.std_needs_elevation(text), text)
+        for text in ("", None, "The user name or password is incorrect.", "Access is denied.", "spike740user", "error 7400", "1740", "7401", "The system cannot find the file specified."):
+            self.assertFalse(measure.std_needs_elevation(text), text)
+
+    def test_the_sentence_is_cut_after_the_password_is_hidden_so_no_piece_of_the_password_is_left(self):
+        """가린 뒤에 자른다 — 자른 뒤에 가리면 비밀번호 한가운데가 잘려 가릴 낱말 전체가 안 맞고 조각이 남는다(설치 도구 로그 꼬리와 같은 규칙)."""
+        sentence = "q" * 20 + LIGHT_PASSWORD + "z" * 190                                                       # 200자 꼬리가 비밀번호의 열두 번째 글자에서 시작한다
+        self.assertEqual(longest_piece(sentence[-run.measure.STD_MESSAGE_LIMIT:], LIGHT_PASSWORD), len(LIGHT_PASSWORD) - 12)      # 사전 확인: 자르기만 하면 조각이 남는다
+        for switches in ({"std_launch_ok": False}, {"std_install_launch_ok": False}):
+            with self.subTest(switches):
+                world, ctx, item = self.attempt(std_launch_message=sentence, **switches)
+                self.assertIn("<가림>", item["note"])
+                self.assertEqual(longest_piece(everything_left(world, ctx), LIGHT_PASSWORD), 0)
+
+    def test_a_long_or_many_line_sentence_is_folded_to_one_line_and_the_reason_fits_the_box_cell(self):
+        measure = run.measure
+        self.assertEqual(measure.parse_std_message("앞\r\nSPIKE_START_MESSAGE=가   나\t다  \r\n뒤\r\n"), "가 나 다")
+        self.assertEqual(measure.parse_std_message("SPIKE_START_ERROR=X\r\nSPIKE_START_MESSAGE=\r\n"), "")
+        self.assertEqual(measure.parse_std_message("앞 SPIKE_START_MESSAGE=표지가 아니다\r\n"), "")                      # 줄 맨 앞의 표지만 인정한다
+        self.assertEqual(measure.parse_std_message(None), "")
+        long_sentence = "This command cannot be run due to the error: " + " ".join("word%03d" % number for number in range(200))
+        for switches in ({"std_launch_ok": False}, {"std_install_launch_ok": False}):
+            with self.subTest(switches):
+                world, ctx, item = self.attempt(std_launch_message=long_sentence, **switches)
+                brief = item["values"]["brief"]
+                self.assertLessEqual(len(brief), run.CELL_LIMIT, brief)                                      # 상자 한 칸이 110자에서 자르기 전에 이유가 들어간다
+                self.assertTrue(brief.endswith(") — 운영자 실기로"), brief)
+                self.assertLessEqual(len(item["values"]["start_message"]), measure.STD_MESSAGE_LIMIT + 1)
+                self.assertNotIn("\n", item["values"]["start_message"])
+                self.assertTrue(run.measurement_lines(ctx.results, "M18")[0].endswith(brief))
+        world, ctx, item = self.attempt(std_install_launch_ok=False, std_launch_message=self.ELEVATION.replace("The requested", "x" * 400 + " The requested"))
+        self.assertEqual(item["status"], "fail")
+        self.assertLessEqual(len(item["values"]["brief"]), run.CELL_LIMIT)
+
+    def test_the_reason_words_drop_only_the_boilerplate_and_keep_the_end_of_the_sentence(self):
+        measure = run.measure
+        self.assertEqual(measure.std_reason_words(self.ELEVATION), "The requested operation requires elevation.")
+        self.assertEqual(measure.std_reason_words("This command cannot be run due to the error:"), "This command cannot be run due to the error:")         # 머리말뿐이면 그대로(빈 이유를 만들지 않는다)
+        self.assertEqual(measure.std_reason_words("Access is denied."), "Access is denied.")
+        self.assertEqual(measure.std_reason_words("가" * 300, 10), "…" + "가" * 10)
+        self.assertEqual(measure.std_reason_words(None), "")
 
 
 class LongPathAndHooksFlowTest(unittest.TestCase):

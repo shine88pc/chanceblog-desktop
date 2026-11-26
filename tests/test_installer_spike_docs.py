@@ -142,8 +142,11 @@ class RunnerGuardDocsTest(unittest.TestCase):
         self.guide = read(GUIDE)
 
     def exit_code_off_a_runner(self):
+        """러너가 아닌 환경으로 `main` 을 불러 종료 코드를 읽는다. 재작업 S-R7·Q-R7 — 진짜 `Host` 가 아니라 '아무것도 못 하는' 가짜(`Untouchable`)로 부른다: 가드가 깨지면 이 시험이 진짜 `measure`(방화벽 규칙·Defender 검사)를
+        돌리지 않고 빨개지기만 한다(이 PC·CI 윈도 러너는 관리자 권한이다)."""
+        untouchable = support.untouchable_host_class()
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
-            return self.run.main(["measure", "--work", str(Path(tmp) / "w")], host=self.measure.Host({}))
+            return self.run.main(["measure", "--work", str(Path(tmp) / "w")], host=untouchable({}))
 
     def variables_the_guard_reads(self):
         spy = support.RecordingEnv({"GITHUB_ACTIONS": "true", "RUNNER_OS": "Windows", "RUNNER_TEMP": "D:\\a\\_temp"})
@@ -206,8 +209,15 @@ class FirstRunFixDocsTest(unittest.TestCase):
         self.rows = [line for line in read("docs/DECISIONS.md").splitlines() if re.match(r"^\| D-81\d \|", line)]          # 이 갈래의 번호 구간(2차 측정 뒤 도구를 정하는 행이 D-811 로 더해져도 이 시험은 그대로 맞다)
         self.row = next((line for line in self.rows if line.startswith("| D-810 |")), "")
         self.guide = read(GUIDE)
-        self.section = self.guide[self.guide.index("## 두 번째로 돌릴 때"):]
+        self.section = self.guide_section("## 두 번째로 돌릴 때")
+        self.how_to = self.guide_section("## 하는 법")
         self.changelog = read("CHANGELOG.md")
+
+    def guide_section(self, heading):
+        """실행 안내에서 `heading` 절 — 다음 `## ` 절 앞까지만(파일 끝까지가 아니다). 재작업 Q-R6(가) — 이 절 뒤에 다른 갈래가 새 절을 덧붙여도 이 절의 불릿·번호 단계 수가 흔들리지 않는다."""
+        start = self.guide.index(heading)
+        following = self.guide.find("\n## ", start + len(heading))
+        return self.guide[start:] if following < 0 else self.guide[start:following + 1]
 
     @staticmethod
     def total(scores, weights):
@@ -232,11 +242,22 @@ class FirstRunFixDocsTest(unittest.TestCase):
             self.assertNotIn(word, row)
 
     def test_the_row_names_each_defect_what_was_done_and_what_stays_open(self):
-        for word in ("그 실패는 모두 측정 도구의 결함이었다", "통과 개수를 12 로 못박아", "열세 번째 점검", "SELFTEST_KEYS", "더 찍힌 점검은 막지 않는다", "원인 후보는 넷이다", "종료 코드가 비어", "환경을 물려받아", "기다리지 않고 바로 흔적을 봤", "컴퓨터 이름을 붙여", "spikeusera·spikeuserb·spikeuserc", "최대 45초 기다리며", "러너에서만 알 수 있다",
+        for word in ("그 실패는 모두 측정 도구의 결함이었다", "통과 개수를 12 로 못박아", "열세 번째 점검", "SELFTEST_KEYS", "더 찍힌 점검은 막지 않는다", "원인 후보는 다섯이다", "종료 코드가 비어 나올 수도", "환경을 물려받아", "기다리지 않고 바로 흔적을 봤", "컴퓨터 이름을 붙여", "spikeusera·spikeuserb·spikeuserc", "최대 45초 기다리며", "러너에서만 알 수 있다",
                      "사용자 폴더·임시 폴더 변수를 그 사용자 것으로 명시", "종료 코드 42", "시도 불가", "T-INST-04", "종료 740", "0.0.0.0", "6.5.0 이상이면 쓴다", "Korean.isl", "미확인", "컴파일 출력",
-                     "ImageOS", "대문자", "vpk --version", "M20", "M17", "M19", "100자", "False", "실제 도구 결과", "M13", "대소문자까지 달라야 한다", "M15", "ws2_32", "M16", "M05", "30.6초", "30초",
+                     "ImageOS", "대문자", "vpk --version", "M20", "M17", "M19", "100자", "False", "실제 도구 결과", "M13", "대소문자를 무시하고 비교해도 다른 이름이어야 한다(대소문자만 다르면 같은 폴더)", "M15", "ws2_32", "M16", "M05", "30.6초", "30초",
                      "설치 로그에서 훅을 말하는 줄", "2차 측정 뒤에 정한다", "Run workflow 단추 한 번", "T2"):
             self.assertIn(word, self.row, word)
+
+    def test_the_row_names_the_fifth_cause_of_the_exit_zero_and_what_the_second_box_will_say(self):
+        """재작업 S-R2·S-R1·S-R4·S-R5 — M18 원인 후보에 '`Start-Process` 가 띄우지 못하고 오류만 낸 경우도 종료 0 이 된다'(이 개발 PC 에서 재현)가 다섯째로 있고, 종료 코드가 비어 나오는 것은 확정이 아니라 '나올 수도' 이다.
+        띄우기 실패의 윈도 오류 문장·권한 상승(elevation) 실패·G8 근거의 종료 코드·시간 초과·빌드 판정 거절·대소문자 규칙의 바른 문장."""
+        for word in ("원인 후보는 다섯이다", "비어 나올 수도 있어", "`Start-Process` 가 프로그램을 띄우지 못하고 오류만 낸 경우도 종료 코드 0 이 된다", "`-ErrorAction Stop` 이 없으면", "이 개발 PC 의 Windows PowerShell 5.1 에서 재현했다",
+                     "앞의 넷은 이 PC 에서는 확인할 수 없고", "윈도의 오류 문장(예외 메시지", "비밀번호를 가린 뒤 잘라", "관리자 권한을 요구한 것만 실패다", "종료 740 으로 끝났거나", "권한 상승이 필요하다(elevation)",
+                     "탐침이 그렇게 막히는 것은 설치 도구의 탓이 아니라 시도 불가다", "2차 상자의 M18 줄이 위 다섯 후보 가운데 어느 것인지", "종료 코드 N·시간 초과·빌드 판정 거절", "대소문자만 다르면 같은 폴더"):
+            self.assertIn(word, self.row, word)
+        for old in ("원인 후보는 넷이다", "종료 코드가 비어 나와 0 으로", "대소문자까지 달라야 한다", "를 요구하는 종료 740 만 실패다"):                     # 고치기 전의 말이 남아 있지 않다
+            self.assertNotIn(old, self.row, old)
+        self.assertEqual(self.row.count("원인 후보는"), 1)
 
     def test_the_scores_in_the_row_are_what_the_design_table_adds_up_to(self):
         self.assertEqual(sum(self.WEIGHTS), 100)
@@ -245,8 +266,10 @@ class FirstRunFixDocsTest(unittest.TestCase):
         changed = {arm: [index for index in range(9) if self.PRE[arm][index] != self.NOW[arm][index]] for arm in "AB"}
         self.assertEqual(changed, {"A": [5], "B": [5]})                                           # 측정이 바꾼 칸은 C6(롤백·복구 바탕) 하나뿐이다
         row = self.row
-        for word in ("A 63·B 68", "C6", "84", "81", "산수 정정", "약 16점"):
+        for word in ("A 63·B 68", "C6", "84", "81", "산수 정정", "약 16점", "B 보다 5점 넘게 앞서면", "점수 차가 5점 이하이면", "5점 넘게", "5점 이하"):          # 결정 규칙의 문턱(5점) — 2차 뒤 이 행을 읽고 결정하므로 문턱의 오타가 곧 결정 오류가 된다(재작업 Q-R5)
             self.assertIn(word, row, word)
+        for wrong in ("3점 넘게", "3점 이하", "4점 넘게", "4점 이하", "6점 넘게", "6점 이하", "10점 넘게"):
+            self.assertNotIn(wrong, row, wrong)
         self.assertGreater(self.total(self.PRE["C"], self.WEIGHTS) - self.total(self.NOW["B"], self.WEIGHTS), 5)                  # 점수 차가 5점을 넘는다 — C 를 재야 결론이 난다
 
     def test_the_guide_says_the_second_run_is_the_same_one_press_of_the_same_button(self):
@@ -257,7 +280,11 @@ class FirstRunFixDocsTest(unittest.TestCase):
         self.assertNotIn("{{", self.section)
         for word in ("비밀번호", "password", "토큰을 입력"):
             self.assertNotIn(word, self.section)
-        self.assertEqual(re.findall(r"(?m)^(\d)\. ", self.guide), ["1", "2", "3", "4", "5", "6"])                                  # 하는 법의 번호 단계는 여섯 그대로다(절차를 늘리지 않았다)
+        self.assertEqual(re.findall(r"(?m)^(\d)\. ", self.how_to), ["1", "2", "3", "4", "5", "6"])                                # 하는 법의 번호 단계는 여섯 그대로다(절차를 늘리지 않았다) — 이 절 안에서만 센다(재작업 Q-R6 가)
+        self.assertEqual(re.findall(r"(?m)^(\d)\. ", self.section), [])                                                           # 새 절은 번호 단계를 더하지 않는다
+        self.assertTrue(self.how_to.startswith("## 하는 법"))
+        self.assertNotIn("## 두 번째로 돌릴 때", self.how_to)
+        self.assertEqual(self.section.count("\n## "), 0)                                                                          # 절은 다음 절 앞에서 끝난다
 
     def test_the_guide_adds_no_input_field_and_no_new_step_for_the_operator(self):
         workflow = support.WORKFLOW.read_text(encoding="utf-8").replace("\r\n", "\n")

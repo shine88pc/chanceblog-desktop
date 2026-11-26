@@ -47,10 +47,75 @@ def read(rel):
     return (ROOT / rel).read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
-def app_selftest_names():
-    """앱이 `--selftest` 로 찍는 점검 이름들 — 앱 쪽 `scripts/release_check.py` 의 `SELFTEST_KEYS` 를 정규식으로 읽는다(측정 도구의 읽개 `measure.app_selftest_keys` 와 방법이 달라 서로 견줄 수 있다)."""
-    found = re.search(r"(?ms)^SELFTEST_KEYS\s*=\s*\((.*?)\)", read("scripts/release_check.py"))
-    return tuple(re.findall(r'"([a-z_0-9]+)"', found.group(1))) if found else ()
+def tuple_body(text, name):
+    """`name = ( ... )` 형태 튜플의 괄호 안 글 — 글자 하나씩 훑어 따옴표 글과 `#` 주석 속의 괄호는 세지 않고 짝이 맞는 닫는 괄호에서 끝낸다(없으면 None). 첫 정규식 읽개는 튜플 안 주석에 괄호가 있으면 거기서 일찍 끊겼다 —
+    다른 갈래가 점검 이름 줄 끝에 '(M129)' 같은 주석을 달면 가짜 세계의 점검 목록이 잘려 흐름 시험이 줄줄이 빨개질 뻔했다(독립 검증 재작업 권고 Q-R6)."""
+    start = re.search(r"(?m)^%s\s*=\s*\(" % re.escape(name), text)
+    if not start:
+        return None
+    depth, quote, index, body = 1, "", start.end(), []
+    while index < len(text):
+        char = text[index]
+        if quote:
+            body.append(char)
+            if char == "\\" and index + 1 < len(text):
+                body.append(text[index + 1])
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+            body.append(char)
+        elif char == "#":
+            while index < len(text) and text[index] != "\n":
+                index += 1
+            continue
+        elif char == "(":
+            depth += 1
+            body.append(char)
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return "".join(body)
+            body.append(char)
+        else:
+            body.append(char)
+        index += 1
+    return None
+
+
+def app_selftest_names(text=None):
+    """앱이 `--selftest` 로 찍는 점검 이름들 — 앱 쪽 `scripts/release_check.py` 의 `SELFTEST_KEYS` 를 글자 단위 읽개로 읽는다(측정 도구의 읽개 `measure.app_selftest_keys` 는 `ast` 라 방법이 달라 서로 견줄 수 있다).
+    text 를 주면 그 글을 읽는다(시험용)."""
+    body = tuple_body(read("scripts/release_check.py") if text is None else text, "SELFTEST_KEYS")
+    return tuple(re.findall(r'"([a-z_0-9]+)"', body)) if body is not None else ()
+
+
+def untouchable_host_class():
+    """프로그램을 돌리거나 띄우거나 끝내거나 창을 보거나 방화벽·Defender·바깥 접속을 건드리는 모든 길을 AssertionError 로 막은 가짜 Host 의 클래스(러너 가드 시험용).
+    이 PC·CI 윈도 러너는 관리자 권한이라 가드가 깨졌을 때 시험이 진짜 `measure` 를 돌리면 방화벽 규칙·Defender 를 건드릴 수 있었다 — 이 클래스를 쓰면 가드가 깨져도 시험은 일을 하지 않고 빨개지기만 한다(독립 검증 재작업 권고 S-R7)."""
+    measure = load("measure")
+
+    class Untouchable(measure.Host):
+        def run(self, *args, **kwargs):
+            raise AssertionError("러너가 아닌데 프로그램을 돌렸다")
+
+        def start(self, *args, **kwargs):
+            raise AssertionError("러너가 아닌데 프로그램을 띄웠다")
+
+        def kill(self, *args, **kwargs):
+            raise AssertionError("러너가 아닌데 프로세스를 끝냈다")
+
+        def watch(self, *args, **kwargs):
+            raise AssertionError("러너가 아닌데 프로그램을 띄워 창을 봤다")
+
+        def defender_scan(self, *args, **kwargs):
+            raise AssertionError("러너가 아닌데 Defender 검사를 했다")
+
+        def reachable(self, *args, **kwargs):
+            raise AssertionError("러너가 아닌데 바깥에 접속했다")
+
+    return Untouchable
 
 
 SHA_REF = re.compile(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}")

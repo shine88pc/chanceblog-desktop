@@ -520,12 +520,31 @@ def app_selftest_keys(repo=None):
     return ()
 
 
+def selftest_unclean(counts):
+    """`--selftest` 가 '깨끗하게' 끝나지 않은 이유들(깨끗하면 빈 목록): 시간 초과·종료 코드가 0 이 아님·실패·건너뜀·빌드 판정(`judge_selftest`) 거절. 점검 줄이 모두 통과로 찍혀도 이런 것이 있으면 통과가 아니다 —
+    상자의 근거 문구가 이유를 말하지 않으면 '점검 열세 개가 같은데 왜 실패인가' 를 알 수 없다(독립 검증 재작업 권고 S-R4)."""
+    reasons = []
+    rc = counts.get("rc", "모름")
+    if counts.get("timed_out") or rc is None:
+        reasons.append("시간 초과")
+    elif rc != 0:
+        reasons.append("종료 코드 %s" % rc)
+    if counts.get("failed"):
+        reasons.append("실패 %s" % counts.get("failed"))
+    if counts.get("skipped"):
+        reasons.append("건너뜀 %s" % counts.get("skipped"))
+    if not counts.get("judged"):
+        reasons.append("빌드 판정 거절")
+    return reasons
+
+
 def selftest_verdict(counts, expected):
     """`--selftest` 결과 판정 → {ok, expected, missing, extra, basis}. 종료 코드 0·실패 0·건너뜀 0·빌드와 같은 판정(`judge_selftest`)이 통과이고, 앱 점검 목록을 읽었으면 그 이름이 **모두** 통과 줄로 찍혀야 한다
-    (더 찍힌 점검은 막지 않는다) — 목록을 못 읽었으면 통과 줄이 바닥 개수 이상이어야 한다. 통과 개수를 하나로 못박지 않는다."""
+    (더 찍힌 점검은 막지 않는다) — 목록을 못 읽었으면 통과 줄이 바닥 개수 이상이어야 한다. 통과 개수를 하나로 못박지 않는다. 깨끗하지 않으면(`selftest_unclean`) 근거 문구에 그 이유를 덧붙인다 — 점검 줄이 모두 통과여도 불통과인 까닭이 보이게."""
     expected = tuple(expected or ())
     names = list(counts.get("passed_names") or [])
     clean = counts.get("rc") == 0 and counts.get("failed") == 0 and counts.get("skipped") == 0 and bool(counts.get("judged"))
+    unclean = "" if clean else " — 깨끗하지 않음: " + ("·".join(selftest_unclean(counts)) or "점검 결과가 모자람")
     if expected:
         missing = [name for name in expected if name not in names]
         extra = [name for name in names if name not in expected]
@@ -536,9 +555,9 @@ def selftest_verdict(counts, expected):
             basis = "앱 점검 목록 %d개가 모두 통과(목록에 없는 점검 %d개가 더 찍힘: %s)" % (len(expected), len(extra), ",".join(extra[:4]))
         else:
             basis = "앱 점검 목록 %d개와 같다" % len(expected)
-        return {"ok": ok, "expected": len(expected), "missing": missing, "extra": extra, "basis": basis}
+        return {"ok": ok, "expected": len(expected), "missing": missing, "extra": extra, "basis": basis + unclean}
     ok = bool(clean and counts.get("passed", 0) >= MIN_SELFTEST_PASSED)
-    return {"ok": ok, "expected": None, "missing": [], "extra": [], "basis": "앱 점검 목록을 읽지 못해 통과 %d개 이상으로 본다" % MIN_SELFTEST_PASSED}
+    return {"ok": ok, "expected": None, "missing": [], "extra": [], "basis": "앱 점검 목록을 읽지 못해 통과 %d개 이상으로 본다" % MIN_SELFTEST_PASSED + unclean}
 
 
 def selftest_brief(label, counts):
@@ -1285,7 +1304,7 @@ def real_selftest(ctx, exe):
     parsed = bp.parse_selftest(result.text())
     ok, gate_present, _override, bad = bp.judge_selftest(parsed, allow_missing_gate=False)
     counts = parse_selftest_counts(parsed)
-    counts.update(rc=result.rc, bad=bad, seconds=result.seconds, judged=bool(ok))
+    counts.update(rc=result.rc, timed_out=bool(result.timed_out), bad=bad, seconds=result.seconds, judged=bool(ok))
     verdict = selftest_verdict(counts, app_selftest_keys())
     counts.update(ok=verdict["ok"], expected=verdict["expected"], missing=verdict["missing"], extra=verdict["extra"], basis=verdict["basis"])
     return counts
@@ -1423,7 +1442,7 @@ def m13_id_collision(ctx):
         survived = sentinel.exists()
         brief = "설치 못 함(종료 %s)" % installed.rc if not ready else "같은 폴더 %s 제거 뒤 데이터 %s" % ("예" if same_folder else "아니오", "남음" if survived else "지워짐")
         ctx.add(record("M13", "A", "info", brief=brief, installed=ready, same_folder=same_folder, sentinel_survived=survived, install_rc=installed.rc, uninstall_rc=removed.rc,
-                       note="지워지면 '패키지 ID 는 데이터 폴더 이름과 대소문자까지 달라야 한다' 규칙이 확정된다(F2)"))
+                       note="지워지면 '패키지 ID 는 데이터 폴더 이름과 대소문자를 무시하고 비교해도 다른 이름이어야 한다(대소문자만 다르면 같은 폴더)' 규칙이 확정된다(F2)"))
     finally:
         import shutil
         shutil.rmtree(data_folder, ignore_errors=True)
@@ -1486,21 +1505,29 @@ def m17_korean(ctx):
 STD_PROBE_CODE = 42
 STD_WAIT_SECONDS = 45                       # 설치 도구가 비동기로 끝낼 때 흔적을 기다리는 시간 — 작은 앱 설치는 0.4초 만에 끝났는데 흔적은 그 뒤에 생겼다(M05 는 60초까지 기다린다)
 ELEVATION_REQUIRED_CODE = 740
+STD_MESSAGE_LIMIT = 200                     # 띄우기 실패의 윈도 오류 문장을 기록에 싣는 길이 상한(가린 뒤에 자른다)
+STD_REASON_LIMIT = 68                       # 상자 한 칸(110자)에 이유가 잘리지 않고 들어가는 오류 문장 길이(군더더기 머리말을 뺀 뒤) — 시험이 가장 긴 경우에도 칸 안에 들어감을 확인한다
 _STD_EXIT = re.compile(r"(?m)^SPIKE_EXIT=(\S*)\s*$")
 _STD_ERROR = re.compile(r"(?m)^SPIKE_START_ERROR=(\w+)\s*$")
+_STD_MESSAGE = re.compile(r"(?m)^SPIKE_START_MESSAGE=(.*?)\s*$")
+_START_BOILERPLATE = re.compile(r"(?i)^this command cannot be run due to the error:\s*")
+_ELEVATION_WORDS = re.compile(r"(?i)elevation|권한 상승|\b%d\b" % ELEVATION_REQUIRED_CODE)
 STD_TRACE_NAMES = ("version", "update.exe", "unins000.exe")
 
 
 def std_user_script():
-    """임시 표준 사용자로 프로그램 하나를 띄우는 PowerShell(결정 D-810). 1차 측정은 '종료 0 인데 설치 흔적 없음' 이었다 — 원인 후보 둘을 막는다: ① 부모(러너 계정)의 환경을 물려받아 사용자 폴더 변수가 러너 계정 것으로 남는 것 →
+    """임시 표준 사용자로 프로그램 하나를 띄우는 PowerShell(결정 D-810). 1차 측정은 '종료 0 인데 설치 흔적 없음' 이었다 — 원인 후보 셋을 막는다: ① 부모(러너 계정)의 환경을 물려받아 사용자 폴더 변수가 러너 계정 것으로 남는 것 →
     사용자 폴더·임시 폴더 변수를 그 사용자 것으로 **명시**한 뒤 띄운다(`-UseNewEnvironment` 는 -Credential 과 함께 쓰면 현재 사용자의 환경을 불러온다고 알려져 믿지 않는다) ② -Credential 로 띄운 프로세스의 종료 코드가 비어 나와
-    0 으로 보이는 것 → 종료 코드를 `SPIKE_EXIT=` 줄로 찍어 읽고, 못 읽으면 `none`, 띄우지 못하면 `SPIKE_START_ERROR=오류 종류` 로 밝힌다."""
+    0 으로 보이는 것 → 종료 코드를 `SPIKE_EXIT=` 줄로 찍어 읽고, 못 읽으면 `none`, 띄우지 못하면 `SPIKE_START_ERROR=오류 종류` 로 밝힌다. ③ `Start-Process` 가 띄우지 못하고 오류만 내는 경우 — `-ErrorAction Stop` 이 없으면 그 오류는 화면에만
+    나오고 스크립트는 계속돼 `$p` 가 비어 종료 코드 0 이 된다(이 개발 PC 의 Windows PowerShell 5.1 에서 재현했고 1차 도구가 그 모양이었다) → `-ErrorAction Stop` 으로 잡아 `SPIKE_START_ERROR=` 에 더해 윈도의 오류 문장(예외 메시지)을
+    `SPIKE_START_MESSAGE=` 한 줄로 찍는다(공백·줄바꿈은 한 칸으로 접고 300자까지) — 오류 종류는 띄우기 실패 모두 `InvalidOperationException` 이라 로그온 거부·권한·서비스 꺼짐·권한 상승 필요를 가르는 것은 이 문장이다."""
     return ("$pw = ConvertTo-SecureString $env:SPIKE_PW -AsPlainText -Force; "
             "$cred = New-Object System.Management.Automation.PSCredential('.\\' + $env:SPIKE_USER, $pw); "
             "$env:USERNAME = $env:SPIKE_USER; $env:USERPROFILE = $env:SPIKE_PROFILE; $env:LOCALAPPDATA = $env:SPIKE_PROFILE + '\\AppData\\Local'; $env:APPDATA = $env:SPIKE_PROFILE + '\\AppData\\Roaming'; "
             "$env:TEMP = $env:SPIKE_TMP; $env:TMP = $env:SPIKE_TMP; "
             "try { $p = Start-Process -FilePath $env:SPIKE_SETUP -ArgumentList $env:SPIKE_ARGS -Credential $cred -LoadUserProfile -Wait -PassThru -WorkingDirectory $env:SPIKE_CWD -ErrorAction Stop } "
-            "catch { Write-Output ('SPIKE_START_ERROR=' + $_.Exception.GetType().Name); exit 1 }; "
+            "catch { $m = ([string]$_.Exception.Message -replace '\\s+', ' ').Trim(); if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }; "
+            "Write-Output ('SPIKE_START_ERROR=' + $_.Exception.GetType().Name); Write-Output ('SPIKE_START_MESSAGE=' + $m); exit 1 }; "
             "try { $p.WaitForExit() } catch { }; "
             "try { $code = $p.ExitCode } catch { $code = $null }; "
             "if ($null -eq $code) { Write-Output 'SPIKE_EXIT=none'; exit 0 }; "
@@ -1518,6 +1545,29 @@ def parse_std_exit(text, rc):
         raw = found.group(1)
         return ("code", int(raw)) if raw.lstrip("-").isdigit() else ("none", None)
     return "plain", rc
+
+
+def parse_std_message(text):
+    """표준 사용자 스크립트가 띄우기 실패와 함께 찍은 윈도 오류 문장(`SPIKE_START_MESSAGE=` 줄) → 공백·줄바꿈을 한 칸으로 접은 한 줄(없으면 빈 글). 줄 맨 앞의 표지만 인정한다. 길이를 자르는 것은 호출하는 쪽이다 — 가린 뒤에 잘라야 한다."""
+    found = _STD_MESSAGE.search(text or "")
+    return " ".join(found.group(1).split()) if found else ""
+
+
+def std_start_message(ctx, text, limit=STD_MESSAGE_LIMIT):
+    """띄우기 실패의 윈도 오류 문장 → 비밀 낱말을 가린 **뒤에** 뒤쪽 limit 글자로 자른 글(없으면 빈 글). 자른 뒤에 가리면 낱말 한가운데가 잘려 조각이 남는다."""
+    message = parse_std_message(text)
+    return tail(ctx.mask(message), limit) if message else ""
+
+
+def std_reason_words(message, limit=STD_REASON_LIMIT):
+    """상자 한 칸에 넣을 이유 글 — 윈도 오류 문장 앞의 군더더기 머리말('This command cannot be run due to the error:')을 빼고 뒤쪽 limit 글자만 남긴다(이유는 문장 끝에 있다)."""
+    message = str(message or "")
+    return tail(_START_BOILERPLATE.sub("", message) or message, limit)
+
+
+def std_needs_elevation(message):
+    """띄우기 실패의 오류 문장이 '권한 상승(관리자)이 필요하다' 는 뜻인가 — 'elevation'·'권한 상승'·오류 번호 740 낱말. 설치 도구가 관리자 권한을 요구하면 Start-Process 는 종료 740 이 아니라 이 오류로 막힌다."""
+    return bool(_ELEVATION_WORDS.search(message or ""))
 
 
 def std_user_traces(local_root, limit=5):
@@ -1562,7 +1612,9 @@ def std_user_folders(ctx, user=STD_USER):
 
 def m18_standard_user(ctx, arm):
     """러너에 임시 표준 사용자를 만들어 그 계정으로 무음 설치를 시도한다(결정 D-810). 먼저 같은 방법으로 아무것도 안 하는 프로그램(종료 코드 42)을 띄워 '다른 계정으로 프로그램을 띄울 수 있는지·종료 코드를 읽을 수 있는지'를 본 뒤 설치한다.
-    성공(흔적을 찾음)이면 통과, 설치 도구가 관리자 권한을 요구하면(종료 740) 실패, 그 밖에 확인하지 못한 것은 — '종료 0 인데 흔적 없음' 도 — 실패가 아니라 '시도 불가' 이고 이유를 적는다(운영자 PC 시험지 T-INST-04 로 넘긴다)."""
+    성공(흔적을 찾음)이면 통과, 설치 도구가 관리자 권한을 요구하면 실패 — 종료 740 으로 끝났거나, 띄우는 단계에서 '권한 상승이 필요하다' 는 오류 문장으로 막힌 경우(설치 도구가 관리자 권한을 요구하면 `Start-Process` 는 종료 코드 대신 이 오류를 낸다) —
+    그 밖에 확인하지 못한 것은 — '종료 0 인데 흔적 없음' 도 — 실패가 아니라 '시도 불가' 이고 이유를 적는다(운영자 PC 시험지 T-INST-04 로 넘긴다). 띄우지 못한 이유는 형식 이름(늘 같다)이 아니라 윈도의 오류 문장을 적는다(비밀번호를 가린 뒤 자른다).
+    아무것도 안 하는 탐침(cmd.exe)이 권한 상승 오류로 막히는 것은 설치 도구의 탓이 아니므로 '시도 불가' 다."""
     import secrets
     import shutil
     inst = installers_of(ctx, arm)
@@ -1594,32 +1646,43 @@ def m18_standard_user(ctx, arm):
         shutil.copyfile(inst["0.0.1"]["setup"], setup)
         log = public / ("std-%s.log" % arm)
         probe, probe_kind, probe_value = std_user_run(ctx, password, public, profile_root, "cmd.exe", "/d /c exit %d" % STD_PROBE_CODE, timeout=120, user=user)
+        probe_message = std_start_message(ctx, probe.text()) if probe_kind == "error" else ""                  # 띄우기 실패의 윈도 오류 문장 — 형식 이름은 늘 같아 이유를 가르지 못한다
         launched = probe_kind in ("none", "code") or (probe_kind == "plain" and probe.rc == 0)
         reads_exit = probe_kind == "code" and probe_value == STD_PROBE_CODE
         probe_values = {"launched": launched, "exit_code_readable": reads_exit, "kind": probe_kind}
+        if probe_message:
+            probe_values["message"] = probe_message
         if not launched:
-            why = "다른 계정으로 프로그램을 띄우지 못함(%s)" % (probe_value if probe_kind == "error" else "rc %s" % probe.rc)
-            ctx.add(record("M18", arm, "unavailable", brief="%s — 운영자 실기로" % why, probe=probe_values,
-                           note="러너 안에서 다른 계정으로 프로그램을 띄우지 못했다 — 설치는 시도하지 않았다. 운영자 실기(T-INST-04)로 넘긴다. " + tail(ctx.mask(probe.text()), 160)))
+            reason = std_reason_words(probe_message) if probe_message else (probe_value if probe_kind == "error" else "rc %s" % probe.rc)
+            why = "다른 계정으로 프로그램을 띄우지 못함(%s)" % reason
+            ctx.add(record("M18", arm, "unavailable", brief="%s — 운영자 실기로" % why, probe=probe_values, start_error=probe_value if probe_kind == "error" else "", start_message=probe_message,
+                           note="러너 안에서 다른 계정으로 프로그램을 띄우지 못했다 — 설치는 시도하지 않았다. 운영자 실기(T-INST-04)로 넘긴다." + (" 윈도 오류 문장(%s): %s." % (probe_value, probe_message) if probe_message else "") + " " + tail(ctx.mask(probe.text()), 160)))
             return
         arguments = ('--silent --log "%s"' % log) if velopack_arm(arm) else ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /LOG="%s"' % log)
         result, kind, value = std_user_run(ctx, password, public, profile_root, setup, arguments, user=user)
+        message = std_start_message(ctx, result.text()) if kind == "error" else ""
         code = value if kind in ("code", "plain") else None
         if not result.timed_out and kind != "error" and code in (0, None):
             wait_until(ctx, lambda: bool(std_user_traces(profile)), STD_WAIT_SECONDS, 1.0)       # 1차 측정은 기다리지 않고 바로 흔적을 봤다 — Setup 이 일을 다른 프로세스에 넘기고 먼저 끝나면 흔적이 아직 없다
         traces = std_user_traces(profile)
         log_text = tail(ctx.mask(read_text_guess(log)), 120) if log.is_file() else ""
         values = {"rc": result.rc, "seconds": result.seconds, "exit_kind": kind, "exit_code": code, "traces": traces, "probe": probe_values, "log_chars": len(log_text)}
+        if kind == "error":
+            values.update(start_error=value, start_message=message)
         if traces and code in (0, None) and kind != "error" and not result.timed_out:
             ctx.add(record("M18", arm, "pass", brief="표준 사용자 설치 성공 %s초%s" % (result.seconds, "" if kind == "code" or kind == "plain" else "(종료 코드는 못 읽음)"), **values))
             return
         if code == ELEVATION_REQUIRED_CODE:
             ctx.add(record("M18", arm, "fail", brief="설치 도구가 관리자 권한을 요구했다(종료 %d)" % ELEVATION_REQUIRED_CODE, note=tail(ctx.mask(result.text()), 160), **values))
             return
+        if kind == "error" and std_needs_elevation(parse_std_message(result.text())):      # 설치 도구가 관리자 권한을 요구하면 Start-Process 는 종료 740 대신 이 오류로 막힌다(자르기 전의 문장 전체로 가른다)
+            ctx.add(record("M18", arm, "fail", brief="설치 도구가 관리자 권한을 요구했다(띄우기 단계에서 막힘: %s)" % std_reason_words(message, 50),
+                           note="설치 도구를 다른 계정으로 띄우는 단계에서 권한 상승이 필요하다는 오류로 막혔다 — 종료 코드(%d)로 끝난 것이 아니라 띄우기 자체가 막혔다. 윈도 오류 문장(%s): %s" % (ELEVATION_REQUIRED_CODE, value, message), **values))
+            return
         if result.timed_out:
             why = "시간 안에 끝나지 않음"
         elif kind == "error":
-            why = "다른 계정으로 설치 프로그램을 띄우지 못함(%s)" % value
+            why = "다른 계정으로 설치 프로그램을 띄우지 못함(%s)" % (std_reason_words(message) if message else value)
         elif traces:
             why = "흔적은 있으나 종료 %s" % code
         elif kind == "none":
@@ -1629,7 +1692,8 @@ def m18_standard_user(ctx, arm):
         else:
             why = "종료 %s·설치 흔적 없음" % code
         extra = (" 설치 도구 로그 끝: " + log_text + " /") if log_text else ""
-        ctx.add(record("M18", arm, "unavailable", brief="%s — 운영자 실기로" % why, note="러너 안에서 다른 계정으로 설치가 되었는지 확인하지 못했다 — 운영자 실기(T-INST-04)로 넘긴다." + extra + " " + tail(ctx.mask(result.text()), 160), **values))
+        words = (" 윈도 오류 문장(%s): %s." % (value, message)) if kind == "error" and message else ""
+        ctx.add(record("M18", arm, "unavailable", brief="%s — 운영자 실기로" % why, note="러너 안에서 다른 계정으로 설치가 되었는지 확인하지 못했다 — 운영자 실기(T-INST-04)로 넘긴다." + words + extra + " " + tail(ctx.mask(result.text()), 160), **values))
     finally:
         ctx.host.run(["net", "user", user, "/delete"], timeout=60)
         shutil.rmtree(public, ignore_errors=True)

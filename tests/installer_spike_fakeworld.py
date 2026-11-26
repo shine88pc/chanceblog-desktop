@@ -97,6 +97,9 @@ class FakeWorld(measure.Host):
         self.delete_data_on_uninstall = False
         self.std_user_ok = False
         self.std_launch_ok = True                       # 임시 사용자로 프로그램을 띄울 수 있는가(탐침과 설치 모두)
+        self.std_install_launch_ok = True               # 거짓이면 탐침은 띄워지고 설치 도구만 띄우지 못한다(std_launch_ok 가 거짓이면 이 값과 상관없이 탐침부터 막힌다)
+        self.std_launch_message = "This command cannot be run due to the error: The user name or password is incorrect."          # 띄우기 실패 때 스크립트가 함께 찍는 윈도 오류 문장(빈 글이면 그 줄이 없다 — 옛 스크립트의 모양)
+        self.std_timeout = False                        # 참이면 설치 도구 호출이 시간 안에 끝나지 않는다(흔적은 std_user_ok 에 따라 생길 수 있다)
         self.std_exit_readable = True                   # -Credential 로 띄운 프로세스의 종료 코드를 읽을 수 있는가
         self.std_exit_code = 0                          # 설치 도구가 끝날 때의 종료 코드(std_user_ok 가 거짓이고 std_silent 가 참일 때)
         self.std_silent = False                         # 거짓이면 예전처럼 실패하며 비밀번호를 되울린다 / 참이면 1차 측정의 증상 — 종료 코드만 내고 설치 흔적은 없다
@@ -107,6 +110,8 @@ class FakeWorld(measure.Host):
         self.firewall_effective = True
         self.selftest_fail = set()
         self.selftest_names = None                      # None 이면 앱의 점검 목록(SELFTEST_NAMES) 전부
+        self.selftest_rc = None                         # 정수면 --selftest 가 점검 줄과 상관없이 그 종료 코드로 끝난다(None 이면 실패한 점검이 있을 때만 1)
+        self.selftest_timed_out = False                 # 참이면 점검 줄을 다 찍은 뒤 시간 안에 끝나지 않은 것으로 돌려준다(종료 코드 없음)
         self.velopack_log_text = ""                     # Velopack Setup 이 --log 파일에 남기는 글(비면 로그 없음)
         self.std_trace_delay = 0                        # 0 보다 크면 설치 흔적이 그 초 뒤에 생긴다(설치 도구가 일을 다른 프로세스에 넘기고 먼저 끝나는 모양)
         self.pending_traces = []
@@ -279,11 +284,16 @@ class FakeWorld(measure.Host):
             return self.ok("CN=Fake Signer B.V., O=Fake\n")
         if "PSCredential" in script:
             self.ps_calls.append((script, dict(env or {})))
-            if not self.std_launch_ok:
-                return measure.HostResult(1, 0.5, "SPIKE_START_ERROR=InvalidOperationException\r\n", "")
-            if Path((env or {}).get("SPIKE_SETUP", "")).name.lower() == "cmd.exe":                       # 탐침 — 종료 코드 42 를 읽을 수 있는가
+            probing = Path((env or {}).get("SPIKE_SETUP", "")).name.lower() == "cmd.exe"
+            if not self.std_launch_ok or (not probing and not self.std_install_launch_ok):
+                text = "SPIKE_START_ERROR=InvalidOperationException\r\n" + (("SPIKE_START_MESSAGE=" + self.std_launch_message + "\r\n") if self.std_launch_message else "")
+                return measure.HostResult(1, 0.5, text, "")
+            if probing:                                                                                   # 탐침 — 종료 코드 42 를 읽을 수 있는가
                 return self.ok("SPIKE_EXIT=42\r\n" if self.std_exit_readable else "SPIKE_EXIT=none\r\n")
-            return self.standard_install(env or {})
+            result = self.standard_install(env or {})                                                     # 설치 도구가 한 일(흔적·로그)은 남는다
+            if self.std_timeout:                                                                          # 그런데 호출은 시간 안에 끝나지 않았다 — 표지도 종료 코드도 없다
+                return measure.HostResult(None, 180.0, "", "", timed_out=True)
+            return result
         return self.ok()
 
     def std_trace_root(self, user=measure.STD_USER):
@@ -492,7 +502,12 @@ class FakeWorld(measure.Host):
             lines = ["[%s] %s: ok" % ("실패" if name in self.selftest_fail else "통과", name) for name in names]
             failed = sum(1 for name in names if name in self.selftest_fail)
             lines.append("결과: 통과 %d · 실패 %d · 건너뜀 0 — %s" % (len(names) - failed, failed, "점검 실패" if failed else "모두 정상"))          # 앱이 마지막에 찍는 요약 줄
-            return measure.HostResult(1 if self.selftest_fail else 0, 0.5, "\n".join(lines) + "\n", "")
+            code = 1 if self.selftest_fail else 0
+            if self.selftest_rc is not None:
+                code = self.selftest_rc
+            if self.selftest_timed_out:                                                                   # 점검 줄은 다 찍었지만 시간 안에 끝나지 않았다 — 종료 코드가 없다
+                return measure.HostResult(None, 300.0, "\n".join(lines) + "\n", "", timed_out=True)
+            return measure.HostResult(code, 0.5, "\n".join(lines) + "\n", "")
         if (exe.parent / "BROKEN").exists():
             return measure.HostResult(3, 0.2, "", "")
         if "--update-from" in args:

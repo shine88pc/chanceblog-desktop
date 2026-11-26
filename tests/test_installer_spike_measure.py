@@ -409,6 +409,18 @@ class JudgeTest(unittest.TestCase):
         for arm in "ABC":
             self.assertEqual(gates[arm]["G8"]["status"], "fail")
 
+    def test_g8_fails_when_only_the_installed_real_bundle_selftest_failed_and_the_portable_one_passed(self):
+        """재작업 Q-R1 — 위 시험은 휴대용(M22)만 실패하는 경우뿐이었다. 설치본(M06 실제 묶음)만 실패해도(M22 통과) 관문 G8 은 실패다 — 관문이 설치본을 안 보면 설치된 앱의 점검 실패가 통과로 흐른다.
+        갈래 A 는 B 의 설치본 값을 따라가므로(추정) B 가 실패하면 A·B 가, C 가 실패하면 C 만 실패하고, 둘 다 실패하면 세 갈래 모두 실패다."""
+        def failing(*arms):
+            kept = [item for item in passing_results() if not (item["id"] == "M06" and item["values"].get("target") == "real" and item["arm"] in arms)]
+            return run.judge(kept + [rec("M06", arm, "fail", brief="설치본 selftest 실패", target="real") for arm in arms])
+        for arms, failed in ((("B", "C"), "ABC"), (("B",), "AB"), (("C",), "C")):
+            gates = failing(*arms)
+            for arm in "ABC":
+                self.assertEqual(gates[arm]["G8"]["status"], "fail" if arm in failed else "pass", (arms, arm))
+        self.assertEqual(run.judge(passing_results())["B"]["G8"]["status"], "pass")                  # 같은 입력에서 설치본이 통과면 통과다 — 위 실패가 설치본 때문임을 보인다
+
     def test_rollup_rules(self):
         self.assertEqual(run.rollup([rec("M05", "A", "pass"), rec("M05", "A", "fail")]), "fail")
         self.assertEqual(run.rollup([rec("M05", "A", "pass"), rec("M05", "A", "info")]), "pass")
@@ -560,9 +572,12 @@ class RunnerGuardTest(unittest.TestCase):
                     self.assertNotIn(CANARY_TOKEN, err.getvalue())                          # 변수 이름만 적고 값은 적지 않는다
 
     def test_without_a_host_the_real_environment_decides_and_a_development_pc_is_refused(self):
+        """재작업 S-R7·Q-R7 — 호스트를 안 주면 진짜 환경이 정한다. 가드가 깨지면 이 시험 자체가 진짜 `measure`(방화벽 규칙·Defender 검사·임시 사용자)를 돌릴 수 있었다 — 이 PC·CI 윈도 러너는 관리자 권한이다.
+        그래서 진짜 `Host` 자리에 '아무것도 못 하는' 가짜(`Untouchable`)를 끼운다: 환경을 읽는 모양은 그대로이고, 가드가 깨지면 일을 하지 않고 빨개지기만 한다."""
+        untouchable = support.untouchable_host_class()
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp) / "w"
-            with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()):
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(run.measure, "Host", untouchable), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(run.main(["measure", "--work", str(work)]), 2)
             self.assertFalse(work.exists())
 
@@ -874,6 +889,19 @@ class SelftestVerdictTest(unittest.TestCase):
         self.assertEqual(len(set(keys)), len(keys))
         self.assertEqual(measure.app_selftest_keys(), keys)                                   # 저장소 위치를 안 줘도 이 도구 파일 위치에서 찾는다
 
+    def test_the_test_helpers_reader_is_not_fooled_by_parentheses_in_comments_or_strings_inside_the_tuple(self):
+        """재작업 Q-R6(다) — 가짜 세계가 쓰는 점검 이름 읽개(글자 단위)는 튜플 안 주석이나 글 속의 괄호에서 일찍 끊기지 않는다. 다른 갈래가 점검 이름 줄 끝에 '(M129)' 같은 주석을 달면 정규식 읽개는 거기서 끊겨
+        가짜 세계의 점검 목록이 잘리고 흐름 시험이 줄줄이 빨개질 뻔했다. 두 읽개(이 읽개와 `ast` 로 읽는 `measure.app_selftest_keys`)가 같은 답을 내는지도 본다."""
+        source = ('X = 1\nSELFTEST_KEYS = ("utf8_mode",  # 첫째 (M129 에서 더함)\n                 "tls",   # TLS 점검 (접속 부품) 끝\n                 "a_b", "c_d",  # 글 속 괄호 ")" 와 # 와 \' 따옴표\n'
+                  '                 "e_f",\n                 )   # 끝 (끝)\nOTHER = ("zzz",)\n')
+        self.assertEqual(support.app_selftest_names(source), ("utf8_mode", "tls", "a_b", "c_d", "e_f"))
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "scripts").mkdir()
+            (Path(tmp) / "scripts" / "release_check.py").write_text(source, encoding="utf-8")
+            self.assertEqual(measure.app_selftest_keys(tmp), support.app_selftest_names(source))                  # 다른 방법(ast)으로 읽어도 같다
+        for text, expected in (("", ()), ("SELFTEST_KEYS = (", ()), ("OTHER = ('a',)\n", ()), ('SELFTEST_KEYS = ("a", "b")\n', ("a", "b")), ('  SELFTEST_KEYS = ("a",)\n', ())):
+            self.assertEqual(support.app_selftest_names(text), expected, text)
+
     def test_the_list_reader_accepts_a_tuple_or_a_list_and_gives_up_quietly_on_anything_else(self):
         cases = {"튜플": ('SELFTEST_KEYS = ("a", "b",\n                 "c")   # 주석\n', ("a", "b", "c")), "목록": ("SELFTEST_KEYS = ['a', 'b']\n", ("a", "b")),
                  "다른 이름": ("OTHER_KEYS = ('a', 'b')\n", ()), "빈 튜플": ("SELFTEST_KEYS = ()\n", ()), "겹침": ("SELFTEST_KEYS = ('a', 'a')\n", ()), "글 아님": ("SELFTEST_KEYS = ('a', 1)\n", ()),
@@ -905,6 +933,58 @@ class SelftestVerdictTest(unittest.TestCase):
         self.assertFalse(verdict["ok"])
         self.assertEqual(verdict["missing"], ["tls"])
         self.assertIn("tls", verdict["basis"])
+
+    def test_a_passed_line_with_another_name_does_not_fill_the_place_of_a_check(self):
+        """재작업 Q-R1 — 이름 비교는 정확히 같은 글자여야 한다: 부분 일치(tls_old)·대소문자만 다름(TLS)·공백이 붙음(tls )·앞에 글자가 붙음(xtls)으로 점검 하나를 '찍힌 것' 으로 치지 않는다.
+        통과 줄의 수는 그대로 열세 개라 개수만 보는 옛 판정은 이 넷을 모두 통과로 읽었을 것이다."""
+        for fake in ("tls_old", "TLS", "tls ", "xtls", "tls2", "Tls"):
+            with self.subTest(fake):
+                names = [fake if name == "tls" else name for name in self.NAMES]
+                self.assertEqual(len(names), len(self.NAMES))
+                verdict = measure.selftest_verdict(self.counts(names), self.NAMES)
+                self.assertFalse(verdict["ok"])
+                self.assertEqual(verdict["missing"], ["tls"])
+                self.assertEqual(verdict["extra"], [fake])
+                self.assertIn("tls 가 통과로 찍히지 않았다", verdict["basis"])
+
+    def test_the_basis_names_why_the_run_was_not_clean_even_when_every_check_line_passed(self):
+        """재작업 S-R4 — 점검 줄이 모두 통과여도 종료 코드가 0 이 아니거나 시간 초과이거나 빌드 판정이 거절이면 통과가 아니다. 근거 문구가 '앱 점검 목록 13개와 같다' 만 말하면 1차 상자처럼 왜 실패인지 알 수 없다."""
+        clean = measure.selftest_verdict(self.counts(), self.NAMES)
+        self.assertTrue(clean["ok"])
+        self.assertEqual(clean["basis"], "앱 점검 목록 13개와 같다")
+        self.assertNotIn("깨끗하지 않음", clean["basis"])
+        cases = (("종료 코드 3", {"rc": 3}, "깨끗하지 않음: 종료 코드 3"), ("종료 코드 음수", {"rc": -1073741502}, "깨끗하지 않음: 종료 코드 -1073741502"), ("종료 코드 없음", {"rc": None}, "깨끗하지 않음: 시간 초과"),
+                 ("시간 초과 표시", {"timed_out": True, "rc": None}, "깨끗하지 않음: 시간 초과"), ("빌드 판정", {"judged": False}, "깨끗하지 않음: 빌드 판정 거절"),
+                 ("둘 다", {"rc": 2, "judged": False}, "깨끗하지 않음: 종료 코드 2·빌드 판정 거절"), ("실패 건너뜀", {"failed": 2, "skipped": 1}, "깨끗하지 않음: 실패 2·건너뜀 1"))
+        for label, change, expected in cases:
+            with self.subTest(label):
+                verdict = measure.selftest_verdict(self.counts(**change), self.NAMES)
+                self.assertFalse(verdict["ok"])
+                self.assertEqual(verdict["missing"], [])                                               # 점검 이름은 모두 통과 줄로 찍혔다 — 그래도 불통과이고 이유가 근거에 있다
+                self.assertTrue(verdict["basis"].startswith("앱 점검 목록 13개와 같다"), verdict["basis"])
+                self.assertTrue(verdict["basis"].endswith(expected), verdict["basis"])
+        floor = measure.selftest_verdict(self.counts(rc=4), ())
+        self.assertFalse(floor["ok"])
+        self.assertTrue(floor["basis"].endswith("깨끗하지 않음: 종료 코드 4"), floor["basis"])
+        extra = measure.selftest_verdict(self.counts(list(self.NAMES) + ["more"], rc=5), self.NAMES)
+        self.assertIn("목록에 없는 점검 1개가 더 찍힘: more", extra["basis"])
+        self.assertTrue(extra["basis"].endswith("깨끗하지 않음: 종료 코드 5"), extra["basis"])
+        counts = self.counts()
+        del counts["rc"]
+        self.assertFalse(measure.selftest_verdict(counts, self.NAMES)["ok"])                          # 종료 코드를 모르면 깨끗하다고 보지 않는다
+        self.assertTrue(measure.selftest_verdict(counts, self.NAMES)["basis"].endswith("깨끗하지 않음: 종료 코드 모름"))
+
+    def test_the_box_cell_carries_the_exit_code_and_the_reasons_and_nothing_extra_when_clean(self):
+        """상자 한 칸(brief) — 센 개수 뒤에 근거가 붙는다. 깨끗하지 않으면 종료 코드·시간 초과·빌드 판정 거절이 칸에 보이고, 깨끗하면 덧붙는 말이 없다."""
+        for change, words in (({"rc": 3}, ("종료 코드 3",)), ({"rc": None, "timed_out": True}, ("시간 초과",)), ({"judged": False}, ("빌드 판정 거절",)), ({"rc": 3, "judged": False}, ("종료 코드 3", "빌드 판정 거절"))):
+            counts = self.counts(**change)
+            brief = measure.selftest_brief("설치본", dict(counts, basis=measure.selftest_verdict(counts, self.NAMES)["basis"]))
+            self.assertTrue(brief.startswith("설치본 selftest 통과 13 실패 0 건너뜀 0 · 앱 점검 목록 13개와 같다"), brief)
+            for word in words:
+                self.assertIn(word, brief)
+            self.assertLessEqual(len(brief), run.CELL_LIMIT, brief)                                      # 상자 칸(110자)이 이유를 자르기 전에 들어간다
+        counts = self.counts()
+        self.assertEqual(measure.selftest_brief("휴대용", dict(counts, basis=measure.selftest_verdict(counts, self.NAMES)["basis"])), "휴대용 selftest 통과 13 실패 0 건너뜀 0 · 앱 점검 목록 13개와 같다")
 
     def test_extra_checks_the_list_does_not_know_do_not_fail_and_are_noted(self):
         verdict = measure.selftest_verdict(self.counts(list(self.NAMES) + ["brand_new_check"]), self.NAMES)
@@ -988,8 +1068,52 @@ class StandardUserParsingTest(unittest.TestCase):
             self.assertLess(script.index(variable), script.index("Start-Process"), variable)                                   # 띄우기 전에 정한다
         for word in ("PSCredential", "-Credential", "-LoadUserProfile", "-Wait", "-PassThru", "SPIKE_EXIT=", "SPIKE_START_ERROR=", "$null -eq $code"):
             self.assertIn(word, script, word)
+        for word in ("-ErrorAction Stop", "WaitForExit()", "catch {", "SPIKE_START_MESSAGE=", "$_.Exception.Message", "-replace '\\s+', ' '", "$m.Length -gt 300", "$m.Substring(0, 300)"):   # 재작업 S-R3·Q-R3 — 1차 M18 결함의 핵심 수정(띄우기 실패를 잡아 종료 0 으로 흐르지 않게)과 종료 코드를 읽기 전에 기다리는 줄, 오류 문장을 한 줄로 접고 300자까지만 찍는 줄
+            self.assertIn(word, script, word)
+        order = [script.index(word) for word in ("Start-Process", "-ErrorAction Stop", "catch {", "SPIKE_START_ERROR=", "SPIKE_START_MESSAGE=", "WaitForExit()", "$p.ExitCode", "$null -eq $code", "SPIKE_EXIT=")]
+        self.assertEqual(order, sorted(order))                                                                                 # 띄우기 → 실패를 잡아 오류·문장을 찍고 끝냄 → 기다림 → 종료 코드 읽기 → 표지 찍기
+        self.assertLess(script.index("-ErrorAction Stop"), script.index("catch {"))
+        self.assertEqual(script.count("-ErrorAction Stop"), 1)
         self.assertNotIn("-UseNewEnvironment", script)                                                                         # 현재 사용자의 환경을 불러오는 것으로 알려져 믿지 않는다 — 변수를 명시한다
         self.assertNotIn("SPIKE_PW'", script)                                                                                  # 비밀번호는 환경 변수 이름으로만 쓰고 글로 박지 않는다
+
+    @unittest.skipUnless(os.name == "nt", "윈도 PowerShell 에서만 도는 시험")
+    def test_the_script_run_for_real_without_the_credential_arguments_reads_the_exit_code_and_the_launch_error(self):
+        """재작업 S-R3·Q-R3 — 스크립트는 가짜 세계에서 돌지 않는다(가짜는 출력 약속만 흉내 낸다). 그래서 `-ErrorAction Stop` 한 줄이 사라져도 다른 시험은 모른다 — 1차 M18 의 '종료 0 인데 설치 흔적 없음' 이 바로 그 줄이 없을 때
+        생기는 증상이다(띄우기 실패가 화면 오류로만 나오고 `$p` 가 비어 종료 코드 0). 진짜 PowerShell 로 같은 스크립트에서 `-Credential $cred -LoadUserProfile` 두 인자만 지운 사본을 돌려 '띄운 뒤' 의 논리를 확인한다 —
+        다른 사용자로 로그온하지 않고 `cmd.exe /d /c exit N` 만 띄운다(가짜 비밀번호는 조립한 시험용 값)."""
+        script = measure.std_user_script()
+        plain = script.replace(" -Credential $cred -LoadUserProfile", "")
+        self.assertNotEqual(plain, script)                                                                                     # 정말 두 인자가 지워졌다 — 아니면 이 시험은 다른 사용자로 띄우려 들 것이다
+        self.assertNotIn("-Credential $cred", plain)
+        self.assertNotIn("-LoadUserProfile", plain)
+        host = measure.Host()
+        with tempfile.TemporaryDirectory() as tmp:
+            def attempt(program, arguments):
+                env = {"SPIKE_PW": "CANARY_" + "not_a_secret", "SPIKE_USER": "spikeuserx", "SPIKE_SETUP": program, "SPIKE_ARGS": arguments, "SPIKE_CWD": tmp, "SPIKE_PROFILE": str(Path(tmp) / "profile"), "SPIKE_TMP": str(Path(tmp) / "tmp")}
+                result = host.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", plain], timeout=120, env=env)
+                kind, value = measure.parse_std_exit(result.text(), result.rc)
+                return result, kind, value
+
+            for code in (42, 0, 740):
+                with self.subTest(code):
+                    result, kind, value = attempt("cmd.exe", "/d /c exit %d" % code)
+                    self.assertEqual((kind, value, result.rc), ("code", code, code), result.text())                              # 종료 코드를 줄로 읽었고 스크립트의 종료 코드도 같다
+                    self.assertEqual(measure.parse_std_message(result.text()), "")
+            with self.subTest("없는 프로그램"):
+                result, kind, value = attempt(str(Path(tmp) / "no_such_folder" / "none.exe"), "/d /c exit 1")
+                self.assertEqual((kind, value, result.rc), ("error", "InvalidOperationException", 1), result.text())          # 띄우기 실패가 종료 0 으로 흐르지 않고 잡혔다
+                message = measure.parse_std_message(result.text())
+                self.assertTrue(message, result.text())                                                                        # 오류 문장(윈도의 언어로)도 함께 찍힌다
+                self.assertNotIn("\n", message)
+                self.assertLessEqual(len(message), 300)
+
+    def test_the_launch_message_line_is_read_only_at_the_start_of_a_line_and_folded(self):
+        for text, expected in (("SPIKE_START_ERROR=X\r\nSPIKE_START_MESSAGE=가   나\t다  \r\n", "가 나 다"), ("SPIKE_START_MESSAGE=\r\n", ""), ("앞 SPIKE_START_MESSAGE=표지가 아니다\r\n", ""), ("", ""), (None, ""),
+                               ("SPIKE_START_MESSAGE=첫째\r\nSPIKE_START_MESSAGE=둘째\r\n", "첫째"), ("SPIKE_EXIT=0\r\n", "")):
+            self.assertEqual(measure.parse_std_message(text), expected, text)
+        self.assertEqual(measure.parse_std_exit("SPIKE_START_ERROR=InvalidOperationException\r\nSPIKE_START_MESSAGE=SPIKE_EXIT=0\r\n", 1), ("error", "InvalidOperationException"))      # 문장 속의 표지 모양은 표지가 아니다
+        self.assertEqual(measure.parse_std_exit("SPIKE_START_MESSAGE=SPIKE_EXIT=0\r\n", 5), ("plain", 5))
 
 
 class StandardUserNameTest(unittest.TestCase):
