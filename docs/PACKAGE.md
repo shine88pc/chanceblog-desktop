@@ -114,6 +114,7 @@ python -m venv ..\chanceblog-package-venv
 - **아이콘이 없다**(PyInstaller 기본 아이콘). 윈도 버전 정보(속성 → 자세히)에는 제품 이름·버전·'개인 PC 제한 시험용, 미서명 Package' 가 들어 있다.
 - **묶음 점검의 한계**: DLL 출처 검사는 PyInstaller 가 적은 출처 글을 `..`·슬래시·대소문자를 풀어 견줄 뿐(D-443) 바로가기·정션을 따라가 실제 위치를 확인하지 않고, 금지 이름 점검은 정확한 이름(OpenSSL `-x64` 쌍은 이름 꼴)만 봐서 낯선 이름은 걸러 내지 못한다 — 넓은 그물은 출처 검사 몫이다. 깨끗함 검사(D-441)도 파일의 크기·수정 시각을 같게 맞춰 git 의 상태 캐시를 속이는 수정은 보지 않는다.
 - 업데이트·롤백·마이그레이션 코드가 없다(새 버전은 새로 풀어서 쓴다 — 데이터 폴더는 같고, 백업·복원 화면이 있는 Package 에서는 그 기능으로 옮긴다).
+- **정정(UPDATE 갈래, D-790에서 D-805):** 바로 위 줄의 '코드가 없다' 는 이제 사실이 아니다 — 업데이트 확인·서명 검증·복구 코드가 앱에 들어왔지만(`update/`·`service/update_flow.py`) 스위치가 모두 꺼져 있어 이 Package 에서는 실행되지 않는다. 새 버전을 새로 풀어서 쓰는 방식은 그대로다. 끝의 '업데이트 코드가 들어왔다' 절을 본다.
 - **빌드 워크플로**(`.github/workflows/package.yml`)는 `.github` 변경이라 T3 였고 운영자 승인으로 병합돼 지금 main 에 있다: **수동 실행만**(`workflow_dispatch` — 푸시·PR·예약으로는 돌지 않고 입력 칸도 없다)·`windows-latest`·Python 3.12·잠금 파일로 설치·위 스크립트 실행(시험 빌드 옵션 `--allow-missing-gate` 는 쓰지 않는다)·**압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json` 네 개만** `ChanceBlogDesktop-preview` 라는 이름으로 **14일** 보존해 올림·읽기 권한만·비밀 값 0·서명 단계 없음. 운영자는 Actions 의 실행 화면 맨 아래 `Artifacts` 에서 받는다(올린 것을 GitHub 가 한 겹 더 압축해 주므로 풀면 안쪽에 압축 파일이 또 있다 — 시험지 0-0). 빌드가 빨간 실행이면 아래 '실패 문장 읽는 법' 대로 한 줄을 복사해 알린다.
 - PySide6·PyInstaller 는 CI(Linux·Windows 시험 칸)에 없으므로(D-32) 이 도구의 시험은 PyInstaller 없이 도는 부분(`tests/test_packaging_*.py`)이고, 실제 빌드는 개발 PC 에서 돌려 결과를 보고서에 남긴다.
 
@@ -163,3 +164,7 @@ python -m venv ..\chanceblog-package-venv
 설치 파일(Setup)을 만드는 도구를 문서가 아니라 **측정**으로 고르려고 수동 워크플로 한 개와 스크립트를 더했다(운영자 확인 037 ①, 변경 등급 T3 예외 — 설계서 INSTALLER 3-1). 구성: `.github/workflows/installer-spike.yml`(수동 실행만·입력칸 0·읽기 권한만·비밀 0·`package.yml` 과 같은 SHA 고정 액션만·보고서 둘만 올림)과 `packaging/spike/` — `tools.lock.json`(고정 도구 둘의 크기·SHA-256)·`fetch_tools.py`(고정 호스트 하나에서만, 크기·시간 상한, 받은 직후 크기와 SHA-256 이 다르면 지우고 실패)·`run_spike.py`(`install-tools`·`build-bundles`·`pack`·`measure`·`report` 다섯 단계)·`measure.py`(측정 M01에서 M22 와 판정 부품)·`spike_app.py`·`spike_app_sdk.py`(훅 인자·버전·종료 코드를 흉내 내는 작은 앱)·`ChanceBlogSpike.iss`(Inno 스크립트). 세 갈래(A Velopack 과 파이썬 SDK, B Velopack SDK 없이, C Inno Setup)를 같은 PyInstaller 묶음에 적용해 무음 설치·제거·업데이트·훅·한국어·Defender·크기·시간을 재고 관문 G1에서 G8 을 판정한다. 시험 쪽은 이 워크플로의 업로드 모양 둘(`INSTALLER_SPIKE_REPORT.md`·`.json`)을 '올려도 되는 파일 모양' 에 더했다(허용 모양은 정확히 여섯 — 결정 D-344·D-700).
 
 **이 가지는 준비만 한다.** 이 워크플로는 이 PC 에서 실행하지 않았고 병합과 실행은 운영자만 한다(수동 실행은 파일이 main 에 있어야 Run workflow 단추가 보인다). 운영자 안내는 [`INSTALLER_SPIKE_RUN.md`](INSTALLER_SPIKE_RUN.md). 결과로 설치 도구를 정하는 일(점수 다시 매기기)과 `packaging/` 변경 목록은 설계서 I-A 이후 갈래의 몫이다.
+
+## 업데이트 코드가 들어왔다 — 이 Package 에서는 꺼진 채 (D-790에서 D-805)
+
+앱에 업데이트 확인·서명 검증·복구 코드(`update/`·`service/update_flow.py`)가 들어왔지만 **이 Package 는 그 코드를 한 번도 부르지 않는다.** 스위치 `NET_UPDATE_CHECK`·`UPDATE_APPLY` 가 모두 `False` 이고(`--selftest` 의 `capabilities` 점검이 켜진 스위치가 출하 표와 같은지 보며, 출하 표는 비어 있다), 서명을 확인할 공개키 자리도 비어 있어 모든 서명 확인이 거절된다. 시작 파일 `packaging/gui_entry.py` 에 한 줄(`note_update_boot()`)이 더해졌지만 `UPDATE_APPLY` 가 꺼져 있으면 아무것도 읽지도 쓰지도 않고 어떤 실패도 삼킨다. 이 Package 의 사용법은 그대로다 — 새 버전은 새로 풀어서 쓰고(데이터 폴더는 같다) 설치 파일(Setup)과 자동 업데이트는 아직 없다. 규칙과 한계는 [`SECURITY.md`](SECURITY.md) '업데이트 코드' 절, 매니페스트 규칙은 [`RELEASE.md`](RELEASE.md) 의 'schema 1' 절에 있다.

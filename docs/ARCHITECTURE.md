@@ -309,3 +309,19 @@ python -X utf8 scripts/release_check.py --json                             같�
 - **후보 산출물 훑기**(`--scan-dir`): 설치 파일을 푼 것·zip 푼 것·로그·백업·진단 복사본의 모든 파일을 `security/scan.py` 의 `scan_secrets` 로 훑는다 — **새 검사 규칙은 없다.** 글이든 이진 파일이든 덩어리로 끝까지 읽고 덩어리 사이를 65,536 글자 겹쳐 경계에 걸친 키를 한 번만 센다(키·토큰 모양 하나가 32,768 글자까지면 경계 어디에 걸려도 찾는다 — 그보다 긴 것이 경계에 걸리면 놓칠 수 있다). zip 은 풀지 않고 안을 읽는다. 링크·클라우드에만 있는 자리표시(읽으면 내려받기가 시작된다)·너무 큰 파일·읽기 실패·열지 못하는 압축 형식·깨진 zip 은 **조용히 건너뛰지 않고 '읽지 못함' 으로 세어 표에 드러내며, 하나라도 있으면 FAIL**(0 이라고 말할 수 없다)이다. 결과에는 상대 경로·유형·줄 번호만 있고 키 글자와 이 PC 의 폴더 경로는 없다(D-672). PASS 의 근거 글에는 '본 것: 기존 여섯 모양·넘겨 준 폴더만' 과 '못 보는 것: 다른 서비스의 키 모양' 이 함께 적힌다.
 - **알려 둔 한계**: 구현이 있는지는 파일 이름·소스 글로 보는 어림짐작이다 — 이름이 맞으면 수동으로 오르고 이름이 다르면 아직에 머문다(D-671·D-674; 이름만 같은 빈 껍데기가 오르지 않게 7번은 import 문, 9번은 함수가 든 `update` 파이썬 파일, 11번은 설치 정의 파일만 센다). 압축된 설치 파일 안쪽은 먼저 풀어서 폴더로 줘야 본다. 읽은 파일로 세지만 키 모양이 눈에 들어오지 않는 것: 표지 없는 UTF-16·UTF-32(표지가 있으면 읽는다)·NTFS 대체 데이터 스트림·표지가 읽지 못함 목록 밖인 압축(zstd·lz4·OLE/MSI 등)·PyInstaller 묶음의 PYZ 안쪽 — 모르는 압축 표지를 읽지 못함으로 세지는 않는다(실제 설치 묶음에서 10번이 영원히 PASS 가 될 수 없으므로, D-672 ⑦). 12번의 GitHub Release 일치와 새 clone 빌드·시험·설치·제거·휴대용 실행은 운영자 PC 에서 직접 해 봐야 한다(수동). 그 밖에 이름으로 적어 둔 한계: 8번은 파일 내용의 낱말만 본다(파일 이름·UTF-16 파일·전각 글자로 쓴 낱말은 못 본다), 4번은 `Purpose(` 호출을 이름으로 읽는다(별칭으로 부르거나 여섯 번째 이후 위치 인자는 못 읽는다), 12번의 화면 버전 확인은 `VERSION` 낱말이 있는지만 본다, 후보 훑기는 발견 수 상한이 없고 압축 폭탄은 zip 하나에 최대 1GiB 까지 풀어 읽는다.
 - **쓸 때 알아 둘 것**: `--root` 로 다른 저장소 사본을 주면 그 사본의 `packaging/gui_entry.py` 와 앱 코드를 실행하니 믿는 사본에만 쓴다. 열세 점검(자가 점검)은 시스템 임시 폴더에 빈 폴더를 잠깐 만들었다 지운다(그 밖에는 아무것도 만들거나 바꾸지 않는다). 출력의 파일 이름은 그대로다(키 모양 이름만 가려진다) — 사진 이름 등이 든 폴더를 훑은 출력은 보고서·커밋에 그대로 붙이지 않는다.
+
+## 업데이트 코드 — `update/`·`service/update_flow.py`·`ui/core/updates.py` (UPDATE 갈래 U-1·U-2·U-3·U-6, D-790에서 D-805)
+
+위 §5 표의 `update/` 행(예정)이 코드가 됐다 — **스위치는 모두 꺼진 채**라 실행되지 않는다(규칙·위협 대응은 [`SECURITY.md`](SECURITY.md) '업데이트 코드' 절, 매니페스트 규칙은 [`RELEASE.md`](RELEASE.md)). 아래에서 위로만 부른다(위가 아래를 부르고 아래는 위를 모른다).
+
+| 층 | 파일 | 하는 일 | 만지는 것 |
+|---|---|---|---|
+| 순수 규칙 | `update/versions.py`·`ed25519.py`·`keys.py`·`manifest.py` | 버전 비교(SemVer 2.0)·서명 검증(검증 전용, 표준 라이브러리만)·내장 공개키 목록(비어 있음)·서명 매니페스트 schema 1 의 엄격한 읽기와 규칙 | 없음(접속·파일·시계 없음, 시각은 넘겨받는다) |
+| 상태·복구 | `update/state.py`·`machine.py`·`health.py`·`recovery.py` | 상태 파일 `update/state.json`(원자적 쓰기)·시작 후크 `note_boot`·19 상태 × 26 사건의 전이 표·정상 점검과 임시 폴더 정리·복구 순서 | 데이터 폴더의 `update/` 한 곳(`state.json`·`staging/`·`keep/<버전>/`) |
+| 설치 종류·적용 | `update/install_kind.py`·`apply.py` | 파일이 있는지만 보는 설치 종류 감지(잠정)·적용 어댑터의 빈 틀(첫 문장이 `UPDATE_APPLY` 관문). **설치 도구를 띄우는 코드는 없다**(U-4) | 파일 존재 확인뿐 |
+| 받기 | `update/source.py` | 주소 만들기(상수 + 검증된 태그·이름)·디스크 여유 확인·임시 폴더에 받아 크기·SHA-256 확인. 폴더에서 업데이트는 고른 폴더를 **읽기만** 해 같은 임시 폴더에 복사하며 해시한다(`read_folder_manifest`·`stage_from_folder`) | 접속 틀의 `NetClient`(주입받음)·`update/staging/`·(폴더에서 업데이트) 고른 폴더 읽기 |
+| 서비스 | `service/update_flow.py` | 확인·내려받기·적용·복구와 순서를 지키는 `UpdateSession`. 확인·받기는 `require_net("update_check", …)`, 적용·복구는 `require_update_apply(…)` 가 첫 문장. **폴더에서 업데이트**(`check_from_folder`·`stage_update_from_folder`)는 접속이 없어 `require_update_apply` 만 쓴다 | 접속 틀(`external` 등록부의 `update` 종류)·`backup_flow`·`locks/update.lock` |
+| 화면용 데이터 | `ui/core/updates.py`·`update_text.py` | 상태 → 설정 화면 '업데이트' 카드 한 장(`CardView` — '파일에서 업데이트…' 단추 글 `folder_action` 포함)과 문구표. Qt 코드는 없다(U-5 몫) | 없음(순수) |
+| 시작 후크 | `packaging/gui_entry.py` 의 `note_update_boot()` | 시작할 때 한 번 `update/state.note_boot()` 를 부르고 모든 실패를 삼킨다 | `UPDATE_APPLY` 가 켜져야 데이터 폴더를 읽는다 |
+
+데이터 폴더의 새 자리: `<데이터 폴더>/update/state.json`·`update/staging/<무작위>/`(받는 중)·`update/keep/<버전>/`(복구용으로 보관한 검증된 설치 파일, 최대 둘)·`locks/update.lock`. 접속은 접속 틀의 `update_check` 용도 한 길뿐이고, `update/` 와 `service/update_flow.py` 는 `http`·`ssl`·`socket`·`subprocess` 를 가져오지 않는다(시험이 지킨다). 시험은 `tests/test_update_*.py` 열네 모듈과 `tests/test_ui_update_core.py`, 도우미 `tests/update_support.py`(앱 코드와 따로 쓴 참고 서명기·가짜 매니페스트 만들기)·`tests/update_flow_support.py`(가짜 접속 서버·임시 데이터 폴더·가짜 어댑터)다 — 외부 접속 0, 모두 루프백·가짜 전송기·임시 폴더만 쓴다.

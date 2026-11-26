@@ -34,7 +34,7 @@ from chanceblog_desktop.publish import gitrepo  # noqa: E402
 
 SRC = HERE.parent / "src" / "chanceblog_desktop"
 HOST_UPDATE = "github.com"
-UPDATE_PATH = "/own/app/releases/latest/download/update-manifest.json"
+UPDATE_PATH = f"/{gitrepo.EXPECTED_OWNER}/chanceblog-desktop/releases/latest/download/update-manifest.json"
 UPDATE_URL = f"https://{HOST_UPDATE}{UPDATE_PATH}"
 SITE = f"{gitrepo.EXPECTED_OWNER.lower()}.github.io"
 SITE_URL = f"https://{SITE}/blog/posts.json?cb=app"
@@ -115,7 +115,7 @@ class GateTest(unittest.TestCase):
 
 class HostTableTest(unittest.TestCase):
     EXPECTED = {
-        "update_check": ("github.com", ("GET",), ()),
+        "update_check": ("github.com", ("GET", "GET"), ()),
         "pages_site": (SITE, ("GET",), None),
         "blogger_oauth": ("oauth2.googleapis.com", ("POST", "POST"), ()),
         "blogger_read": ("www.googleapis.com", ("GET", "GET", "GET"), None),
@@ -134,11 +134,11 @@ class HostTableTest(unittest.TestCase):
                     self.assertEqual({route.query for route in endpoint.routes}, {query})
         self.assertEqual(endpoints.table_problems(), [])
         hosts = {endpoint.host for endpoint in endpoints.ENDPOINTS.values()} | {host for endpoint in endpoints.ENDPOINTS.values() for host in endpoint.redirect_hosts}
-        self.assertEqual(sorted(hosts), sorted({"github.com", SITE, "oauth2.googleapis.com", "www.googleapis.com"}), "표에 있는 호스트가 정확히 이 넷이다")
-        self.assertEqual(endpoints.ENDPOINTS["update_check"].redirect_hosts, (), "업데이트 확인의 이동 호스트는 UPDATE 갈래가 확정할 때까지 비어 있다 — 이동은 모두 거절된다")
+        self.assertEqual(sorted(hosts), sorted({"github.com", SITE, "oauth2.googleapis.com", "www.googleapis.com", "release-assets.githubusercontent.com"}), "표에 있는 호스트가 정확히 이 다섯이다")
+        self.assertEqual(endpoints.ENDPOINTS["update_check"].redirect_hosts, ("release-assets.githubusercontent.com",), "업데이트 확인의 이동 호스트는 릴리스 자산 호스트 하나뿐이다(D-790)")
         redirects = {use: (endpoint.max_redirects, endpoint.redirect_hosts) for use, endpoint in endpoints.ENDPOINTS.items()}
-        self.assertEqual(redirects, {"update_check": (0, ()), "pages_site": (2, ()), "blogger_oauth": (0, ()), "blogger_read": (0, ()), "blogger_draft": (0, ())},
-                         "이동은 기본 0(거절)이고 열린 곳은 공개 사이트의 같은 호스트 최대 두 번뿐이다(M-NET-10)")
+        self.assertEqual(redirects, {"update_check": (3, ("release-assets.githubusercontent.com",)), "pages_site": (2, ()), "blogger_oauth": (0, ()), "blogger_read": (0, ()), "blogger_draft": (0, ())},
+                         "이동은 기본 0(거절)이고 열린 곳은 공개 사이트의 같은 호스트 최대 두 번과 업데이트 확인의 최대 세 번(릴리스 자산 호스트 하나까지)뿐이다(M-NET-10)")
         self.assertLessEqual(len({endpoints.ENDPOINTS["update_check"].host} | set(endpoints.ENDPOINTS["update_check"].redirect_hosts)), 2, "업데이트 확인의 호스트는 최대 둘이다(설계서 3.6)")
 
     def test_the_blogger_routes_are_the_six_documented_shapes(self):
@@ -167,8 +167,12 @@ class HostTableTest(unittest.TestCase):
         for use, endpoint in endpoints.ENDPOINTS.items():
             with self.subTest(use=use):
                 self.assertEqual(endpoint.total_timeout, 30.0)
-                self.assertEqual((endpoint.download_timeout, endpoint.max_download), (0.0, 0), "내려받기 표는 UPDATE 갈래가 정할 때까지 비어 있다")
-                self.assertFalse(any(route.download for route in endpoint.routes), "내려받기 길은 UPDATE 갈래가 정할 때까지 없다")
+                if use == "update_check":                                                      # 내려받기는 업데이트 확인 하나뿐이다(D-790): 10분·200 MiB 이고 내려받기 길은 릴리스 자산 길 하나
+                    self.assertEqual((endpoint.download_timeout, endpoint.max_download), (600.0, 200 * mib))
+                    self.assertEqual([route.shown for route in endpoint.routes if route.download], ["/(릴리스 자산)"])
+                else:
+                    self.assertEqual((endpoint.download_timeout, endpoint.max_download), (0.0, 0), "내려받기 표는 업데이트 확인뿐이다")
+                    self.assertFalse(any(route.download for route in endpoint.routes), "내려받기 길은 업데이트 확인뿐이다")
                 self.assertEqual(endpoint.accept_encodings, ("identity", "gzip", "deflate") if use == "pages_site" else ("identity",))
                 self.assertEqual(endpoint.cache_control, "no-cache" if use == "pages_site" else "")
                 self.assertEqual(endpoint.uncounted_statuses, (400, 404, 422, 429) if use == "pages_site" else (400, 422, 429))
@@ -180,8 +184,10 @@ class HostTableTest(unittest.TestCase):
     POSTS = f"/blogger/v3/blogs/{NUMBER}/posts"
     FORM = "application/x-www-form-urlencoded"
     SITE_PATH = ("/(?!/)(?!(?:.*/)?\\.\\.(?:/|$))(?!.*%(?:2[eEfF]|5[cC]|00))(?:%[0-9A-Fa-f]{2}|[A-Za-z0-9._" + chr(0x7E) + "+/-]){0,498}")
+    RELEASES = f"/{gitrepo.EXPECTED_OWNER}/chanceblog-desktop/releases"          # 앱 저장소의 릴리스 길(소유자는 글 저장소와 같은 상수 하나에서 온다)
     ROUTES = {
-        "update_check": [("GET", f"/{SEGMENT}/{SEGMENT}/releases/latest/download/{SEGMENT}", "/(릴리스 최신 자산)", (), False, "", 0, False)],
+        "update_check": [("GET", RELEASES + "/latest/download/update-manifest\\.json(?:\\.sig)?", "/(릴리스 최신 매니페스트)", (), False, "", 0, False),
+                         ("GET", RELEASES + "/download/v[0-9]+\\.[0-9]+\\.[0-9]+(?:-rc\\.[1-9][0-9]*)?/[A-Za-z0-9][A-Za-z0-9._-]{0,99}", "/(릴리스 자산)", (), False, "", 0, True)],
         "pages_site": [("GET", SITE_PATH, "/(공개 사이트)", (("cb", "app(?:-[0-9]{1,3})?"),), False, "", 0, False)],
         "blogger_oauth": [("POST", "/token", "/token", (), False, FORM, 4096, False), ("POST", "/revoke", "/revoke", (), False, FORM, 4096, False)],
         "blogger_read": [("GET", f"/blogger/v3/blogs/{NUMBER}", "/blogger/v3/blogs/<번호>", (), True, "", 0, False),
@@ -190,16 +196,16 @@ class HostTableTest(unittest.TestCase):
         "blogger_draft": [("POST", POSTS, "/blogger/v3/blogs/<번호>/posts", (("isDraft", "true"),), True, "application/json; charset=UTF-8", 1024 * 1024, False)],
     }
     FIELDS = {                                                # 용도마다 길 말고 표의 칸 전부(이름 → 값)
-        "update_check": dict(host="github.com", accept="application/json", max_response=1024 * 1024, max_redirects=0, redirect_hosts=(), cache_control="", accept_encodings=("identity",), total_timeout=30.0,
-                             download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429)),
+        "update_check": dict(host="github.com", accept="*/*", max_response=1024 * 1024, max_redirects=3, redirect_hosts=("release-assets.githubusercontent.com",), cache_control="", accept_encodings=("identity",),
+                             total_timeout=30.0, download_timeout=600.0, max_download=200 * 1024 * 1024, keep_headers=(), uncounted_statuses=(400, 422, 429), send_version=False),
         "pages_site": dict(host=SITE, accept="*/*", max_response=20 * 1024 * 1024, max_redirects=2, redirect_hosts=(), cache_control="no-cache", accept_encodings=("identity", "gzip", "deflate"), total_timeout=30.0,
-                           download_timeout=0.0, max_download=0, keep_headers=("age", "last-modified", "cache-control", "x-cache"), uncounted_statuses=(400, 404, 422, 429)),
+                           download_timeout=0.0, max_download=0, keep_headers=("age", "last-modified", "cache-control", "x-cache"), uncounted_statuses=(400, 404, 422, 429), send_version=True),
         "blogger_oauth": dict(host="oauth2.googleapis.com", accept="application/json", max_response=1024 * 1024, max_redirects=0, redirect_hosts=(), cache_control="", accept_encodings=("identity",), total_timeout=30.0,
-                              download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429)),
+                              download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429), send_version=True),
         "blogger_read": dict(host="www.googleapis.com", accept="application/json", max_response=2 * 1024 * 1024, max_redirects=0, redirect_hosts=(), cache_control="", accept_encodings=("identity",), total_timeout=30.0,
-                             download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429)),
+                             download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429), send_version=True),
         "blogger_draft": dict(host="www.googleapis.com", accept="application/json", max_response=2 * 1024 * 1024, max_redirects=0, redirect_hosts=(), cache_control="", accept_encodings=("identity",), total_timeout=30.0,
-                              download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429)),
+                              download_timeout=0.0, max_download=0, keep_headers=(), uncounted_statuses=(400, 422, 429), send_version=True),
     }
 
     def test_every_route_and_every_endpoint_field_is_pinned_by_a_hand_written_table(self):
@@ -234,9 +240,9 @@ class HostTableTest(unittest.TestCase):
         self.assertTrue(endpoints.table_problems({"update_check": dataclasses.replace(good, routes=())}))
 
 
-def golden(method, path, host, *, accept="application/json", encoding="identity", extra=(), body=b""):
-    """설계서 3.8 의 요청 모양을 손으로 적은 것(코드와 따로) — 머리글 순서까지 고정이다."""
-    lines = [f"{method} {path} HTTP/1.1", f"Host: {host}", f"User-Agent: ChanceBlogDesktop/{ns.VERSION}", f"Accept: {accept}", f"Accept-Encoding: {encoding}", "Connection: close"]
+def golden(method, path, host, *, accept="application/json", encoding="identity", extra=(), body=b"", agent=None):
+    """설계서 3.8 의 요청 모양을 손으로 적은 것(코드와 따로) — 머리글 순서까지 고정이다. `agent` 를 주면 그 `User-Agent`(업데이트 확인은 버전 없는 `ChanceBlogDesktop`), 안 주면 `ChanceBlogDesktop/<버전>`."""
+    lines = [f"{method} {path} HTTP/1.1", f"Host: {host}", f"User-Agent: {agent or 'ChanceBlogDesktop/' + ns.VERSION}", f"Accept: {accept}", f"Accept-Encoding: {encoding}", "Connection: close"]
     lines += [f"{name}: {value}" for name, value in extra]
     return ("\r\n".join(lines) + "\r\n\r\n").encode("ascii") + body
 
@@ -246,9 +252,9 @@ class RequestBytesTest(unittest.TestCase):
         return bytes(env.last_socket.sent)
 
     def test_request_bytes_equal_the_golden_shape_for_every_use(self):
-        """NT-20 — 보낸 바이트가 용도별 고정 모양과 같다(업데이트 확인은 설계서 3.8 의 모양과 바이트 단위로 같고 버전 번호만 다르다)."""
+        """NT-20 — 보낸 바이트가 용도별 고정 모양과 같다(업데이트 확인은 설계서 3.8 의 모양에 UPDATE 갈래의 두 가지가 다르다 — `User-Agent` 가 버전 없는 제품 이름이고 `Accept` 가 `*/*` 다, D-790)."""
         env, _ = run(self, OK_JSON)
-        self.assertEqual(self.sent(env), golden("GET", UPDATE_PATH, "github.com"))
+        self.assertEqual(self.sent(env), golden("GET", UPDATE_PATH, "github.com", accept="*/*", agent="ChanceBlogDesktop"))
         env, _ = run(self, ns.http_response(200, body=b"[]"), "pages_site", SITE_URL)
         self.assertEqual(self.sent(env), golden("GET", "/blog/posts.json?cb=app", SITE, accept="*/*", extra=[("Cache-Control", "no-cache")]))
         env, _ = run(self, OK_JSON, "blogger_read", BLOG, bearer="tok.en-1_2")
@@ -286,16 +292,23 @@ class RequestBytesTest(unittest.TestCase):
         import getpass
         import os
         import platform
-        env, _ = run(self, OK_JSON)
-        wire = bytes(env.last_socket.sent).decode("ascii")
         try:
             user = getpass.getuser()
         except Exception:                                  # noqa: BLE001 - 사용자 이름을 알 수 없는 컨테이너에서도 시험이 돈다
             user = ""
-        for secret in {user, os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), platform.node(), str(Path.home()), str(Path.cwd()), sys.executable, tempfile.gettempdir()}:
-            if len(secret) >= 3:
-                self.assertNotIn(secret.lower(), wire.lower())
-        self.assertEqual(re.findall(r"User-Agent: (.*)\r\n", wire), ["ChanceBlogDesktop/" + ns.VERSION])
+        secrets_here = {user, os.environ.get("USERNAME", "?"), os.environ.get("COMPUTERNAME", "?"), platform.node(), str(Path.home()), str(Path.cwd()), sys.executable, tempfile.gettempdir()}
+        # 업데이트 확인은 버전도 싣지 않는다(제품 이름뿐, D-790) — 나머지 용도는 `ChanceBlogDesktop/<버전>` 이 앱에서 나가는 유일한 값이다
+        for use, url, extra, agent in (("update_check", UPDATE_URL, {}, "ChanceBlogDesktop"), ("pages_site", SITE_URL, {}, "ChanceBlogDesktop/" + ns.VERSION),
+                                       ("blogger_read", BLOG, {"bearer": "t"}, "ChanceBlogDesktop/" + ns.VERSION)):
+            with self.subTest(use=use):
+                env, _ = run(self, OK_JSON, use, url, **extra)
+                wire = bytes(env.last_socket.sent).decode("ascii")
+                for secret in secrets_here:
+                    if len(secret) >= 3:
+                        self.assertNotIn(secret.lower(), wire.lower())
+                self.assertEqual(re.findall(r"User-Agent: (.*)\r\n", wire), [agent])
+                if use == "update_check":
+                    self.assertNotIn(ns.VERSION, wire, "업데이트 확인 요청에는 버전 번호도 없다")
 
     def test_the_request_goes_out_in_one_header_block_and_the_body_follows_exactly(self):
         payload = b'{"a": 1}'
@@ -407,16 +420,22 @@ class ShapeRefusalTest(unittest.TestCase):
                 self.assertEqual(sent.count(b"Content-Type:"), 1)
 
     def test_the_update_check_route_takes_no_dot_segments_and_no_hidden_names(self):
-        """G-2(독립 검증 Q·S 권고-2) — 자리표시자 길도 `.`·`..`·점으로 시작하는 구간은 받지 않는다(공개 사이트 길이 `..` 를 막는 것과 같다). 소유자·저장소 고정은 UPDATE 갈래가 확정할 때 한다."""
-        for label, url in (("점점 소유자", f"https://{HOST_UPDATE}/../app/releases/latest/download/x.exe"), ("점 저장소", f"https://{HOST_UPDATE}/own/./releases/latest/download/x.exe"),
-                           ("점점 둘", f"https://{HOST_UPDATE}/../../releases/latest/download/x"), ("점점 자산", f"https://{HOST_UPDATE}/own/app/releases/latest/download/.."),
-                           ("점 자산", f"https://{HOST_UPDATE}/own/app/releases/latest/download/."), ("숨은 자산", f"https://{HOST_UPDATE}/own/app/releases/latest/download/.hidden"),
-                           ("숨은 소유자", f"https://{HOST_UPDATE}/.own/app/releases/latest/download/x"), ("인코딩된 점점", f"https://{HOST_UPDATE}/own/app/releases/latest/download/%2e%2e"),
-                           ("구간 길이 100 초과", f"https://{HOST_UPDATE}/" + "a" * 101 + "/app/releases/latest/download/x")):
+        """(옛 시험 이름을 그대로 둔다 — 시험 id 를 없애지 않으려고. 아래가 더 엄격해진 내용이다: 고정 길 둘 말고는 모두 거절.) G-2 가 자리표시자 길에 걸었던 점 구간·숨은 이름 거절은 **더 엄격하게** 이어진다(D-790) — 소유자·저장소가 상수 하나에서 오는 고정 길이 됐으므로 다른 소유자·저장소·자산 이름·태그 모양·점 구간·숨은 이름은 연결 전에 거절한다.
+        통과하는 모양은 최신 릴리스의 매니페스트·서명 파일 둘과 태그가 정해진 릴리스의 자산 하나(이름 규칙은 매니페스트의 파일 이름 규칙)뿐이다."""
+        owner = gitrepo.EXPECTED_OWNER
+        base = f"https://{HOST_UPDATE}/{owner}/chanceblog-desktop/releases"
+        for label, url in (("다른 소유자", f"https://{HOST_UPDATE}/own/chanceblog-desktop/releases/latest/download/update-manifest.json"), ("다른 저장소", f"https://{HOST_UPDATE}/{owner}/app/releases/latest/download/update-manifest.json"),
+                           ("옛 자리표시자", f"https://{HOST_UPDATE}/own/app/releases/latest/download/update-manifest.json"), ("점점 소유자", f"https://{HOST_UPDATE}/../chanceblog-desktop/releases/latest/download/update-manifest.json"),
+                           ("다른 자산 이름", base + "/latest/download/other.json"), ("서명 뒤에 더", base + "/latest/download/update-manifest.json.sig.bak"), ("점점 자산", base + "/latest/download/.."),
+                           ("숨은 자산", base + "/download/v1.0.1/.hidden"), ("점점 자산 둘", base + "/download/v1.0.1/../x"), ("구간이 더", base + "/download/v1.0.1/a/b"), ("v 없는 태그", base + "/download/1.0.1/a.exe"),
+                           ("점 둘뿐인 태그", base + "/download/v1.0/a.exe"), ("사전판 글자", base + "/download/v1.0.1-beta.1/a.exe"), ("rc 에 0", base + "/download/v1.0.1-rc.0/a.exe"), ("인코딩된 점점", base + "/latest/download/%2e%2e"),
+                           ("이름 길이 100 초과", base + "/download/v1.0.1/" + "a" * 101), ("API 길", f"https://{HOST_UPDATE}/repos/{owner}/chanceblog-desktop/releases/latest"), ("릴리스 목록", base),
+                           ("태그 길", f"https://{HOST_UPDATE}/{owner}/chanceblog-desktop/releases/tag/v1.0.1"), ("최신 길의 자산", base + "/latest/download/ChanceBlogDesktop-1.0.1-Setup.exe")):
             self.refused(label, url)
-        for ok in ("own/app/releases/latest/download/update-manifest.json", "O_w-n.x/a.b-c_d/releases/latest/download/App-1.2.3.exe", "a/b/releases/latest/download/" + "z" * 100):
+        for ok in ("/latest/download/update-manifest.json", "/latest/download/update-manifest.json.sig", "/download/v1.0.1/ChanceBlogDesktop-1.0.1-Setup.exe", "/download/v0.9.0-rc.1/releases.stable.json",
+                   "/download/v10.20.30/" + "z" * 100, "/download/v1.0.1/a.b-c_d.nupkg"):
             with self.subTest(ok=ok), ns.Harness(self, OK_JSON, switches=ns.USE_SWITCHES["update_check"]) as env:
-                self.assertEqual(env.client.request("update_check", "GET", f"https://{HOST_UPDATE}/{ok}").status, 200)
+                self.assertEqual(env.client.request("update_check", "GET", base + ok).status, 200)
 
     def test_the_public_site_route_refuses_a_leading_double_slash_but_keeps_the_vendor_tool_shapes(self):
         """N-4(독립 검증 Q) — 공개 사이트 길의 맨 앞 `//` 는 거절한다(요청 줄이 `//호스트/...` 모양이 되는 길). vendor 확인 도구의 `//` 는 구간 사이·끝에만 쓰이므로 그 모양은 그대로 통과한다."""
@@ -456,7 +475,7 @@ class RedirectTest(unittest.TestCase):
         return ns.http_response(status, "Found", headers=[("Location", location)])
 
     def test_redirects_are_refused_by_default_and_the_second_request_is_never_made(self):
-        """NT-24 — 기본은 거절(업데이트 확인·Blogger 읽기 표는 이동 0): 전송 시도는 한 번뿐이다. 이동 주소가 표에 맞는 같은 호스트의 올바른 주소여도 따라가지 않는다 —
+        """NT-24 — 기본은 거절(Blogger 읽기 표는 이동 0): 전송 시도는 한 번뿐이다. 이동 주소가 표에 맞는 같은 호스트의 올바른 주소여도 따라가지 않는다 — (업데이트 확인은 UPDATE 갈래가 이동을 열었다(D-790): 여기 두 사례는 이제 '표 밖 길로의 이동은 열린 용도에서도 거절한다' 를 지킨다)
         기본값이 0 이라는 것을 직접 못박는다(표 밖 주소만 시험하면 기본값이 3 으로 바뀌어도 표 검사 때문에 거절돼 못 알아챈다 — 변이 M-NET-10 의 첫 실행이 이 틈을 드러내 시험을 강화했다)."""
         cases = (("update_check", UPDATE_URL, {}, f"https://{HOST_UPDATE}/elsewhere"),
                  ("update_check", UPDATE_URL, {}, f"https://{HOST_UPDATE}/own/app/releases/latest/download/other.json"),

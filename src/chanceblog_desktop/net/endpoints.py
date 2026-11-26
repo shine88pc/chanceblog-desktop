@@ -4,7 +4,8 @@
 표 밖의 요청은 접속하기 **전에** 거절된다(`client.py` 의 3단계). 이 표를 바꾸는 것은 코드 변경이다 — 시험(`test_net_client.HostTableTest`)이 표가 설계서와 정확히 같음을 지킨다.
 
 용도(use) 이름은 `capabilities.NET_USES` 와 같은 이름이다. `pages_branch` 는 git 이 접속하므로 이 표에 없다. `blogger_read` 와 `blogger_draft` 는 같은 호스트의 다른 방법이라 표가 둘이다.
-업데이트 확인(`update_check`)의 호스트·길은 UPDATE 설계가 정한다 — 이 표의 줄은 UPDATE 갈래가 확정·확장하는 **자리표시자**다(이동 호스트가 비어 있어 이동은 모두 거절된다).
+업데이트 확인(`update_check`)의 길은 UPDATE 갈래가 **확정**했다(D-790): 호스트 `github.com` 한 곳, 길은 앱 저장소(`EXPECTED_OWNER` 한 상수 + 저장소 이름 상수)의 릴리스 길 둘뿐이다 — 최신 릴리스의 매니페스트·서명 파일과 태그가 정해진 릴리스의 자산.
+자산은 다른 호스트(`release-assets.githubusercontent.com`)로 넘어가므로 이동을 최대 3번까지 열고 그 호스트 하나만 허용한다. 이 용도만 `User-Agent` 에 버전을 싣지 않는다(`send_version=False` — 제품 이름뿐).
 """
 from __future__ import annotations
 
@@ -24,7 +25,15 @@ TOTAL_TIMEOUT = 30.0              # 요청 하나의 총 시간 — 마감 감�
 MAX_HEADER_BYTES = 64 * KIB       # 받은 머리글 전체의 상한(`http.client` 의 줄 한도·개수 100 위에 더한 우리 쪽 한도)
 MAX_URL_CHARS = 500               # 요청 주소(길 + 질의) 길이 상한
 MAX_BEARER_CHARS = 4096           # 접근 토큰 글자 수 상한(모양은 영문·숫자와 점·밑줄·더하기·빗금·등호·붙임표 정도 — `client.py` 의 `_BEARER`)
-USER_AGENT_PREFIX = "ChanceBlogDesktop/"   # 앱에서 나가는 유일한 값은 이 뒤의 버전 번호다(업데이트 확인의 약속)
+USER_AGENT_NAME = "ChanceBlogDesktop"
+USER_AGENT_PREFIX = USER_AGENT_NAME + "/"   # 앱에서 나가는 유일한 값은 이 뒤의 버전 번호다(버전을 싣지 않는 용도 — 업데이트 확인 — 는 제품 이름만 나간다)
+RELEASE_REPO = "chanceblog-desktop"          # 앱 저장소 이름(소유자는 글 저장소와 같은 상수 `EXPECTED_OWNER` 에서 온다 — 시험이 둘이 어긋나지 않음을 지킨다)
+RELEASE_BASE = f"/{EXPECTED_OWNER}/{RELEASE_REPO}/releases"
+MANIFEST_PATH = RELEASE_BASE + r"/latest/download/update-manifest\.json(?:\.sig)?"          # 정규식 글 — 최신 릴리스의 매니페스트와 서명 파일 둘뿐
+ASSET_PATH = RELEASE_BASE + r"/download/v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?/[A-Za-z0-9][A-Za-z0-9._-]{0,99}"      # 정규식 글 — 태그가 정해진 릴리스의 자산 하나(이름 규칙은 매니페스트의 파일 이름 규칙과 같다)
+RELEASE_ASSET_HOST = "release-assets.githubusercontent.com"    # 릴리스 자산을 실제로 내려주는 호스트(github.com 이 넘겨 준다)
+MAX_UPDATE_FILE = 200 * MIB                 # 업데이트 파일 하나의 상한(매니페스트의 `size` 도 같은 상한이다)
+UPDATE_DOWNLOAD_SECONDS = 600.0             # 내려받기 전체 시간(10분)
 
 NUMBER = r"[0-9]{1,25}"           # 블로그·글 번호 — 숫자만
 CACHE_BUSTER = re.compile(r"app(?:-[0-9]{1,3})?")      # 공개 사이트 질의 `cb` 의 값 — 설계서는 `app` 고정이었지만 vendor 확인 도구가 시도마다 `app-<시도 번호>` 로 바꿔 보낸다(실측: `f"{token}-{tries}"`)
@@ -63,6 +72,7 @@ class Endpoint:
     label: str                       # 사용자 문구의 「작업」 이름
     max_redirects: int = 0           # 0 = 이동(3xx) 거절(기본) — 열린 곳이 눈에 보이게
     redirect_hosts: tuple = ()       # 이동을 허용하는 **다른** 호스트(정확히 일치). 같은 호스트 이동은 max_redirects 가 0 이 아닐 때만
+    send_version: bool = True        # False 면 `User-Agent` 에 버전을 싣지 않는다(제품 이름뿐) — 업데이트 확인만(UPDATE 설계 질문 Q5)
     cache_control: str = ""          # 붙일 Cache-Control 값(없으면 붙이지 않는다)
     accept_encodings: tuple = ("identity",)   # 허용하는 Accept-Encoding — identity 밖의 값은 본문을 읽지 않는(limit 0) 요청에서만
     total_timeout: float = TOTAL_TIMEOUT      # 요청 하나의 총 시간
@@ -77,17 +87,20 @@ def _routes(*items):
 
 
 SEGMENT = r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}"      # 길 한 구간 — 첫 글자가 점이 아니다(`.`·`..`·숨은 이름 거절, 독립 검증 G-2)
-# 길이 아직 자리표시자인 용도 — UPDATE 갈래가 소유자·저장소를 상수 하나에서 만들어 길을 확정하면 이 목록에서 뺀다. 이 용도를 여는 스위치는 그 전에는 출하 표에 오를 수 없다(시험이 지킨다, D-738)
-PLACEHOLDER_USES = ("update_check",)
+# 길이 아직 자리표시자인 용도 — 길의 소유자·저장소 구간이 자유로운 용도(없다: UPDATE 갈래가 `update_check` 의 길을 확정하며 비웠다, D-790). 새 용도가 자리표시자로 시작하면 여기에 올리고, 이 용도를 여는 스위치는 길이 확정되기 전에는 출하 표에 오를 수 없다(시험이 지킨다, D-738)
+PLACEHOLDER_USES = ()
 
 _PAGES_HOST = f"{EXPECTED_OWNER.lower()}.github.io"        # 글 저장소 소유자 상수 하나에서 만든다(연결한 저장소 확인용 `EXPECTED_ORIGIN` 과 같은 상수 — 시험이 둘이 어긋나지 않음을 확인)
 _BLOGGER_POST = f"/blogger/v3/blogs/{NUMBER}/posts"
 
 ENDPOINTS = {
-    # 업데이트 확인(읽기, 사용자가 누를 때만) — UPDATE 설계가 확정한다. 지금은 정적 매니페스트 주소 한 모양(GET, 질의 없음)이고 이동은 모두 거절한다.
+    # 업데이트 확인·내려받기(읽기, 사용자가 누를 때만) — UPDATE 갈래가 확정했다(D-790). 호스트 한 곳(앱 저장소의 릴리스), 길 둘(둘 다 GET, 질의 없음): 최신 릴리스의 매니페스트·서명 파일 /
+    # 태그가 정해진 릴리스의 자산(내려받기 길 — 파일은 `request_to_file` 로 받는다). 릴리스 자산은 `release-assets.githubusercontent.com` 으로 넘어가므로 그 호스트 하나만 이동을 허용한다(같은 호스트 이동 포함 최대 3번).
+    # 정적 주소라 릴리스 API(비인증 시간당 60회)를 쓰지 않는다. `User-Agent` 는 제품 이름뿐이다(`send_version=False`).
     "update_check": Endpoint(
-        use="update_check", host="github.com", accept="application/json", max_response=1 * MIB, label="업데이트 확인",
-        routes=_routes(Route("GET", re.compile(rf"/{SEGMENT}/{SEGMENT}/releases/latest/download/{SEGMENT}"), "/(릴리스 최신 자산)")),
+        use="update_check", host="github.com", accept="*/*", max_response=1 * MIB, label="업데이트 확인", max_redirects=3, redirect_hosts=(RELEASE_ASSET_HOST,), send_version=False,
+        download_timeout=UPDATE_DOWNLOAD_SECONDS, max_download=MAX_UPDATE_FILE,
+        routes=_routes(Route("GET", re.compile(MANIFEST_PATH), "/(릴리스 최신 매니페스트)"), Route("GET", re.compile(ASSET_PATH), "/(릴리스 자산)", download=True)),
     ),
     # 올린 글의 공개 주소 확인(읽기) — 호스트 한 곳(소유자의 사이트), 같은 호스트 이동 최대 2번, `cb=app` 고정 질의, `Cache-Control: no-cache`(vendor 확인 도구와 같은 요청 모양)
     "pages_site": Endpoint(
@@ -188,10 +201,10 @@ def app_version():
     return text if _NUMBER.fullmatch(text) else "0.0.0"
 
 
-def user_agent(version):
-    """앱에서 나가는 `User-Agent` — `ChanceBlogDesktop/<버전>` 뿐이다(버전 번호가 앱에서 나가는 유일한 값)."""
-    return USER_AGENT_PREFIX + str(version)
+def user_agent(version, *, versioned=True):
+    """앱에서 나가는 `User-Agent` — `ChanceBlogDesktop/<버전>` 뿐이다(버전 번호가 앱에서 나가는 유일한 값). `versioned=False`(업데이트 확인)는 제품 이름 `ChanceBlogDesktop` 뿐이다."""
+    return USER_AGENT_PREFIX + str(version) if versioned else USER_AGENT_NAME
 
 
-__all__ = ["CACHE_BUSTER", "CONNECT_TIMEOUT", "ENDPOINTS", "Endpoint", "IO_TIMEOUT", "MAX_BEARER_CHARS", "MAX_HEADER_BYTES", "MAX_URL_CHARS", "PLACEHOLDER_USES", "Route", "SEGMENT", "SITE_PATH", "TOTAL_TIMEOUT", "USER_AGENT_PREFIX", "app_version", "table_problems", "url_for", "user_agent",
+__all__ = ["CACHE_BUSTER", "CONNECT_TIMEOUT", "ENDPOINTS", "Endpoint", "IO_TIMEOUT", "MAX_BEARER_CHARS", "MAX_HEADER_BYTES", "MAX_URL_CHARS", "MANIFEST_PATH", "ASSET_PATH", "MAX_UPDATE_FILE", "PLACEHOLDER_USES", "RELEASE_ASSET_HOST", "RELEASE_BASE", "RELEASE_REPO", "Route", "SEGMENT", "SITE_PATH", "TOTAL_TIMEOUT", "UPDATE_DOWNLOAD_SECONDS", "USER_AGENT_NAME", "USER_AGENT_PREFIX", "app_version", "table_problems", "url_for", "user_agent",
            "valid_host"]
