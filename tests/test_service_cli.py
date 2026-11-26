@@ -492,6 +492,22 @@ class PagesCommandsTest(Base):
         self.assertEqual(self.status(project_id), st.PUBLISH_FAILED)
         self.assertIn("PAGES_MERGE_ABANDONED", self.ok("show", project_id))
 
+    def test_abandon_without_yes_names_the_post_and_an_unknown_number_is_reported_first_like_every_other_number_taking_command(self):
+        """CI 빨강 고치기: 번호 자리의 규칙(`test_service_echo`)대로 없는 번호는 확인을 묻기 전에 먼저 '찾을 수 없다' 로 알리고(친 글을 되풀이하지 않는다), 있는 글이면 어느 글인지(`delete` 처럼 제목·번호·상태)를 확인 문구에 담는다. 두 경우 모두 원격 호출 0·상태 그대로."""
+        project_id = self.approved()
+        self.ok("publish-pages", project_id, "--yes")
+        calls = len(self.backend.calls)
+        _out, err = self.fails("abandon", "999")
+        self.assertIn("CONTENT_NOT_FOUND", err)
+        self.assertNotIn("CONFIRMATION_REQUIRED", err)
+        _out, err = self.fails("abandon", project_id)
+        self.assertIn("CONFIRMATION_REQUIRED", err)
+        self.assertIn(project_id[:8], err)
+        self.assertIn("병합 기다리는 중", err)
+        self.assertIn("--yes", err)
+        self.assertEqual(len(self.backend.calls), calls, "확인을 묻는 동안 원격은 한 번도 건드리지 않았다")
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING)
+
     def test_disconnect_clears_only_the_folder_setting_and_says_what_it_did_not_touch(self):
         folder = self.ctx.settings.repo_path()
         self.assertTrue(folder)

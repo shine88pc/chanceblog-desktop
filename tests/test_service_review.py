@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import service_support as ss  # noqa: E402
 
 from chanceblog_desktop.content import status as st  # noqa: E402
+from chanceblog_desktop.publish.pages import MainCheck  # noqa: E402
 from chanceblog_desktop.service import naver_flow, pages_flow, previews, projects, review  # noqa: E402
 from chanceblog_desktop.content.profiles import NaverProfile  # noqa: E402
 from chanceblog_desktop.service.naver_flow import NaverOptions  # noqa: E402
@@ -107,6 +108,11 @@ class PagesReviewTest(Base):
     def test_a_post_that_is_already_committed_or_online_cannot_be_made_again(self):
         project_id = ss.make_approved(self.ctx)
         pages_flow.run_pages_publish(self.ctx, project_id, confirmed=True, wait=False)
+        self.assertEqual(self.status(project_id), st.MERGE_PENDING, "PUBPR(D-740): 올리면 새 가지에서 병합을 기다린다 — 옛 시험은 여기서 곧바로 PUSHED 를 기대했다(원격 main 으로 올리던 흐름)")
+        error = ss.code_of(self.review_pages, project_id)
+        self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.MERGE_PENDING))
+        self.ctx.backend.merge_results = [MainCheck("merged", commit="d" * 40)]                  # 사람이 GitHub 에서 병합한 뒤 병합 확인(`merge-check`) — 그러면 옛 시험이 보던 '올림'(PUSHED)이 된다
+        pages_flow.merge_check_pages(self.ctx, project_id)
         self.assertEqual(self.status(project_id), st.PUSHED)
         error = ss.code_of(self.review_pages, project_id)
         self.assertEqual((error.code, error.slots["현재 상태"]), ("STATUS_TRANSITION_INVALID", st.PUSHED))

@@ -56,7 +56,8 @@ HELP = {
     "candidates show": "8832067c0d270664e16b47a383ae1eed340d9a0681aeabf7889736b3d9c18141",
     "candidates suggest": "647ca257a842a6709c0ec2464c9bf4d435b6db349686ba4cb4ca55167e639db1",
     "candidates unlink": "68306814071bfa955e3373055310c603c591167436f1b18c8e0ca0ca4c952d72",
-    "check-deploy": "97c98284e3bc069612dc940553f4dd2d3ec1104bddd2e3e89f93cab8523c2300",
+    # 의도적 갱신(PUBPR, D-744·D-746): 병합을 확인한 글만 공개 확인을 하므로 한 줄 설명이 '올린 글' 에서 '병합을 확인한 글' 로 바뀌었다 — 인자·옵션은 그대로다. 이전 값은 97c98284e3bc069612dc940553f4dd2d3ec1104bddd2e3e89f93cab8523c2300(기준 사본과 줄 단위로 견줘 바뀐 줄이 이 한 줄뿐임을 확인했다).
+    "check-deploy": "d78e622d2a603ca6b146d09fb86b3960d514f375d4186c3cb5ba9cc195e9ee2b",
     "connect": "0799036be98cb0973c71e3d3d9744bcda30e2f7735162f8c69889df93eb1fb5f",
     "delete": "f23de96f66354406ba4f561598277987ab5b09a9113e01acb5c06780b5e026e1",
     "doctor": "2ebe6641cbe59182f2d5f3276211def47aaf437646fd0c43e329948994881842",
@@ -81,7 +82,8 @@ HELP = {
     "naver-profile": "623d66584e4ab56d85da0e704cb5cda4d3b02a4531ff56c57e1dfbc3960bf934",
     "new": "bf3f0dfdf7677ea0501bd60f9b3ff616ce793a868b570fd437bffd926fc028fb",
     "preview": "65024b9575d87ffc07c96d7668840d61eea85a1f0a4b50a7d99313f8364dfdc4",
-    "publish-pages": "c673ceb205311464dfd5a69f8e71552772b8f79d07b5f60a0da332d004ed3cc6",
+    # 의도적 갱신(PUBPR, D-740·D-744): 올리기가 원격 main 이 아니라 새 가지 하나로 바뀌어 한 줄 설명과 `--yes`·`--no-wait`·`--cancel` 설명이 고쳐졌다 — 인자·옵션 이름은 그대로다. 이전 값은 c673ceb205311464dfd5a69f8e71552772b8f79d07b5f60a0da332d004ed3cc6(기준 사본과 줄 단위로 견줘 바뀐 줄이 이 네 줄뿐임을 확인했다).
+    "publish-pages": "e1db75aca3e11d037542781165ceb7fc640d848a11eecaa0d5ae380decc195b1",
     "restore": "6dd3f7791a015ebeeac2e09796a56b932a037c809a5ad7563c7427e04ecd8376",
     "review": "8d5f2498abe66db45221e9b2752366f9bf5bf2246e940510df143fd0074d3f58",
     "revoke": "8549f1f969fa9fca45890374f38722bd60d3ea02c0d1ee7644207e6604943b02",
@@ -89,8 +91,11 @@ HELP = {
 }
 # P3 전의 기존 명령 출력(출력 글 해시 — 종료 코드와 함께). 번호·경로가 없는 것만 골랐다.
 OUTPUTS = (
-    (["keys", "purposes"], 0, "1915f05f4c386ad25c2dc905d6d4e13abf1ce9e7f01e323e6736640fe947ad57"),
-    (["keys", "purposes", "--json"], 0, "c2f32633c1fc8ecbf045272a3921832961b32331f07e49a4056485df2863bb4d"),
+    # 의도적 갱신(PUBPR, D-743·D-747): 이 시험 모듈은 외부 게시 관문을 연 채로 도는데(`setUpModule`), 그때 `keys purposes` 가 보여 주는 GitHub 저장소 안내 한 줄이 '터미널에서 `git push` 를 한 번 해 로그인을 마칩니다' 에서
+    # '이 앱은 main 에 올리지 않고 새 가지에만 올려요 — 로그인은 Git 을 쓰는 프로그램에서 이 저장소에 한 번 마쳐 두세요' 로 바뀌었다(터미널의 `git push` 는 main 으로 가는 길이라 더는 권하지 않는다). 바뀐 줄은 이 한 줄뿐이다(기준 사본과 줄 단위로 견줘 확인).
+    # 이전 값: 일반 글 1915f05f4c386ad25c2dc905d6d4e13abf1ce9e7f01e323e6736640fe947ad57, `--json` c2f32633c1fc8ecbf045272a3921832961b32331f07e49a4056485df2863bb4d.
+    (["keys", "purposes"], 0, "6fb5351eefd0b14da08ceb438c297dcef2056cdf0a69751f4b187139fc28e9e2"),
+    (["keys", "purposes", "--json"], 0, "36bc5846584f25034d2f876220d86dc76acc827f122b8337b2680d582f2b2e19"),
     (["keys", "list"], 0, "72d594c73fe59992b0e8bb7ea4af82f305ecd10032d02321481595ca62b0d168"),
     (["candidates", "list"], 0, "c64d2ea8fed0270ad2aad32467fa9bcfb614d55b6f904fbb67019f7d2f95071d"),
     (["candidates", "list", "--json"], 0, "1997486554adcbe7cfaf78337a3d7e9dd811522b1ddcd2408c34415301277abe"),
@@ -124,7 +129,10 @@ class ExistingOutputUnchangedTest(unittest.TestCase):
             with self.subTest(command=name):
                 self.assertEqual(found.get(name), expected, "기존 명령의 도움말이 바뀌었다 — P3 는 기존 명령을 바꾸지 않는다")
         # 의도적 갱신(DB): `draft body`(규칙 기반 초안 본문)는 P3 뒤에 더해진 새 하위 명령이라 '기존 명령' 목록에서 뺀다(그 도움말은 tests/test_service_draft_body.py 가 시험한다).
-        self.assertEqual({name for name in found if not name.startswith("topics") and name not in ("(top)", "draft body")}, set(HELP), "기존 명령이 더해지거나 빠졌다")
+        # 의도적 갱신(PUBPR, D-744): `merge-check`·`abandon`·`disconnect` 도 P3 뒤에 더해진 새 명령이라 '기존 명령' 목록에서 뺀다(그 동작은 tests/test_service_cli.py·test_service_cli_hardening.py 가 시험한다) — 대신 넷이 모두 있는지는 여기서 본다.
+        later_commands = ("draft body", "merge-check", "abandon", "disconnect")
+        self.assertEqual({name for name in found if not name.startswith("topics") and name not in ("(top)", *later_commands)}, set(HELP), "기존 명령이 더해지거나 빠졌다")
+        self.assertTrue(set(later_commands) <= set(found), "P3 뒤에 더해진 명령이 빠졌다")
 
     def test_the_help_does_not_depend_on_how_the_tests_were_started(self):
         """수정 4차: Linux CI 가 실패한 원인으로 '도움말의 `usage:` 줄이 `sys.argv[0]`(윈도 `python.exe -m unittest`·리눅스 `python -m unittest`)에서 온다' 는 가설이 있었다 — 파서의 `prog` 가 상수(`PROG`)라서 그렇지 않다는 것을 못박는다."""

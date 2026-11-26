@@ -393,6 +393,10 @@ def cmd_merge_check(ctx, args):
 def cmd_abandon(ctx, args):
     capabilities.require_external_write("병합하지 않기로 하고 정리하기(abandon)")
     capabilities.require_net("pages_branch", "병합하지 않기로 하고 정리하기(abandon)")
+    if not args.yes:
+        view = projects.show_project(ctx, args.id)                       # 어느 글인지 보여 주려고 읽기만 한다(아무것도 바꾸지 않는다) — 없는 번호는 `delete` 처럼 확인을 묻기 전에 먼저 '찾을 수 없다' 로 알린다(번호 자리의 규칙)
+        raise AppError("CONFIRMATION_REQUIRED", {"항목": f"병합하지 않기로 하고 정리하기 — 「{view.title}」(번호 {fmt.short_id(view.project_id)}, {fmt.status_text(view.variant('github_pages').status)})"},
+                       detail="병합하지 않기로 한 글이 맞으면 같은 명령 끝에 --yes 를 붙여 다시 실행합니다 — 올려 둔 가지와 글은 지우지 않습니다")
     report = pages_flow.abandon_pages_publish(ctx, args.id, confirmed=args.yes)
     return Output(["병합하지 않기로 하고 글을 정리했습니다.", *[f"  - {step}" for step in report.steps]], report.to_dict())
 
