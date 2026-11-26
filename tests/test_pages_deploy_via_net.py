@@ -115,6 +115,7 @@ class SiteHostTest(unittest.TestCase):
         """Q11 — `_config.yml` 의 `url` 이 `<소유자>.github.io` 가 아니면(사용자 지정 도메인·닮은 이름·가는 길에 끼운 이름) 접속하지 않고 곧바로 알린다."""
         hosts = {"사용자 지정 도메인": "https://blog.example.com", "닮은 이름 뒤": f"https://{OWNER_HOST}.evil.example.com", "닮은 이름 앞": f"https://evil-{OWNER_HOST}",
                  "다른 소유자": "https://someoneelse.github.io", "예시 주소": "https://example.invalid"}
+        hosts.update({"포트가 붙은 소유자 호스트(S 참고 N-3)": f"https://{OWNER_HOST}:8443", "기본 포트를 적은 소유자 호스트": f"https://{OWNER_HOST}:443", "사용자 정보가 붙은 소유자 호스트": f"https://user:CANARY_secret_value@{OWNER_HOST}"})
         world = pd.FakeWorld()
         for label, url in hosts.items():
             with self.subTest(label=label):
@@ -124,7 +125,8 @@ class SiteHostTest(unittest.TestCase):
                     error = ss.code_of(_default_fetcher_check, folder.root, world)
                 self.assertEqual(error.code, "CONTENT_INVALID")
                 self.assertIn(OWNER_HOST, error.detail)
-                self.assertEqual((wire.calls, world.sleeps), ([], []), "접속도 기다림도 없었다")
+                self.assertNotIn("CANARY_secret_value", error.detail + str(error) + error.log_line(), "주소에 적힌 비밀은 오류 글에 나오지 않는다")
+                self.assertEqual((wire.calls, world.sleeps), ([], []), "접속도 기다림도 없었다 — 포트가 붙은 소유자 호스트도 12분을 헛기다리지 않는다")
 
     def test_require_pages_host_accepts_only_the_exact_host_ignoring_case(self):
         deploy.require_pages_host(f"https://{OWNER_HOST}/chanceblog/posts/x/", OWNER_HOST)
@@ -132,6 +134,12 @@ class SiteHostTest(unittest.TestCase):
         for url in (f"https://{OWNER_HOST}.evil.example/", f"https://x.{OWNER_HOST}/", f"https://evil.example/{OWNER_HOST}/", "https://127.0.0.1/", "not a url", ""):
             with self.subTest(url=url):
                 self.assertEqual(ss.code_of(deploy.require_pages_host, url, OWNER_HOST).code, "CONTENT_INVALID")
+        for url in (f"https://{OWNER_HOST}:8443/x/", f"https://{OWNER_HOST}:443/x/", f"https://{OWNER_HOST}:/x/", f"https://user@{OWNER_HOST}/x/", f"https://user:CANARY_secret_value@{OWNER_HOST}/x/"):
+            with self.subTest(url=url, note="호스트 이름은 같아도 포트·사용자 정보가 붙었다(S 참고 N-3) — 접속 틀이 접속 전에 거절하므로 12분을 기다리지 않게 여기서 먼저 알린다"):
+                error = ss.code_of(deploy.require_pages_host, url, OWNER_HOST)
+                self.assertEqual(error.code, "CONTENT_INVALID")
+                self.assertIn(OWNER_HOST, error.detail)
+                self.assertNotIn("CANARY_secret_value", error.detail + str(error) + error.log_line())
 
 
 def _default_fetcher_check(root, world):

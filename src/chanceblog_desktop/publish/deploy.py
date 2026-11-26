@@ -96,12 +96,17 @@ def expected_url(root, path, text, *, now=None):
 
 def require_pages_host(url, host):
     """공개 확인이 닿는 곳은 `<소유자>.github.io` 한 곳뿐이다(NET 의 `pages_site` 용도) — 이 저장소의 `_config.yml` 이 다른 주소(사용자 지정 도메인 등)를 가리키면 앱은 그곳에 접속하지 않으므로
-    끝내 안 열리는 확인을 최대 12분 기다리게 하지 않고 곧바로 이유를 알린다(글은 이미 올라가 있다 — 공개 확인만 사람이 브라우저에서 한다)."""
+    끝내 안 열리는 확인을 최대 12분 기다리게 하지 않고 곧바로 이유를 알린다(글은 이미 올라가 있다 — 공개 확인만 사람이 브라우저에서 한다).
+    호스트 이름이 같아도 포트(`:8443`)나 사용자 정보(`user@`)가 붙은 주소는 접속 틀(`net/`)이 접속 전에 거절하므로 같은 까닭으로 곧바로 알린다(독립 검증 S 참고 N-3 — 예전에는 호스트 이름만 견줘 그런 주소가 통과하고 vendor 확인 도구가 마감까지 되풀이했다)."""
     from urllib.parse import urlsplit
-    actual = (urlsplit(url).hostname or "").lower()
+    parts = urlsplit(url)
+    actual = (parts.hostname or "").lower()
     if actual != str(host).lower():
         raise AppError("CONTENT_INVALID", {"항목": "_config.yml 의 url"},
                        detail=f"공개 주소의 호스트({mask(actual)[:80] or '없음'})가 앱이 확인하는 {host} 가 아니라 앱은 접속하지 않았다 — 사용자 지정 도메인이면 공개 확인은 브라우저에서 직접 한다")
+    if parts.netloc.lower() != actual:                                            # 포트·사용자 정보가 붙었다(주소 속 비밀은 글에 싣지 않는다)
+        raise AppError("CONTENT_INVALID", {"항목": "_config.yml 의 url"},
+                       detail=f"공개 주소({host})에 포트나 사용자 정보가 붙어 있어 앱은 접속하지 않았다 — 공개 확인은 브라우저에서 직접 한다")
 
 
 def check_deployed(root, path, text, *, deadline=720, interval=10, fetcher=None, sleep=None, clock=None, now=None, token="app"):

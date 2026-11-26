@@ -38,6 +38,11 @@ _NETWORK_COMMANDS = frozenset({"fetch", "push", "ls-remote", "pull", "clone"})
 # 네트워크로 나갈 수 있는 그 밖의 git 하위 명령 — 앱은 쓰지 않으므로 어떤 모양으로든 거절한다(`remote update`·`remote show` 처럼 원격에 닿는 `remote` 의 다른 모양은 `network_shape` 가 따로 거른다)
 _OTHER_NETWORK_COMMANDS = frozenset({"fetch-pack", "send-pack", "upload-pack", "receive-pack", "upload-archive", "archive", "submodule", "http-fetch", "http-push", "request-pull", "daemon", "instaweb",
                                      "imap-send", "send-email", "svn", "p4", "cvsimport", "cvsexportcommit", "cvsserver", "credential", "credential-store", "credential-cache", "credential-manager", "fast-import"})
+# 앱이 쓰는 **로컬**(네트워크로 나가지 않는) git 하위 명령 — 닫힌 목록이다(PUBPR 독립 검증 S G-2: 표가 거부 목록이라 낯선 하위 명령 `lfs push`·`maintenance run`·대소문자만 바꾼 `Remote update` 가 하위 프로세스까지 갔다).
+# 이 목록에 없는 하위 명령은 하위 프로세스 전에 거절한다 — 사용자의 `help.autocorrect` 가 가장 비슷한 명령으로 고쳐 돌릴 길도 없다. `remote get-url`·`config --get`·`--version` 은 `network_shape` 가 모양까지 보고 따로 받는다.
+# 새 하위 명령이 필요하면 여기에 더하고 시험(`test_pages_branch_policy.LocalCommandListTest` 가 소스에서 쓰는 하위 명령과 이 목록이 같은지 본다)을 함께 고친다.
+_LOCAL_COMMANDS = frozenset({"add", "cat-file", "commit", "commit-tree", "diff", "diff-tree", "hash-object", "log", "ls-files", "ls-tree", "merge", "merge-base", "mktree", "reset", "restore", "rev-list", "rev-parse", "rm", "status",
+                             "symbolic-ref"})
 _SSH_DEFAULT = "ssh -o BatchMode=yes"          # 질문 대신 실패하는 ssh(입력을 기다리며 멈추지 않게) — 사용자가 ssh 명령을 따로 정하지 않았을 때만 쓴다
 _LOCK_MAX_AGE = DEFAULT_TIMEOUT + 120          # 방금 끈 git 이 남긴 index.lock 으로 볼 최대 나이(초) — 이보다 오래된 잠금은 다른 프로그램의 것일 수 있어 건드리지 않는다
 # 글 저장소의 소유자·저장소 이름 — 연결한 폴더의 origin 정규식과 공개 사이트 호스트(`net/endpoints.py` 의 `pages_site`)가 모두 이 두 상수 하나에서 나온다(NET 설계서 3.6, D-724 — 정규식 글은 예전과 한 글자도 다르지 않다)
@@ -211,43 +216,53 @@ def _refused(detail):
 
 
 def network_shape(args):
-    """git 인자 표(PUBPR 설계서 3.5) — 인자(하위 명령부터)가 **네트워크로 나가는 명령**이면 허용된 모양의 이름을, 네트워크 명령이 아니면 None 을 돌려준다.
-    허용하지 않는 모양이면 하위 프로세스를 띄우기 **전에** `PAGES_PUSH_REFUSED`. 허용되는 네트워크 모양은 정확히 넷뿐이다:
+    """git 인자 표(PUBPR 설계서 3.5) — 인자(하위 명령부터)가 **네트워크로 나가는 명령**이면 허용된 모양의 이름을, 앱이 쓰는 로컬 하위 명령(`_LOCAL_COMMANDS`)이면 None 을 돌려준다.
+    그 밖은 하위 프로세스를 띄우기 **전에** `PAGES_PUSH_REFUSED` — 허용하지 않는 올리기·받기 모양, 목록에 없는 하위 명령(허용 목록이다: 낯선 이름·대소문자만 바꾼 이름도 거절), 글(`str`)이 아닌 인자(`Path`·`bytes`·숫자·`str` 하위 클래스),
+    빈 인자. 허용되는 네트워크 모양은 정확히 넷뿐이다:
       · `fetch_main`   받기 — `FETCH_MAIN_ARGS`(원격 main → 원격 추적 참조) 그대로
       · `ls_remote`    가지 확인 — `ls-remote --exit-code origin refs/heads/<가지 이름>`
       · `push_branch`  가지 올리기 — `push --porcelain --no-verify origin <40자 소문자 16진수>:refs/heads/<가지 이름>` (새 가지 하나 — main·강제(`+`·`--force…`)·삭제(`:이름`·`--delete`)·태그·`--mirror`·`--all`·`--prune`·여러 refspec·`origin` 대신 주소는 모두 거절)
       · `push_check`   올리기 점검 — `push --dry-run --porcelain --no-verify origin <40자>:refs/heads/desktop/check-<8자 16진수>` (보내지 않는다)
     `pull`·`clone`·`fetch-pack` 같은 그 밖의 네트워크 명령과, 하위 명령 앞에 끼워 넣은 전역 옵션(`-c alias.…`·`--exec-path` …)과, 원격에 닿거나 설정을 바꾸는 `remote`·`config` 의 모양도 거절한다.
     가지 이름은 상수 접두사와 숫자·16진수로만 만들어지는 정해진 모양(`BRANCH_NAME`)이어야 하고 사용자 글에서 온 글자는 한 글자도 들어갈 수 없다."""
-    items = list(args)
-    if not items or any(not isinstance(item, str) for item in items):
-        return None                                               # 빈 인자·글이 아닌 인자는 git 이 알아서 실패한다 — 네트워크 명령이 아니다
+    if isinstance(args, (str, bytes, bytearray)):
+        raise _refused("git 인자는 글 하나하나의 목록이어야 한다")
+    try:
+        items = tuple(args)                                       # 한 번만 읽은 값으로 아래를 모두 견준다(검사하는 사이 내용이 바뀌는 가변 객체·한 번만 읽히는 반복자를 믿지 않는다)
+    except TypeError:
+        raise _refused("git 인자는 글 하나하나의 목록이어야 한다") from None
+    if not items:
+        raise _refused("git 인자가 비어 있다")
+    if any(type(item) is not str for item in items):              # 정확히 `str` 만 — `Path`·`bytes`·숫자는 물론 `str` 하위 클래스(검사 메서드를 속일 수 있다)도 받지 않는다. 앱의 호출자는 모두 평범한 글을 넘긴다
+        raise _refused("git 인자는 모두 평범한 글(str)이어야 한다 — 경로 객체·바이트·숫자 같은 다른 모양은 받지 않는다")
     first = items[0]
     if first.startswith("-"):
-        if items == ["--version"]:
+        if items == ("--version",):
             return None                                           # `doctor` 의 git 확인 — 읽기뿐이다
         raise _refused(f"하위 명령 앞에 옵션을 둘 수 없다: {mask(first)[:40]}")
     if first == "remote":
-        if items[1:2] != ["get-url"]:
+        if items[1:2] != ("get-url",):
             raise _refused("remote 는 주소 읽기(get-url)만 허용한다")
         return None
     if first == "config":
-        if items[1:2] != ["--get"] or len(items) != 3:
+        if items[1:2] != ("--get",) or len(items) != 3:
             raise _refused("config 는 읽기(--get 이름 하나)만 허용한다")
         return None
     if first in _OTHER_NETWORK_COMMANDS or first.startswith("remote-"):
         raise _refused(f"허용하지 않는 git 명령: {mask(first)[:40]}")
     if first not in _NETWORK_COMMANDS:
-        return None
-    if items == list(FETCH_MAIN_ARGS):
+        if first in _LOCAL_COMMANDS:
+            return None
+        raise _refused(f"허용하지 않는 git 명령(앱이 쓰는 하위 명령 목록에 없다): {mask(first)[:40]}")
+    if items == FETCH_MAIN_ARGS:
         return "fetch_main"
-    if first == "ls-remote" and len(items) == 4 and items[1:3] == ["--exit-code", "origin"] and items[3].startswith("refs/heads/") and BRANCH_NAME.fullmatch(items[3][len("refs/heads/"):]):
+    if first == "ls-remote" and len(items) == 4 and items[1:3] == ("--exit-code", "origin") and items[3].startswith("refs/heads/") and BRANCH_NAME.fullmatch(items[3][len("refs/heads/"):]):
         return "ls_remote"
-    if first == "push" and len(items) == 5 and items[1:4] == ["--porcelain", "--no-verify", "origin"]:
+    if first == "push" and len(items) == 5 and items[1:4] == ("--porcelain", "--no-verify", "origin"):
         commit, colon, target = items[4].partition(":")
         if colon and _COMMIT_ID.fullmatch(commit) and target.startswith("refs/heads/") and BRANCH_NAME.fullmatch(target[len("refs/heads/"):]):
             return "push_branch"
-    if first == "push" and len(items) == 6 and items[1:5] == ["--dry-run", "--porcelain", "--no-verify", "origin"]:
+    if first == "push" and len(items) == 6 and items[1:5] == ("--dry-run", "--porcelain", "--no-verify", "origin"):
         commit, colon, target = items[5].partition(":")
         if colon and _COMMIT_ID.fullmatch(commit) and target.startswith("refs/heads/") and CHECK_BRANCH.fullmatch(target[len("refs/heads/"):]):
             return "push_check"
@@ -273,8 +288,12 @@ def _config_overrides():
 
 
 def run_git(cwd, args, timeout=DEFAULT_TIMEOUT, input_bytes=None):
-    """git 을 cwd 에서 실행한다(사용자의 훅·대화창·다른 저장소 설정에 휘둘리지 않게 환경을 고정하고, 네트워크 명령은 `network_shape` 의 정해진 모양만 하위 프로세스 전에 통과시킨다)."""
-    capabilities.require_external_write(f"git {args[0] if args else ''}")
+    """git 을 cwd 에서 실행한다(사용자의 훅·대화창·다른 저장소 설정에 휘둘리지 않게 환경을 고정하고, 인자는 `network_shape` 의 허용 목록(네트워크 명령은 정해진 모양, 로컬 명령은 앱이 쓰는 이름)만 하위 프로세스 전에 통과시킨다 — 인자는 한 번만 읽어 둔 값으로 검사하고 그 값으로 실행한다)."""
+    capabilities.require_external_write(f"git {args[0] if isinstance(args, (list, tuple)) and args else ''}")
+    try:
+        args = tuple(args)                                                            # 검사와 실행이 **같은** 인자를 보게 한 번만 만든다 — 검사 뒤에 내용이 바뀌는 가변 객체·한 번만 읽히는 반복자로 표를 피할 수 없다
+    except TypeError:
+        raise _refused("git 인자는 글 하나하나의 목록이어야 한다") from None
     shape = network_shape(args)                                                       # 허용하지 않는 올리기·받기 모양은 여기서 PAGES_PUSH_REFUSED — 하위 프로세스는 한 번도 뜨지 않는다
     if shape is not None:
         capabilities.require_net("pages_branch", f"git {args[0]}")                    # 둘째 문장: 좁은 스위치(PAGES_BRANCH_PUSH)도 켜져 있어야 받기·올리기가 나간다

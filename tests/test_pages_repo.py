@@ -932,14 +932,14 @@ class RunnerTest(unittest.TestCase):
 
     def test_output_is_decoded_leniently(self):
         with mock.patch("subprocess.Popen", self.fake_popen(out=b"\xff\xfe", err="한글".encode("utf-8"), code=1, waits=[1])):
-            result = gitrepo.run_git(".", ["x"])
+            result = gitrepo.run_git(".", ["status"])          # 재작업 1: 인자 표가 허용 목록이 되어 없는 하위 명령 `x` 는 거절된다 — 출력 해독 시험은 허용된 `status` 로(단언은 그대로)
         self.assertEqual((result.returncode, result.stderr), (1, "한글"))
 
     def test_a_huge_stdout_is_an_error_not_a_silent_cut_and_stderr_keeps_its_tail(self):
         with mock.patch.object(gitrepo, "_MAX_STDOUT", 10), mock.patch("subprocess.Popen", self.fake_popen(out=b"x" * 20)):
             self.assertEqual(code_of(gitrepo.run_git, ".", ["ls-files"]).code, UNEXPECTED)
         with mock.patch.object(gitrepo, "_STDERR_TAIL", 5), mock.patch("subprocess.Popen", self.fake_popen(err=b"0123456789")):
-            self.assertEqual(gitrepo.run_git(".", ["x"]).stderr, "56789")
+            self.assertEqual(gitrepo.run_git(".", ["status"]).stderr, "56789")
 
     def test_a_real_process_tree_is_ended_at_the_time_limit(self):
         """git 이 손자 프로세스(git-remote-https·ssh)를 띄운 채 멈춰도, 시간이 되면 손자까지 모두 끄고 곧 돌아온다."""

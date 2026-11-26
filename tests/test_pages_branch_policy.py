@@ -7,6 +7,9 @@
   4) 소스에 `refs/heads/main` 으로 가는 refspec 을 만드는 코드가 없다 — 받는 쪽 상수 한 곳뿐이다(PT-06, AST).
   5) 네트워크 명령 직전마다 origin 을 다시 읽어 견준다(PT-07 — 진짜 git·로컬 bare 저장소는 `test_pages_branch_build.py`).
   6) 올리기 길의 환경에서 인증서 검증을 끄거나 설정을 덮어쓰거나 통신 내용을 기록하게 하는 변수가 지워진다(NET '켜기 전 필수 조건' 마무리).
+  7) 표는 **허용 목록**이다(재작업 1, 독립 검증 S G-1·G-2): 앱이 쓰는 로컬 하위 명령(`gitrepo._LOCAL_COMMANDS`) 밖의 이름(낯선 이름·대소문자만 바꾼 이름)과 글(`str`)이 아닌 인자(`Path`·`bytes`·숫자·`str` 하위 클래스)·빈 인자도
+     하위 프로세스 전에 거절하고, `run_git` 은 검사와 실행이 같은 인자를 보게 한 번만 읽으며, 목록은 소스가 실제로 쓰는 하위 명령과 같다.
+  8) `run_command`(하위 프로세스를 띄우는 유일한 곳)는 `publish/gitrepo.py` 의 `run_git`·`_with_ssh_default` 두 곳에서만 가리킨다 — 이름·속성·`import … as`·글자·이어 붙인 글 모두(AST, G-3). 시험 접합부 `_EXTRA_TRANSPORTS` 도 같은 방식으로 지킨다.
 """
 import ast
 import os
@@ -72,10 +75,44 @@ REFUSED_OTHERS = {
     "전역 옵션 -c": ["-c", "alias.f=push", "f", "origin", "main"], "전역 옵션 -C": ["-C", "/other", "status"], "전역 옵션 --exec-path": ["--exec-path=/tmp/evil", "status"], "--git-dir": ["--git-dir=/other/.git", "fetch"],
     "옵션이 먼저": ["--no-pager", "log"], "--help": ["--help"],
 }
+
+
+class Sneaky(str):
+    """글(`str`)처럼 보이지만 검사 메서드를 속이는 하위 클래스 — `startswith` 가 늘 거짓이라 '옵션처럼 시작한다' 를 숨긴다."""
+
+    def startswith(self, *args, **kwargs):
+        return False
+
+
+class Shifty(list):
+    """처음 읽을 때는 안전한 인자를, 그다음부터는 위험한 인자를 내놓는 가변 목록 — 검사와 실행이 따로 읽으면 표를 피할 수 있다(`reads` 가 읽힌 횟수)."""
+
+    def __init__(self, safe, danger):
+        super().__init__(safe)
+        self.safe, self.danger, self.reads = tuple(safe), tuple(danger), 0
+
+    def __iter__(self):
+        self.reads += 1
+        return iter(self.safe if self.reads == 1 else self.danger)
+
+
+# 재작업 1(G-1·G-2): 글이 아닌 인자·빈 인자·낯선 하위 명령·대소문자만 바꾼 이름 — 모두 하위 프로세스 전에 거절한다
+REFUSED_OTHERS.update({
+    "Path 인자(S 탐침 A7)": ["push", "--force", "origin", Path("main")], "Path 하위 명령": [Path("status")], "bytes 인자(A8)": ["push", b"--force", "origin", b"main"], "bytes 하위 명령": [b"push", "origin", "main"],
+    "숫자 인자(A9)": ["status", 1], "None 인자": ["status", None], "중첩 목록": ["status", ["--force"]], "튜플 인자": ["status", ("--force",)], "str 하위 클래스": ["push", Sneaky("--force"), "origin", "main"],
+    "str 하위 클래스 하위 명령": [Sneaky("status")], "빈 인자": [], "빈 글 하위 명령": [""], "공백 하위 명령": [" status"], "글 하나(목록 아님)": "status", "바이트 글(목록 아님)": b"status",
+    "알 수 없는 하위 명령 x": ["x"], "lfs push(A10)": ["lfs", "push", "--all", "origin"], "maintenance run(A10)": ["maintenance", "run", "--task=prefetch"], "credential-wincred": ["credential-wincred", "get"],
+    "credential-manager-core": ["credential-manager-core", "get"], "bundle": ["bundle", "create", "x", "HEAD"], "update-ref 삭제": ["update-ref", "-d", "refs/remotes/origin/main"], "gc": ["gc"], "notes merge": ["notes", "merge", "x"],
+    "rebase": ["rebase", "origin/main"], "foo": ["foo"], "checkout": ["checkout", "-b", "x"], "branch 삭제": ["branch", "-D", "x"], "tag 삭제": ["tag", "-d", "x"], "stash": ["stash"], "clean": ["clean", "-fdx"], "init": ["init"],
+    "worktree": ["worktree", "add", "x"], "filter-branch": ["filter-branch"], "대소문자 PUSH(A5)": ["PUSH", "--force", "origin", "main"], "대소문자 Push": ["Push", "--force", "origin", "main"], "대소문자 pUsH": ["pUsH", "origin", "main"],
+    "대소문자 FETCH(A6)": ["FETCH", "origin"], "대소문자 LS-REMOTE": ["LS-REMOTE", "origin"], "대소문자 Pull": ["Pull", "origin"], "대소문자 CLONE": ["CLONE", "origin"], "대소문자 Remote update(A10)": ["Remote", "update"],
+    "대소문자 Config --global": ["Config", "--global", "x", "y"], "대소문자 STATUS": ["STATUS"], "대소문자 Rev-Parse": ["Rev-Parse", "HEAD"],
+})
 LOCAL_COMMANDS = (["status"], ["rev-parse", "HEAD"], ["rev-list", "--count", "a..b"], ["ls-tree", "-z", "abc"], ["cat-file", "-e", "HEAD:x"], ["diff-tree", "-z", "abc"], ["hash-object", "--no-filters", "--stdin"],
                   ["mktree", "-z", "--missing"], ["commit-tree", "abc", "-p", "def", "-F", "-"], ["log", "-1"], ["merge", "--ff-only", "x"], ["reset", "--soft", "x"], ["restore", "--staged", "--", "a"],
                   ["remote", "get-url", "--all", "origin"], ["remote", "get-url", "--push", "--all", "origin"], ["config", "--get", "core.sshCommand"], ["symbolic-ref", "-q", "HEAD"], ["merge-base", "--is-ancestor", "a", "b"],
-                  ["--version"], ["x"])
+                  ["--version"], ["add", "--", "a.md"], ["commit", "--only", "--no-verify", "--quiet", "-F", "m.txt", "--", "a.md"], ["diff", "--raw", "-z", "HEAD", "refs/remotes/origin/main"], ["ls-files", "-z", "--others"],
+                  ["rm", "--cached", "--quiet", "--", "a.md"])          # 재작업 1: 옛 `["x"]`(없는 하위 명령)는 표가 이제 허용 목록이라 거절 쪽(`REFUSED_OTHERS` 의 '알 수 없는 하위 명령 x')으로 옮겼다
 
 
 class ShapeTableTest(unittest.TestCase):
@@ -344,6 +381,185 @@ class EnvironmentTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GIT_SSH_COMMAND": "ssh -i C:/keys/mine", "GIT_SSH": "C:/tools/plink.exe"}):
             env = gitrepo._git_env()
         self.assertEqual((env["GIT_SSH_COMMAND"], env["GIT_SSH"]), ("ssh -i C:/keys/mine", "C:/tools/plink.exe"))
+
+
+class StrictArgumentTest(unittest.TestCase):
+    """재작업 1(독립 검증 S G-1) — 검사와 실행이 **같은** 인자를 본다: `run_git` 은 인자를 한 번만 읽어 두고 그 값으로 검사하고 그 값으로 실행한다. 글이 아닌 인자·낯선 하위 명령을 거절하는 것은 위 `REFUSED_OTHERS` 가
+    `network_shape` 와 `run_git`(하위 프로세스 0) 양쪽으로 본다."""
+
+    def setUp(self):
+        ss.external_write_on()
+        self.addCleanup(ss.external_write_off)
+
+    def run_recorded(self, args):
+        """`run_command` 를 가짜로 바꿔 실제로 실행하려던 명령을 돌려준다(하위 프로세스 0)."""
+        seen = []
+
+        def recorder(command, *, env=None, timeout=0, label="", input_bytes=None):
+            seen.append(list(command))
+            return gitrepo.GitResult(0, "", "")
+
+        with mock.patch.object(gitrepo, "run_command", recorder), mock.patch.object(gitrepo, "_with_ssh_default", lambda cwd, env: env):
+            gitrepo.run_git("C:/repo", args)
+        return seen
+
+    def test_the_table_and_the_runner_read_the_arguments_exactly_once(self):
+        """검사 뒤에 내용이 바뀌는 가변 목록: 처음 읽으면 `status`, 두 번째부터는 `push --force origin main`. 실행이 따로 다시 읽으면 표를 피한다 — 실제로 실행된 명령은 검사한 것(`status`)이어야 한다."""
+        shifty = Shifty(["status"], ["push", "--force", "origin", "main"])
+        seen = self.run_recorded(shifty)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][-1:], ["status"], seen[0])
+        self.assertFalse({"push", "--force", "origin", "main"} & set(seen[0]), seen[0])
+        self.assertEqual(shifty.reads, 1, "목록은 한 번만 읽혔다")
+
+    def test_an_iterator_is_read_once_and_the_command_is_what_was_checked(self):
+        seen = self.run_recorded(iter(["status", "--porcelain"]))
+        self.assertEqual(seen[0][-2:], ["status", "--porcelain"], "한 번만 읽히는 반복자도 검사한 값 그대로 실행된다(비어 버리지 않는다)")
+
+    def test_an_iterator_that_hides_a_forbidden_shape_is_still_refused_before_any_process(self):
+        with og.Tripwire() as wire:
+            with self.assertRaises(AppError) as caught:
+                gitrepo.run_git(Path("."), iter(["push", "--force", "origin", "main"]))
+        self.assertEqual((caught.exception.code, wire.calls), ("PAGES_PUSH_REFUSED", []))
+
+    def test_every_allowed_shape_runs_unchanged_through_the_snapshot(self):
+        for name, args in ALLOWED.items():
+            with self.subTest(shape=name):
+                seen = self.run_recorded(args)
+                self.assertEqual((len(seen), seen[0][-len(args):], seen[0][:3]), (1, args, ["git", "-C", "C:/repo"]))
+
+
+GIT_CALLERS = ("git", "run_git", "_must", "_git_in_chunks")
+
+
+def src_git_subcommands():
+    """`src` 가 git 으로 부르는 하위 명령(목록 인자의 첫 항목이 글자 상수인 것) 집합 — `git(root, [...])`·`run_git`·`_must(git, root, [...])`·`_git_in_chunks(git, root, [접두 목록], 이름들)` 호출을 AST 로 훑는다."""
+    used = set()
+    for path in sorted(SRC.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in GIT_CALLERS:
+                for arg in node.args:
+                    if isinstance(arg, ast.List) and arg.elts and isinstance(arg.elts[0], ast.Constant) and isinstance(arg.elts[0].value, str):
+                        used.add(arg.elts[0].value)
+    return used
+
+
+class LocalCommandListTest(unittest.TestCase):
+    """재작업 1(독립 검증 S G-2) — 표는 거부 목록이 아니라 **허용 목록**이다: 앱이 쓰는 로컬 하위 명령 스무 개(`gitrepo._LOCAL_COMMANDS`)와 네트워크 네 모양·`remote get-url`·`config --get`·`--version` 만 하위 프로세스에 간다."""
+
+    def test_the_closed_list_is_exactly_the_local_commands_the_source_runs(self):
+        used = src_git_subcommands()
+        self.assertTrue({"push", "ls-remote", "remote", "--version", "rev-parse"} <= used, "빈 훑기가 아니다")
+        self.assertEqual(used - {"fetch", "push", "ls-remote", "remote", "config", "--version"}, set(gitrepo._LOCAL_COMMANDS),
+                         "소스가 git 으로 부르는 로컬 하위 명령과 `_LOCAL_COMMANDS` 가 같아야 한다 — 새 하위 명령을 쓰려면 목록에 더하고(검토 지점) 안 쓰게 되면 목록에서 뺀다")
+
+    def test_every_name_on_the_list_passes_untouched(self):
+        for name in sorted(gitrepo._LOCAL_COMMANDS):
+            with self.subTest(name=name):
+                self.assertIsNone(gitrepo.network_shape([name, "--", "x"]))
+
+    def test_the_list_holds_plain_lower_case_local_names_only(self):
+        self.assertIsInstance(gitrepo._LOCAL_COMMANDS, frozenset)
+        for name in gitrepo._LOCAL_COMMANDS:
+            self.assertRegex(name, r"\A[a-z]+(?:-[a-z]+)*\Z", name)
+        self.assertEqual(gitrepo._LOCAL_COMMANDS & (gitrepo._NETWORK_COMMANDS | gitrepo._OTHER_NETWORK_COMMANDS), set(), "네트워크로 나갈 수 있는 명령은 허용 목록에 없다")
+
+    def test_look_alikes_of_allowed_names_are_refused(self):
+        """대소문자만 바꾼 이름·공백·줄바꿈·눈에 안 보이는 글자·경로 꼴·접두 옵션·이름을 줄이거나 늘린 것 — 가장 비슷한 명령으로 고쳐 돌릴 길(`help.autocorrect`)도 없다."""
+        names = sorted(gitrepo._LOCAL_COMMANDS) + ["fetch", "push", "ls-remote", "remote", "config"]
+        for name in names:
+            variants = {name.upper(), name.title(), name.swapcase(), " " + name, name + " ", name + chr(10), name[:1] + chr(0x200B) + name[1:], "./" + name, "--" + name, name + "/", name.replace("-", "_"), name + "s", name[:-1]} - {name}
+            for variant in sorted(variants):
+                with self.subTest(name=name, variant=repr(variant)):
+                    with self.assertRaises(AppError) as caught:
+                        gitrepo.network_shape([variant, "x"])
+                    self.assertEqual(caught.exception.code, "PAGES_PUSH_REFUSED")
+
+
+def _fold(node):
+    """글자 상수(이어 붙인 것·글자 부분뿐인 f-문자열 포함)로 접히면 그 글, 아니면 None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _fold(node.left), _fold(node.right)
+        return left + right if left is not None and right is not None else None
+    if isinstance(node, ast.JoinedStr) and all(isinstance(part, ast.Constant) for part in node.values):
+        return "".join(part.value for part in node.values)
+    return None
+
+
+def references_in(tree, word):
+    """한 소스(AST)에서 `word` 를 가리키는 모든 곳 → [(둘러싼 함수 이름('<module>' 이면 함수 밖), 종류)] — 이름·속성(`x.word`)·`import … word [as …]`·`def word`·글자 `word`(이어 붙인 글(`'run_' + 'command'`)도 접어서 본다)."""
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    found = []
+    for node in ast.walk(tree):
+        kind = None
+        if isinstance(node, ast.Name) and node.id == word:
+            kind = "name"
+        elif isinstance(node, ast.Attribute) and node.attr == word:
+            kind = "attribute"
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == word:
+            kind = "def"
+        elif isinstance(node, ast.alias) and word in (node.name.rsplit(".", 1)[-1], node.asname):
+            kind = "import"
+        elif isinstance(node, (ast.Constant, ast.BinOp, ast.JoinedStr)) and _fold(node) == word and not (isinstance(node, ast.Constant) and isinstance(parents.get(node), (ast.BinOp, ast.JoinedStr))):
+            kind = "string"
+        if kind is None:
+            continue
+        owner, scope = node, "<module>"
+        while owner in parents:
+            owner = parents[owner]
+            if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = owner.name
+                break
+        found.append((scope, kind))
+    return found
+
+
+def src_references(word):
+    """`src` 모든 파일에서 `word` 를 가리키는 곳 → 정렬된 [(상대 경로, 둘러싼 함수 이름, 종류)]."""
+    found = []
+    for path in sorted(SRC.rglob("*.py")):
+        if "__pycache__" not in path.parts:
+            found += [(path.relative_to(SRC).as_posix(), scope, kind) for scope, kind in references_in(ast.parse(path.read_text(encoding="utf-8")), word)]
+    return sorted(found)
+
+
+class RunCommandCallersTest(unittest.TestCase):
+    """재작업 1(독립 검증 S G-3) — `run_command` 는 인자 표도 환경 정리도 없는 하위 프로세스 실행기다. 그것을 직접 부르는 곳이 생기면 표를 건너뛴다(`getattr(gitrepo, 'run_command')(['git', 'push', …])` 도 마찬가지).
+    그래서 소스가 `run_command` 를 가리키는 곳을 **허용 목록**(`gitrepo.py` 안 정해진 두 곳)으로 못박는다. 정직한 한계: 소스 훑기는 정직한 코드의 회귀 그물이다 — 일부러 숨기는 코드를 막는 방어가 아니라서 마지막 방어는 `run_git` 의 인자 표와 환경 정리다."""
+
+    ALLOWED = [("publish/gitrepo.py", "<module>", "def"), ("publish/gitrepo.py", "_with_ssh_default", "name"), ("publish/gitrepo.py", "run_git", "name")]
+
+    def test_only_the_runner_and_the_ssh_default_point_at_run_command(self):
+        self.assertEqual(src_references("run_command"), self.ALLOWED,
+                         "`run_command` 를 가리키는 곳은 정의 하나와 `run_git`·`_with_ssh_default` 의 호출뿐이다 — 이름·속성·`import … as`·글자(`getattr`·이어 붙인 글)로 가리키는 곳도 모두 센다")
+
+    def test_the_scanner_sees_every_way_of_pointing_at_a_name(self):
+        """훑개가 빈 훑개가 아님을 합성 코드로 보인다(소스 파일을 만들지 않고 AST 만): 이름·속성·import 별칭·글자·이어 붙인 글·f-문자열·정의 — 한 번씩만 센다."""
+        cases = {"run_command([])": ["name"], "gitrepo.run_command([])": ["attribute"], "from x import run_command as rc": ["import"], "from x import rc as run_command": ["import"], "getattr(m, 'run_command')": ["string"],
+                 "getattr(m, 'run_' + 'command')": ["string"], "getattr(m, 'r' + 'un' + '_' + 'command')": ["string"], "getattr(m, f'run_command')": ["string"], "def run_command(): pass": ["def"],
+                 "other_name([])": [], "x = 'run_commands'": [], "def f():\n    return gitrepo.run_command([])": ["attribute"]}
+        for code, kinds in cases.items():
+            with self.subTest(code=code):
+                self.assertEqual([kind for _scope, kind in references_in(ast.parse(code), "run_command")], kinds)
+        self.assertEqual(references_in(ast.parse("def f():\n    return gitrepo.run_command([])"), "run_command"), [("f", "attribute")], "둘러싼 함수 이름을 함께 센다")
+
+    def test_the_two_allowed_callers_build_their_command_the_way_the_table_expects(self):
+        tree = ast.parse((SRC / "publish" / "gitrepo.py").read_text(encoding="utf-8"))
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        calls = [node for node in ast.walk(functions["_with_ssh_default"]) if isinstance(node, ast.Call) and ast.unparse(node.func) == "run_command"]
+        self.assertEqual([ast.unparse(call.args[0]) for call in calls], ["['git', '-C', str(cwd), 'config', '--get', 'core.sshCommand']"], "ssh 기본값 확인은 읽기 하나뿐이다")
+        commands = [node.value for node in ast.walk(functions["run_git"]) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "command" for target in node.targets)]
+        self.assertEqual([ast.unparse(value) for value in commands], ["['git', '-C', str(cwd), *_config_overrides(), *args]"], "실행 명령은 늘 붙는 -c 설정과 검사한 인자로만 짠다")
+        calls = [node for node in ast.walk(functions["run_git"]) if isinstance(node, ast.Call) and ast.unparse(node.func) == "run_command"]
+        self.assertEqual([ast.unparse(call.args[0]) for call in calls], ["command"])
+
+    def test_the_transport_seam_is_named_only_where_it_is_defined_and_read(self):
+        """`_EXTRA_TRANSPORTS`(시험이 `file` 전송을 임시로 여는 접합부)를 이름·속성·글자(`__dict__[…]`·`setattr`·이어 붙인 글)로 가리키는 곳은 `gitrepo.py` 의 정의와 `_config_overrides` 의 읽기뿐이다."""
+        self.assertEqual(src_references("_EXTRA_TRANSPORTS"), [("publish/gitrepo.py", "<module>", "name"), ("publish/gitrepo.py", "_config_overrides", "name")])
 
 
 if __name__ == "__main__":
