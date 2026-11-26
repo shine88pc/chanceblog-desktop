@@ -138,6 +138,13 @@ class CheckTest(FlowCase):
         self.check()
         self.assertEqual(self.state().last_seen_utc, "2026-12-03T00:00:00Z")
 
+    def test_a_failed_check_whose_own_record_cannot_be_written_still_raises_the_original_failure(self):
+        state.write_state(self.folder, state.State(last_seq=5))
+        before = self.state()
+        with mock.patch.object(state, "write_state", side_effect=state.StateError("write")):
+            self.assertEqual(code_of(self.check, current_version="2.0.0"), "UPDATE_DOWNGRADE_BLOCKED", "기록이 안 돼도 원래 거절 코드가 그대로 올라온다")
+        self.assertEqual(self.state(), before, "기록하려다 실패했으니 상태 파일은 그대로다")
+
     def test_net_failures_become_the_check_failed_code_and_cooldown_and_tls_pass_through(self):
         down = fs.FlowHarness(self, self.server, dial_error=OSError("no route"))
         with down, external.registered(external.KIND_UPDATE, down.factory):
@@ -443,6 +450,43 @@ class ApplyTest(ApplyCase):
                 self.assertEqual((after.pending, after.last_seq), (None, 0), "지금 판 그대로")
                 self.assertEqual(len(self.adapter.calls), 1)
 
+    def test_a_marker_that_cannot_be_cleared_after_a_failed_hand_off_does_not_hide_the_apply_failure(self):
+        real = state.write_state
+        calls = []
+
+        def fail_on_second(folder, new_state):
+            calls.append(1)
+            if len(calls) == 2:                                     # 첫째는 넘기기 전의 pending 기록, 둘째가 실패 뒤 표식 지우기
+                raise state.StateError("write")
+            return real(folder, new_state)
+        self.adapter = fs.FakeAdapter(self.folder, fail=AppError("DISK_FULL"))                  # 표식 지우기가 실패해 올리는 코드(UPDATE_APPLY_FAILED)와 달라야 어느 쪽이 올라왔는지 가려진다
+        with mock.patch.object(state, "write_state", fail_on_second):
+            self.assertEqual(code_of(self.apply), "DISK_FULL", "표식을 못 지워도 넘기기가 낸 원래 오류가 그대로 올라온다")
+        self.assertEqual((len(calls), len(self.adapter.calls)), (2, 1))
+        left = self.state()
+        self.assertEqual((left.pending.to_version, left.last_seq), ("1.0.1", 0), "표식은 남고 seq 는 그대로다")
+        with fs.switches_on("UPDATE_APPLY"):
+            self.assertEqual(state.note_boot(version="1.0.0", folder=self.folder).action, "not_applied", "다음 시작이 남은 표식을 보고 정리한다")
+        self.assertIsNone(self.state().pending)
+
+    def test_a_hand_off_that_succeeded_is_a_success_even_when_the_seq_cannot_be_written(self):
+        real = state.write_state
+        calls = []
+
+        def fail_on_second(folder, new_state):
+            calls.append(1)
+            if len(calls) == 2:                                     # 첫째는 pending 기록, 둘째가 넘김 성공 뒤 seq 올리기
+                raise state.StateError("write")
+            return real(folder, new_state)
+        with mock.patch.object(state, "write_state", fail_on_second):
+            done = self.apply()
+        self.assertEqual((done.handed_off, done.to_version, len(calls), len(self.adapter.calls)), (True, "1.0.1", 2, 1))
+        self.assertEqual((self.state().pending.to_version, self.state().last_seq), ("1.0.1", 0), "표식은 남고 seq 는 아직이다 — 정상 표식이 올린다")
+        with fs.switches_on("UPDATE_APPLY"):
+            self.assertEqual(state.note_boot(version="1.0.1", folder=self.folder).action, "first_boot")
+        health.mark_healthy(self.folder)
+        self.assertEqual(self.state().last_seq, self.release.dict["seq"])
+
     def test_a_missing_adapter_for_an_installed_kind_refuses_without_running_anything(self):
         self.assertEqual(code_of(update_flow.apply_update, self.ctx, self.result, self.staged, confirmed=True), "UPDATE_APPLY_FAILED")
         self.assertEqual((self.state().pending, self.state().last_seq), (None, 0))
@@ -731,6 +775,19 @@ class RecoveryTest(ApplyCase):
         self.previous.install(self.server, latest=False)
         self.assertEqual(self.recover().steps[-1], "record")
 
+    def test_a_kept_copy_missing_one_of_the_needed_files_is_treated_as_absent_and_downloaded_again(self):
+        keep = self.keep_previous()
+        (keep / "releases.stable.json").unlink()
+        with self.assertRaises(recovery.RollbackFailure) as caught:
+            with mock.patch.object(update_flow.capabilities, "NET_UPDATE_CHECK", False):
+                self.recover()
+        self.assertEqual((caught.exception.step, caught.exception.cause_code), ("installer", "NETWORK_DISABLED"), "보관본이 모자라면 없는 것으로 보고 받으러 간다")
+        self.assertEqual(self.adapter.calls, [])
+        self.previous.install(self.server, latest=False)
+        before = len(self.server.requests)
+        self.assertEqual(self.recover().steps[-1], "record")
+        self.assertGreater(len(self.server.requests), before, "이번에는 서버에서 받았다")
+
     def test_the_previous_release_must_be_exactly_the_version_before_the_update(self):
         wrong = fs.Release("0.9.0", min_version="0.8.0")
         wrong.tag = "v1.0.0"
@@ -801,6 +858,43 @@ class RecoveryTest(ApplyCase):
         with self.assertRaises(recovery.RollbackFailure):
             session.recover(confirmed=True)                                # 보관한 것도 없고 서버에도 이전 릴리스가 없다
         self.assertEqual((session.state, session.error.code), ("ROLLBACK_FAILED", "UPDATE_ROLLBACK_FAILED"))
+
+
+class QuietStepTest(unittest.TestCase):
+    """덤으로 하는 기록 한 걸음(`_quietly`) — 목록에 든 오류만 삼키고 그 밖의 오류와 '죽음'(BaseException)은 그대로 올린다."""
+
+    @staticmethod
+    def raises(error):
+        def action(*args):
+            raise error
+        return action
+
+    def test_only_the_listed_errors_are_swallowed(self):
+        self.assertIs(update_flow._quietly(AppError, self.raises(AppError("UPDATE_CHECK_FAILED"))), False)
+        self.assertIs(update_flow._quietly((OSError, ValueError), self.raises(ValueError("x"))), False)
+        self.assertIs(update_flow._quietly(AppError, lambda *args: None), True)
+        for other in (RuntimeError("x"), OSError("x"), fs.Killed()):
+            with self.subTest(other=type(other).__name__):
+                with self.assertRaises(type(other)):
+                    update_flow._quietly(AppError, self.raises(other))
+
+    def test_the_arguments_are_passed_through(self):
+        seen = []
+        self.assertIs(update_flow._quietly(AppError, lambda *args: seen.append(args), 1, "a"), True)
+        self.assertEqual(seen, [(1, "a")])
+
+    def test_the_quiet_step_is_used_at_exactly_the_three_known_places(self):
+        """오류를 일부러 삼키는 자리는 이 셋뿐이다(서비스 층 안전 시험이 `suppress` 를 세는 것과 같은 뜻) — 넷째가 생기면 여기서 걸려 이유를 적게 한다."""
+        found = []
+
+        def visit(node, current):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "_quietly":
+                    found.append((current, ast.unparse(child.args[0]), ast.unparse(child.args[1])))
+                visit(child, child.name if isinstance(child, ast.FunctionDef) else current)
+        visit(ast.parse((SRC / "service" / "update_flow.py").read_text(encoding="utf-8")), "")
+        self.assertEqual(sorted(found), sorted([("check_for_update", "AppError", "_record_check"), ("apply_update", "AppError", "_save_state"),
+                                                ("apply_update", "state_module.StateError", "state_module.write_state")]))
 
 
 class EntryPointShapeTest(unittest.TestCase):

@@ -43,15 +43,15 @@ class NeedsRecoveryTest(unittest.TestCase):
 class PromptTest(unittest.TestCase):
     def test_the_prompt_text_comes_from_the_error_table_and_names_two_buttons(self):
         from chanceblog_desktop.errors import render
-        prompt = recovery.prompt_for(PENDING)
+        prompt = recovery.box_for(PENDING)
         shown = render("UPDATE_RECOVERY_NEEDED")
         self.assertIn(shown.message, prompt.text)
         self.assertIn(shown.card_action, prompt.text)
         self.assertEqual((prompt.title, prompt.recover_label, prompt.later_label), ("ChanceBlog Desktop 업데이트 복구", "복구", "나중에"))
-        self.assertEqual(recovery.prompt_for(None).text, prompt.text)
+        self.assertEqual(recovery.box_for(None).text, prompt.text)
 
     def test_the_prompt_has_no_commands_paths_options_or_diagnostic_words(self):
-        text = recovery.prompt_for(PENDING).text
+        text = recovery.box_for(PENDING).text
         for word in ("python", "--", ".json", ".exe", "C:\\", "/", "터미널", "명령", "HKEY", "http", chr(0x7E), "{", "}"):
             self.assertNotIn(word, text, word)
         self.assertIn("두 번 연속", text)

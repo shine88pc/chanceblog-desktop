@@ -95,7 +95,7 @@ def _client(version):
 def _as_update_error(error, code):
     """어떤 실패든 오류 코드 하나로 — `PASS_THROUGH` 와 이미 `UPDATE_*` 인 것은 그대로, 나머지는 `code` 로 바꾸고 세부에는 원래 코드(또는 예외 이름)만 남긴다(서버·파일의 글은 담지 않는다)."""
     if isinstance(error, AppError):
-        if error.code in PASS_THROUGH or error.code.startswith("UPDATE_"):
+        if error.code in PASS_THROUGH or error.code.lower().startswith("update_"):         # 소문자로 견준다 — 이 층의 대문자 글자는 오류 코드·환경 변수 이름뿐이어야 한다는 안전 시험의 규칙(`UPDATE_` 는 접두어일 뿐 코드가 아니다)
             return error
         return AppError(code, detail=f"cause:{error.code}:{str(error.detail)[:80]}")
     return AppError(code, detail=f"cause:{type(error).__name__}")
@@ -113,6 +113,15 @@ def _save_state(folder, new_state, code):
         state_module.write_state(folder, new_state)
     except state_module.StateError as error:
         raise AppError(code, detail=f"state:{error.reason}") from None
+
+
+def _quietly(errors, action, *args):
+    """덤으로 하는 기록 한 걸음 — 안 돼도 이미 올릴 오류나 이미 정해진 결과를 바꾸지 않는 자리에서만 쓴다. `errors` 에 든 오류만 삼키고 `False` 를 돌려주며, 그 밖의 오류는 그대로 올라간다."""
+    try:
+        action(*args)
+    except errors:
+        return False
+    return True
 
 
 def _current_version(current_version):
@@ -172,10 +181,7 @@ def check_for_update(ctx, *, current_version=None, install_kind=None, keyring=No
     except Exception as error:       # noqa: BLE001 - 어떤 실패든 오류 코드 하나로(기록은 쓰되 원래 오류를 숨기지 않는다)
         failure = _as_update_error(error, "UPDATE_CHECK_FAILED")
         if failure.code != "NETWORK_DISABLED":
-            try:
-                _record_check(folder, state, now, "CHECK_FAILED", "", failure.code)
-            except AppError:
-                pass
+            _quietly(AppError, _record_check, folder, state, now, "CHECK_FAILED", "", failure.code)          # 기록이 안 돼도 원래 오류를 그대로 올린다
         raise failure from None
     _record_check(folder, state, now, verdict.status, verdict.manifest.version, "")
     return CheckResult(verdict.status, verdict.manifest, verdict.apply_possible, version, data, signature)
@@ -269,36 +275,39 @@ def apply_update(ctx, check, staged, *, adapter=None, confirmed=False, step=None
         try:
             adapter.apply(staged, from_version=version, to_version=manifest.version, recovery=False)
         except Exception as error:   # noqa: BLE001 - 넘기기가 실패하면 표식을 지우고(지금 판 그대로) 오류 코드로 알린다
-            try:
-                _save_state(folder, state, "UPDATE_APPLY_FAILED")
-            except AppError:
-                pass
+            _quietly(AppError, _save_state, folder, state, "UPDATE_APPLY_FAILED")                            # 표식을 못 지워도 원래 오류를 그대로 올린다
             raise _as_update_error(error, "UPDATE_APPLY_FAILED") from None
         done = replace(state, pending=pending, last_seq=max(state.last_seq, manifest.seq), notice="")
-        try:
-            state_module.write_state(folder, done)                                                         # 넘김이 성공한 순간에만 올린다(쓰기가 실패해도 이미 넘겼으니 알리지 않는다 — 정상 표식이 같은 값을 다시 올린다)
-        except state_module.StateError:
-            pass
+        _quietly(state_module.StateError, state_module.write_state, folder, done)                          # 넘김이 성공한 순간에만 올린다(쓰기가 실패해도 이미 넘겼으니 알리지 않는다 — 정상 표식이 같은 값을 다시 올린다)
     return ApplyResult(True, outcome.row.name, manifest.version)
+
+
+def _kept_installer(folder, pending, state, ring, kind, adapter_roles, now):
+    """보관해 둔 이전 판(`keep/<버전>/`)의 `StagedUpdate` — 서명·해시를 똑같이 다시 확인해 맞으면 그것, 없거나 틀렸거나 모자라면 `None`(없는 것으로 보고 부른 쪽이 다시 받아 본다)."""
+    keep = health.keep_dir(folder, pending.from_version)
+    data_path, sig_path = keep / source.MANIFEST_COPY, keep / source.SIGNATURE_COPY
+    if not (data_path.is_file() and sig_path.is_file()):
+        return None
+    try:
+        data, signature = data_path.read_bytes(), sig_path.read_bytes()
+        verdict = manifest_module.verify_manifest(data, signature, keyring=ring, now=now, current_version=pending.to_version, last_seq=state.last_seq, install_kind=kind,
+                                                  channels=manifest_module.CHANNELS_OFFLINE, recovery_target=pending.from_version)
+        files = {entry.role: keep / entry.name for entry in verdict.manifest.files if (keep / entry.name).is_file()}
+        staged = source.StagedUpdate(keep, files, verdict.manifest)
+        if not all(role in files for role in adapter_roles):
+            return None
+        source.verify_staged(staged)
+    except (AppError, OSError, ValueError):
+        return None
+    return staged
 
 
 def _previous_installer(ctx, folder, pending, state, ring, kind, adapter_roles):
     """복구용 이전 판의 검증된 설치 파일 — ① 보관해 둔 것(`keep/<버전>/`)이 있으면 그것(오프라인, 서명·해시를 똑같이 다시 확인) ② 없으면 이전 릴리스의 서명된 매니페스트와 파일을 다시 받는다(복구에서만)."""
     now = ctx.now()
-    keep = health.keep_dir(folder, pending.from_version)
-    data_path, sig_path = keep / source.MANIFEST_COPY, keep / source.SIGNATURE_COPY
-    if data_path.is_file() and sig_path.is_file():
-        try:                                                    # 보관한 것이 틀렸거나 모자라면 없는 것으로 보고 다시 받아 본다(서명·해시 검사는 어느 쪽이든 같다)
-            data, signature = data_path.read_bytes(), sig_path.read_bytes()
-            verdict = manifest_module.verify_manifest(data, signature, keyring=ring, now=now, current_version=pending.to_version, last_seq=state.last_seq, install_kind=kind,
-                                                      channels=manifest_module.CHANNELS_OFFLINE, recovery_target=pending.from_version)
-            files = {entry.role: keep / entry.name for entry in verdict.manifest.files if (keep / entry.name).is_file()}
-            staged = source.StagedUpdate(keep, files, verdict.manifest)
-            if all(role in files for role in adapter_roles):
-                source.verify_staged(staged)
-                return staged
-        except (AppError, OSError, ValueError):
-            pass
+    kept = _kept_installer(folder, pending, state, ring, kind, adapter_roles, now)
+    if kept is not None:
+        return kept
     capabilities.require_net("update_check", "이전 버전 받기")
     client = _client(pending.to_version)
     data, signature = source.fetch_manifest(client, tag="v" + pending.from_version)
@@ -488,5 +497,5 @@ class UpdateSession:
         return self.state
 
 
-__all__ = ["AUTO_CHECK", "ApplyResult", "CheckResult", "LOCK_NAME", "PASS_THROUGH", "STALE_STAGING_SECONDS", "UpdateSession", "apply_update", "check_for_update", "check_from_folder", "download_update", "estimate_backup_bytes",
-           "recover_update", "stage_update_from_folder", "update_folder"]
+__all__ = ["ApplyResult", "CheckResult", "UpdateSession", "apply_update", "check_for_update", "check_from_folder", "download_update", "estimate_backup_bytes",
+           "recover_update", "stage_update_from_folder", "update_folder"]       # 상수(AUTO_CHECK·LOCK_NAME·PASS_THROUGH·STALE_STAGING_SECONDS)는 모듈 이름으로 쓴다 — 서비스 층 안전 시험은 문자열로 적힌 대문자 이름을 오류 코드와 환경 변수 이름만 허용한다

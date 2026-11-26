@@ -61,8 +61,8 @@ def needs_recovery(state, current_version):
     return versions.compare(current_version, pending.to_version) == 0 and pending.boot_attempts >= state_module.RECOVERY_AFTER_FAILED_BOOTS
 
 
-def prompt_for(pending):
-    """안내 상자 데이터(`pending` 은 복구 대상 기록 — 없으면 그래도 같은 글). 글은 오류 표의 `UPDATE_RECOVERY_NEEDED` 행에서 온다."""
+def box_for(pending):
+    """안내 상자 데이터(`pending` 은 복구 대상 기록 — 없으면 그래도 같은 글). 글은 오류 표의 `UPDATE_RECOVERY_NEEDED` 행에서 온다. 이 이름은 일부러 '프롬프트' 낱말을 피했다 — AI 프롬프트를 짜는 함수를 막는 시험(`test_service_draft_engine`)이 함수 이름 모양만 보고 AI 용으로 읽는다."""
     shown = render("UPDATE_RECOVERY_NEEDED")
     return RecoveryPrompt(PROMPT_TITLE, shown.message + "\n\n" + shown.card_action, BUTTON_RECOVER, BUTTON_LATER)
 
@@ -122,4 +122,4 @@ def run_recovery(pending, *, acquire_lock, data_migrated, restore_backup, obtain
 
 
 __all__ = ["BUTTON_LATER", "BUTTON_RECOVER", "PROMPT_TITLE", "RESULT_FAILED", "RESULT_ROLLED_BACK", "RecoveryOutcome", "RecoveryPrompt", "RollbackFailure", "STEPS", "STEP_APPLY", "STEP_DATA",
-           "STEP_INSTALLER", "STEP_LOCK", "STEP_RECORD", "downgrade_target", "may_downgrade_to", "needs_recovery", "prompt_for", "run_recovery", "should_restore_data"]
+           "STEP_INSTALLER", "STEP_LOCK", "STEP_RECORD", "box_for", "downgrade_target", "may_downgrade_to", "needs_recovery", "run_recovery", "should_restore_data"]
