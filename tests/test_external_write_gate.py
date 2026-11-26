@@ -47,6 +47,7 @@ ENTRY_POINTS = (
     ("service/backend.py", "GitPagesBackend.check_push_access"), ("service/backend.py", "GitPagesBackend.commit"), ("service/backend.py", "GitPagesBackend.push"),
     ("service/backend.py", "GitPagesBackend.discard"), ("service/backend.py", "GitPagesBackend.check_deployed"),
     ("service/cli.py", "cmd_publish_pages"), ("service/cli.py", "cmd_check_deploy"),
+    ("service/blogger_flow.py", "save_draft"), ("publish/blogger.py", "insert_draft"), ("service/cli.py", "cmd_blogger_save_draft"),            # BLOGGER 갈래(D-777) — 초안 저장 한 길(셋)
 )
 # 첫 문장이 `if 온라인:` 이고 그 안 첫 문장이 관문인 곳
 CONDITIONAL_ENTRY_POINTS = (("service/cli.py", "cmd_doctor"), ("service/doctor.py", "_check_push_access"))
@@ -270,6 +271,57 @@ class EntryPointGateTest(unittest.TestCase):
             self.fail("run_command 안에 Popen 이 있어야 한다")
         kill_tree = ast.unparse(function_node(tree, "_kill_tree"))
         self.assertIn("taskkill", kill_tree)
+
+
+def gate_callers():
+    """소스 전체에서 외부 쓰기 관문(`require_external_write`)을 **부르는** 함수들 `(파일, 한정 이름)` — `capabilities.py`(관문을 정의하는 곳)는 뺀다. 클래스 안 메서드는 `클래스.메서드` 로 센다."""
+    found = set()
+    for path in src_files():
+        rel = path.relative_to(SRC).as_posix()
+        if rel == "capabilities.py":
+            continue
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            owners = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owners = [(node.name, node)]
+            elif isinstance(node, ast.ClassDef):
+                owners = [(f"{node.name}.{member.name}", member) for member in node.body if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            for name, owner in owners:
+                if any(isinstance(call, ast.Call) and ast.unparse(call.func) in GATE_NAMES for call in ast.walk(owner)):
+                    found.add((rel, name))
+    return found
+
+
+def listed_entry_points():
+    """진입점 표 — 이름이 `ENTRY_POINTS` 로 끝나는 이 파일의 표 모두(조건부 표 포함). 갈래마다 자기 표(예: 따로 만든 `…_ENTRY_POINTS`)를 더해도 합쳐서 본다."""
+    found = []
+    for name, value in sorted(globals().items()):
+        if name.endswith("ENTRY_POINTS") and isinstance(value, tuple):
+            found += [tuple(item) for item in value]
+    return found
+
+
+class EntryPointTableIsCompleteTest(unittest.TestCase):
+    """재작업 1 참고(안전 검증 S 의 S-M14) — 위 표는 '표에 적힌 곳이 관문을 가졌는지' 만 보고 '관문을 가진 곳이 표에 다 있는지' 는 보지 않아서 표의 줄을 지워도 시험이 빨개지지 않았다.
+    이제 소스에서 관문을 부르는 함수를 모두 찾아 표(조건부 둘 포함)와 **정확히 같음**을 본다 — 새 진입점은 표에 올려야 하고 표의 줄을 지우면 빨개진다."""
+
+    def test_every_function_that_calls_the_gate_is_in_the_table_and_the_table_has_nothing_else(self):
+        self.assertEqual(sorted(gate_callers()), sorted(set(listed_entry_points())),
+                         "외부 쓰기 관문을 부르는 함수가 진입점 표와 다르다 — 새 진입점은 `ENTRY_POINTS` 에 올리고(첫 문장이 관문이어야 한다) 낡은 줄은 지운다")
+
+    def test_the_tables_have_no_duplicate_rows_and_do_not_overlap_each_other(self):
+        rows = listed_entry_points()
+        self.assertEqual(len(rows), len(set(rows)), "같은 줄이 표에 두 번 있거나 두 표에 걸쳐 있다")
+        self.assertTrue(set(ENTRY_POINTS) <= set(rows) and set(CONDITIONAL_ENTRY_POINTS) <= set(rows))
+
+    def test_the_finder_would_see_a_new_gated_function_and_a_method(self):
+        """대조 — 찾는 함수가 헛돌지 않는다: 합성 소스에서 같은 방식으로 찾아 본다."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "m.py").write_text("from . import capabilities\n\n\ndef writes():\n    capabilities.require_external_write('x')\n\n\nclass Box:\n    def push(self):\n        if True:\n            capabilities.require_external_write('y')\n\n    def other(self):\n        return 1\n\n\ndef quiet():\n    return capabilities.require_net('a', 'b')\n", encoding="utf-8")
+            with mock.patch.object(sys.modules[__name__], "SRC", root):
+                self.assertEqual(sorted(gate_callers()), [("m.py", "Box.push"), ("m.py", "writes")])
 
 
 class RefusalWithoutOutgoingCallsTest(unittest.TestCase):

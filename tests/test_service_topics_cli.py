@@ -89,8 +89,8 @@ HELP = {
 }
 # P3 전의 기존 명령 출력(출력 글 해시 — 종료 코드와 함께). 번호·경로가 없는 것만 골랐다.
 OUTPUTS = (
-    (["keys", "purposes"], 0, "1915f05f4c386ad25c2dc905d6d4e13abf1ce9e7f01e323e6736640fe947ad57"),
-    (["keys", "purposes", "--json"], 0, "c2f32633c1fc8ecbf045272a3921832961b32331f07e49a4056485df2863bb4d"),
+    (["keys", "purposes"], 0, "5070a3148cca00cdf29caad8a706dcf3670dc19b761c92e2cbf8c4653fc53a56"),                 # 의도적 갱신(BLOGGER D-775): Blogger 용도 블록의 '쓰임' 한 줄만 바뀌었다(옛 값 1915f05f…) — 나머지 용도는 한 글자도 안 바뀐다
+    (["keys", "purposes", "--json"], 0, "3cefba8b2952caf080e3f7c3b6110fe9c2725968fea27224c77a83ce42eb4f88"),         # 의도적 갱신(BLOGGER D-775): Blogger 블록의 summary·rotation(limited→never)·limits 셋만 바뀌었다(옛 값 c2f32633…)
     (["keys", "list"], 0, "72d594c73fe59992b0e8bb7ea4af82f305ecd10032d02321481595ca62b0d168"),
     (["candidates", "list"], 0, "c64d2ea8fed0270ad2aad32467fa9bcfb614d55b6f904fbb67019f7d2f95071d"),
     (["candidates", "list", "--json"], 0, "1997486554adcbe7cfaf78337a3d7e9dd811522b1ddcd2408c34415301277abe"),
@@ -124,7 +124,8 @@ class ExistingOutputUnchangedTest(unittest.TestCase):
             with self.subTest(command=name):
                 self.assertEqual(found.get(name), expected, "기존 명령의 도움말이 바뀌었다 — P3 는 기존 명령을 바꾸지 않는다")
         # 의도적 갱신(DB): `draft body`(규칙 기반 초안 본문)는 P3 뒤에 더해진 새 하위 명령이라 '기존 명령' 목록에서 뺀다(그 도움말은 tests/test_service_draft_body.py 가 시험한다).
-        self.assertEqual({name for name in found if not name.startswith("topics") and name not in ("(top)", "draft body")}, set(HELP), "기존 명령이 더해지거나 빠졌다")
+        # 의도적 갱신(BLOGGER): `blogger` 명령과 그 하위 명령도 P3 뒤에 더해진 새 명령이라 '기존 명령' 목록에서 뺀다(그 도움말은 tests/test_blogger_input_open.py 가 시험한다).
+        self.assertEqual({name for name in found if not name.startswith(("topics", "blogger")) and name not in ("(top)", "draft body")}, set(HELP), "기존 명령이 더해지거나 빠졌다")
 
     def test_the_help_does_not_depend_on_how_the_tests_were_started(self):
         """수정 4차: Linux CI 가 실패한 원인으로 '도움말의 `usage:` 줄이 `sys.argv[0]`(윈도 `python.exe -m unittest`·리눅스 `python -m unittest`)에서 온다' 는 가설이 있었다 — 파서의 `prog` 가 상수(`PROG`)라서 그렇지 않다는 것을 못박는다."""

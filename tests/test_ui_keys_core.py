@@ -175,7 +175,7 @@ class TablesTest(unittest.TestCase):
             if not spec.takes_keys or spec.legacy_to:
                 continue
             with self.subTest(purpose=key):
-                self.assertEqual(tuple(services._FIELD_TABLE[key]), tuple((item.name, item.label, item.min_len) for item in spec.fields))
+                self.assertEqual(tuple(services._FIELD_TABLE[key]), tuple((item.name, item.label, item.min_len) for item in spec.entered_fields()))
 
     def test_the_terms_pending_purposes_are_the_service_ones_that_never_call_before_the_terms_are_known(self):
         pending = {key for key, spec in cn.PURPOSES.items() if any(item.fail_closed for item in spec.providers)}
@@ -875,7 +875,7 @@ class SettingsViewTest(unittest.TestCase):
                 # `policy`(키 전환 안내)는 쓰는 공급자에서 제공자별 상한(운영자 정책) 기준이다 — 읽기 전용 카드의 '용도당 최대 3개' 는 읽을 때 천장 값이라 Blogger·검색광고에서는 실제 등록 상한과 달랐다.
                 self.assertEqual({key: value for key, value in card.items() if key not in ("keys", "policy")}, {key: value for key, value in old_card.items() if key not in ("keys", "policy")})
                 policies[card["key"]] = (card["policy"], old_card["policy"])
-        self.assertEqual(policies["blogger"], ("예비: 한도·일시 오류일 때만 다음 키로 넘어가요(용도당 최대 2개)", "예비: 한도·일시 오류일 때만 다음 키로 넘어가요(용도당 최대 3개)"))
+        self.assertEqual(policies["blogger"], (T["policy_never"], T["policy_never"]), "Blogger 는 전환이 없다(영문·한글이 다른 블로그 — D-775): 쓰는 카드도 읽기 카드도 같은 문장")
         self.assertEqual(policies["naver_searchad"], (T["policy_single"], "예비: 한도·일시 오류일 때만 다음 키로 넘어가요(용도당 최대 3개)"))
         for same in ("naver_apihub", "image_provider", "ai_assist", "github_repo"):
             self.assertEqual(policies[same][0], policies[same][1], same)                       # 이 넷은 둘이 같다(천장과 상한의 합이 같거나 안내가 없다)

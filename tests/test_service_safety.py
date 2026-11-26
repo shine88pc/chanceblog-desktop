@@ -53,6 +53,9 @@ FILE_WRITERS[("photo_manifest.py", "delete_manifest")] = {"unlink"}
 # `trash_manifest` 의 `unlink` 둘(검증 S PS-5·PS-10, impl3c): ① 사진이 0장인 멀쩡한 사진 정보 파일은 사본으로 옮기지 않고 그 파일 하나만 지운다(앞서 둔 사본을 빈 것으로 덮지 않으려고) ② 끝난 뒤 같은 초안 번호의 쓰다 남은 임시 파일만 힘닿는 데까지 지운다.
 FILE_WRITERS[("photo_manifest.py", "clear_trash")] = {"unlink"}
 FILE_WRITERS[("photo_manifest.py", "trash_manifest")] = {"unlink"}
+# Blogger 초안 저장 저널(BLOGGER 갈래, D-774): `service/blogger_flow.py` 가 `publish/blogger/<글번호>-<구분>.json` 에 쓰는 길은 모두 `context.write_json`(위 허용)이고 직접 파일을 지우는 곳은 **`BloggerJournal.remove` 의 `unlink` 하나**뿐이다 —
+# 글번호·구분 모양을 확인한 뒤 그 저널 파일 하나만 지운다(없으면 아무것도 안 하고 못 지우면 이유 글을 돌려준다 — 옛 발행 기록 `journal.py` 의 `remove` 와 같은 모양, `test_blogger_save` 가 동작으로 못박는다).
+FILE_WRITERS[("blogger_flow.py", "remove")] = {"unlink"}
 OS_CALLS["os.replace"] = OS_CALLS["os.replace"] | {("photo_manifest.py", "trash_manifest"), ("photo_manifest.py", "restore_manifest")}
 OS_CALLS["os.rename"] = {("backup_flow.py", "_finish_folder")}
 # 파일을 읽기 전용으로 여는 곳(내장 `open`)은 **(파일, 함수)** 하나뿐이다 — 운영자가 고른 txt·md 글을 `rb` 로만 열어 상한 + 1 바이트까지 읽는 `own_posts.py` 의 `_read_prefix`.
