@@ -113,11 +113,11 @@ class WholeFlowRequestsTest(flow.FlowCase):
         return sorted(item for item in found if len(item) >= 4)
 
     def test_a_whole_update_check_download_apply_walk_sends_only_allowed_requests_and_leaks_nothing(self):
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
         session.check()
         session.download()
         session.apply(confirmed=True)
-        self.assertEqual(len(self.harness.made), 10, "확인 여섯(매니페스트·서명 × 최신 길 → 태그 길 → 자산 호스트) + 파일 둘 × 둘(태그 길 → 자산 호스트) — 적용은 접속하지 않는다")
+        self.assertEqual(len(self.harness.made), 8, "확인 여섯(매니페스트·서명 × 최신 길 → 태그 길 → 자산 호스트) + 파일(Inno 는 Setup 하나) × 둘(태그 길 → 자산 호스트) — 적용은 접속하지 않는다")
         raw_all = b""
         for sock in self.harness.made:
             raw = bytes(sock.sent)

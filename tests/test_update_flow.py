@@ -3,7 +3,7 @@
 지키는 것:
   1) 확인: 요청은 고정 주소 읽기뿐이고(최신 릴리스 → 태그 길 → 자산 호스트로 이동) 서명이 맞아야 값을 믿는다. 모든 실패는 `UPDATE_*` 코드(꺼짐·시계·쉬는 중·디스크는 그대로)이고 마지막 확인 결과가 상태 파일에 남는다. **확인은 `last_seq` 를 올리지 않는다.**
      서명 불일치는 한 번만 다시 받는다(릴리스가 공개되는 순간의 두 파일 어긋남). 스위치가 꺼졌거나 어댑터가 꽂히지 않았으면 접속 전에 끝난다.
-  2) 내려받기: 필요한 파일만(Velopack 은 패키지·피드), 크기·해시를 서명된 값과 정확히 맞춘다 — 틀리면 폴더째 지우고 `UPDATE_SIGNATURE_INVALID`, 끊김·크기 초과·이동 거절은 `UPDATE_DOWNLOAD_FAILED`, 디스크 모자람은 받기 전 `DISK_FULL`.
+  2) 내려받기: 필요한 파일만(Inno 는 Setup 하나), 크기·해시를 서명된 값과 정확히 맞춘다 — 틀리면 폴더째 지우고 `UPDATE_SIGNATURE_INVALID`, 끊김·크기 초과·이동 거절은 `UPDATE_DOWNLOAD_FAILED`, 디스크 모자람은 받기 전 `DISK_FULL`.
   3) 적용: 확인 표시 → 잠금 → 다시 해시 → **백업이 완료일 때만** → `pending` 기록 → 설치 도구에 넘기기 → `last_seq` 올리기. 넘기기가 실패하면 `pending` 을 지우고 지금 판 그대로. 어느 자리에서 프로세스가 죽어도 다음 시작이 이어간다(각 자리에서 죽여 본다).
   4) 복구: 사용자가 '복구' 를 눌렀을 때만, 보관한 이전 판(없으면 이전 릴리스를 다시 받아)으로 — 낮은 판은 `pending.from` 하나뿐, 서명은 같게 확인하고 만료는 보지 않는다.
   5) `UpdateSession` 은 순서가 틀린 호출을 아무것도 하지 않고 거절한다.
@@ -71,7 +71,7 @@ class FlowCase(unittest.TestCase):
         self.assertEqual(self.wire.calls, [], "진짜 바깥 호출이 일어났다")
 
     def check(self, **overrides):
-        options = dict(current_version="1.0.0", install_kind="velopack", keyring=fs.RING)
+        options = dict(current_version="1.0.0", install_kind="inno", keyring=fs.RING)
         options.update(overrides)
         return update_flow.check_for_update(self.ctx, **options)
 
@@ -114,7 +114,7 @@ class CheckTest(FlowCase):
 
     def test_refusals_carry_the_documented_codes_and_the_last_check_is_recorded(self):
         cases = (("낮은 판", dict(current_version="2.0.0"), "UPDATE_DOWNGRADE_BLOCKED"), ("최소 버전", dict(current_version="0.9.0"), "UPDATE_NEEDS_MANUAL_INSTALL"),
-                 ("설치 종류", dict(install_kind="inno"), "UPDATE_NEEDS_MANUAL_INSTALL"), ("출하 키(비어 있음)", dict(keyring=keys.shipped_keyring()), "UPDATE_SIGNATURE_INVALID"))
+                 ("설치 종류", dict(install_kind="velopack"), "UPDATE_NEEDS_MANUAL_INSTALL"), ("출하 키(비어 있음)", dict(keyring=keys.shipped_keyring()), "UPDATE_SIGNATURE_INVALID"))
         for label, overrides, code in cases:
             with self.subTest(label=label):
                 self.assertEqual(code_of(self.check, **overrides), code)
@@ -279,16 +279,17 @@ class DownloadTest(FlowCase):
 
     def test_only_the_needed_files_are_fetched_whole_and_verified_and_the_proof_is_kept_beside_them(self):
         result, staged = self.downloaded()
-        self.assertEqual(sorted(staged.files), ["feed", "package"], "Velopack 은 패키지와 피드만")
+        self.assertEqual(sorted(staged.files), ["setup"], "Inno 는 Setup 하나만")
         run = staged.folder
-        self.assertEqual(sorted(path.name for path in run.iterdir()), sorted([f"ChanceBlogDesktopApp-1.0.1-stable-full.nupkg", "releases.stable.json", "update-manifest.json", "update-manifest.json.sig"]))
+        self.assertEqual(sorted(path.name for path in run.iterdir()), sorted(["ChanceBlogDesktop-1.0.1-Setup.exe", "update-manifest.json", "update-manifest.json.sig"]))
         for role, path in staged.files.items():
             entry = result.manifest.file(role)
             self.assertEqual((path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest()), (entry.size, entry.sha256))
         self.assertEqual((run / "update-manifest.json").read_bytes(), self.release.manifest_bytes)
         self.assertEqual((run / "update-manifest.json.sig").read_bytes(), self.release.signature)
         self.assertEqual(run.parent, health.staging_root(self.folder))
-        self.assertNotIn(f"ChanceBlogDesktop-1.0.1-Setup.exe", [request[2] for request in self.server.requests])
+        for unneeded in ("ChanceBlogDesktopApp-1.0.1-stable-full.nupkg", "releases.stable.json"):
+            self.assertNotIn(unneeded, [request[2] for request in self.server.requests], "릴리스에 올라 있어도 Inno 에 필요 없는 파일은 요청하지 않는다")
         self.assertTrue(source.verify_staged(staged))
 
     def test_each_file_is_requested_with_its_signed_size_as_the_byte_limit(self):
@@ -303,7 +304,7 @@ class DownloadTest(FlowCase):
         with mock.patch.object(net_client.NetClient, "request_to_file", spy):
             update_flow.download_update(self.ctx, result)
         sizes = {entry["name"]: entry["size"] for entry in self.release.dict["files"]}
-        self.assertEqual(sorted(seen), sorted([("ChanceBlogDesktopApp-1.0.1-stable-full.nupkg", sizes["ChanceBlogDesktopApp-1.0.1-stable-full.nupkg"]), ("releases.stable.json", sizes["releases.stable.json"])]))
+        self.assertEqual(sorted(seen), [("ChanceBlogDesktop-1.0.1-Setup.exe", sizes["ChanceBlogDesktop-1.0.1-Setup.exe"])])
 
     def test_the_requests_for_files_are_the_tag_route_and_never_the_latest_pointer(self):
         self.downloaded()
@@ -312,7 +313,7 @@ class DownloadTest(FlowCase):
         self.assertFalse([target for target in targets if "/latest/" in target])
 
     def test_a_tampered_file_of_the_same_size_is_refused_and_the_folder_is_removed(self):
-        name = "ChanceBlogDesktopApp-1.0.1-stable-full.nupkg"
+        name = "ChanceBlogDesktop-1.0.1-Setup.exe"
         body = bytearray(self.release.bodies[name])
         body[10] ^= 1
         self.release.install(self.server, tamper={name: bytes(body)})
@@ -321,7 +322,7 @@ class DownloadTest(FlowCase):
         self.assertEqual(self.staging_runs(), [])
 
     def test_a_shorter_or_longer_body_is_refused_and_the_folder_is_removed(self):
-        name = "releases.stable.json"
+        name = "ChanceBlogDesktop-1.0.1-Setup.exe"
         for label, body, code in (("짧음", self.release.bodies[name][:-1], "UPDATE_SIGNATURE_INVALID"), ("김", self.release.bodies[name] + b"x", "UPDATE_DOWNLOAD_FAILED")):
             with self.subTest(label=label):
                 self.release.install(self.server, tamper={name: body})
@@ -331,17 +332,17 @@ class DownloadTest(FlowCase):
 
     def test_a_missing_asset_and_an_unlisted_redirect_host_fail_the_download_and_leave_nothing(self):
         result = self.check()
-        self.server.routes.pop((fs.CDN_HOST, fs.cdn_path("releases.stable.json")))
+        self.server.routes.pop((fs.CDN_HOST, fs.cdn_path("ChanceBlogDesktop-1.0.1-Setup.exe")))
         self.assertEqual(code_of(update_flow.download_update, self.ctx, result), "UPDATE_DOWNLOAD_FAILED")
         self.assertEqual(self.staging_runs(), [])
-        self.server.redirect("github.com", f"{fs.BASE}/download/v1.0.1/releases.stable.json", "https://evil.example.test/x")
+        self.server.redirect("github.com", f"{fs.BASE}/download/v1.0.1/ChanceBlogDesktop-1.0.1-Setup.exe", "https://evil.example.test/x")
         self.assertEqual(code_of(update_flow.download_update, self.ctx, result), "UPDATE_DOWNLOAD_FAILED")
         self.assertEqual(self.staging_runs(), [])
         self.assertNotIn("evil.example.test", [host for host, _address in self.harness.dials], "표 밖 호스트로는 연결하지 않았다")
 
     def test_a_short_disk_is_refused_before_anything_is_fetched_and_the_boundary_passes(self):
         result = self.check()
-        sizes = [result.manifest.file(role).size for role in ("package", "feed")]
+        sizes = [result.manifest.file(role).size for role in ("setup",)]
         backup = update_flow.estimate_backup_bytes(self.ctx)
         self.assertEqual(source.DISK_MULTIPLIER, 3, "설계서 U6 — 파일 합계의 세 배(받은 파일·복사본·여유) + 백업 예상 크기")
         needed = sum(sizes) * 3 + backup                 # 상수를 되읽지 않고 손으로 적은 값으로 견준다(상수를 바꾸면 이 시험이 빨개진다)
@@ -349,7 +350,7 @@ class DownloadTest(FlowCase):
         self.assertEqual(code_of(update_flow.download_update, self.ctx, result, free_bytes=lambda folder: needed - 1), "DISK_FULL")
         self.assertEqual((len(self.server.requests), self.staging_runs()), (before, []), "받기 전에 거절 — 요청 0·폴더 0")
         staged = update_flow.download_update(self.ctx, result, free_bytes=lambda folder: needed)
-        self.assertEqual(sorted(staged.files), ["feed", "package"])
+        self.assertEqual(sorted(staged.files), ["setup"])
         self.assertGreater(backup, 0, "백업 예상 크기가 실제로 더해진다(빈 실험이 아니다)")
 
     def test_a_portable_build_an_up_to_date_result_and_a_missing_role_never_download(self):
@@ -360,7 +361,7 @@ class DownloadTest(FlowCase):
         self.assertEqual(code_of(update_flow.download_update, self.ctx, up), "UPDATE_CHECK_FAILED")
         self.assertEqual(len(self.server.requests), before + 6, "내려받기 요청은 없었다(확인 요청만 늘었다)")
         thin = fs.Release("1.0.2")
-        thin.dict["files"] = [entry for entry in thin.dict["files"] if entry["role"] != "feed"]
+        thin.dict["files"] = [entry for entry in thin.dict["files"] if entry["role"] != "setup"]
         thin.manifest_bytes = us.encode_manifest(thin.dict)
         thin.signature = us.signature_file(thin.seed, thin.manifest_bytes)
         thin.install(self.server)
@@ -397,9 +398,9 @@ class ApplyTest(ApplyCase):
     def test_the_order_is_confirm_verify_backup_pending_handoff_last_seq(self):
         done = self.apply()
         self.assertEqual((done.handed_off, done.to_version), (True, "1.0.1"))
-        self.assertEqual(self.adapter.calls, [(["feed", "package"], "1.0.0", "1.0.1", False)])
+        self.assertEqual(self.adapter.calls, [(["setup"], "1.0.0", "1.0.1", False)])
         seen = self.adapter.pending_seen[0]
-        self.assertEqual((seen.from_version, seen.to_version, seen.seq, seen.boot_attempts, seen.kind), ("1.0.0", "1.0.1", self.release.dict["seq"], 0, "velopack"), "넘기는 순간 pending 은 이미 디스크에 있었다")
+        self.assertEqual((seen.from_version, seen.to_version, seen.seq, seen.boot_attempts, seen.kind), ("1.0.0", "1.0.1", self.release.dict["seq"], 0, "inno"), "넘기는 순간 pending 은 이미 디스크에 있었다")
         self.assertEqual(seen.backup_name, done.backup_name)
         self.assertEqual(self.backups(), [done.backup_name], "넘기기 전에 백업이 완료돼 있었다")
         after = self.state()
@@ -412,7 +413,7 @@ class ApplyTest(ApplyCase):
         self.assertEqual((self.adapter.calls, self.backups(), self.state().pending), ([], [], None))
 
     def test_a_file_changed_after_the_download_is_refused_before_the_backup(self):
-        path = self.staged.files["package"]
+        path = self.staged.files["setup"]
         path.write_bytes(path.read_bytes()[:-1] + b"X")
         self.assertEqual(code_of(self.apply), "UPDATE_SIGNATURE_INVALID")
         self.assertEqual((self.adapter.calls, self.backups(), self.state().pending), ([], [], None))
@@ -488,8 +489,15 @@ class ApplyTest(ApplyCase):
         self.assertEqual(self.state().last_seq, self.release.dict["seq"])
 
     def test_a_missing_adapter_for_an_installed_kind_refuses_without_running_anything(self):
-        self.assertEqual(code_of(update_flow.apply_update, self.ctx, self.result, self.staged, confirmed=True), "UPDATE_APPLY_FAILED")
-        self.assertEqual((self.state().pending, self.state().last_seq), (None, 0))
+        """(옛 이름 그대로 — 시험 id 를 지키려고) 어댑터가 없는 설치 종류는 아무것도 실행하지 않고 `UPDATE_APPLY_FAILED` 로 거절한다. U-4 이후에는 `inno` 가 진짜 어댑터를 갖고 어댑터가 없는 쪽은 `velopack`(매니페스트는 읽지만 적용하지 않는다)이다 —
+        그 릴리스를 어댑터를 넘기지 않고 적용해 보면 **백업을 만들기 전에** 거절되고(독립 검증 S I10) 하위 프로세스는 한 번도 불리지 않는다."""
+        velopack = fs.Release("1.0.1", kind="velopack")
+        result = update_flow.CheckResult("AVAILABLE", manifest_module.read_and_verify(velopack.manifest_bytes, velopack.signature, keyring=fs.RING), True, "1.0.0", velopack.manifest_bytes, velopack.signature)
+        staged = source.StagedUpdate(self.tmp / "nothing-here", {}, result.manifest)
+        with mock.patch.object(apply.subprocess, "Popen", side_effect=AssertionError("이 시험은 하위 프로세스를 띄우지 않는다")) as popen:
+            self.assertEqual(code_of(update_flow.apply_update, self.ctx, result, staged, confirmed=True), "UPDATE_APPLY_FAILED")
+            popen.assert_not_called()
+        self.assertEqual((self.state().pending, self.state().last_seq, self.backups()), (None, 0, []), "백업·표식·시퀀스 모두 그대로")
 
     def test_a_second_update_or_recovery_is_refused_while_the_lock_is_held(self):
         lock = update_flow._UpdateLock(self.ctx.workspace.locks_dir, update_flow.LOCK_NAME, now=self.ctx.now, host="")
@@ -594,7 +602,7 @@ class SessionTest(FlowCase):
     switches = ("NET_UPDATE_CHECK", "UPDATE_APPLY")
 
     def session(self, **kwargs):
-        options = dict(install_kind="velopack", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
+        options = dict(install_kind="inno", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
         options.update(kwargs)
         return update_flow.UpdateSession(self.ctx, **options)
 
@@ -636,7 +644,7 @@ class SessionTest(FlowCase):
         session.current_version = "1.0.0"
         session.check()                                                   # 실패한 뒤에는 다시 확인할 수 있다
         self.assertEqual(session.state, "AVAILABLE")
-        self.server.routes.pop((fs.CDN_HOST, fs.cdn_path("releases.stable.json")))
+        self.server.routes.pop((fs.CDN_HOST, fs.cdn_path("ChanceBlogDesktop-1.0.1-Setup.exe")))
         with self.assertRaises(AppError):
             session.download()
         self.assertEqual((session.state, session.error.code), ("IDLE", "UPDATE_DOWNLOAD_FAILED"))
@@ -683,7 +691,7 @@ class SessionTest(FlowCase):
         self.assertEqual((after.pending, after.last_good, after.last_seq), (None, "1.0.1", self.release.dict["seq"]))
         kept = health.keep_dir(self.folder, "1.0.1")
         self.assertTrue((kept / "update-manifest.json").is_file() and (kept / "update-manifest.json.sig").is_file())
-        self.assertTrue((kept / "releases.stable.json").is_file())
+        self.assertTrue((kept / "ChanceBlogDesktop-1.0.1-Setup.exe").is_file())
         self.assertFalse(run.exists())
         self.assertEqual(self.staging_runs(), [])
 
@@ -701,7 +709,7 @@ class SessionTest(FlowCase):
         self.assertEqual((self.folder / "state.json").read_bytes(), before, "사용자가 누르기 전에는 아무것도 바뀌지 않는다")
 
     def test_the_boot_hook_results_map_to_the_documented_states(self):
-        for action, target in (("first_boot", "POST_UPDATE_BOOT"), ("recovery_offered", "RECOVERY_OFFERED"), ("not_applied", "IDLE"), ("none", "IDLE")):
+        for action, target in (("first_boot", "POST_UPDATE_BOOT"), ("recovery_offered", "RECOVERY_OFFERED"), ("not_applied", "IDLE"), ("none", "IDLE"), ("rolled_back", "IDLE"), ("stale_cleared", "IDLE")):
             session = self.session()
             self.assertEqual(session.on_boot(state.BootNote(action, None)), target, action)
         self.assertEqual(self.session().on_boot(None), "IDLE")
@@ -734,7 +742,7 @@ class RecoveryTest(ApplyCase):
         keep.mkdir(parents=True)
         (keep / "update-manifest.json").write_bytes(self.previous.manifest_bytes)
         (keep / "update-manifest.json.sig").write_bytes(self.previous.signature)
-        for name in ("ChanceBlogDesktopApp-1.0.0-stable-full.nupkg", "releases.stable.json"):
+        for name in ("ChanceBlogDesktop-1.0.0-Setup.exe",):
             (keep / name).write_bytes(self.previous.bodies[name])
         return keep
 
@@ -750,7 +758,13 @@ class RecoveryTest(ApplyCase):
         self.assertEqual(len(self.server.requests), before, "보관해 둔 이전 판이면 접속하지 않는다")
         self.assertEqual((outcome.restored_data, outcome.steps), (True, ("lock", "data", "installer", "apply", "record")))
         self.assertEqual(self.restores, [(self.pending.backup_name, True)])
-        self.assertEqual(self.adapter.calls, [(["feed", "package"], "1.0.1", "1.0.0", True)], "낮은 판 설치는 복구 표시(recovery)와 함께")
+        self.assertEqual(self.adapter.calls, [(["setup"], "1.0.1", "1.0.0", True)], "낮은 판 설치는 복구 표시(recovery)와 함께")
+        launched = self.state()
+        self.assertEqual((launched.pending, launched.notice, launched.last_good), (self.pending, "rollback_launched", ""), "이전 판 Setup 을 '띄웠다' 까지만 기록한다 — 표식은 그대로, 정상 판 기록은 아직(독립 검증 S R4)")
+        self.assertEqual(launched.last_seq, self.release.dict["seq"], "복구는 시퀀스를 건드리지 않는다")
+        with fs.switches_on("UPDATE_APPLY"):
+            note = state.note_boot(version="1.0.0", folder=self.folder)                  # 이전 판이 실제로 켜졌다 — 그때 확정한다
+        self.assertEqual((note.action, note.pending), ("rolled_back", None))
         after = self.state()
         self.assertEqual((after.pending, after.notice, after.last_good), (None, "rolled_back", "1.0.0"))
         self.assertFalse((self.ctx.workspace.locks_dir / "update.lock").exists())
@@ -765,7 +779,7 @@ class RecoveryTest(ApplyCase):
 
     def test_a_tampered_kept_installer_falls_back_to_the_download_and_a_missing_network_fails_at_the_installer_step(self):
         keep = self.keep_previous()
-        path = keep / "releases.stable.json"
+        path = keep / "ChanceBlogDesktop-1.0.0-Setup.exe"
         path.write_bytes(path.read_bytes()[:-1] + b"X")
         with self.assertRaises(recovery.RollbackFailure) as caught:
             with mock.patch.object(update_flow.capabilities, "NET_UPDATE_CHECK", False):
@@ -777,7 +791,7 @@ class RecoveryTest(ApplyCase):
 
     def test_a_kept_copy_missing_one_of_the_needed_files_is_treated_as_absent_and_downloaded_again(self):
         keep = self.keep_previous()
-        (keep / "releases.stable.json").unlink()
+        (keep / "ChanceBlogDesktop-1.0.0-Setup.exe").unlink()
         with self.assertRaises(recovery.RollbackFailure) as caught:
             with mock.patch.object(update_flow.capabilities, "NET_UPDATE_CHECK", False):
                 self.recover()
@@ -843,7 +857,7 @@ class RecoveryTest(ApplyCase):
 
     def test_the_session_drives_the_recovery_through_the_machine(self):
         self.keep_previous()
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.1", keyring=fs.RING, adapter=self.adapter)
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.1", keyring=fs.RING, adapter=self.adapter)
         with fs.switches_on("UPDATE_APPLY"):
             note = state.note_boot(version="1.0.1", folder=self.folder)
         self.assertEqual(note.action, "recovery_offered")
@@ -853,7 +867,7 @@ class RecoveryTest(ApplyCase):
         self.assertEqual(session.machine.send("ack"), "IDLE")
 
     def test_a_failed_session_recovery_ends_in_rollback_failed(self):
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.1", keyring=fs.RING, adapter=self.adapter)
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.1", keyring=fs.RING, adapter=self.adapter)
         session.machine = machine.Machine("RECOVERY_OFFERED")
         with self.assertRaises(recovery.RollbackFailure):
             session.recover(confirmed=True)                                # 보관한 것도 없고 서버에도 이전 릴리스가 없다

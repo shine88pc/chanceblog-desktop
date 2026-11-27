@@ -167,7 +167,7 @@ class OnlineChannelTest(tf.FlowCase):
         self.assertEqual((result.status, result.manifest.channel, result.manifest.version), ("AVAILABLE", "rc", "1.0.1-rc.1"))
 
     def test_the_session_check_refuses_the_candidate_too_and_never_opts_in_to_the_candidate_channel(self):
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING)
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING)
         with self.assertRaises(AppError):
             session.check()
         self.assertEqual((session.state, session.error.code), ("CHECK_FAILED", "UPDATE_MANIFEST_INVALID"))
@@ -462,11 +462,11 @@ class ReportHealthSwallowTest(tf.FlowCase):
     switches = ("NET_UPDATE_CHECK", "UPDATE_APPLY")
 
     def session(self):
-        return update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.1", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
+        return update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.1", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
 
     def booted(self):
         """업데이트를 넘긴 뒤 새 판이 처음 켜진 순간까지 — (받아 둔 임시 폴더, 시작 후크의 결과)."""
-        first = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
+        first = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.folder))
         first.check()
         first.download()
         first.apply(confirmed=True)
@@ -651,7 +651,10 @@ class DocFactsTest(unittest.TestCase):
             with self.subTest(label=label):
                 found = [line for line in rows if f"독립 검증 S {label}" in line]
                 self.assertEqual(len(found), 1)
-                self.assertIn("U-5 배선 전에 고친다", found[0])
+                # UPDATE U-4(v1update4, D-852)가 코드로 고쳤다 — 'U-5 배선 전에 고친다' 는 '고쳤다' 로 바뀌었고 그 줄이 묶인 시험 모듈을 말한다(옛 사실·재현·고칠 방향은 그대로 남아 아래 반복이 계속 본다)
+                self.assertIn("고쳤다(D-852", found[0])
+                self.assertIn("tests/test_update_guards.py", found[0])
+                self.assertNotIn("U-5 배선 전에 고친다", found[0], "고쳤으니 아직 고칠 것이라고 적지 않는다")
                 self.assertNotIn("켜기 전에 반드시 고친다", found[0])
         for line in rows[2:]:
             if "독립 검증 S R" in line:

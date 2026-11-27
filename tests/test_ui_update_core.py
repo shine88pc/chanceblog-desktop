@@ -28,7 +28,7 @@ LAST = state.LastCheck("2026-12-02T03:04:05Z", "AVAILABLE", "1.0.1", "")
 
 
 def view(**overrides):
-    options = dict(check_enabled=True, apply_enabled=True, install_kind="velopack", state="IDLE", version="1.0.0", last_check=None, available_version="", summary="", error=None, progress=None, notice="")
+    options = dict(check_enabled=True, apply_enabled=True, install_kind="inno", state="IDLE", version="1.0.0", last_check=None, available_version="", summary="", error=None, progress=None, notice="")
     options.update(overrides)
     return updates.card_view(**options)
 
@@ -91,13 +91,22 @@ class CardTableTest(unittest.TestCase):
     def test_the_folder_update_action_appears_only_with_the_apply_switch_on_an_installed_kind_in_a_quiet_state(self):
         """'파일에서 업데이트…'(설계 3-7 표의 마지막 행, 3-11) — 접속이 없어 확인 스위치와 상관없다. 모든 상태 x 스위치 x 설치 종류에서 손으로 적은 식과 같다."""
         for state_name, check_on, apply_on, kind in itertools.product(machine.STATES, (False, True), (False, True), ("velopack", "inno", "portable", "source", "")):
-            expected = T["upd_from_folder"] if apply_on and kind in ("velopack", "inno") and state_name in ("IDLE", "UP_TO_DATE", "AVAILABLE", "CHECK_FAILED") else ""
+            expected = T["upd_from_folder"] if apply_on and kind in ("inno",) and state_name in ("IDLE", "UP_TO_DATE", "AVAILABLE", "CHECK_FAILED") else ""
             with self.subTest(state=state_name, check=check_on, apply=apply_on, kind=kind):
                 card = view(state=state_name, check_enabled=check_on, apply_enabled=apply_on, install_kind=kind, available_version="1.0.1", error=AppError("UPDATE_CHECK_FAILED"))
                 self.assertEqual(card.folder_action, expected)
         self.assertEqual(updates.FOLDER_STATES, ("IDLE", "UP_TO_DATE", "AVAILABLE", "CHECK_FAILED"))
         self.assertEqual(T["upd_from_folder"], "파일에서 업데이트…")
         self.assertEqual(view(state="IDLE", check_enabled=False, apply_enabled=True).primary, "", "꺼짐 카드의 주 단추는 여전히 없다 — 파일에서 업데이트는 주 단추가 아니다")
+
+    def test_the_card_treats_exactly_the_adapters_installed_kinds_as_installed_and_velopack_is_not_one(self):
+        """카드의 '설치형' 판단(`ui/core` 는 `update` 를 가져오지 않아 글자로 적는다)이 적용 어댑터가 있는 설치 종류(`apply.INSTALLED_KINDS`)와 같다 — 설치 도구가 Inno 로 정해진 뒤 Velopack 은 설치형이 아니다(U-4)."""
+        from chanceblog_desktop.update import apply
+        self.assertEqual(apply.INSTALLED_KINDS, ("inno",))
+        for kind in ("inno", "velopack", "portable", "source", "", "INNO", "msi"):
+            with self.subTest(kind=kind):
+                card = view(state="IDLE", install_kind=kind)
+                self.assertEqual(bool(card.folder_action), kind in apply.INSTALLED_KINDS)
 
     def test_progress_is_a_fraction_or_unknown_never_a_wrong_value(self):
         self.assertEqual(view(state="DOWNLOADING", progress=0.25).progress, 0.25)

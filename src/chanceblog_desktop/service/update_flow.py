@@ -6,7 +6,8 @@
   · 확인은 `update-manifest.json` 과 `.sig` 를 받아 **서명을 확인한 뒤에** 값을 믿는다(`update/manifest.py`). 확인만으로는 `last_seq`(적용한 가장 높은 시퀀스)를 올리지 않는다 — 실패한 확인이 시퀀스를 태우지 않게.
   · 적용은 ① 확인 표시가 있어야 하고 ② 받은 파일을 다시 해시해 서명된 값과 같을 때만 ③ **백업이 완료(`complete`)일 때만**(부분·막힘·실패면 시작하지 않는다 — `UPDATE_BACKUP_FAILED`) ④ `pending` 을 기록한 **뒤에** 설치 도구에 넘기고 ⑤ 넘김이 성공한 순간에만 `last_seq` 를 올린다.
     넘기기가 실패하면 `pending` 을 지우고(지금 판 그대로) `UPDATE_APPLY_FAILED`. 어느 단계에서 프로세스가 죽어도 다음 시작(`update/state.note_boot`)이 `pending` 을 보고 이어간다.
-  · 복구는 사용자가 '복구' 를 눌렀을 때만(`confirmed`), 순서와 실패 처리는 `update/recovery.py` 가 정한다 — 낮은 판은 `pending.from` 하나만.
+  · 복구는 사용자가 '복구' 를 눌렀을 때만(`confirmed`), 순서와 실패 처리는 `update/recovery.py` 가 정한다 — 낮은 판은 `pending.from` 하나만. 복구가 기록하는 것은 이전 판 Setup 을 '띄웠다' 까지다(`notice` = `rollback_launched`, `pending` 은 그대로) —
+    되돌려졌다는 확정은 다음 시작의 `state.note_boot` 가 실행 중인 판이 `pending.from` 일 때 한다(복구 Setup 이 조용히 안 돌아 새 판이 그대로 켜지면 복구 안내가 다시 뜬다).
   · 요청은 고정 주소 읽기뿐이고 사진·글·경로·사용자 이름·키는 어디에도 실리지 않는다(접속 틀이 표의 머리글만 보낸다 — 시험 `test_update_privacy` 가 가로채 확인한다).
 폴더에서 업데이트(설계서 3-11, 질문 Q4 추천 '포함' — `check_from_folder`·`stage_update_from_folder`): 사용자가 고른 폴더(예: 공개 전 후보의 자산을 받아 둔 곳·인터넷이 막힌 PC)의 매니페스트·서명·파일을 **온라인과 똑같은 규칙**으로 확인하고
 (서명·칸 규칙·만료·시계·버전·`seq`·설치 종류·크기·SHA-256 — 후보 채널 `rc` 도 읽는다) 같은 적용 흐름(`apply_update`)으로 넘긴다. **접속이 없어** 접속 스위치와 무관하고 진입점의 첫 문장은 `capabilities.require_update_apply` 다. 고른 폴더는 읽기만 한다.
@@ -14,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -131,6 +133,47 @@ def _current_version(current_version):
     return version
 
 
+def _require_applicable_kind(manifest):
+    """적용 어댑터가 없는 설치 종류(매니페스트는 읽지만 적용하지 않는 `velopack` — 설치 도구는 Inno 로 정해졌다, 결정 D-811)는 받기·백업을 하기 **전에** 거절한다(독립 검증 S I10) — 아무것도 바뀌지 않았다."""
+    if manifest.installer_kind not in apply_module.INSTALLED_KINDS:
+        raise AppError("UPDATE_APPLY_FAILED", detail="kind_not_supported")
+
+
+def _require_matching(check, staged):
+    """적용 직전의 일치 확인(독립 검증 S R3, 결정 D-850 이상) — 받아 둔 파일(`staged`)이 방금 확인한 결과(`check`)의 **그 판**이어야 한다. 어긋나면 백업·잠금·`pending` 보다 먼저 거절한다(아무것도 바뀌지 않았다).
+    ① 확인 결과가 `CheckResult`·받은 값이 `StagedUpdate` 다(그 밖의 값은 예외 대신 거절) ② 확인 결과가 새 판(`AVAILABLE`)이고 이 앱이 바꿀 수 있는 설치 종류(`apply_possible`)다 ③ 적용 어댑터가 있는 종류다 ④ 두 매니페스트가 똑같다(서명 확인을 거친 같은 값 — 버전·`seq`·역할·크기·해시·`digest` 모두)
+    ⑤ 확인 결과가 든 서명된 바이트가 바이트 값이고 그 매니페스트의 것이다(`digest` 는 그 바이트의 SHA-256 — 글·숫자 같은 값은 해시하다 예외가 나기 전에 거절) ⑥ 새 버전이 확인 때의 지금 버전보다 높다 ⑦ 필요한 역할이 매니페스트에도 받은 파일에도 있다
+    ⑧ 받은 파일의 **경로·값 모양**이 어댑터가 나중에 요구할 모양 그대로다 — 받은 폴더가 경로 글이고 Setup 이 그 폴더 안의 서명된 이름(이 판의 이름)이고 다른 역할의 값도 경로 글이다(`apply.setup_for` — 어댑터의 마지막 검사와 같은 함수를 **백업 앞에서도** 부른다. 독립 검증 S R3: 예전에는 이 모양 어긋남이 백업과
+    표식을 남긴 뒤에야 어댑터에서 걸리거나 `verify_staged` 에서 생 예외로 샜다). 그 밖에 파일의 크기·해시는 이어서 `source.verify_staged` 가 디스크에서 다시 읽어 견준다."""
+    if not isinstance(check, CheckResult) or not isinstance(check.manifest, manifest_module.Manifest):
+        raise AppError("UPDATE_CHECK_FAILED", detail="apply:check")
+    if not isinstance(staged, source.StagedUpdate) or not isinstance(staged.files, dict):
+        raise AppError("UPDATE_SIGNATURE_INVALID", detail="apply:staged")
+    manifest = check.manifest
+    if check.status != manifest_module.STATUS_AVAILABLE:
+        raise AppError("UPDATE_CHECK_FAILED", detail="apply:not_available")
+    if not check.apply_possible:
+        raise AppError("UPDATE_NOT_INSTALLED_KIND", detail="apply")
+    _require_applicable_kind(manifest)
+    if staged.manifest != manifest:
+        raise AppError("UPDATE_SIGNATURE_INVALID", detail="apply:manifest")
+    signed = check.manifest_bytes
+    if not isinstance(signed, (bytes, bytearray)) or not signed or hashlib.sha256(signed).hexdigest() != manifest.digest:
+        raise AppError("UPDATE_SIGNATURE_INVALID", detail="apply:signed_data")
+    try:
+        newer = versions.is_newer(manifest.version, check.current_version)
+    except ValueError:
+        raise AppError("UPDATE_CHECK_FAILED", detail="apply:current_version") from None
+    if not newer:
+        raise AppError("UPDATE_DOWNGRADE_BLOCKED", detail="apply:version")
+    for role in apply_module.REQUIRED_ROLES.get(manifest.installer_kind, ()):
+        if manifest.file(role) is None:
+            raise AppError("UPDATE_MANIFEST_INVALID", detail="manifest:missing_role")
+        if role not in staged.files:
+            raise AppError("UPDATE_SIGNATURE_INVALID", detail=f"apply:role:{role}")
+    apply_module.setup_for(staged, check.current_version, manifest.version)            # ⑧ 같은 거절 코드(`UPDATE_APPLY_FAILED`·이유 이름 하나)를 백업을 만들기 전에 낸다
+
+
 def estimate_backup_bytes(ctx):
     """업데이트 전 백업이 차지할 크기의 어림(담는 파일 여섯의 크기 합) — 읽지 못하는 것은 0 으로 센다."""
     total = 0
@@ -217,6 +260,7 @@ def stage_update_from_folder(ctx, check, *, progress=None, free_bytes=None):
         raise AppError("UPDATE_CHECK_FAILED", detail="stage:not_available")
     if not check.apply_possible:
         raise AppError("UPDATE_NOT_INSTALLED_KIND", detail="stage")
+    _require_applicable_kind(check.manifest)
     kind = check.manifest.installer_kind
     roles = apply_module.REQUIRED_ROLES.get(kind, ())
     if not roles or any(check.manifest.file(role) is None for role in roles):
@@ -233,10 +277,13 @@ def download_update(ctx, check, *, progress=None, free_bytes=None):
     """'내려받고 설치' 의 앞 절반 — 서명된 매니페스트가 말한 필요한 파일만 받아 크기·해시를 확인한다 → `source.StagedUpdate`. 휴대용·소스 실행은 받지 않는다(`UPDATE_NOT_INSTALLED_KIND`).
     실패하면 받은 폴더를 지운다. 끊김·시간·크기 초과는 `UPDATE_DOWNLOAD_FAILED`, 크기·해시 불일치는 `UPDATE_SIGNATURE_INVALID`, 디스크 모자람은 `DISK_FULL`."""
     capabilities.require_net("update_check", "업데이트 내려받기")
+    if getattr(check, "source", "online") != "online":
+        raise AppError("UPDATE_CHECK_FAILED", detail="download:folder_source")        # 폴더에서 확인한 결과(후보 `rc` 포함)는 인터넷으로 받지 않는다(독립 검증 S R4) — 요청 0 · `prepare_from_folder` 로 간다
     if check.status != manifest_module.STATUS_AVAILABLE:
         raise AppError("UPDATE_CHECK_FAILED", detail="download:not_available")
     if not check.apply_possible:
         raise AppError("UPDATE_NOT_INSTALLED_KIND", detail="download")
+    _require_applicable_kind(check.manifest)
     kind = check.manifest.installer_kind
     roles = apply_module.REQUIRED_ROLES.get(kind, ())
     if not roles or any(check.manifest.file(role) is None for role in roles):
@@ -255,6 +302,7 @@ def apply_update(ctx, check, staged, *, adapter=None, confirmed=False, step=None
     capabilities.require_update_apply("업데이트 설치")
     require_confirmation(confirmed, "업데이트 설치")
     hooks = hooks or {}
+    _require_matching(check, staged)                    # 받은 파일과 확인 결과의 일치를 백업·잠금보다 먼저 확인한다(독립 검증 S R3)
     manifest = staged.manifest
     version = check.current_version
     adapter = adapter if adapter is not None else apply_module.adapter_for(manifest.installer_kind if check.apply_possible else "")
@@ -317,7 +365,7 @@ def _previous_installer(ctx, folder, pending, state, ring, kind, adapter_roles):
 
 
 def recover_update(ctx, *, adapter=None, confirmed=False, keyring=None):
-    """'복구'(사용자가 눌렀을 때만) — `update/recovery.run_recovery` 의 순서: 잠금 → 데이터(이관됐거나 모를 때 업데이트 직전 백업 복원) → 이전 판 구하기 → 적용 → 기록. 실패하면 `UPDATE_ROLLBACK_FAILED`(단계 이름·원인 코드)."""
+    """'복구'(사용자가 눌렀을 때만) — `update/recovery.run_recovery` 의 순서: 잠금 → 데이터(이관됐거나 모를 때 업데이트 직전 백업 복원) → 이전 판 구하기 → 적용(이전 판 Setup 을 띄움) → 기록(`rollback_launched` — 확정은 다음 시작). 실패하면 `UPDATE_ROLLBACK_FAILED`(단계 이름·원인 코드)."""
     capabilities.require_update_apply("업데이트 복구")
     require_confirmation(confirmed, "이전 버전으로 되돌리기")
     folder = update_folder(ctx)
@@ -346,7 +394,9 @@ def recover_update(ctx, *, adapter=None, confirmed=False, keyring=None):
     def record(result, restored):
         current = state_module.load_state(folder)
         if result == recovery.RESULT_ROLLED_BACK:
-            state_module.write_state(folder, replace(current, pending=None, notice="rolled_back", last_good=pending.from_version))
+            # 여기서 아는 것은 이전 판 Setup 을 '띄웠다' 까지다(앱이 곧 끝나 그 결과는 못 본다). 되돌려졌다는 확정(`pending` 지우기·`rolled_back`·`last_good`)은 다음 시작이 한다 —
+            # 복구 Setup 이 조용히 안 돌아 새 판이 그대로 켜져도 `pending`(연속 두 번 정상 표식 없음)이 남아 있어 복구 안내가 다시 뜬다(독립 검증 S R4). 데이터는 이미 업데이트 직전으로 복원됐다.
+            state_module.write_state(folder, replace(current, notice=state_module.NOTICE_ROLLBACK_LAUNCHED))
         else:
             state_module.write_state(folder, replace(current, notice="rollback_failed"))
 

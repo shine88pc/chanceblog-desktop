@@ -168,3 +168,7 @@ python -m venv ..\chanceblog-package-venv
 ## 업데이트 코드가 들어왔다 — 이 Package 에서는 꺼진 채 (D-790에서 D-805)
 
 앱에 업데이트 확인·서명 검증·복구 코드(`update/`·`service/update_flow.py`)가 들어왔지만 **이 Package 는 그 코드를 한 번도 부르지 않는다.** 스위치 `NET_UPDATE_CHECK`·`UPDATE_APPLY` 가 모두 `False` 이고(`--selftest` 의 `capabilities` 점검이 켜진 스위치가 출하 표와 같은지 보며, 출하 표는 비어 있다), 서명을 확인할 공개키 자리도 비어 있어 모든 서명 확인이 거절된다. 시작 파일 `packaging/gui_entry.py` 에 한 줄(`note_update_boot()`)이 더해졌지만 `UPDATE_APPLY` 가 꺼져 있으면 아무것도 읽지도 쓰지도 않고 어떤 실패도 삼킨다. 이 Package 의 사용법은 그대로다 — 새 버전은 새로 풀어서 쓰고(데이터 폴더는 같다) 설치 파일(Setup)과 자동 업데이트는 아직 없다. 규칙과 한계는 [`SECURITY.md`](SECURITY.md) '업데이트 코드' 절, 매니페스트 규칙은 [`RELEASE.md`](RELEASE.md) 의 'schema 1' 절에 있다.
+
+## 업데이트 설치 도구 어댑터(Inno Setup)가 들어왔다 — 이 Package 에서는 꺼진 채 (D-850에서 D-857)
+
+설치 도구는 Inno Setup 으로 정해져(설치 도구 시험 2차 측정 결과, 이슈 #288) 앱의 업데이트 코드에 **Inno 어댑터**(`update/apply.py` 의 `InnoAdapter`·`launch_setup` — 앱이 설치 도구를 띄우는 유일한 곳)가 들어왔다. Velopack 감지와 어댑터는 만들지 않았다(`velopack` 은 매니페스트를 읽기만 하고 적용하지 않는다). 하지만 **이 Package 는 그 코드를 한 번도 부르지 않는다** — 스위치 `UPDATE_APPLY` 가 `False` 이고 서명 공개키 자리도 비어 있다. 앱이 읽는 설치 종류는 `inno`(실행 파일 폴더에 `unins000.exe`)·`portable`·`source` 셋이고, 모르면 적용하지 않는 쪽(휴대용)이다. 설치 구현 갈래가 `packaging/` 에 만드는 `.iss` 는 앱의 기대를 지켜야 한다: 실행 파일 폴더에 제거 도구(`unins000.exe`)가 남을 것·무음 인자(`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS` — 설치 쪽 `INNO_SILENT_UPDATE_ARGS` 와 같은 값)로 끝까지 설치될 것·낮은 판 재설치(복구)를 위해 파일 복사가 `ignoreversion` 일 것. 규칙과 한계는 [`SECURITY.md`](SECURITY.md) 의 '설치 도구 어댑터(Inno Setup)' 절, 파일 역할 표는 [`RELEASE.md`](RELEASE.md) 의 '설치 종류와 파일 역할 확정' 에 있다.
