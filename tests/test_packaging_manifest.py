@@ -764,5 +764,65 @@ class CliTest(unittest.TestCase):
             self.assertEqual(list(bundle.iterdir()), [])
 
 
+class InstallerColumnsTest(unittest.TestCase):
+    """바깥 정보에 설치 파일 칸 둘(`installer`·`artifacts`)을 선택 칸으로 더한 것(V1INSTALL, D-833) — schema 번호는 그대로 1 이고, 안쪽 정보·옛 바깥 정보를 읽고 쓰는 길은 바이트까지 그대로다."""
+    RECORD = {"tool": "inno-setup", "tool_version": "6.7.1", "iscc_sha256": "a" * 64, "built_on": "local"}
+    ARTIFACTS = {"setup": {"name": pc.setup_name(ps.VERSION), "sha256": "b" * 64, "bytes": 10}, "portable": {"name": pc.zip_name(ps.VERSION), "sha256": "f" * 64, "bytes": 12345}}
+
+    def test_an_old_outer_info_has_neither_column_and_still_renders_and_round_trips_the_same_way(self):
+        info = sample_info("outer")
+        self.assertNotIn("installer", info)
+        self.assertNotIn("artifacts", info)
+        text = mm.render_json(info)
+        self.assertEqual(json.loads(text), info)
+        self.assertEqual(mm.render_json(json.loads(text)), text)
+        self.assertEqual(info["schema"], 1)
+
+    def test_the_inner_info_never_carries_the_columns_even_when_built_after_them(self):
+        for variant_info in (sample_info("inner"), sample_info("inner", trial=True)):
+            self.assertNotIn("installer", variant_info)
+            self.assertNotIn("artifacts", variant_info)
+        # 재작업 1(시험 Q 권고-10, Q42): 이름대로 **칸을 실제로 넘겨서** 본다 — 안쪽 정보는 넘겨 받아도 칸을 만들지 않고, 바깥 정보만 만든다
+        real = mm.build_info
+
+        def given_the_columns(**kwargs):
+            return real(installer=self.RECORD, artifacts=self.ARTIFACTS, **kwargs)
+
+        with mock.patch.object(mm, "build_info", side_effect=given_the_columns) as patched:
+            handed = [sample_info("inner"), sample_info("inner", trial=True)]
+            outer = sample_info("outer")
+        self.assertEqual(patched.call_count, 3)
+        for variant_info in handed:
+            self.assertNotIn("installer", variant_info)
+            self.assertNotIn("artifacts", variant_info)
+            self.assertEqual(variant_info["variant"], "inner")
+        self.assertEqual((outer["installer"], outer["artifacts"]), (self.RECORD, self.ARTIFACTS))
+        self.assertEqual(outer["schema"], 1)
+
+    def test_the_columns_are_added_to_a_copy_with_the_same_schema_and_the_old_columns_untouched(self):
+        info = sample_info("outer")
+        newer = mm.with_installer(info, self.RECORD, self.ARTIFACTS)
+        self.assertIsNot(newer, info)
+        self.assertEqual(newer["schema"], 1)
+        self.assertEqual({key: value for key, value in newer.items() if key not in ("installer", "artifacts")}, info)
+        self.assertEqual((newer["installer"], newer["artifacts"]), (self.RECORD, self.ARTIFACTS))
+
+    def test_the_sums_file_lists_the_setup_file_too_only_when_the_info_has_the_artifacts(self):
+        info = mm.with_installer(sample_info("outer"), self.RECORD, self.ARTIFACTS)
+        sums = {}
+        with ps.temp_dir() as tmp:
+            zip_path = ps.write(Path(tmp) / pc.zip_name(ps.VERSION), b"zip", binary=True)
+            mm.write_outer(tmp, info, zip_path)
+            for line in (Path(tmp) / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+                digest, name = line.split("  ")
+                sums[name] = digest
+        self.assertEqual(sums, {pc.setup_name(ps.VERSION): "b" * 64, pc.zip_name(ps.VERSION): "f" * 64})
+
+    def test_the_two_info_copies_keep_the_same_front_so_the_old_readers_do_not_notice(self):
+        info = sample_info("outer")
+        newer = mm.with_installer(info, self.RECORD, self.ARTIFACTS)
+        self.assertEqual(list(newer)[:len(info)], list(info))
+
+
 if __name__ == "__main__":
     unittest.main()
