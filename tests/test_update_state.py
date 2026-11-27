@@ -5,9 +5,11 @@
   2) 쓰기는 같은 폴더의 임시 파일에 다 쓰고 디스크까지 내린(`fsync`) 뒤 이름을 바꾼다 — 바꾸기가 막혀도(공유 위반 재시도·끝내 실패) 옛 파일이 그대로이고 임시 파일이 남지 않는다.
   3) 시작 후크: 스위치가 꺼져 있으면 **파일을 읽지도 쓰지도 않는다**. 켜면 시작 **전** 횟수가 기준(2) 미만일 때 하나 올려 저장하고(첫·둘째 시작), 기준 이상이면 저장하지 않고 복구를 알리며(셋째 시작),
      `pending.from` 이면 적용 안 됨·그 밖이면 낡은 표식 정리다. 어떤 실패도 None 이고 예외가 아니다. 이 모듈은 앱의 무거운 모듈·접속 코드를 가져오지 않는다.
+     복구 Setup 을 띄운 직후의 기록은 `rollback_launched`(표식 `pending` 은 그대로)뿐이다 — 다음 시작에서 `pending.from` 이 실행 중이면 `rolled_back` 으로 확정하고, 새 판이 그대로 켜지면 복구 안내가 다시 뜬다(독립 검증 S R4).
   4) 데이터 폴더 위치 규칙이 `service/context.py` 와 같다. 상태 파일에는 카나리 글(경로·키 모양)이 들어가지 않는다.
 네트워크·실제 시크릿 없이 돈다.
 """
+import dataclasses
 import json
 import os
 import subprocess
@@ -85,7 +87,7 @@ class StrictReadTest(TempCase):
         cases = {
             "모르는 칸": raw_of(extra=1), "빠진 칸": json.dumps({k: v for k, v in state.state_to_dict(good_state()).items() if k != "notice"}).encode(),
             "스키마 2": raw_of(schema=2), "스키마 불리언": raw_of(schema=True), "seq 불리언": raw_of(last_seq=True), "seq 음수": raw_of(last_seq=-1), "seq 글": raw_of(last_seq="1"), "seq 너무 큼": raw_of(last_seq=2 ** 54),
-            "시각 모양": raw_of(last_seen_utc="2026-12-01 04:00:00"), "시각 날짜": raw_of(last_seen_utc="2026-02-30T04:00:00Z"), "안내 모르는 값": raw_of(notice="other"),
+            "시각 모양": raw_of(last_seen_utc="2026-12-01 04:00:00"), "시각 날짜": raw_of(last_seen_utc="2026-02-30T04:00:00Z"), "안내 모르는 값": raw_of(notice="other"), "안내 비슷한 값": raw_of(notice="rollback_launch"), "안내 대소문자": raw_of(notice="Rollback_Launched"), "안내 끝 공백": raw_of(notice="rollback_launched "),
             "정상 판 글자": raw_of(last_good="x"), "확인 결과 모름": raw_of(last_check={"at": "2026-12-01T04:00:00Z", "result": "OK", "version": "", "code": ""}),
             "확인 칸 모자람": raw_of(last_check={"at": "2026-12-01T04:00:00Z", "result": "AVAILABLE"}), "코드 소문자": raw_of(last_check={"at": "2026-12-01T04:00:00Z", "result": "CHECK_FAILED", "version": "", "code": "net"}),
             "pending 글": raw_of(pending="x"), "pending 칸 모자람": raw_of(pending={"from_version": "1.0.0"}),
@@ -103,6 +105,17 @@ class StrictReadTest(TempCase):
                     state.read_state(self.folder)
                 self.assertEqual(caught.exception.reason, "corrupt")
 
+    def test_a_state_file_written_before_the_rollback_notice_existed_is_read_unchanged(self):
+        """하위 호환(독립 검증 S R4 의 코드 고침이 안내 값을 하나 늘렸다) — 그 전 판이 쓴 상태 파일(안내 값 다섯 가지, 표식이 있거나 없거나)은 글자 그대로 예전과 같은 `State` 로 읽힌다. 허용 값은 옛 다섯에 `rollback_launched` 하나만 늘었다."""
+        self.assertEqual(state.NOTICES, ("", "not_applied", "pending_stale", "rolled_back", "rollback_failed", "rollback_launched"))
+        pending_json = '{"backup_name": "full-20261201-040000", "boot_attempts": 1, "from_version": "1.0.0", "kind": "inno", "seq": 20261201030000, "started": "2026-12-01T04:00:00Z", "to_version": "1.0.1"}'
+        pending = state.Pending("1.0.0", "1.0.1", 20261201030000, "full-20261201-040000", "2026-12-01T04:00:00Z", 1, "inno")
+        for notice in ("", "not_applied", "pending_stale", "rolled_back", "rollback_failed"):
+            for pending_text, expected in ((pending_json, pending), ("null", None)):
+                with self.subTest(notice=notice, pending=bool(expected)):
+                    self.write_raw(('{"last_check": null, "last_good": "1.0.0", "last_seen_utc": "2026-12-01T04:00:00Z", "last_seq": 20261201030000, "notice": "%s", "pending": %s, "schema": 1}' % (notice, pending_text)).encode("utf-8"))
+                    self.assertEqual(state.read_state(self.folder), state.State(20261201030000, "2026-12-01T04:00:00Z", None, expected, "1.0.0", notice))
+
     def test_a_file_over_the_size_limit_is_corrupt_without_being_read_into_memory_as_json(self):
         self.write_raw(b" " * (state.MAX_STATE_BYTES + 1) + raw_of())
         with self.assertRaises(state.StateError) as caught:
@@ -110,7 +123,7 @@ class StrictReadTest(TempCase):
         self.assertEqual(caught.exception.reason, "corrupt")
 
     def test_the_boundary_values_are_accepted(self):
-        for changes in (dict(last_seq=0), dict(last_seq=2 ** 53), dict(last_seen_utc=""), dict(last_good=""), dict(pending=None), dict(last_check=None), dict(notice="rolled_back"),
+        for changes in (dict(last_seq=0), dict(last_seq=2 ** 53), dict(last_seen_utc=""), dict(last_good=""), dict(pending=None), dict(last_check=None), dict(notice="rolled_back"), dict(notice="rollback_launched"),
                         dict(pending=state.Pending("1.0.0", "1.0.1", 1, "full-20261201-040000-12", "2026-12-01T04:00:00Z", 1000, "inno"))):
             with self.subTest(changes=repr(changes)[:60]):
                 state.write_state(self.folder, good_state(**changes))
@@ -253,6 +266,61 @@ class BootHookTest(TempCase):
         empty = self.folder.parent / "nothing"
         self.assertEqual(state.note_boot(version="1.0.1", folder=empty).action, "none")
         self.assertFalse(empty.exists(), "상태 파일이 없으면 폴더도 만들지 않는다")
+
+    def launched(self, **changes):
+        """복구 Setup 을 띄운 직후의 상태 — 표식(`pending`, 횟수 2)은 그대로이고 `notice` 만 `rollback_launched`, 정상 판 기록은 아직 없다."""
+        stuck = state.Pending("1.0.0", "1.0.1", 20261201030000, "full-20261201-040000", "2026-12-01T04:00:00Z", 2, "inno")
+        values = dict(pending=stuck, notice="rollback_launched", last_good="")
+        values.update(changes)
+        self.seed(**values)
+        return stuck
+
+    def test_a_launched_rollback_is_confirmed_only_when_the_older_version_really_starts(self):
+        """독립 검증 S R4 — 복구 Setup 을 띄운 직후에는 `rollback_launched` 로만 적고 `pending` 을 남긴다. 다음 시작이 되돌릴 판(`pending.from`)이면 그때 `rolled_back` 으로 확정하고 `last_good` 을 적는다."""
+        self.launched()
+        note = state.note_boot(version="1.0.0", folder=self.folder)
+        self.assertEqual((note.action, note.pending, note.attempts_before), ("rolled_back", None, 0))
+        self.assertEqual(state.BOOT_ROLLED_BACK, "rolled_back")
+        after = state.read_state(self.folder)
+        self.assertEqual((after.pending, after.notice, after.last_good, after.last_seq), (None, "rolled_back", "1.0.0", 20261201030000), "표식을 지우고 정상 판을 적되 시퀀스는 그대로")
+        self.assertEqual(state.note_boot(version="1.0.0", folder=self.folder).action, "none", "확정은 한 번뿐이다")
+        self.launched()
+        self.assertEqual(state.note_boot(version="1.0.0+7", folder=self.folder).action, "rolled_back", "빌드 표시는 어느 판인지를 바꾸지 않는다")
+
+    def test_a_silent_rollback_failure_keeps_the_marker_and_the_two_failed_boots_safety_net(self):
+        """독립 검증 S R4 — 복구 Setup 이 조용히 안 돌아 새 판이 그대로 켜지면 표식이 남아 있어 복구 안내가 다시 뜬다(예전에는 `pending` 이 이미 지워져 다음 시작이 아무것도 몰랐다)."""
+        stuck = self.launched()
+        before = (self.folder / "state.json").read_bytes()
+        for _ in range(3):
+            note = state.note_boot(version="1.0.1", folder=self.folder)
+            self.assertEqual((note.action, note.attempts_before, note.pending), ("recovery_offered", 2, stuck))
+            self.assertEqual((self.folder / "state.json").read_bytes(), before, "안내는 아무것도 바꾸지 않는다 — 몇 번을 켜도 같다")
+        self.launched(pending=dataclasses.replace(stuck, boot_attempts=0))                      # 사용자가 일찍 복구를 눌렀다 — 횟수가 기준 미만이면 평소처럼 센다
+        note = state.note_boot(version="1.0.1", folder=self.folder)
+        self.assertEqual((note.action, note.attempts_before), ("first_boot", 0))
+        after = state.read_state(self.folder)
+        self.assertEqual((after.pending.boot_attempts, after.notice), (1, "rollback_launched"), "'띄웠다' 기록은 그대로다")
+
+    def test_the_rollback_marker_is_exactly_that_notice_and_no_other_notice_turns_not_applied_into_rolled_back(self):
+        for notice in state.NOTICES:
+            if notice == "rollback_launched":
+                continue
+            with self.subTest(notice=notice):
+                self.launched(notice=notice)
+                note = state.note_boot(version="1.0.0", folder=self.folder)
+                self.assertEqual(note.action, "not_applied")
+                after = state.read_state(self.folder)
+                self.assertEqual((after.pending, after.notice, after.last_good), (None, "not_applied", ""))
+        self.launched()                                                                          # 판이 둘 다 아니면(그 사이 또 다른 판을 깔았다) 낡은 표식으로 정리한다
+        self.assertEqual((state.note_boot(version="2.0.0", folder=self.folder).action, state.read_state(self.folder).notice), ("stale_cleared", "pending_stale"))
+
+    def test_a_failed_write_while_confirming_leaves_everything_as_it_was_and_the_next_start_confirms(self):
+        self.launched()
+        before = (self.folder / "state.json").read_bytes()
+        with mock.patch.object(state, "write_state", side_effect=state.StateError("write")):
+            self.assertIsNone(state.note_boot(version="1.0.0", folder=self.folder))
+        self.assertEqual((self.folder / "state.json").read_bytes(), before)
+        self.assertEqual(state.note_boot(version="1.0.0", folder=self.folder).action, "rolled_back", "다음 시작이 같은 일을 다시 한다")
 
     def test_every_failure_is_none_and_never_an_exception(self):
         self.seed()

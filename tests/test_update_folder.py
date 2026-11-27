@@ -84,7 +84,7 @@ class FolderCase(unittest.TestCase):
         self.assertEqual(external.registered_kinds(), (), "폴더에서 업데이트는 접속 어댑터를 꽂지 않는다")
 
     def check(self, **overrides):
-        options = dict(current_version="1.0.0", install_kind="velopack", keyring=fs.RING)
+        options = dict(current_version="1.0.0", install_kind="inno", keyring=fs.RING)
         options.update(overrides)
         return update_flow.check_from_folder(self.ctx, self.chosen, **options)
 
@@ -113,15 +113,15 @@ class CheckTest(FolderCase):
     def test_the_release_candidate_channel_is_read_from_a_folder_but_never_online(self):
         candidate = fs.Release("1.0.1-rc.1", channel="rc")
         picked = lay_out(candidate, self.tmp / "rc")
-        result = update_flow.check_from_folder(self.ctx, picked, current_version="1.0.0", install_kind="velopack", keyring=fs.RING)
+        result = update_flow.check_from_folder(self.ctx, picked, current_version="1.0.0", install_kind="inno", keyring=fs.RING)
         self.assertEqual((result.status, result.manifest.channel, result.manifest.version), ("AVAILABLE", "rc", "1.0.1-rc.1"))
         with self.assertRaises(manifest_module.ManifestError) as caught:
-            manifest_module.verify_manifest(candidate.manifest_bytes, candidate.signature, keyring=fs.RING, now=fs.NOW, current_version="1.0.0", install_kind="velopack")
+            manifest_module.verify_manifest(candidate.manifest_bytes, candidate.signature, keyring=fs.RING, now=fs.NOW, current_version="1.0.0", install_kind="inno")
         self.assertEqual((caught.exception.code, caught.exception.reason), ("UPDATE_MANIFEST_INVALID", "channel"))
 
     def test_the_rules_are_the_online_rules(self):
         cases = (("낮은 판", dict(current_version="2.0.0"), "UPDATE_DOWNGRADE_BLOCKED"), ("최소 버전", dict(current_version="0.9.0"), "UPDATE_NEEDS_MANUAL_INSTALL"),
-                 ("설치 종류", dict(install_kind="inno"), "UPDATE_NEEDS_MANUAL_INSTALL"), ("출하 키(비어 있음)", dict(keyring=keys.shipped_keyring()), "UPDATE_SIGNATURE_INVALID"),
+                 ("설치 종류", dict(install_kind="velopack"), "UPDATE_NEEDS_MANUAL_INSTALL"), ("출하 키(비어 있음)", dict(keyring=keys.shipped_keyring()), "UPDATE_SIGNATURE_INVALID"),
                  ("현재 버전이 글이 아님", dict(current_version="not-a-version"), "UPDATE_CHECK_FAILED"))
         for label, overrides, code in cases:
             with self.subTest(label=label):
@@ -149,7 +149,7 @@ class CheckTest(FolderCase):
     def test_a_missing_or_unusable_folder_and_files_are_refused_without_the_path_in_the_reason(self):
         def reason(path):
             try:
-                update_flow.check_from_folder(self.ctx, path, current_version="1.0.0", install_kind="velopack", keyring=fs.RING)
+                update_flow.check_from_folder(self.ctx, path, current_version="1.0.0", install_kind="inno", keyring=fs.RING)
             except AppError as error:
                 return error.code, str(error.detail)
             return None, ""
@@ -172,19 +172,19 @@ class CheckTest(FolderCase):
         trap = self.tmp / "trap"
         lay_out(self.release, trap, skip=("update-manifest.json",))
         (trap / "update-manifest.json").mkdir()
-        self.assertEqual(code_of(update_flow.check_from_folder, self.ctx, trap, current_version="1.0.0", install_kind="velopack", keyring=fs.RING), "UPDATE_MANIFEST_INVALID")
+        self.assertEqual(code_of(update_flow.check_from_folder, self.ctx, trap, current_version="1.0.0", install_kind="inno", keyring=fs.RING), "UPDATE_MANIFEST_INVALID")
         linked = self.tmp / "linked"
         lay_out(self.release, linked, skip=("update-manifest.json",))
         try:
             os.symlink(self.chosen / "update-manifest.json", linked / "update-manifest.json")
         except (OSError, NotImplementedError):
             self.skipTest("이 환경은 링크를 만들 수 없다")
-        self.assertEqual(code_of(update_flow.check_from_folder, self.ctx, linked, current_version="1.0.0", install_kind="velopack", keyring=fs.RING), "UPDATE_MANIFEST_INVALID", "링크인 매니페스트는 따라가지 않는다")
+        self.assertEqual(code_of(update_flow.check_from_folder, self.ctx, linked, current_version="1.0.0", install_kind="inno", keyring=fs.RING), "UPDATE_MANIFEST_INVALID", "링크인 매니페스트는 따라가지 않는다")
         try:
             os.symlink(self.chosen, self.tmp / "folder-link", target_is_directory=True)
         except (OSError, NotImplementedError):
             return
-        self.assertEqual(code_of(update_flow.check_from_folder, self.ctx, self.tmp / "folder-link", current_version="1.0.0", install_kind="velopack", keyring=fs.RING), "UPDATE_MANIFEST_INVALID", "링크인 폴더도 따라가지 않는다")
+        self.assertEqual(code_of(update_flow.check_from_folder, self.ctx, self.tmp / "folder-link", current_version="1.0.0", install_kind="inno", keyring=fs.RING), "UPDATE_MANIFEST_INVALID", "링크인 폴더도 따라가지 않는다")
 
 
 class StageTest(FolderCase):
@@ -195,7 +195,7 @@ class StageTest(FolderCase):
     def test_the_needed_files_are_copied_whole_and_verified_and_the_chosen_folder_is_untouched(self):
         before = snapshot(self.chosen)
         staged = self.stage()
-        self.assertEqual(sorted(staged.files), ["feed", "package"], "Velopack 은 패키지와 피드만 복사한다")
+        self.assertEqual(sorted(staged.files), ["setup"], "Inno 는 Setup 하나만 복사한다")
         for role, path in staged.files.items():
             entry = staged.manifest.file(role)
             self.assertEqual(Path(path).read_bytes(), self.release.bodies[entry.name])
@@ -210,10 +210,10 @@ class StageTest(FolderCase):
         seen = []
         self.stage(progress=lambda fraction, text: seen.append((round(fraction, 2), text)))
         self.assertEqual(seen[0][0], 0.0)
-        self.assertEqual(seen[-1], (1.0, "2/2"))
+        self.assertEqual(seen[-1], (1.0, "1/1"))
 
     def test_a_missing_asset_a_wrong_size_and_a_same_size_change_are_refused_and_leave_nothing(self):
-        package = next(name for name in self.release.bodies if name.endswith(".nupkg"))
+        package = next(name for name in self.release.bodies if name.endswith("-Setup.exe"))          # (변수 이름은 옛 그대로 — 받는 파일은 이제 Setup 하나다)
         cases = (("자산 없음", dict(skip=(package,)), "UPDATE_MANIFEST_INVALID"), ("짧은 파일", dict(replace={package: self.release.bodies[package][:-1]}), "UPDATE_SIGNATURE_INVALID"),
                  ("긴 파일", dict(replace={package: self.release.bodies[package] + b"x"}), "UPDATE_SIGNATURE_INVALID"),
                  ("같은 크기 다른 내용", dict(replace={package: bytes([self.release.bodies[package][0] ^ 1]) + self.release.bodies[package][1:]}), "UPDATE_SIGNATURE_INVALID"))
@@ -225,7 +225,7 @@ class StageTest(FolderCase):
                 self.assertEqual(self.staging_runs(), [], "실패하면 임시 폴더를 남기지 않는다")
 
     def test_a_directory_in_place_of_an_asset_is_refused(self):
-        package = next(name for name in self.release.bodies if name.endswith(".nupkg"))
+        package = next(name for name in self.release.bodies if name.endswith("-Setup.exe"))          # (변수 이름은 옛 그대로 — 받는 파일은 이제 Setup 하나다)
         self.chosen = lay_out(self.release, self.tmp / "dir-asset", skip=(package,))
         (self.chosen / package).mkdir()
         check = self.check()
@@ -233,7 +233,7 @@ class StageTest(FolderCase):
         self.assertEqual(self.staging_runs(), [])
 
     def test_a_file_that_grows_while_it_is_copied_is_refused_and_removed(self):
-        package = next(name for name in self.release.bodies if name.endswith(".nupkg"))
+        package = next(name for name in self.release.bodies if name.endswith("-Setup.exe"))          # (변수 이름은 옛 그대로 — 받는 파일은 이제 Setup 하나다)
         entry = next(item for item in self.release.dict["files"] if item["name"] == package)
         self.chosen = lay_out(self.release, self.tmp / "grown", replace={package: self.release.bodies[package] + b"extra" * 100})
         check = self.check()
@@ -247,7 +247,7 @@ class StageTest(FolderCase):
         self.assertEqual(self.staging_runs(), [])
 
     def test_the_reasons_never_carry_the_folder_path_or_file_names(self):
-        package = next(name for name in self.release.bodies if name.endswith(".nupkg"))
+        package = next(name for name in self.release.bodies if name.endswith("-Setup.exe"))          # (변수 이름은 옛 그대로 — 받는 파일은 이제 Setup 하나다)
         self.chosen = lay_out(self.release, self.tmp / "secret-place-name", skip=(package,))
         check = self.check()
         with self.assertRaises(AppError) as caught:
@@ -270,7 +270,7 @@ class StageTest(FolderCase):
 class WholeWalkTest(FolderCase):
     def test_the_session_walks_check_prepare_apply_in_the_same_order_as_online_with_no_connection(self):
         adapter = fs.FakeAdapter(self.update)
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING, adapter=adapter)
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING, adapter=adapter)
         before = snapshot(self.chosen)
         self.assertEqual(session.check_folder(self.chosen).status, "AVAILABLE")
         self.assertEqual(session.state, machine.AVAILABLE)
@@ -279,14 +279,14 @@ class WholeWalkTest(FolderCase):
         result = session.apply(confirmed=True)
         self.assertEqual(session.state, machine.HANDED_OFF)
         self.assertTrue(result.handed_off)
-        self.assertEqual([(roles, old, new, recovery) for roles, old, new, recovery in adapter.calls], [(["feed", "package"], "1.0.0", "1.0.1", False)])
+        self.assertEqual([(roles, old, new, recovery) for roles, old, new, recovery in adapter.calls], [(["setup"], "1.0.0", "1.0.1", False)])
         self.assertEqual((adapter.pending_seen[0].from_version, adapter.pending_seen[0].to_version), ("1.0.0", "1.0.1"), "넘기기 전에 pending 이 적혀 있었다")
         after = state.read_state(self.update)
         self.assertEqual((after.last_seq, after.pending.to_version, after.pending.backup_name == result.backup_name), (self.release.dict["seq"], "1.0.1", True))
         self.assertEqual(snapshot(self.chosen), before, "고른 폴더는 끝까지 그대로")
 
     def test_a_check_from_a_folder_cannot_be_downloaded_from_the_internet_and_the_machine_does_not_move(self):
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.update))
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING, adapter=fs.FakeAdapter(self.update))
         session.check_folder(self.chosen)
         with fs.switches_on("NET_UPDATE_CHECK"):
             with self.assertRaises(AppError) as caught:
@@ -294,15 +294,15 @@ class WholeWalkTest(FolderCase):
         self.assertEqual((caught.exception.code, session.state), ("UPDATE_CHECK_FAILED", machine.AVAILABLE))
 
     def test_a_failed_folder_check_returns_the_machine_to_the_failed_state_with_the_error_kept(self):
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=keys.shipped_keyring())
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=keys.shipped_keyring())
         with self.assertRaises(AppError):
             session.check_folder(self.chosen)
         self.assertEqual((session.state, session.error.code), (machine.CHECK_FAILED, "UPDATE_SIGNATURE_INVALID"))
 
     def test_a_failed_copy_returns_the_machine_to_idle(self):
-        package = next(name for name in self.release.bodies if name.endswith(".nupkg"))
+        package = next(name for name in self.release.bodies if name.endswith("-Setup.exe"))          # (변수 이름은 옛 그대로 — 받는 파일은 이제 Setup 하나다)
         self.chosen = lay_out(self.release, self.tmp / "short", replace={package: self.release.bodies[package][:-5]})
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING)
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING)
         session.check_folder(self.chosen)
         with self.assertRaises(AppError):
             session.prepare_from_folder()
@@ -311,7 +311,7 @@ class WholeWalkTest(FolderCase):
 
 class SwitchTest(FolderCase):
     def test_with_the_apply_switch_off_every_entry_refuses_before_reading_or_writing_anything(self):
-        session = update_flow.UpdateSession(self.ctx, install_kind="velopack", current_version="1.0.0", keyring=fs.RING)
+        session = update_flow.UpdateSession(self.ctx, install_kind="inno", current_version="1.0.0", keyring=fs.RING)
         check = update_flow.CheckResult("AVAILABLE", self.check().manifest, True, "1.0.0", source="folder", folder=str(self.chosen))
         state_file = self.update / "state.json"
         if state_file.exists():

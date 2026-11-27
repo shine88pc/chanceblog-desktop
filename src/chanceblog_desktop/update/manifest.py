@@ -47,8 +47,8 @@ MAX_VALID_DAYS = 200                           # 발행에서 만료까지의 �
 CLOCK_BEHIND_LIMIT = timedelta(days=2)         # 전에 본 시각보다 이만큼 이상 시계가 뒤로 가 있으면 유효 기간을 믿지 않는다
 CHANNELS_ONLINE = ("stable",)
 CHANNELS_OFFLINE = ("stable", "rc")            # 후보(rc)는 폴더에서 업데이트(오프라인 적용)에서만
-INSTALLER_KINDS = ("velopack", "inno")
-INSTALL_KINDS = INSTALLER_KINDS + ("portable", "source")     # 지금 앱의 설치 종류(휴대용·소스 실행은 적용하지 않는다)
+INSTALLER_KINDS = ("velopack", "inno")         # 매니페스트가 이름으로 부를 수 있는 설치 도구 — `inno` 만 적용 어댑터가 있고 `velopack` 은 읽기만 한다(결정 D-811·D-850: 이미 서명된 매니페스트의 모양을 깨지 않으려고 읽되 적용은 거절)
+INSTALL_KINDS = ("inno", "portable", "source")  # 지금 앱의 설치 종류(Velopack 감지는 지웠다 — 휴대용·소스 실행은 적용하지 않는다)
 FILE_ROLES = ("setup", "package", "feed", "portable")
 TOP_KEYS = frozenset({"schema", "product", "channel", "version", "tag", "seq", "issued_utc", "expires_utc", "min_version", "key_id", "commit", "installer", "notes", "files"})
 INSTALLER_KEYS = frozenset({"kind", "pack_id"})

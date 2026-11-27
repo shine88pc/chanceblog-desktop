@@ -3,7 +3,7 @@
 지키는 것:
   1) `http`·`ssl` 을 가져오는 파일은 `net/client.py` 하나뿐이고 `socket` 은 `net/loopback.py`(BLOGGER 갈래가 더했다 — 지금 1곳)뿐이다. `urllib`(`parse` 말고)·`requests`·`webbrowser`·`ftplib` 등은 어디서도 가져오지 않는다(NT-10·11).
   2) TLS 를 약화하는 이름(검증 끄기·낮은 버전·암호 목록 바꾸기)이 `src/` 어디에도 없다(NT-12).
-  3) 범주 표 다섯은 정확하고 서로 겹치지 않으며 접속·쓰기 범주의 이유에 관문 이름이 있다. 탐지기는 합성 소스 나무에서 새 접속 가져오기를 잡는다(NT-14·15). 허용 표가 '정확히 6곳' 이다.
+  3) 범주 표 다섯은 정확하고 서로 겹치지 않으며 접속·쓰기 범주의 이유에 관문 이름이 있다. 탐지기는 합성 소스 나무에서 새 접속 가져오기를 잡는다(NT-14·15). 허용 표가 '정확히 6곳' 이었고 UPDATE U-4(v1update4)가 범주 표 하나(`update_setup`, 설치 도구를 띄우는 `update/apply.py` 한 곳)를 더해 **정확히 7곳**이다.
   4) vendor 의 `fetch`·`urlopen` 은 앱이 한 번도 부르지 않는다 — 배포 확인은 `fetcher` 를 주입한다(NT-16).
   5) 제3자 고지는 앱이 `ssl` 을 쓰고 인증서 묶음을 싣지 않는다고 사실대로 적고(NT-61), D-415 의 거절 목록은 한 줄도 바뀌지 않았으며(NT-63) `ARCHITECTURE.md` 에 `net/` 행이 있고(NT-64) 새 오류 문구는 쉬운 말로 시작한다(NT-65).
 """
@@ -282,14 +282,14 @@ class KeyLogScopeTest(unittest.TestCase):
 
 class CategoryTablesTest(unittest.TestCase):
     def test_allowed_categories_are_exact_disjoint_and_each_network_reason_names_its_gate(self):
-        """NT-14 — E1–E3: 범주 표는 정확하고(1·1·2·2·1 = 7곳) 서로 겹치지 않고 합집합이 허용 표이며, 접속·쓰기 범주의 이유에 `require_…` 관문 이름이 있다."""
+        """NT-14 — E1–E3: 범주 표는 정확하고(1·1·2·2·1 = 7곳 + UPDATE U-4 의 설치 도구 1곳 = 8곳) 서로 겹치지 않고 합집합이 허용 표이며, 접속·쓰기 범주의 이유에 `require_…` 관문 이름이 있다."""
         sizes = {name: len(table) for name, table in sro.ALLOWED_CATEGORIES.items()}
-        self.assertEqual(sizes, {"git_write": 1, "local_worker": 1, "browser": 2, "net_client": 2, "loopback": 1})
+        self.assertEqual(sizes, {"git_write": 1, "local_worker": 1, "browser": 2, "net_client": 2, "loopback": 1, "update_setup": 1})
         keys = [key for table in sro.ALLOWED_CATEGORIES.values() for key in table]
         self.assertEqual(len(keys), len(set(keys)), "범주 표의 키가 겹친다")
         self.assertEqual(sorted(keys), sorted(sro.ALLOWED))
-        self.assertEqual(len(sro.ALLOWED), 7)
-        for table in (sro.ALLOWED_GIT_WRITE, sro.ALLOWED_NET_CLIENT, sro.ALLOWED_LOOPBACK):
+        self.assertEqual(len(sro.ALLOWED), 8)
+        for table in (sro.ALLOWED_GIT_WRITE, sro.ALLOWED_NET_CLIENT, sro.ALLOWED_LOOPBACK, sro.ALLOWED_UPDATE_SETUP):
             for key, reason in table.items():
                 self.assertRegex(reason, r"require_[a-z_]+", key)
         for key in sro.ALLOWED_NET_CLIENT:

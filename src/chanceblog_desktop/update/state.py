@@ -7,6 +7,8 @@
 `note_boot()` 는 앱이 켜질 때 가장 먼저(무거운 모듈을 불러오기 전에) 한 번 부르는 후크다(`packaging/gui_entry.py` 의 한 줄). **꺼진 채 출하한다**: 스위치 `UPDATE_APPLY` 가 꺼져 있으면 아무것도 읽지도 쓰지도 않는다
 (적용이 없으면 진행 중인 적용도 없다). 켜져 있어도 어떤 실패(파일 없음·깨짐·권한)든 조용히 None 을 돌려줄 뿐 앱을 못 켜게 만들지 않는다. 하는 일: `pending.to` 가 지금 버전이면 시작 **전** 횟수가 기준(2) 미만이면 횟수를 하나 올려
 저장하고(`first_boot`), 기준 이상이면 복구를 안내한다(`recovery_offered` — 연속 두 번 정상 표식이 없었다). `pending.from` 이 지금 버전이면 적용되지 않은 것이라 표식을 지우고 안내만 남긴다(`not_applied`).
+**복구도 '띄웠다' 와 '됐다' 를 가른다**(독립 검증 S R4): 복구가 이전 판 Setup 을 띄운 직후에는 `notice` 를 `rollback_launched` 로만 적고 `pending` 은 지우지 않는다(복구 Setup 이 조용히 안 돌아도 연속 두 번 안전망이 남는다).
+다음 시작에서 실행 중인 판이 `pending.from`(되돌릴 판)이면 그때 비로소 `rolled_back` 으로 확정하고 `pending` 을 지우며 `last_good` 을 적는다(`rolled_back`). 새 판 `pending.to` 가 그대로 켜지면 표식이 남아 있으므로 위의 규칙대로 복구 안내가 다시 뜬다.
 읽은 파일이 깨졌으면 `.bak` 으로 옮겨 두고 처음 상태로 시작한다(알려진 한계: 이때 `last_seq` 가 0 으로 돌아가 재전송 방어가 약해진다 — 같은 사용자 권한의 변조는 앱 파일도 바꿀 수 있어 새 권한이 아니다).
 """
 from __future__ import annotations
@@ -37,13 +39,15 @@ STATE_KEYS = frozenset({"schema", "last_seq", "last_seen_utc", "last_check", "pe
 PENDING_KEYS = frozenset({"from_version", "to_version", "seq", "backup_name", "started", "boot_attempts", "kind"})
 CHECK_KEYS = frozenset({"at", "result", "version", "code"})
 CHECK_RESULTS = ("UP_TO_DATE", "AVAILABLE", "CHECK_FAILED")
-NOTICES = ("", "not_applied", "pending_stale", "rolled_back", "rollback_failed")
+NOTICE_ROLLBACK_LAUNCHED = "rollback_launched"        # 복구가 이전 판 Setup 을 띄웠다 — 되돌려졌다는 확정은 다음 시작이 한다(`pending` 은 그대로 남는다)
+NOTICES = ("", "not_applied", "pending_stale", "rolled_back", "rollback_failed", NOTICE_ROLLBACK_LAUNCHED)
 KINDS = ("velopack", "inno")
 BOOT_NONE = "none"
 BOOT_FIRST = "first_boot"
 BOOT_RECOVERY = "recovery_offered"
 BOOT_NOT_APPLIED = "not_applied"
 BOOT_STALE = "stale_cleared"
+BOOT_ROLLED_BACK = "rolled_back"                      # 복구가 띄운 이전 판이 실제로 켜졌다 — 표식을 지우고 `rolled_back` 안내로 확정
 
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", re.ASCII)
 _BACKUP = re.compile(r"full-[0-9]{8}-[0-9]{6}(?:-[0-9]{1,2})?", re.ASCII)
@@ -285,6 +289,9 @@ def _note_boot(folder, version):
         write_state(folder, replace(state, pending=bumped))
         return BootNote(BOOT_FIRST, bumped, pending.boot_attempts)
     if versions.compare(version, pending.from_version) == 0:
+        if state.notice == NOTICE_ROLLBACK_LAUNCHED:
+            write_state(folder, replace(state, pending=None, notice="rolled_back", last_good=pending.from_version))
+            return BootNote(BOOT_ROLLED_BACK, None)
         write_state(folder, replace(state, pending=None, notice="not_applied"))
         return BootNote(BOOT_NOT_APPLIED, None)
     write_state(folder, replace(state, pending=None, notice="pending_stale"))
@@ -304,6 +311,7 @@ def note_boot(*, environ=None, version=None, data_dir=None, folder=None):
         return None
 
 
-__all__ = ["BOOT_FIRST", "BOOT_NONE", "BOOT_NOT_APPLIED", "BOOT_RECOVERY", "BOOT_STALE", "BootNote", "DIR_NAME", "FILE_NAME", "HEALTHY_AFTER_SECONDS", "KINDS", "LastCheck", "NOTICES", "Pending",
+__all__ = ["BOOT_FIRST", "BOOT_NONE", "BOOT_NOT_APPLIED", "BOOT_RECOVERY", "BOOT_ROLLED_BACK", "BOOT_STALE", "BootNote", "DIR_NAME", "FILE_NAME", "HEALTHY_AFTER_SECONDS", "KINDS", "LastCheck", "NOTICES",
+           "NOTICE_ROLLBACK_LAUNCHED", "Pending",
            "RECOVERY_AFTER_FAILED_BOOTS", "State", "StateError", "default_data_dir", "keep_bad_copy", "load_state", "note_boot", "parse_state", "read_current_version", "read_state", "state_to_dict",
            "update_folder", "utc_text", "write_state"]

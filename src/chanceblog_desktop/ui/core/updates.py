@@ -6,7 +6,7 @@
   · 휴대용·소스 실행은 새 압축 파일 안내와 '릴리스 페이지 열기' 뿐이다(프로그램이 스스로 바뀌지 않는다). 복구 안내가 필요한 상태는 확인 스위치와 상관없이 보인다.
   · 모든 동적 글(안내 글·오류 문구·버전)은 `display_text`(가리기가 먼저, 줄이기가 나중)를 거친다. 영문 상태 이름은 글에 담기지 않는다 — 글은 문구표(`T`)·오류 표에서만 온다.
   · 오류는 오류 표의 문구와 '하실 일'(카드용, 명령줄 꼬리 없음)과 오류 이름(진단용)을 그대로 보인다.
-  · '파일에서 업데이트…'(`folder_action`, 폴더에서 업데이트 — 접속이 없어 확인 스위치와 상관없다)는 **설치(`apply_enabled`)가 켜져 있고 설치형(velopack·inno)이고 조용한 상태**(확인 전·최신·새 버전·실패)일 때만 보인다.
+  · '파일에서 업데이트…'(`folder_action`, 폴더에서 업데이트 — 접속이 없어 확인 스위치와 상관없다)는 **설치(`apply_enabled`)가 켜져 있고 설치형(`inno`)이고 조용한 상태**(확인 전·최신·새 버전·실패)일 때만 보인다.
 """
 from __future__ import annotations
 
@@ -77,9 +77,9 @@ def _make(key, lines, **options):
 
 
 def card_view(*, check_enabled, apply_enabled, install_kind, state, version, last_check=None, available_version="", summary="", error=None, progress=None, notice=""):
-    """상태 한 가지 → 카드 데이터 한 장. `state` 는 상태 기계의 상태 이름(`update/machine.py`), `install_kind` 는 velopack·inno·portable·source(또는 모르면 빈 글)."""
+    """상태 한 가지 → 카드 데이터 한 장. `state` 는 상태 기계의 상태 이름(`update/machine.py`), `install_kind` 는 inno·portable·source(또는 모르면 빈 글)."""
     name = STATE_NAME.get(state, "")
-    installed = install_kind in ("velopack", "inno")
+    installed = install_kind in ("inno",)                       # 설치형은 Inno Setup 하나(결정 D-811 — Velopack 감지는 지웠다. `update/apply.py` 의 `INSTALLED_KINDS` 와 같은 값이고 시험이 같음을 지킨다)
     folder = T["upd_from_folder"] if apply_enabled and installed and state in FOLDER_STATES else ""
     # 복구 안내는 스위치와 상관없이 보인다(이미 깔린 새 판이 안 켜지는 사용자를 막지 않는다)
     if state in ("UNHEALTHY", "RECOVERY_OFFERED"):

@@ -1,4 +1,4 @@
-"""업데이트 서비스 시험 도우미(시험이 아니다 — v1update U-3): 가짜 릴리스 서버·서명된 가짜 릴리스·가짜 어댑터·시험 맥락.
+"""업데이트 서비스 시험 도우미(시험이 아니다 — v1update U-3): 가짜 릴리스 서버·서명된 가짜 릴리스·가짜 어댑터·시험 맥락. 설치 도구는 Inno Setup 이라(D-811) 가짜 릴리스의 기본 설치 종류도 `inno` 다(받는 파일은 `setup` 하나 — 릴리스는 `package`·`feed` 도 올려 두지만 앱은 받지 않는다).
 
 **진짜 접속은 한 번도 없다** — 서버는 `net_support.FakeSocket` 위의 가짜(소켓이 열리지 않는다)이고, 앱의 진짜 접속 틀(`NetClient`)이 그 위에서 돈다: 표 검사·머리글·이동 판정·크기·해시가 모두 진짜 코드다.
 릴리스는 `update_support` 의 임시 키로 서명한다(출하 키는 비어 있어 시험이 키 목록을 직접 만들어 넘긴다). 서버는 GitHub 처럼 `latest/download` → 같은 호스트의 태그 길 → 자산 호스트로 두 번 이동시킨다.
@@ -90,7 +90,7 @@ class ReleaseServer:
 class Release:
     """서명된 가짜 릴리스 하나 — 매니페스트·서명·파일 본문을 만들고 서버에 올린다."""
 
-    def __init__(self, version="1.0.1", *, seq=None, seed=us.SeededTestCase.SEED_A, kind="velopack", sizes=(3000, 400), min_version="1.0.0", issued="2026-12-01T03:00:00Z", expires="2027-05-30T03:00:00Z", pack_id="ChanceBlogDesktopApp", channel="stable"):
+    def __init__(self, version="1.0.1", *, seq=None, seed=us.SeededTestCase.SEED_A, kind="inno", sizes=(3000, 400), min_version="1.0.0", issued="2026-12-01T03:00:00Z", expires="2027-05-30T03:00:00Z", pack_id="ChanceBlogDesktopApp", channel="stable"):
         self.version = version
         self.tag = "v" + version
         self.seed = seed
@@ -152,7 +152,7 @@ class FlowHarness(ns.Harness):
 class FakeAdapter(apply.ApplyAdapter):
     """설치 도구를 띄우지 않는 가짜 어댑터 — 넘겨 받은 것과 그 순간의 디스크 상태를 기록한다."""
 
-    def __init__(self, folder, *, kind="velopack", fail=None, kill=None):
+    def __init__(self, folder, *, kind="inno", fail=None, kill=None):
         self.kind = kind
         self.folder = folder
         self.fail = fail

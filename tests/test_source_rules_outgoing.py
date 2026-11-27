@@ -10,8 +10,11 @@
 (`probe_scanner.py` 의 목록)이 모두 잡히고 지금 소스는 위반이 0 이다.
 
 덧붙임(NET 갈래, D-735 — 운영자 확인 038 ①): 허용 목록을 **범주 표**로 쪼갰다(`ALLOWED_GIT_WRITE`·`ALLOWED_LOCAL_WORKER`·`ALLOWED_BROWSER`·`ALLOWED_NET_CLIENT`·`ALLOWED_LOOPBACK`) — 뒤 갈래가 같은 줄을 고쳐 병합 충돌을 내지 않고 **자기 범주 표에 한 줄**만 더하게 하려는 것이다.
-`ALLOWED` 는 다섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 7곳: 1 + 1 + 2 + 2 + 1 — BLOGGER 갈래가 루프백 한 줄을 더했다, D-771). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
+`ALLOWED` 는 여섯 표의 합집합(키가 겹치지 않음을 시험이 확인)이고 '정확히 N곳' 단언은 그대로다(지금 8곳: 1 + 1 + 2 + 2 + 1 + 1 — BLOGGER 갈래가 루프백 한 줄을(D-771)·UPDATE U-4 가 설치 도구 한 줄을 더했다). 더 엄격해진 것: 접속·쓰기 범주의 이유 글에는 **관문 이름(`require_…`)** 이 들어 있어야 하고,
 `http`·`ssl` 은 `net/client.py` 한 파일에만, `socket` 은 `net/loopback.py` 한 파일에만(지금 1곳) 허용되며 `urllib`(`parse` 말고) 항목과 그 밖의 하위 프로세스 항목은 여전히 허용 표에 없다.
+
+덧붙임(UPDATE U-4, v1update4 — 설치 도구 어댑터, 결정 D-850 이상): 범주 표를 하나 더했다(`ALLOWED_UPDATE_SETUP` — 앱이 Inno Setup 을 띄우는 `update/apply.py` 의 `subprocess` **정확히 한 곳**). `ALLOWED` 는 여섯 표의 합집합이 되어 **정확히 N+1 곳**이고
+(옛 단언을 지운 곳 없이 이 표만 더한다 — 이 표의 이유에도 관문 이름 `require_update_apply` 가 있어야 하고, 그 파일이 바깥과 닿는 이름은 `subprocess` 하나뿐임을 따로 못박는다), 하위 프로세스를 띄우는 허용은 둘에서 **셋**(git·글자 읽기 작업자·설치 도구)이 됐다.
 """
 import ast
 import sys
@@ -63,8 +66,11 @@ ALLOWED_NET_CLIENT = {                      # 정확히 2곳 — 새 인터넷 �
 ALLOWED_LOOPBACK = {                        # 정확히 1곳 — BLOGGER 갈래(D-771)가 더했다
     ("net/loopback.py", "socket"): '로그인 코드를 받으려고 이 PC 안(127.0.0.1)에서 **한 번만** 듣는 유일한 곳 — `capabilities.require_net("blogger_oauth", …)` 가 공개 함수의 첫 문장이고 바깥 주소로 나가는 연결은 만들지 않으며 주소는 글자 `127.0.0.1` 하나뿐이다',
 }
-ALLOWED_CATEGORIES = {"git_write": ALLOWED_GIT_WRITE, "local_worker": ALLOWED_LOCAL_WORKER, "browser": ALLOWED_BROWSER, "net_client": ALLOWED_NET_CLIENT, "loopback": ALLOWED_LOOPBACK}
-ALLOWED = {**ALLOWED_GIT_WRITE, **ALLOWED_LOCAL_WORKER, **ALLOWED_BROWSER, **ALLOWED_NET_CLIENT, **ALLOWED_LOOPBACK}
+ALLOWED_UPDATE_SETUP = {                    # 정확히 1곳 — 업데이트 설치 도구(Inno Setup)를 띄운다(UPDATE U-4, 결정 D-850 이상). 접속은 설치 도구가 하는 일이 아니라 앱이 먼저 받아 검증한 파일만 넘긴다
+    ("update/apply.py", "subprocess"): "검증된 Inno Setup 을 끊어서 띄우는 유일한 곳(`launch_setup`) — 업데이트 설치 관문(`capabilities.require_update_apply`)이 첫 문장이라 이 빌드에서는 한 번도 띄우지 않고, 인자는 고정 목록·셸 없음·출력은 읽지 않으며 종료 코드도 기다리지 않는다(앱이 먼저 끝난다)",
+}
+ALLOWED_CATEGORIES = {"git_write": ALLOWED_GIT_WRITE, "local_worker": ALLOWED_LOCAL_WORKER, "browser": ALLOWED_BROWSER, "net_client": ALLOWED_NET_CLIENT, "loopback": ALLOWED_LOOPBACK, "update_setup": ALLOWED_UPDATE_SETUP}
+ALLOWED = {**ALLOWED_GIT_WRITE, **ALLOWED_LOCAL_WORKER, **ALLOWED_BROWSER, **ALLOWED_NET_CLIENT, **ALLOWED_LOOPBACK, **ALLOWED_UPDATE_SETUP}
 
 # (파일, 쓰는 것) → 이유. 네이티브·동적 호출의 전부다(AS-S1 권고-6, D-611) — 새 파일이 `ctypes` 등을 가져오면 이 시험이 빨개지고, 이유 없이는 표에 더할 수 없다.
 NATIVE_ALLOWED = {
@@ -237,18 +243,20 @@ class OutgoingCallSitesTest(unittest.TestCase):
     def test_every_allowance_has_a_real_reason(self):
         for key, reason in ALLOWED.items():
             self.assertGreater(len(reason), 20, key)
-        for table in (ALLOWED_GIT_WRITE, ALLOWED_NET_CLIENT, ALLOWED_LOOPBACK):                 # NET 설계서 E3 — 접속·쓰기 범주는 이유에 관문 이름이 들어 있어야 한다(더 엄격)
+        for table in (ALLOWED_GIT_WRITE, ALLOWED_NET_CLIENT, ALLOWED_LOOPBACK, ALLOWED_UPDATE_SETUP):                 # NET 설계서 E3 — 접속·쓰기 범주는 이유에 관문 이름이 들어 있어야 한다(더 엄격, 설치 도구 범주도 같다)
             for key, reason in table.items():
                 self.assertIn("require_", reason, f"{key}: 접속·쓰기 허용의 이유에는 관문 이름(`require_…`)이 있어야 한다")
         self.assertIn("LOCAL_OCR", ALLOWED_LOCAL_WORKER[("ui/ocr_adapter.py", "subprocess")], "글자 읽기 작업자의 이유에는 자기 관문 이름이 있다")
+        self.assertIn("require_update_apply", ALLOWED_UPDATE_SETUP[("update/apply.py", "subprocess")], "설치 도구를 띄우는 곳의 이유에는 자기 관문 이름이 있다")
 
     def test_one_place_writes_to_the_outside_and_one_place_starts_the_local_worker_each_behind_its_own_gate(self):
         """결정 D-512(설계 3-8 (2)) — '바깥에 쓰는 곳은 하나' 가 '바깥에 쓰는 곳 하나 + 이 PC 안 계산 작업자 하나' 가 됐다. 옛 단언보다 약하지 않다: 하위 프로세스·소켓·웹 모듈이 허용 목록에 이 둘 말고는 없고,
         글자 읽기 쪽은 네트워크 모듈을 하나도 가져오지 않는다(어댑터의 바깥 이름은 `subprocess` 하나)."""
         external_writers = [("publish/gitrepo.py", "subprocess")]
         local_workers = [("ui/ocr_adapter.py", "subprocess")]
+        setup_launchers = [("update/apply.py", "subprocess")]                 # UPDATE U-4(결정 D-850 이상) — 정확히 한 곳이 더해졌다
         process_like = sorted(key for key in ALLOWED if key[1] in ("subprocess", "multiprocessing", "QProcess", "ProcessPoolExecutor") or key[1].startswith("os."))
-        self.assertEqual(process_like, sorted(external_writers + local_workers), "하위 프로세스를 띄우는 허용은 이 둘뿐이다")
+        self.assertEqual(process_like, sorted(external_writers + local_workers + setup_launchers), "하위 프로세스를 띄우는 허용은 이 셋뿐이다(git·글자 읽기 작업자·설치 도구)")
         # NET 설계서 E1 — 옛 단언 '소켓·http·urllib·ssl 이 든 허용이 0' 은 새 접속이 생길 수 없다는 뜻이었다. 이제는 '이 파일, 이 이름들만' 이고 다른 곳은 여전히 빨갛다(변이 M-NET-06·07 이 직접 깬다).
         network_like = sorted(key for key in ALLOWED if key[1] in ("socket", "http", "urllib", "ssl"))
         self.assertEqual(network_like, sorted(list(ALLOWED_NET_CLIENT) + list(ALLOWED_LOOPBACK)), "접속 모듈이 든 허용은 접속 범주 표의 것뿐이다")
@@ -257,6 +265,8 @@ class OutgoingCallSitesTest(unittest.TestCase):
         self.assertEqual([key for key in ALLOWED if key[1] == "socket"], [key for key in ALLOWED_LOOPBACK if key[1] == "socket"], "socket 은 루프백 범주 표의 것뿐이다")
         self.assertTrue(all(key[0] == "net/loopback.py" for key in ALLOWED_LOOPBACK), "소켓은 net/loopback.py 한 파일에만(BLOGGER 갈래가 더한다)")
         self.assertEqual(sorted(key for key in found_outgoing() if key[0] == "ui/ocr_adapter.py"), local_workers, "어댑터가 바깥과 닿는 이름은 subprocess 하나뿐이다")
+        self.assertEqual(sorted(key for key in found_outgoing() if key[0].startswith("update/")), setup_launchers, "업데이트 패키지가 바깥과 닿는 이름은 apply.py 의 subprocess 하나뿐이다(접속은 net/ 틀 밖에서 하지 않는다)")
+        self.assertEqual(sorted(key for key in found_outgoing(guarded=True) if key[0].startswith("update/")), [], "설치 도구를 띄우는 길에 네이티브·동적 호출이 없다")
         self.assertEqual(sorted(key for key in found_outgoing() if key[0].startswith("net/")), sorted(list(ALLOWED_NET_CLIENT) + list(ALLOWED_LOOPBACK)), "net 패키지가 바깥과 닿는 이름은 표의 것뿐이다")
 
     def test_urllib_parse_is_the_only_urllib_use_outside_the_allowed_list(self):
