@@ -203,7 +203,8 @@ class SourceHygieneTest(unittest.TestCase):
 
     def test_the_four_scripts_exist_and_the_folder_is_not_a_package(self):
         # 의도적 갱신(V1INSTALL, D-830): 설치 파일을 만드는 `build_installer.py` 가 더해져 넷에서 다섯이 됐다(이름의 '넷' 은 옛 이름 — 시험 이름은 바꾸지 않는다)
-        self.assertEqual([path.name for path in self.scripts()], ["build_installer.py", "build_package.py", "gui_entry.py", "make_manifest.py", "pkgcommon.py"])
+        # 의도적 갱신(V1REL12): `release_chain.py` 는 릴리스 R-2(V1REL12)가 더했다 — 이름 목록에 새 파일 하나를 더한 값 갱신이다(단언 강도는 같다)
+        self.assertEqual([path.name for path in self.scripts()], ["build_installer.py", "build_package.py", "gui_entry.py", "make_manifest.py", "pkgcommon.py", "release_chain.py"])
         self.assertFalse((ps.PACKAGING / "__init__.py").exists(), "packaging/ 가 패키지가 되면 PyPI 의 packaging 라이브러리와 부딪친다")
 
     def test_every_script_parses_with_python_3_10_grammar(self):
