@@ -1,0 +1,181 @@
+name: "Release — 릴리스 초안 만들기(수동)"
+
+# 설치 파일(Setup)·휴대용 압축 파일·서명한 업데이트 매니페스트·SHA256SUMS 를 GitHub 의 초안 릴리스(Draft release)로 올리는 수동 흐름이다(운영자 확인 048 ①, 설계서 RELEASE 3-1에서 3-4, 결정 D-880에서 D-885, 문서 docs/RELEASE.md 의 '릴리스 워크플로' 절).
+# 이 파일은 초안까지만 만든다 — 공개(Publish release)는 운영자가 릴리스 화면에서 한 번 누른다. 공개 호출(--publish·--draft=false·gh release edit·upload·delete)은 어디에도 없고 시험이 구조로 지킨다.
+# 수동 실행(workflow_dispatch)만이다 — 푸시·PR·예약·다른 워크플로·릴리스 이벤트로는 돌지 않고 입력칸도 없다(글을 받아 명령에 넣는 길이 없다). 버전은 VERSION 파일 하나가 근원이다.
+# 맨 위 권한은 전부 막고(permissions 빈 매핑) 잡마다 필요한 만큼만 연다: build 는 읽기(contents·actions)뿐이고 비밀이 없으며 서드파티 도구(PyPI 의 잠금 도구·Inno Setup)가 도는 곳이다.
+#   sign-and-draft 는 쓰기(contents)가 필요한 유일한 잡이고, 환경(environment) release 의 필수 검토자가 승인한 뒤에만 시작하며, 서명 비밀 하나(UPDATE_SIGNING_KEY)를 서명 단계 하나의 env 로만 받는다.
+#   이 잡의 run 에는 pip·npm·curl·wget·dotnet·choco·winget 같은 내려받기가 한 번도 나오지 않는다 — 비밀이 서드파티 코드와 한 가상 머신에서 만나지 않게 하는 것이 이 구조의 핵심이다.
+# 기본 셸은 bash 다(윈도 러너에서는 Git Bash — 오류가 나면 바로 멈추는 동작을 얻는다). run 안에는 달러 두 중괄호 식을 쓰지 않고 값은 모두 env 로만 넘긴다(주입 길 0).
+# 액션은 네 개이고 모두 전체 커밋 SHA 로 고정한다(docs/SECURITY.md §4). checkout·setup-python·upload-artifact 는 package.yml 과 같은 값이고, download-artifact(v4.3.0, 이 파일이 처음 쓴다)는
+#   2026-11-24 에 GitHub API 태그 목록에서 읽은 값이며 운영자가 병합 전에 공식 태그와 대조한다(대조 절차는 요청 글과 docs/RELEASE.md). 새 메이저(v5 이상)로 올리는 일은 이 파일이 아니라 따로 한다.
+# 설계서 단계표(build 12단계) 가운데 5(설치 도구 확인)는 단계 6 안에서 한다 — build_installer.py 가 Inno Setup 컴파일러 판(6.5.0 이상)을 읽어 모자라거나 읽지 못하면 거절하고 ISCC 해시를 기록한다.
+#   단계 8(설치 스모크)·9(업데이트 시뮬레이션)는 이 파일에 없다 — 그 스크립트(installer_smoke.py·update_smoke.py)가 생긴 갈래가 '설치 파일 만들기' 와 '후보 목록 만들기' 사이에 단계를 더한다(있으면 도는 모양이 아니다).
+# 부르는 스크립트(다른 갈래가 만든다): release_preflight.py·release_chain.py(assemble·sums·check·notes)·update_manifest.py(verify-candidate·build)·update_sign.py·build_installer.py — 인자는 그 갈래들의 작업 폴더에서 읽은 이름이고 시험이 같은 나무에서 견준다.
+#   매니페스트의 최소 버전(--min-version)은 첫 정식 릴리스가 모든 판에서 바로 올릴 수 있도록 0.0.0 으로 둔다 — 중간 판이 필요해지면 이 값을 바꾸는 T3 변경이다.
+# 러너에서만 확인되는 것(시험이 못 본다 — 첫 실행(후보)의 확인 항목): 초안이 태그를 만드는지·gh 의 동작·환경 승인 흐름·같은 실행 안의 산출물 받기가 actions 권한 없이 되는지·Git Bash 에서의 빌드(묶음 점검 D-468).
+# T3(.github 변경) — 운영자 확인 048 ① 승인 범위 안에서 NO-MERGE 가지에 준비만 해 둔 것이다. 병합·실행·서명 키 만들기·시크릿 입력·저장소 설정·태그·릴리스 공개는 운영자만 한다.
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: 빌드 — 설치 파일·휴대용 압축 파일·후보 목록 (Windows, 비밀 없음)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - name: 가져오기
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: 사전 점검
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_preflight.py
+
+      - name: 파이썬 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: 빌드 도구 설치(바깥에서 받는 유일한 단계)
+        run: python -m pip install -r packaging/requirements-package.txt
+
+      - name: 묶음과 휴대용 압축 파일 만들기
+        run: python packaging/build_package.py --out-dir "$RUNNER_TEMP/package"
+
+      - name: 설치 파일 만들기(Inno Setup 판 확인·기록 포함)
+        run: python packaging/build_installer.py --out-dir "$RUNNER_TEMP/package"
+
+      # 설치 스모크(설계서 단계 8)와 업데이트 시뮬레이션(단계 9)은 이 자리에 다음 갈래가 단계를 더한다 — 지금은 그 스크립트가 없다.
+
+      - name: 후보 목록 만들기(버전 사슬 확인)
+        run: python packaging/release_chain.py assemble --source "$RUNNER_TEMP/package/release" --out "$RUNNER_TEMP/release"
+
+      - name: 올리기(후보 파일 여섯, 1일)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: release-candidate
+          path: |
+            ${{ runner.temp }}/release/ChanceBlogDesktop-*-Setup.exe
+            ${{ runner.temp }}/release/ChanceBlogDesktop-*-win64.zip
+            ${{ runner.temp }}/release/SHA256SUMS
+            ${{ runner.temp }}/release/PACKAGE_INFO.json
+            ${{ runner.temp }}/release/PACKAGE_INFO.md
+            ${{ runner.temp }}/release/release_candidate.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: 작업 요약(승인 전에 눈으로 확인)
+        run: |
+          {
+            echo "### 릴리스 후보 - 승인 전에 이름·크기·SHA-256 을 눈으로 확인한다"
+            echo '```json'
+            cat "$RUNNER_TEMP/release/release_candidate.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sign-and-draft:
+    name: 서명과 초안 만들기 — 환경 승인 뒤에 시작 (Ubuntu, 서드파티 내려받기 없음)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - name: 가져오기
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: 파이썬 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: 사전 점검 다시(초안까지 보이는 쓰기 권한 잡에서)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release_preflight.py
+
+      - name: 후보 받기
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: release-candidate
+          path: ${{ runner.temp }}/release
+
+      - name: 후보 검증(자산을 다시 해시해 후보 목록과 대조)
+        run: python scripts/update_manifest.py verify-candidate --dir "$RUNNER_TEMP/release"
+
+      - name: 매니페스트 만들기
+        run: python scripts/update_manifest.py build --dir "$RUNNER_TEMP/release" --min-version 0.0.0
+
+      - name: 서명과 자체 검증(비밀은 이 단계에만)
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: python scripts/update_sign.py --manifest "$RUNNER_TEMP/release/update-manifest.json" --require-shipped-key --require-openssl
+
+      - name: 해시 목록 만들기
+        run: python packaging/release_chain.py sums --dir "$RUNNER_TEMP/release"
+
+      - name: 사슬 다시 확인(서명 뒤)
+        run: python packaging/release_chain.py check --dir "$RUNNER_TEMP/release" --phase final
+
+      - name: 릴리스 본문 만들기
+        run: python packaging/release_chain.py notes --out "$RUNNER_TEMP/release-notes.md"
+
+      - name: 초안 만들기(공개하지 않는다)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          read -r version < VERSION || [[ -n "$version" ]]
+          re='^[0-9]+[.][0-9]+[.][0-9]+(-rc[.][0-9]+)?$'
+          [[ "$version" =~ $re ]] || exit 1
+          cd "$RUNNER_TEMP/release"
+          if [[ "$version" == *-rc.* ]]; then
+            gh release create "v${version}" --repo "$GITHUB_REPOSITORY" --draft --prerelease --target "$TARGET_SHA" --title "ChanceBlog Desktop ${version}" --notes-file "$RUNNER_TEMP/release-notes.md" ChanceBlogDesktop-*-Setup.exe ChanceBlogDesktop-*-win64.zip PACKAGE_INFO.json PACKAGE_INFO.md SHA256SUMS update-manifest.json update-manifest.json.sig
+          else
+            gh release create "v${version}" --repo "$GITHUB_REPOSITORY" --draft --target "$TARGET_SHA" --title "ChanceBlog Desktop ${version}" --notes-file "$RUNNER_TEMP/release-notes.md" ChanceBlogDesktop-*-Setup.exe ChanceBlogDesktop-*-win64.zip PACKAGE_INFO.json PACKAGE_INFO.md SHA256SUMS update-manifest.json update-manifest.json.sig
+          fi
+
+      - name: 사후 점검(초안이 있고 태그는 아직 없다)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          read -r version < VERSION || [[ -n "$version" ]]
+          re='^[0-9]+[.][0-9]+[.][0-9]+(-rc[.][0-9]+)?$'
+          [[ "$version" =~ $re ]] || exit 1
+          gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${version}" --paginate --jq '.[] | select(.ref == "refs/tags/v'"${version}"'") | error("태그가 이미 있다 - 초안이 태그를 만들었을 수 있다. 공개하지 말고 운영자에게 알린다")'
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq 'map(select(.draft and .tag_name == "v'"${version}"'")) | if length == 1 and (.[0].assets | length) == 7 then .[0].assets[] | "\(.name) \(.size)" else error("초안이 정확히 하나가 아니거나 자산이 일곱 개가 아니다") end'
+
+      - name: 작업 요약(공개 전 확인 목록)
+        run: |
+          cd "$RUNNER_TEMP/release"
+          echo "### 공개 전 확인 목록" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 릴리스 목록에 초안이 한 개 있고 태그 목록은 그대로(태그 없음)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 자산 이름과 개수(일곱), 본문(릴리스 노트·SHA-256 확인법)을 눈으로 본다" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 어긋나면 초안을 지우고 운영자에게 알린다. 후보(rc)는 공개하지 않고 시험 뒤 지운다" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum ChanceBlogDesktop-*-Setup.exe ChanceBlogDesktop-*-win64.zip PACKAGE_INFO.json PACKAGE_INFO.md SHA256SUMS update-manifest.json update-manifest.json.sig >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

@@ -2,7 +2,8 @@
 
 운영자 목록의 마지막 위치 '워크플로 산출물(artifact)'(PCSEC1 H1): 산출물로 올라간 파일은 저장소를 읽을 수 있는 사람에게 내려받아진다 — 시험 로그·데이터 폴더·`*.log` 에 비밀이 있으면 그대로 나간다.
 지키는 것:
-  1) `actions/upload-artifact`(와 `upload-pages-artifact`)를 쓰는 단계가 **있으면** 그 `path:` 는 허용 목록 `ALLOWED_UPLOAD_FILES`(파일 이름 여섯 모양: 패키지 압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json`, 그리고 설치 도구 시험 보고서 `INSTALLER_SPIKE_REPORT.md`·`INSTALLER_SPIKE_REPORT.json`)에만 있고
+  1) `actions/upload-artifact`(와 `upload-pages-artifact`)를 쓰는 단계가 **있으면** 그 `path:` 는 허용 목록 `ALLOWED_UPLOAD_FILES`(파일 이름 열 모양: 패키지 압축 파일·`SHA256SUMS`·`PACKAGE_INFO.md`·`PACKAGE_INFO.json`, 설치 도구 시험 보고서 `INSTALLER_SPIKE_REPORT.md`·`INSTALLER_SPIKE_REPORT.json`,
+     그리고 릴리스 워크플로가 잡 사이로 넘기는 후보 `ChanceBlogDesktop-*-Setup.exe`·`release_candidate.json` 과 서명 매니페스트 `update-manifest.json`·`update-manifest.json.sig`)에만 있고
      시험 로그·데이터 폴더·`*.log`·시험 결과·`.env`·사용자 폴더·와일드카드 폴더를 올리지 않는다. 업로드가 없어도, 허용된 모양으로 있어도 이 규칙은 통과한다 — **더는 '업로드 0 개' 를 못박지 않는다**(PCKIT 독립 검증 D3).
      **새 업로드를 더하려면 이 목록과 결정(docs/DECISIONS.md D-344)을 같이 고친다** — 상수와 결정 기록이 맞는지는 아래 시험이 본다. '오늘 main 의 워크플로(`ci.yml`·`auto-pr.yml`)는 업로드가 없다' 는 사실은 따로 알리는 정보 점검이다(허용된 업로드가 생겨도 빨개지지 않는다).
   2) `${{ secrets.… }}` 는 `env:` 값에서만 쓴다(`run:` 본문에 끼우지 않는다 — 셸이 글을 다시 해석하지 않게). 비밀·토큰이 든 환경 변수(`secrets.…`·`github.token` 을 받은 이름)를 `echo`·`printf`·`cat`·`tee` 로 내지 않는다.
@@ -18,9 +19,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 
-# 산출물로 올려도 되는 파일 — **이 상수 한 곳이 허용 목록의 전부다**(파일 이름의 모양 여섯: 릴리스 패키지 미리보기의 압축 파일·해시 목록·패키지 정보 둘, 그리고 설치 도구 시험 보고서 둘 — 운영자 확인 037 ①, 결정 D-700). 폴더 부분은 막지 않되 아래 금지 모양과 와일드카드 폴더는 걸러 낸다.
+# 산출물로 올려도 되는 파일 — **이 상수 한 곳이 허용 목록의 전부다**(파일 이름의 모양 열: 릴리스 패키지 미리보기의 압축 파일·해시 목록·패키지 정보 둘, 설치 도구 시험 보고서 둘 — 운영자 확인 037 ①, 결정 D-700 —,
+# 그리고 릴리스 워크플로(`release.yml`)가 잡 사이로 넘기는 설치 파일·후보 목록과 서명 매니페스트·서명 파일 넷 — 운영자 확인 048 ①, 결정 D-883). 폴더 부분은 막지 않되 아래 금지 모양과 와일드카드 폴더는 걸러 낸다.
 # 새 업로드를 더하려면 이 목록과 결정(docs/DECISIONS.md D-344)을 같이 고친다 — 아래 시험이 상수와 결정 기록이 맞는지 본다.
-ALLOWED_UPLOAD_FILES = ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json")
+ALLOWED_UPLOAD_FILES = ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json",
+                        "ChanceBlogDesktop-*-Setup.exe", "release_candidate.json", "update-manifest.json", "update-manifest.json.sig")
 CHANGE_RULE_SENTENCE = "새 업로드를 더하려면 이 목록과 결정을 같이 고친다"
 # 오늘 main 에 있는 워크플로 — 이 둘이 업로드하지 않는다는 사실만 정보 점검으로 알린다(빨개지지 않는다).
 NO_UPLOAD_WORKFLOWS = ("ci.yml", "auto-pr.yml")
@@ -129,7 +132,7 @@ def path_problem(path):
     if any(mark in directory for mark in "*?["):
         return "폴더 부분에 와일드카드가 있어 어느 폴더든 올라갈 수 있다"
     if not any(fnmatch.fnmatchcase(name, shape) for shape in ALLOWED_UPLOAD_FILES):
-        return "허용 목록(ALLOWED_UPLOAD_FILES 의 파일 이름 여섯 모양)에 없다"
+        return "허용 목록(ALLOWED_UPLOAD_FILES 의 파일 이름 열 모양)에 없다"
     return ""
 
 
@@ -220,13 +223,19 @@ class ArtifactRuleTest(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertEqual(artifact_problems(text), [], f"{name}: 허용 목록(ALLOWED_UPLOAD_FILES) 밖이거나 금지 모양인 경로를 올린다")
 
-    def test_the_allow_list_is_one_constant_with_exactly_the_six_shapes(self):
-        """의도적 강화(결정 D-700, 운영자 확인 037 ①): 허용 항목은 **정확히 넷+둘**이다 — 예전 네 모양은 그대로 앞에 있고, 설치 도구 시험 보고서 두 모양만 더해졌다(항목 하나를 더하거나 빼면 빨개진다)."""
-        self.assertEqual(ALLOWED_UPLOAD_FILES, ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json"))
-        self.assertEqual(len(ALLOWED_UPLOAD_FILES), 4 + 2)
+    def test_the_allow_list_is_one_constant_with_exactly_the_ten_shapes(self):
+        """의도적 강화(결정 D-883, 운영자 확인 048 ①) — 결정 D-700(운영자 확인 037 ①)의 '정확히 넷+둘' 위에 릴리스 워크플로의 넷이 더해져 허용 항목은 **정확히 넷+둘+넷**이다.
+        예전 네 모양과 보고서 두 모양은 그대로 앞에 있고, 릴리스 후보 넷(설치 파일·후보 목록·서명 매니페스트·서명 파일)만 뒤에 더해졌다(항목 하나를 더하거나 빼면 빨개진다)."""
+        self.assertEqual(ALLOWED_UPLOAD_FILES, ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json",
+                                                "ChanceBlogDesktop-*-Setup.exe", "release_candidate.json", "update-manifest.json", "update-manifest.json.sig"))
+        self.assertEqual(len(ALLOWED_UPLOAD_FILES), 4 + 2 + 4)
         self.assertEqual(ALLOWED_UPLOAD_FILES[:4], ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json"), "예전 네 모양은 바뀌지 않는다")
+        self.assertEqual(ALLOWED_UPLOAD_FILES[:6], ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json"), "예전 여섯 모양은 바뀌지 않는다")
+        self.assertEqual(ALLOWED_UPLOAD_FILES[6:], ("ChanceBlogDesktop-*-Setup.exe", "release_candidate.json", "update-manifest.json", "update-manifest.json.sig"), "릴리스 후보 네 모양이 뒤에 있다")
         source = Path(__file__).read_text(encoding="utf-8")
         self.assertEqual(len(re.findall(r"^ALLOWED_UPLOAD_\w+\s*=", source, re.M)), 1, "허용 목록은 이 모듈의 한 상수뿐이다(두 곳이 되면 어긋난다)")
+
+    test_the_allow_list_is_one_constant_with_exactly_the_six_shapes = test_the_allow_list_is_one_constant_with_exactly_the_ten_shapes      # 옛 시험 이름(id)을 별칭으로 남긴다 — 같은 단언(예전 여섯 모양은 그대로 앞에 있다)을 더 단단하게 돈다
 
     def test_the_decision_record_names_every_allowed_shape_and_the_rule_for_changing_the_list(self):
         """목록(상수)과 결정(D-344)은 같이 고친다 — 한쪽만 고치면 이 시험이 빨개진다."""
@@ -282,6 +291,7 @@ jobs:
     # 예전 네 모양(릴리스 패키지 미리보기) — 허용 상수에 보고서 두 모양이 더해져도 이 합성 워크플로는 이 넷만 올린다(의도적 갱신, 결정 D-700)
     PACKAGE_SHAPES = ("ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json")
     SPIKE_SHAPES = ("INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json")
+    RELEASE_SHAPES = ("ChanceBlogDesktop-*-Setup.exe", "release_candidate.json", "update-manifest.json", "update-manifest.json.sig")           # 릴리스 워크플로(결정 D-883)가 잡 사이로 넘기는 후보 — 설치 파일·후보 목록·서명 매니페스트·서명 파일
 
     PACKAGE_UPLOAD = """
 jobs:
@@ -306,7 +316,7 @@ jobs:
         self.assertEqual(artifact_problems(self.PACKAGE_UPLOAD), [], "허용 목록의 네 모양만 올리는 단계는 통과한다")
         self.assertEqual(upload_inventory({"package.yml": self.PACKAGE_UPLOAD}),
                          {"package.yml": ["${{ runner.temp }}/package/release/" + shape for shape in self.PACKAGE_SHAPES]})
-        self.assertTrue(set(self.PACKAGE_SHAPES) | set(self.SPIKE_SHAPES) == set(ALLOWED_UPLOAD_FILES), "예전 네 모양과 보고서 두 모양이 허용 목록의 전부다")
+        self.assertTrue(set(self.PACKAGE_SHAPES) | set(self.SPIKE_SHAPES) | set(self.RELEASE_SHAPES) == set(ALLOWED_UPLOAD_FILES), "예전 네 모양과 보고서 두 모양과 릴리스 후보 네 모양이 허용 목록의 전부다")
 
     def test_the_installer_spike_report_upload_with_its_two_files_passes_and_nothing_near_it_does(self):
         text = self.UPLOAD.format(path="|\n            ${{ runner.temp }}/spike/report/INSTALLER_SPIKE_REPORT.md\n            ${{ runner.temp }}/spike/report/INSTALLER_SPIKE_REPORT.json")
@@ -320,8 +330,26 @@ jobs:
             with self.subTest(path=near):
                 self.assertTrue(artifact_problems(self.UPLOAD.format(path=near)), "보고서 두 모양과 비슷할 뿐인 경로는 걸려야 한다")
 
+    def test_the_release_workflow_upload_with_its_four_files_passes_and_nothing_near_it_does(self):
+        """결정 D-883(운영자 확인 048 ①): 릴리스 워크플로가 잡 사이로 넘기는 후보 네 모양(설치 파일·후보 목록과 서명 매니페스트·서명 파일)은 통과하고, 이름만 비슷한 것은 모두 걸린다."""
+        for good in ("ChanceBlogDesktop-1.0.0-Setup.exe", "ChanceBlogDesktop-0.9.0-rc.1-Setup.exe", "ChanceBlogDesktop-*-Setup.exe", "release_candidate.json", "update-manifest.json", "update-manifest.json.sig"):
+            for folder in ("", "release/", "${{ runner.temp }}/package/release/"):
+                with self.subTest(path=folder + good):
+                    self.assertEqual(artifact_problems(self.UPLOAD.format(path=folder + good)), [])
+        for near in ("ChanceBlogDesktop-setup.exe", "ChanceBlogDesktop-Setup.exe", "ChanceBlogDesktop-1.0.0-setup.exe", "ChanceBlogDesktop-1.0.0-Setup.exe.zip", "ChanceBlogDesktop-1.0.0-Setup.exe.log", "ChanceBlogDesktop-1.0.0-Setup.exe.bak",
+                     "ChanceBlogSpike-0.0.1-Setup.exe", "ChanceBlogDesktop-1.0.0-Setup.msi", "release_candidate.json.bak", "release_candidate.json.log", "release_candidate.txt", "RELEASE_CANDIDATE.json", "release-candidate.json",
+                     "update-manifest.json.bak", "update-manifest.json.sig.txt", "update-manifest.sig", "update-manifest.json.sig.log", "update_manifest.json", "manifest.json", "tests/release_candidate.json", "logs/update-manifest.json",
+                     "${{ runner.temp }}/**/release_candidate.json", "${{ runner.temp }}/package/*/update-manifest.json", "C:/Users/x/update-manifest.json.sig", "release/*", "update-manifest.json.sig.key", "update-signing-key.pem"):
+            with self.subTest(path=near):
+                self.assertTrue(artifact_problems(self.UPLOAD.format(path=near)), "릴리스 후보 네 모양과 비슷할 뿐인 경로는 걸려야 한다")
+        text = self.UPLOAD.format(path="|\n            " + "\n            ".join("${{ runner.temp }}/package/release/" + shape for shape in self.RELEASE_SHAPES))
+        self.assertEqual(artifact_problems(text), [])
+        self.assertEqual(upload_inventory({"release.yml": text}), {"release.yml": ["${{ runner.temp }}/package/release/" + shape for shape in self.RELEASE_SHAPES]})
+        self.assertEqual(main_upload_notes({"release.yml": text}), [], "새 워크플로 파일의 업로드는 알림 대상도 아니다")
+
     def test_each_allowed_file_passes_in_any_ordinary_folder_and_the_six_shapes_are_exact(self):
-        for good in ("ChanceBlogDesktop-0.1.0-win64.zip", "ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json"):
+        for good in ("ChanceBlogDesktop-0.1.0-win64.zip", "ChanceBlogDesktop-*-win64.zip", "SHA256SUMS", "PACKAGE_INFO.md", "PACKAGE_INFO.json", "INSTALLER_SPIKE_REPORT.md", "INSTALLER_SPIKE_REPORT.json",
+                     "ChanceBlogDesktop-1.0.0-Setup.exe", "release_candidate.json", "update-manifest.json", "update-manifest.json.sig"):
             for folder in ("", "release/", "dist/", "${{ runner.temp }}/package/release/"):
                 with self.subTest(path=folder + good):
                     self.assertEqual(artifact_problems(self.UPLOAD.format(path=folder + good)), [])
