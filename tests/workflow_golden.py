@@ -22,7 +22,10 @@ ACTIONS = {
     "actions/setup-python": "a26af69be951a213d495a4c3e4e4022e16d87065",
     "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
 }
-APPROVED_REFS = frozenset(f"{name}@{sha}" for name, sha in ACTIONS.items())
+# 릴리스 워크플로(`release.yml`, 운영자 확인 048 ① — 결정 D-880에서 D-885)만 쓰는 새 액션 하나 — 값은 2026-11-24 에 GitHub API 태그 목록에서 읽은 v4.3.0 이고 운영자가 병합 전에 공식 태그와 대조한다.
+# `ci.yml`·`package.yml` 의 단계 목록은 위 `ACTIONS` 만 쓰므로(`_step_problems`) 영향이 없고, 다른 워크플로가 이 액션을 쓰지 못한다는 것은 `tests/test_release_workflow.py` 가 따로 지킨다.
+RELEASE_ONLY_ACTIONS = {"actions/download-artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093"}
+APPROVED_REFS = frozenset(f"{name}@{sha}" for name, sha in {**ACTIONS, **RELEASE_ONLY_ACTIONS}.items())
 TOP_KEYS = {"name", "on", "permissions", "concurrency", "jobs"}
 STEP_KEYS = {"name", "uses", "with", "run", "env"}
 MATRIX_LINE = re.compile(r"(?m)^(        (?:os|python|shard)):[ ]+(\[[^\]\n]*\])[ ]*$")

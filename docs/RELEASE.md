@@ -89,7 +89,7 @@ Velopack 의 롤백·서명 검증은 '문서에 없음'일 뿐 코드는 미확
 | `VERSION` = `CHANGELOG.md` 맨 위 절의 버전 | `tests/test_repo_layout.py` VersionTest | 있음 |
 | `VERSION` = 화면 '정보' 카드의 버전 | `ui/core/version.py` 가 `VERSION` 을 읽는다. 묶음에서는 `--selftest` 의 `version_file` 이 정보 파일과 견준다 | 있음(읽기와 자가 점검) |
 | `VERSION` = 묶음 정보(`PACKAGE_INFO.json`)·압축 파일 이름의 버전 | 빌드가 `VERSION` 에서 만들고 시험이 이름을 견준다 | 있음 |
-| `VERSION` = 태그 이름(`v` + 버전) | 릴리스 워크플로가 태그를 `VERSION` 에서 만들거나 견준다 | **없음** — 릴리스 갈래 |
+| `VERSION` = 태그 이름(`v` + 버전) | 릴리스 워크플로(`release.yml`)가 `VERSION` 에서 태그 `v<버전>` 을 정하고 사전 점검이 그 태그가 아직 없음을 견준다(태그는 운영자가 Publish 할 때 생긴다) | **있음** — 아래 '릴리스 워크플로(`release.yml`)' 절, 첫 실행은 운영자 승인 뒤 |
 | CHANGELOG 절 = Release 본문 | 생성 스크립트가 만들고 점검이 다시 견준다 | **없음** — 릴리스·종합 검증 갈래 |
 | 후보 빌드의 위 값이 모두 같다 | 종합 검증의 점검 스크립트(예: `scripts/release_check.py`)가 한 번에 견준다 | **일부 있음** — `scripts/release_check.py`(결정 D-670–D-675)가 `VERSION` 과 `CHANGELOG.md` 맨 위 절을 견준다. 태그·산출물 이름까지의 견주기는 릴리스 갈래 몫 |
 
@@ -306,3 +306,124 @@ python packaging/release_chain.py names                                         
 - 참고 **N-1**(`O_EXCL`)·**N-2**(점 조각 저장소 이름 거절)·**N-7**(OpenSSL 예시를 저장소 밖 절대 경로로)을 함께 고쳤다. 하지 않은 것: N-3(버전 길이 상한 — 설치 파일 이름 100자 제한과 앱의 `validate_fields` 가 이미 거절한다)·N-4(`--commit` 은 R-3 이 준다)·N-5(OpenSSL 명령줄이 빈 메시지를 서명하지 못하는 것 — 매니페스트는 늘 비어 있지 않다)·N-6(병합 겹침 — 병합 때 푼다)·N-8(`check --phase final` 은 서명의 모양만 본다 — 서명 확인은 서명 도구의 몫이다)·N-9(우분투 칸에서 처음 도는 시험)·N-10(묶음 정보 채널 강화 — 값이 정해진 뒤).
 
 **시험 렌즈 Q 의 권고(R1에서 R8)도 같은 재작업에서 닫았다**(D-872·D-873): R1 은 위 S-1 과 같다. **R2** 결과를 화면에 못 써도(비 UTF-8 파이프·닫힌 파이프) 서명·키 파일과 종료 코드·문구가 어긋나지 않는다 — 못 쓰는 글자는 물음표로 바꿔 쓰고(종료 0), 아예 못 쓰면 파일은 그대로 두고 서명 도구는 종료 코드 5·키 생성 도구는 4 와 ASCII 고정 문장으로 알린다(새 상황에만 더한 코드 — 기존 코드의 뜻은 그대로다). **R3** 진짜 하위 프로세스를 돌리는 시험이 자식의 입출력 인코딩을 못박는다. **R4** 매니페스트 도구 시험이 진짜 출하 목록이 비어 있음에 기대지 않는다(운영자가 T3 로 키를 넣는 날에도 그대로 통과). **R5·R6** 변이 시험이 찾은 시험 틈 열셋(PEM 꼬리 줄·`openssl` 시간 한도·`--overwrite` 임시 파일 정리·읽기 상한·링크 기본값 배선·닫는 중괄호만·웹 주소 `www`·사전판 글자 각각·소제목 끝 공백·절의 끝·본문 꼬리 안내 문장)을 닫았다. **R7** 기본 인자 배선(R-3 워크플로가 `--version-file`·`--changelog`·`--root`·`--out` 없이 부르는 길 — 기본값은 저장소 맨 위 폴더의 `VERSION`·`CHANGELOG.md`·`--root`, 모으기의 출력은 `release`)을 시험이 못박는다. **R8** PATH 의 `openssl` 이 3.x 보다 낡으면 '키가 틀렸다' 로 오진하지 않고 '낡아서 건너뜀' 으로 알린다(`--require-openssl` 이면 다른 고정 문장으로 실패).
+
+## 릴리스 워크플로(`release.yml`) — 초안 릴리스를 만드는 수동 흐름 (R-3, 운영자 확인 048 ①, 결정 D-880에서 D-885, 독립 검증 뒤 재작업 1 은 D-886에서 D-891, 병합됨 — 실행은 운영자 승인 뒤)
+
+> **이 절은 병합된 `release.yml` 을 설명한다.** `.github/workflows/release.yml` 은 main 에 들어왔고(구현 때는 병합하지 않는 가지에만 있었다) 수동 실행(`workflow_dispatch`)뿐이라 저절로 도는 것은 없다. 운영자 확인 048 ①(이슈 #289)이 승인한 것은 **이 파일 하나·새 액션 하나(`download-artifact`)·그 구조를 지키는 시험**뿐이고, 병합·워크플로 실행·서명 키 만들기·시크릿 입력·저장소 설정·태그·릴리스 공개는 승인 밖이라 운영자만 한다. 이 흐름이 GitHub 러너에서 끝까지 도는지는 **한 번도 확인하지 못했다** — 첫 실행(후보)의 확인 항목은 아래 8번이다.
+
+### 1. 무엇을 하나
+
+- 이름은 `Release — 릴리스 초안 만들기(수동)`. 운영자가 Actions 화면에서 `Run workflow`(main 가지, 입력칸 없음)를 한 번 누르면 시작한다. 푸시·PR·예약·다른 워크플로·릴리스 이벤트로는 돌지 않는다. 버전은 `VERSION` 파일 하나가 근원이다(`0.9.0-rc.1` 꼴은 후보, `1.0.0` 꼴은 정식).
+- 일은 두 잡이다. **`build`**(Windows)가 설치 파일·휴대용 압축 파일·후보 목록을 만들고, 운영자가 작업 요약의 표를 눈으로 보고 승인하면 **`sign-and-draft`**(Ubuntu)가 업데이트 매니페스트를 만들어 서명하고 **초안 릴리스**를 만든다.
+- 결과는 초안뿐이다. `--publish`·`--draft=false`·`gh release edit`·`upload`·`delete` 는 파일 어디에도 없고 시험이 지킨다(1차는 잡·단계의 글을 글자 그대로 못박은 정확한 글 목록, 2차는 규칙 W-8·W-9 — 한계는 `SECURITY.md` 의 한계 ⑥). 공개(Publish release)와 태그 만들기는 운영자가 릴리스 화면에서 한 번 한다. 후보(`-rc.N`)는 공개하지 않고 시험 뒤 초안을 지운다(공개하면 불변이라 태그 이름을 다시 쓸 수 없다).
+
+### 2. 잡·권한 표
+
+| 잡 | 러너 | 잡 권한 | 시크릿 | 환경 | 바깥에서 받는 것 | 이유 |
+|---|---|---|---|---|---|---|
+| (맨 위) | — | 전부 막음(빈 매핑) | — | — | — | 잡마다 필요한 만큼만 연다 |
+| `build` | `windows-latest` | `contents: read`·`actions: read` | **없음** | 없음 | 파이썬 패키지 저장소(PyPI)의 잠금 빌드 도구 — **한 단계에서만** | 서드파티 코드(PyInstaller·Inno Setup)가 도는 곳이라 쓰기·시크릿이 없다. `actions: read` 는 사전 점검이 이 커밋의 `ci.yml` 결과를 읽는 데 쓴다 |
+| `sign-and-draft` | `ubuntu-latest` | `contents: write`(초안 만들기) | `UPDATE_SIGNING_KEY` 하나 — 서명 단계의 env 에만 | `release`(필수 검토자·main 가지만) | **없음**(`run` 에 `pip`·`npm`·`curl`·`wget`·`dotnet`·`choco`·`winget` 이 한 번도 나오지 않는다) | 우리 스크립트와 `gh` 만 쓴다. 비밀이 서드파티 코드와 한 가상 머신에서 만나지 않는 것이 이 구조의 핵심이다 |
+
+공통: 수동 실행 하나·입력칸 0·`concurrency.group: release`(같은 릴리스를 두 번 만들지 않는다 — 진행 중인 실행을 취소하지 않는다)·기본 셸 `bash`(윈도 러너에서는 Git Bash — 명령이 하나라도 실패하면 바로 멈춘다)·`run` 안에 달러 두 중괄호 식 0(값은 모두 env 로만)·시간 한도 `build` 45분·`sign-and-draft` 15분·`if`·`continue-on-error` 없음(실패한 단계를 건너뛰어 초록으로 끝나는 길 0). **잠금 빌드 도구의 한계**: `build` 의 `pip` 설치(`packaging/requirements-package.txt`)는 정확한 버전(`==`)만 지키고 해시 고정(`--require-hashes`)이 아니다 — 새로 올라온 악성 버전은 막지만 PyPI 계정 탈취로 이미 올라간 지정 버전이나 소스 배포본(sdist)의 빌드 코드는 막지 못한다. 보강으로 `build` 는 비밀과 쓰기 권한이 없고 서명 잡이 받은 후보를 다시 해시해 후보 목록과 대조하지만, `build` 가 악성 산출물과 후보 목록을 함께 바꾸는 것은 막지 못한다(작업 요약의 표를 눈으로 보는 것이 보강 — `SECURITY.md` 의 한계 ②·⑦, 해시를 더하는 일은 별도 T3).
+
+### 3. 단계표
+
+| 잡 | 번호 | 단계 | 하는 일 |
+|---|---|---|---|
+| `build` | 1 | 가져오기 | `actions/checkout`(`persist-credentials: false`) |
+| | 2 | 사전 점검 | `python scripts/release_preflight.py` — 실행 이벤트가 `workflow_dispatch`·ref 가 main·실행 커밋이 main 끝·`VERSION` 모양(정식 또는 `-rc.N`)·태그와 릴리스(초안 포함)가 아직 없음·변경 이력과 릴리스 노트·이 커밋의 `ci.yml` 성공·작업 트리가 깨끗함(R-2 갈래의 스크립트) |
+| | 3 | 파이썬 3.12 | `actions/setup-python` |
+| | 4 | 빌드 도구 설치 | `python -m pip install -r packaging/requirements-package.txt` — **바깥에서 받는 유일한 단계** |
+| | 5 | 묶음과 휴대용 압축 파일 만들기 | `python packaging/build_package.py --out-dir "$RUNNER_TEMP/package"`(자가 점검이 통과해야 산출) |
+| | 6 | 설치 파일 만들기 | `python packaging/build_installer.py --out-dir "$RUNNER_TEMP/package"` — Inno Setup 컴파일러는 러너에 미리 깔려 있어 내려받지 않고, 판이 6.5.0 보다 낮거나 읽지 못하면 거절하며 ISCC 파일 해시를 빌드 기록에 남긴다(위협 T11) |
+| | 7 | 후보 목록 만들기 | `python packaging/release_chain.py assemble --source "$RUNNER_TEMP/package/release" --out "$RUNNER_TEMP/release"` — 빌드 산출물을 `release` 폴더로 모으고 `release_candidate.json`(자산마다 이름·크기·SHA-256, 버전·커밋·러너 이미지)을 써서 버전 사슬을 확인한다 |
+| | 8 | 올리기 | `actions/upload-artifact`(이름 `release-candidate`, 파일 여섯: 설치 파일·압축 파일·`SHA256SUMS`·`PACKAGE_INFO.json`·`PACKAGE_INFO.md`·`release_candidate.json`, **보존 1일**, 없으면 실패) |
+| | 9 | 작업 요약 | 후보 목록 원문을 작업 요약에 써서 승인하는 사람이 이름·크기·SHA-256 을 눈으로 본다 |
+| `sign-and-draft` | 1·2 | 가져오기·파이썬 3.12 | 같은 커밋(`persist-credentials: false`) |
+| | 3 | 사전 점검 다시 | 쓰기 권한이 있는 잡에서 같은 스크립트를 한 번 더(초안까지 보이므로 태그·릴리스 확인이 여기서 완전해진다) |
+| | 4 | 후보 받기 | `actions/download-artifact`(같은 실행의 `release-candidate`) |
+| | 5 | 후보 검증 | `python scripts/update_manifest.py verify-candidate --dir "$RUNNER_TEMP/release"` — 자산 파일을 **다시 해시**해 `release_candidate.json` 과 대조(건너뛰고 서명하는 길 0 — 시험이 순서를 지킨다) |
+| | 6 | 매니페스트 만들기 | `python scripts/update_manifest.py build --dir "$RUNNER_TEMP/release" --min-version 0.0.0`(schema 1 — 먼저 사슬 전체를 확인한다. 최소 버전 0.0.0 은 첫 정식 릴리스가 모든 판에서 바로 올릴 수 있다는 뜻이고, 서명 키 이름표는 앱에 내장된 현재 키라 내장 목록이 비어 있으면 여기서 멈춘다) |
+| | 7 | 서명과 자체 검증 | `python scripts/update_sign.py --manifest "$RUNNER_TEMP/release/update-manifest.json" --require-shipped-key --require-openssl` — **이 단계의 env 에만** `UPDATE_SIGNING_KEY`, 명령은 이것 하나뿐. 앱 번들과 같은 검증기와 `openssl` 의 독립 확인이 하나라도 실패하면 서명 파일을 남기지 않고 멈춘다 |
+| | 8 | 해시 목록 만들기 | `python packaging/release_chain.py sums --dir "$RUNNER_TEMP/release"` — 매니페스트와 서명을 포함해 폴더의 모든 파일(자기 자신과 후보 기록 빼고)의 줄을 새로 쓴다 |
+| | 9 | 사슬 다시 확인 | `python packaging/release_chain.py check --dir "$RUNNER_TEMP/release" --phase final` — 서명한 뒤의 폴더가 버전 사슬(이름·크기·해시 목록·매니페스트의 `version`·`tag`)을 지키는지 본다 |
+| | 10 | 릴리스 본문 만들기 | `python packaging/release_chain.py notes --out "$RUNNER_TEMP/release-notes.md"` — `CHANGELOG.md` 의 그 버전 절 + 고정 안내 꼬리(SHA-256 확인법·서명 없는 설치 파일 안내) |
+| | 11 | 초안 만들기 | `VERSION` 에서 읽은 버전 글이 정식(`X.Y.Z`)이나 후보(`X.Y.Z-rc.N`) 모양인지 먼저 확인한 뒤(끝 줄바꿈이 없는 `VERSION` 도 읽는다) `gh release create v<버전> --draft`(후보면 `--prerelease` 도) — `--target` 은 env 로 받은 실행 커밋의 전체 SHA(가지 이름이 아니다)·제목은 `ChanceBlog Desktop <버전>`·본문은 위 파일·붙이는 자산은 일곱(설치 파일·압축 파일·`PACKAGE_INFO` 둘·`SHA256SUMS`·매니페스트·서명 파일) |
+| | 12 | 사후 점검 | 같은 방법으로 버전 글을 읽어 확인한 뒤 ① 태그가 **아직 없는지** `git/matching-refs` 로 읽는다 — 응답이 200 이고 비어 있어야 정상이고 403·5xx·속도 제한·네트워크 오류는 모두 단계 실패이며(옛 단계는 이 오류들을 '태그 없음' 으로 읽고 통과했다), 같은 이름의 태그가 있으면 jq 의 `error` 로 실패한다(초안 때문에 생긴 것일 수 있으니 공개하지 말고 운영자에게 알린다) ② 릴리스 목록의 최신 100개(첫 쪽 — 새 초안은 가장 최신이다)에서 초안이 정확히 하나이고 자산이 일곱인지 본다(쪽마다 따로 도는 jq 로는 쪽을 넘어 셀 수 없어 첫 쪽만 읽는다) |
+| | 13 | 작업 요약 | 공개 전 확인 목록과 자산 SHA-256 표 |
+
+### 4. 설계서 단계표와 다른 점 (설치 도구가 Inno Setup 이라서 — 결정 D-811)
+
+| 설계서(RELEASE 3-3) | 이 워크플로 | 이유 |
+|---|---|---|
+| 5 설치 도구(Velopack 이면 vpk·휠을 크기·SHA-256 이 맞을 때만 받기) | 6 안에서 한다 | Inno 의 컴파일러는 미리 깔려 있어 받을 것이 없다. 판(6.5.0 이상)과 해시 확인·기록은 `build_installer.py` 가 한다. 바깥 내려받기 단계가 둘에서 하나(빌드 도구 설치)가 되어 규칙 W-15 도 한 단계다 |
+| 8 설치 스모크·9 업데이트 시뮬레이션 | **이 워크플로에 없다** | 스크립트(`installer_smoke.py`·`update_smoke.py`)가 아직 없다. 첫 릴리스 후보의 설치·업데이트 검증은 운영자 PC 시험지 T-INST·T-UPD 가 맡는다. 스크립트를 만든 갈래가 '설치 파일 만들기' 와 '후보 목록 만들기' 사이(파일 안 주석이 표시한 자리)에 **단계를 더하고** 시험의 정해진 단계 목록(`EXPECTED_STEPS`)을 같이 고친다 — '있으면 돈다' 가 아니라 단계를 더하는 방식이다 |
+| `SHA256SUMS`(모든 자산 + 매니페스트 + 서명) | `sign-and-draft` 8 이 `release_chain.py sums` 로 새로 쓴다 | `build` 가 올리는 `SHA256SUMS` 는 후보 단계의 것이고, 초안에 붙는 것은 매니페스트와 서명까지 포함한 새 목록이다(그 뒤 9 가 사슬을 다시 확인한다) |
+| 매니페스트의 `min_version`(설계서에 값이 없다) | `--min-version 0.0.0` 으로 고정 | 실행 입력칸이 없고 첫 정식 릴리스는 모든 판에서 바로 올릴 수 있어서다. 중간 판이 필요해지면 이 값을 바꾸는 T3 변경이다 |
+
+### 5. 시크릿 위치와 규칙
+
+- 서명 개인키는 이 흐름에서 **환경 시크릿 `UPDATE_SIGNING_KEY` 하나**다(저장소 시크릿이 아니라 환경 `release` 의 시크릿 — 환경을 쓰는 잡에만 보이고 검토자 승인 뒤에만 열린다). 키를 만들고 보관하고 시크릿에 붙여 넣는 일은 운영자만 한다(설계서 순서표 1·2·5). AI 는 값을 다루지 않는다.
+- 값은 서명 단계 하나의 env 로만 들어간다. 그 단계는 `update_sign.py` 한 명령뿐이고(시험이 지킨다) 값을 어디에도 출력·기록하지 않는다. `secrets.` 참조는 파일 전체에서 이 한 줄이다.
+- 자동 토큰은 `GH_TOKEN` 환경 변수로 `github.token` 을 넘기는 단계(사전 점검·초안 만들기·사후 점검)에서만 쓴다. 잡 수준 env·`with`·`run` 에는 두지 않는다.
+- 이 워크플로를 바꾸는 변경은 **T3** 로 표시하고 운영자 승인 전에는 병합하지 않는다(위 '워크플로 규칙').
+
+### 6. 액션 네 개와 운영자의 공식 태그 대조
+
+| 액션 | 태그(주석) | 전체 SHA | 상태 |
+|---|---|---|---|
+| `actions/checkout` | v4.4.0 | `11d5960a326750d5838078e36cf38b85af677262` | 다른 워크플로와 같은 값 |
+| `actions/setup-python` | v5.6.0 | `a26af69be951a213d495a4c3e4e4022e16d87065` | 같음 |
+| `actions/upload-artifact` | v4.6.2 | `ea165f8d65b6e75b540449e92b4886f43607fa02` | 같음 |
+| `actions/download-artifact` | v4.3.0 | `d3f86a106a0bac45b974a628896c90dbdf5c8093` | **새 액션 — 운영자 대조 필요** |
+
+읽은 날짜와 값: 설계서가 **2026-11-24 에 GitHub API 의 태그 목록**에서 읽은 값이다(앞의 셋은 공식 태그와 일치했고, `download-artifact` 는 v4 줄의 마지막 태그). 이 갈래는 접속이 금지라 **다시 읽지 못했다** — 독립 검증 S 가 2026-11-26 에 네 값을 모두 다시 읽어 일치를 확인했고, 운영자가 병합 전에 한 번 더 대조한다.
+운영자의 대조(비개발자용, 새 액션 하나): ① 요청 글의 표에서 액션 이름·태그·SHA 를 읽는다 ② 브라우저에서 그 액션 저장소의 '태그' 목록을 열고 **저장소 주인이 `actions` 인지**(포크가 아닌지) 본다 ③ 목록에서 그 태그를 찾아 옆의 커밋 SHA 의 **앞 7자리와 끝 4자리**가 같은지 본다 ④ 하나라도 다르면 승인하지 않고 그 사실을 답한다 ⑤ 같으면 '대조함' 이라고 답한다 — 이 답은 SHA 를 승인하는 것이 아니라 '표와 공식 태그가 같다' 를 확인했다는 뜻이다. 시험은 '40자리 SHA·승인된 네 쌍·저장소 주인 이름' 만 지키고 실제 태그와의 일치는 못 본다. 새 메이저(v5 이상)로 올리는 일은 같은 메이저 안의 최신 태그만 쓰는 정책(`SECURITY.md` §4)에 따라 이 파일이 아니라 따로 한다.
+
+### 7. 운영자 몫 순서표(요약 — 정본은 설계서 RELEASE 3-9)
+
+1. **키**(운영자): 서명 키 쌍을 오프라인에서 만들고(예비 키 포함) 서로 다른 두 곳에 보관한다. 화면의 공개키와 지문만 알린다. 2. **공개키를 앱에 넣는 변경**(AI, T3)과 그 병합(운영자). 3. **저장소 설정**(운영자 — 환경 `release`·필수 검토자 본인 한 명·본인 승인 막기는 끔·배포 가지는 main 만·환경 시크릿에 `UPDATE_SIGNING_KEY`·불변 릴리스·태그 보호 등 S1–S13). 4. **이 워크플로의 병합**(운영자, 새 액션 SHA 대조 포함). 5. **후보 버전 올리기**(`0.9.0-rc.1`)와 병합. 6. **실행**: Actions 의 `Release` 에서 `Run workflow`(main) 한 번 → `build` 초록 → `sign-and-draft` 가 승인 대기 → 작업 요약의 표를 눈으로 보고 승인 → 초안. 7. **초안 점검**(릴리스 목록에 초안 한 개·태그 목록은 그대로·자산 이름과 개수·본문). 8. **개인 PC 실기**(T-INST·T-UPD)와 후보 초안 삭제. 9. 정식 버전(`1.0.0`)으로 같은 실행 → **Publish release 한 번**(운영자) → 공개 뒤 확인(`gh release verify` 등, AI). 키가 새면 환경 시크릿을 지우고 새 앱을 손으로 설치하게 안내한다(설계서 3-10).
+
+**이 워크플로를 병합하기 전에 환경 `release` 를 먼저 만든다**(필수 검토자 본인 한 명·배포 가지는 main 만·본인 승인 막기는 끔). 환경이 없는 채로 실행하면 GitHub 가 보호 규칙 없는 환경을 자동으로 만든다 — 시크릿이 없어 서명은 실패하지만 승인 없이 `sign-and-draft` 가 시작된다(순서표 5 가 6·7 보다 먼저인 까닭).
+
+### 8. 러너에서만 확인되는 것 — 첫 실행(후보)의 확인 항목
+
+시험은 글의 구조만 본다. 아래는 GitHub 러너에서만 알 수 있어 **첫 실행(후보)에서 확인**한다. 하나라도 다르면 초안을 지우고 알린다.
+
+1. **초안이 태그를 만드는가**(R3 — 공식 문서에 없다). 사후 점검이 태그가 생겼으면 크게 실패한다. 생기면 '태그는 운영자가 Publish 때 만든다' 는 약속이 깨지므로 흐름을 다시 설계한다.
+2. `gh release create` 의 동작 — `--target` 에 전체 SHA 를 주는 것·`--notes-file`·자산 일곱을 붙이는 것·`--prerelease` 와 `--draft` 를 같이 쓰는 것.
+3. `gh api` 로 릴리스 목록을 읽을 때 초안이 보이는가(초안은 쓰기 권한이 있는 토큰에만 보인다) — 사후 점검의 초안 확인이 쓴다. 같은 단계의 `git/matching-refs/tags/v버전` 이 태그가 없을 때 오류가 아니라 200 과 빈 목록을 돌려주는지도 첫 실행에서 본다(오류가 나면 사후 점검이 실패하므로 닫힌 쪽이다). 사후 점검의 **부정 경로**(태그가 이미 있을 때 jq `error(...)` 가 단계를 실제로 실패시키는지)는 첫 실행(태그 없음)이 지나지 않으므로, 병합 전·후 아무 때나 읽기 전용으로 `gh api "repos/<이 저장소>/releases?per_page=1" --jq 'error("x")'` 를 한 번 돌려 종료 코드가 1 이고 오류 글이 나오는지 본다(쓰기 0). '빈 본문 200 은 `--jq` 에서 값이 없어 통과한다' 는 것은 모형 기준의 해석이며 실제 GitHub 는 이 응답을 주지 않는다.
+4. **환경 승인 흐름** — `Review deployments` 화면, 본인 승인 막기를 꺼 두었을 때 혼자 승인되는지, 배포 가지 제한이 main 만 통과시키는지.
+5. 같은 실행 안의 `download-artifact` 가 `actions` 권한 없이 되는지(`sign-and-draft` 의 잡 권한은 `contents: write` 하나다).
+6. `sign-and-draft` 의 사전 점검 다시 실행이 이 커밋의 `ci.yml` 결과를 `actions` 권한 없이 읽을 수 있는지(공개 저장소의 공개 읽기). 안 되면 사전 점검 스크립트에 그 확인을 건너뛰는 인자가 필요하다.
+7. 윈도 러너에서 기본 셸 `bash`(Git Bash)로 `build_package.py` 가 도는지 — 빌드는 PATH 를 좁혀 PyInstaller 를 부르지만(D-468) 묶음 점검(DLL 출처)을 처음 이 셸에서 돌린다.
+8. 릴리스 본문(`release_chain.py notes` 가 변경 이력 절과 고정 안내 꼬리로 만든 글 — GitHub 본문 길이 한도는 확인 필요)이 초안에 그대로 올라가고 SHA-256 확인법과 서명 없는 설치 파일의 SmartScreen 안내가 보이는지.
+9. 설치 스모크·업데이트 시뮬레이션이 이 워크플로에 없다는 것 — 첫 후보의 설치·업데이트 검증은 개인 PC 시험지가 맡는다.
+10. 앱에 내장된 서명 공개키가 있어야만 `매니페스트 만들기` 가 키 이름표를 정한다 — 공개키를 앱에 넣는 변경(순서표 2)이 병합되기 전의 첫 실행은 그 단계에서 멈춘다(정상 — 서명 전이라 아무것도 올라가지 않는다).
+11. `Re-run all jobs` 로 같은 실행을 처음부터 다시 돌리면 올리기 단계가 같은 이름의 산출물이 이미 있다며 멈출 수 있다(확인 필요) — 그러면 `Run workflow` 를 새로 누른다. 실패한 잡만 다시 돌리는 `Re-run failed jobs` 는 이미 올라간 후보를 그대로 쓴다.
+
+### 9. 다른 갈래의 스크립트와 인자 (병합 가지에서 합쳐질 때)
+
+이 워크플로가 부르는 스크립트는 다른 갈래(설치 구현 V1INSTALL·릴리스 R-1·R-2 V1REL12)가 같은 시각에 만들던 것이다. 아래 이름과 인자는 **2026-11-26 에 그 작업 폴더의 소스에서 읽은 것**이고, 워크플로의 모든 명령줄이 그 소스의 하위 명령·옵션 이름과 맞는 것을 확인했다. 이 가지에는 `build_package.py` 만 있어서 시험 `tests/test_release_workflow.py` 의 `ScriptNamesTest` 는 나머지 스크립트가 같은 나무에 들어오는 병합 가지에서 같은 견주기를 한다(어긋나면 그때 빨개진다).
+
+| 스크립트 | 워크플로의 호출 | 읽은 곳 |
+|---|---|---|
+| `scripts/release_preflight.py` | 인자 없음(env `GH_TOKEN`, 러너의 기본 변수 `GITHUB_*`) | R-2 작업 폴더 |
+| `packaging/build_package.py` | `--out-dir` | 이 나무 |
+| `packaging/build_installer.py` | `--out-dir` | 설치 구현 작업 폴더(`--out-dir`·`--iscc`·`--icon`) |
+| `packaging/release_chain.py` | `assemble --source … --out …`·`sums --dir …`·`check --dir … --phase final`·`notes --out …` | R-2 작업 폴더 |
+| `scripts/update_manifest.py` | `verify-candidate --dir …`·`build --dir … --min-version 0.0.0` | R-1 작업 폴더 |
+| `scripts/update_sign.py` | `--manifest …`·`--require-shipped-key`·`--require-openssl` | R-1 작업 폴더 |
+
+설계서가 인자를 적지 않았던 것(`--dir`·`--source`·`--out`·`--min-version`)은 위 소스의 이름을 따랐다. 그 갈래의 소스가 바뀌면 이 표와 워크플로·시험의 정해진 목록(`EXPECTED_STEPS`)을 같이 고친다.
+
+### 10. 하지 않은 것과 이유
+
+- **러너 스모크 단계**(설치·업데이트 시뮬레이션) — 스크립트가 아직 없어 만들지 않았고 단계를 더할 자리만 표시했다(4번).
+- **Velopack 쪽**(`vpk`·휠 받기·`….nupkg`·피드 파일) — 설치 도구가 Inno Setup 으로 정해졌다(D-811).
+- **`--publish`·자동 공개·공개된 릴리스 수정·태그를 AI 가 만들기** — 태그·릴리스 공개는 운영자 몫이다(D-05).
+- **아티팩트 증명서(attestation)** — `id-token`·`attestations` 쓰기 권한이 필요해 권한 규칙이 넓어진다. 앱의 신뢰 뿌리는 서명 매니페스트 하나라 정식 뒤에 검토한다(설계서 Q6).
+- **액션 메이저 갱신**(v5 이상) — 같은 메이저 안의 최신 태그만 쓰는 정책이고 별도 갈래다(Q7).
+- **빌드 도구의 해시 고정**(`pip install --require-hashes`) — `packaging/requirements-package.txt` 는 정확한 버전(`==`)만 지키고 `--hash` 가 없다(`PACKAGE.md` 도 그렇게 적는다). 해시를 더하려면 요구 파일을 바꾸고 해시를 읽어 와야 해서(네트워크 필요) 별도 T3 로 남겼다. 지금의 한계는 `SECURITY.md` 의 한계 ⑦ 에 적었다.
+- **서명 키·시크릿·환경·저장소 설정·태그·릴리스 공개·`.github/` 의 다른 파일·다른 워크플로·`scripts/`·`packaging/`·`src/`** — 승인 범위 밖이거나 다른 갈래의 일이다.

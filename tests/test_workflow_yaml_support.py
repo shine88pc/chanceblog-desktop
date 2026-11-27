@@ -93,6 +93,27 @@ class RefusesWhatItDoesNotReadTest(unittest.TestCase):
                 with self.assertRaises(yamlsub.YamlSubsetError):
                     load(text)
 
+    def test_each_refusal_names_its_own_reason(self):
+        """독립 검증 Q 의 R04·R06·R07·R08: 거절 검사 하나를 꺼도 뒤의 다른 검사(키 모양·보이지 않는 글자 범주)가 같은 글을 거절해서 시험이 통과했다 — 거절 문장이 그 검사의 이유를 말하는지까지 못박는다."""
+        bs = chr(0x5C)
+        cases = (("a:\n  <<: x\n", "병합 키"), ("a: &x 1\n", "앵커·별칭·태그"), ("a: *x\n", "앵커·별칭·태그"), ("a: !!str 1\n", "앵커·별칭·태그"), ("a:\n\tb: 1\n", "탭 들여쓰기"), (chr(0xFEFF) + "a: 1\n", "BOM"), ("a: 1\x00\n", "NUL"),
+                 ("a: 1\rb: 2\n", "홀로 CR"), ("a: 1\na: 2\n", "같은 키"), ("a:\n  b: 1\n  b: 2\n", "같은 키"), ("a: >\n  x\n", "접은 글"), ("a: {b: c}\n", "흐름식"), ("a: |2\n  x\n", "들여쓰기 숫자"), ("a: 'x\n", "닫히지 않는다"),
+                 ("a:\n  - - 1\n", "목록 안의 목록"), ("a: b: c\n", "키: 값"), ("a: - b\n", "목록 표시"), ("a: " + "x" * 1001 + "\n", "너무 길다"), ("a:\n  - |\n    x\n", "블록 글"), ('a: "' + bs + 'x41"\n', "이스케이프"),
+                 ("a: b" + bs + " \n", "역슬래시"))
+        for text, reason in cases:
+            with self.subTest(reason=reason, text=text[:20]):
+                with self.assertRaises(yamlsub.YamlSubsetError) as caught:
+                    load(text)
+                self.assertIn(reason, str(caught.exception))
+
+    def test_a_folded_block_marker_is_refused_even_with_nothing_or_a_sibling_key_after_it(self):
+        """독립 검증 Q 의 R10: `a: >` 는 뒤에 들여쓴 줄이 이어지면 들여쓰기 오류로도 거절돼서 `>` 거절 자체를 꺼도 시험이 통과했다 — 이어지는 글이 없거나 같은 층 키가 이어져 YAML 에서는 빈 접은 글이 되는 모양도 읽개는 거절한다."""
+        for text in ("a: >\n", "a: >\nb: 1\n", "a: >-\n  x\n", "a: >+\nb: 1\n", "a: > x\n", "a: >2\n  x\n", "a:\n  b: >\n  c: 1\n"):
+            with self.subTest(text=text):
+                with self.assertRaises(yamlsub.YamlSubsetError) as caught:
+                    load(text)
+                self.assertIn("접은 글", str(caught.exception))
+
     def test_the_error_message_names_the_line_and_the_reason(self):
         with self.assertRaises(yamlsub.YamlSubsetError) as caught:
             load("a: 1\nb: {c: d}\n")
@@ -196,6 +217,182 @@ class RefusesInputThatIsTooLongOrTooDeepTest(unittest.TestCase):
         self.assertEqual(yamlsub.strip_comment("value   # note"), "value")
         self.assertEqual(yamlsub.strip_comment("a#b c"), "a#b c")
         self.assertLess(time.time() - started, 1.0)
+
+
+class ReadsOnlyTheExactEmptyFlowValuesTest(unittest.TestCase):
+    """릴리스 워크플로(R-3, 운영자 확인 048 ①, 결정 D-880)의 최상위 `permissions: {}`(전부 차단)를 읽으려고 **값 자리의 정확히 `{}` 와 `[]`** 만 빈 매핑·빈 목록으로 읽는다 — 이것이 읽개를 약하게 하지 않도록
+    그 밖의 흐름식(`{a: 1}`·`[1]`·`{ }`·`{}x` …)은 위 거절 목록과 똑같이 그대로 거절하고, 목록 항목 자리의 `- {}`·`- []`·키 자리·문서 맨 위의 `{}` 도 계속 거절한다."""
+
+    def test_an_exact_empty_mapping_and_an_exact_empty_list_are_read_in_a_value_place(self):
+        self.assertEqual(load("a: {}\n"), {"a": {}})
+        self.assertEqual(load("a: []\n"), {"a": []})
+        self.assertEqual(load("permissions: {}\njobs:\n  one: x\n"), {"permissions": {}, "jobs": {"one": "x"}})
+        self.assertEqual(load("outer:\n  b: {}\n  c: []\n  d: z\n"), {"outer": {"b": {}, "c": [], "d": "z"}})
+        self.assertEqual(load("a:\n  - k: {}\n    m: []\n"), {"a": [{"k": {}, "m": []}]}, "목록 항목 안의 매핑에서도 값 자리다")
+
+    def test_the_results_are_a_mapping_and_a_list_and_not_the_none_or_text_an_empty_value_gives(self):
+        tree = load("a: {}\nb: []\nc:\nd: ''\ne: '{}'\nf: '[]'\n")
+        self.assertEqual(tree["a"], {})
+        self.assertIsInstance(tree["a"], dict)
+        self.assertEqual(tree["b"], [])
+        self.assertIsInstance(tree["b"], list)
+        self.assertIsNone(tree["c"])
+        self.assertEqual((tree["d"], tree["e"], tree["f"]), ("", "{}", "[]"), "따옴표 글 '{}' 은 글 그대로다")
+        self.assertIsNot(load("a: {}\n")["a"], load("a: {}\n")["a"], "읽을 때마다 새 객체다(공유되어 고쳐지지 않는다)")
+
+    def test_a_comment_after_a_space_may_follow_but_nothing_else_may(self):
+        self.assertEqual(load("a: {}   # 전부 차단\n"), {"a": {}})
+        self.assertEqual(load("a: []  # 비었다\n"), {"a": []})
+        for text in ("a: {}#x\n", "a: []#x\n", "a: {} x\n", "a: [] x\n", "a: {}x\n", "a: []x\n", "a: {}}\n", "a: []]\n", "a: {}{}\n", "a: [][]\n", "a: {},\n", "a: [],\n", "a: {}:\n", "a: {} : 1\n"):
+            with self.subTest(text=text):
+                with self.assertRaises(yamlsub.YamlSubsetError):
+                    load(text)
+
+    def test_every_other_flow_expression_is_still_refused(self):
+        cases = (("안이 있는 매핑", "a: {a: 1}\n"), ("안이 있는 목록", "a: [1]\n"), ("공백이 든 빈 매핑", "a: { }\n"), ("공백이 든 빈 목록", "a: [ ]\n"), ("빈 매핑 뒤 글", "a: {}x\n"), ("빈 목록 뒤 글", "a: []x\n"),
+                 ("겹친 빈 목록", "a: [[]]\n"), ("겹친 빈 매핑", "a: {{}}\n"), ("빈 매핑 속 빈 목록", "a: {[]}\n"), ("한 줄 목록", "on: [push, workflow_dispatch]\n"), ("닫히지 않은 매핑", "a: {\n"), ("닫히지 않은 목록", "a: [\n"),
+                 ("키 자리의 빈 매핑", "{}: 1\n"), ("문서 맨 위의 빈 매핑", "{}\n"), ("문서 맨 위의 빈 목록", "[]\n"), ("목록 항목의 빈 매핑", "a:\n  - {}\n"), ("목록 항목의 빈 목록", "a:\n  - []\n"),
+                 ("목록 항목 안 매핑의 흐름식 값", "a:\n  - k: {x: 1}\n"), ("흐름식 단계", "steps:\n  - {run: x}\n"))
+        for label, text in cases:
+            with self.subTest(case=label):
+                with self.assertRaises(yamlsub.YamlSubsetError):
+                    load(text)
+
+    def test_the_refusal_message_still_names_the_line_and_the_flow_expression(self):
+        with self.assertRaises(yamlsub.YamlSubsetError) as caught:
+            load("a: {}\nb: {c: d}\n")
+        self.assertIn("2번째 줄", str(caught.exception))
+        self.assertIn("흐름식", str(caught.exception))
+
+    def test_a_block_text_and_a_comment_that_merely_contain_braces_are_untouched(self):
+        self.assertEqual(load("run: |\n  echo {}\n  echo []\n"), {"run": "echo {}\necho []\n"})
+        self.assertEqual(load("a: 1  # {}\n"), {"a": "1"})
+        self.assertEqual(load("a: x{}\nb: y[]\n"), {"a": "x{}", "b": "y[]"}, "글 한가운데의 중괄호는 흐름식이 아니라 평범한 글이다 — 값의 맨 앞 글자만 흐름식 표시다")
+
+    def test_a_workflow_shaped_text_with_the_blocking_top_level_permissions_is_read_into_the_expected_shape(self):
+        text = "name: x\non:\n  workflow_dispatch:\npermissions: {}\njobs:\n  one:\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi\n"
+        tree = load(text)
+        self.assertEqual(tree["permissions"], {})
+        self.assertEqual(tree["jobs"]["one"]["permissions"], {"contents": "read"})
+        self.assertEqual(tree["on"], {"workflow_dispatch": None})
+
+
+ZS_CHARACTERS = [chr(code) for code in range(0x110000) if unicodedata.category(chr(code)) == "Zs" and code != 0x20]      # NBSP·U+1680·U+2000에서 U+200A·U+202F·U+205F·U+3000 — YAML 에서는 공백이 아니라 값의 일부인 글자들
+
+
+class KeepsUnicodeSpacesAndRefusesBackslashSpaceAtLineEndTest(unittest.TestCase):
+    """독립 검증 S 의 S-1(필수, 결정 D-887): 읽개가 줄 끝·값 앞뒤의 유니코드 공백(NBSP·U+2003·U+3000·U+202F …)까지 잘라서 모든 못박은 값이 보이지 않는 글자 하나로 시험을 통과했다 —
+    YAML(과 PyYAML)에서 이 글자들은 값의 일부라 `environment: release` 뒤의 NBSP 는 GitHub 에서 다른 환경 이름이다. 줄 끝에서는 ASCII 공백만 자르고, 그러면 값에 남기거나 읽을 수 없는 줄로 거절한다.
+    같은 뿌리의 둘째: 줄 끝의 역슬래시 뒤 ASCII 공백은 셸에서 줄 이음이 아닌데 공백을 지우는 읽개에는 줄 이음으로 보였다."""
+
+    BS = chr(0x5C)
+
+    def test_the_space_like_characters_the_reader_accepts_are_exactly_the_Zs_ones(self):
+        """파이썬 `str.strip()` 이 자르는 글자 중 읽개가 따로 거절하지 않는 것은 범주 Zs 뿐이다 — 이 시험이 빠진 칸이 없음을 파이썬 자신의 기준으로 보인다."""
+        gap = []
+        for code in range(0x110000):
+            ch = chr(code)
+            if ch.isspace() and code not in (0x0A, 0x20) and ch not in yamlsub.LINE_BREAKS and unicodedata.category(ch) not in yamlsub.REFUSED_CATEGORIES and unicodedata.category(ch) != "Zs":
+                gap.append(hex(code))
+        self.assertEqual(gap, [])
+        self.assertGreaterEqual(len(ZS_CHARACTERS), 16)
+
+    def test_a_trailing_unicode_space_stays_in_a_plain_value_and_a_leading_one_too(self):
+        for ch in ZS_CHARACTERS:
+            with self.subTest(character=hex(ord(ch))):
+                self.assertEqual(load("a: b" + ch + "\n"), {"a": "b" + ch})
+                self.assertEqual(load("a: b" + ch + "\r\n"), {"a": "b" + ch})
+                self.assertEqual(load("a: b" + ch + "  # 주석\n"), {"a": "b" + ch}, "주석 앞에 남은 유니코드 공백도 값의 일부다")
+                self.assertEqual(load("a:\n  - b" + ch + "\n"), {"a": ["b" + ch]})
+                self.assertEqual(load("a: " + ch + "b\n"), {"a": ch + "b"})
+                self.assertEqual(load("environment: release\n"), {"environment": "release"})
+                self.assertNotEqual(load("environment: release" + ch + "\n"), load("environment: release\n"), "값이 달라져야 정해진 값과의 견주기가 빨개진다")
+
+    def test_a_unicode_space_where_only_an_ascii_space_may_end_the_line_is_refused(self):
+        places = (("키 콜론 뒤", "a:{c}\n"), ("빈 매핑 뒤", "a: {}{c}\n"), ("빈 목록 뒤", "a: []{c}\n"), ("빈 매핑 뒤 주석", "a: {}{c} # x\n"), ("작은따옴표 글 뒤", "a: 'b'{c}\n"), ("큰따옴표 글 뒤", 'a: "b"{c}\n'),
+                  ("블록 글 표시 뒤", "a: |{c}\n  x\n"), ("블록 글 표시 뒤(깎는 표시)", "a: |-{c}\n  x\n"), ("중첩 매핑 키 뒤", "a:\n  b:{c}\n"))
+        for ch in ZS_CHARACTERS:
+            for label, template in places:
+                with self.subTest(character=hex(ord(ch)), place=label):
+                    with self.assertRaises(yamlsub.YamlSubsetError):
+                        load(template.replace("{c}", ch))
+        for label, template in places:
+            with self.subTest(place=label, character="ASCII 공백 둘"):
+                load(template.replace("{c}", "  "))                                   # 같은 자리의 ASCII 공백은 예전처럼 읽힌다(거절하지 않는다)
+        self.assertEqual(load("a: {}  \n"), {"a": {}}, "같은 자리의 ASCII 공백은 그대로 잘린다")
+        self.assertEqual(load("a: []   # x\n"), {"a": []})
+        self.assertEqual(load("a: 'b'  \n"), {"a": "b"})
+        self.assertEqual(load("a: |  \n  x\n"), {"a": "x\n"})
+
+    def test_a_unicode_space_after_a_colon_inside_a_list_item_is_plain_text_not_a_mapping(self):
+        """`- b:` 뒤에 NBSP 가 붙으면 YAML 에서 콜론 뒤가 공백이 아니라 `b:` + NBSP 가 통째로 글이다(PyYAML 도 같다) — 읽개도 글 하나로 읽고 NBSP 를 값에 남긴다."""
+        for ch in ZS_CHARACTERS:
+            with self.subTest(character=hex(ord(ch))):
+                self.assertEqual(load("a:\n  - b:" + ch + "\n"), {"a": ["b:" + ch]})
+
+    def test_a_trailing_unicode_space_stays_in_every_line_of_a_block_text(self):
+        for ch in ZS_CHARACTERS:
+            with self.subTest(character=hex(ord(ch))):
+                self.assertEqual(load("a: |\n  one" + ch + "\n  two\n"), {"a": "one" + ch + "\ntwo\n"})
+                self.assertEqual(load("a: |\n  one\n  two" + ch + "\n"), {"a": "one\ntwo" + ch + "\n"})
+                self.assertEqual(load("a: |\n  one\n  " + ch + "\n  two\n"), {"a": "one\n" + ch + "\ntwo\n"}, "유니코드 공백뿐인 줄은 빈 줄이 아니라 글 한 줄이다")
+        self.assertEqual(load("a: |\n  one  \n  two\n"), {"a": "one\ntwo\n"}, "ASCII 공백은 그대로 잘린다")
+
+    def test_a_unicode_space_is_never_dropped_anywhere_a_value_is_read(self):
+        """모든 자리에서 '값에 남거나 거절' — 읽은 글에 그 글자가 없으면서 읽힌 경우가 없다."""
+        templates = ("a: b{c}\n", "a: {c}b\n", "a:\n  c: d{c}\n", "a:\n  - x{c}\n  - y\n", "a: |\n  x{c}\n", "a: |\n  {c}\n  x\n", "a: 'p{c}q'\n", 'a: "p{c}q"\n', "a: b{c}  # 주석\n", "a: b  # 주석{c}\n")
+        for ch in ZS_CHARACTERS:
+            for template in templates:
+                text = template.replace("{c}", ch)
+                with self.subTest(character=hex(ord(ch)), template=template):
+                    try:
+                        tree = load(text)
+                    except yamlsub.YamlSubsetError:
+                        continue
+                    if template == "a: b  # 주석{c}\n":
+                        self.assertEqual(tree, {"a": "b"}, "주석 안의 글자는 값에 들어오지 않는다")
+                        continue
+                    seen = []
+
+                    def walk(node):
+                        if isinstance(node, dict):
+                            for key, value in node.items():
+                                seen.append(key)
+                                walk(value)
+                        elif isinstance(node, list):
+                            for item in node:
+                                walk(item)
+                        elif isinstance(node, str):
+                            seen.append(node)
+
+                    walk(tree)
+                    self.assertTrue(any(ch in piece for piece in seen), (text, tree))
+
+    def test_a_backslash_and_ascii_spaces_at_the_end_of_a_line_are_refused_in_every_place(self):
+        bs = self.BS
+        cases = (("블록 글(한 칸)", "a: |\n  echo hi " + bs + " \n  rm x\n"), ("블록 글(두 칸)", "a: |\n  echo hi " + bs + "  \n  rm x\n"), ("블록 글 마지막 줄(줄바꿈 없음)", "a: |\n  echo hi " + bs + " "),
+                 ("블록 글(CRLF)", "a: |\r\n  echo hi " + bs + " \r\n  rm x\r\n"), ("주석 줄", "# 설명 " + bs + " \na: 1\n"), ("한 줄 값", "a: b" + bs + " \n"), ("목록 항목", "a:\n  - x" + bs + " \n"),
+                 ("역슬래시 둘", "a: |\n  echo hi " + bs + bs + " \n  rm x\n"), ("줄 끝 주석", "a: b  # c " + bs + " \n"))
+        for label, text in cases:
+            with self.subTest(case=label):
+                with self.assertRaises(yamlsub.YamlSubsetError) as caught:
+                    load(text)
+                self.assertIn("역슬래시", str(caught.exception))
+                self.assertIn("번째 줄", str(caught.exception))
+
+    def test_a_backslash_at_the_very_end_of_a_line_is_a_normal_continuation_and_stays_in_the_text(self):
+        bs = self.BS
+        text = "a: |\n  echo a " + bs + "\n    b\n  echo c\n"
+        self.assertEqual(load(text), {"a": "echo a " + bs + "\n  b\necho c\n"})
+        self.assertEqual(load(text.replace("\n", "\r\n")), load(text))
+        self.assertEqual(load("a: x" + bs + "y  \n"), {"a": "x" + bs + "y"}, "줄 끝이 아닌 역슬래시와 ASCII 공백 끝은 그대로 읽는다")
+        self.assertEqual(load("a: |\n  echo " + bs + bs + "\n  rm x\n"), {"a": "echo " + bs + bs + "\nrm x\n"})
+
+    def test_a_backslash_then_a_unicode_space_is_not_a_continuation_and_both_characters_stay(self):
+        bs = self.BS
+        for ch in ZS_CHARACTERS:
+            with self.subTest(character=hex(ord(ch))):
+                self.assertEqual(load("a: |\n  echo hi " + bs + ch + "\n  rm x\n"), {"a": "echo hi " + bs + ch + "\nrm x\n"})
 
 
 if __name__ == "__main__":
