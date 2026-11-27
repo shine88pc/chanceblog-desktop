@@ -352,7 +352,9 @@ def notices_text(version, packages, commit):
         "| OpenSSL 3 (libssl-3.dll·libcrypto-3.dll) | Python 3.12 가 함께 싣는 것 | Apache-2.0 | Python 표준 `ssl`(`_ssl`) — **이 앱의 접속 틀(`net/`)이 보안 접속(TLS)에 쓴다**(스위치가 모두 꺼진 지금은 접속하지 않는다). 인증서는 윈도 신뢰 저장소를 쓰고 앱은 인증서 묶음(CA bundle)을 싣지 않는다. Qt 의 네트워크 파이썬 모듈(QtNetwork)·TLS 플러그인과 그 OpenSSL(`-x64` 이름)은 앱이 쓰지 않아 묶음에서 뺐고, 들어 있으면 빌드가 거절합니다(Qt6Network.dll 자체는 PySide6 의 Qt DLL 이고 Qt 의 터치 플러그인 qtuiotouchplugin.dll 이 가져오기 때문에 남습니다) |",
         "| libffi · SQLite · bzip2 · liblzma | Python 3.12 가 함께 싣는 것 | MIT · 퍼블릭 도메인 · BSD 계열 · 퍼블릭 도메인 | Python 표준 모듈(ctypes·sqlite3·bz2·lzma) |",
         "| Microsoft Visual C++ 런타임(VCRUNTIME140·MSVCP140) | 빌드한 PC 의 것 | Microsoft 의 재배포 가능 구성 요소 | Python·Qt 의 실행에 필요 |",
-        "| Mesa 소프트웨어 OpenGL(opengl32sw.dll) | PySide6 배포본과 같음 | MIT 계열 | 그래픽 장치가 없을 때의 대체(Qt 가 싣는 것) |", "",
+        "| Mesa 소프트웨어 OpenGL(opengl32sw.dll) | PySide6 배포본과 같음 | MIT 계열 | 그래픽 장치가 없을 때의 대체(Qt 가 싣는 것) |",
+        "| Inno Setup | 설치 파일(Setup)을 만든 빌드 PC 의 판(판은 정보 파일 PACKAGE_INFO 의 installer 칸에 적힌다) | 저작권자·라이선스 이름·전문은 아직 이 폴더에 없다 — 릴리스 갈래가 빌드 러너의 Inno Setup 설치 폴더에서 복사해 와야 한다 | "
+        "설치 파일(Setup)을 만드는 도구이고 설치 파일 안에 설치·제거 프로그램의 실행 부분이 들어 있다(이 압축 파일에는 들어 있지 않다) |", "",
         "## LGPL(Qt·PySide6) 안내", "",
         "- 사용 방식: 동적 링크입니다. Qt DLL 과 PySide6 모듈은 `_internal` 폴더 안 `PySide6` 에 **각자 별개 파일**로 있고 하나의 실행 파일로 합치지 않았습니다.",
         "- 바꿔 끼우기: 같은 버전의 Qt 또는 PySide6 파일로 `_internal` 안의 해당 파일을 바꿔 넣을 수 있습니다.",

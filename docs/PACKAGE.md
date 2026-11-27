@@ -172,3 +172,63 @@ python -m venv ..\chanceblog-package-venv
 ## 업데이트 설치 도구 어댑터(Inno Setup)가 들어왔다 — 이 Package 에서는 꺼진 채 (D-850에서 D-857)
 
 설치 도구는 Inno Setup 으로 정해져(설치 도구 시험 2차 측정 결과, 이슈 #288) 앱의 업데이트 코드에 **Inno 어댑터**(`update/apply.py` 의 `InnoAdapter`·`launch_setup` — 앱이 설치 도구를 띄우는 유일한 곳)가 들어왔다. Velopack 감지와 어댑터는 만들지 않았다(`velopack` 은 매니페스트를 읽기만 하고 적용하지 않는다). 하지만 **이 Package 는 그 코드를 한 번도 부르지 않는다** — 스위치 `UPDATE_APPLY` 가 `False` 이고 서명 공개키 자리도 비어 있다. 앱이 읽는 설치 종류는 `inno`(실행 파일 폴더에 `unins000.exe`)·`portable`·`source` 셋이고, 모르면 적용하지 않는 쪽(휴대용)이다. 설치 구현 갈래가 `packaging/` 에 만드는 `.iss` 는 앱의 기대를 지켜야 한다: 실행 파일 폴더에 제거 도구(`unins000.exe`)가 남을 것·무음 인자(`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS` — 설치 쪽 `INNO_SILENT_UPDATE_ARGS` 와 같은 값)로 끝까지 설치될 것·낮은 판 재설치(복구)를 위해 파일 복사가 `ignoreversion` 일 것. 규칙과 한계는 [`SECURITY.md`](SECURITY.md) 의 '설치 도구 어댑터(Inno Setup)' 절, 파일 역할 표는 [`RELEASE.md`](RELEASE.md) 의 '설치 종류와 파일 역할 확정' 에 있다.
+
+## 설치 파일(Inno Setup) — 만드는 법·무음 설치와 제거·한계 (V1INSTALL, D-830에서 D-836)
+
+위 1에서 10 절은 압축 폴더(휴대용) 이야기다. 이 절은 **같은 묶음 폴더로 설치 파일(Setup)도 만드는** 도구를 설명한다. 설치 파일을 만드는 도구는 **Inno Setup** 이다(설치 도구 시험 2차 결과 — 세 후보 모두 관문을 통과했고 점수가 가장 높았다, 이슈 #288). 설치 파일은 휴대용 압축 파일과 **바이트가 같은 프로그램**을 담고, 압축 파일과 정보 파일을 만드는 방법(위 2·4 절)은 그대로다. 앱 소스(`src/`)·스위치(모두 꺼짐)·`.github`·의존성은 이 절의 변경에 들어 있지 않다.
+
+### 만드는 법
+
+먼저 위 2 절대로 `python packaging/build_package.py` 를 돌린다(출력 폴더 `dist/package`). 그다음 **윈도에서 Inno Setup 6.5.0 이상이 깔린 곳**(GitHub 의 윈도 러너 이미지에는 미리 깔려 있다)에서 저장소 맨 위 폴더에서 `python packaging/build_installer.py` 를 돌린다. 구현에 쓴 개발 PC 에는 Inno 가 없었고 설치·내려받기는 하지 않았다 — 진짜 컴파일은 러너에서 처음 확인한다(아래 '알려진 한계').
+
+| 옵션 | 뜻 |
+|---|---|
+| `--out-dir 폴더` | `build_package.py` 의 출력 폴더(기본 저장소의 `dist/package`). 표지 파일(`.chanceblog-package-out`)이 없으면 거절한다. **상대 경로면 이 도구를 부른 폴더 기준으로 시작할 때 한 번 절대 경로로 바꾼다** — 컴파일러는 `packaging` 폴더에서 돌아 상대 경로를 그대로 넘기면 그 폴더 기준으로 읽어 묶음 폴더를 못 찾기 때문이다(릴리스 워크플로가 `--out-dir <상대 폴더>` 로 불러도 의도한 폴더에서 돈다) |
+| `--iscc ISCC.exe 경로` | 컴파일러 위치(상대 경로는 위와 같이 절대 경로로 바꾼다). 없으면 환경 변수 `CHANCEBLOG_ISCC` → PATH → 잘 알려진 설치 폴더(`Program Files` 의 `Inno Setup 6`·사용자 프로그램 폴더) 순으로 찾는다. **PATH 는 절대 폴더만 훑고 현재 폴더·상대 폴더·빈 항목은 보지 않는다**(윈도 기본 환경의 `shutil.which` 는 현재 폴더를 PATH 보다 먼저 봐서 저장소 맨 위에 둔 가짜 `ISCC.exe` 가 걸릴 수 있었다). 준 경로가 틀리면 다른 것으로 바꿔치기하지 않고 거절한다 |
+| `--icon 아이콘.ico` | 설치 파일의 아이콘(상대 경로는 위와 같이 절대 경로로 바꾼다). 없으면 `packaging/ChanceBlogDesktop.ico` 가 있을 때만 쓰고, 그것도 없으면 기본 아이콘이다(아래 '아이콘') |
+
+순서(스크립트가 한 줄씩 알린다): ① 입력 확인 — 출력 폴더 표지·바깥 정보(outer)·**시험 빌드(`TESTBUILD`)가 아님**·`release_eligible`·압축 파일의 크기와 SHA-256 이 정보 파일·`SHA256SUMS` 와 같음 → ② 묶음 폴더 바이트가 압축 파일과 같은지(파일마다 SHA-256, 압축 파일 안 항목과도 견줌) → ③ 스크립트 `packaging/ChanceBlogDesktop.iss` 점검(`iss_problems`)과 기본 설치 폴더·데이터 폴더가 안 겹치는지 → ④ 컴파일러 찾기와 판 확인 → ⑤ 컴파일(`ISCC`) → ⑥ 컴파일러가 컴파일 출력에서 스스로 밝힌 판 확인과 설치 파일 점검 → ⑦ 바깥 정보·`SHA256SUMS` 갱신.
+
+산출물: `release` 폴더에 `ChanceBlogDesktop-0.1.0-preview.1-Setup.exe` 가 더해지고, `SHA256SUMS` 는 두 줄(압축 파일·설치 파일), 바깥 `PACKAGE_INFO.json`·`.md` 에 선택 칸 `installer`(도구 이름 `inno-setup`·판·컴파일러 파일의 SHA-256·만든 곳)와 `artifacts`(역할 `setup`·`portable` 별 이름·SHA-256·크기)가 더해진다. **`schema` 번호는 올리지 않았고(1 그대로) 안쪽 정보·`gui_entry` 의 점검·화면 '정보' 카드는 건드리지 않았다** — 옛 묶음·휴대용 정보를 읽는 길은 바이트까지 그대로다(`schema` 2·`channel`·`notice`·`update` 확장은 RELEASE·UPDATE 갈래 몫으로 미뤘다 — 총괄 결정, D-833). 압축 파일·묶음 폴더·안쪽 정보는 한 바이트도 바뀌지 않는다(시험이 해시로 견준다).
+
+하지 않는 일: **시험 빌드에는 설치 파일을 만들지 않는다**(이름 함수 `pkgcommon.setup_name` 도 거절). 서명하지 않는다(`/S` 인자 0). 네트워크 0. **하위 프로세스는 ISCC 한 곳**이다(`Host.run_iscc` — 이름이 `ISCC.exe` 가 아니면 거절, 셸 없음, 비밀처럼 보이는 이름의 환경 변수는 넘기지 않는다). 지우는 곳은 출력 폴더 안의 임시 폴더 `work/installer` 뿐이다.
+
+### 판 읽기 — 읽지 못하거나 6.5.0 보다 낮으면 만들지 않는다
+
+러너 이미지가 바뀌어 다른 판의 컴파일러가 걸리는 일(위협 T11)을 막으려고 판을 이 순서로 읽는다: ① 컴파일러가 **컴파일 출력에서 스스로 밝힌 판**(`Compiler engine version` 줄) ② 레지스트리 제거 항목 — **항목의 설치 위치가 이 컴파일러가 든 폴더와 정확히 같은 폴더**(대소문자·`/`·끝 구분자는 무시)일 때만이고, 윗 폴더·아랫 폴더·이웃 폴더(`inno` 대 `inno2`)는 읽지 않으며, 제품 이름도 `Inno Setup 6`·`Inno Setup version 6.7.1` 꼴만 읽는다(이름이 `Inno Setup` 으로 시작하기만 하는 다른 제품의 항목은 읽지 않는다) ③ 파일 제품 판 ④ 파일 판. 위에서부터 처음 읽힌 값을 쓴다(파일 판은 러너에서 0.0.0.0 으로 나왔다 — 그래서 레지스트리로 읽었다). **하나도 읽지 못하거나 6.5.0(한국어 안내 파일 `Korean.isl` 이 들어 있는 첫 판)보다 낮으면 빌드를 거절**하고 설치 파일을 내놓지 않는다. 컴파일 전에 이 컴파일러가 든 폴더의 레지스트리 항목으로 읽힌 판이 낮으면 컴파일도 하지 않는다(파일 판은 바로가기 같은 껍데기 파일이면 엉뚱한 값일 수 있어 컴파일 전의 판정에는 쓰지 않는다 — 최종 판정은 컴파일 출력이 밝힌 판이다). 읽은 판과 컴파일러 파일의 SHA-256 은 바깥 정보의 `installer` 칸에 남는다. 시험 안 우회용 인자는 만들지 않았다.
+
+### 설치 파일의 모양(`packaging/ChanceBlogDesktop.iss`)
+
+스파이크(`packaging/spike/ChanceBlogSpike.iss`)에서 러너가 실제로 컴파일하고 설치·제거·업데이트까지 통과한 스크립트를 바탕으로 줄 모양을 맞췄고, 이름과 ID 는 생산 값이다. **스파이크에 없던 새 모양이 셋 있고 러너가 아직 컴파일해 본 적이 없다**: ① `AppId` 줄 — 여는 중괄호를 두 번 겹쳐 쓰는 Inno 의 표준 모양이다(스파이크는 이 값을 `/D` 정의 글로 넣었다) ② `[Setup]` 끝의 `#ifdef IconFile` 로 싼 `SetupIconFile` 줄 — 아이콘이 있을 때만 켜지는 구역이라 아이콘이 없으면 컴파일되지 않는다 ③ `#error AppVersion …` 줄 — 버전 정의가 없으면 멈춘다(스파이크의 `#error` 는 `SourceDir` 용이었고 버전은 기본값을 넣었다). 스파이크에서 뺀 것은 시험용 `[Code]`(로그용)와 설치 확인 쪽을 건너뛰는 `DisableReadyPage`, 정의로 받던 실행 파일·설치 폴더 이름(스크립트에 글자로 적었다)이고, 컴파일러를 `/Q` 없이 부르는 것도 다르다(컴파일 출력에서 판을 읽으려고). 값은 ISCC 의 `/D` 정의(`AppVersion`·`SourceDir`, 아이콘이 있으면 `IconFile`)와 `/O`·`/F` 로 받는다.
+
+- `PrivilegesRequired=lowest` — **관리자 권한 없이** 사용자 폴더에 설치한다(Setup 의 실행 수준은 `asInvoker`로 측정됐다). `DefaultDirName={autopf}\ChanceBlogDesktop` 는 사용자 권한에서 `%LocalAppData%\Programs\ChanceBlogDesktop` 이 된다.
+- `Languages` 는 공식 `compiler:Languages\Korean.isl` 하나(한국어 안내, `/LANG=korean` 으로 확인했다).
+- `CloseApplications=yes`·`RestartApplications=yes` — **쉬운 말로**: 설치하는 도중 이 앱이 켜져 있으면 Setup 이 윈도의 다시 시작 관리자에게 '이 앱을 닫아 주세요' 라고 요청하고, 끝난 뒤 '다시 켜 주세요' 라고 요청한다. 윈도가 다시 켜 줄 수 있는 앱만 다시 켜지는데 이 앱이 거기에 해당하는지는 측정하지 못했다. 조용한 설치에서 앱을 닫게 하려면 Setup 을 `/CLOSEAPPLICATIONS` 인자로 부른다(아래 무음 설치 — 이 인자는 설계에서 가져온 것이고 러너에서 재 본 적이 없다).
+- `Compression=lzma2/max`·`SolidCompression=yes`(러너 측정: 묶음 95.8 MB → Setup 29.1 MB, 컴파일 25.2초)·`ArchitecturesInstallIn64BitMode=x64compatible`·`DisableProgramGroupPage=yes`·`UninstallDisplayIcon`·`OutputBaseFilename`.
+- 시작 메뉴 바로가기 **하나뿐**(바탕화면 0). `[Run]` 은 `postinstall skipifsilent` — 화면으로 설치할 때만 '앱 실행' 을 묻고 조용한 설치에서는 앱을 띄우지 않는다.
+- **`[UninstallDelete]`·`[Registry]`·`[Tasks]`·`[Code]` 구역이 없고 시작 자동 실행·예약 작업도 없다.** 점검 함수 `build_installer.iss_problems` 가 컴파일 전에 같은 규칙을 걸고(구역은 다섯뿐·구역마다 필수 줄이 정확히 한 번·코드 줄은 ASCII·바탕화면·시작 자동 실행·사용자 데이터 폴더 상수 거절), 시험(`test_installer_build_rules`)이 쉰 가지가 넘는 변이로 규칙 자체를 시험한다. **줄은 `str.splitlines` 가 보는 모든 줄 구분(CR 단독·VT·FF·FS·GS·RS·NEL·LS·PS 까지)으로 나눠 읽고, 탭·줄바꿈 말고 널 문자를 포함한 제어 문자나 줄 나눔 글자가 하나라도 있으면 그 글자만으로 거절한다** — 줄을 `\n` 으로만 나누던 점검은 주석 한 줄 안의 줄 구분 글자 뒤에 숨긴 `[UninstallDelete]` 를 주석으로 보고 지나쳤다(독립 검증 S 권고 R2, 재작업 1에서 막았다).
+- `AppId` 는 이 갈래가 한 번 만들어 **영구 고정**한 GUID 다(`packaging/pkgcommon.py` 의 `INNO_APP_GUID`, 값은 결정 D-830). 바꾸면 같은 앱의 새 판이 아니라 별개 앱으로 설치된다. 스크립트에는 여는 중괄호를 두 번 겹쳐 쓰는 Inno 의 규칙으로 적는다(시험이 이 모양을 묶는다).
+- 이 파일의 코드 줄은 모두 ASCII 이고 한글은 주석뿐이다(한국어 화면은 `Korean.isl` 이 맡는다).
+
+### 무음 설치·제거 명령 줄 — 러너에서 잰 것과 설계에서 가져온 것을 갈라 적는다
+
+- **설치(러너에서 측정)**: `ChanceBlogDesktop-0.1.0-preview.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-` — 필요하면 `/DIR=폴더`·`/LOG=파일`, 한국어 안내 글이 필요하면 `/LANG=korean` 을 더한다. 측정: 종료 코드 0·실제 묶음 3.1초·앱은 저절로 뜨지 않음·설치본 `--selftest` 13개 통과·방화벽을 막아도 됨·한글과 공백이 든 103자 경로에도 됨.
+- **제거(러너에서 측정)**: 설치 폴더 안에서 `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`. 측정: 종료 코드 0·설치 폴더·바로가기·제거 항목이 사라지고 **센티넬 데이터 파일과 가짜 자격 증명은 그대로**였다.
+- **업데이트 호출(설계에서 가져온 것 — 러너에서 재 본 적 없다)**: 위 설치 인자에 `/CLOSEAPPLICATIONS` 를 더한다(앱이 먼저 끝난 뒤 Setup 이 남은 앱을 닫게 — UPDATE 설계서 3-8). 스파이크는 이 인자를 한 번도 쓰지 않았다. 켜 둔 앱이 있을 때 측정한 M09 는 이 인자 없이·앱이 먼저 끝나지 않은 채·창 없는 시험 앱으로 돌렸고 새 판이 적용되지 않았다 — 그래서 **이 인자가 켜 둔 앱을 닫고 새 판을 적용하게 하는지는 확인하지 못했다**(재측정은 릴리스 갈래의 러너 시험 몫, 아래 '알려진 한계').
+- **인자의 단일 출처**: 위 인자는 `packaging/pkgcommon.py` 의 `INNO_SILENT_INSTALL_ARGS`·`INNO_SILENT_UNINSTALL_ARGS`·`INNO_UPDATE_EXTRA_ARGS`(와 합친 `INNO_SILENT_UPDATE_ARGS`·제거 프로그램 이름 `INNO_UNINSTALLER_NAME`)에만 적혀 있고 `build_installer.py` 는 이 글자를 다시 쓰지 않는다. **`packaging/` 도구는 앱 소스(`src/`)를 불러오지 못하고 앱 소스도 `packaging/` 을 불러오지 못한다**(`pkgcommon.py` 는 표준 라이브러리만). 그래서 UPDATE U-4(설치 도구 어댑터 `update/apply.py`·`install_kind.py` 의 Inno 판, 나중 갈래)가 **같은 값을 `src/` 쪽에 따로 두고, 두 값이 같음을 지키는 시험**(`VERSION_PATTERN` 과 `ui/core/version.py` 의 같음 시험과 같은 모양)을 더해야 한다. 이 갈래는 `src/` 를 건드리지 않아 그 같음 시험을 만들지 않았다.
+
+### 설치 폴더와 데이터 — 겹치지 않고, 제거해도 남는다
+
+설치 폴더 `%LocalAppData%\Programs\ChanceBlogDesktop` 와 데이터 폴더 `%LOCALAPPDATA%\ChanceblogDesktop`(소문자 b — 이름은 바꾸지 않았다)은 부모 폴더가 달라 겹치지 않는다. 순수 함수 `install_dir_problem(설치 폴더, 데이터 폴더)` 는 대소문자·끝의 점·공백·슬래시·`..`·유니코드 정규화를 무시하고 **같거나 한쪽이 다른 쪽 안에 들면** 문제 글을 돌려주고(Velopack 판의 `pack_id_problem` 은 만들지 않았다 — D-831), 빌드가 기본 위치로 한 번 확인한다(시험이 일부러 겹친 값으로 변이를 확인한다). **제거해도 데이터 폴더·자격 증명 관리자 항목·백업은 그대로 남는다**(`[UninstallDelete]` 0 — 지우는 법은 위 9 절).
+
+### 알려진 한계(사실대로)
+
+- **켜 둔 앱이 있으면 무음 Setup 이 새 판을 적용하지 못한다(측정 M09)**: 작은 앱을 켜 둔 채 새 Setup 을 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-` 로 돌리자 새 판이 적용되지 않았고 옛 판과 켜진 앱이 그대로였다(반쯤 바뀐 상태는 없음). 단 그 측정은 생산 호출과 달랐다 — 앱이 먼저 끝나지 않았고 `/CLOSEAPPLICATIONS` 가 없었고 창 없는 시험 앱이었다. **생산 호출(앱이 먼저 끝남 + `/CLOSEAPPLICATIONS`)의 재측정은 릴리스 갈래의 러너 시험 몫**이다.
+- **낮은 판으로 되돌리기**는 옛 Setup 을 다시 돌려서 된다(측정 M10) — 그래서 이전 Setup 을 보관해야 한다(UPDATE 설계의 `update/keep`). **깨진 새 판은 도구가 되돌리지 않는다**(측정 M11 — 새 판이 시작하자마자 끝나도 그대로 남았다) — 복구는 앱의 복구 코드와 사용자 몫이다.
+- **서명이 없다.** 설치 파일도 처음 실행할 때 SmartScreen 경고가 뜰 수 있고 스마트 앱 컨트롤이 켜진 PC 에서는 막힐 수 있다(위 10 절). SHA-256 이 변조를 알아보는 수단이다(`SHA256SUMS`·릴리스 화면의 값).
+- **표준 사용자 계정에서의 설치(T-INST-04)는 러너에서 만들지 못했다**('다른 계정으로 프로그램을 띄우지 못함') — 운영자 실기 시험지(`PERSONAL_PC_TEST_V1_DRAFT.md` 의 T-INST 표)로 넘겼다.
+- **진짜 컴파일은 러너에서 처음 확인한다**: 구현에 쓴 개발 PC 에는 Inno 가 없었고 설치·내려받기는 금지라 `tests/test_installer_build_rules.py` 의 진짜 컴파일 시험(생산 `.iss` 로 작은 가짜 묶음을 컴파일해 이름·크기·판 기록을 확인)은 거기서 건너뛰었다. GitHub 의 윈도 러너(Inno 6.7.1)에서 도는 앱 검사(CI)가 생산 `.iss` 를 **처음 진짜로 컴파일한다** — 거기서 빨개지면 스크립트 줄이나 판 읽기를 고친다. 먼저 의심할 곳은 스파이크에 없던 새 모양 셋(위 '설치 파일의 모양')이고, 나머지 줄은 스파이크와 같게 해서 이 위험을 줄였다.
+- **앱 검사 초록이 '컴파일했다' 는 뜻은 아니다**: 진짜 컴파일 시험은 컴파일러를 못 찾으면 실패가 아니라 건너뛴다(러너 이미지가 바뀌어도 모든 병합이 막히지 않게 한 총괄 결정이고, 릴리스 워크플로가 안정되면 다시 검토한다). 그래서 러너(`GITHUB_ACTIONS` 가 `true` 인 윈도)에서는 컴파일하면 검사 주석에 `::notice`(Inno 판·설치 파일 크기)를, 컴파일러를 못 찾아 건너뛰면 `::warning` 을 남긴다 — **검사 주석에 notice 가 있어야 컴파일한 것이다**(로컬·우분투에서는 아무것도 쓰지 않고 조용히 건너뛴다).
+- **아이콘**: `.ico` 가 없어 기본 아이콘이다. `packaging/ChanceBlogDesktop.ico` 가 있거나 `--icon` 을 주면 `SetupIconFile` 이 켜진다(`IconFile` 정의가 있을 때만). 아이콘을 정하는 것은 운영자 결정이다(D-834).
+- **고지문**: `THIRD_PARTY_NOTICES.md` 에 'Inno Setup 으로 만든 설치 파일' 사실만 적었다. Inno Setup 의 저작권자 표시·라이선스 이름·전문은 릴리스 갈래가 러너의 Inno 설치 폴더에서 복사해 채워야 한다(법률 판단이 아니다).
+- 짧은 이름(8.3)·링크·정션은 풀지 않고 글자만 본다(`install_dir_problem` 의 한계). 설치 파일 크기는 업데이트 매니페스트의 파일 하나 상한(200 MiB)을 넘으면 거절한다.

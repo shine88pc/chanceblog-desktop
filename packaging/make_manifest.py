@@ -401,9 +401,10 @@ def malware_text(scan):
 # ---- 정보 만들기 -------------------------------------------------------------
 
 def build_info(*, variant, version, git, requirements, python_version, lock_sha256, build, dependencies, files, signing,
-               package=None, scan=None, built_utc=None, selftest=None, host=None, trial=False):
+               package=None, scan=None, built_utc=None, selftest=None, host=None, trial=False, installer=None, artifacts=None):
     """정보 사전 하나. `variant` 가 'inner' 이면 시계·압축 파일 해시·검사 결과·자가 점검·만든 PC 정보를 담지 않는다(같은 입력이면 같은 바이트).
-    `trial` 은 시험 빌드(외부 쓰기 관문 모듈이 아직 없는 소스를 `--allow-missing-gate` 로 만든 것) 표시 — 개인 PC 로 보내지 않는 빌드다."""
+    `trial` 은 시험 빌드(외부 쓰기 관문 모듈이 아직 없는 소스를 `--allow-missing-gate` 로 만든 것) 표시 — 개인 PC 로 보내지 않는 빌드다.
+    `installer`·`artifacts` 는 설치 파일(Inno Setup)을 만든 뒤에만 바깥 사본에 더하는 **선택 칸**이다(V1INSTALL, D-833 — schema 번호는 그대로 1, 안쪽 사본에는 절대 넣지 않는다)."""
     if variant not in ("inner", "outer"):
         raise ValueError("variant 는 inner 또는 outer")
     info = {
@@ -431,7 +432,22 @@ def build_info(*, variant, version, git, requirements, python_version, lock_sha2
         info["selftest"] = selftest
         info["host"] = host
         info["release_eligible"] = bool(selftest and selftest.get("gate_present") and not selftest.get("failed") and not trial)
+        if installer is not None:
+            info["installer"] = installer
+        if artifacts is not None:
+            info["artifacts"] = artifacts
     return info
+
+
+def with_installer(info, installer, artifacts):
+    """바깥 정보 사본에 설치 파일 칸 둘(`installer`·`artifacts`)을 더한 **새 사전**을 돌려준다(이미 있으면 바꾼다) — 앞쪽 칸의 값과 순서는 그대로 두고 맨 뒤에 둔다. schema 번호는 올리지 않는다.
+    안쪽 정보(`variant` 가 outer 가 아닌 것)는 거절(ValueError) — 안쪽 사본에는 이 칸이 없어야 같은 입력에서 같은 압축 파일이 나온다."""
+    if not isinstance(info, dict) or info.get("variant") != "outer":
+        raise ValueError("설치 파일 칸은 바깥 정보에만 더해요.")
+    newer = {key: value for key, value in info.items() if key not in ("installer", "artifacts")}
+    newer["installer"] = dict(installer)
+    newer["artifacts"] = {role: dict(item) for role, item in artifacts.items()}
+    return newer
 
 
 def render_json(info):
@@ -445,6 +461,21 @@ def render_sums(entries):
 
 def _hash_rows(files, names):
     return [f"| `{name}` | `{files[name]}` |" for name in names if name in files]
+
+
+def installer_lines(info):
+    """바깥 사본에 설치 파일(Inno Setup) 칸이 있을 때만 `PACKAGE_INFO.md` 에 더하는 절 — 두 산출물의 해시·만든 도구·확인 방법(V1INSTALL, D-833). 사실만 적는다(법률 판단 없음)."""
+    installer = info["installer"]
+    artifacts = info.get("artifacts") or {}
+    lines = ["## 설치 파일(Inno Setup)", ""]
+    for role, label in (("setup", "설치 파일"), ("portable", "휴대용 압축 파일")):
+        item = artifacts.get(role)
+        if item:
+            lines.append(f"- {label} `{item['name']}`: `{item['sha256']}` (크기 {item['bytes']:,} 바이트)")
+    lines += [f"- 만든 도구: Inno Setup {installer['tool_version']} · 컴파일러(ISCC) 파일의 SHA-256 `{installer['iscc_sha256']}` · 만든 곳 {installer['built_on']}",
+              "- 확인 방법: PowerShell 에서 `Get-FileHash .\\<파일 이름> -Algorithm SHA256` 의 값이 위 값과 같아야 합니다(`SHA256SUMS` 에도 같은 값이 있습니다). 두 파일은 같은 묶음 폴더에서 만들어 안의 프로그램 파일이 같은 바이트입니다.",
+              "- 서명이 없는 설치 파일이라 처음 실행할 때 위 8번의 SmartScreen 경고가 뜰 수 있습니다. 설치는 관리자 권한 없이 사용자 폴더에 하고, 제거해도 글·설정·백업·키는 남습니다.", ""]
+    return lines
 
 
 def render_markdown(info):
@@ -503,6 +534,8 @@ def render_markdown(info):
     lines += ["## 7. 서명 여부", "", f"- **{pc.NOTICE}**: " + ("서명 있음" if signing["signed"] else "미서명") + f" (실행 파일 서명 확인: {signing['exe']})", f"- {signing['summary']}",
               f"- 묶음 안 서명된 외부 구성 요소(DLL·pyd): {signing['signed_third_party_binaries']}개", ""]
     lines += ["## 8. SmartScreen 예상 동작", "", SMARTSCREEN_TEXT, ""]
+    if outer and info.get("installer"):
+        lines += installer_lines(info)
     if outer and info.get("selftest"):
         check = info["selftest"]
         counts = f"- 통과 {len(check.get('passed', []))} · 실패 {len(check.get('failed', []))} · 건너뜀 {len(check.get('skipped', []))}"
@@ -541,13 +574,22 @@ def write_inner(bundle, info):
     (bundle / pc.INFO_MD).write_bytes(render_markdown(info).encode("utf-8"))
 
 
+def sums_entries(info, zip_path):
+    """`SHA256SUMS` 에 적을 (이름, 해시) 목록 — 압축 파일 하나, 바깥 정보에 `artifacts`(설치 파일 칸)가 있으면 그 파일들도. 같은 이름이 다른 해시로 두 번 나오면 ValueError."""
+    entries = {Path(zip_path).name: info["package"]["sha256"]}
+    for item in (info.get("artifacts") or {}).values():
+        if entries.setdefault(item["name"], item["sha256"]) != item["sha256"]:
+            raise ValueError("같은 파일 이름이 서로 다른 해시로 적혀 있어요.")
+    return sorted(entries.items())
+
+
 def write_outer(out_dir, info, zip_path):
-    """압축 파일 옆에 `PACKAGE_INFO.json`·`.md`·`SHA256SUMS` 를 쓴다."""
+    """압축 파일 옆에 `PACKAGE_INFO.json`·`.md`·`SHA256SUMS` 를 쓴다(설치 파일 칸이 있으면 `SHA256SUMS` 에 설치 파일 줄도)."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / pc.INFO_JSON).write_bytes(render_json(info).encode("utf-8"))
     (out_dir / pc.INFO_MD).write_bytes(render_markdown(info).encode("utf-8"))
-    (out_dir / pc.SUMS_NAME).write_bytes(render_sums([(Path(zip_path).name, info["package"]["sha256"])]).encode("utf-8"))
+    (out_dir / pc.SUMS_NAME).write_bytes(render_sums(sums_entries(info, zip_path)).encode("utf-8"))
 
 
 def zlib_text():

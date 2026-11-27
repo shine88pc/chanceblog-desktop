@@ -4,6 +4,7 @@
 import ast
 import hashlib
 import re
+import sys
 import unittest
 from pathlib import Path
 
@@ -164,6 +165,36 @@ class StdlibImportsTest(unittest.TestCase):
         self.assertTrue({"re", "json"} <= names, names)
 
 
+class InstallerConstantsTest(unittest.TestCase):
+    """설치 파일(Inno Setup, V1INSTALL — D-830)의 이름·ID·인자 상수가 표준 라이브러리만 쓰는 이 공통 파일 한 곳에 있고, 옛 이름·옛 문구는 그대로다(자세한 값은 `test_installer_ids.py`)."""
+
+    def test_the_new_constants_exist_with_the_right_kinds_and_the_old_ones_are_unchanged(self):
+        self.assertEqual(pc.SCHEMA, 1, "바깥 정보의 schema 번호는 올리지 않았다(설계서 P3 의 schema 2 는 RELEASE·UPDATE 갈래 몫)")
+        self.assertEqual((pc.CHANNEL, pc.NOTICE_LONG), ("personal-pc-preview", "개인 PC 제한 시험용, 미서명 Package — 공개 배포용이 아닙니다"))
+        self.assertIsInstance(pc.INNO_MIN_VERSION, tuple)
+        self.assertIsInstance(pc.INNO_SILENT_INSTALL_ARGS, tuple)
+        self.assertIsInstance(pc.INNO_SILENT_UNINSTALL_ARGS, tuple)
+        self.assertTrue(pc.INNO_APP_ID.startswith("{" * 2))
+        self.assertTrue(callable(pc.setup_name) and callable(pc.install_dir_problem))
+
+    def test_the_setup_name_is_never_made_for_a_trial_build_and_the_zip_names_are_unchanged(self):
+        with self.assertRaises(ValueError):
+            pc.setup_name("0.1.0-preview.1", True)
+        self.assertEqual(pc.zip_name("0.1.0-preview.1"), "ChanceBlogDesktop-0.1.0-preview.1-win64.zip")
+        self.assertEqual(pc.zip_name("0.1.0-preview.1", True), "ChanceBlogDesktop-0.1.0-preview.1-TESTBUILD-win64.zip")
+
+    def test_the_common_file_stays_standard_library_only(self):
+        tree = ast.parse((ps.PACKAGING / "pkgcommon.py").read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        self.assertTrue(imported <= set(sys.stdlib_module_names), sorted(imported - set(sys.stdlib_module_names)))
+        self.assertTrue({"chanceblog_desktop", "build_package", "make_manifest", "build_installer"}.isdisjoint(imported))
+
+
 class SourceHygieneTest(unittest.TestCase):
     """packaging/ 의 스크립트는 3.10 문법만, 물결표·주소 링크 없이, 앱 코드를 고치지 않고, 파이썬 패키지 이름 `packaging` 과 부딪치지 않는다."""
 
@@ -171,7 +202,8 @@ class SourceHygieneTest(unittest.TestCase):
         return sorted(ps.PACKAGING.glob("*.py"))
 
     def test_the_four_scripts_exist_and_the_folder_is_not_a_package(self):
-        self.assertEqual([path.name for path in self.scripts()], ["build_package.py", "gui_entry.py", "make_manifest.py", "pkgcommon.py"])
+        # 의도적 갱신(V1INSTALL, D-830): 설치 파일을 만드는 `build_installer.py` 가 더해져 넷에서 다섯이 됐다(이름의 '넷' 은 옛 이름 — 시험 이름은 바꾸지 않는다)
+        self.assertEqual([path.name for path in self.scripts()], ["build_installer.py", "build_package.py", "gui_entry.py", "make_manifest.py", "pkgcommon.py"])
         self.assertFalse((ps.PACKAGING / "__init__.py").exists(), "packaging/ 가 패키지가 되면 PyPI 의 packaging 라이브러리와 부딪친다")
 
     def test_every_script_parses_with_python_3_10_grammar(self):
